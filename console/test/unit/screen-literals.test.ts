@@ -1825,6 +1825,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'graph/move.ts',
       'installations.ts',
       'manage/command.ts',
+      'manage/shell.ts',
       'manage/types.ts',
       'new-bridge.ts',
       'screens/accountkeys.ts',

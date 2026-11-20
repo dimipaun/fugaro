@@ -1,0 +1,169 @@
+/* SPDX-License-Identifier: LicenseRef-Fugaro-Subscription */
+/* See console/LICENSE.md for the terms. */
+/* console/src/renderer/theme/manage.css — the Manage section's own rules
+ * (the console-improvements plan's task MO-SH; reconciliation R3; the prose is
+ * `docs/console-improvements/manage-kinds.md`, and the inventory of every hook
+ * below is design section 2.15).
+ *
+ * **Why a file of its own.** The section is drawn by one module
+ * (`console/src/renderer/manage/shell.ts`) whose tree is entirely its own: the
+ * four disclosures, one section per kind, a table of the kind's own columns, the
+ * actions under it and the two sentences a read that answered with nothing or
+ * was refused draws. No screen of `screens.css` names any of it, and a task that
+ * added these rules there would be a rule for a section living in the stylesheet
+ * of the screens beside it. The bundler concatenates the theme directory's
+ * whole contents into one `console.css` (`THEME_STYLESHEETS`), so a separate
+ * file costs one entry in a list and keeps the section's rules where the section
+ * is.
+ *
+ * **Every selector is a hook section 2.15 lists, qualified by the tag the shell
+ * draws it with.** The licence is section 2's ("a rule may only select a hook
+ * this table names"), and `theme-selectors.test.ts` holds the two halves of it:
+ * the class is in the inventory, and the tag in front of it is one the renderer
+ * actually draws. That is why `shell.ts` draws each of these elements through a
+ * call whose tag and class are both literals the scan can read, rather than
+ * through one ternary over a class: a selector this file cannot be checked
+ * against is a rule that would silently style nothing the day a tag changes.
+ *
+ * **What this file deliberately does not style.** The busy mark, the `as of`
+ * stamp, the Refresh, the Retry and the skeleton are `flight-deck.css`'s,
+ * against the `console-*` hooks `src/renderer/section.ts` and
+ * `src/renderer/skeleton.ts` draw — a second set of rules here would be a second
+ * busy mark for the one section that uses the helper. The dimming of a kind
+ * being read is that file's too: `section[data-busy='true'] > *:not(.console-busy-slot)`
+ * fades every child of the section the mark belongs to but the slot the mark
+ * sits in, which is exactly why a kind is drawn as a `section` and the mark goes
+ * in its own slot above the body.
+ *
+ * **The type is the redesign's, and the density rules are section 3.8's.** A
+ * group's title is the medium step, a kind's heading the small one, and a
+ * column's heading is section 3.7's table-header step — `--font-size-xs`,
+ * uppercase, letter-spaced — because a table's header is the smallest thing a
+ * person reads. The cells are the small step with `--space-2xs` of vertical
+ * padding and one hairline between rows, which is section 3.8's `--row-height`
+ * row read the way a table can express it, so a list of twenty members is a list
+ * and not twenty cards. A copy-command's label is mono (section 3.7): its whole value is that a
+ * person can compare it character by character with the command they are about
+ * to run, and the empty and refusal lines are prose in the console's voice at
+ * the base size — the one place a sentence is the content.
+ */
+
+section.manage-section {
+  margin-bottom: var(--space-lg);
+}
+
+/* ---- The four groups ------------------------------------------------------
+ *
+ * A group is a real `details`/`summary`, so the disclosure's own affordance is
+ * the element's: the marker the browser draws, the keyboard's Enter and Space,
+ * and the folding are all the element's and none of them is this file's. What is
+ * here is the row's measure (a group title is a target a person clicks, so it
+ * takes the theme's row height), the hairline between two groups, and the indent
+ * that puts a group's kinds under its own title rather than level with it.
+ */
+
+details.manage-group {
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+summary.manage-group-title {
+  min-height: var(--row-height);
+  padding-block: var(--space-2xs);
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+div.manage-group-body {
+  padding-left: var(--space-md);
+}
+
+/* ---- One kind: its heading, its table, its actions ------------------------
+ *
+ * A kind is a section of its own — one read, one busy mark, one refusal — so it
+ * is a block with the space above it that separates it from the kind before it,
+ * and the busy slot above its body is the helper's (the mark stays at the top of
+ * the section it belongs to, above whatever the last read drew).
+ */
+
+section.manage-kind {
+  margin-block: var(--space-sm);
+}
+
+h3.manage-kind-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-semibold);
+}
+
+div.manage-body {
+  margin-top: var(--space-2xs);
+}
+
+table.manage-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th.manage-column {
+  padding-block: var(--space-3xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--weight-medium);
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+td.manage-cell {
+  padding-block: var(--space-2xs);
+  border-top: var(--rule-width) solid var(--border);
+  font-size: var(--font-size-sm);
+}
+
+/* The controls a kind offers: a wrapping row under the table, each control a
+ * button of the theme's own box rather than the document's default. The copy
+ * control is mono and the view control is not, because one is a command and the
+ * other is a word of this console's own. */
+div.manage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-2xs);
+}
+
+button.manage-copy,
+button.manage-view {
+  min-height: var(--row-height-compact);
+  padding: var(--space-3xs) var(--space-sm);
+  background: var(--surface);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-md);
+  color: inherit;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+button.manage-copy {
+  font-family: var(--font-mono);
+}
+
+/* ---- The two sentences ----------------------------------------------------
+ *
+ * A read that answered with nothing and a read that was refused are two facts,
+ * and both are drawn as one line of prose: the console's own sentence for the
+ * first and the CLI's for the second (which `renderRetry` is drawn beside, and
+ * which the theme styles nowhere yet — the helper's hooks are `console-*` and
+ * not this section's).
+ */
+
+p.manage-refusal,
+p.manage-empty {
+  margin-block: var(--space-2xs);
+  font-size: var(--font-size-base);
+}
+
+p.manage-empty {
+  color: var(--text-muted);
+}

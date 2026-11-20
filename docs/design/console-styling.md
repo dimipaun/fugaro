@@ -1944,6 +1944,86 @@ section, and this is the table its hooks are added to.
   (`!` in a triangle, `i` in a circle), which is §3.5's rule read where it matters most: the
   one card an operator may see before anything else they can act on.
 
+---
+
+### 2.15 The Manage section — `console/src/renderer/manage/shell.ts` + `console/src/renderer/theme/manage.css`
+
+**The Manage section is the Project tab's four groups, and each kind inside them is a
+section of its own.** It is drawn by one module (`console/src/renderer/manage/shell.ts`,
+whose `mountManage` the Project tab mounts) out of the kind descriptors of
+`console/src/renderer/manage/types.ts` (the console-improvements plan's task MG0): the four
+group names of `MANAGE_GROUPS` — `People & access`, `Code`, `Models & keys`, `Budget` —
+each a real `details`/`summary` disclosure collapsed by default, and inside each group one
+element per registered kind, in registration order. **The shell knows no document.** A
+kind's `source` is its read, its `columns` are the table's headings, its `decode` answers
+its rows and its `actions` are the controls under them, so a kind joins this section by
+being registered and not by editing a screen or this stylesheet — which is why everything
+below is the shell's own drawing, and a kind's own words (a column's title, a cell's value,
+a command) are content under these hooks rather than hooks themselves. **Its rules are a
+layer of their own** (`console/src/renderer/theme/manage.css`, one entry in the bundler's
+`THEME_STYLESHEETS`): no screen's stylesheet names a tree this section draws, and a rule for
+one written into `screens.css` would be a rule about a section living in the file of the
+screens beside it.
+
+**One kind, one read, one busy mark, one refusal** (the parallel-sections rule in
+`console/.claude/rules/console.md`, and reconciliation R3 of the console-improvements plan).
+Each kind's read is a section read from `console/src/renderer/section.ts`: the kind's own
+command is the read, a busy mark and `aria-busy` are set on the kind while it is in flight
+with the rows already drawn kept under them, the CLI's refusal is drawn in that kind alone
+with the Retry beside it, and the other kinds are untouched — one kind's refusal is not the
+section's, which is what the red step of this task's test pins. A kind's content is replaced
+whole when its read lands, never patched row by row, and a group's kinds are read when the
+group is first opened: a collapsed group has asked the CLI for nothing.
+
+**The busy mark, the skeleton, the stamp and the Retry are not this file's.** They are drawn
+by `src/renderer/section.ts` and `src/renderer/skeleton.ts` against the `console-*` hooks §2
+already lists, and `flight-deck.css` styles them once: a second set of rules here would be a
+second busy mark for the one section that uses the helper. The rule that fades what a
+section already drew while its next read runs (`section[data-busy='true']`, with the busy
+slot excepted) is why a kind is drawn as a `section` with the mark in a slot above its own
+body, and not as a `div`.
+
+| Hook | Element | What it is |
+|---|---|---|
+| `section.manage-section` | the section's root | the four groups and nothing else, with `--space-lg` below it. It is mounted inside the Project tab, so it is a block of that tab and not a page: no `h1`, and no card of its own |
+| `details.manage-group` | one group | the disclosure itself. The marker, the keyboard and the folding are the element's, and the state is its own `open` attribute — no class carries it and no rule here sets one. The hairline between two groups is this hook's `border-bottom` |
+| `summary.manage-group-title` | a group's title | the group's name from `MANAGE_GROUPS`, in the medium step and semibold, on `--row-height` because it is a target a person clicks. `manage.css` leaves its `display` alone so the browser's marker survives — the height and the padding are all this rule sets |
+| `div.manage-group-body` | the kinds under a title | the column a group's kinds are drawn in, indented `--space-md` from the title. A collapsed group still draws it; that it is not rendered is the element's own doing |
+| `section.manage-kind` | one kind | the unit the sections rule is about: one read, one busy mark, one refusal, and `data-kind` naming the kind's id so the tree can be read back. The helper's mark goes in a slot at the top of this element, above whatever the last read drew |
+| `h3.manage-kind-title` | a kind's heading | the kind's `title` from its descriptor, in the small step and semibold. A kind is an `h3` because it sits under the tab's own heading and one level below a group's title |
+| `div.manage-body` | a kind's content | replaced whole every time the kind's read lands: the helper's `as of` stamp line, then the table or the empty sentence, then the actions |
+| `table.manage-table` | a kind's table | a real `table` with a real header row and body rows, at the section's full width. A kind whose rows are better read as prose draws its own body instead: no rule here assumes a table |
+| `th.manage-column` | a column's heading | the column's `title`, with `scope="col"`, in §3.7's table-header step — `--font-size-xs`, uppercase, letter-spaced, `--weight-medium` — and `data-column` naming the column's key. It is the smallest thing a person reads in this section, and the hook a sort or a filter would be keyed on later |
+| `td.manage-cell` | a cell | one document string, put through the class its column declared in `TEXT_CLASSES` (`putText`): a value the class refuses is the console's `n/a` with the reason in `title`, and the value itself never reaches the element. `--space-2xs` of vertical padding for §3.8's `--row-height` row, and the hairline between rows is this hook's `border-top` |
+| `tr.manage-row` | a row | one row the kind's `decode` answered with, `data-row` naming the row's own key. No rule selects it: the cells carry the density, and a rule against a row itself would be a rule about one kind's rows |
+| `div.manage-actions` | a kind's actions | the wrapping row of the controls a kind offers, drawn under the table whenever the kind's read landed — an empty list included, because an empty list is exactly when a person reaches for "add" — and never over a refusal |
+| `button.manage-copy` | a copy-command action | a `type="button"` whose label **is** the exact argv (`copyCommandText`, out of the action's parts), copying that text on click. Mono (§3.7), because its whole value is that a person compares it character by character with the command they are about to run |
+| `button.manage-view` | an open-view action | a `type="button"` asking the console to show a view of the rail (D2909: the Budget kind opens Spend). Its label names the view it opens, and it is not mono — the words are this console's own |
+| `p.manage-refusal` | a refused read | the CLI's own sentence for that kind's read (`sanitizeRefusal` keeps the role, project and path words and drops the rest), with the helper's Retry drawn beside it. It is the one place CLI text is drawn as prose |
+| `p.manage-empty` | a read that answered with nothing | the console's own single sentence (`Nothing listed yet`), muted, in the console's voice and never the CLI's: an empty answer is not a refusal, so it gets no CLI sentence and no reason to retry |
+
+- **The attributes are the shell's own bookkeeping.** `data-kind`, `data-operation`,
+  `data-group`, `data-row` and `data-column` are stamped on the elements above, and **no rule
+  in the theme selects any of them**: they are how a reader of the tree — a test, an operator
+  filing a report — sees which kind, which read, which group and which column a node belongs
+  to. The refusal names its own read with `data-operation`, so "which command was refused" is
+  answered by the markup rather than by the sentence beside it.
+- **A kind's actions are drawn once per kind, not once per row.** The descriptor's action
+  carries no per-row value (an id, a slug, a name), so there is nothing to substitute into a
+  row's copy and no row's command a table could name — a per-row action is a descriptor member
+  (the plan's MG0) and then a shell change, in that order. A kind whose rows need their own
+  control draws it from its own `decode` today.
+- **The empty sentence is the shell's, and it is one sentence for every kind.** The console's
+  own `renderEmpty` takes a closed union of sentences (`EMPTY_RUNS` today), so the shell draws
+  its own line rather than widen a helper that belongs to the screens. A kind that wants its
+  own wording for an empty list adds a member to that union first, in the PR that wants it,
+  and then names it here.
+- **A group is read when it is opened, never before.** A collapsed group draws its title and
+  nothing else, and the first `toggle` is what starts its kinds' reads (`read()` and
+  `readKind(id)` are the caller's doors; `end()` stops the section's reads when the tab is
+  left). Jobs are the other thing that is never in the first paint (§2.5), for the same
+  reason: a read nobody asked for is a child process nobody asked for.
+
 ## 3. The theme system
 
 ### 3.1 One file, one value set, one vocabulary
