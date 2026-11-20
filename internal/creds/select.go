@@ -5,31 +5,35 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // Tier is a credential's cost class: A is a shared subscription OAuth token
 // (someone's donated quota, free to spend and scarce), B is the project's
-// Anthropic API key (paid, bounded by the caps). The cascade walks them in that
-// order — cheapest usable first — and never the other way round.
+// Anthropic API key (paid, bounded by the caps) and C is a named provider key
+// (paid, at a third party: the route D3000 gates for a Claude model). The
+// cascade walks them in that order — cheapest usable first — and never the
+// other way round.
 type Tier string
 
 const (
 	TierA Tier = "a"
 	TierB Tier = "b"
-	// TierC is reserved and never selected. It is the third-party route (an
-	// OpenRouter key) that serves a Claude model under another model ID, and
-	// this release does not build it: it waits for Check 50 to measure Claude's
-	// prompt-cache markers through that route (D150, C3.6). The constant exists
-	// so that a state node or a policy a later release writes reads as a tier
-	// here and not as a name, and so that a caller offering one is refused
-	// rather than quietly served by something else.
+	// TierC is the third-party route (an OpenRouter key): a provider's own key,
+	// held by the credentials service, that serves a model the provider runs.
+	// It is selected only for a model that is not a Claude one, and that is the
+	// whole of D3000: a CLAUDE model through a provider key waits for Check 50,
+	// which measures Claude's prompt-cache markers through that route (D150,
+	// C3.6, R3), while a non-Claude provider model is served without waiting.
+	// Which models are Claude's is config.IsClaudeModel — the pin vocabulary
+	// every reader already shares (R3), never a list of this package's.
 	//
-	// Since AK6b a bundle really can hold such a credential: the project's
-	// provider key is in the document, and the credentials service offers it to
-	// the one review caller whose pairing names it (internal/credsvc, F15,
-	// D1418). So this is no longer a tier no credential can be offered at —
-	// what keeps the route unserved is checkCandidates' refusal below and not
-	// the absence of a credential, which is why a call offered one is answered
+	// Since AK6b a bundle really can hold such a credential — the project's
+	// provider key is in the document (F15, D1418), and since KS1 so is one
+	// entry per repository and provider (R2, D3008) — so what keeps the Claude
+	// case unserved is checkCandidates' refusal below and not the absence of a
+	// credential, which is why a call whose only credential is one is answered
 	// a typed refusal naming Check 50 rather than served by another tier.
 	TierC Tier = "c"
 )
@@ -101,6 +105,19 @@ type Selector struct {
 	// (Strategy). It never outranks the tier: the strategy decides which member
 	// of a tier a run goes to and never which tier (F7).
 	Strategy Strategy
+	// Model is the model this call is for, as the request names it, and it is
+	// what tells a Claude model from any other: a tier-C candidate — a named
+	// provider key — is served for any model that is not a Claude one, and a
+	// Claude model through one waits for Check 50 (D3000, R3, TierC).
+	//
+	// It is the CALLER's answer and not this package's: a selection knows no
+	// model ids and reads no request, so the side that parsed the call hands
+	// the model it names (the credentials service's provider route and its
+	// cascade route, KS4 and KS5), and "" means a caller that named none —
+	// which reads as a Claude model, the fail-closed direction this gate has
+	// always had. A caller that never sets it therefore selects exactly what it
+	// selected before this field existed.
+	Model string
 }
 
 // Select answers the credential the run's next call goes to, or the wait until
@@ -126,6 +143,12 @@ type Selector struct {
 //     credential of a refused tier that could not serve the call anyway (a
 //     broken one, one whose mark carries no time) is not this error: it is
 //     ErrNoCredential, because a policy change would not make the call succeed.
+//   - ("", 0, the Check 50 refusal) — every candidate left is a tier-C one and
+//     this call is a Claude model's (or names no model): a Claude model through
+//     a provider key waits for Check 50 (D3000, D150). A refusal, and the one
+//     sentence that says which check and which decision: the caller named a
+//     provider credential and this release does not select that route for a
+//     Claude model yet.
 //   - another error — the state could not be read or written. Fail closed: an
 //     unreadable state is not an empty one.
 //
@@ -140,7 +163,9 @@ type Selector struct {
 // rule above, or a rotation through them in that same order — and the tier is
 // decided before it, so neither rule can move a call off the cheaper one. A
 // candidate whose tier is not one this release selects is refused rather than
-// skipped. A tier B
+// skipped; a tier-C candidate this call's model may not be served by is
+// refused the same way, and the difference between the two is only which
+// sentence the caller reads (checkCandidates). A tier B
 // candidate offered under `oauth-only` is not refused — it carries no mistake —
 // but it is never selected, and a call that nothing else can serve is answered
 // with ErrFallbackForbidden when that candidate could actually serve it (see the
@@ -175,7 +200,7 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 	if err := run.valid(); err != nil {
 		return Credential{}, 0, err
 	}
-	cs, err := checkCandidates(candidates)
+	cs, err := checkCandidates(candidates, s.Model)
 	if err != nil {
 		return Credential{}, 0, err
 	}
@@ -303,16 +328,31 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 }
 
 // tiers is the cascade's order under this policy: tier A always, tier B only
-// when the policy spends. It is the one place the paid tier is admitted, so
-// "oauth-only never spends" is a property of this function rather than of a
-// check below it — the earlier shape of this code gated only the wait-vs-switch
-// decision and fell through to the paid key whenever every shared token was
-// broken, which is exactly when the platform must refuse (D152).
+// when the policy spends, and tier C — a named provider key — whichever the
+// fallback says. It is the one place the paid tier is admitted, so "oauth-only
+// never spends" is a property of this function rather than of a check below it
+// — the earlier shape of this code gated only the wait-vs-switch decision and
+// fell through to the paid key whenever every shared token was broken, which is
+// exactly when the platform must refuse (D152).
+//
+// Tier C is not part of that decision, and the reason is what a tier-C
+// candidate is (R3, D3000): it is in the list only because the call's own
+// published policy names that provider credential for the calling repository —
+// an entry the credentials service reads out of the bundle and offers, and one
+// no policy that names no provider can produce (internal/credsvc's offering).
+// So the owner has already decided to spend there, and `fallback` is about
+// something else: it is the rule for moving a CLAUDE call off a shared
+// subscription token onto the project's own paid ANTHROPIC key, and a
+// non-Claude provider model was never on a subscription token to be moved off
+// one. D3007 reads the same way from the owner: a repository's auth mode is
+// there for the models and not the other way round, so a project whose Claude
+// calls run on donated tokens (`oauth-only`, the protective default) can still
+// have its DeepSeek calls served by its own OpenRouter key.
 func (s Settings) tiers() []Tier {
 	if s.Fallback.Spends() {
-		return []Tier{TierA, TierB}
+		return []Tier{TierA, TierB, TierC}
 	}
-	return []Tier{TierA}
+	return []Tier{TierA, TierC}
 }
 
 // reachable reports whether a credential is of a tier this policy admits. It is
@@ -320,8 +360,12 @@ func (s Settings) tiers() []Tier {
 // while the policy was `auto` does not keep spending after the operator turns
 // the policy back to `oauth-only` — its call waits for a shared credential, or
 // is refused, and the run is moved when one is taken.
+//
+// Tier C is admitted the way tiers admits it and for the same reason: a run
+// placed on a named provider key stays on it, and a call whose model is not a
+// Claude one keeps being served, whatever the fallback says.
 func reachable(c Credential, set Settings) bool {
-	return c.Tier == TierA || set.Fallback.Spends()
+	return c.Tier == TierA || c.Tier == TierC || set.Fallback.Spends()
 }
 
 // reachableOnly is the candidates this policy admits, in the order offered.
@@ -329,7 +373,7 @@ func reachableOnly(cs []Credential, set Settings) []Credential {
 	if set.Fallback.Spends() {
 		return cs
 	}
-	return groupOf(cs, TierA)
+	return append(groupOf(cs, TierA), groupOf(cs, TierC)...)
 }
 
 // Mark applies a state change to one credential's mark, under the store's
@@ -704,18 +748,42 @@ func groupOf(cs []Credential, tier Tier) []Credential {
 //   - an empty list is ErrNoCandidates, because a caller with no credential to
 //     offer (an admission that dropped every account, a bundle read that came
 //     back empty) must see that, not an exhausted account;
-//   - a tier C candidate is refused, because this release does not select it
-//     (D150, C3.6) and serving the call from another tier would hide the fact
-//     that the policy asked for something not built;
-//   - an unknown tier is refused for the same reason, and an empty name too;
+//   - a candidate of an unknown tier is refused, and an empty name too;
 //   - the same name twice is refused: it would be one credential counted twice
-//     in a tie, which is a worse round robin for a reason nobody could see.
-func checkCandidates(cs []Credential) ([]Credential, error) {
+//     in a tie, which is a worse round robin for a reason nobody could see;
+//   - a tier C candidate — a named provider key — is refused unless this call's
+//     model is one it may be served by, and a list that leaves nothing but such
+//     candidates is refused with the sentence naming Check 50 (D3000, D150).
+//
+// # Which tier-C candidates this call may be served by, and why the list is the
+// # answer (D3000, R3, F5)
+//
+// A tier C credential is a third-party provider's key, and this release serves
+// it for every model but a Claude one: a CLAUDE model through a provider key
+// waits for Check 50, which measures Claude's prompt-cache markers on that route
+// and nothing about another model (D150, D3000). So the model decides, and the
+// model is the caller's (Selector.Model) — an empty one reads as a Claude model
+// and keeps this gate exactly as wide as it was before the model arrived.
+//
+// A refused candidate is DROPPED from the list, and the rest of the call is not
+// its business. That is the difference a bundle of named entries makes (KS1
+// offers a coding caller the provider entries of its own repository), and
+// without it the gate would be far wider than the decision it implements: a
+// repository that holds an OpenRouter key would be refused EVERY Claude call it
+// makes — the cascade's own model entries are offered beside the provider entry,
+// and the whole call would fail on a candidate that call would never have been
+// served by. What the refusal is for is the call whose only credential is a
+// provider's: a Claude model routed through one, which is exactly what the
+// gateway pins and what the service's provider route builds a list of one for.
+// Such a call reads the sentence, and it is the sentence that names the check,
+// the reason and the decision.
+func checkCandidates(cs []Credential, model string) ([]Credential, error) {
 	if len(cs) == 0 {
 		return nil, ErrNoCandidates
 	}
 	out := make([]Credential, 0, len(cs))
 	seen := make(map[string]bool, len(cs))
+	var refused []Credential
 	for _, c := range cs {
 		if c.Name == "" {
 			return nil, fmt.Errorf("creds: a candidate of tier %q has no name", c.Tier)
@@ -723,7 +791,10 @@ func checkCandidates(cs []Credential) ([]Credential, error) {
 		switch c.Tier {
 		case TierA, TierB:
 		case TierC:
-			return nil, fmt.Errorf("creds: %q is tier C, and this release does not select a third-party route for a Claude model: it waits for Check 50 (D150, C3.6)", c.Name)
+			if !providerServes(model) {
+				refused = append(refused, c)
+				continue
+			}
 		default:
 			return nil, fmt.Errorf("creds: %q has tier %q, which is not a tier this Fugaro knows: it selects tier a (a shared subscription token) and tier b (the project's API key)", c.Name, c.Tier)
 		}
@@ -733,7 +804,28 @@ func checkCandidates(cs []Credential) ([]Credential, error) {
 		seen[c.Name] = true
 		out = append(out, c)
 	}
+	if len(out) == 0 {
+		// Nothing is left but provider keys this call's model may not be served
+		// by, and that is the refusal D150's gate is: the answer is not "no
+		// credential is offered" (which would send the caller to the bundle for
+		// a call the bundle answered) and not "everything is exhausted" (which
+		// would idle a run on a credential that is not coming).
+		return nil, fmt.Errorf("creds: %q is tier C, and this release does not select a third-party route for a Claude model: it waits for Check 50 (D150, C3.6)", refused[0].Name)
+	}
 	return out, nil
+}
+
+// providerServes reports whether a call for this model may be served by a
+// provider's own key: every model but a Claude one (D3000, R3). A caller that
+// named no model is not one of them — the fail-closed direction, and the one
+// every caller had before a selection could be told the model at all.
+//
+// The vocabulary is config's own (IsClaudeModel over ClaudePatterns): which
+// models are Claude's is the pin ladder the config, the mount and the launch
+// already share (R3), and a second list here would be a second answer to a
+// question that has one.
+func providerServes(model string) bool {
+	return model != "" && !config.IsClaudeModel(model)
 }
 
 func (s *Selector) now() time.Time {
