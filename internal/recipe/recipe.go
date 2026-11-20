@@ -64,6 +64,29 @@ const modeMsg = "must be implement, review, artifact or evaluate"
 // NameRE is a recipe name: the shape of a project name.
 var NameRE = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$`)
 
+// LevelNames are the levels a by_level: entry may name, in the vocabulary's
+// own order (internal/rigor's Rigors: POC, Startup, Pro, Critical, Hotfix).
+//
+// The list is written here rather than read from internal/rigor because the
+// dependency cannot go that way: rigor's own tests import this package
+// (rounds_test.go, which pins that a level's round counts are ones a recipe
+// could have carried itself), and a package that imports back into a package
+// whose tests import it is an import cycle Go refuses to compile ("import
+// cycle not allowed in test"). So this is a second copy of the vocabulary,
+// the way this file's mode and check enums are its own, and
+// TestRecipeLevelNamesMatchTheVocabulary (schemas/schemas_test.go, which may
+// import both) is what keeps the two from drifting — together with the
+// schema's own by_level enum, pinned against rigor.Rigors by the same test.
+var LevelNames = []string{"poc", "startup", "pro", "critical", "hotfix"}
+
+// byLevelOnlyRoles is the refusal every key but roles gets inside a by_level:
+// entry. The cap and the loop's shape are not the level's to change: a run's
+// per-run cap is the cap of the level it bootstrapped at (T6.1, D16), and the
+// steps are the recipe's, so a level-conditional recipe has exactly one thing
+// to vary. The message says so, because a budget word written here is not a
+// typo but the one thing the design refuses.
+const byLevelOnlyRoles = "a by_level entry can set roles only: the cap a run gets is its level's own, and the loop's shape is the recipe's"
+
 // StepKind is a step type of version 1.
 type StepKind string
 
@@ -356,6 +379,18 @@ func (o *Outputs) MaxSetBytes() int64 {
 	return o.MaxTotalBytes
 }
 
+// RoleMap is one role mapping: at most one of the two is set, exactly as the
+// two fields the top-level roles: key leaves on Recipe. Parse refuses both at
+// once, at the top level and inside a by_level: entry alike.
+type RoleMap struct {
+	// ReviewerIsCoder is roles: {reviewer: coder}: the reviewer runs on the
+	// coder's model and per-call output limit.
+	ReviewerIsCoder bool
+	// CoderIsReviewer is roles: {coder: reviewer}: the coder runs on the
+	// reviewer's (stronger) model.
+	CoderIsReviewer bool
+}
+
 // Recipe is a parsed, valid recipe.
 type Recipe struct {
 	Version     int
@@ -368,6 +403,17 @@ type Recipe struct {
 	ReviewerIsCoder bool
 	// CoderIsReviewer is roles: {coder: reviewer}.
 	CoderIsReviewer bool
+	// levelRoles is the by_level: block: the role mapping the recipe sets
+	// for each level it names, which replaces the recipe's own roles: at
+	// that level. Nil when the recipe writes no such key. It is read
+	// through RolesFor, which applies that fallback, and never directly.
+	levelRoles map[string]RoleMap
+	// levelRolesWritten is set when the recipe text writes the by_level:
+	// key, whatever its entries hold, so UsesLevelRoles decides by presence
+	// the way UsesV07 does — and for the same reason: a parser older than
+	// the key refuses the whole recipe ("is not a recipe key"), so a
+	// by_level: {} recipe still needs a job image that knows it.
+	levelRolesWritten bool
 	// Mode is ModeImplement, ModeReview or ModeArtifact, never "".
 	Mode  string
 	Steps []Step
@@ -482,6 +528,43 @@ func UsesRebase(r *Recipe) bool {
 // carried one.
 func UsesHandOver(r *Recipe) bool {
 	return slices.ContainsFunc(r.Steps, func(s Step) bool { return s.HandOver })
+}
+
+// RolesFor is the role mapping the recipe runs with at level: the by_level:
+// entry that names level when the recipe wrote one — including one written
+// with roles: {}, which is how a recipe says the level runs with no mapping —
+// and the recipe's own roles: (Recipe.ReviewerIsCoder, Recipe.CoderIsReviewer)
+// for every other level, a level the recipe never named among them.
+//
+// level is a rigor level name, internal/rigor's Rigor value: this package
+// cannot import it (see LevelNames), so the caller converts. Parse refuses a
+// by_level: key that is not one of LevelNames, so a name this package does
+// not know can only come from a caller; it takes the recipe's own mapping,
+// which is what an unnamed level takes.
+func (r *Recipe) RolesFor(level string) RoleMap {
+	if m, ok := r.levelRoles[level]; ok {
+		return m
+	}
+	return RoleMap{ReviewerIsCoder: r.ReviewerIsCoder, CoderIsReviewer: r.CoderIsReviewer}
+}
+
+// UsesLevelRoles reports whether the recipe text writes the by_level: key,
+// the recipe's one conditional (0.27.0): the level's own role mapping.
+//
+// It decides by presence (Recipe.levelRolesWritten), not by the parsed
+// mapping, for UsesV07's reason: a parser that predates the key refuses the
+// whole recipe ("is not a recipe key"), so a by_level: recipe whose entries
+// all hold the recipe's own mapping — or one that writes by_level: {} — still
+// needs a job image whose runner knows the key.
+//
+// It is read by the launch gate: recipeSinceFor chooses levelRolesSince when
+// the embedded recipe, or the launcher's own read of a repository recipe's
+// file, carries the key (internal/cli/recipes_skew.go), so a launch against a
+// job image whose runner predates the release that reads it is refused before
+// it starts, naming fugaro image refresh, rather than reaching the runner's
+// own parse refusal at bootstrap.
+func UsesLevelRoles(r *Recipe) bool {
+	return r.levelRolesWritten
 }
 
 // Renamed are catalog names removed in 0.7.0 and what replaced them.
@@ -746,7 +829,10 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 			r.newKeysV08 = true
 			r.Outputs = p.outputs(v)
 		case "roles":
-			r.ReviewerIsCoder, r.CoderIsReviewer = p.roles(r, v)
+			m := p.roleMap(r, "roles", v, true)
+			r.ReviewerIsCoder, r.CoderIsReviewer = m.ReviewerIsCoder, m.CoderIsReviewer
+		case "by_level":
+			r.levelRoles = p.byLevel(r, v)
 		case "steps":
 			r.Steps, srcIdx = p.steps(r, v)
 		default:
@@ -771,16 +857,26 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 			p.add("outputs", 0, "is required for mode: artifact")
 		}
 		// roles map the coder onto the reviewer and back; an artifact
-		// recipe has neither role. Checked here rather than in roles(),
+		// recipe has neither role. Checked here rather than in roleMap,
 		// for the same reason as the step rules: mode may come after it.
+		// by_level is refused by name too: it is nothing but roles written
+		// per level, and removing roles: would not fix it.
 		if r.ReviewerIsCoder || r.CoderIsReviewer {
 			p.add("roles", 0, "mode: artifact has no agent steps to map roles onto: remove roles")
 		}
-	case r.Mode == ModeEvaluate && (r.ReviewerIsCoder || r.CoderIsReviewer):
+		if r.levelRolesWritten {
+			p.add("by_level", 0, "mode: artifact has no agent steps to map roles onto: remove by_level")
+		}
+	case r.Mode == ModeEvaluate && (r.ReviewerIsCoder || r.CoderIsReviewer || r.levelRolesWritten):
 		// The same rule, for the mode with no agent at all: an evaluate run
 		// starts no coder and no reviewer, so there is no role for a mapping
 		// to change (U6).
-		p.add("roles", 0, "mode: evaluate has no agent steps to map roles onto: remove roles")
+		if r.ReviewerIsCoder || r.CoderIsReviewer {
+			p.add("roles", 0, "mode: evaluate has no agent steps to map roles onto: remove roles")
+		}
+		if r.levelRolesWritten {
+			p.add("by_level", 0, "mode: evaluate has no agent steps to map roles onto: remove by_level")
+		}
 	case seenOutputs:
 		p.add("outputs", 0, "is only for mode: artifact")
 	}
@@ -822,19 +918,24 @@ func hasControlChar(s string) bool {
 	return false
 }
 
-// roles returns (reviewerIsCoder, coderIsReviewer): which of the two
-// exclusive role mappings the recipe set.
-func (p *parser) roles(r *Recipe, v *yaml.Node) (revIsCoder, coderIsRev bool) {
+// roleMap reads one roles: block. prefix is the path its problems are
+// reported under — "roles" at the top level, "by_level.<level>.roles" inside
+// a by_level: entry — and v07 says whether writing the coder key is itself a
+// 0.7.0 construct here. It is not inside a by_level: entry: the whole key is
+// 0.27.0's, and no parser that reads it can be one that predates the coder
+// key (Recipe.newKeys, Recipe.levelRolesWritten).
+func (p *parser) roleMap(r *Recipe, prefix string, v *yaml.Node, v07 bool) RoleMap {
 	if v.Kind != yaml.MappingNode {
-		p.add("roles", v.Line, "must be a mapping such as {reviewer: coder}")
-		return false, false
+		p.add(prefix, v.Line, "must be a mapping such as {reviewer: coder}")
+		return RoleMap{}
 	}
+	var m RoleMap
 	want := map[string]string{"reviewer": "coder", "coder": "reviewer"}
 	for i := 0; i+1 < len(v.Content); i += 2 {
 		k, val := v.Content[i], v.Content[i+1]
-		path := "roles." + pluginwire.Printable(k.Value)
+		path := prefix + "." + pluginwire.Printable(k.Value)
 		w := want[k.Value]
-		if k.Value == "coder" {
+		if k.Value == "coder" && v07 {
 			r.newKeys = true
 		}
 		switch {
@@ -842,9 +943,9 @@ func (p *parser) roles(r *Recipe, v *yaml.Node) (revIsCoder, coderIsRev bool) {
 			p.add(path, k.Line, "only the reviewer and coder roles can be mapped (reviewer: coder, or coder: reviewer)")
 		case val.Kind == yaml.ScalarNode && val.Tag == "!!str" && val.Value == w:
 			if k.Value == "reviewer" {
-				revIsCoder = true
+				m.ReviewerIsCoder = true
 			} else {
-				coderIsRev = true
+				m.CoderIsReviewer = true
 			}
 		case val.Kind == yaml.ScalarNode && val.Tag == "!!str" && val.Value != "" && val.Value != "coder" && val.Value != "reviewer" && val.Value != "background":
 			p.add(path, val.Line, "can only be %s: %s", w, modelMsg)
@@ -852,10 +953,64 @@ func (p *parser) roles(r *Recipe, v *yaml.Node) (revIsCoder, coderIsRev bool) {
 			p.add(path, val.Line, "must be %s", w)
 		}
 	}
-	if revIsCoder && coderIsRev {
-		p.add("roles", v.Line, "roles: coder: reviewer and reviewer: coder exclude each other")
+	if m.ReviewerIsCoder && m.CoderIsReviewer {
+		p.add(prefix, v.Line, "roles: coder: reviewer and reviewer: coder exclude each other")
 	}
-	return revIsCoder, coderIsRev
+	return m
+}
+
+// byLevel reads the by_level: block: a mapping from a rigor level name to
+// the role mapping the recipe runs with at that level (LD9). roles is the
+// whole of what a level may vary — the cap a run gets is the level's own
+// (T6.1, D16) and the loop's shape is the recipe's — so any other key is
+// refused with byLevelOnlyRoles rather than as an unknown key.
+//
+// The key's presence is recorded even when the mapping is empty
+// (Recipe.levelRolesWritten), and an entry that writes roles: {} is kept as
+// the empty mapping it is: that is how a recipe says the level runs with no
+// mapping while every other level keeps the recipe's own.
+func (p *parser) byLevel(r *Recipe, v *yaml.Node) map[string]RoleMap {
+	r.levelRolesWritten = true
+	if v.Kind != yaml.MappingNode {
+		p.add("by_level", v.Line, "must be a mapping such as {poc: {roles: {coder: reviewer}}}")
+		return nil
+	}
+	out := make(map[string]RoleMap, len(v.Content)/2)
+	for i := 0; i+1 < len(v.Content); i += 2 {
+		k, val := v.Content[i], v.Content[i+1]
+		path := "by_level." + pluginwire.Printable(k.Value)
+		if !slices.Contains(LevelNames, k.Value) {
+			p.add(path, k.Line, "must be a rigor level: %s", strings.Join(LevelNames, ", "))
+			continue
+		}
+		// The level name is checked first, so a bad level and a bad entry
+		// are one problem rather than two.
+		if val.Kind != yaml.MappingNode {
+			p.add(path, val.Line, "must be a mapping holding roles")
+			continue
+		}
+		sawRoles := false
+		for j := 0; j+1 < len(val.Content); j += 2 {
+			bk, bv := val.Content[j], val.Content[j+1]
+			bpath := path + "." + pluginwire.Printable(bk.Value)
+			if bk.Value != "roles" {
+				// A model key keeps its own message: it is refused at
+				// every level, not only here.
+				if msg, ok := reserved[bk.Value]; ok {
+					p.add(bpath, bk.Line, "%s", msg)
+				} else {
+					p.add(bpath, bk.Line, "%s", byLevelOnlyRoles)
+				}
+				continue
+			}
+			sawRoles = true
+			out[k.Value] = p.roleMap(r, path+".roles", bv, false)
+		}
+		if !sawRoles {
+			p.add(path, val.Line, "must set roles: a by_level entry is the level's role mapping")
+		}
+	}
+	return out
 }
 
 // steps returns the valid steps and each one's position in the source list.
@@ -1371,6 +1526,8 @@ func (p *parser) order(r *Recipe, src []int) {
 			p.add("steps", 0, "mode: review allows exactly one review step and nothing else")
 		case r.ReviewerIsCoder || r.CoderIsReviewer:
 			p.add("roles", 0, "mode: review has no coder step to map roles onto: remove roles")
+		case r.levelRolesWritten:
+			p.add("by_level", 0, "mode: review has no coder step to map roles onto: remove by_level")
 		case steps[len(steps)-1].MaxRounds > 1:
 			p.add("steps", 0, "mode: review reviews once: max_rounds must be 1")
 		case steps[len(steps)-1].HandOver:
