@@ -77,17 +77,19 @@ func (f *observeCloud) beforeThisWork(t *testing.T) {
 	f.sm.Seed("fugaro-github-app", managed, nil)
 }
 
-// regionalContainer creates a Fugaro-labelled container with user-managed
-// replication in region, as a container created from now on is: the fake keeps
-// the policy of the create that made it and answers it back on the listing.
-func (f *observeCloud) regionalContainer(t *testing.T, id, region string) {
+// regionalContainer creates a container with user-managed replication in
+// region, as one created from now on is, carrying labels: the fake keeps the
+// policy of the create that made it and answers it back on the listing. A nil
+// labels map makes one that is not Fugaro's at all, which is what a project's
+// own containers are.
+func (f *observeCloud) regionalContainer(t *testing.T, id, region string, labels map[string]string) {
 	t.Helper()
 	svc, err := secretmanager.NewService(context.Background(), option.WithoutAuthentication(), option.WithEndpoint(f.sm.URL+"/"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = svc.Projects.Secrets.Create("projects/"+observeProject, &secretmanager.Secret{
-		Labels: managed,
+		Labels: labels,
 		Replication: &secretmanager.Replication{UserManaged: &secretmanager.UserManaged{
 			Replicas: []*secretmanager.Replica{{Location: region}}}}},
 	).SecretId(id).Context(context.Background()).Do()
@@ -130,13 +132,21 @@ func TestAMixOfSecretsIsReportedAsMixed(t *testing.T) {
 			f.sm.Seed("fugaro-bitbucket-token", managed, nil)
 		}, ObservedSecrets{Replication: ReplicationAutomatic}},
 		{"every container regional", func(t *testing.T, f *observeCloud) {
-			f.regionalContainer(t, "fugaro-github-app", "europe-west1")
-			f.regionalContainer(t, "fugaro-bitbucket-token", "us-east5")
+			f.regionalContainer(t, "fugaro-github-app", "europe-west1", managed)
+			f.regionalContainer(t, "fugaro-bitbucket-token", "us-east5", managed)
 		}, ObservedSecrets{Replication: ReplicationRegional, Regions: []string{"europe-west1", "us-east5"}}},
 		{"a new container beside an old one", func(t *testing.T, f *observeCloud) {
 			f.sm.Seed("fugaro-github-app", managed, nil)
-			f.regionalContainer(t, "fugaro-bitbucket-token", "europe-west1")
+			f.regionalContainer(t, "fugaro-bitbucket-token", "europe-west1", managed)
 		}, ObservedSecrets{Replication: ReplicationMixed, Regions: []string{"europe-west1"}}},
+		// The listing filters on `fugaro=managed`, which is what keeps the
+		// answer to the installation's own containers: a project's own secret,
+		// replicated where its owner chose, is neither Fugaro's nor a reason to
+		// call the installation's containers regional.
+		{"a container that is not ours", func(t *testing.T, f *observeCloud) {
+			f.sm.Seed("fugaro-github-app", managed, nil)
+			f.regionalContainer(t, "the-owners-own", "europe-west1", nil)
+		}, ObservedSecrets{Replication: ReplicationAutomatic}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newObserveCloud(t)
