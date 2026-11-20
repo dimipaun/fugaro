@@ -410,14 +410,16 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 			`service_account = google_service_account.credentials[0].email`},
 		// The resident orchestrator's own literals, which its two cases read
 		// (orchestratorServiceChange, orchestratorTickChange): the IAM setting
-		// that is the fence, the argv of the subcommand, the three names
+		// that is the fence, the argv of the subcommand, the six names
 		// orchestratorServiceEnv allows, the account the template names, and
-		// the tick's route. A module edit that renamed or dropped one fails
-		// here rather than refusing a plan the module still writes.
+		// the tick's route. The six are the node's three (P5.1c) and the
+		// launch's three (P5.1d). A module edit that renamed or dropped one
+		// fails here rather than refusing a plan the module still writes.
 		"modules/installation/orchestrator.tf": {`invoker_iam_disabled = false`,
 			`args  = ["orchestrator", "serve"]`,
 			`orchestrator_tick_path = "/tick"`,
 			`"FUGARO_PROJECT"`, `"FUGARO_FIREBASE_PROJECT"`, `"FUGARO_RTDB_URL"`,
+			`"FUGARO_GCP_PROJECT"`, `"FUGARO_REGION"`, `"FUGARO_BUCKET"`,
 			`service_account = google_service_account.orchestrator[0].email`},
 	}
 	for file, wants := range pins {
@@ -1682,13 +1684,36 @@ func TestCoverRefusesAVoiceServiceThatIsNotTheModules(t *testing.T) {
 		}, false},
 		// An environment is the one path a value could reach this process
 		// without a Secret Manager read, and this process is reachable by
-		// anyone.
+		// anyone. The name below is one the process reads NOWHERE (it is the
+		// credentials service's own, and even there it is not a container's
+		// environment): since P5.3.5 the hop's three names are the two the
+		// Firebase reads need and the GCP project the provider-key container
+		// lives in, and voiceServiceEnv is the whole of what a plan may carry.
 		"an environment the module does not set": {func() ResourceChange {
 			r, _ := load()
 			c := container(r)
-			c["env"] = append(c["env"].([]any), map[string]any{"name": "FUGARO_GCP_PROJECT", "value": f.Project})
+			c["env"] = append(c["env"].([]any), map[string]any{"name": "FUGARO_SERVICE_URL", "value": "https://example.invalid"})
 			return r
 		}, false},
+		// A name DROPPED is covered and deliberately so, which is the split
+		// between this check and the golden's: this file refuses what a
+		// hand-edited plan ADDS, and TestGoldenVoiceHopCarriesItsThreeNamesAndNoOther
+		// is what reads the three names and their values off the module's own
+		// plan — a revision missing one of them is a process that never binds
+		// (internal/cli's voiceServiceConfig) rather than a grant anybody
+		// widened, so it is not a refusal this row could carry.
+		"the project the provider keys live in, dropped": {func() ResourceChange {
+			r, _ := load()
+			c := container(r)
+			kept := []any{}
+			for _, e := range c["env"].([]any) {
+				if str(e.(map[string]any)["name"]) != "FUGARO_GCP_PROJECT" {
+					kept = append(kept, e)
+				}
+			}
+			c["env"] = kept
+			return r
+		}, true},
 		"an environment whose value comes from a source": {func() ResourceChange {
 			r, _ := load()
 			container(r)["env"] = []any{map[string]any{"name": "FUGARO_FIREBASE_PROJECT",
@@ -1774,7 +1799,7 @@ func orchestratorAccount(acts ...string) ResourceChange {
 // orchestratorService is the resident orchestrator as
 // modules/installation/orchestrator.tf writes it: one container at
 // template[0].containers[0] running the RELEASED image with the module's argv,
-// its three environment variables and the account the module creates for it.
+// its six environment variables and the account the module creates for it.
 // The address is what tells the three services apart in the cover
 // (cloudRunServiceName), so it carries the module's own resource name.
 //
@@ -1790,6 +1815,11 @@ func orchestratorService(image string) ResourceChange {
 		map[string]any{"name": "FUGARO_PROJECT", "value": "aurora", "value_source": []any{}},
 		map[string]any{"name": "FUGARO_FIREBASE_PROJECT", "value": "aurora-fp", "value_source": []any{}},
 		map[string]any{"name": "FUGARO_RTDB_URL", "value": "https://aurora-fp-default-rtdb.firebaseio.com", "value_source": []any{}},
+		// The launch's three (P5.1d), which the module sets beside the node's
+		// own three: the same three names a run's own container carries.
+		map[string]any{"name": "FUGARO_GCP_PROJECT", "value": "proj-1", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_REGION", "value": "us-east5", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_BUCKET", "value": "gs://aurora-runs", "value_source": []any{}},
 	}}
 	r := rc("google_cloud_run_v2_service", map[string]any{"invoker_iam_disabled": false,
 		"template": []any{map[string]any{"service_account": orchestratorAccountEmail, "containers": []any{c}}}}, map[string]any{}, "create")
@@ -1851,8 +1881,8 @@ func orchestratorTick(uri, audience, email string) ResourceChange {
 // reads the digest back would otherwise have this process, which may be the
 // phone, run their code.
 //
-// The environment is the three names orchestrator.tf sets (the process reads no
-// fourth: internal/cli's TestOrchestratorServiceEnvIsTheDeploymentsOwn holds
+// The environment is the six names orchestrator.tf sets (the process reads no
+// seventh: internal/cli's TestOrchestratorServiceEnvIsTheDeploymentsOwn holds
 // the two lists to each other), with literal values and no value_source — an
 // environment is the one path a value could reach this process without a Secret
 // Manager read.
@@ -1860,7 +1890,7 @@ func orchestratorTick(uri, audience, email string) ResourceChange {
 // Mutation (run, restore): delete the orchestratorServiceChange branch from
 // Cover.attributes — the module's own plan becomes REFUSED, which is the row
 // that pins the branch: every change at this address then falls to the
-// credentials service's case, which refuses the argv, the account and the three
+// credentials service's case, which refuses the argv, the account and the six
 // names of this container. A test that only listed refused rows would miss it.
 func TestCoverRefusesAnOrchestratorServiceThatIsNotTheModules(t *testing.T) {
 	img := "us-east5-docker.pkg.dev/proj-1/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:" + strings.Repeat("a", 64)
@@ -1923,7 +1953,7 @@ func TestCoverRefusesAnOrchestratorServiceThatIsNotTheModules(t *testing.T) {
 			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"args": true}}}}}
 			return r
 		}, false},
-		// The environment, which is a list of three and nothing else.
+		// The environment, which is a list of six and nothing else.
 		"an environment the module does not set": {func() ResourceChange {
 			r := svc()
 			c := container(r)

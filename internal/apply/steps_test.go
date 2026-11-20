@@ -111,7 +111,16 @@ func TestStepsMatchesRealSettingKeys(t *testing.T) {
 		// workspace's own project is applied from (its service account and the
 		// one grant) and what the record stage publishes, so it owes both.
 		{"workspace_members.*.repos", []string{initflow.WorkspaceProject, initflow.Workspace}},
+		{"workspace_members.*.job_service_accounts.*.repos", []string{initflow.WorkspaceProject, initflow.Workspace}},
+		{"workspace_members.*.database_region", []string{initflow.WorkspaceProject, initflow.Workspace}},
 		{"workspace_cap.monthly", []string{initflow.WorkspaceProject, initflow.Workspace}},
+		// The shared list is the owner's too: it is published in the same record
+		// the member table is, and it is the same project the record's service
+		// account and grant belong to, so a credential shared or unshared owes
+		// both stages and not a third one of its own.
+		{"workspace_shared.*.kind", []string{initflow.WorkspaceProject, initflow.Workspace}},
+		{"workspace_shared.*.projects", []string{initflow.WorkspaceProject, initflow.Workspace}},
+		{"workspace_shared.*.covers", []string{initflow.WorkspaceProject, initflow.Workspace}},
 		// The workspace MEMBER's half, which owes no step: nothing publishes
 		// either key, and the workspace stage skips on a member. The two are
 		// declared rather than missing, so Steps answers true with no steps —
@@ -119,6 +128,7 @@ func TestStepsMatchesRealSettingKeys(t *testing.T) {
 		// never run on the machine that asked for it.
 		{"workspace", nil},
 		{"workspace_pin.issuer", nil},
+		{"workspace_pin.service_address", nil},
 	} {
 		got, ok := Steps(Change{Kind: Setting, Key: tc.key})
 		if !ok {

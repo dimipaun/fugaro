@@ -50,11 +50,14 @@
 # credentials service (_CREDENTIALS_SERVICE_URL set, B4.5), the credential
 # step fetches the workflow's secrets with its git credential and writes each
 # one into the fugaro-secrets volume, which only the credential step and the
-# build step mount; the build step takes that file in place of the variable
-# availableSecrets would have given it, and removes it. The variable the build
-# step reads them under, SECRET_ENVS, is the same list either way, and the
-# secrets of a build that does not fetch them reach it exactly as they did
-# before: the file is written only where the service answered.
+# build step mount. The build step prefers the variable availableSecrets
+# filled for it wherever that variable is set, so while the request carries
+# the entry the mount is what reaches the Dockerfile and the fetched file is
+# left in the volume unread; the fetched file is what reaches it once a
+# request carries no entry for that name (B4.9). The variable the build step
+# reads them under, SECRET_ENVS, is the same list either way, and the secrets
+# of a build that does not fetch them reach it exactly as they did before:
+# the file is written only where the service answered.
 #
 # Substitution is textual, so no ${_…} ever appears in a step's shell
 # script: a crafted value (a branch named x$(…) is a valid git ref) would

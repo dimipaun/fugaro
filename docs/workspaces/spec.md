@@ -470,7 +470,7 @@ repeatable) — the first four are the values this table holds, `--repo` is the 
 contribution to the workspace, and the **region** is in none of them (§6) — and the per-member
 credentials node itself has no writer at all:
 `WorkspaceCredentials`'s own comment says so
-(`internal/projectpolicy/workspace_credentials.go`:101, "This node has no writer in the tree"). The
+(`internal/projectpolicy/workspace_credentials.go`:113, "This node has no writer in the tree"). The
 command that records a region, and the publish path that fills the table, are therefore a later
 task's, and a member whose Firebase project was adopted with a **regional** database is derived the
 legacy `<firebase_project>-default-rtdb` host until one lands: its row can carry only an empty

@@ -327,13 +327,18 @@ resource "google_service_account_iam_member" "orchestrator_token_minter" {
 # pin are told apart by their argv — which is what internal/infra/tf's case for
 # this address reads.
 #
-# The environment is the process's whole configuration and it is three names,
+# The environment is the process's whole configuration and it is six names,
 # none of them a credential and none of them a secret (the process's own header
 # counts them): the project that names this installation's node, the Firebase
-# project that node belongs to, and the database URL it is read from. There is
+# project that node belongs to, and the database URL it is read from — and,
+# since P5.1d, the launch's own three: the GCP project the installation's jobs
+# are in, the region they were deployed to, and the runs bucket's URL. There is
 # deliberately no model key, no git credential and no secret ID here — section
 # 6's rules 4 and 5, and the account's table has no secretAccessor for one to be
-# read with.
+# read with. Nor is there a budget mode or a signer account: the launcher reads
+# the Firebase project above and derives both (internal/infra's SignerAccountID,
+# which the Firebase root's own outputs check), so a name an operator could set
+# to another account's is not a field of this deployment.
 resource "google_cloud_run_v2_service" "orchestrator" {
   count = local.orchestrator_on ? 1 : 0
 
@@ -390,6 +395,35 @@ resource "google_cloud_run_v2_service" "orchestrator" {
         name  = "FUGARO_RTDB_URL"
         value = var.orchestrator.rtdb_url
       }
+      # The launch's own three (mobile plan task P5.1d). The service starts the
+      # runs the node records, and the launcher reads its backend, its region
+      # and its runs bucket out of the config it builds from them: the project
+      # the jobs are in and the region they were deployed to, and the URL of the
+      # bucket the claim, the task, the launch record and the run's sealed budget
+      # token live in. They are the same three names a run's own container
+      # carries them under (internal/infra's GCPProjectEnv, RegionEnv and
+      # BucketEnv), so what this service launches is a launch of the
+      # installation's own jobs and never a second, differently-addressed one.
+      # None of them is a credential: two are names, and the third is the bucket
+      # the two bindings above already reach under runs/, tokens/ and issues/.
+      # They are not a second spelling of anything above: the Firebase project is
+      # where the database is, the GCP project is where the jobs are, and on an
+      # installation whose database lives in another project the two differ.
+      # internal/cli reads exactly this list as orchestratorServiceEnvNames, and
+      # TestOrchestratorServiceEnvIsTheDeploymentsOwn holds the two to each other
+      # in both directions.
+      env {
+        name  = "FUGARO_GCP_PROJECT"
+        value = var.project
+      }
+      env {
+        name  = "FUGARO_REGION"
+        value = var.region
+      }
+      env {
+        name  = "FUGARO_BUCKET"
+        value = "gs://${var.runs_bucket}"
+      }
     }
   }
 
@@ -431,7 +465,7 @@ resource "google_cloud_run_v2_service_iam_member" "orchestrator_invoker" {
   role     = "roles/run.invoker"
   member   = google_service_account.scheduler.member
 
-  depends_on = [google_service_account.orchestrator]
+  depends_on = [google_cloud_run_v2_service.orchestrator, google_service_account.orchestrator]
 }
 
 # The account's way INTO the credentials service (F19, O2 of
@@ -467,7 +501,7 @@ resource "google_cloud_run_v2_service_iam_member" "orchestrator_credentials_invo
   role     = "roles/run.invoker"
   member   = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
 
-  depends_on = [google_service_account.orchestrator]
+  depends_on = [google_cloud_run_v2_service.credentials, google_service_account.orchestrator]
 }
 
 # The tick that wakes it (section 4.1; Q4's answer of 2026-10-19: the tick is

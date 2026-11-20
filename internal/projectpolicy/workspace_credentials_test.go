@@ -8,10 +8,12 @@ import (
 	"testing"
 )
 
-// credentialsFixture is one workspace credentials node: two members and one
-// shared credential, with no real address and no value anywhere (the folder's
-// rule: projects are project-a and project-b, the addresses are at
-// example.com).
+// credentialsFixture is one workspace credentials node, in the shape this
+// Fugaro writes (version 2): two members, each with the repositories its job
+// account is a job of, and one shared credential — a model one, which is what
+// the pool held before version 2 and what a version-1 entry decodes as. There
+// is no real address and no value anywhere (the folder's rule: projects are
+// project-a and project-b, the addresses are at example.com).
 func credentialsFixture() *WorkspaceCredentials {
 	return &WorkspaceCredentials{
 		Name: "workspace-alpha",
@@ -19,16 +21,24 @@ func credentialsFixture() *WorkspaceCredentials {
 			{
 				Project: "project-a", FirebaseProject: "project-a", FP: "project-a",
 				JobAccounts: []string{"fugaro-job-1@project-a.iam.example.com"},
+				JobAccountRepos: []WorkspaceJobAccount{{
+					Account: "fugaro-job-1@project-a.iam.example.com",
+					Repos:   []string{"github/owner/repo-a"},
+				}},
 				ExchangeURL: "https://exchange.project-a.example.com",
 			},
 			{
 				Project: "project-b", FirebaseProject: "project-b", FP: "project-b",
 				JobAccounts: []string{"fugaro-job-1@project-b.iam.example.com"},
+				JobAccountRepos: []WorkspaceJobAccount{{
+					Account: "fugaro-job-1@project-b.iam.example.com",
+					Repos:   []string{"github/owner/repo-b"},
+				}},
 				ExchangeURL: "https://exchange.project-b.example.com",
 			},
 		},
 		Shared: []WorkspaceShared{
-			{Name: "claude-oauth-token-team", Projects: []string{"project-a", "project-b"}},
+			{Name: "claude-oauth-token-team", Kind: SharedKindModel, Projects: []string{"project-a", "project-b"}},
 		},
 	}
 }

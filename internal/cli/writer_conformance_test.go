@@ -101,6 +101,10 @@ var writerProbeLadder = []string{
 	"2Gi", "30d", "off", "warn", "observe", "enforce", "acme/web", "src/**",
 	"strong", "strongest", "fast", "oauth", "api-key", "vertex",
 	"fugaro", "launcher", "18", "52",
+	// A fraction, the one value domain the registry's rows carry that this list
+	// had none of: a stage's budget is a share of the run's cap, and the loader
+	// refuses every whole number beside it (config.StageBudget).
+	"0.5",
 }
 
 // writerProbeListItems are the members a list key is tried with, after the

@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
@@ -23,6 +27,22 @@ type modelsAddOptions struct {
 	priceInSet  bool
 	priceOutSet bool
 	yes         bool
+	// project and config are the settings family's two aiming flags
+	// (settingsAimFlags): a caller names the installation this write lands in
+	// rather than whichever one this machine's environment would have picked
+	// (desktop-console.md §3.4 rule 3). They are how the console aims a write
+	// at the project it is showing rather than at the ambient one.
+	project string
+	config  string
+	// dryRun is --dry-run: the change is computed and printed and nothing is
+	// written — no config file, no published policy node, no saved apply step.
+	// It is a read, so it asks nothing and it makes no change live.
+	dryRun bool
+	// jsonOut is --json: the dry run's own document
+	// (schemas/models-add-plan.schema.json), refused without --dry-run for the
+	// reason settings give the same pair — the two answer different questions,
+	// so a caller that asked for a document must say so.
+	jsonOut bool
 	// noApply is --no-apply (D1565): the change is written and the steps that
 	// make it live are saved for `fugaro apply` instead of run here. It is the
 	// flag's own word, read at RunE's time (the flag is parsed after this
@@ -34,6 +54,20 @@ type modelsAddOptions struct {
 // and printed under, so the lines a person reads name the command they ran and
 // not `fugaro update` (accountsAddRunStages' rule).
 const modelsAddDoor = "models add"
+
+// modelsAddLocalFileWhat names these two commands in the refusal a project
+// selected from a layer and with no file of its own reads. It is the same
+// sentence modelsLocalFile passes for `models rm`: the two commands edit one
+// file, and a project that has none of its own has nothing for either to
+// write.
+const modelsAddLocalFileWhat = "models add and models rm"
+
+// modelsAddChanges is the change one `models add` makes, in apply's own closed
+// vocabulary: the model of the project, whose one step is the policy publish.
+// It is named once so the plan a dry run prints and the chain a write runs
+// cannot come to disagree about which step the change owes — and the step table
+// (apply.Steps) is the one place either reads it from.
+var modelsAddChanges = []apply.Change{{Kind: apply.Resource, Key: apply.ResourceModel}}
 
 func newModelsAddCmd() *cobra.Command {
 	var o modelsAddOptions
@@ -54,7 +88,20 @@ func newModelsAddCmd() *cobra.Command {
 			"owed, and `fugaro apply` runs it later. A route's own claim is not published —\n" +
 			"a run routes by the copy of the providers block in its job's environment — so a\n" +
 			"repository routes to the model once `fugaro update --repo .` has been run in\n" +
-			"its checkout.",
+			"its checkout.\n\n" +
+			"--dry-run says what the change would do — the layer and the file it would\n" +
+			"write, the entry it would append to the route's models and to\n" +
+			"budget.allowed_models, the model_prices entry with both rates, and the\n" +
+			"follow-up step it would run or save — and writes nothing: no config file, no\n" +
+			"published policy node and no saved apply step. It is answered with no terminal,\n" +
+			"and a refusal the write would print (an unknown ID, a half-given price) is the\n" +
+			"same refusal. With --json it prints the versioned document\n" +
+			"schemas/models-add-plan.schema.json describes, which is what a caller that\n" +
+			"draws the change reads; --json is the dry run's own shape and is refused\n" +
+			"without --dry-run.\n\n" +
+			"--project and --config name the installation this write lands in, the way\n" +
+			"every settings write does (desktop-console.md §3.4 rule 3); without them the\n" +
+			"selection is the ambient one and a machine with two installations refuses.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o.priceInSet = cmd.Flags().Changed("price-in")
@@ -63,21 +110,31 @@ func newModelsAddCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
+	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.route, "route", "", "the route that claims the model (default: the route that claims it already, or the only one)")
 	f.Float64Var(&o.priceIn, "price-in", 0, "input price, dollars per million tokens (required for a model the catalog does not price)")
 	f.Float64Var(&o.priceOut, "price-out", 0, "output price, dollars per million tokens (required for a model the catalog does not price)")
+	f.BoolVar(&o.dryRun, "dry-run", false, "print what the change would do and write nothing")
+	f.BoolVar(&o.jsonOut, "json", false, "print the dry run's document (with --dry-run)")
 	o.noApply = addNoApplyFlag(cmd)
 	return cmd
 }
 
 func runModelsAdd(cmd *cobra.Command, id string, o *modelsAddOptions) error {
+	if err := modelsAddDryRunFlags(o); err != nil {
+		return err
+	}
 	if err := modelsPriceFlags(o); err != nil {
 		return err
 	}
 	if err := modelsPriceRange(o); err != nil {
 		return err
 	}
-	sel, lc, err := modelsLocalFile()
+	// The aiming pair names the installation this write lands in rather than
+	// whichever one the ambient environment selects: settingsAimedLocalFile is
+	// the same resolution and the same refusal `settings set` takes, with this
+	// family's own sentence for a project that has no file of its own.
+	sel, lc, err := settingsAimedLocalFile(settingsWriteOptions{project: o.project, config: o.config}, modelsAddLocalFileWhat)
 	if err != nil {
 		return err
 	}
@@ -102,13 +159,19 @@ func runModelsAdd(cmd *cobra.Command, id string, o *modelsAddOptions) error {
 	if err != nil {
 		return err
 	}
-	price, err := modelsAddPrice(sel.Path, table, id, o, &next)
+	price, priced, err := modelsAddPrice(sel.Path, table, id, o, &next)
 	if err != nil {
 		return err
 	}
 	allowed, err := modelsAddAllow(sel.Path, lc, id, &next)
 	if err != nil {
 		return err
+	}
+	if o.dryRun {
+		return modelsAddDryRun(cmd, modelsAddDryRunInput{
+			sel: sel, lc: lc, old: old, next: next, id: id, route: route,
+			claim: claim, allowed: allowed, price: priced, o: o,
+		})
 	}
 
 	// D846's two widening halves: the claim, which puts the model on a route a
@@ -160,8 +223,7 @@ func runModelsAdd(cmd *cobra.Command, id string, o *modelsAddOptions) error {
 	// A model already claimed by a pattern the change did not touch owes the
 	// publish for the same reason: the price and the allow-list entry are the
 	// node's.
-	return chainApply(cmd.Context(), cmd, lc, sel, modelsAddDoor,
-		[]apply.Change{{Kind: apply.Resource, Key: apply.ResourceModel}}, *o.noApply)
+	return chainApply(cmd.Context(), cmd, lc, sel, modelsAddDoor, modelsAddChanges, *o.noApply)
 }
 
 // modelsAddNote is one sentence a write produces: the full text the owner
@@ -300,23 +362,30 @@ func modelsAddClaim(path string, lc *localcfg.Config, route, id string, next *[]
 // and the command explains what it is charged at; one the table cannot price
 // requires both rates (D782). Rates given for a priced model become a
 // model_prices entry that replaces its row, and the command says so.
-func modelsAddPrice(path string, table *pricing.Table, id string, o *modelsAddOptions, next *[]byte) (modelsAddNote, error) {
+func modelsAddPrice(path string, table *pricing.Table, id string, o *modelsAddOptions, next *[]byte) (modelsAddNote, modelsAddPriceFact, error) {
 	entry, priced := table.Lookup(id)
 	if !priced && !o.priceInSet {
 		why := table.Refusal(id)
 		if why == "" {
 			why = "the built-in price catalog does not price it for this route"
 		}
-		return modelsAddNote{}, userErr("%s has no price a run can use: %s. Pass --price-in and --price-out (dollars per million tokens): that writes model_prices.%s, and the cache fields stay at their defaults", config.CodeSpan(id), why, id)
+		return modelsAddNote{}, modelsAddPriceFact{}, userErr("%s has no price a run can use: %s. Pass --price-in and --price-out (dollars per million tokens): that writes model_prices.%s, and the cache fields stay at their defaults", config.CodeSpan(id), why, id)
 	}
+	fact := modelsAddPriceFact{input: o.priceIn, output: o.priceOut, source: modelsAddPriceGiven}
 	if !o.priceInSet {
+		// The rates are the model's own, and where they come from is the second
+		// half: a table row the owner's model_prices replaced carries no
+		// catalog provenance (pricing.Table.With clears it), so `entry.Catalog`
+		// naming nothing is exactly the file's own entry.
+		fact = modelsAddPriceFact{input: entry.Rates.InputPerM, output: entry.Rates.OutputPerM, source: modelsAddPriceLocal}
 		if entry.Catalog == nil {
 			return modelsAddNote{
 				full:    fmt.Sprintf("model_prices already prices %s at $%g/M in and $%g/M out", id, entry.Rates.InputPerM, entry.Rates.OutputPerM),
 				summary: "the model_prices entry already in the file prices it",
-			}, nil
+			}, fact, nil
 		}
-		return modelsAddNote{full: modelsCatalogPriceNote(id, entry), summary: "the built-in catalog prices it"}, nil
+		fact.source = modelsAddPriceCatalog
+		return modelsAddNote{full: modelsCatalogPriceNote(id, entry), summary: "the built-in catalog prices it"}, fact, nil
 	}
 	out, err := yamledit.SetScalar(*next, []string{"model_prices", id, "input_per_m"}, modelsPriceText(o.priceIn))
 	if err == nil {
@@ -324,21 +393,21 @@ func modelsAddPrice(path string, table *pricing.Table, id string, o *modelsAddOp
 	}
 	if err != nil {
 		if err, ok := modelsSpliceRefusal(path, err); ok {
-			return modelsAddNote{}, err
+			return modelsAddNote{}, modelsAddPriceFact{}, err
 		}
-		return modelsAddNote{}, userErr("model_prices.%s: %v", id, err)
+		return modelsAddNote{}, modelsAddPriceFact{}, userErr("model_prices.%s: %v", id, err)
 	}
 	*next = out
 	if priced {
 		return modelsAddNote{
 			full:    fmt.Sprintf("model_prices.%s now carries $%s/M in and $%s/M out, which replaces the row %s was priced at", id, modelsPriceText(o.priceIn), modelsPriceText(o.priceOut), id),
 			summary: "the price you gave replaces the row it had",
-		}, nil
+		}, fact, nil
 	}
 	return modelsAddNote{
 		full:    fmt.Sprintf("model_prices.%s carries $%s/M in and $%s/M out; the cache fields are left at their defaults", id, modelsPriceText(o.priceIn), modelsPriceText(o.priceOut)),
 		summary: "priced at $" + modelsPriceText(o.priceIn) + "/M in and $" + modelsPriceText(o.priceOut) + "/M out",
-	}, nil
+	}, fact, nil
 }
 
 // modelsCatalogPriceNote is what a catalog-priced model needs the owner to
@@ -451,3 +520,302 @@ func modelsAddHandoff(cmd *cobra.Command, lc *localcfg.Config, id string) error 
 // A rate as the file writes it: the shortest decimal that reads back as the
 // same number, so 1 is written 1 and never 1.000000.
 func modelsPriceText(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+
+// The models add plan (MD1): what `--dry-run` answers with, and the shape a
+// caller that draws the change — the console's Manage window — is written from.
+// The document is the change as data: every fact a consumer would otherwise
+// have to work out is one the write path already computed, and
+// schemas/models-add-plan.schema.json is its contract. A member is only ever
+// added within a version, and removing or retyping one bumps the version
+// (D848), so a consumer that reads version 1 keeps reading it.
+const modelsAddPlanVersion = 1
+
+// Where the rates in the document come from, as `prices.source` names it: the
+// rates the caller passed (which are written as a model_prices entry), the
+// built-in catalog's row for the model, or the file's own model_prices entry.
+// The second and third are the models read's own words (modelsSourceCatalog,
+// modelsSourceLocal), so one vocabulary describes both surfaces.
+const (
+	modelsAddPriceGiven   = "given"
+	modelsAddPriceCatalog = modelsSourceCatalog
+	modelsAddPriceLocal   = modelsSourceLocal
+)
+
+// The follow-up step's two states: the step the write would run now, and the
+// step --no-apply would leave saved for `fugaro apply`.
+const (
+	modelsAddPlanStepRun   = "run"
+	modelsAddPlanStepSaved = "saved"
+)
+
+// modelsAddPlanDoc is the dry run's document. Refusal is empty in every
+// document this CLI prints: a refusal is this program's own sentence with a
+// non-zero exit and no document at all, which is what a consumer branches on,
+// and it is written out because the shape is the contract.
+type modelsAddPlanDoc struct {
+	Version int    `json:"version"`
+	Layer   string `json:"layer"`
+	Path    string `json:"path"`
+	Model   string `json:"model"`
+	Route   string `json:"route"`
+	// Changed is whether the file would change at all: false is a
+	// classification and not an error — the command exits 0 with this document
+	// — and it is the answer to an add whose claim, price and allow-list entry
+	// the file already holds.
+	Changed       bool                `json:"changed"`
+	Claim         modelsAddPlanClaim  `json:"claim"`
+	AllowedModels modelsAddPlanAllow  `json:"allowed_models"`
+	Prices        modelsAddPlanPrice  `json:"prices"`
+	Steps         []modelsAddPlanStep `json:"steps"`
+	Refusal       string              `json:"refusal"`
+}
+
+// modelsAddPlanClaim is the `providers.<route>.models` entry the change would
+// append: Entry is the exact ID that lands there, and ClaimedBy is the existing
+// entry or pattern that already covers the model — the two are never both set,
+// and one of them always is, because a model the route already claims is a
+// claim this change leaves alone.
+type modelsAddPlanClaim struct {
+	Key       string `json:"key"`
+	Entry     string `json:"entry"`
+	ClaimedBy string `json:"claimed_by"`
+}
+
+// modelsAddPlanAllow is the `budget.allowed_models` entry the change would
+// append. Present is whether the key is set at all: an absent list stays absent
+// rather than becoming a list of one (D786), so a document whose Entry is empty
+// and whose Present is false describes a project where every model a route
+// opens is allowed.
+type modelsAddPlanAllow struct {
+	Key     string `json:"key"`
+	Entry   string `json:"entry"`
+	Present bool   `json:"present"`
+}
+
+// modelsAddPlanPrice is the model_prices entry the model lands at, with both
+// rates: the two the caller gave, the catalog row's, or the file's own entry's.
+type modelsAddPlanPrice struct {
+	Key        string  `json:"key"`
+	InputPerM  float64 `json:"input_per_m"`
+	OutputPerM float64 `json:"output_per_m"`
+	Source     string  `json:"source"`
+}
+
+// modelsAddPlanStep is one follow-up step the change owes, by the step table's
+// own name, and whether the write would run it or leave it saved.
+type modelsAddPlanStep struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+}
+
+// modelsAddDryRunInput is the facts a dry run prints, gathered where the write
+// path has already computed them.
+type modelsAddDryRunInput struct {
+	sel     localcfg.Selection
+	lc      *localcfg.Config
+	old     []byte
+	next    []byte
+	id      string
+	route   string
+	claim   modelsAddNote
+	allowed modelsAddNote
+	price   modelsAddPriceFact
+	o       *modelsAddOptions
+}
+
+// modelsAddPriceFact is the model_prices entry a change carries: both rates and
+// where they come from.
+type modelsAddPriceFact struct {
+	input  float64
+	output float64
+	source string
+}
+
+// modelsAddDryRunFlags refuses the combination the command does not take:
+// --json is the dry run's own shape, so a caller that asked for a document must
+// say so (settingsDryRunFlags' rule, and the console always passes both).
+func modelsAddDryRunFlags(o *modelsAddOptions) error {
+	if o.jsonOut && !o.dryRun {
+		return userErr("--json is the dry run's document: pass --dry-run with it, or read this project's models with `fugaro models ls --json`")
+	}
+	return nil
+}
+
+// modelsAddDryRun is --dry-run's whole answer: the refusals the write would
+// make, then the document, and nothing written. It is reached after every
+// refusal about the arguments (an unknown ID, a half-given price) has been
+// made, so those are the write's own sentences, and it makes the write's own
+// last two checks itself through modelsAddPrecheck.
+//
+// The follow-up is the change's own — the step table's names, not a second list
+// — and its state is --no-apply's own word: a write that saves its steps prints
+// the same document with them saved, which is what apply would then do.
+func modelsAddDryRun(cmd *cobra.Command, in modelsAddDryRunInput) error {
+	if err := modelsAddPrecheck(in.sel, in.old, in.next); err != nil {
+		return err
+	}
+	changed := yamledit.Changed(in.old, in.next)
+	steps := []modelsAddPlanStep{}
+	if changed {
+		names, err := chainSteps(modelsAddChanges)
+		if err != nil {
+			return err
+		}
+		state := modelsAddPlanStepRun
+		if *in.o.noApply {
+			state = modelsAddPlanStepSaved
+		}
+		for _, name := range names {
+			steps = append(steps, modelsAddPlanStep{Name: safetext.Field(name), State: state})
+		}
+	}
+	doc := modelsAddPlanDoc{
+		Version: modelsAddPlanVersion,
+		// The layer is the local project config and never another: this command
+		// edits the selected installation's own file and nothing else (D780).
+		Layer:   settingsLayerLocal,
+		Path:    safetext.Field(in.sel.Path),
+		Model:   safetext.Field(in.id),
+		Route:   safetext.Field(in.route),
+		Changed: changed,
+		Claim: modelsAddPlanClaim{
+			Key:       safetext.Field("providers." + in.route + ".models"),
+			ClaimedBy: safetext.Field(in.claim.by),
+		},
+		AllowedModels: modelsAddPlanAllow{
+			Key:     safetext.Field("budget.allowed_models"),
+			Present: in.lc.Budget != nil && len(in.lc.Budget.AllowedModels) > 0,
+		},
+		Prices: modelsAddPlanPrice{
+			Key:        safetext.Field("model_prices." + in.id),
+			InputPerM:  in.price.input,
+			OutputPerM: in.price.output,
+			Source:     safetext.Field(in.price.source),
+		},
+		Steps: steps,
+	}
+	// A claim is appended exactly when nothing already covers the model, and
+	// the allow-list entry exactly when the list is set and does not name it
+	// (modelsAddClaim, modelsAddAllow): the notes carry which half happened,
+	// and the document states the entry rather than a summary of it.
+	if in.claim.by == "" {
+		doc.Claim.Entry = safetext.Field(in.id)
+	}
+	if in.allowed.summary != "" {
+		doc.AllowedModels.Entry = safetext.Field(in.id)
+	}
+	return writeModelsAddPlan(cmd.OutOrStdout(), doc, in.o.jsonOut)
+}
+
+// modelsAddPrecheck is the two refusals the write path makes over the edited
+// bytes before it writes them (modelsEditLocal): the strict read-back the
+// command's own read used, and the price table built from the edited bytes, so
+// a claim the catalog refuses or a model_prices entry the compile cannot
+// express is refused here rather than written into a file that would refuse
+// every launch (design D5). Same calls, same bytes, same sentences — the dry
+// run answers for the write, so it must be refused wherever the write would be
+// (D1106's rule for the settings dry run).
+func modelsAddPrecheck(sel localcfg.Selection, old, next []byte) error {
+	if !yamledit.Changed(old, next) {
+		return nil
+	}
+	after, err := modelsReparseLocal(sel.Path, next)
+	if err != nil {
+		return err
+	}
+	if _, _, err := priceTable(after, budgetNow()); err != nil {
+		return userErr("the project config this would write does not price its models: %v", err)
+	}
+	return nil
+}
+
+// writeModelsAddPlan prints the dry run's document: the versioned JSON document
+// with --json, and the same facts as a table without it. The two shapes carry
+// the same facts or the table is a second contract, and a second contract is
+// the one that drifts — which is why the table renders the document rather than
+// the notes it was built from.
+func writeModelsAddPlan(w io.Writer, doc modelsAddPlanDoc, jsonOut bool) error {
+	if jsonOut {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(doc)
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "FIELD\tVALUE")
+	for _, row := range [][2]string{
+		{"version", strconv.Itoa(doc.Version)},
+		{"layer", doc.Layer},
+		{"path", doc.Path},
+		{"model", doc.Model},
+		{"route", doc.Route},
+		{"changed", strconv.FormatBool(doc.Changed)},
+		{"claim", modelsAddPlanClaimText(doc.Claim)},
+		{"allowed_models", modelsAddPlanAllowText(doc.AllowedModels)},
+		{"prices", modelsAddPlanPriceText(doc.Prices)},
+		{"steps", modelsAddPlanStepsText(doc.Steps)},
+		{"refusal", doc.Refusal},
+	} {
+		fmt.Fprintf(tw, "%s\t%s\n", row[0], row[1])
+	}
+	return tw.Flush()
+}
+
+// modelsAddPlanClaimText renders the claim the one way a table cell carries it:
+// the key and the entry that lands on it, or the entry that already covers the
+// model.
+func modelsAddPlanClaimText(c modelsAddPlanClaim) string {
+	if c.Entry != "" {
+		return c.Key + " += " + c.Entry
+	}
+	if c.ClaimedBy != "" {
+		return "already claimed by " + c.ClaimedBy
+	}
+	return ""
+}
+
+// modelsAddPlanAllowText renders the allow-list entry the same way, with the
+// third answer a list can give: the key is not set, so it stays absent.
+func modelsAddPlanAllowText(a modelsAddPlanAllow) string {
+	switch {
+	case a.Entry != "":
+		return a.Key + " += " + a.Entry
+	case a.Present:
+		return a.Key + " already names it"
+	default:
+		return a.Key + " is not set, so it stays absent"
+	}
+}
+
+// modelsAddPlanPriceText renders the rates and where they come from, in words a
+// reader who has not run the command can act on.
+func modelsAddPlanPriceText(p modelsAddPlanPrice) string {
+	return fmt.Sprintf("%s: $%s/M in and $%s/M out (%s)",
+		p.Key, modelsPriceText(p.InputPerM), modelsPriceText(p.OutputPerM), modelsAddPlanPriceSourceText(p.Source))
+}
+
+// modelsAddPlanPriceSourceText is the source word in a sentence: the document's
+// own three words, named rather than spelled a second time.
+func modelsAddPlanPriceSourceText(source string) string {
+	switch source {
+	case modelsAddPriceGiven:
+		return "the rates you gave"
+	case modelsAddPriceCatalog:
+		return "the built-in catalog prices it"
+	case modelsAddPriceLocal:
+		return "the file's own model_prices already prices it"
+	}
+	return source
+}
+
+// modelsAddPlanStepsText renders the follow-up: one step per name with its own
+// state, and the words for a change that writes nothing, which owes none.
+func modelsAddPlanStepsText(steps []modelsAddPlanStep) string {
+	if len(steps) == 0 {
+		return "nothing: this change writes nothing"
+	}
+	parts := make([]string, 0, len(steps))
+	for _, s := range steps {
+		parts = append(parts, s.Name+" ("+s.State+")")
+	}
+	return strings.Join(parts, ", ")
+}

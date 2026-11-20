@@ -358,7 +358,7 @@ type DB interface {
 	Patch(ctx context.Context, root string, updates map[string]any) error
 }
 
-// Store is the cascade's shared state as selection reads and writes it.
+// CascadeState is the cascade's shared state as a selection reads and writes it.
 //
 // It is an interface for two reasons, and both matter: the only implementation
 // that talks to a database is the service's, and the selection logic has to be
@@ -367,7 +367,15 @@ type DB interface {
 // values it hands back, a mark is never written without the compare-and-set that
 // keeps another writer's change (UpdateMark), and no write leaves the state
 // holding two facts that disagree (SetPlacement).
-type Store interface {
+//
+// It is a type of its own, and Store embeds it, because a selection never reads
+// a repository's auth record: that record is a repository's OWN configuration
+// and not the state a call is served out of (D2070 (a)), and a two-deployment
+// world has two databases — so what a selection may reach has to be the six
+// methods it really uses and no more (Selector.Store). A caller that handed a
+// selection a wider store would be handing it a database it must not read the
+// record out of.
+type CascadeState interface {
 	// Marks reads every credential's mark in one call: the subtree is one short
 	// node per credential and a selection needs the marks of all its candidates
 	// at once, so reading them one at a time would be one round trip per
@@ -399,14 +407,30 @@ type Store interface {
 	// breaking a tie at once get two different values rather than one value
 	// twice.
 	RoundRobin(ctx context.Context) (int64, error)
+}
+
+// Store is the state store a credentials service is built with: the cascade's
+// shared state (CascadeState) plus the per-repository auth record, which is a
+// read of a repository's OWN configuration and not of the state a call is served out
+// of. The service hands one store to everything that needs either — the record
+// feeds the last step of the ADMISSION a selection is made from (D2070 (a),
+// G16), so it is the selection's own call chain that reads it — while what a
+// SELECTION itself is given is the narrower CascadeState above (Selector.Store).
+//
+// A deployment whose two halves read two databases needs that split: the record
+// lives in the repository's own project's database, and a workspace's state
+// store is its own, so a caller able to reach RepoAuth through the state a
+// selection holds would answer it out of the wrong one.
+type Store interface {
+	CascadeState
 	// RepoAuth reads one repository's auth record — what its own fugaro.yaml
 	// says its runs go out on (creds/repoauth/<slug>, B2.1). It is a read of
-	// the record and not of the selection's state, and it belongs here because
-	// the narrowing it feeds is the last step of the ADMISSION a selection is
-	// made from: the service decides a non-cascade repository's reach from this
-	// record rather than from what the caller declares (D2070 (a), G16), and
-	// the store a selection reads its state through is the one handle that
-	// reaches it.
+	// the record and not of the selection's state; it is here, beside the state
+	// the service hands a selection, because the narrowing it feeds is the last
+	// step of the ADMISSION a selection is made from: the service decides a
+	// non-cascade repository's reach from this record rather than from what the
+	// caller declares (D2070 (a), G16), and a selection's caller holds this one
+	// handle.
 	//
 	// found=false is a repository no update has recorded, which the caller
 	// reads as "nothing is narrowed" (an installation this release has not
@@ -420,8 +444,8 @@ type Store interface {
 // apart from the cascade's marks (TokenStatus).
 //
 // It is an interface of its own and not two methods on Store, deliberately.
-// Store is a selection's state — the marks, the leases, a run's placement and
-// the tie-breaker — and a store handed to a selection must not be able to write
+// CascadeState is a selection's state — the marks, the leases, a run's placement
+// and the tie-breaker — and a store handed to a selection must not be able to write
 // a Bitbucket token's status, nor a proxy that only ever touches tokens be able
 // to write a model mark.
 type TokenStatusStore interface {
