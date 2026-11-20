@@ -533,6 +533,26 @@ type Config struct {
 	// and must not turn it back on for the project (TriageEffective); a written
 	// false is the switch.
 	Triage *bool `yaml:"triage,omitempty"`
+	// ReviewAgainstTask is whether every review stage checks a pull request
+	// against the task it was written for (R7 of docs/review-against-task/),
+	// the owner's answer for the whole project beside a repository's own
+	// fugaro.yaml `agent.review_against_task`. It travels the triage switch's
+	// way for the same reason: the check is what holds a pull request back to
+	// the work it was asked for, so a launcher who could write the switch into
+	// the runs bucket's shared file would be letting every teammate's runs be
+	// reviewed against nothing. Shared nils it and ParseShared refuses the key.
+	//
+	// The two answers meet the other way round from triage's (D2935): the
+	// repository's own true turns the check back on under a node that turned it
+	// off, because on is the stricter value (policy.Merge). Here the file is
+	// the owner's own statement and the only thing that moves it is his own
+	// edit, so a written true or a written false both win over the node
+	// (ReviewAgainstTaskEffective).
+	//
+	// An absent key is a machine whose file has nothing to say about the check
+	// and must not turn it back on for the project (ReviewAgainstTaskEffective);
+	// a written false is the switch.
+	ReviewAgainstTask *bool `yaml:"review_against_task,omitempty"`
 	// Orchestrator is the owner's block of the orchestrator daemon's own
 	// guardrails (D1239, D1234): how many runs it may have running at once, how
 	// many it launches in one batch, the rate it may spawn at, and the model
@@ -2713,6 +2733,31 @@ func (c *Config) BakeReposEffective(published *bool) *bool {
 func (c *Config) TriageEffective(published *bool) *bool {
 	if c.Triage != nil {
 		return c.Triage
+	}
+	return published
+}
+
+// ReviewAgainstTaskEffective is the keep rule for the review-against-task
+// switch, stated here beside the field for the triage switch's reason (R7 of
+// docs/review-against-task/, D2935): this file's answer when it writes one, and
+// the published node's otherwise — so a machine whose config predates the key
+// does not publish a node that turns the check back on for every run of the
+// project. The cost of the other reading is the triage switch's: a machine
+// whose config says nothing about the check would be undoing a decision the
+// owner made, and the decision here is the one that holds a pull request back
+// to the work it was asked for.
+//
+// The answer is a pointer for the triage switch's reason: absent and on are one
+// statement to every reader (config.Agent.ReviewAgainstTaskOn reads an absent
+// key as on), so only a written answer has anything to say and the publisher
+// omits the member when the answer is nil. A written true is not the same
+// statement as an absent key here the way it is for the bake switch, because
+// the node may hold a false: a repository's own true is what turns the check
+// back on under it (policy.Merge), and the owner's own file states that for the
+// whole project (D2935).
+func (c *Config) ReviewAgainstTaskEffective(published *bool) *bool {
+	if c.ReviewAgainstTask != nil {
+		return c.ReviewAgainstTask
 	}
 	return published
 }

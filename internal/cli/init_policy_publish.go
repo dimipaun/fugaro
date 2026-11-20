@@ -240,6 +240,18 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	if lc.Triage != nil {
 		add("triage", lc.TriageEffective(p.Triage), p.Triage, false)
 	}
+	// The review-against-task switch reaches a run off this node too (R7 of
+	// docs/review-against-task/), so a config that states it where the node
+	// states the other answer is a difference a publish closes, and it is
+	// compared the triage switch's way: the node's value is handed to the
+	// publisher's keep rule, so a config that writes nothing is not reported as
+	// a difference — nil would read as one against a node that states either
+	// answer — while a written false, the project-wide default (D2935), against
+	// a node that says nothing (or true) is exactly the edit this stage exists
+	// to carry.
+	if lc.ReviewAgainstTask != nil {
+		add("review_against_task", lc.ReviewAgainstTaskEffective(p.ReviewAgainstTask), p.ReviewAgainstTask, false)
+	}
 	// The pools' subscription switch reaches a run off this node too (F22,
 	// D1636), so a config that states it where the node states the other answer
 	// is a difference a publish closes, and it is compared the triage switch's
