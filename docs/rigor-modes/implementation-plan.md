@@ -205,12 +205,16 @@ correction, C5):
 - **Critical's finding thresholds are unchanged; its prompts, its PR body's
   hand-back sections and two presence checks are new — and that holds of Critical
   alone, because D19's answer makes Pro the default.** T3.1's first test asserts
-  the first half: a run whose resolved mode is Critical is ready or not ready by
-  the same table and returns the same reason string as `main`'s `Decide` does,
-  whatever prompt, hand-back section or presence check the run now carries. If
-  that test cannot be written, the slice is wrong. The same claim is **not** true
-  of a run in an unconfigured repository: that run is Pro, and T3.1's second test
-  is the one that says what Pro tolerates.
+  the first half: a run whose resolved mode is Critical **and whose hand-back
+  file carries its sections** is ready or not ready by the same table and
+  returns the same reason string as `main`'s `Decide` does. The prompts, the
+  hand-back sections and the two presence checks are new **inputs** of that
+  table, not new thresholds: a Critical run whose hand-back file is missing is a
+  draft (§3b item 13), so its outcome and its reason do move. The overlay's T3.1
+  row states the same equivalence "for a run whose `pr.md` carries its sections,
+  not the whole PR body". If that test cannot be written, the slice is wrong. The
+  same claim is **not** true of a run in an unconfigured repository: that run is
+  Pro, and T3.1's second test is the one that says what Pro tolerates.
 - **Fail closed, everywhere.** An unscored finding, an unparseable verdict, or a
   policy that cannot decide blocks in every mode (D4, F3). T2.3 and T3.1 both
   carry a test for it.
@@ -302,7 +306,11 @@ What a reviewer of these pull requests should look at, in order:
    hand-back sections and two presence checks are new** (the owner's answer of
    2026-10-22, [levels-reconciliation.md](levels-reconciliation.md) §3b item 1),
    so a slice that changes which findings Critical blocks on, or the reason
-   string `Decide` returns, is not mergeable as written.
+   string `Decide` returns for a run whose hand-back file carries its sections, is
+   not mergeable as written. The two presence checks are that answer's own new
+   inputs and not a move of the thresholds: a Critical run whose hand-back file
+   is missing is a draft (§3b item 13), so its outcome and reason move, and a
+   slice that adds them is the answer being built.
 2. **Is the change the one D19's answer asks for in an unconfigured repository?**
    The default is **Pro**, so a repository with no `rigor:` block tolerates what
    Pro tolerates. The question is not "does this alter an unconfigured repository"
@@ -694,8 +702,12 @@ not change for anyone who has not configured a mode.
   still fails in every mode; and **Critical's finding thresholds are unchanged;
   its prompts, its PR body's hand-back sections and two presence checks are new**
   (the owner's answer of 2026-10-22, [levels-reconciliation.md](levels-reconciliation.md)
-  §3b item 1): the same records produce the same outcome and the same reason
-  string as `main`'s `Decide` does, whatever prompt or PR body the run carries.
+  §3b item 1): for a run whose hand-back file carries its sections, the same
+  records produce the same outcome and the same reason string as `main`'s
+  `Decide` does — the overlay's T3.1 row holds the equivalence "for a run whose
+  `pr.md` carries its sections, not the whole PR body", and the presence checks
+  join those records as new inputs, so a run whose file is missing is a draft
+  (§3b item 13) rather than a moved threshold.
   That last one is written as a table of (records, mode) → (ready, reason) whose
   Critical column is the pre-change behaviour, so a later edit that moves it is
   caught rather than argued about.
