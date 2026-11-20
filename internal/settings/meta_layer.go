@@ -372,12 +372,13 @@ func registerLayerMeta() {
 	})
 
 	// governance: the project's own guardrails, which a repository may only
-	// tighten. The bounds are validateGovernance's, and the two it refuses
-	// without a ceiling (a stage budget is a fraction of the run's cap, a stage
-	// timeout is any positive duration) carry a floor alone.
+	// tighten. The bounds are validateGovernance's, which counts three shapes:
+	// a counted key with its own ceiling, a stage budget, which is a fraction
+	// of the run's cap and so stays below 1, and a stage timeout, which is any
+	// positive duration and carries no ceiling at all.
 	each("layer.governance.review_ratio", Meta{
 		Label:       "Review ratio",
-		Description: "How many of the project's runs are read at the senior level, as a share in hundredths.",
+		Description: "Review calls above this multiple of the implement stage's calls stop the review stage.",
 		Group:       GroupProfiles,
 		Type:        TypeInt,
 		Min:         "0",
@@ -385,7 +386,7 @@ func registerLayerMeta() {
 	})
 	each("layer.governance.review_floor_calls", Meta{
 		Label:       "Review floor calls",
-		Description: "How many senior review calls each of the project's runs is guaranteed.",
+		Description: "The count of implement calls below which the ratio does not apply, so a short implementation is still reviewed.",
 		Group:       GroupProfiles,
 		Type:        TypeInt,
 		Min:         "0",
@@ -393,7 +394,7 @@ func registerLayerMeta() {
 	})
 	each("layer.governance.max_subagents", Meta{
 		Label:       "Subagent cap",
-		Description: "The most subagents a run of the project may fan out to.",
+		Description: "The most distinct subagents one stage of a run of the project may start.",
 		Group:       GroupProfiles,
 		Type:        TypeInt,
 		Min:         "0",
@@ -406,12 +407,17 @@ func registerLayerMeta() {
 			Group:       GroupProfiles,
 			Type:        TypeDuration,
 		})
+		// 0.99 and not 1: the decoder refuses a share of 1 or more — the run's
+		// cap stays the ceiling whatever a stage is given — and a bound here is
+		// inclusive, so the ceiling a console offers is the largest value under
+		// the boundary rather than the boundary itself.
 		each("layer.governance.stage_budget."+stage, Meta{
 			Label:       "Stage budget: " + stage,
-			Description: "The share of the run's cap the " + stage + " stage may spend.",
+			Description: "The share of the run's cap the " + stage + " stage may spend, a fraction below 1.",
 			Group:       GroupProfiles,
 			Type:        TypeFloat,
 			Min:         "0",
+			Max:         "0.99",
 		})
 		each("layer.governance.stage_tokens."+stage, Meta{
 			Label:       "Stage tokens: " + stage,

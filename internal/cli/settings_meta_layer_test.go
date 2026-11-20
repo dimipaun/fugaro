@@ -228,6 +228,20 @@ func settingsMetaLayerBoundaries(t *testing.T, m settings.Meta) []settingsMetaLa
 				refused: true,
 			})
 	}
+	// A ceiling the entry does not declare is one the console does not offer:
+	// a number input with no maximum takes whatever a person types, so a value
+	// past every bound a reader could have must be a value the write accepts.
+	// Where it is not, the entry is missing the Max that reader enforces —
+	// a console offering a number `settings set` refuses at re-read, which is
+	// what layer.governance.stage_budget's fraction below 1 was.
+	if m.Max == "" {
+		value, _ := settingsMetaLayerNumber(t, m.Type, "1000000000", 0)
+		cases = append(cases, settingsMetaLayerCase{
+			what:  "an undeclared ceiling",
+			value: value,
+			why:   "the entry declares no maximum, so the console offers none and the write takes what a person types, or the entry is missing the Max the decoder enforces",
+		})
+	}
 	return cases
 }
 
