@@ -229,12 +229,16 @@ merge_state() {
   esac
 }
 
-# suite_check_state SHA NAME prints missing | cancelled | failed | pending |
-# success for NAME over the check suites of the full `ci` runs on SHA, with the
-# same rules commit_check_state applies to one listing. missing is a commit with
-# no full run at all, which is all a selected run leaves behind.
+# suite_check_state SHA NAME [SUITES] prints missing | cancelled | failed |
+# pending | success for NAME over the check suites of the full `ci` runs on SHA,
+# with the same rules commit_check_state applies to one listing. missing is a
+# commit with no full run at all, which is all a selected run leaves behind.
+# SUITES is full_run_suites' answer when the caller has already read the commit's
+# runs, so one pass over the three `ci` names lists them once rather than three
+# times -- the gate polls, and each listing is a request against the token's
+# hourly allowance.
 suite_check_state() {
-  suites=$(full_run_suites "$1") || return 1
+  suites=${3:-$(full_run_suites "$1")} || return 1
   [ -n "$suites" ] || { printf missing; return 0; }
   state=""
   while IFS= read -r suite; do
@@ -245,12 +249,13 @@ suite_check_state() {
   printf '%s' "$state"
 }
 
-# check_state SHA NAME prints missing | cancelled | failed | pending | success
-# for the required check NAME: the three a `ci` run owns from that run's check
-# suite, the console legs from the commit's own check runs.
+# check_state SHA NAME [SUITES] prints missing | cancelled | failed | pending |
+# success for the required check NAME: the three a `ci` run owns from that run's
+# check suite, the console legs from the commit's own check runs. SUITES is
+# passed on to suite_check_state for the callers that read a commit's runs once.
 check_state() {
   case " ${suite_names[*]} " in
-    *" $2 "*) suite_check_state "$1" "$2" ;;
+    *" $2 "*) suite_check_state "$1" "$2" "${3:-}" ;;
     *) commit_check_state "$1" "$2" ;;
   esac
 }
@@ -325,8 +330,10 @@ while :; do
   # and "${pending#* }" would split it in the wrong place.
   pending_name=""
   pending_state=""
+  # The tagged commit's full runs, read once for the three `ci` names below.
+  target_suites=$(full_run_suites "$GITHUB_SHA")
   for name in "${names[@]}"; do
-    state=$(check_state "$GITHUB_SHA" "$name")
+    state=$(check_state "$GITHUB_SHA" "$name" "$target_suites")
     case "$state" in
       success) ;;
       missing | pending | cancelled)
