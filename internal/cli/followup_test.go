@@ -112,6 +112,49 @@ func TestRunPRLaunchesFollowUp(t *testing.T) {
 	}
 }
 
+// indexEntriesOf is the pull-request index entries of PR n of appSlug's
+// repository, failing on an object the reader had to skip.
+func indexEntriesOf(t *testing.T, b *blob.Bucket, n int) []runstore.PRIndexEntry {
+	t.Helper()
+	out, err := runstore.ListPRIndex(context.Background(), b, appSlug, n, func(f string, a ...any) {
+		t.Errorf("skipped an index object: "+f, a...)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestLauncherWritesEntryForFollowUp: `fugaro run --pr N` writes the run's
+// pull-request index entry itself (RL2W, D2962), so a follow-up started on a
+// job image older than the index — which writes none of its own — is still
+// found by `runs ls --pr N`. The entry is per run and create-if-absent: a
+// repeat of the same launch, which starts nothing, leaves it as it stands.
+func TestLauncherWritesEntryForFollowUp(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	args := []string{"run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--json", "also rename x"}
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatal(err)
+	}
+	b, err := blob.OpenBucket(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	got := indexEntriesOf(t, b, 7)
+	if len(got) != 1 || got[0].RunID != fuID || got[0].Kind != runstore.PRIndexFollowed ||
+		got[0].PR != 7 || got[0].Slug != appSlug || got[0].At.IsZero() {
+		t.Fatalf("entries = %+v, want one followed entry for %s on PR 7", got, fuID)
+	}
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatal(err)
+	}
+	if after := indexEntriesOf(t, b, 7); len(after) != 1 || !after[0].At.Equal(got[0].At) {
+		t.Fatalf("the repeat changed the entry: %+v → %+v", got, after)
+	}
+}
+
 // TestRunPRTakesACheckoutPath: prSpec reads the flag for itself and holds it
 // to owner/name, so `--repo .` has to be resolved before it gets there --
 // this is the follow-up shape of the launch, and its own red step is the

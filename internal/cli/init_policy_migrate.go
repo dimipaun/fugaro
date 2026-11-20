@@ -332,14 +332,16 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 //
 // The rule is a member only the node can carry, listed here one at a time and
 // asked of the publisher's own guard for that member: `lc.X != nil` where the
-// publisher's guard is that (the bake switch and the triage switch among them:
-// BakeReposEffective and TriageEffective hand back a written answer whatever it
-// is, and the rows that compare them are reached by `lc.BakeRepos != nil` and
-// `lc.Triage != nil`), and the block's own emptiness where the publisher hands
-// the node's member back for a config that states none (the crafts family,
-// whose three members are compared by publishedCraftCredentials,
-// publishedCraftPools and publishedCrafts, and the cascade and the grades N4
-// merges beside them, whose guards are credentialsStated and Empty).
+// publisher's guard is that (the bake switch, the triage switch and the
+// review-against-task switch among them: BakeReposEffective, TriageEffective
+// and ReviewAgainstTaskEffective hand back a written answer whatever it is, and
+// the rows that compare them are reached by `lc.BakeRepos != nil`,
+// `lc.Triage != nil` and `lc.ReviewAgainstTask != nil`), and the block's own
+// emptiness where the publisher hands the node's member back for a config that
+// states none (the crafts family, whose three members are compared by
+// publishedCraftCredentials, publishedCraftPools and publishedCrafts, and the
+// cascade and the grades N4 merges beside them, whose guards are
+// credentialsStated and Empty).
 func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	var out []string
 	if lc.ImageCatalogEffective(nil) != nil {
@@ -361,6 +363,17 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	// no run reads.
 	if lc.TriageEffective(nil) != nil {
 		out = append(out, "the triage switch")
+	}
+	// The review-against-task switch joins them (RA8b, R7, D2935): a
+	// repository's own file states the switch for itself, and the answer a
+	// project's runs read is the node's — a published false is the project-wide
+	// default a repository's own true turns back on — so a project whose config
+	// writes it and which never published a node has left the owner's own
+	// ceiling in a file no run reads. The node's own text writes it one row
+	// after the triage switch (init_policy_publish.go's publish), so it is
+	// listed here beside it.
+	if lc.ReviewAgainstTaskEffective(nil) != nil {
+		out = append(out, "the review-against-task switch")
 	}
 	// The pools' subscription switch joins them (F22, D1636): it is read off
 	// the node and nowhere else — a run asks the published policy whether it
@@ -428,15 +441,19 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 // and the shared config refuses the map and the switches outright. The triage
 // switch joins them (D1854) for the half a repository cannot write: a
 // repository's own file states the switch for itself, and the answer a
-// project's runs read is the node's. The clone URLs join them (SD5, D842) for
-// the whole of the member: the runner computes a run's clone URL from the
-// published node, so the block the local config writes reaches no run until the
-// node carries it. The pools' subscription switch joins them last (F22, D1636)
-// for the same reason, one over: whether a run may spread a project across two
-// or more subscriptions at all is the node's answer, and a written true is what
-// makes a pool of two or more subscriptions serve anything. So each of them is
-// a member a project that has never published a node has left in a file no run
-// reads.
+// project's runs read is the node's. The review-against-task switch joins them
+// (RA8b, R7, D2935) for that same half, one switch over: the file's own answer
+// is a repository's, a published false is the project-wide default its true
+// turns back on, and a project whose config writes an answer the node does not
+// carry has left the owner's ceiling in a file no run reads. The clone URLs
+// join them (SD5, D842) for the whole of the member: the runner computes a
+// run's clone URL from the published node, so the block the local config writes
+// reaches no run until the node carries it. The pools' subscription switch
+// joins them last (F22, D1636) for the same reason, one over: whether a run may
+// spread a project across two or more subscriptions at all is the node's
+// answer, and a written true is what makes a pool of two or more subscriptions
+// serve anything. So each of them is a member a project that has never
+// published a node has left in a file no run reads.
 //
 // The members that are not node-only are not this stage's to publish here: a
 // budget ceiling, a base branch or a model list reaches every run through the

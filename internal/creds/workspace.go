@@ -65,6 +65,11 @@ import (
 // value — Credential's own rule) and the per-project allow-list D1298 asks for,
 // which is the same shape allow_data_to already uses for a model route.
 //
+// It is a model credential or a forge one, and the pool carries both
+// (D2978, D2984, F15): a model entry is the name, the tier and the allow-list,
+// and a forge entry adds the kind it is and the repositories the owner's
+// credential reaches (Kind, Covers).
+//
 // Projects are member project names (config.ProjectNameRE, the grammar a
 // workspace and its members are both named by),
 // and an empty list is a credential the workspace offers to nobody: an entry
@@ -78,7 +83,42 @@ type Shared struct {
 	// the member's, and the effective set intersects it with the member's own
 	// policy (AdmitShared).
 	Projects []string
+	// Kind is the kind of credential this entry is, for a FORGE entry: the
+	// provider whose repositories it reaches, which is a kind a repository's
+	// `git.provider` may be (config.Providers) and the first segment of every
+	// repository Covers names (D2978, D2984, F15, and U2 in C3's words).
+	//
+	// It is EMPTY for a model credential, and that is the pool's own kind
+	// rather than a missing answer: the pool was model-only until version 2 of
+	// the owner's node (F15), so an entry that names no kind is read as what
+	// the pool held before the column existed — which is what a version-1 node
+	// decodes to, and what a value built without the column carries (C3's rule
+	// 8). The reading widens nothing: a model entry is read from the bundle's
+	// model index alone and a forge entry from the accessor of its own kind, so
+	// the two arms can never answer for each other.
+	Kind string
+	// Covers are the concrete repositories a forge entry reaches, canonical
+	// ("bitbucket/acme/app"), each with the entry's own Kind as its provider
+	// segment: the workspace owner's own list of the repositories their
+	// credential is stored for, and never the member's (U2, D2978). It is the
+	// coverage a forge route holds a run's repository to, before the member's
+	// own policy is asked as well (R5).
+	//
+	// It is empty for a model credential, which reaches no repository of its
+	// own: the repositories a model call may be made for are the member's own
+	// policy's business.
+	Covers []string
 }
+
+// Forge reports whether this pool entry is a forge credential rather than a
+// model one: it names a kind, and that is the whole of the difference (Kind's
+// own doc states what the empty kind means).
+//
+// It exists so that the one place the two halves of the pool are told apart —
+// the model cascade's candidate list, SharedFor — reads as the question it is
+// asking, and so that a later reader of the pool asks it here rather than
+// comparing Kind against "" somewhere of its own.
+func (s Shared) Forge() bool { return s.Kind != "" }
 
 // ErrNotShared is the refusal of a credential this member's project is not on
 // the workspace's allow-list for. It names the workspace's side of the
@@ -169,6 +209,14 @@ func AdmitShared(project string, s Shared, member MemberPolicy) error {
 // what the workspace adds to a member's own credentials — and it never widens
 // the member's set, because AdmitShared's two legs are both required here.
 //
+// **It is the MODEL list, and a forge entry is not in it.** The pool carries
+// every kind the workspace serves (D2978, D2984, F15), and the cascade this
+// list is offered to attaches a model credential and nothing else: a Bitbucket
+// token or the App key among the candidates would be a candidate whose call
+// cannot be made. So the forge entries are dropped here rather than filtered by
+// each caller, and the forge routes read them from the pool itself, each with
+// its own fences (Covers, and the member's policy — R5).
+//
 // A credential refused by either leg is dropped rather than reported: this is
 // the set a call is offered, and the typed refusal an operator reads comes from
 // AdmitShared, which answers about one named credential. Pooling the refusals
@@ -179,6 +227,9 @@ func SharedFor(project string, offered []Shared, member MemberPolicy) []Credenti
 	var out []Credential
 	seen := make(map[string]bool, len(offered))
 	for _, s := range offered {
+		if s.Forge() {
+			continue
+		}
 		if seen[s.Name] {
 			continue
 		}

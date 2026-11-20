@@ -335,6 +335,17 @@ func workspaceResourceBlocks(t *testing.T, text string) []workspaceBlock {
 // service account and to no other principal, so the whole-database reach is that
 // account's and the run accounts, the members' accounts and the project's own
 // members hold nothing on it.
+//
+// WS6 gave the root two more grants than the one above — the workspace's own
+// credentials service reaches the workspace's ONE bundle container as that same
+// account, and the member table's job accounts reach that service's front door
+// (D2980, F4, F17) — and neither of them is a grant on the database. The table
+// below is therefore the whole of the root's reach, one row per member resource
+// it may declare, and a grant the table does not know is refused rather than
+// counted: the workspace's own project holds the account, its one database
+// role, the database grant and the service's own two grants, and nothing else
+// (spec §9; internal/infra/tf's WorkspaceNotCovered is the plan-side half of
+// the same rule).
 func TestWorkspaceRulesAllowTheServicesOwnAccount(t *testing.T) {
 	// The document's half: no client token opens the family, so a caller
 	// reaches the workspace's database as the service or not at all.
@@ -345,43 +356,76 @@ func TestWorkspaceRulesAllowTheServicesOwnAccount(t *testing.T) {
 		WorkspaceRollupPath: deployedTree(t)[WorkspaceRollupPath],
 	})
 
-	// The root's half: exactly one database grant, bound to the workspace's own
-	// service account, and that account holds nothing else.
+	// The root's half: every grant it declares, and what that grant must bind.
 	//
-	// What counts as binding the account is the block's own member ATTRIBUTE
-	// and not a mention of it: the custom role's description says which account
-	// holds it, and a sentence is not a grant. Every member resource the root
-	// declares is the role's, and its member is that one account.
-	blocks := workspaceResourceBlocks(t, workspaceRootText(t))
+	// What counts as binding an account is the block's own member ATTRIBUTE and
+	// not a mention of it: the custom role's description says which account
+	// holds it, and a sentence is not a grant.
+	type rootGrant struct {
+		role, member, why string
+	}
 	const accountRef = "google_service_account.workspace.member"
-	memberAttr := regexp.MustCompile(`(?m)^\s*member\s*=\s*` + accountRef + `\s*$`)
-	grants, naming := 0, 0
-	for _, b := range blocks {
-		binds := memberAttr.MatchString(b.Body)
+	want := map[string]rootGrant{
+		"google_project_iam_member.workspace_database": {
+			role:   `"` + workspaceDatabaseRole + `"`,
+			member: accountRef,
+			why:    "the workspace's own service account is the one identity that reaches the workspace database, and a grant to anything else is a principal that can read the record and the admitted-token hashes",
+		},
+		"google_secret_manager_secret_iam_member.workspace_bundle": {
+			role:   `"roles/secretmanager.secretAccessor"`,
+			member: accountRef,
+			why:    "the workspace's service reads its ONE bundle container as its own account: a second reader of the workspace's model credentials, or a project-level accessor, is the pool disclosed to a principal the service did not choose (F4, Q6)",
+		},
+		"google_cloud_run_v2_service_iam_member.workspace_invoker": {
+			role:   `"roles/run.invoker"`,
+			member: `"serviceAccount:${each.value}"`,
+			why:    "the member table's own job accounts are the only principals that reach that service, and the invoke grant is the ONE grant a member holds in the workspace's project (F17, F29)",
+		},
+	}
+	addrs := []string{
+		"google_project_iam_member.workspace_database",
+		"google_secret_manager_secret_iam_member.workspace_bundle",
+		"google_cloud_run_v2_service_iam_member.workspace_invoker",
+	}
+	roleAttr := regexp.MustCompile(`(?m)^\s*role\s*=\s*(.+?)\s*$`)
+	memberAttr := regexp.MustCompile(`(?m)^\s*member\s*=\s*(.+?)\s*$`)
+	seen := map[string]bool{}
+	for _, b := range workspaceResourceBlocks(t, workspaceRootText(t)) {
+		addr := b.Type + "." + b.Name
+		member := ""
+		if m := memberAttr.FindStringSubmatch(b.Body); m != nil {
+			member = m[1]
+		}
 		if !strings.HasSuffix(b.Type, "_iam_member") {
-			if binds {
-				t.Errorf("%s.%s binds the workspace's own service account outside a member resource: its reach is the one database grant", b.Type, b.Name)
+			if member != "" {
+				t.Errorf("%s binds %s outside a member resource: the root's reach is the three grants below and nothing else", addr, member)
 			}
 			continue
 		}
-		grants++
-		if !strings.Contains(b.Body, workspaceDatabaseRole) {
-			t.Errorf("%s.%s binds a role that is not the workspace database role (%s): every grant this root makes is that role's, because Realtime Database IAM has no path-level scope", b.Type, b.Name, workspaceDatabaseRole)
+		g, ok := want[addr]
+		if !ok {
+			t.Errorf("%s is a member resource this test does not know: the workspace's own project holds the account, its one database role, the database grant and the service's own two grants, and a fourth resource here is a decision a person makes in this file and in the root's own cover together", addr)
+			continue
 		}
-		if !binds {
-			t.Errorf("%s.%s does not bind %s: the workspace's own service account is the one identity that reaches the workspace database, and a grant to anything else is a principal that can read the record and the admitted-token hashes", b.Type, b.Name, accountRef)
+		if seen[addr] {
+			t.Errorf("%s is declared twice: one row of the root's reach is one resource", addr)
+		}
+		seen[addr] = true
+		role := "(no role attribute)"
+		if m := roleAttr.FindStringSubmatch(b.Body); m != nil {
+			role = m[1]
+		}
+		if role != g.role {
+			t.Errorf("%s binds %s, want %s: %s", addr, role, g.role, g.why)
+		}
+		if member != g.member {
+			t.Errorf("%s binds %q, want %q: %s", addr, member, g.member, g.why)
 		}
 	}
-	if grants == 0 {
-		t.Fatal("the workspace root binds the database role to nobody: the workspace's own service has no way to read the record it rolls up and admits against")
-	}
-	for _, b := range blocks {
-		if memberAttr.MatchString(b.Body) {
-			naming++
+	for _, addr := range addrs {
+		if !seen[addr] {
+			t.Errorf("the workspace root declares no %s: the account the root creates has no grant at all, so the root and the document disagree about who reaches the database", addr)
 		}
-	}
-	if naming == 0 {
-		t.Error("no resource binds the workspace's own service account: the account the root creates has no grant at all, so the root and the document disagree about who reaches the database")
 	}
 }
 
