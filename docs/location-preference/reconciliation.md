@@ -3,8 +3,8 @@
 Checked against `origin/main` at `252329076` on 2026-11-20. **Where this file disagrees with
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
 **D3080–D3091**, all answered by the owner on 2026-11-20, every one as recommended. **D3087 was
-amended after review round 1 and D3088 after round 3** (below), and the amended texts wait for
-the owner's confirmation (O6, O12). It carries out
+amended after review round 1 and D3088 after round 3** (below); the owner confirmed both
+amended texts the same day, and answered **D3092–D3096** on the items the reviews left open. It carries out
 **D3029** of [always a budget](../always-a-budget/reconciliation.md) (in that plan's open follow-up,
 pull request #3305, merged on 2026-11-20), it replaces **D4** of `docs/design/m9-budget-and-dashboard.md` for a new
 installation, and it reverses the ruling **D12 of 2026-10-20** for the Firestore location (D3090).
@@ -275,11 +275,26 @@ All answered by the owner on 2026-11-20. None departs from the recommendation.
 | **D3084** | A workspace whose members are in different places? | **Allowed. Each project keeps its own place**, and the documents say the workspace's service reads each member's ledger across places | as recommended: the code already carries a member's database region |
 | **D3085** | Where does a new Firestore database go? | **The installation's own region where Firestore offers it, else the place's default** | as recommended: one region for everything where it can be |
 | **D3086** | Which region does EU give with no `--region`? | **`europe-west1`** | as recommended: the Realtime Database's only EU location, so everything is in one region |
-| **D3087** | Where is "what this installation has" kept? | **A locations record in the project config, written by setup and by update from what the cloud holds; where it and the cloud disagree the cloud wins and the record is corrected.** *Amended after review:* the record is each machine's own and is not published in the shared config, and nothing reads it as an input | as recommended, then **amended after review round 1**; the original answer was "shared with teammates like the region is" |
-| **D3088** | A `--region` that differs from the installation's? | **Refused at once, with the fix**: the refusal names the installation's region and prints the command with it. *Amended after review:* in `setup` and `update`, the commands that plan; every other command keeps `--region` as the per-invocation override it is | as recommended, then **amended after review round 3**: today it ends in a late Terraform refusal |
+| **D3087** | Where is "what this installation has" kept? | **A locations record in the project config, written by setup and by update from what the cloud holds; where it and the cloud disagree the cloud wins and the record is corrected.** *Amended after review:* the record is each machine's own and is not published in the shared config, and nothing reads it as an input | as recommended, then **amended after review round 1**; the original answer was "shared with teammates like the region is". **The owner confirmed the amended text on 2026-11-20** |
+| **D3088** | A `--region` that differs from the installation's? | **Refused at once, with the fix**: the refusal names the installation's region and prints the command with it. *Amended after review:* in `setup` and `update`, the commands that plan; every other command keeps `--region` as the per-invocation override it is | as recommended, then **amended after review round 3, and confirmed by the owner on 2026-11-20** (read commands keep the override): today it ends in a late Terraform refusal |
 | **D3089** | An installation made before this work, with compute in the EU and a database not yet created? | **`fugaro update` creates it in the derived place**, prints the line and asks nothing | as recommended: it is what D3029 held AB7 back for |
 | **D3090** | The Firestore location's own note (D12 of 2026-10-20)? | **Removed everywhere.** The line is printed and the database is created, in any session the stage itself may run in | as recommended: the brief's item 4; the stage's own fences still apply |
 | **D3091** | A database found outside the installation's place? | **Adopted if empty or ours, recorded where it really is, said once, and reported by `fugaro doctor` as information** | as recommended: accepted is not the same as hidden |
+
+**Answered after the reviews, 2026-11-20:**
+
+| # | Question | Answer | Why |
+| --- | --- | --- | --- |
+| **D3092** | On an installation made before this work, what is a secret created afterwards (O8)? | **Regional, everywhere.** What exists is left alone; what is new is in the region | as recommended: one rule with nothing inferred |
+| **D3093** | What does choosing EU not promise, beyond D3082's first list (O8)? | **All four are confirmed**: log isolation turned off; the build and system logs left in `_Default`; a database adopted outside the place; and the log bucket's fallback to the place's multi-region where its region has none | as recommended |
+| **D3094** | In what order are always-a-budget's AB7 and this plan launched (O3)? | **AB7 once LP2, LP4 and LP8 have merged; LP3, LP6, LP10 and LP14 once AB7 has** | as recommended: no two runs live on one file |
+| **D3095** | How is a release gated on the key service's redeploy (O9)? | **A line in `docs/release.md`**, the owner's release steps | as recommended |
+| **D3096** | A typed region that cannot be checked against the runs bucket (O7, R10)? | **Accepted, with one line saying it was not checked** | as recommended |
+| **D3097** | How is the real provider's behaviour under `ignore_changes` proven, round 3's fixes being unreviewed (O11)? | **A fourth review of the documents** | **not the recommendation** (an owner's `fugaro update --plan-only` on the dogfood installation from LP2's and LP5a's branches before each merges). The owner sets the three-round cap aside for this plan |
+
+**What D3097 leaves open.** A review of documents cannot run the real provider, so U9 stays
+unverified until Check 821, after the release. That is the cost stated with the option, and it is
+the owner's choice.
 
 **What changed in D3087, and why.** Two facts about the code bear on the answer as given.
 First, the shared config decodes strictly, so a new field there stops a teammate's older CLI
@@ -370,7 +385,8 @@ None. No two answers pull against each other.
 - **O2.** AB7 of always-a-budget tests that the budget database is written before the location's
   note (D3027). LP10 removes the note and is ordered after AB7; it rewrites that test to assert
   that no note is printed. If AB7 has not merged when LP10 is ready, LP10 waits.
-- **O3.** Always-a-budget's text (D3029, merged as #3305) says AB7 waits on "the part that says
+- **O3.** *Answered by D3094.*
+- **O3 (as written).** Always-a-budget's text (D3029, merged as #3305) says AB7 waits on "the part that says
   where a new budget database goes". That part is LP2. Because AB7 shares files with this plan
   (F19), this plan asks for more: AB7 launched once LP2, LP4 and LP8 have merged, and LP3, LP6,
   LP10 and LP14 launched once AB7 has. That
@@ -383,29 +399,35 @@ None. No two answers pull against each other.
   loop until the owner copies the staged workflow in (`.claude/rules/terraform.md`). LP5a and LP6
   touch modules the workspace root does not use; if that changes, the root is validated by hand.
 
-- **O6.** D3087 was amended after review round 1: the record is each machine's own, not shared,
+- **O6.** *Confirmed by the owner, 2026-11-20.*
+- **O6 (as written).** D3087 was amended after review round 1: the record is each machine's own, not shared,
   and never an input. The owner is asked to confirm the amended text.
-- **O7.** R10 (a region that cannot be checked is accepted with a line) is a resolution the owner
+- **O7.** *Answered by D3096.*
+- **O7 (as written).** R10 (a region that cannot be checked is accepted with a line) is a resolution the owner
   may overrule.
-- **O8.** D3082 was sharpened in review, and the owner is asked to confirm four things. The list
+- **O8.** *Answered by D3092 and D3093.*
+- **O8 (as written).** D3082 was sharpened in review, and the owner is asked to confirm four things. The list
   of what is not promised grew: log isolation turned off, the logs Fugaro leaves in `_Default`
   (F20), and a database adopted outside the place. On an installation made before this work,
   secrets created afterwards are regional while the old ones stay automatic (R5); the owner's
   answer spoke of new installations only. And the log bucket falls back to the place's
   multi-region (`us`, `eu`) where its region has no log bucket; the answer said "a regional
   location".
-- **O9.** The vendor's key service must be redeployed with LP15 before a release ships LP4. It is
+- **O9.** *Answered by D3095.*
+- **O9 (as written).** The vendor's key service must be redeployed with LP15 before a release ships LP4. It is
   the owner's step, and the one step in this plan that `fugaro update` does not carry, because it
   is not an installation's. It is a line in `docs/release.md`; nothing else gates the release on
   it.
-- **O11.** Review round 3's fixes are the last commit and were not reviewed again; three rounds
+- **O11.** *Answered by D3097: a fourth review round, which the README reports. U9 stays open.*
+- **O11 (as written).** Review round 3's fixes are the last commit and were not reviewed again; three rounds
   is the cap. They are: LP2's ignored region for a managed instance, LP8's scope, LP6's listing of
   every location and its added files, LP10's added files, LP7 after LP5b, LP12's silence with no
   record, and the key service's step moved to `docs/release.md`. The "plans no change" tests of
   LP2 and LP5a run under the mock provider; what the real provider does is U9, measured by Check
   821 only after the release. An owner's `fugaro update --plan-only` on the dogfood installation
   from each of those two branches, before it merges, would close that sooner.
-- **O12.** D3088 was amended after review round 3: the refusal is in `setup` and `update` only.
+- **O12.** *Confirmed by the owner, 2026-11-20: `setup` and `update` only.*
+- **O12 (as written).** D3088 was amended after review round 3: the refusal is in `setup` and `update` only.
   The owner is asked to confirm, and to say whether `--region` should stay an override on the
   read commands.
 - **O10.** Pull requests #3315 and #3323 both use D3060–D3079 and checks 810–819. Neither

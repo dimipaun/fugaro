@@ -14,10 +14,16 @@ config (D3087, amended after review: it is this machine's own and is never an in
 gets a missing database in its derived place (D3089); the location's own note is removed
 everywhere (D3090); a database found elsewhere is adopted, recorded and reported (D3091).
 
+**Answered after the reviews** (the owner, 2026-11-20): D3087 and D3088 confirmed as amended;
+new secrets are regional on every installation (D3092); four further exceptions to the promise
+(D3093); the launch order with AB7 below (D3094); the key service's redeploy is a line in
+`docs/release.md` (D3095); a region that cannot be checked is accepted with a line (D3096); a
+fourth review round (D3097, not the recommendation).
+
 **What always-a-budget's AB7 waits on is LP2** (D3029, R9). LP2 needs only LP1 and LP8, and all
 three are small. Because AB7 writes files this plan also writes, the plan asks that AB7 be
 launched once LP2, LP4 and LP8 have merged, and that LP3, LP6, LP10 and LP14 be launched once
-AB7 has (O3).
+AB7 has, which the owner accepted (D3094).
 
 **Review round 1 changed the design in one place.** What Terraform and the CLI are told about a
 thing that exists is read from the cloud, for that thing, every time. The record is written from

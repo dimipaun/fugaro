@@ -13,11 +13,11 @@ made before this work, where its data already is, moving nothing. It carries out
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's ruling; no typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A5, the census of every location fixed in code, what each Google product offers (read 2026-11-20), findings F1–F21, the mapping, decisions D3080–D3091 with the owner's answers, resolutions R1–R10, open items O1–O12, UNVERIFIED U1–U9. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A5, the census of every location fixed in code, what each Google product offers (read 2026-11-20), findings F1–F21, the mapping, decisions D3080–D3097 with the owner's answers, resolutions R1–R10, open items O1–O12, UNVERIFIED U1–U9. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks LP0 to LP15 (LP5 is LP5a, LP5b and LP5c: 18 runs); levels, critical path, shared files; Checks 820 and 821 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
-**Numbers reserved:** decisions **D3080–D3099** (D3080–D3091 used), checks **820–829** (820 and
+**Numbers reserved:** decisions **D3080–D3099** (D3080–D3097 used), checks **820–829** (820 and
 821 used). Read on 2026-11-20: the highest decision on `main` was D3039 (reserved by
 always-a-budget, D3020–D3029 used there); D3040–D3059 and checks 800–809 are held by the open
 pull request #3308 (ci-affected-tests); D3060–D3079 and checks 810–819 by the open pull request
@@ -25,8 +25,16 @@ pull request #3308 (ci-affected-tests); D3060–D3079 and checks 810–819 by th
 No open pull request takes a number in D3080–D3099 or 820–829.
 
 **Owner answers of 2026-11-20:** D3080 to D3091, **every one as recommended**; none is marked
-"not the recommendation". Two are marked **amended after review** and wait for confirmation:
-D3087 (round 1) and D3088 (round 3). In short: the region stays the one stored setting and the place is
+"not the recommendation". Two are marked **amended after review**, D3087 (round 1) and D3088 (round 3), and
+**the owner confirmed both amended texts on 2026-11-20**.
+
+**Owner answers after the reviews, 2026-11-20:** D3092 to D3096 as recommended (new secrets are
+regional on every installation; the four further exceptions to the promise; AB7 once LP2, LP4 and
+LP8 have merged, and LP3, LP6, LP10 and LP14 once AB7 has; the key service's redeploy is a line
+in `docs/release.md`; a region that cannot be checked is accepted with a line). **D3097 is not
+the recommendation**: a fourth review of the documents, where an owner's plan-only run on the
+dogfood installation before LP2 and LP5a merge was recommended. The real provider's behaviour
+(U9) therefore stays unverified until Check 821. In short: the region stays the one stored setting and the place is
 derived from it (D3080); US and EU are named, other regions work with stated fallbacks (D3081); a
 new installation's data at rest, secrets and run logs included, is in the place (D3082); model
 calls are outside the promise (D3083); a workspace's members may differ (D3084); Firestore goes in
