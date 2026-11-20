@@ -73,7 +73,7 @@
 import { ROUTE } from '../../../shared/command/index.js';
 import { DESTRUCTIVE_VERBS, pending, readBack } from '../../../shared/confirm/index.js';
 import { REDACTED, redact } from '../../../shared/digest/index.js';
-import { CALL_FAILURE, CALL_STATE, ENGINE, REFUSAL, REASON } from '../../../shared/voice-switch/index.js';
+import { CALL_FAILURE, CALL_STATE, DIRECTION, ENGINE, REFUSAL, REASON } from '../../../shared/voice-switch/index.js';
 
 /**
  * The ten rules of §5, as data.
@@ -123,7 +123,13 @@ export const EGRESS_CODE = Object.freeze({
    * list, because a list is editable and this must not be.
    */
   OTHER_INSTALLATION: 'other-installation',
-  /** The router could not read the utterance, so no route may be acted on. */
+  /**
+   * The router could not read the utterance -- it refused it, or (`tts`, whose
+   * text is the app's own reply) there is no route at all -- so no route may be
+   * acted on. It is **not** the answer for a spoken turn with no transcript: on
+   * a device whose local engine cannot hear the user, that turn may go, and the
+   * residual is the design's (§5 rule 3).
+   */
   ROUTE_UNREADABLE: 'route-unreadable',
   /**
    * The confirmation machine's state could not be read, so whether a
@@ -131,6 +137,12 @@ export const EGRESS_CODE = Object.freeze({
    * pending" (`shared/confirm`'s own fail-closed rule, and §4.5's).
    */
   STATE_UNREADABLE: 'state-unreadable',
+  /**
+   * The switch answered something that is not a badge -- it threw, or it handed
+   * back a value no `send` can be read off. The device's own half of the answer
+   * is missing, and a missing answer is the local engine.
+   */
+  BADGE_UNREADABLE: 'badge-unreadable',
   /**
    * The redactor refused the text it was handed. The turn is served locally
    * rather than sent: §5 rule 4 makes the redactor's output the thing that goes,
@@ -172,7 +184,7 @@ export const RESERVED_PROJECTS = Object.freeze(['belong']);
 export const ACTION_COMMANDS = Object.freeze(['confirm', 'cancel-that']);
 
 /** The two directions, as `shared/voice-switch` names them. */
-const DIRECTIONS = Object.freeze(['stt', 'tts']);
+const DIRECTIONS = Object.freeze([DIRECTION.STT, DIRECTION.TTS]);
 
 /** A frozen refusal, in the shape this repository's modules use. */
 function refuse(code, field) {
@@ -215,8 +227,9 @@ function local(direction, reason, offer = null) {
  * @param {object} input
  * @param {string} input.direction `stt` or `tts`
  * @param {object|null} input.route the result of `routeUtterance` for this
- *   utterance, or a refusal from it, or `null` when this turn has no transcript
- *   of its own yet (a remote-STT turn that has not answered)
+ *   utterance, or a refusal from it, or `null` when **this device's local
+ *   engine could not hear the user** and the audio is the only way to find out
+ *   what was said (the residual, below)
  * @param {object|null} input.state the confirmation machine (`shared/confirm`),
  *   or `null` when the app has no action history at all
  * @param {number} input.now the caller's clock, for `pending(state, now)`
@@ -232,7 +245,12 @@ function local(direction, reason, offer = null) {
 export function permit({ direction, route, state, now, project, projects, badge } = {}) {
   if (!DIRECTIONS.includes(direction)) return refuse(REFUSAL.UNKNOWN_DIRECTION, 'direction');
   if (!Array.isArray(projects)) return refuse(REFUSAL.INTERNAL_ERROR, 'projects');
-  if (!isPlainObject(badge) || badge.ok !== true) return refuse(REFUSAL.INTERNAL_ERROR, 'badge');
+  // The badge is P5.3.6's `INDICATOR_FIELDS` and carries no `ok`: it is the
+  // switch's *answer*, and the switch's own fail-closed badge (a record it could
+  // not read) is an answer too -- `send: false`, `reason: no-answer`, with the
+  // refusal in `refusal`. What is checked here is only that it is an object this
+  // module can read a `send` off.
+  if (!isPlainObject(badge)) return refuse(REFUSAL.INTERNAL_ERROR, 'badge');
 
   // Rules 1 and 2, and they come first. `pending` is asked about the **state**:
   // it sweeps the deadline against `now` and answers the actions that are still
@@ -246,23 +264,53 @@ export function permit({ direction, route, state, now, project, projects, badge 
     if (live.actions.length > 0) return local(direction, EGRESS_CODE.PENDING);
   }
 
-  // Rule 3. A route this module cannot read is a route it will not act on, and
-  // the two commands that act on a pending action are the destructive path: the
-  // read-back is rebuilt by the app (`readBack`, which is imported above so that
-  // this file cannot drift from what the app speaks) and the confirming utterance
-  // is transcribed locally. Nothing here recognises a destructive *phrase* --
-  // §5 rule 3's mechanism is the router, and the verbs name the action, not the
-  // words.
-  if (!isPlainObject(route)) return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);
-  if (route.ok !== true) return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);
-  if (route.route === ROUTE.NOT_UNDERSTOOD) return local(direction, EGRESS_CODE.NO_COMMAND);
-  if (route.route === ROUTE.APP_COMMAND) {
+  // Rules 3 and 5, and the one place this module has to be honest about what it
+  // cannot do.
+  //
+  // A **transcript the router has read** decides: an utterance the router did
+  // not understand is not a command (§5 rule 5), the app's own seven commands
+  // are the app's and need no third party (§5 rule 5), and the two that act on a
+  // pending action are the destructive path (§5 rule 3) -- the read-back is
+  // rebuilt by the app (`readBack`, imported above so that this file cannot
+  // drift from what the app speaks), it is spoken locally, and the confirming
+  // utterance is transcribed locally. Nothing here recognises a destructive
+  // *phrase*, which is the design's point: the router is the mechanism, and the
+  // verbs name the action rather than the words.
+  //
+  // A route the router **refused** is not a route this module will act on, and
+  // the turn is local.
+  //
+  // `route === null` is the residual §5 rule 3 states, and it is deliberate that
+  // it does not fall into the same branch. It means one thing and one thing
+  // only: **this device's local engine could not hear the user**, so there is no
+  // transcript to route and the audio is the only way to find out what was said.
+  // The app cannot classify an utterance before transcribing it, so on that
+  // device the *first* destructive utterance may already have gone -- that is
+  // the design's own sentence, and a module that answered `local` here would be
+  // pretending the remote engine can never be used, which is the whole feature.
+  // Rule 2 is what still holds on that path (nothing at all while a confirmation
+  // is pending, and a remote engine can never be the source of a confirmation),
+  // and rule 5's mechanism on that path is the **capture**: the app opens the
+  // microphone for one turn the user started, never continuously and never on a
+  // wake word it did not hear locally.
+  //
+  // A `tts` turn is never in that position: the text is the app's own reply, so
+  // there is always a route for it, and one that is missing is a defect rather
+  // than a device without a local engine.
+  if (route === null || route === undefined) {
+    if (direction === DIRECTION.TTS) return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);
+  } else if (!isPlainObject(route) || route.ok !== true) {
+    return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);
+  } else if (route.route === ROUTE.NOT_UNDERSTOOD) {
+    return local(direction, EGRESS_CODE.NO_COMMAND);
+  } else if (route.route === ROUTE.APP_COMMAND) {
     return local(
       direction,
       ACTION_COMMANDS.includes(route.command) ? EGRESS_CODE.DESTRUCTIVE : EGRESS_CODE.NO_COMMAND,
     );
+  } else if (route.route !== ROUTE.AGENT_TEXT) {
+    return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);
   }
-  if (route.route !== ROUTE.AGENT_TEXT) return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);
 
   // Rules 6 and 7. A turn goes for one project and only that project: the slug
   // is what the hop reads the policy node by (the hop takes the project from the
@@ -375,30 +423,37 @@ export function createVoiceEgress({ hop, voiceSwitch, projects, secrets = [], on
   if (onCall !== undefined && typeof onCall !== 'function') throw new TypeError('onCall is a function');
   const tell = onCall ?? (() => {});
 
-  /** The badge for one turn, read from the record the device actually holds. */
-  async function badgeFor({ direction, status, lastCallInDirection }) {
-    const badge = await voiceSwitch.indicator({ direction, status, lastCallInDirection });
-    if (badge !== null && typeof badge === 'object' && badge.ok !== undefined && badge.ok === false) {
-      // The switch refused to render a badge -- it could not read its own record.
-      // There is no consent answer and no setting answer, and a turn with neither
-      // is local. The badge's refusal is carried as the reason so the caller can
-      // show what went wrong rather than a generic "local".
-      return Object.freeze({ ok: true, send: false, provider: null, reason: badge.code ?? REASON.NO_ANSWER });
-    }
-    return badge;
-  }
-
   /**
    * One turn's decision, without sending anything.
    *
    * The screen calls this before it opens its local pipeline: what it answers is
    * where the turn would go and, when the local engine is the one that failed,
    * whether the app owes the user text entry.
+   *
+   * The badge is read here, once, from the record the device holds -- so the
+   * switch, the consent and the project's own answer are the app's and never the
+   * caller's word. A switch that threw, or answered something this module cannot
+   * read, is a turn served locally: an answer the app could not get is not an
+   * answer that says "send".
    */
   async function decide({ direction, route, state, now, project, status, lastCallInDirection, localFailed = false } = {}) {
-    const badge = await badgeFor({ direction, status, lastCallInDirection });
+    let badge;
+    try {
+      badge = await voiceSwitch.indicator({ direction, status, lastCallInDirection });
+    } catch {
+      return local(direction, EGRESS_CODE.BADGE_UNREADABLE, localFailed ? EGRESS_OFFER.TEXT_ENTRY : null);
+    }
     const answer = permit({ direction, route, state, now, project, projects, badge });
-    if (!answer.ok) return answer;
+    if (!answer.ok) {
+      // A refusal here is about an input this module could not read. The badge is
+      // the only one that comes from the app's own state rather than from the
+      // caller, so it is the one answered as a local turn: a switch that
+      // answered something which is not a badge is not a switch that said
+      // "send". A caller's own bad direction is the caller's bug and is refused
+      // as one.
+      if (answer.field !== 'badge') return answer;
+      return local(direction, EGRESS_CODE.BADGE_UNREADABLE, localFailed ? EGRESS_OFFER.TEXT_ENTRY : null);
+    }
     if (answer.send) return answer;
     return local(direction, answer.reason, localFailed ? EGRESS_OFFER.TEXT_ENTRY : null);
   }
@@ -432,7 +487,16 @@ export function createVoiceEgress({ hop, voiceSwitch, projects, secrets = [], on
         reason: null,
       });
       tell(done);
-      return Object.freeze({ ...answer, direction, engine: ENGINE.REMOTE, provider: decision.provider, call: done });
+      return Object.freeze({
+        ...answer,
+        send: true,
+        direction,
+        engine: ENGINE.REMOTE,
+        provider: decision.provider,
+        reason: null,
+        offer: null,
+        call: done,
+      });
     }
     const reason = callFailure(answer);
     const failed = callRecord({
@@ -462,15 +526,15 @@ export function createVoiceEgress({ hop, voiceSwitch, projects, secrets = [], on
     /**
      * One turn's audio (§5 rules 1 to 3, 5 to 10).
      *
-     * `route` is the router's answer for this utterance -- from the local
-     * engine's transcript when the device has one, which is the design's "the
-     * local engine always runs when it is available" and is what makes the
-     * destructive decision a decision about a transcript rather than about a
-     * hope. On a device whose local engine cannot hear the user there is no such
-     * transcript, `route` is `null`, and the turn is local: the residual §5 rule 3
-     * states is that such a device's *first* destructive utterance may already
-     * have been transcribed remotely, and this module cannot classify what it
-     * cannot read, so it does not pretend to.
+     * `route` is the router's answer for this utterance, from the **local**
+     * engine's transcript -- the design's "the local engine always runs when it
+     * is available", which is what makes the destructive decision a decision
+     * about a transcript rather than about a hope. On a device whose local
+     * engine cannot hear the user there is no such transcript and `route` is
+     * `null`: the turn may go, and the residual §5 rule 3 states is that such a
+     * device's first destructive utterance may already have been transcribed
+     * remotely before anything knew it was destructive. `permit` documents that
+     * branch, and what still holds on it.
      */
     async transcribe({ audio, contentType, direction = 'stt', ...turn } = {}) {
       const decision = await decide({ direction, ...turn });
