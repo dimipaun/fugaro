@@ -45,9 +45,21 @@
 //      microphone; the demo's absence from the list is the assertion F10 and
 //      D212 ask this task for -- it is text-only by construction, and it has no
 //      session to enter a voice screen with.
+//   6. `fetch(` -- the network (P5.3.7). It may be opened from
+//      `src/voice-switch/hop.js` and nowhere else, so the one file that can put
+//      a byte in front of a third party is a file a reviewer reads whole, and a
+//      second call site is a failing test rather than a new egress path. The
+//      scan below it (rule 7, which has no pattern list of its own) holds §5's
+//      fifth rule over the same directory: the egress half keeps no timer, no
+//      file and no store between one utterance and the next.
+//
+// Rules 6 and 7 are P5.3.7's; the five above them are P3.1's and VS1.3's, and a
+// rule added here is a decision about what may grow -- which is why each one's
+// `why` is written as the sentence a reviewer would otherwise have to
+// reconstruct.
 //
 // **The self-exemption and the positive controls.** This file contains all
-// four tokens, so it exempts itself by name -- once, visibly -- and every rule
+// six tokens, so it exempts itself by name -- once, visibly -- and every rule
 // is asserted against a planted example as well as against the tree. Without
 // the controls, a typo in a pattern would turn the whole file green while
 // checking nothing, which is the one way a scan can lie.
@@ -114,6 +126,14 @@ const RULES = [
     allow: ['index.js', 'src/voice-session/session.js'],
     why: 'VS1.3: the controller is declared in `session.js` and built in `index.js`, and a second construction site would be a second session over one microphone',
   },
+  {
+    name: 'the network is opened in one file, and it is the hop',
+    // A call and not a mention: `fetch(` preceded by anything that could make
+    // it another identifier (`prefetch(`, `x.fetch(`) is not this rule's.
+    pattern: /(?<![A-Za-z0-9_$.])fetch\s*\(/,
+    allow: ['src/voice-switch/hop.js'],
+    why: 'P5.3.7: the egress path is the only thing in the app that talks to a third party, and a second file that could open the network is a second place a byte could leave from',
+  },
 ];
 
 /**
@@ -159,6 +179,11 @@ test('the scan walks the app, and not an empty list', () => {
     // purpose: the everyday rules below then cover it like any other file, and
     // a directory that stopped being walked is a failure rather than silence.
     'src/voice-switch/index.js',
+    // ... and the egress half (P5.3.7) with it: the hop client is the one file
+    // that opens the network, and the rules are the last thing between a spoken
+    // sentence and a third party.
+    'src/voice-switch/hop.js',
+    'src/voice-switch/egress.js',
   ]) {
     assert.ok(files.includes(expected), `${expected} is in the walk`);
   }
@@ -183,6 +208,46 @@ for (const rule of RULES) {
   });
 }
 
+// **Rule 7: the egress half keeps nothing.** §5's fifth rule is that "there is
+// no queue, no spool, no file and no buffer", and D118's answer is that a
+// remote failure is answered locally rather than retried from a store. A scan
+// is what can hold that: the alternative -- a promise in a test that the
+// directory holds no spool -- is a claim about today's code, and what the rule
+// forbids is the code somebody adds next month. So the whole directory is
+// judged, and not only the two files that exist now.
+//
+// **Why the directory and not the app.** A timer, a file and a store are all
+// legitimate elsewhere in this app (the lease keeps a timer, the accounts keep a
+// store), which is exactly why the rule has to name its scope: what may not
+// happen *here* is that anything is held between one utterance and the next.
+
+/** The primitives a spool, a file or a store is made of. */
+const SPOOL = /\b(setTimeout|setInterval|setImmediate|requestAnimationFrame|writeFile|appendFile|createWriteStream|createReadStream|openSync|AsyncStorage|SecureStore|localStorage)\b/;
+
+test('the egress half holds nothing between turns — no timer, no file, no store', () => {
+  // The positive control: the pattern must flag real code, or a green run below
+  // would mean only that the pattern matches nothing at all.
+  for (const line of [
+    'const t = setTimeout(flush, 0)',
+    'setInterval(flush, 1000)',
+    'await writeFile(path, text)',
+    "await AsyncStorage.setItem('m', text)",
+  ]) {
+    assert.ok(SPOOL.test(line), line);
+  }
+
+  const files = sourceFiles().filter((file) => file.startsWith('src/voice-switch/') && !isTest(file));
+  // A scope that found nothing would pass for the wrong reason.
+  assert.ok(files.length >= 6, `expected the voice switch's files, found ${files.length}`);
+  for (const file of files) {
+    assert.equal(
+      SPOOL.test(code(readFileSync(join(ROOT, file), 'utf8'))),
+      false,
+      `${file}: §5 rule 5 and D118 — a failure is answered locally, never spooled for later`,
+    );
+  }
+});
+
 /** A line of code the rule's own pattern matches. */
 function control(rule) {
   switch (rule.name) {
@@ -194,6 +259,8 @@ function control(rule) {
       return "const KEY = 'fugaro.account.'";
     case RULES[4].name:
       return 'const session = createVoiceSession({ machine, screen, pipeline, native });';
+    case RULES[5].name:
+      return "const answer = await fetch(url, { method: 'POST' });";
     default:
       return "console.log('x')";
   }
