@@ -7,7 +7,7 @@ and the two questions it answers for the route half are **R14** (what workspace 
 D2980 (a second Cloud Run service on the same binary), D2981 (a member's run calls it directly),
 D2982 (the route is decided once at the run's start), D2988 (a member's runs only), D2992 (shared
 project jobs are served) and D1299 as amended (the service holds no write on a member). The shapes
-are `internal/credsvc/scope.go`: `Scope`, `ScopeResolver`, `StateStore`, `RepoAuthReader`,
+are `internal/credsvc/scope.go`: `Scope`, `ScopeResolver`, `ScopeFault`, `StateStore`, `RepoAuthReader`,
 `OfferingReader`, `ForgeReader`, `WorkspaceNodeReader`, `WorkspaceScopeConfig`,
 `WorkspaceScopeResolverFunc`, `NewWorkspaceScopeResolver` and `WorkspaceKeepWarmPath`. The stub this
 package ships while the sides are built (`scope_stub.go`, with its test) is deleted by **I1**.
@@ -49,11 +49,18 @@ and not a parsed `credsvc.Request`, because the routes answered ahead of `Reques
 run identity to parse and because **which** verification a route needs is a property of the route: the
 resolver decides it, so no route can reach a reader it was not admitted to.
 
-An error from `Resolve` is a refusal of the **caller** — the verifier's own, naming the field that
-failed and never its value — and `ServeHTTP` answers it exactly as it answers the verification it
-makes itself today. A route the deployment does not serve is **not** an error: `Resolve` answers a
-scope whose `Serves` is false, so that a route can be told apart from a caller, and so that the one
-gate that refuses an unserved route stays in one place.
+`Resolve` answers one of **three** things, and the three are not interchangeable. A route the
+deployment does not serve is **not** an error: `Resolve` answers a scope whose `Serves` is false, so
+that a route can be told apart from a caller, and so that the one gate that refuses an unserved route
+stays in one place. An error is a refusal of the **caller** — the verifier's own, naming the field that
+failed and never its value — which `ServeHTTP` answers exactly as it answers the verification it makes
+itself today. And **`*ScopeFault`** is the third: the scope could not be built for a reason that is not
+the caller's at all — the workspace's node could not be re-read (R17), a member's database could not be
+reached — which `ServeHTTP` answers as the **service's own failure** (`StatusUnavailable` with
+`ErrorStateUnavailable`, the refusal `refuseIdentity`'s default arm already gives a state that could not
+be read) and never as a verdict about the caller. Confusing the two is not cosmetic: a 403 halts a run's
+gateway as a missing invoke grant (R16), and a table that could not be re-read is not a caller who is
+not admitted. The type's own comment carries the whole of it, the audit line and `Caller` included.
 
 `NewWorkspaceScopeResolver` is a **variable** of the constructor's signature
 (`WorkspaceScopeResolverFunc`) and not a function, and that is the contract's own shape rather than an
@@ -145,13 +152,16 @@ constructor and gets either the workspace's resolver or a refusal, never a nil.
    existed and what it goes on serving (`server.go`'s own rule, which is the slips plan's R9 and not
    this one's).
 
-8. **The node is re-read, and a failed re-read refuses (R13, R17, F26).** The workspace's scope
-   re-reads the published node when the copy it holds is older than 60 seconds, conditionally, so a
-   member added or an entry shared or unshared takes effect within a minute with no new revision. When
-   that re-read fails and the copy held is older than the 60 seconds, the scope refuses the call: it
-   never serves from a stale table, because a table that cannot be re-read is not one that still
-   admits what it said. A member's **new repository** still needs the workspace owner to declare it and
-   run `fugaro update`, for the invoke grant and for the account's list.
+8. **The node is re-read, and a failed re-read is a service fault (R13, R17, F26).** The workspace's
+   scope re-reads the published node when the copy it holds is older than 60 seconds, conditionally, so
+   a member added or an entry shared or unshared takes effect within a minute with no new revision.
+   When that re-read fails and the copy held is older than the 60 seconds, the scope refuses the call —
+   **as a `*ScopeFault` and never as a refusal of the caller** — because it never serves from a stale
+   table (a table that cannot be re-read is not one that still admits what it said) and because a 403
+   is what a run's gateway reads as a missing invoke grant (R16): the caller did nothing wrong and is
+   owed the truth that the service could not answer. A member's **new repository** still needs the
+   workspace owner to declare it and run `fugaro update`, for the invoke grant and for the account's
+   list.
 
 9. **The meter is declared and not yet wired, and it is the shape's one non-refusing zero.** `Meter()`
    is the scope's answer to "what is the workspace's cap for this call", and the reservation, the
@@ -176,6 +186,23 @@ constructor and gets either the workspace's resolver or a refusal, never a nil.
     the selector from here. A single-token installation is served exactly as it is now, which is why
     no existing test changes; and a workspace scope that answers nil refuses, instead of being handed
     the workspace bundle's legacy token by a fallback nobody chose.
+
+11. **The node admits the caller, and `Workspace` is the verifier and not the membership (R11, R13,
+    F26).** `WorkspaceScopeConfig.Workspace` is a `*Workspace`: the process's front door, built **once**
+    from `WorkspaceConfig.Members` at startup (`NewWorkspace`'s `readMembers`) and never refreshed.
+    **F26 is that object**, and R13 is its consequence — so the table it resolves against is not the
+    authority on who is served today. The re-read node is (rule 8), and it is what says which members
+    there are. **A caller the node no longer lists is refused from the service's next read of it
+    (R11), whatever the frozen table still resolves** — a refusal of the caller, because a verdict
+    about the caller is exactly what it is, and so the one audit line every post-verification refusal
+    writes. A resolver that took its members from `Workspace` instead would keep a removed member
+    served — and drawing on the workspace's pool — until a new revision, which is the fence R11 names
+    and the one this shape would otherwise hand WS2 open. What the frozen table is **for** is what only
+    the verifier holds: which member a job account's identity belongs to, that member's own outcome
+    reader, and the audience the run's token was minted for. WS2 holds both halves with the two tests
+    it already owes — `TestWorkspaceScopeRereadsItsNode` (a member removed is refused at the next read)
+    and `TestAFailedRereadRefuses` (the fault, and not a caller refusal) — and WS4 is what publishes
+    the node they read.
 
 ## What this contract cannot promise
 
@@ -210,8 +237,11 @@ R1 asked for rather than a hole in this contract.
 This contract declares the **questions** — `Serves`, `AcceptsSlip`, `Covers`, and the readers that
 refuse — and not the sentences. The typed refusal of an unserved route is written where the gate is, in
 `ServeHTTP` (WS1, which edits `server.go`), and the workspace's tests for it are WS2's
-(`TestWorkspaceModeRefusesEveryOtherRoute`). Nothing in `scope.go` refuses anything itself: the stub's
-refusals are the stub's, and I1 deletes them.
+(`TestWorkspaceModeRefusesEveryOtherRoute`). The one sentence it does fix is the fault's, because it is
+the answer that has to be told apart from a refusal of the caller: `StatusUnavailable` with
+`ErrorStateUnavailable`, answered by the gate and never by a route (rule 8, and `ScopeFault`'s own
+comment). Nothing in `scope.go` refuses anything itself: the stub's refusals are the stub's, and I1
+deletes them.
 
 ## What each side may rely on
 
@@ -223,12 +253,18 @@ refusals are the stub's, and I1 deletes them.
   also **moves the one read of the auth record to the scope**: `cascade.go`'s
   `s.cfg.State.RepoAuth(ctx, id.Slug)` becomes a read through `Scope.RepoAuth()`, while `Config.State`
   stays the wide `creds.Store` it is today, so the installation's own store goes on answering the state
-  and the record and no route reads the record through a state handle (rule 2). It
-  may not read the scope's readers before the resolver has answered a scope, and it may not reach a
-  `Config` field a route is supposed to take from the scope.
+  and the record and no route reads the record through a state handle (rule 2). It **answers the
+  three things `Resolve` can say**, too: the gate refuses a route whose `Serves` is false, answers a
+  resolver error as the caller refusal it is today, and answers a `*ScopeFault` as the **service's own
+  failure** — `StatusUnavailable` with `ErrorStateUnavailable`, the caller's one audit line written
+  where the fault carries a `Caller` and no line where it carries none. Neither of WS1's two named
+  tests covers the third, so this sentence and the fault's own type are what hold it. It may not read
+  the scope's readers before the resolver has answered a scope, and it may not reach a `Config` field a
+  route is supposed to take from the scope.
 - **The workspace's scope (WS2)** may rely on: the `MemberCall` `Workspace.Verify` produced as the one
   thing that names the member, its database and its verified slug; C3's node as what the offering and
-  the forge coverage are read from, with `WorkspaceShared`'s signature as WS15 changes it; and the
+  the forge coverage are read from — **and as what admits a caller, `Workspace`'s frozen member table
+  being the verifier alone (rule 11)** — with `WorkspaceShared`'s signature as WS15 changes it; and the
   constructor's signature as written here, which it supplies the body of by assigning
   `NewWorkspaceScopeResolver`. It answers `RepoAuth()` from the MEMBER's database and never from the
   state store (rule 2), and it answers its meter — never nil — for a workspace whose pool has a cap
@@ -244,8 +280,11 @@ refusals are the stub's, and I1 deletes them.
 
 ## What this contract does not decide
 
-- **How a route is refused** — the status, the error type and the sentence. That is WS1's, and WS2's
-  tests read it through the server rather than through this shape.
+- **How a route is refused** — the status, the error type and the sentence — with the two exceptions
+  this contract does fix, because they are the difference between two answers a run reads differently:
+  an unserved route is the gate's own refusal, and a `*ScopeFault` is the service's own failure
+  (`StatusUnavailable` with `ErrorStateUnavailable`) and never a refusal of the caller. Everything else
+  is WS1's, and WS2's tests read it through the server rather than through this shape.
 - **Whose stop switches a workspace-mode call honours** — the member's own operator's, the
   workspace's, or both read together. Nothing in R1 to R19 picks one, and `workspace_cap.go`'s
   comment already names the workspace's own switch as a refusal the workspace's service answers on

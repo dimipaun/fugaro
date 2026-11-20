@@ -268,14 +268,82 @@ type ScopeResolver interface {
 	// resolver decides it, so no route can reach a reader it was not admitted
 	// to.
 	//
-	// An error is a REFUSAL OF THE CALLER — the verifier's own, which names the
-	// field that failed and never its value — and ServeHTTP answers it exactly
-	// as it answers the verification it makes itself today. A route the
-	// deployment does not serve is NOT an error: Resolve answers a scope whose
-	// Serves is false, so that a route can be told apart from a caller, and so
-	// that the one gate that refuses an unserved route stays in one place.
+	// It answers one of three things, and the three are not interchangeable:
+	//
+	//   - the scope the call is served under. A route the deployment does not
+	//     serve is NOT an error: the scope's Serves is false, so that a route
+	//     can be told apart from a caller, and so that the one gate that
+	//     refuses an unserved route stays in one place;
+	//   - a REFUSAL OF THE CALLER — the verifier's own, which names the field
+	//     that failed and never its value — which ServeHTTP answers exactly as
+	//     it answers the verification it makes itself today;
+	//   - a *ScopeFault, where the SCOPE could not be built for a reason that
+	//     is not the caller's at all. It is a channel of its own because the
+	//     two answers are read differently by the run that gets them and by the
+	//     operator who reads the line (the type's own comment says how), and
+	//     because a fault answered as a refusal of the caller is a verdict
+	//     about the caller that was never made.
 	Resolve(ctx context.Context, r *http.Request) (Scope, error)
 }
+
+// ScopeFault is a resolver's failure to build a scope for a reason that is NOT
+// the caller's: the workspace's published node could not be re-read (R17), a
+// member's database could not be reached, a table could not be decoded.
+//
+// **It is a channel of its own, and a caller refusal is not it.** The two
+// answers differ for the run that reads them and for the operator who reads the
+// line. A refusal of the caller is StatusUnverified — a 403 — and a run's
+// gateway reads a platform 403 as a missing invoke grant and halts the run on
+// it (R16): the halt would name a grant when what happened is a node that could
+// not be read. A fault is answered as the service's OWN failure instead:
+// StatusUnavailable with ErrorStateUnavailable, the refusal refuseIdentity's
+// default arm already gives a state that could not be read and refuseUnavailable
+// writes for the proxy — a refusal the run halts on rather than a fallback
+// (D143). It says the service could not answer, which is what happened.
+//
+// **The audit rule is not suspended for it, and Caller is what keeps it.** Once
+// the caller's identity is verified every refusal writes exactly one line, and
+// what carries none is the refusals answered before there is a verified
+// identity to record (audit.go, SECURITY.md). A resolver that had verified a
+// caller when its fault happened puts that caller here, and WS1 writes that one
+// line — the run, the repository, the job and ErrorStateUnavailable — while a
+// resolver that had verified none leaves this nil and the call is answered with
+// no line, exactly as today's pre-identity refusals are. The third reading is
+// the one this type exists to prevent: a fault written as a caller refusal
+// whose line says the run identity failed to verify — a verification that did
+// not happen.
+type ScopeFault struct {
+	// What names the step that failed, for the operator — "the workspace's
+	// node", a reader's own name. A field name and never a value.
+	What string
+	// Err is the cause, the reader's own error. The refusal's message carries
+	// it, as refuseIdentity's default arm does today, and a reader's error is
+	// held by its own package never to name a credential, a token or a value of
+	// any table.
+	Err error
+	// Caller is the identity the resolver had verified when the fault happened,
+	// and nil where it had verified none — which is the whole of the difference
+	// between a line and no line (see above).
+	Caller *Identity
+}
+
+func (e *ScopeFault) Error() string {
+	msg := "credsvc: the scope could not be built"
+	if e.What != "" {
+		msg += ": " + e.What
+	}
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
+}
+
+// Unwrap lets WS1's log name the reader's own error beside the fault.
+func (e *ScopeFault) Unwrap() error { return e.Err }
+
+// The channel is an error whatever else changes about it: WS1 branches on it
+// with errors.As, as it branches on RunEnded today.
+var _ error = (*ScopeFault)(nil)
 
 // OfferingReader answers the credentials one call may be served from: the pool
 // the cascade walks, before any credential is chosen.
@@ -364,12 +432,18 @@ type ForgeReader interface {
 // It is the one thing the workspace's resolver reads that is not a database of
 // a member's: the node is the workspace's own, published by the workspace
 // owner's `fugaro update`, and it is what says which members there are and what
-// the pool offers. The scope re-reads it when the copy it holds is older than
-// 60 seconds, conditionally, so a member added or an entry shared or unshared
-// takes effect within a minute with no new revision (R13) — and a re-read that
-// FAILS refuses the call rather than serving from the stale copy, because a
-// table that cannot be re-read is not a table that still admits what it said
-// (R17).
+// the pool offers. **It is therefore what ADMITS a caller, and the frozen
+// *Workspace the resolver is built beside is not** (WorkspaceScopeConfig's own
+// comment): the workspace's process serves the table it read at startup and no
+// other, so a member removed from the node is refused from the next read of it
+// (R11) while the table still resolves the identity. The scope re-reads it when
+// the copy it holds is older than 60 seconds, conditionally, so a member added
+// or an entry shared or unshared takes effect within a minute with no new
+// revision (R13) — and a re-read that FAILS refuses the call rather than serving
+// from the stale copy, because a table that cannot be re-read is not a table
+// that still admits what it said (R17). That refusal is a *ScopeFault and not a
+// refusal of the caller: the caller did nothing wrong and is owed the truth
+// that the service could not answer it (R16, ScopeFault's own comment).
 type WorkspaceNodeReader interface {
 	// WorkspaceNode answers the node, false where none is published, and an
 	// error where the node could not be read or decoded. Absent is not an
@@ -390,6 +464,20 @@ type WorkspaceScopeConfig struct {
 	// member a job account belongs to, and Verify resolves the run identity
 	// beside it and answers the MemberCall the routes that act for a member
 	// take. It is the same value the process serves with.
+	//
+	// **It is the verifier and not the membership, and the difference is a
+	// fence.** A *Workspace is built once from WorkspaceConfig.Members
+	// (NewWorkspace's readMembers) and has no refresh of its own, so the table
+	// it resolves against still holds a member the workspace owner has since
+	// removed — F26 is exactly that, and R13 is its consequence. Who the scope
+	// ADMITS is therefore the node's and only the node's: a caller the
+	// re-read node no longer lists is refused from the service's next read of
+	// it (R11), whatever the frozen table still resolves, and a resolver that
+	// took its members from here instead would keep a removed member served —
+	// and drawing on the workspace's pool — until a new revision. What this
+	// field is for is what only the verifier holds: which member a job
+	// account's identity belongs to, that member's own outcome reader, and the
+	// audience the run's token was minted for.
 	Workspace *Workspace
 	// Node is the workspace's own published credentials node, re-read as
 	// WorkspaceNodeReader describes.
