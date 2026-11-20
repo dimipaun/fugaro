@@ -387,21 +387,44 @@ p.live-note {
 }
 
 /* The burn window: one tick per sample, the tone saying whether the sample is
- * plottable, and the rate in each bar's `title`. */
+ * plottable, and the rate in each bar's `title`.
+ *
+ * **The line is one fixed-size box** (D2901, the owner's report of 2026-11-18):
+ * its width and its height are the stylesheet's, it clips what it cannot hold,
+ * and its ticks are capped -- so a window of a thousand samples is the same box
+ * as a window of three. It packs to its **end** because the axis is time: the
+ * newest sample is the right edge, which is what a clip must therefore keep, and
+ * the older ticks it drops are the ones nobody is looking at.
+ *
+ * **The width is stated and not measured, and a tick has a floor.** A box with no
+ * width of its own is sized to its content, and a tick with no text has none: the
+ * line resolved to its gaps alone -- a pixel wider per sample, every tick 0 px
+ * and neither line drawing anything at all. Eight rows is a strip and not a pane
+ * (its row carries the cap bar and the hour line too), so a dense window clips to
+ * its newest ticks; the floor is what makes those ticks a comb of hairlines
+ * rather than the same nothing at a narrower pitch.
+ *
+ * **No text and no `live-num` on a tick.** Both would give every bar a minimum
+ * width of its own -- the six-character floor of the number hook most of all --
+ * and a line whose width follows its sample count is the row of blue squares the
+ * report was about (`spark()`, `live.ts`). The bar is geometry: the share in
+ * `data-height`, the state in `data-state`, the rate in `title`. */
 ol.live-burn {
   display: flex;
   align-items: flex-end;
+  justify-content: flex-end;
   gap: 1px;
+  width: calc(8 * var(--row-height));
   height: var(--row-height);
+  overflow: hidden;
 }
 
 li.live-burn-bar {
   flex: 1 1 0;
+  min-width: 1px;
   max-width: 12px;
   height: 100%;
   overflow: hidden;
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
   background: var(--accent);
 }
 

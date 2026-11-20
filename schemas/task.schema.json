@@ -329,6 +329,70 @@
         "l2": { "$ref": "#/$defs/level" },
         "l3": { "$ref": "#/$defs/level" }
       }
+    },
+    "review_spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source"],
+      "description": "The spec a launched review is checked against (task.Spec.ReviewSpec, docs/review-against-task R2): the task the pull request was written for, the follow-up's own text beside it, and the plan task whose section of its plan the reviewer is also pointed at. The launcher writes it for `fugaro review` and for `fugaro run --recipe review-only`, which resolve it through one shared resolver (D2934), and the review job's runner reads it and reads no other run; an in-run review carries no block, since its runner holds the run's own task already. It is DATA and never an instruction (R3): the reviewer compares the diff against it, and the runner quotes it redacted, cleaned and nonce-fenced under a sentence that says so. It is never the pull request body, which whoever can edit the pull request can rewrite (spec §2), and never a source the review job fetches itself: the launcher hands the bytes in (F3). Absent for every launch that is not a launched review, which is every spec written before this field, so such a spec is byte-identical to the previous release's. The rules here are task.ReviewSpecProblem's, applied by the launcher on write and by task.Parse on read: a source from the closed vocabulary, a run source naming the root run's ID, a file source carrying no run id, and a none source with a reason and without text. The trim task.Validate applies to the reason is not expressible here, so a reason of nothing but whitespace passes this document and is refused by the decoder.",
+      "properties": {
+        "source": {
+          "enum": ["run", "file", "none"],
+          "description": "Where the spec came from (task.ReviewSpecSource): `run` is a pull request a Fugaro run produced, whose spec is the root run's stored task the launcher read out of the runs bucket; `file` is a spec a person handed in with `fugaro review --spec FILE`; `none` is no spec at all, and `reason` says why. Required whenever the block is present, which is what makes a review_spec that names no source a document neither reader accepts."
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "Why there is no spec, and it belongs to `source: none` alone — the rules in the `allOf` below require it there (task.ReviewSpecProblem). The values a launcher writes are `--code-only`, `no run found`, `pick of different tasks` and `own-step recipe` (R2, F35). The pattern is the rule the paths entries carry: at least one non-whitespace character, so a reason of nothing but spaces is no reason."
+        },
+        "run": {
+          "type": "string",
+          "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+          "description": "The root run's ID, present when `source` is `run` and refused beside `file`: it names the run whose stored task `text` holds, so a reader can say which record the review was judged against (R16). The pattern is run_id's own form (task.ValidRunID). It is the launcher's claim and not a proof — an earlier run of the same repository can rewrite that record — which is the residual the owner accepted (O3)."
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 16384,
+          "description": "The spec itself: the root task's text, or the text of a `--spec FILE`. Bounded by task.MaxReviewSpecBytes (R4's 16 KiB), and refused beside `source: none` by the `allOf` below. maxLength counts characters while the decoder's cap counts bytes, so this schema is the looser of the two for text outside ASCII, exactly as the level focus below records. The launcher clips a longer root task at a line with a note naming what was dropped, as clipBaseInstructions does, so a spec it writes never exceeds what the decoder accepts; a `--spec FILE` over the cap is refused at launch with its size."
+        },
+        "followup": {
+          "type": "string",
+          "maxLength": 16384,
+          "description": "The latest follow-up run's own text, added beside `text` so a pull request a follow-up wrote is judged against what it was for and not only against the fix instructions (spec §2, R1). Absent when the pull request has no follow-up, and bounded by task.MaxReviewSpecBytes like `text`."
+        },
+        "plan_task": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+$",
+          "maxLength": 128,
+          "description": "The plan task copied off the root task (task.Spec.PlanTask, D2932): when it is set, the reviewer is also pointed at that task's section of its implementation plan. It is a copy and not a second claim — nothing joins it into a path — and its shape here is task.PlanTaskProblem's, the same rule the top-level `plan_task` above carries, applied by task.Parse on read. Absent when the root task named no plan task."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "source": { "const": "run" } }, "required": ["source"] },
+          "then": { "required": ["run"] }
+        },
+        {
+          "if": { "properties": { "source": { "const": "file" } }, "required": ["source"] },
+          "then": { "not": { "allOf": [{ "required": ["run"] }, { "properties": { "run": { "minLength": 1 } } }] } }
+        },
+        {
+          "if": { "properties": { "source": { "const": "none" } }, "required": ["source"] },
+          "then": {
+            "required": ["reason"],
+            "not": { "allOf": [{ "required": ["text"] }, { "properties": { "text": { "minLength": 1 } } }] }
+          }
+        }
+      ]
+    },
+    "from_findings": {
+      "type": "boolean",
+      "description": "True marks a follow-up launched from a review's own findings (`fugaro run --pr N --review-run R`, task.Spec.FromFindings, R2/F30): such a run's task text is the rendered findings followed by the person's TEXT, and only the person's part is a brief — the rest is a reviewer's words, and quoting them as the spec would make a reviewer the author of the brief the next review judges against (F25). Absent — and so false — for every other launch, which is every spec written before this field, so such a spec is byte-identical to the previous release's."
+    },
+    "own_text": {
+      "type": "string",
+      "maxLength": 16384,
+      "description": "The person's own words on a findings follow-up (task.Spec.OwnText, R2): the TEXT they typed, kept apart from the findings the task text opens with, so a review of that pull request quotes what the person asked for and leaves the reviewer's words out (R1). Absent for every other launch, which is every spec written before this field, so such a spec is byte-identical to the previous release's. Bounded by task.MaxReviewSpecBytes, and the `dependentRequired` entry below refuses it beside no `from_findings`: a launch that did not mark the findings has no person's text to keep apart from them. That entry fires on the key being present while the decoder fires on it being non-empty, so a hand-written `own_text: \"\"` is refused here and accepted there; no launcher writes one, its own field being omitempty."
     }
   },
   "$defs": {
@@ -362,7 +426,8 @@
     "pr": ["branch", "previous_run"],
     "previous_run": ["branch", "pr"],
     "owner_ruled": ["branch", "pr", "previous_run"],
-    "mutate": ["review_prs"]
+    "mutate": ["review_prs"],
+    "own_text": ["from_findings"]
   },
   "allOf": [
     { "not": { "allOf": [{ "required": ["review_prs"] }, { "anyOf": [{ "required": ["branch"] }, { "required": ["pr"] }, { "required": ["previous_run"] }] }] } },

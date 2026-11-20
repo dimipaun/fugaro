@@ -305,7 +305,7 @@ func TestImagesSkillEntryBuildAsksForNoSecret(t *testing.T) {
 	// repository's own branch carries the source it was read at with it
 	// (internal/catalog/fetch.go, c76a427d).
 	fetch := readRepoFile(t, "internal/catalog/fetch.go")
-	if !strings.Contains(fetch, "if asksForASecret(line.text) {") || !strings.Contains(fetch, "SecretRefusal(e.Name, line.line)") {
+	if !strings.Contains(fetch, "if asksForASecret(line.text) {") || !strings.Contains(fetch, "err := SecretRefusal(e.Name, line.line)") {
 		t.Error("refuseCredentialIn no longer refuses a definition that asks for a secret of its own by name and line, which is the refusal the skill states")
 	}
 	// And the refusal is not a text guard standing in front of a build that

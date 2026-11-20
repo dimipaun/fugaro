@@ -65,6 +65,22 @@ trusting any finding above it.
   prohibitions: **a workspace never widens a member** (no member's policy, cap, allow-list or
   launcher list can be changed by anything a workspace holds), and **no agent handles a
   credential** (a shared credential is proxied by the workspace's service and never disclosed).
+  **The first of the two is no longer unconditional**, and this folder's own §9 records it as a
+  prohibition rather than a law of nature: the addendum at
+  [../workspace-projects-users/spec.md](../workspace-projects-users/spec.md) gives a workspace IAM
+  authority over its member projects, and its
+  [reconciliation](../workspace-projects-users/reconciliation.md) carries the owner's **D2800**
+  answer of 2026-11-18 superseding three of §9's six rules — `never widens a member`,
+  `never writes a member's database` and `never becomes a second permission model` — **for people
+  and roles only, on the member owner's own consent at `fugaro workspace project link`** (D2819),
+  with `fugaro update` linking no member and an unlinked member keeping `fugaro user …` whole — the
+  first two of the three being this folder's own record rather than the addendum's (**F1**'s `never
+  widens a member` and **D1299**'s amended `never writes a member's database`), and all three carried
+  at their real size by the **WU0 acceptance**, the rewritten threat model and the independent
+  security review it is gated on. The
+  other three rules of §9 stand, the credential rule above stands, and what the authority puts in
+  reach of each actor is stated at its real size in
+  [../workspace-projects-users/threat-model.md](../workspace-projects-users/threat-model.md).
 
 ## What it is
 

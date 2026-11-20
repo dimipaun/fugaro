@@ -1019,7 +1019,14 @@ var initFlagCases = map[string]string{
 	// refused by name on a converge, whose write is the layer stage's — the
 	// confirmation it reaches is confirmStageWrite's, which the property
 	// already covers.
-	"admin": "value", "alert-email": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
+	// answers-file (ST1 of docs/console-improvements/implementation-plan.md;
+	// D2904) is the third: the wizard's five questions as one document, whose
+	// answers are written onto those five flags' own fields, so it reaches the
+	// confirmations they reach and none of its own. The steps that are a
+	// person's — the project's creation, the billing link, the Firestore
+	// location, every secret value — have no member in the document, which is
+	// what a member for one is refused by name for.
+	"admin": "value", "alert-email": "value", "answers-file": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",
 	"display-name": "value", "expect-digest": "value", "gcp-project": "value", "github-app-id": "value",
 	"image-source": "value", "name": "value", "no-log-isolation": "value",

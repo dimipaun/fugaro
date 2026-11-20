@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/run-message.schema.json",
+  "title": "Fugaro run message (tokens/<repo-slug>/<run-id>/messages/NNNN.msg.json)",
+  "description": "One message a person sent to a run that is going (docs/run-messages/spec.md, reconciliation F12, F13, F25). It lives under tokens/, the one prefix a job account reads and cannot write (D2941), and the object's name carries the number the run reads it by: the run polls 1..20 and treats a missing number as 'none yet', so the name is the identity. A reader outside the binary — the console, the mobile app, `diagnose` — reads this document; adding a property is fine, removing or retyping one bumps `version`. The store refuses a document this schema refuses, and refuses a few things no JSON Schema can see (a text over the cap in bytes rather than code points, a number in the object's name that disagrees with `seq`), so this is the aid a person checks a hand-written object against and internal/runmsg is the authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "seq", "sent_at", "text"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "The message format the sender wrote, which is the highest one it knows. A runner refuses a version above the one it reads rather than guessing at the shape (F25)."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20,
+      "description": "The number in the object's own name, which must agree with it: a run reads at most 20 messages and never reads a number past that (F12)."
+    },
+    "sent_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the object was written, stamped by the store when the caller leaves it zero."
+    },
+    "sent_by": {
+      "type": "string",
+      "maxLength": 256,
+      "description": "The sender as it states itself: display only and never a decision, because no per-object writer metadata exists to check a name against and every launcher can write every run's objects under tokens/ (F1, D2940)."
+    },
+    "flags": {
+      "type": "array",
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": { "enum": ["now", "wrap_up"] },
+      "description": "What the sender asked for beyond the next coder stage: `now` is the agent's next quiet point inside the stage that is running (D2945), `wrap_up` is commit and stop (D2946). The set is closed and the run advertises the ones its runner honours (F25), so a sender never writes a flag the runner would read as ordinary text."
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "description": "The person's own words, bounded at 4 KiB (O1, F12). maxLength counts code points where the store's cap counts bytes, so the schema is the looser of the two and never refuses a text the store wrote; the runner redacts, cleans and fences the text before the agent sees it. No copy of it is in the run record, which a run can rewrite (F13)."
+    }
+  }
+}
