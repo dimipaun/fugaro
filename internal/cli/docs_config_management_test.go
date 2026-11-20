@@ -290,9 +290,20 @@ const (
 // scope key of `fugaro.yaml`, read from the base branch, and the `agent.` prefix
 // reaches it — the shape `agent.triage` beside it has — so the allowlist carries
 // one key more and the rows without a generic writer do not move.
+//
+// W3 of docs/config-ownership is the last mover, by two names and by none: the
+// repository's `workflows.*.needs` (R1) and `workflows.*.ab.reviewer_arm` (B1.4)
+// are rows whose owner column named the generic writer while no name in the
+// allowlist reached them, so a concrete spelling was refused by the path its own
+// row pointed at (F13), and naming the two is the whole of what makes a write
+// land on them. `mobile_allow` — the block a person declares a phone in (D231,
+// D2603) — is the third name and it moves no figure: the registry holds the
+// three `mobile_allow.*` leaf rows and no row for the block, so the block is
+// admitted by its own name and the row an entry write is about is built from its
+// leaves rather than counted here.
 const (
 	cfmRegistryRows   = 506
-	cfmAllowlistNamed = 118
+	cfmAllowlistNamed = 120
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

@@ -779,12 +779,15 @@ var settingsProbeItems = map[string]string{
 
 // settingsAddLands reports whether `--add` lands on key, in the layer the row
 // is set in. It asks the command rather than a second list, so what "a key that
-// takes a list" means is the documents' own loaders' answer.
+// takes a list" means is the documents' own loaders' answer. The row comes from
+// settingsWriteLookup — the write path's own resolution — rather than from
+// settings.Lookup: a wildcard row's concrete spelling (`workflows.web.needs`) is
+// the key a write lands on, and no registry row is keyed under it.
 func settingsAddLands(t *testing.T, key string) bool {
 	t.Helper()
-	row, ok := settings.Lookup(key)
+	row, _, ok := settingsWriteLookup(key)
 	if !ok {
-		t.Fatalf("%s is not a registry row", key)
+		t.Fatalf("%s is not a key the write resolves to a row", key)
 	}
 	layer := settingsDefaultLayer(row)
 	if layer == "" {
@@ -883,8 +886,16 @@ func TestSettingsAddHintListKeysAreTheKeysThatTakeAList(t *testing.T) {
 		t.Fatal("no row of the registry is one the write accepts: the probe checked nothing")
 	}
 	// The other direction: a name on the list the write refuses would be a key
-	// the loop above never reaches, so it is probed on its own.
+	// the loop above never reaches, so it is probed on its own. A wildcard entry
+	// is the one exception and is probed at its concrete spelling instead: the
+	// literal `*` is a map entry no write lands on — settingsAddLands would
+	// measure the map rule rather than the key — while the concrete spelling is
+	// the one a person types and the one the writer table's argv is built for
+	// (`workflows.web.needs`, W3).
 	for key := range settingsHintListKeys {
+		if strings.Contains(key, "*") {
+			key = writerProbeKey(key)
+		}
 		if !settingsAddLands(t, key) {
 			t.Errorf("%s: the hint's list names it, and --add does not land there", key)
 		}
@@ -2741,10 +2752,12 @@ func TestSettingsSetAddToAWideningListRowIsTyped(t *testing.T) {
 // verifier_accounts is (D231, D1165), so the widening classification is the
 // same one — asked of settingsTypedWrite directly, because the rows' own
 // spelling carries a `*` and no write lands on one: the literal `*` meets the
-// map rule, a concrete spelling meets the unknown-key answer, and W3's allowlist
-// is what reaches their concrete spellings. What the test pins is the half that
-// is true today and the half that has to hold the day it is not: the row's
-// TypedWhy is the sentence `--add` and a truthy `set` both carry.
+// map rule, and a concrete spelling is one no row answers for, so the write
+// lands on the block's own name instead (W3 admits `mobile_allow`, and
+// settingsEntryRow builds the row an entry write is about from these leaves).
+// What the test pins is the half that is true today and the half that has to
+// hold the day it is not: the row's TypedWhy is the sentence `--add` and a
+// truthy `set` both carry.
 func TestSettingsTypedAddCoversTheMobileAllowRows(t *testing.T) {
 	for _, key := range []string{"mobile_allow.*.uid", "mobile_allow.*.address", "mobile_allow.*.role"} {
 		row, ok := settings.Lookup(key)
@@ -2772,18 +2785,20 @@ func TestSettingsTypedAddCoversTheMobileAllowRows(t *testing.T) {
 
 	// Neither spelling is a write today, and each refusal is the one it should
 	// be: the literal `*` meets the map rule, and the concrete name is one the
-	// lookup does not resolve — the allowlist carries no `mobile_allow.` prefix
-	// and no wildcard row of it by name, so a concrete spelling has no row to
-	// land on and W3's task is what gives it one (D1162). It is the writer
-	// table that registers the concrete form, which is why all three are
-	// testdata/writer_gaps.golden's until then.
+	// lookup does not resolve — the allowlist names the block `mobile_allow`,
+	// not a `mobile_allow.` prefix and not a wildcard row of it (W3), so the
+	// spelling a person declares a phone with is the block itself (D1162). It is
+	// the writer table that would register a leaf's concrete form, which is why
+	// all three are testdata/writer_gaps.golden's: a write of
+	// `mobile_allow.operator.uid` would edit a mapping the file's own list
+	// reader refuses.
 	if _, err := settingsWriteRow("mobile_allow.*.uid"); err == nil {
 		t.Error("the literal mobile_allow.*.uid is writable, and a key with a `*` is a map entry the generic path never writes")
 	} else if !strings.Contains(err.Error(), "a key with a * is a map entry") {
 		t.Errorf("the literal spelling is refused with %v, want the map rule's own words", err)
 	}
 	if _, err := settingsWriteRow("mobile_allow.operator.uid"); err == nil {
-		t.Error("mobile_allow.operator.uid is writable, and the allowlist carries no row of the declared allowlist: W3's task is what registers one (D1162)")
+		t.Error("mobile_allow.operator.uid is writable, and the allowlist names the block the entries are declared in rather than a leaf of it (D1162)")
 	} else if !strings.Contains(err.Error(), "no setting has that name") {
 		t.Errorf("the concrete spelling is refused with %v, want the unknown-key answer the allowlist's silence gives", err)
 	}
@@ -2847,10 +2862,10 @@ func TestSettingsOrchestratorGuardrailsAreMeasuredAgainstTheDaemonBlock(t *testi
 // classified by the block it lands in and not by a row (D1165), so the two
 // blocks R1 hands the generic path — the orchestrator's decision-model map and
 // the declared mobile allowlist — carry the sentence the fence prints for an
-// entry added to them. The mobile block's writer is W3's (`settingsWriteRow`
-// refuses the bare block name today: the registry holds the three leaf rows and
-// no row for the block), and registering the widening before the writer is what
-// makes the guard hold the day the writer lands rather than a release later.
+// entry added to them. The mobile block's writer is the allowlist's block name
+// (W3), which is what makes the fence reachable at all: registering the widening
+// before the writer is what makes the guard hold from the day the writer lands
+// rather than a release later.
 func TestSettingsTypedWriteCoversTheEntryBlocksThatWiden(t *testing.T) {
 	for _, key := range []string{"orchestrator.decision_model_per_class", "mobile_allow"} {
 		block, ok := settingsEntryBlocks[key]
