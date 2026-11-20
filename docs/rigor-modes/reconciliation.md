@@ -1849,8 +1849,8 @@ tolerated and filed. Two things bound it. **First, the security-sensitive tier
 stays Critical**: D18's floors are outside every layer, so a credential path, an
 IAM path or `.github/workflows/` runs at Critical whatever the default says.
 **Second, a repository may pin itself back**: `rigor.default: critical` in that
-repository's `fugaro.yaml` restores today's behaviour exactly, and it is one line
-that a repository can merge on its own.
+repository's `fugaro.yaml` restores Critical's finding thresholds, and it is one
+line that a repository can merge on its own.
 
 **The migration note, stated where a reader will meet it** (the plan's T8.3, and
 the release note it writes): *the rigor modes change what "ready" means for a

@@ -30,7 +30,7 @@ merging alone.
   `rigor:` block starts tolerating what Pro tolerates — findings that used to fail
   a run may now be tolerated and filed. The **security-sensitive tier stays
   Critical** (the D18 floors, outside every layer), and a repository that wants
-  today's behaviour exactly pins it back with `rigor.default: critical`. Every
+  Critical's finding thresholds back pins them with `rigor.default: critical`. Every
   claim below that a slice leaves a run unchanged is therefore true of less than
   it says — the owner's answer of 2026-10-22 restated them all as **Critical's
   finding thresholds are unchanged; its prompts, its PR body's hand-back
@@ -1269,7 +1269,7 @@ from `Recipe` as the thing to watch for on an installation whose rules are older
    Pro tolerates. Every slice and every claim written on the assumption that an
    unconfigured repository does not change is scoped to **Critical mode**; the
    security-sensitive tier stays Critical (D18's floors), the one-line pin
-   `rigor.default: critical` restores today's behaviour exactly, and **Pro's
+   `rigor.default: critical` restores Critical's finding thresholds, and **Pro's
    threshold table is now the behaviour of every unconfigured repository**, which
    is why §7 gives it its own review question. T8.3's migration note is what tells
    those repositories about it.

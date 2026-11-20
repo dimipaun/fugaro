@@ -51,7 +51,8 @@ the modes decide readiness today — but `runner.Decide` reads a mode's blocking
 only where the repository opted in (`rigor.Config.Configured`: a `rigor:` block, or
 a project `defaults.rigor`), and a repository that configures nothing still blocks
 on every finding it did not fix. The loud migration note plus the one-line pin
-`rigor.default: critical` are what a repository uses to keep today's behaviour.
+`rigor.default: critical` are what a repository uses to keep its runs at
+Critical's finding thresholds.
 The security-sensitive tier is **not a mode floor in this tree**: T1.5's built-in
 sensitive-path floors are unbuilt, and what the runner guarantees a
 security-sensitive diff today is review level 3, forced on a matching path
