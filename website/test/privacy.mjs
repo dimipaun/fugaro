@@ -875,8 +875,9 @@ export function allowListedReachFailures(files) {
 
 /** Every production source that names `host`, or []. */
 export function reachFailures(files, host) {
-  // A host ends where a name does: `fugaro.device-key.` is the app's secure-store key prefix and
-  // only begins with the same letters, so a bare substring match refused it.
+  // A host ends where a name does: the app's secure-store key prefix begins with the host's own
+  // letters and goes on with a name character (`device-key.` is the second half of it), so a bare
+  // substring match refused the prefix as if it were the host.
   const named = new RegExp(`${host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9-])`)
   return files
     .filter((file) => named.test(file.text))
