@@ -445,7 +445,10 @@ One tension was found and settled: D3006 (an operator's update keeps the mounts)
   every job but those.
 
 - **O4.** D3007 read in full retires `agent.auth` as a repository's setting. This plan does only
-  the part that touches provider keys. Whether the rest becomes its own spec is the owner's.
+  the part that touches provider keys. **Answered by the owner on 2026-11-20** (D3026 of
+  [always a budget](../always-a-budget/reconciliation.md), in his own words: "The entire notion of
+  "key repository" or "oauth repository" is stupid and should die."): the rest is a spec of its
+  own, not written yet.
 - **O5.** Which models are Claude's is decided by pattern, so a provider's own alias for a Claude
   model would pass R3's gate. The exposure is cost (an uncached Claude call), not access.
 - **O6.** After this work only a project owner can set or rotate a provider key; an operator could
