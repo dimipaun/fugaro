@@ -2073,6 +2073,17 @@ own price table, and covers the runs that started today and recorded a
 result: a run still in flight has recorded none, so today's is partial, and
 a repository whose runs recorded no estimate is null, never 0.
 
+--stream, with --json, prints the caps listing as newline-delimited JSON instead
+of as one document: a line per repository, each carrying one element of the
+document's repos array unchanged under `row`, then the project's kill switch as
+a row of its own, then a line saying how many rows the feed carried (`end`). A
+consumer draws the caps table as its lines arrive rather than holding the whole
+document, and a feed with no end line is a read that was interrupted. A feed
+that stopped after its first line writes an `error` line with the sentence the
+command would have printed, and exits non-zero. --repo, --all and --compute mean
+here what they mean without it, so the feed carries the rows of the listing they
+ask for.
+
 Usage: `fugaro budget show`
 
 Flags:
@@ -2088,6 +2099,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
+| `--stream` | bool | `false` | no | with --json: one line per repository and per kill switch, then a line saying how many there were |
 
 Subcommands:
 
