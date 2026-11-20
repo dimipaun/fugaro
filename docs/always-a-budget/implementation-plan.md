@@ -12,7 +12,8 @@ the stop it brings accepted (D3023, not the recommendation); a database's own mo
 the policy node keeps its version (D3025, not the recommendation); no rule is written in terms of
 a repository's auth, and retiring that setting is a spec of its own (D3026, the owner's own
 answer); the budget database is written before the Firestore location's note (D3027); a managed
-project creates its database under the managed gate (D3028, not the recommendation). **AB6 is dropped** (F28); its number is not reused.
+project creates its database under the managed gate (D3028, not the recommendation); AB7 waits on a location-preference spec, so no database is
+created in a place the installation would not have chosen (D3029). **AB6 is dropped** (F28); its number is not reused.
 
 **It ships in one release** (R1). No CLI release, a hotfix included, is cut from `main` between the
 merge of AB7 and I1.
@@ -262,7 +263,8 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 - Command: `go test ./internal/cli/ -run 'UpdateCreatesTheDatabase|ADatabaseUnknownHere|AStateNamingAForeignProject|AnUpdateThatCannotCreate|AManagedProjectCreatesItsDatabase|TheBudgetDatabaseIsWrittenBefore|TheNewDatabaseStarts|ADeletedStateDoesNotLead|TheStagesBehindTheFlag|AKnownDatabaseSkips|WithNothingToAnswerTheStage|RefusalMatrix|CliReferenceNames' -count=1 && go test ./ee/clidoc/ -run CliReferenceIsCurrent -count=1 && go test -timeout 40m ./internal/cli/ -count=1`.
 - Red step: an update with no flag skips the stage with "no --firebase-project given".
 - Depends on: AB0 (kept, behaviour: its probe needs the fake project's permission test, and the
-  other update tests need the harness's database).
+  other update tests need the harness's database). **Not launched before the location-preference
+  spec's plan has merged the part that says where a new budget database is created (D3029).**
 - Commit: `update: the budget database is created on every installation (AB7, R2, F3)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -469,7 +471,7 @@ The decoupling pass is on (`planning.decoupling` is `true` for this repository).
 | Level | Tasks |
 | --- | --- |
 | 0 | C1, AB0, AB14 |
-| 1 | AB1a, AB5, AB7, AB8a, AB10 |
+| 1 | AB1a, AB5, AB7 (after the location-preference plan, D3029), AB8a, AB10 |
 | 2 | AB1b, AB4, AB8b, AB11 |
 | 3 | AB2, AB3, AB9 |
 | 4 | AB12, AB13, AB15 |
