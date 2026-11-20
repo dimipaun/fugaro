@@ -26,6 +26,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -67,7 +68,7 @@ func newBindingFixture(t *testing.T) *bindingFixture {
 func newBindingFixtureWith(t *testing.T, edit func(*fixture)) *bindingFixture {
 	t.Helper()
 	mints := &bundleMints{}
-	probe := &probeServer{status: http.StatusUnauthorized, body: `{"error":"Permission denied"}`}
+	probe := newProbeServer()
 	f := newFixtureWith(t, Production, func(f *fixture) {
 		mints.inner = f.recording
 		f.deps.Mints = mints
@@ -83,61 +84,150 @@ func newBindingFixtureWith(t *testing.T, edit func(*fixture)) *bindingFixture {
 	return &bindingFixture{fixture: f, probe: probe, mints: mints}
 }
 
-// probeServer is D2205's database in a case: what it answers, and every project
-// id it was asked about. It is installed into the package's own probe seam,
-// which is the seam a deployment fills with Firebase's host.
+// probeServer is D2205's database in a case: what each of the hosts a default
+// database can be at answers, and every host and project id it was asked about.
+// It is installed into the package's own probe seam, which is the seam a
+// deployment fills with Firebase's three hosts.
+//
+// One server stands in for all three, so `install` gives each host a path of its
+// own and what a read is answered with is what the host it went to was given: a
+// case about an installation in a region is exactly a case where the hosts
+// answer differently.
 type probeServer struct {
-	mu     sync.Mutex
-	asked  []string
-	status int
-	body   string
-	// refuses is a server that is not there at all, which is the third answer
-	// D2205 names: no answer binds unchecked.
-	refuses bool
+	mu      sync.Mutex
+	asked   []probeAsk
+	answers map[string]probeAnswer
 	// during is one step a case runs while the database is being read — the
 	// window a competing request has to get through, since the probe is where
 	// this service waits on another system. It runs once.
 	during func()
 
 	server *httptest.Server
-	closed bool
+}
+
+// probeAsk is one read the service made: the host it went to and the project id
+// it asked about.
+type probeAsk struct {
+	host    string
+	project string
+}
+
+// probeAnswer is what one host answers. refuses is a host that is not there at
+// all, which is the third answer D2205 names: no answer binds unchecked.
+type probeAnswer struct {
+	status  int
+	body    string
+	refuses bool
+}
+
+// The two answers most cases want, named: a database whose rules are locked,
+// which is every installation's, and a host holding no database at its address.
+var (
+	probeLocked  = probeAnswer{status: http.StatusUnauthorized, body: `{"error":"Permission denied"}`}
+	probeMissing = probeAnswer{status: http.StatusNotFound, body: `{"error":"404 Not Found. No such database."}`}
+)
+
+// newProbeServer is every host answering as a locked database: a case that is
+// not about D2205's read at all binds without shaping the probe.
+func newProbeServer() *probeServer {
+	answers := make(map[string]probeAnswer, len(productionDatabases))
+	for _, host := range productionDatabases {
+		answers[host.location] = probeLocked
+	}
+	return &probeServer{answers: answers}
+}
+
+// all sets what every host answers, which is how a case that is about D2205's
+// read as a whole shapes it: the three hosts are one fake.
+func (p *probeServer) all(answer probeAnswer) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for host := range p.answers {
+		p.answers[host] = answer
+	}
+}
+
+// at sets what one host answers and leaves the others alone: an installation
+// whose database is in a region is what a case needs that for.
+func (p *probeServer) at(host string, answer probeAnswer) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.answers[host] = answer
 }
 
 func (p *probeServer) install(t *testing.T) {
 	t.Helper()
 	p.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, project := probeAskOf(r.URL.Path)
 		p.mu.Lock()
-		p.asked = append(p.asked, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/"), "/.json"))
-		status, body, refuses, during := p.status, p.body, p.refuses, p.during
+		p.asked = append(p.asked, probeAsk{host: host, project: project})
+		answer, known := p.answers[host]
+		during := p.during
 		p.during = nil
 		p.mu.Unlock()
+		if !known {
+			// A read at a path this case did not install a host at: the answer
+			// is the failure of a host, which is what this is from here.
+			answer = probeAnswer{status: http.StatusInternalServerError, body: "this case's database was asked at " + host + ", which is not one of its hosts"}
+		}
 		if during != nil {
 			during()
 		}
-		if refuses {
+		if answer.refuses {
 			// A connection closed with no answer at all: what a project whose
 			// database cannot be reached looks like from here.
 			panic(http.ErrAbortHandler)
 		}
-		w.WriteHeader(status)
-		_, _ = io.WriteString(w, body)
+		w.WriteHeader(answer.status)
+		_, _ = io.WriteString(w, answer.body)
 	}))
-	previous := probeInstallation
-	probeInstallation = projectInstallation{
-		database: p.server.URL + "/%s",
-		client:   p.server.Client(),
+	databases := make([]databaseHost, 0, len(productionDatabases))
+	for _, host := range productionDatabases {
+		databases = append(databases, databaseHost{
+			location: host.location,
+			address:  p.server.URL + "/" + host.location + "/%s",
+		})
 	}
+	previous := probeInstallation
+	probeInstallation = projectInstallation{databases: databases, client: p.server.Client()}
 	t.Cleanup(func() {
 		probeInstallation = previous
 		p.server.Close()
 	})
 }
 
+// probeAskOf reads the host and the project id out of one request's path, which
+// the case's server is installed as: `<host>/<project>/.json`.
+func probeAskOf(path string) (host, project string) {
+	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/.json"), "/")
+	if len(parts) != 2 {
+		return "", ""
+	}
+	return parts[0], parts[1]
+}
+
 // saw is every project id the case's database was asked about.
 func (p *probeServer) saw() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]string(nil), p.asked...)
+	ids := make([]string, 0, len(p.asked))
+	for _, ask := range p.asked {
+		ids = append(ids, ask.project)
+	}
+	return ids
+}
+
+// sawHosts is every host the case's database was asked at, in the order the
+// reads were made: which host answered an installation, and so which hosts were
+// read at all, is what a case about a regional installation is about.
+func (p *probeServer) sawHosts() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	hosts := make([]string, 0, len(p.asked))
+	for _, ask := range p.asked {
+		hosts = append(hosts, ask.host)
+	}
+	return hosts
 }
 
 // bundleMints is the package's recording minter with the answers kept whole: the
@@ -739,8 +829,7 @@ func TestRevokedKeysSecretFetchesNothing(t *testing.T) {
 // service may guess at.
 func TestBindingNeedsAFugaroInstallation(t *testing.T) {
 	f := newBindingFixture(t)
-	f.probe.status = http.StatusNotFound
-	f.probe.body = `{"error":"404 Not Found. No such database."}`
+	f.probe.all(probeMissing)
 	_, workspace, held := f.licensingWorkspace(t)
 
 	rec := f.bind(t, held.ID, exampleProject)
@@ -774,10 +863,14 @@ func TestUnreachableProbeNeverBinds(t *testing.T) {
 		name  string
 		shape func(f *bindingFixture)
 	}{
-		{name: "no answer at all", shape: func(f *bindingFixture) { f.probe.refuses = true }},
+		{name: "no answer at all", shape: func(f *bindingFixture) {
+			f.probe.all(probeAnswer{refuses: true})
+		}},
 		{name: "a database that failed", shape: func(f *bindingFixture) {
-			f.probe.status = http.StatusInternalServerError
-			f.probe.body = "the database is having a bad day"
+			f.probe.all(probeAnswer{
+				status: http.StatusInternalServerError,
+				body:   "the database is having a bad day",
+			})
 		}},
 	} {
 		t.Run(answer.name, func(t *testing.T) {
@@ -857,22 +950,147 @@ func TestProjectIDShapeIsCheckedBeforeTheProbe(t *testing.T) {
 // TestTheProbeReadsTheProjectsOwnDatabase: D2205's read is of the project's own
 // Realtime Database, which every installation creates
 // (`deploy/terraform/gcp/modules/firebase/firebase.tf`), unauthenticated, at its
-// root. The address is pinned here because the answers it gives are not: what a
-// real database answers a stranger is UNVERIFIED (the reconciliation's open
-// list), and the address is the half this repository can hold.
+// root — at each of the three hosts a default database can answer at, the legacy
+// one first. The addresses are pinned here because the answers they give are
+// not: what a real database answers a stranger is UNVERIFIED (the
+// reconciliation's open list), and the addresses are the half this repository
+// can hold.
 func TestTheProbeReadsTheProjectsOwnDatabase(t *testing.T) {
-	probe := projectInstallation{database: productionDatabase}
-	address := probe.url(exampleProject)
-	want := "https://" + exampleProject + "-default-rtdb.firebaseio.com/.json"
-	if address != want {
-		t.Errorf("the probe reads %s, want %s", address, want)
+	want := []string{
+		"https://" + exampleProject + "-default-rtdb.firebaseio.com/.json",
+		"https://" + exampleProject + "-default-rtdb.europe-west1.firebasedatabase.app/.json",
+		"https://" + exampleProject + "-default-rtdb.asia-southeast1.firebasedatabase.app/.json",
 	}
-	// The project id is put into the host BEFORE the database's own suffix: an id
-	// built from the name of another host is refused by the shape check, and this
-	// is what the shape is protecting.
-	if !strings.HasPrefix(strings.TrimPrefix(address, "https://"), exampleProject+"-") {
-		t.Errorf("the address %s does not begin with the project id it was asked about", address)
+	var read []string
+	for _, host := range productionDatabases {
+		address := host.url(exampleProject)
+		read = append(read, address)
+		// The project id is put into the host BEFORE the database's own suffix: an
+		// id built from the name of another host is refused by the shape check, and
+		// this is what the shape is protecting.
+		if !strings.HasPrefix(strings.TrimPrefix(address, "https://"), exampleProject+"-") {
+			t.Errorf("the address %s does not begin with the project id it was asked about", address)
+		}
 	}
+	if !slices.Equal(read, want) {
+		t.Errorf("the probe reads %v, want %v", read, want)
+	}
+	// The legacy host is the first read of the three, which is what `ask` rests
+	// on: the ordinary project — every installation made before a region could be
+	// chosen — is answered in one request.
+	if len(read) == 0 || !strings.HasSuffix(read[0], ".firebaseio.com/.json") {
+		t.Errorf("the first host the probe reads is %v, want the legacy firebaseio.com one", read)
+	}
+}
+
+// TestAnInstallationInEuropeIsFound: an installation whose database is in
+// europe-west1 answers at a host of its own, and D2205's read finds it there
+// (F13, D2205). The legacy host is read first and has no database at its
+// address, which is what every host but one says about an installation that is
+// not its own; the binding then proceeds on the refusal the European host gives,
+// which is the same refusal-is-an-installation rule the legacy host's answer is
+// read by.
+func TestAnInstallationInEuropeIsFound(t *testing.T) {
+	f := newBindingFixture(t)
+	f.probe.all(probeMissing)
+	f.probe.at(europeDatabase, probeLocked)
+	_, workspace, held := f.licensingWorkspace(t)
+
+	rec := f.bind(t, held.ID, exampleProject)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("binding an installation whose database is in europe-west1 answered %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if bound, _ := f.entitlement(held.ID); bound.BoundAt == nil {
+		t.Errorf("the entitlement records no binding, and the installation was found and the key minted")
+	}
+	if licensed, _ := f.workspace(workspace.ID); licensed.ProjectID == nil || *licensed.ProjectID != exampleProject {
+		t.Errorf("the workspace is %+v, want it bound to %s", licensed, exampleProject)
+	}
+	if len(f.mints.answers) != 1 {
+		t.Errorf("the binding minted %d keys, want one", len(f.mints.answers))
+	}
+	// Which hosts were read: the legacy one, which answered that it holds no
+	// database, and then the European one, which answered as an installation. The
+	// read stops at the first host that answers as one, so the asian host is
+	// never asked — a binding is not three reads when one of them has answered.
+	if saw := f.probe.sawHosts(); !slices.Equal(saw, []string{usCentralDatabase, europeDatabase}) {
+		t.Errorf("the binding read %v, want the legacy host and then europe-west1", saw)
+	}
+}
+
+// TestNoDatabaseAnywhereIsNoInstallation: a project with no database at any of
+// the three hosts has no installation, and the person is told to set one up
+// (D2205). Every host answers that it holds no database, and that is the one
+// answer that is an absence rather than a host this service did not check.
+func TestNoDatabaseAnywhereIsNoInstallation(t *testing.T) {
+	f := newBindingFixture(t)
+	f.probe.all(probeMissing)
+	_, workspace, held := f.licensingWorkspace(t)
+
+	rec := f.bind(t, held.ID, exampleProject)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("binding a project with no database anywhere answered %d, want 422: %s", rec.Code, rec.Body)
+	}
+	fault := readAnswer[apiError](f.fixture, rec).Error
+	if fault.Code != "no_installation" {
+		t.Errorf("the refusal's code is %q, want no_installation", fault.Code)
+	}
+	if !strings.Contains(fault.Message, "fugaro setup") {
+		t.Errorf("the refusal's sentence is %q, and the fix is a setup the person has to run", fault.Message)
+	}
+	if saw := f.probe.sawHosts(); !slices.Equal(saw, []string{usCentralDatabase, europeDatabase, asiaDatabase}) {
+		t.Errorf("the binding read %v, want all three hosts before it answered that there is no installation", saw)
+	}
+	if len(f.mints.answers) != 0 {
+		t.Errorf("a refused binding minted %d keys", len(f.mints.answers))
+	}
+	if bound, _ := f.entitlement(held.ID); bound.BoundAt != nil {
+		t.Errorf("the entitlement records a binding at %s, and nothing was bound", bound.BoundAt)
+	}
+	if after, _ := f.workspace(workspace.ID); after.ProjectID != nil {
+		t.Errorf("the workspace names the project %v, and nothing was bound", after.ProjectID)
+	}
+}
+
+// TestTheLegacyHostIsStillReadFirst: the legacy host is D2205's first read
+// (F13), and the two regional hosts follow it in the order a database's
+// locations are named. An installation at any of them is found, and the read
+// ends at the first host that answers as one rather than at the one that holds
+// it: which host holds the database is the platform's answer and not a decision
+// this service makes.
+func TestTheLegacyHostIsStillReadFirst(t *testing.T) {
+	// An ordinary installation: the legacy host answers as one and nothing else is
+	// read at all, which is the one-request path every installation made before a
+	// region could be chosen takes.
+	t.Run("an installation at the legacy host is read once", func(t *testing.T) {
+		f := newBindingFixture(t)
+		_, _, held := f.licensingWorkspace(t)
+
+		rec := f.bind(t, held.ID, exampleProject)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("binding an installation at the legacy host answered %d, want 200: %s", rec.Code, rec.Body)
+		}
+		if saw := f.probe.sawHosts(); !slices.Equal(saw, []string{usCentralDatabase}) {
+			t.Errorf("the binding read %v, want the legacy host alone: the hosts after it are read only when it holds no database", saw)
+		}
+	})
+
+	// And the order of the two regional hosts the read falls back through: the
+	// legacy host, then europe-west1, then asia-southeast1.
+	t.Run("the regional hosts are read in order", func(t *testing.T) {
+		f := newBindingFixture(t)
+		f.probe.all(probeMissing)
+		f.probe.at(asiaDatabase, probeLocked)
+		_, _, held := f.licensingWorkspace(t)
+
+		rec := f.bind(t, held.ID, exampleProject)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("binding an installation whose database is in asia-southeast1 answered %d, want 200: %s", rec.Code, rec.Body)
+		}
+		if saw := f.probe.sawHosts(); !slices.Equal(saw, []string{usCentralDatabase, europeDatabase, asiaDatabase}) {
+			t.Errorf("the binding read %v, want the legacy host first and the regional ones after it in the order a database's locations are named", saw)
+		}
+	})
 }
 
 // TestAnEndedEntitlementCannotBeBound: a licence whose term has run out mints
