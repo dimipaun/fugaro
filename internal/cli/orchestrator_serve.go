@@ -97,8 +97,8 @@
 // container); the Firebase web API key, which the minted custom token must be
 // exchanged with before it is an identity the rules know, and which is
 // therefore what keeps a mailbox's writer unbuildable — the service's own
-// environment does not carry it (orchestrator.tf's six
-// names are three of the node's and three of the launch's, and
+// environment does not carry it (orchestrator.tf's six names are three of the
+// node's and three of the launch's, and
 // TestOrchestratorServiceEnvIsTheDeploymentsOwn holds that list in both
 // directions); and the database read the inbox itself needs, which is an IAM
 // read from an account section 4.3's table grants no firebasedatabase role —
