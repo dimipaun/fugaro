@@ -3036,32 +3036,36 @@ button.graph-fit:hover {
   color: var(--text);
 }
 
-/* The pane is the canvas's own scroll area, and it is the floor under the
- * picture's scale (D735). The canvas carries its minimum size as geometry --
- * `minimumCanvas`, the whole picture at `GRAPH_MIN_SCALE`, which is 195 px of a
- * 260 px card -- so the pane has something to overflow exactly when the panel is
- * narrower than that. Above it there is nothing to scroll: `width: auto` with
- * `min-width: 100%` then draws the canvas at the panel's own width, which is
- * what the element did before the pane existed.
+/* The pane scrolls **vertically only** (D2900, the owner, 2026-11-18). The
+ * picture is read top to bottom and a level wider than a row is stacked into
+ * rows of four (`GRAPH_ROW_CARDS`, whose arithmetic is in `graph/layout.ts`), so
+ * the axis it grows along is the pane's height. What the width cannot hold, the
+ * canvas is **scaled** to (`width: 100%` below) rather than the reader scrolling
+ * sideways: a picture read sideways is one the window has to be wide for, which
+ * is the shape step 6a had and this ruling reversed. The horizontal rule is
+ * `hidden` and not `clip` so the pane stays the scroll container the vertical
+ * axis is read in.
  *
  * **It wraps the canvas and nothing else**, so a screen with no picture -- the
  * list, or the coordinator scope -- grows no scroll area it never uses. */
 div.graph-canvas-pane {
-  overflow-x: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
-/* The canvas takes the panel's width while the panel is at least as wide as the
- * picture's own floor, and the picture's ratio decides its height, which is what
- * `viewBox` is for. Under the floor the element keeps the `width`/`height`
- * geometry `graph.ts` wrote on it (`minimumCanvas`) and overflows the pane
- * instead of shrinking: a card drawn narrower than 195 px is a title nobody can
- * read, and a picture read sideways is still a picture. The ground is the page's
- * own `--bg` rather than a surface, so the cards and the bands are the only
- * raised things in the picture. */
+/* The canvas **is the pane's width**: the picture's ratio decides its height,
+ * which is what `viewBox` is for, and everything drawn on it keeps its place in
+ * the picture's own coordinates. The two `width`/`height` attributes `graph.ts`
+ * writes (`minimumCanvas`, the whole picture at `GRAPH_MIN_SCALE`, which is
+ * 195 px of a 260 px card) are the element's intrinsic size -- what gives it that
+ * ratio when this stylesheet is absent, and what `graph.test.ts` reads the
+ * picture's floor off -- and a `width` in this rule wins over the attribute, so
+ * the picture is drawn at the pane's width and scaled with it. The ground is the
+ * page's own `--bg` rather than a surface, so the cards and the bands are the
+ * only raised things in the picture. */
 section.graph svg.graph-canvas {
   display: block;
-  width: auto;
-  min-width: 100%;
+  width: 100%;
   height: auto;
   background-color: var(--bg);
   background-image: radial-gradient(var(--line) 1px, transparent 1px);

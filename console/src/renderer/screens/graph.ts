@@ -428,11 +428,15 @@ export const GRAPH_ZOOM_MAX = 8
  * fitting the width alone shrinks a wide picture until nothing in it can be read
  * (D735).
  *
- * **It is a floor and not a size.** A picture with room to spare is drawn at the
- * panel's own width, exactly as it was, and one without it is held at this width
- * and read by scrolling sideways (`div.graph-canvas-pane`). The alternative --
- * folding the picture with `elk.layered.wrapping` -- is refused: the layers run
- * left to right, and wrapping folds them across the axis a reader moves along.
+ * **It is what the layout's row bound is measured against and not a size the
+ * canvas is drawn at** (D2900). A level is stacked into rows of `GRAPH_ROW_CARDS`
+ * cards, which is as many as the pane the console opens in holds at this floor,
+ * so the picture never has to be drawn under it; the pane itself carries only the
+ * picture's **vertical** scroll, and a pane narrower than the picture at this
+ * scale (the inspector open beside it) draws the canvas at the pane's width and
+ * scales the picture with it. The alternative -- folding the picture with
+ * `elk.layered.wrapping` -- is refused: the engine ignores it in a top-to-bottom
+ * picture, and wrapping folds the layers across the axis a reader moves along.
  */
 export const GRAPH_MIN_SCALE = 0.75
 
@@ -1182,9 +1186,13 @@ export function clampZoom(zoom: number): number {
 }
 
 /**
- * minimumCanvas is the smallest the picture may be **drawn**: the whole of it at
- * `GRAPH_MIN_SCALE`, which is the size the canvas carries as its own geometry and
- * the width the pane around it scrolls at.
+ * minimumCanvas is the picture's own extent at `GRAPH_MIN_SCALE`, which is the
+ * size the canvas carries as its `width`/`height` **attributes**.
+ *
+ * **It is the element's intrinsic size rather than a width it is held at**: the
+ * stylesheet draws the canvas at the pane's width (`width: 100%`) with the
+ * picture's ratio deciding its height, so these two numbers are what give it that
+ * ratio with the stylesheet absent, and what `graph.test.ts` reads the floor off.
  *
  * The width is the whole picture's and not one level's or one stream's: the
  * picture is as wide as its widest row plus the bands and the boxes around it,
@@ -1445,17 +1453,19 @@ function stage(factory: ScreenFactory, picture: GraphPicture, drawing: ScreenEle
 }
 
 /**
- * canvasPane is the box the canvas is read through when the picture is wider
- * than the panel: the canvas keeps its minimum width (its own `width` geometry,
- * `minimumCanvas`) and this element scrolls sideways to reach the rest of it.
+ * canvasPane is the box the canvas is read through: the picture is read top to
+ * bottom and grows downward, so the pane is where it scrolls, and it never
+ * scrolls across -- the canvas is drawn at the pane's own width (`width: 100%`)
+ * and the picture scales with it (D2900).
  *
  * **It is drawn around the canvas and around nothing else.** The list is not a
  * picture and has no width of its own to keep, and the coordinator scope draws
  * no canvas at all, so neither of them grows a scroll area it never uses.
  *
- * The scroll direction is the stylesheet's (`overflow-x` in `flight-deck.css`):
- * the pane is a box, and what a box does with its overflow is a rule rather than
- * a value this file can write, `style-src 'self'` admitting no inline style.
+ * The scroll direction is the stylesheet's (`overflow-x` and `overflow-y` in
+ * `flight-deck.css`): the pane is a box, and what a box does with its overflow is
+ * a rule rather than a value this file can write, `style-src 'self'` admitting no
+ * inline style.
  */
 function canvasPane(factory: ScreenFactory, drawing: ScreenElement): ScreenElement {
   const pane = make(factory, 'div', 'graph-canvas-pane')
@@ -1686,10 +1696,10 @@ function canvas(factory: GraphFactory, picture: GraphPicture): ScreenElement | n
   svg.setAttribute('aria-label', GRAPH_CANVAS_LABEL)
   svg.setAttribute('viewBox', viewBoxOf(bounds, picture.state.zoom))
   // The canvas's own size, as geometry rather than a style (`style-src 'self'`
-  // backs none): the whole picture at `GRAPH_MIN_SCALE`. It is a **floor** --
-  // the stylesheet's `min-width: 100%` stretches the canvas to the panel
-  // whenever the panel is wider than this, so a picture with room to spare is
-  // drawn exactly as it was, and only one without it is held here and scrolled.
+  // backs none): the whole picture at `GRAPH_MIN_SCALE`. It is the element's
+  // **intrinsic size**, which is the ratio the stylesheet's `width: 100%` and
+  // `height: auto` draw the picture at the pane's width with -- and the floor
+  // `graph.test.ts` reads the picture's scale off.
   const minimum = minimumCanvas(bounds)
   geometry(svg, 'width', minimum.width)
   geometry(svg, 'height', minimum.height)

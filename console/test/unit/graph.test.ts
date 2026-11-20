@@ -2365,17 +2365,17 @@ describe('the graph screen and its scope', () => {
 })
 
 // ---------------------------------------------------------------------------
-// The scale the picture is drawn at (slice G, D735)
+// The scale the picture is drawn at (slice G, D735; D2900 for the axis)
 // ---------------------------------------------------------------------------
 
 describe('the graph screen and the scale it is drawn at', () => {
   it('graph: fits the width above the minimum scale', async () => {
-    // **The picture has a scale floor, and the panel's width is what reaches
-    // it.** Above the floor nothing changes: the canvas is the panel's own
-    // width, which is `width: auto` with `min-width: 100%` and is what the
-    // element did before the floor existed. The floor itself is the canvas's
-    // `width`/`height` geometry -- the whole picture at `GRAPH_MIN_SCALE` --
-    // written as attributes because `style-src 'self'` backs no inline style.
+    // **The picture carries a scale floor as its own geometry** (D735): the
+    // canvas's `width`/`height` attributes are the whole picture at
+    // `GRAPH_MIN_SCALE`, written as attributes because `style-src 'self'` backs
+    // no inline style, and the stylesheet then draws the element at the pane's
+    // width (`width: 100%`, the case below) with the picture's own ratio keeping
+    // it a picture.
     const screen = elkScreen()
     await screen.load(DOCUMENT, RUNS)
     const root = drawingOf(screen)
@@ -2400,22 +2400,28 @@ describe('the graph screen and the scale it is drawn at', () => {
     expect(GRAPH_NODE_WIDTH * GRAPH_MIN_SCALE).toBe(195)
     expect(title * GRAPH_MIN_SCALE).toBeGreaterThanOrEqual(9)
 
-    // And the canvas fills the panel whenever there is room: `min-width: 100%`
-    // is what makes the floor a floor rather than a size, and `height: auto`
-    // keeps the picture's ratio while it stretches.
+    // And the canvas **is the pane's width**: `width: 100%` draws the whole
+    // picture at whatever the pane holds -- the floor above is what keeps the
+    // scale from being forced under the legibility bound, since a level is
+    // stacked into rows of four cards and no picture is wider than the pane the
+    // console opens in -- and `height: auto` keeps the picture's ratio while it
+    // stretches. `min-width` is gone deliberately: a floor the element cannot go
+    // under is a picture that overflows the pane and is read sideways, which is
+    // the shape D2900 reversed.
     const rule = themeRule('flight-deck.css', 'section.graph svg.graph-canvas')
-    expect(rule['width']).toBe('auto')
-    expect(rule['min-width']).toBe('100%')
+    expect(rule['width']).toBe('100%')
     expect(rule['height']).toBe('auto')
+    expect(rule['min-width']).toBeUndefined()
   })
 
-  it('graph: scrolls horizontally below it', async () => {
-    // Below the floor the canvas keeps its geometry and the pane around it
-    // scrolls: a picture read sideways is still a picture, where a picture
-    // shrunk to the panel is one nobody can read. `width: 100%` -- the rule the
-    // screen carried before the floor existed -- is exactly the value that would
-    // fit the width whatever the picture's own size, so the canvas must not
-    // carry it any more.
+  it('graph: scrolls vertically only, with the canvas the pane’s width', async () => {
+    // **The pane scrolls down and never across** (D2900's second half, which
+    // reversed the sideways reading below the floor). The picture is read top to
+    // bottom and a level wider than a row is stacked, so the axis it grows along
+    // is the pane's height -- and where the pane is narrower than the picture at
+    // its floor (the inspector takes 300 px of it) the canvas is drawn at the
+    // pane's width and scaled with it rather than held at the floor and scrolled.
+    // The browser's own reading of that is `graph.spec.ts`'s, in a real window.
     const screen = elkScreen()
     await screen.load(DOCUMENT, RUNS)
     const root = drawingOf(screen)
@@ -2431,11 +2437,12 @@ describe('the graph screen and the scale it is drawn at', () => {
     const stage = classedIn(root, 'graph-stage')[0]
     expect(stage?.children.map((each) => each.getAttribute('class'))).toEqual(['graph-canvas-pane'])
 
-    expect(themeRule('flight-deck.css', 'div.graph-canvas-pane')['overflow-x']).toBe('auto')
-    const rule = themeRule('flight-deck.css', 'section.graph svg.graph-canvas')
-    expect(rule['width'], 'the canvas still fits the width whatever the picture’s size').not.toBe('100%')
-    // The floor is below the picture's own width, or there would be no range in
-    // which the pane has anything to scroll.
+    const paneRule = themeRule('flight-deck.css', 'div.graph-canvas-pane')
+    expect(paneRule['overflow-x'], 'the pane still scrolls across').toBe('hidden')
+    expect(paneRule['overflow-y']).toBe('auto')
+    expect(themeRule('flight-deck.css', 'section.graph svg.graph-canvas')['width']).toBe('100%')
+    // The floor is below the picture's own width, or the attributes above would
+    // be the frame itself and the scale they carry would say nothing.
     expect(Number(canvas.getAttribute('width'))).toBeLessThan(frame.width)
     expect(Number(canvas.getAttribute('height'))).toBeLessThan(frame.height)
 

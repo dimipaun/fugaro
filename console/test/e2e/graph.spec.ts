@@ -357,6 +357,33 @@ async function strokeOffset(page: Page, selector: string): Promise<string> {
   return page.locator(selector).first().evaluate((element) => getComputedStyle(element).strokeDashoffset)
 }
 
+/** PaneReading is what the canvas pane's own box says about scrolling across:
+ * the width it has, the width its content wants, and the width the canvas is
+ * actually drawn at. Only a browser computes any of the three. */
+interface PaneReading {
+  readonly clientWidth: number
+  readonly scrollWidth: number
+  readonly canvasWidth: number
+  readonly overflowX: string
+}
+
+/** paneReading reads the canvas pane, or `null` where the screen drew none --
+ * which is a claim of its own (the list has no picture to scroll), and never a
+ * reading a case may take as zero. */
+async function paneReading(page: Page): Promise<PaneReading | null> {
+  return page.evaluate(() => {
+    const pane = document.querySelector('div.graph-canvas-pane')
+    const canvas = document.querySelector('section.graph svg.graph-canvas')
+    if (pane === null || canvas === null) return null
+    return {
+      clientWidth: pane.clientWidth,
+      scrollWidth: pane.scrollWidth,
+      canvasWidth: canvas.getBoundingClientRect().width,
+      overflowX: getComputedStyle(pane).overflowX,
+    }
+  })
+}
+
 /** COMET, PULSE and FLOW are the three marks GV2.4's motion is drawn on: the
  * streak that travels a running card's border, the glow behind a critical card,
  * and the critical path's own dashes. */
@@ -650,6 +677,57 @@ test.describe('the graph view in a window', () => {
       const mine = streams.get(plan ?? '') ?? ''
       const holders = reading.bands.filter((band) => band.box !== null && card.box !== null && holds(band.box, card.box))
       expect(holders.map((band) => band.stream), `${card.key} is inside its plan's own band`).toEqual([mine])
+    }
+  })
+
+  test('scrolls vertically only, and draws the picture at the pane’s own width', async () => {
+    // **The picture never scrolls sideways** (D2900's second half). The layout is
+    // top to bottom and a level wider than a row is stacked into rows of four, so
+    // the axis the picture grows along is the pane's **height**, which is the one
+    // the pane scrolls (`overflow-y: auto`). Where the pane is narrower than the
+    // picture's own floor the canvas is drawn at the pane's width and scaled with
+    // it rather than held at a width the reader has to scroll to. The claim is
+    // the pane's own box, which only a browser computes:
+    // `scrollWidth` is the width the pane's content wants and `clientWidth` the
+    // width it has.
+    //
+    // **Two pane widths are read, and the second one is where the teeth are.** At
+    // rest the pane is wider than the committed document's picture at the card's
+    // floor (1028 units of `viewBox`, 771 px at `GRAPH_MIN_SCALE`), so the canvas
+    // fills it either way. Selecting a task opens the inspector beside the
+    // canvas, which takes the pane down to about three quarters of its width --
+    // **under** that floor -- and that is the pane the stylesheet's old
+    // `min-width: 100%` held the canvas at 771 px and scrolled across.
+    const atRest = await paneReading(page)
+    expect(atRest, 'the screen drew no canvas pane, so this case would read nothing').not.toBeNull()
+    const resting = atRest as PaneReading
+    expect(resting.overflowX, 'the pane still offers a scrollbar across').toBe('hidden')
+    expect(resting.scrollWidth, 'the pane scrolls across at the console’s own width').toBeLessThanOrEqual(
+      resting.clientWidth,
+    )
+    expect(resting.canvasWidth, 'the canvas is not the pane’s own width').toBeLessThanOrEqual(resting.clientWidth)
+
+    await page.locator('g.graph-node[data-state="ready"]').first().click()
+    await page.locator('aside.graph-inspector').waitFor()
+    try {
+      const narrowedPane = await paneReading(page)
+      expect(narrowedPane, 'the pane went out with the inspector').not.toBeNull()
+      const narrowed = narrowedPane as PaneReading
+      expect(
+        narrowed.clientWidth,
+        'the inspector did not narrow the pane, so this second reading tests nothing',
+      ).toBeLessThan(resting.clientWidth)
+      expect(narrowed.scrollWidth, 'the pane scrolls across with the inspector open').toBeLessThanOrEqual(
+        narrowed.clientWidth,
+      )
+      expect(narrowed.canvasWidth, 'the canvas is not the pane’s own width with the inspector open').toBeLessThanOrEqual(
+        narrowed.clientWidth,
+      )
+    } finally {
+      // Escape is the inspector's own way out, and the case leaves the window as
+      // it found it: a selection left behind is a pane another case would read.
+      await page.keyboard.press('Escape')
+      await page.locator('aside.graph-inspector').waitFor({ state: 'detached' })
     }
   })
 
