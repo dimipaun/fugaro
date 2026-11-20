@@ -31,9 +31,12 @@ merging alone.
   a run may now be tolerated and filed. The **security-sensitive tier stays
   Critical** (the D18 floors, outside every layer), and a repository that wants
   today's behaviour exactly pins it back with `rigor.default: critical`. Every
-  claim below that a slice "relaxes nothing" or is "byte-identical to today" is
-  therefore **true of Critical mode only**, and T8.3's migration note is the loud
-  version of this paragraph.
+  claim below that a slice leaves a run unchanged is therefore narrower than it
+  reads — the owner's answer of 2026-10-22 restated them all as **Critical's
+  finding thresholds are unchanged; its prompts, its PR body's hand-back
+  sections and two presence checks are new**
+  ([levels-reconciliation.md](levels-reconciliation.md) §3b item 1) — and T8.3's
+  migration note is the loud version of this paragraph.
 - **It does not add a merge path, a deployer, or a scheduler.** `gitprov` has no
   merge call and the runner never deploys (F29); D13 and D15 say what Hotfix and
   the automatic follow-up mean instead, and both are smaller than they sound.
@@ -199,14 +202,15 @@ correction, C5):
 - **The readiness rule stays one rule.** `runner.Decide` is where readiness is
   decided (F4) and no task may add a second answer to "may this PR be ready".
   Slice 3's T3.1 changes what `Decide` is given, not what it means.
-- **Critical *mode* is byte-identical to today — and only Critical, because D19's
-  answer makes Pro the default.** T3.1's first test asserts it: a run whose
-  resolved mode is Critical produces the same outcome and the same reason string
-  as `main` does, and the same PR body apart from the one line D18 requires every
-  run's body to carry, naming the mode it ran under. If that test cannot be
-  written, the slice is wrong. The same claim is **not** true of a run in an
-  unconfigured repository: that run is Pro, and T3.1's second test is the one that
-  says what Pro tolerates.
+- **Critical's finding thresholds are unchanged; its prompts, its PR body's
+  hand-back sections and two presence checks are new — and that holds of Critical
+  alone, because D19's answer makes Pro the default.** T3.1's first test asserts
+  the first half: a run whose resolved mode is Critical is ready or not ready by
+  the same table and returns the same reason string as `main`'s `Decide` does,
+  whatever prompt, hand-back section or presence check the run now carries. If
+  that test cannot be written, the slice is wrong. The same claim is **not** true
+  of a run in an unconfigured repository: that run is Pro, and T3.1's second test
+  is the one that says what Pro tolerates.
 - **Fail closed, everywhere.** An unscored finding, an unparseable verdict, or a
   policy that cannot decide blocks in every mode (D4, F3). T2.3 and T3.1 both
   carry a test for it.
@@ -293,10 +297,12 @@ them.
 
 What a reviewer of these pull requests should look at, in order:
 
-1. **Does the change alter a run at Critical mode?** It must not: Critical is
-   byte-identical to today (apart from the mode line D18 requires in every run's
-   body), and a slice that changes Critical's outcome, reason or body is not
-   mergeable as written.
+1. **Does the change move a run at Critical off its finding thresholds?** It must
+   not: **Critical's finding thresholds are unchanged; its prompts, its PR body's
+   hand-back sections and two presence checks are new** (the owner's answer of
+   2026-10-22, [levels-reconciliation.md](levels-reconciliation.md) §3b item 1),
+   so a slice that changes which findings Critical blocks on, or the reason
+   string `Decide` returns, is not mergeable as written.
 2. **Is the change the one D19's answer asks for in an unconfigured repository?**
    The default is **Pro**, so a repository with no `rigor:` block tolerates what
    Pro tolerates. The question is not "does this alter an unconfigured repository"
@@ -429,8 +435,9 @@ what it asked for. That is what lets each task merge alone and leaves `main`
 green with no behaviour change at all.
 
 **T1.1 — the mode vocabulary, and the one resolver**
-- **Files.** `internal/rigor/mode.go` (new: `Mode`, its parse, `Rank`,
-  `Strictest`), `internal/rigor/resolve.go` (new: `Resolve`, implementing D6's
+- **Files.** `internal/rigor/mode.go` (new: `Rigor` — LD2's name for this axis,
+  the file keeping its `mode.go` name — its parse, `Rank`, `Strictest`),
+  `internal/rigor/resolve.go` (new: `Resolve`, implementing D6's
   order — area, then repository, then project default, then Fugaro's own default,
   with the task's request able to raise and never lower, and the floors outside
   every layer, only tightening), and the path-rule matching that reuses
@@ -496,7 +503,7 @@ green with no behaviour change at all.
 - **Commit.** `config(rigor): the repository's default, read by nothing yet`
 
 **T1.4 — the area layer: named globs, chosen from the files the run touches**
-- **Files.** `internal/rigor/areas.go` (new: `Area{Name, Match, Mode}` and its
+- **Files.** `internal/rigor/areas.go` (new: `Area{Name, Match, Level}` and its
   load-time validation), `internal/rigor/select.go` (new: `Select`, D23's
   strictest-of-matched, returning the names of every area that matched),
   `internal/config/config.go`, `internal/config/defaults.go` and
@@ -684,8 +691,11 @@ not change for anyone who has not configured a mode.
   held by the test that holds them today: the existing four reasons are
   unchanged for a run with no tolerated findings; a tolerated finding yields a
   ready PR with a reason that names the mode and the count; an unscored finding
-  still fails in every mode; and **Critical is byte-identical**: the same records
-  produce the same outcome and the same reason string as `main`'s `Decide` does.
+  still fails in every mode; and **Critical's finding thresholds are unchanged;
+  its prompts, its PR body's hand-back sections and two presence checks are new**
+  (the owner's answer of 2026-10-22, [levels-reconciliation.md](levels-reconciliation.md)
+  §3b item 1): the same records produce the same outcome and the same reason
+  string as `main`'s `Decide` does, whatever prompt or PR body the run carries.
   That last one is written as a table of (records, mode) → (ready, reason) whose
   Critical column is the pre-change behaviour, so a later edit that moves it is
   caught rather than argued about.
@@ -1224,7 +1234,7 @@ from `Recipe` as the thing to watch for on an installation whose rules are older
 
 | Risk | Where it comes from | What holds it |
 | --- | --- | --- |
-| a bad PR becomes ready because a threshold is loose | this feature's entire point, and it is now the behaviour of every unconfigured repository (D19's Pro default) | D4's fail-closed rule; §7's first two questions — Critical mode's byte-identical table, and Pro's table reviewed as the default rather than as one mode among five |
+| a bad PR becomes ready because a threshold is loose | this feature's entire point, and it is now the behaviour of every unconfigured repository (D19's Pro default) | D4's fail-closed rule; §7's first two questions — T3.1's table of Critical's unchanged thresholds, and Pro's table reviewed as the default rather than as one mode among five |
 | the reviewer scores unreliably, so the thresholds are noise | **U1**, unverified | T2.4 measures before the thresholds are trusted; D4 keeps the failure safe |
 | a credential path is missed by the floors | D18's declared-plus-built-in split | T1.5's built-in set and its operator review; the floors can only be raised |
 | schema drift between the record and `result.schema.json` | F20 | the existing `TestResultSchemaAcceptsRunnerRecords`, which is the red step of T3.4 |

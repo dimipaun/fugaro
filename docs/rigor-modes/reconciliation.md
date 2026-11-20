@@ -1335,7 +1335,9 @@ items.**
 Why: one answer to "may this pull request be ready" is the property the owner
 relies on, and a tolerated finding has to land where a reader can close it.
 
-**Recommended: Critical *mode* is byte-identical to today — and only Critical,
+**Recommended, restated 2026-10-22 (levels-reconciliation.md §3b item 1):
+Critical's finding thresholds are unchanged; its prompts, its PR body's hand-back
+sections and two presence checks are new — and that is true of Critical alone,
 because D19's answer makes Pro the mode a repository gets for configuring
 nothing.** Every other mode keeps the
 reviewer, keeps the one required `review` step, keeps the verify stage, and
@@ -1869,12 +1871,15 @@ self-consistent, and `fugaro diagnose` printing the mode of the run it read.
 
 **What follows from the answer, and is the plan's problem rather than this
 decision's:** every claim in this folder and in the plan that the first cut
-"relaxes nothing", that an unconfigured repository "behaves exactly as it does
-today", or that a run is "byte-identical to today" is **true of Critical mode
-only** — of a run whose resolved mode is Critical, which after this answer is a
-run that configured it or sits under a floor. The plan scopes them (T3.1's table,
-T8.3's note) and §7's review focus gives Pro's threshold table the attention it
-now owes: **Pro's table is the behaviour of every unconfigured repository**, so
+leaves a run unchanged is **narrower than it reads**, and the owner's answer of
+2026-10-22 restated them all
+([levels-reconciliation.md](levels-reconciliation.md) §3b item 1): *Critical's
+finding thresholds are unchanged; its prompts, its PR body's hand-back sections
+and two presence checks are new* — true of a run whose resolved mode is Critical,
+which after this answer is a run that configured it or sits under a floor. The
+plan scopes them (T3.1's table, T8.3's note) and §7's review focus gives Pro's
+threshold table the attention it now owes: **Pro's table is the behaviour of
+every unconfigured repository**, so
 it is the one table whose review cannot be deferred.
 
 **Alternative (this folder's earlier recommendation, displaced by the answer):
@@ -1905,7 +1910,8 @@ project like `defaults.git` and `defaults.agent`.
 `fugaro.yaml`: `rigor.default` for this repository's mode and `rigor.areas` for
 its areas, scope `InRepo` — five edits (F7), the schema entry included.
 (c) An **area** is one entry of `rigor.areas`, a list of
-`{name: <short label>, match: <doublestar glob>, mode: <name>}`. The `name` is
+`{name: <short label>, match: <doublestar glob>, level: <name>}` — the leaf LD2
+renamed from `mode:`, which both loaders still read as the fallback. The `name` is
 not decoration: it is what the run, the PR and `fugaro watch` print when they say
 which rule decided (D24), and a rule that cannot be named cannot be explained to
 the person reading the PR. `match` is a path glob, matched with the same
@@ -2050,7 +2056,9 @@ the third is priced because it costs a deploy rather than a line of code.
 **Recommended: one resolved value with three parts — the mode, the layer that
 won, and the areas that matched — shown in three places.** The value is computed
 once per resolution (D22) and carried, not recomputed per surface, from the same
-source as the record's `Mode` (F18's one-value rule, §6's item 5).
+source as the record's level — `runstore.RigorRecord`, whose `LevelOf` reads the
+`level` key LD2 writes and falls back to the released `mode` one (F18's one-value
+rule, §6's item 5).
 
 - **The run.** `runstore.Record` gains the rigor block (mode, `from`, areas with
   the moment each was applied), so `fugaro runs ls --json`, `fugaro diagnose` and
