@@ -146,21 +146,21 @@ const UNKNOWN_SCOPE_WORD = 'unknown'
  * (short rendered fields), and the kill cell is a `sentence` -- it carries the
  * document's own reason text beside its attestation, and free text is what the
  * `sentence` class is for. */
-const COLUMNS = Object.freeze([
+const COLUMNS: readonly ManageColumn[] = Object.freeze([
   { key: 'repository', title: 'Repository', class: 'repository' },
   { key: 'daily', title: 'Daily cap', class: 'label' },
   { key: 'perRun', title: 'Per-run cap', class: 'label' },
   { key: 'spent', title: 'Spent today', class: 'label' },
   { key: 'left', title: 'Left today', class: 'label' },
   { key: 'kill', title: 'Kill switch', class: 'sentence' },
-] as const satisfies readonly ManageColumn[])
+])
 
 /** SPEND_LINK is the kind's one action: the Spend tab, which is where the
  * report behind these figures lives (`entry.ts`'s `VIEWS` id `spend`, the
  * design's "with a link to the Spend report"). */
-const SPEND_LINK = Object.freeze([
+const SPEND_LINK: readonly ManageAction[] = Object.freeze([
   { kind: 'open-view', view: 'spend' },
-] as const satisfies readonly ManageAction[])
+])
 
 // ---------------------------------------------------------------------------
 // The kind.
