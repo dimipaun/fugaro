@@ -96,10 +96,15 @@ expect_verdict() { # key want what
 # rather than matching a stem.
 job_a=fugaro-chk830-probe
 job_b=fugaro-chk830-forge
-handmade=fugaro-chk830-handmade
+handmade=fugaro-chk830-probe-handmade
 uid_a=77001
 uid_b=77002
-vm_a=fugaro-chk830-probe-abc123
+# The probe's own VM on the platform the default fixture models: Batch's name
+# for it carries no part of the job's identity, so its name is not a field the
+# link could rest on. `vm_job_named` is the same VM on the other platform, the
+# one the `name-forges` bend models, where Batch names the VM after the job.
+vm_a=fugaro-chk830-vm-abc123
+vm_job_named=fugaro-chk830-probe-abc123
 vm_b=fugaro-chk830-forge-def456
 zone=us-east5-a
 instance_id=9900112233
@@ -670,7 +675,10 @@ PY
 # write_default_case: the platform answers most cases start from. Both jobs ran;
 # the probe's VM carries Batch's OWN job-uid label and metadata item (which is
 # the Google-made fact u1-link is about, and the field a forge would have to
-# reproduce); the forging job's VM carries its OWN uid in the same two fields, so
+# reproduce), and its own name carries no part of the job's identity — the
+# `name-forges` bend is the platform where Batch names the VM after the job, and
+# where the name is therefore a candidate field too; the forging job's VM
+# carries its OWN uid in the same two fields, so
 # the forge does not reproduce the probe's identity but the fields are live
 # (that is what the control counts); the hand-made VM carries neither. The
 # CreateJob audit record names the probe job, as the real one does.
@@ -724,6 +732,17 @@ write_default_case() { # write_default_case DIR [bend...]
         "fugaro=managed,fugaro_chk=830,batch-job-uid=$uid_a,job_uid=$uid_a" ""
       write_vm "$d/state/vm-b.json" "$vm_b" 9900112234 "$zone" \
         "fugaro=managed,fugaro_chk=830,batch-job-uid=$uid_b,job_uid=$uid_b" ""
+      ;;
+    name-forges)
+      # The platform where Batch names the VM after the job: the probe's VM
+      # carries the job's name in its own name, so the name is a candidate field
+      # — and O8's plain VM, which this check names after the probe job, carries
+      # it. The row that must find this is u1-handmade, and it finds it on the
+      # name rather than being saved from it by the name the check chose.
+      write_vm "$d/state/vm-a.json" "$vm_job_named" "$instance_id" "$zone" \
+        "fugaro=managed,fugaro_chk=830,batch-job-uid=$uid_a" "batch-job-uid=$uid_a"
+      write_log "$d/state/log-$uid_a.json" "$uid_a" "$vm_job_named" "$zone" "$instance_id" present "job_uid=$uid_a" full
+      vm_a_is "$d" "$vm_job_named" vm-a.json
       ;;
     no-link)
       write_vm "$d/state/vm-a.json" "vm-plain01" "$instance_id" "$zone" "fugaro_chk=830" ""
@@ -872,7 +891,13 @@ test_happy_path() {
   expect_verdict u1-link PASS "happy: the link"
   expect_row u1-link "the link is the instance's own object" "happy: the link is a field of the instance"
   expect_row u1-link "labels.batch-job-uid=${uid_a}" "happy: the field the link rests on"
-  expect_row u1-link "name=${vm_a}" "happy: the instance's own name is a candidate too"
+  # The O8 VM the check makes is named after the probe job, but on this platform
+  # the probe's own VM carries no part of that name, so the name is not one of
+  # the fields the row judges: the `name-forges` case below is the platform
+  # where it is, and where u1-handmade must fail rather than be saved by the
+  # name the check gave its own VM.
+  expect_absent "$(printf '%s\n' "$out" | grep -m1 "^FACT u1-link: " || true)" "name=${vm_a}" \
+    "happy: the instance's own name is not a candidate field when it carries no part of the job's identity"
   expect_row u1-link "compute.instances.get" "happy: the read the field costs (O1)"
   expect_verdict u1-forge PASS "happy: a second job cannot forge the link"
   expect_row u1-forge "Control: 5/5 of those keys" "happy: the attempt was live — the keys did reach that VM"
@@ -985,6 +1010,29 @@ test_a_handmade_vm_that_carries_the_fallback_key_fails_the_row() {
   expect_verdict u1-link PASS "a hand-made VM that carries the fallback key: the link itself exists"
   expect_last_line "CHECK 830 RESULT: FAIL" "a hand-made VM that carries the fallback key"
   nothing_left "a hand-made VM that carries the fallback key"
+}
+
+# O8's plain VM is named after the probe job, so on a platform whose Batch VMs
+# carry the job's name in their own name (the `name-forges` bend) the VM's name
+# is a candidate field like any other — and the hand-made VM reproduces it. The
+# row must be a FAIL that names instance.name; a name the check picks freely must
+# not be what makes this row pass, since that is exactly the field a launcher
+# writes by naming their VM after another job. This case is what pins the name
+# the check gives its plain VM: rename it to something that is not the job's and
+# the row stops finding the field, so the case fails.
+test_a_plain_vm_named_after_the_job_forges_the_name_field() {
+  setup_case name-forges
+  write_default_case "$dir" name-forges
+  run_check
+  expect_status "$status" 1 "a VM named after the job"
+  expect_verdict u1-link PASS "a VM named after the job: the link itself exists"
+  expect_row u1-link "name=${vm_job_named}" "a VM named after the job: the VM's own name is one of the candidate fields"
+  expect_verdict u1-forge PASS "a VM named after the job: the second job's own avenues still hold"
+  expect_verdict u1-handmade FAIL "a VM named after the job: O8's row, and it is a finding rather than a pass"
+  expect_row u1-handmade "instance.name" "a VM named after the job: the field the plain VM reproduced"
+  expect_row u1-handmade "compute.instances.create" "a VM named after the job: who could do it (O8)"
+  expect_last_line "CHECK 830 RESULT: FAIL" "a VM named after the job"
+  nothing_left "a VM named after the job"
 }
 
 # The same attempt against a platform that refuses the key: the row is a verdict
@@ -1302,6 +1350,7 @@ t test_the_forge_attempt_is_what_makes_the_row
 t test_a_second_job_that_reproduces_the_field_fails_u1_forge
 t test_a_handmade_vm_that_carries_the_field_fails_u1_handmade
 t test_a_handmade_vm_that_carries_the_fallback_key_fails_the_row
+t test_a_plain_vm_named_after_the_job_forges_the_name_field
 t test_a_plain_vm_compute_refuses_the_key_on_is_recorded
 t test_no_google_made_link_at_all_fails_u1_link
 t test_a_link_inside_the_vm_only_is_reported_as_such

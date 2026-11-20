@@ -296,7 +296,13 @@ CHK_LABEL=fugaro_chk
 CHK_VALUE=830
 JOB_A=fugaro-chk830-probe
 JOB_B=fugaro-chk830-forge
-HANDMADE_VM=fugaro-chk830-handmade
+# O8's plain VM is named after the probe job on purpose, and not `…-handmade`:
+# the name is the one field a launcher picks freely, so a VM named after another
+# job is the best a hand can do at passing for it. If the probe's own VM carries
+# the job's identity in its name, this name reproduces that field and
+# u1-handmade FAILS — which is the finding, not a false pass: what a launcher
+# chooses cannot be what the link rests on.
+HANDMADE_VM=${JOB_A}-handmade
 # A container with curl and python3, so the probe reads the metadata server
 # itself. It is a Google-hosted public image: the probe is not about the
 # installation's own image, and naming one that a project may not have would
