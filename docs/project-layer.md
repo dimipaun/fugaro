@@ -408,6 +408,7 @@ Two exceptions: a workflow that sets `dockerfile:` drops its profile's `image:` 
 | `followup.allow_public` | repo | it decides whose comments steer a run with the repository's credentials |
 | `rigor.default` | project, repo |  |
 | `rigor.areas` | project, repo |  |
+| `rigor.repos` | project | it is the level one repository of the project runs at, which the project layer states for repositories it does not own; a repository's own level is its own `rigor.default` |
 | `planning.decoupling` | project, repo |  |
 | `security.patterns` | project, repo | it is a guardrail: the project layer states the rows every repository of the project treats as security-sensitive and a repository can only add to them — the list in force is the engine's floor, then the project's rows, then the repository's, unioned by row name (D1506) — so neither layer can drop what another said, and `**` is refused in both because that is the layer's `always_level_3`. 0.22.0 decodes and validates both halves, and the readers resolve them: what a run matches a change against, what `fugaro security paths` prints and what `fugaro doctor` counts are that one resolution of the floor, the project's rows and the repository's, each row carrying the layer it came from (SC9). SC10 landed the other half: `always_level_3`, and the per-run request that goes with it, `fugaro run --security` — the task's own `security: true` — turn review level 3 on when the run resolves its levels |
 <!-- scope-table:end -->

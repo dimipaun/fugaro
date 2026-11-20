@@ -15,7 +15,7 @@ func TestSelectKeepsTheStrictestOfTheMatched(t *testing.T) {
 		{Name: "web", Match: "web/**", Level: Startup},
 		{Name: "db", Match: "internal/db/**", Level: Pro},
 	}
-	got := Select(areas, []string{"web/admin/page.tsx", "internal/payments/card.go", "docs/readme.md"})
+	got := Select(areas, "", []string{"web/admin/page.tsx", "internal/payments/card.go", "docs/readme.md"})
 	want := []string{"payments", "web", "docs"}
 	if names := areaNames(got); !slices.Equal(names, want) {
 		t.Fatalf("Select = %v; want %v (strictest first)", names, want)
@@ -32,7 +32,7 @@ func TestSelectKeepsTheStrictestOfTheMatched(t *testing.T) {
 func TestSelectLeavesTheModeAloneWhenNothingMatches(t *testing.T) {
 	areas := []Area{{Name: "payments", Match: "internal/payments/**", Level: Critical}}
 	for _, paths := range [][]string{nil, {}, {"README.md"}, {"internal/paymentss/card.go"}} {
-		if got := Select(areas, paths); len(got) != 0 {
+		if got := Select(areas, "", paths); len(got) != 0 {
 			t.Errorf("Select(%v) = %v; want no match", paths, areaNames(got))
 		}
 	}
@@ -50,7 +50,7 @@ func TestSelectDeduplicatesByNameKeepingTheStrictest(t *testing.T) {
 		{Name: "payments", Match: "internal/payments/**", Level: Pro},
 		{Name: "payments", Match: "internal/payments/**", Level: Critical},
 	}
-	got := Select(areas, []string{"internal/payments/card.go"})
+	got := Select(areas, "", []string{"internal/payments/card.go"})
 	if names := areaNames(got); !slices.Equal(names, []string{"payments"}) {
 		t.Fatalf("Select = %v; want the name once", names)
 	}
@@ -71,7 +71,7 @@ func TestSelectDeduplicatesByNameNotByPattern(t *testing.T) {
 		{Name: "payments", Match: "internal/payments/**", Level: Pro},
 		{Name: "payments", Match: "internal/billing/**", Level: Critical},
 	}
-	got := Select(areas, []string{"internal/payments/card.go", "internal/billing/invoice.go"})
+	got := Select(areas, "", []string{"internal/payments/card.go", "internal/billing/invoice.go"})
 	if names := areaNames(got); !slices.Equal(names, []string{"payments"}) {
 		t.Fatalf("Select = %v; want the name once, whatever globs it was written with", names)
 	}
@@ -91,7 +91,7 @@ func TestSelectDedupeKeepsTheInPlaceOrder(t *testing.T) {
 		{Name: "beta", Match: "b/**", Level: Pro},
 		{Name: "alpha", Match: "a/**", Level: POC},
 	}
-	got := Select(areas, []string{"a/x.go", "b/y.go"})
+	got := Select(areas, "", []string{"a/x.go", "b/y.go"})
 	if names := areaNames(got); !slices.Equal(names, []string{"alpha", "beta"}) {
 		t.Fatalf("Select = %v; want [alpha beta]", names)
 	}
@@ -109,7 +109,7 @@ func TestSelectSortsEqualRanksStably(t *testing.T) {
 		{Name: "two", Match: "b/**", Level: Pro},
 		{Name: "three", Match: "c/**", Level: Pro},
 	}
-	got := Select(areas, []string{"a/x", "b/x", "c/x"})
+	got := Select(areas, "", []string{"a/x", "b/x", "c/x"})
 	if names := areaNames(got); !slices.Equal(names, []string{"one", "two", "three"}) {
 		t.Errorf("Select = %v; want the written order for equal ranks", names)
 	}

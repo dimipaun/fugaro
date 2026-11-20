@@ -1129,8 +1129,17 @@
         "layer.defaults.rigor.areas.*.name": {
           "default": "unset = none"
         },
+        "layer.defaults.rigor.areas.*.members.*.paths": {
+          "default": "unset = none"
+        },
+        "layer.defaults.rigor.areas.*.members.*.repo": {
+          "default": "unset = none"
+        },
         "layer.defaults.rigor.default": {
           "default": "unset = the built-in level (pro)"
+        },
+        "layer.defaults.rigor.repos": {
+          "default": "unset = none"
         },
         "layer.gcp_project": {
           "default": "unset = the installation's GCP project"
@@ -1573,6 +1582,9 @@
         },
         "rigor.default": {
           "default": "unset = pro (rigor.Default)"
+        },
+        "rigor.repos": {
+          "default": "unset = none"
         },
         "rigor_pending": {
           "default": "unset = none: the wizard's rigor answer has been written into the project layer"

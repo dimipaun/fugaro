@@ -287,7 +287,7 @@ func TestStrictestOverASetIsWhatResolveReads(t *testing.T) {
 	if got.Level != Critical {
 		t.Fatalf("level = %q; want %q", got.Level, Critical)
 	}
-	if want := []Area{areas[3], areas[2], areas[1], areas[0]}; !slices.Equal(got.Areas, want) {
+	if want := []Area{areas[3], areas[2], areas[1], areas[0]}; !slices.Equal(areaNames(got.Areas), areaNames(want)) {
 		t.Errorf("areas = %+v; want %+v", got.Areas, want)
 	}
 }

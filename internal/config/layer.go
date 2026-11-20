@@ -485,12 +485,15 @@ func listUnderLeaf(v any) bool {
 	return ok && n.Kind != yaml.ScalarNode
 }
 
-// LayerRigor is defaults.rigor: the same two keys the repository's own
-// rigor: block carries, because either layer may set either of them
-// (docs/project-layer.md §5).
+// LayerRigor is defaults.rigor: default and areas are the two keys the
+// repository's own rigor: block carries, because either layer may set either
+// of them (docs/project-layer.md §5), and repos is the project layer's alone:
+// the level one repository of the project runs at, which only a layer that
+// speaks for more than one repository can state.
 type LayerRigor struct {
-	Default rigor.Rigor  `yaml:"default"`
-	Areas   []rigor.Area `yaml:"areas"`
+	Default rigor.Rigor            `yaml:"default"`
+	Areas   []rigor.Area           `yaml:"areas"`
+	Repos   map[string]rigor.Rigor `yaml:"repos"`
 }
 
 // LayerGit is defaults.git.
@@ -1014,7 +1017,7 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	if badUSD(ag.MaxBudgetUSD) {
 		add("defaults.agent.max_budget_usd", "must be a finite number, not negative")
 	}
-	ps = append(ps, validateRigor("defaults.rigor", d.Rigor.Default, d.Rigor.Areas)...)
+	ps = append(ps, validateRigor("defaults.rigor", d.Rigor.Default, d.Rigor.Areas, d.Rigor.Repos, true)...)
 	ps = append(ps, validateGovernance("governance", l.Governance)...)
 	ps = append(ps, validateAB("ab", l.AB)...)
 	if l.Security != nil {

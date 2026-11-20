@@ -127,8 +127,11 @@ layer.defaults.model_grades.strongest.access
 layer.defaults.model_grades.strongest.model
 layer.defaults.rigor.areas.src.level
 layer.defaults.rigor.areas.src.match
+layer.defaults.rigor.areas.src.members.conformance.paths
+layer.defaults.rigor.areas.src.members.conformance.repo
 layer.defaults.rigor.areas.src.name
 layer.defaults.rigor.default
+layer.defaults.rigor.repos
 layer.profiles.web.base
 layer.profiles.web.cache.conformance.key
 layer.profiles.web.cache.conformance.paths

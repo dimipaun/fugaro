@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -213,7 +214,7 @@ func Validate(c *Config) []Problem {
 	if c.Rigor != nil {
 		// The repository's own block, by the same rules the project layer's
 		// is judged by: one function, two prefixes.
-		ps = append(ps, validateRigor("rigor", c.Rigor.Default, c.Rigor.Areas)...)
+		ps = append(ps, validateRigor("rigor", c.Rigor.Default, c.Rigor.Areas, nil, false)...)
 	}
 	if c.Security != nil {
 		// The repository's own list, by the rules the project layer's is
@@ -451,6 +452,13 @@ func validateRebuild(p string, r Rebuild) []Problem {
 // "defaults.rigor" for the project layer's, so one function states the rules
 // for both layers (docs/project-layer.md §5 gives either layer both keys).
 //
+// project says which of the two blocks it is, and it is the one thing that
+// differs between them: a repository's rule names a path glob of its own tree
+// (Area.Validate), while a project rule names what the area is made of — a
+// match in effect for every repository, members, or both (Area.ValidateProject).
+// The project layer's per-repository map (repos) is validated here too, and it
+// is the project layer's alone.
+//
 // It reads rigor.Area.Validate and rigor.Known, which is the whole point of
 // the vocabulary living in internal/rigor: the value a configuration may
 // write is the value the resolver can use, so a mode outside the vocabulary
@@ -464,8 +472,9 @@ func validateRebuild(p string, r Rebuild) []Problem {
 // writer cannot see. The rule is per layer: the two area lists are a union
 // rather than a replacement (D20c), and a repository's rule for the project
 // layer's glob is a rule of its own, which this function never sees because
-// each layer is validated on its own.
-func validateRigor(p string, mode rigor.Rigor, areas []rigor.Area) []Problem {
+// each layer is validated on its own. A rule that names no glob at all — a
+// project rule made of members — is not compared: there is no glob to repeat.
+func validateRigor(p string, mode rigor.Rigor, areas []rigor.Area, repos map[string]rigor.Rigor, project bool) []Problem {
 	var ps []Problem
 	if mode != "" && !rigor.Known(mode) {
 		ps = append(ps, Problem{Path: p + ".default", Message: "must be one of " + rigor.RigorList()})
@@ -478,8 +487,15 @@ func validateRigor(p string, mode rigor.Rigor, areas []rigor.Area) []Problem {
 	// reason is the one its writer has to fix.
 	seen := make(map[string]int, len(areas))
 	for i, a := range areas {
-		if msg := a.Validate(); msg != "" {
+		msg := a.Validate()
+		if project {
+			msg = a.ValidateProject()
+		}
+		if msg != "" {
 			ps = append(ps, Problem{Path: fmt.Sprintf("%s.areas[%d]", p, i), Message: msg})
+			continue
+		}
+		if a.Match == "" {
 			continue
 		}
 		if j, dup := seen[a.Match]; dup {
@@ -487,6 +503,38 @@ func validateRigor(p string, mode rigor.Rigor, areas []rigor.Area) []Problem {
 			continue
 		}
 		seen[a.Match] = i
+	}
+	if project {
+		ps = append(ps, validateRigorRepos(p+".repos", repos)...)
+	}
+	return ps
+}
+
+// validateRigorRepos reports defaults.rigor.repos' problems, each at
+// p.<repo>: the repository name, and the level it is given.
+//
+// The name is checked for its shape only (rigor.Member.Validate's rule,
+// reused so one rule states what a repository name looks like): the project
+// layer cannot see the published allow_repos, so whether the policy admits
+// the repository is a question only `fugaro doctor` can ask, and it warns
+// about a name the policy does not admit. A layer file is held to what a
+// layer file can be held to.
+//
+// The keys are sorted so the problems read in one order whatever order the
+// document wrote them in — the map has no order of its own, and a refusal
+// that moved between two runs would read as two different mistakes.
+func validateRigorRepos(p string, repos map[string]rigor.Rigor) []Problem {
+	if len(repos) > rigor.MaxRepoLevels {
+		return []Problem{{Path: p, Message: fmt.Sprintf("must hold at most %d repositories", rigor.MaxRepoLevels)}}
+	}
+	var ps []Problem
+	for _, name := range slices.Sorted(maps.Keys(repos)) {
+		switch lvl := repos[name]; {
+		case rigor.Member{Repo: name}.Validate() != "":
+			ps = append(ps, Problem{Path: p + "." + name, Message: "must be a repository name, owner/name: letters, digits, dot, dash and underscore in each of two segments, and no . or .. segment"})
+		case !rigor.Known(lvl):
+			ps = append(ps, Problem{Path: p + "." + name, Message: "must be one of " + rigor.RigorList()})
+		}
 	}
 	return ps
 }

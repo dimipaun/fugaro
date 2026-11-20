@@ -1,0 +1,28 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+defaults:
+  rigor:
+    default: startup
+    areas:
+      # A whole-repo member: every path of acme/console-web is in the area.
+      - name: console
+        members:
+          - repo: acme/console-web
+          - repo: acme/app
+            paths: ["ui/**"]
+        level: pro
+      # One repository in two areas, on disjoint paths (LD4): acme/app's
+      # mobile/ is not its ui/, and a run touching one path matches one area.
+      - name: mobile
+        members:
+          - repo: acme/app
+            paths: ["mobile/**"]
+        level: startup
+      - name: payments
+        members:
+          - { repo: acme/payments-core }
+        level: critical
+    repos:
+      acme/legacy-api: pro
+      acme/payments-core: critical
