@@ -96,6 +96,13 @@ type messageState struct {
 	// dels is what the record says about every number the run saw, in number
 	// order.
 	dels []runmsg.Delivery
+	// texts is every message's own text, as the run read it, by number. The
+	// record carries none (F13) and the object under tokens/ may be gone by
+	// the time the report is written, so this is the only place the words
+	// survive for the report's Messages section — which is also what makes
+	// them the runner's own reading of them and not a run's rewritten record
+	// (F19, F20).
+	texts map[int]string
 }
 
 // openMessages opens the channel at bootstrap and publishes the record's
@@ -129,7 +136,8 @@ func (r *run) coderStages() bool {
 func (r *run) publishMessages() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.rec.Messages = &runmsg.Record{Accepting: r.msgs.on, Format: runmsg.Format, Messages: slices.Clone(r.msgs.dels)}
+	r.rec.Messages = &runmsg.Record{Accepting: r.msgs.on, Format: runmsg.Format,
+		Flags: r.messageFlags(), Messages: slices.Clone(r.msgs.dels)}
 }
 
 // watchMessages reads the message prefix every CancelPoll, the cancel watch's
@@ -249,6 +257,12 @@ func (r *run) commitMessages(next int, found []runmsg.Message, dels []runmsg.Del
 		return
 	}
 	r.msgs.next = next
+	for _, m := range found {
+		if r.msgs.texts == nil {
+			r.msgs.texts = make(map[int]string, len(found))
+		}
+		r.msgs.texts[m.Seq] = m.Text
+	}
 	r.msgs.pending = append(r.msgs.pending, found...)
 	r.msgs.dels = append(r.msgs.dels, dels...)
 	r.publishMessages()
