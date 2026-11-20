@@ -108,13 +108,15 @@
         "prediction": true,
         "paths": [
           "scripts/release-gate.sh",
-          "scripts/release_test.go"
+          "scripts/release_test.go",
+          "scripts/testdata/fake-gh.sh",
+          "internal/cli/docs_desktop_console_test.go"
         ]
       }
     },
     {
       "id": "CS7b",
-      "title": "the hotfix path dispatches a full run",
+      "title": "a release dispatches its own full run",
       "run": null,
       "version": null,
       "tier": "small",
@@ -159,7 +161,7 @@
     },
     {
       "id": "CS9",
-      "title": "Check 790: measure and break one on purpose",
+      "title": "Check 800: measure and break one on purpose",
       "run": null,
       "version": null,
       "tier": "small",
@@ -167,7 +169,25 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "docs/ci-affected-tests/check-790.md"
+          "scripts/live-checks/check800.sh",
+          "scripts/live-checks/check800_test.sh",
+          "docs/ci-affected-tests/check-800.md"
+        ]
+      }
+    },
+    {
+      "id": "CS6b",
+      "title": "the tests that pin what CS6 changes",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/docs_desktop_console_test.go",
+          "internal/cli/docs_mobile_release_workflow_test.go",
+          "internal/cli/docs_runner_timeout_test.go"
         ]
       }
     }
@@ -219,11 +239,6 @@
       "reason": "one sweep: the hotfix path dispatches a full run"
     },
     {
-      "task": "CS8",
-      "needs": "CS6",
-      "reason": "documents what ci.yml does"
-    },
-    {
       "task": "CS9",
       "needs": "CS6",
       "reason": "measures the live workflow"
@@ -232,6 +247,26 @@
       "task": "CS9",
       "needs": "CS2b",
       "reason": "the trace it breaks on purpose"
+    },
+    {
+      "task": "CS6",
+      "needs": "CS2b",
+      "reason": "the trace format it uploads"
+    },
+    {
+      "task": "CS6b",
+      "needs": "CS6",
+      "reason": "it reads the text it adapts the tests to"
+    },
+    {
+      "task": "CS8",
+      "needs": "CS6",
+      "reason": "documents what ci.yml does"
+    },
+    {
+      "task": "CS8",
+      "needs": "CS6b",
+      "reason": "documents what they do"
     }
   ],
   "decoupling": [],

@@ -7,11 +7,11 @@ CI runs the whole suite on every dispatch: 27 shards, about 175 runner-minutes, 
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. Written by the coordinator from the owner's direction of 2026-11-20; no typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1-A4, findings F1-F15, decisions D3040-D3043 with the owner's answers, resolutions R1-R11 |
-| [implementation-plan.md](implementation-plan.md) | Tasks CS1-CS9 (CS2 in two parts, CS7 with a companion CS7b): 11 tasks, no contract (the pass was weighed and declined, §6), one of them owner-run |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1-A4, findings F1-F15, decisions D3040-D3043 with the owner's answers, resolutions R1-R12 |
+| [implementation-plan.md](implementation-plan.md) | Tasks CS1-CS9 (CS2 in two parts, CS6 with a companion CS6b, CS7 with a companion CS7b): 12 tasks, no contract (the pass was weighed and declined, §6), one of them owner-run |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
-**Numbers reserved:** decisions **D3040-D3059** (D3040-D3043 used), checks **790-799** (790 used). Read on 2026-11-20: the highest decision on `main` and in the open pull requests was D3019; checks 780-789 are reserved by the open pull request #3299 (keys-through-service) and the highest on `main` is 772.
+**Numbers reserved:** decisions **D3040-D3059** (D3040-D3043 used), checks **800-809** (800 used). Read on 2026-11-20: the highest decision on `main` and in the open pull requests was D3019; checks 780-789 are reserved by the open pull request #3299 (keys-through-service), 790-799 by #3302 (always-a-budget), and the highest on `main` is 772; decisions D3020-D3026 and D3039 are #3302's.
 
 **Owner answers of 2026-11-20** (given in this session through the structured question at the owner's terminal): D3040-D3043 all as recommended: the release gate requires a full run on the tag's commit; one scheduled nightly full run (a narrow exception to the dispatch-only ruling of 2026-11-07); the selector is a Go program with tests under `scripts/`; a recorded read-map refreshed by the full run.
 
