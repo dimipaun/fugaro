@@ -90,12 +90,10 @@ type workspaceProjectStage struct {
 	dir     string // the root's own directory, for the sentences that name where to read a plan
 	applied bool
 	// svc is var.credentials_service as this run writes it, nil when the root's
-	// tfvars carry none, and deploys whether this run's apply creates or moves
-	// the workspace's service — ONE decision, read once (serviceBlock) because
-	// prepare runs on every path of the stage and the line a run that deploys
-	// nothing prints is one line.
+	// tfvars carry none — ONE decision, read once (serviceBlock) because prepare
+	// runs on every path of the stage and the line a run that deploys nothing
+	// prints is one line.
 	svc     *workspaceServiceVar
-	deploys bool
 	svcRead bool
 }
 
@@ -434,10 +432,14 @@ func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (init
 	s.applied = true
 	s.e.r.res.Applied = true
 	fmt.Fprintf(s.e.r.w, "created the workspace root's two accounts and its one grant: the workspace's own service account %s, the SA fallback's IAM account %s, and %s on %s%s\n", account, iamAccount, tf.WorkspaceDatabaseRole(project), project, createdService(s.svc))
-	// The second apply, and only for the run that just wrote the service: the
-	// revision the apply above made carries the module's unassigned audience
-	// until the URL Cloud Run assigned is read back and applied (fillServiceURL).
-	if s.deploys {
+	// The second apply is on the STATE this run leaves and not on this run's own
+	// resolve: a block written with no url — a create the apply never made, a
+	// `--plan-only` pass — is a revision whose audience is the module's
+	// unassigned placeholder, which admits no member, and the update that finds
+	// the block is the run that heals it rather than the release after it
+	// (fillServiceURL, the same rule as fillCredentialsAudience one root over).
+	// A block that already carries the root's own audience writes nothing.
+	if s.svc != nil {
 		if err := s.fillServiceURL(ctx); err != nil {
 			return initflow.Outcome{}, err
 		}
@@ -735,11 +737,10 @@ func workspaceMemberTable(lc *localcfg.Config) map[string]workspaceMemberVar {
 	return out
 }
 
-// serviceBlock is var.credentials_service as this run writes it, and whether
-// this run's apply creates or moves the service: the ONE reading of that
-// decision, memoized because prepare runs on every path of the stage (Check,
-// Plan, Apply) and the line a run that deploys nothing prints belongs in the
-// transcript once.
+// serviceBlock is var.credentials_service as this run writes it: the ONE
+// reading of that decision, memoized because prepare runs on every path of the
+// stage (Check, Plan, Apply) and the line a run that deploys nothing prints
+// belongs in the transcript once.
 //
 // It carries the block the workdir already holds forward in every state but the
 // two that write one, and that is the security property rather than bookkeeping:
@@ -783,7 +784,7 @@ func (s *workspaceProjectStage) serviceBlock(ctx context.Context) *workspaceServ
 	// carry is the answer of every state that deploys nothing: the block the
 	// workdir holds goes back exactly as it stands, and why is one line.
 	carry := func(why string) *workspaceServiceVar {
-		s.svc, s.deploys = recorded, false
+		s.svc = recorded
 		fmt.Fprintf(e.r.w, "the workspace's credentials service is not deployed: %s\n", why)
 		return s.svc
 	}
@@ -821,7 +822,7 @@ func (s *workspaceProjectStage) serviceBlock(ctx context.Context) *workspaceServ
 	if recorded != nil {
 		svc.URL = recorded.URL
 	}
-	s.svc, s.deploys = svc, true
+	s.svc = svc
 	return svc
 }
 
@@ -867,8 +868,18 @@ func workspaceServiceFacts(lc *localcfg.Config) string {
 }
 
 // fillServiceURL is the SECOND apply of this stage: the URL Cloud Run assigned
-// the service the apply above created, read back from the root's own output and
+// the service the apply above wrote, read back from the root's own output and
 // written into credentials_service.url.
+//
+// It is called for every state whose apply wrote a block (Apply) and answers
+// from the state itself: an output that is already the block's own url is the
+// write already made, and one that differs — or a block that carries none at
+// all, which is the revision a create apply left behind with the module's
+// unassigned placeholder — is this apply. That is the same rule one root over
+// (fillCredentialsAudience), and the reason the gate is not "did this run
+// deploy the service": the block a run carries forward is a revision already
+// serving members, and the run that finds it with no audience is the run that
+// has to assign one, or the service admits nobody until the next release.
 //
 // Why it takes two applies (the root's own comment beside the placeholder, and
 // the installation's fillCredentialsAudience for the same shape one root over):

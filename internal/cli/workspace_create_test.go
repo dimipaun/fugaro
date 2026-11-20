@@ -332,7 +332,12 @@ func wsWorkdirRoot() string {
 // the state a workdir is in before the run's own prepare rebuilds the tree:
 // PrepareWorkdir snapshots the file first, and that snapshot is what a run that
 // deploys nothing writes back.
-func wsSeedRecorded(t *testing.T, ws, image string) {
+//
+// url is the audience that run read back from the root's own output, and an
+// empty one is the state a run leaves behind when its second apply never landed
+// — a create the apply never made, a `--plan-only` pass: the block names an
+// image and no audience, so the revision it is the tfvars of admits nobody.
+func wsSeedRecorded(t *testing.T, ws, image, url string) {
 	t.Helper()
 	if err := os.MkdirAll(wsWorkdirRoot(), 0o700); err != nil {
 		t.Fatal(err)
@@ -342,7 +347,8 @@ func wsSeedRecorded(t *testing.T, ws, image string) {
 	doc.Service = &workspaceServiceVar{
 		Service: creds.WorkspaceServiceName, Image: image, Region: "us-east5",
 		BundleSecret:    credsvc.WorkspaceBundleSecretID(ws),
-		FirebaseProject: wsProject, RTDBURL: "https://proj-1234-default-rtdb.firebaseio.com"}
+		FirebaseProject: wsProject, RTDBURL: "https://proj-1234-default-rtdb.firebaseio.com",
+		URL: url}
 	b, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -920,7 +926,7 @@ func TestSplitFirebaseGetsNoService(t *testing.T) {
 		"members": []any{wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b")},
 		"cap":     map[string]any{"monthly_micros": 25_000_000},
 	})
-	wsSeedRecorded(t, initProjectName, oldCredentialsRef(convergePrev))
+	wsSeedRecorded(t, initProjectName, oldCredentialsRef(convergePrev), "")
 
 	startRunInFlight(t, r)
 	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})

@@ -1834,10 +1834,10 @@ func wsPlanSeq() []map[string]any {
 	return []map[string]any{{"exit": 2}, {"exit": 2}, {"exit": 2}, {"exit": 2}, {"exit": 0}}
 }
 
-// wsPlanSeqConverged is the same for a run that deploys nothing and applies one
-// change: the fill has no second plan — a run that writes no service has no
-// audience to fill (serviceBlock, fillServiceURL) — so the verify is the fourth
-// read and the one that finds nothing.
+// wsPlanSeqConverged is the same for a run whose block already carries the
+// audience the root's own output reports: the fill has nothing to write — the
+// revision behind the block admits its callers, whether this run moved its image
+// or not — so the verify is the fourth read and the one that finds nothing.
 func wsPlanSeqConverged() []map[string]any {
 	return []map[string]any{{"exit": 2}, {"exit": 2}, {"exit": 2}, {"exit": 0}}
 }
@@ -1995,8 +1995,10 @@ func TestUpdateConvergesAWorkspaceFromThePreviousRelease(t *testing.T) {
 // run would be going when they converge the installation it belongs to.
 func TestUpdateDeploysTheWorkspaceServiceWithARunInFlight(t *testing.T) {
 	r := wsOwnerConvergeRig(t, wsOwnerTable+wsOwnerCap)
-	wsSeedRecorded(t, initProjectName, oldCredentialsRef(convergePrev))
-	r.script["plan@workspace"] = wsPlanSeq()
+	wsSeedRecorded(t, initProjectName, oldCredentialsRef(convergePrev), wsServiceURL)
+	// The block the release behind deployed carries its own audience, so this run
+	// moves the image and writes no url: four reads, the last finding nothing.
+	r.script["plan@workspace"] = wsPlanSeqConverged()
 	r.setPlanAt(t, "workspace", wsRootPlan(initProjectName, r.credentialsRefAt(convergeRelease), wsMemberBAccount)...)
 	r.script["output@workspace"] = map[string]any{
 		"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
@@ -2036,9 +2038,14 @@ func TestUpdateRemovesAMembersInvokeGrant(t *testing.T) {
 	r := wsOwnerConvergeRig(t, "workspace_members: {}\n"+wsOwnerCap)
 	// The block this release's own run deployed: the member table is what moved,
 	// and the service is not — so the run carries the block forward and applies
-	// the removal alone, which is the one apply below.
-	wsSeedRecorded(t, initProjectName, r.credentialsRefAt(convergeRelease))
+	// the removal alone, which is the one apply below. Its URL is the audience
+	// that run read back, which is what makes this apply the last one: the
+	// second apply is for a block with no audience, and this one has its own
+	// (fillServiceURL reads the root's output to be told so).
+	wsSeedRecorded(t, initProjectName, r.credentialsRefAt(convergeRelease), wsServiceURL)
 	r.script["plan@workspace"] = wsPlanSeqConverged()
+	r.script["output@workspace"] = map[string]any{
+		"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
 	r.setPlanAt(t, "workspace",
 		wsServiceNoOpPlan(r.credentialsRefAt(convergeRelease)), wsInvokerRemovedPlan(wsMemberBAccount))
 	r.save(t)
@@ -2059,5 +2066,39 @@ func TestUpdateRemovesAMembersInvokeGrant(t *testing.T) {
 	}
 	if v := wsRootVars(t); len(v.Members) != 0 {
 		t.Errorf("the workspace root's members = %+v, want none: the only member the owner's table named is gone", v.Members)
+	}
+}
+
+// TestUpdateConvergesAWorkspaceWhoseServiceHasNoAudience is the state the second
+// apply is gated on, and the one the update after a run has to heal: the
+// workspace root's tfvars already carry this release's image and no url — what
+// `fugaro update --plan-only` leaves, and what a create apply that never landed
+// leaves — so the run carries the block forward rather than resolving anything,
+// and terraform is content with it either way: an empty url is the module's own
+// placeholder, so a plan over that document finds the service converged while
+// the revision behind it admits no member's ID token at all.
+//
+// The block a run carries forward is therefore not evidence that the audit is
+// done: the URL Cloud Run assigned is read back and applied on the update that
+// finds the block without one, which is what the two applies and the written
+// audience below pin. Gating that apply on this run's own resolve instead — the
+// run that moves the image — would leave the workspace unreachable until the
+// next release, which is the one thing the HARD RULE forbids.
+func TestUpdateConvergesAWorkspaceWhoseServiceHasNoAudience(t *testing.T) {
+	r := wsOwnerConvergeRig(t, wsOwnerTable+wsOwnerCap)
+	wsSeedRecorded(t, initProjectName, r.credentialsRefAt(convergeRelease), "")
+	r.script["plan@workspace"] = wsPlanSeq()
+	r.setPlanAt(t, "workspace", wsRootPlan(initProjectName, r.credentialsRefAt(convergeRelease), wsMemberBAccount)...)
+	r.script["output@workspace"] = map[string]any{
+		"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
+	r.save(t)
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if n := wsApplies(t, r); n != 2 {
+		t.Errorf("the update applied the workspace root %d time(s), want 2 (the root itself, and the audience write that makes the revision behind it admit a member's ID token): %v", n, r.applies(t))
+	}
+	if v := wsRootVars(t); v.Service == nil || v.Service.URL != wsServiceURL {
+		t.Errorf("after the update the workspace's service is %+v, want the URL Cloud Run assigned (%s) written into its block: a block with no audience is a revision that admits nobody, and no plan over that document ever says so", v.Service, wsServiceURL)
 	}
 }
