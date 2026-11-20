@@ -64,6 +64,10 @@ func buildBudgetWorld(t *testing.T, f *cloudFixture) *gcpfake.RTDB {
 	}
 	db := f.budget.DB
 	f.rewriteConfig(t, f.budget.ConfigBlock(), budgetBlock(db))
+	// The block in the config is this world's from here on, and the field names
+	// the harness's own line: a later helper (noBudget, appendConfig) would
+	// otherwise look for the line this just replaced.
+	f.budget = nil
 	adoptBudgetFake(db)
 	buildBudgetCaps(db)
 	stubBuildPricer(t)

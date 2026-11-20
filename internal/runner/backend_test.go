@@ -72,6 +72,9 @@ func newBK(t *testing.T, cfg, mode, capUSD string, script ...anthropicfake.Reply
 
 func attachBackend(t *testing.T, g *gw, mode string) *bk {
 	t.Helper()
+	if g.budget == nil {
+		t.Fatal("attachBackend needs a harness whose job carries a budget database (newHarnessFiles, testutil.NewBudget): a body that asked for none (noBudget) is a run with no database for it to attach")
+	}
 	b := &bk{gw: g, tb: t}
 	// The harness's own database, not a second one: the address the run's
 	// environment carries (g.budget, testutil.NewBudget) is the address this

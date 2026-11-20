@@ -55,10 +55,13 @@ type cloudFixture struct {
 	// installation at (buildBudgetWorld): nil for a rig that only reads, and
 	// the fake a test changes a cap or a counter on afterwards.
 	db *gcpfake.RTDB
-	// budget is the fake budget database this installation has, which every
-	// harness here gives one unless the test asked for none (noBudget): its
-	// address is in the config, and its database is the one buildBudgetWorld
-	// leases against.
+	// budget is the fake budget database this installation has: every fixture
+	// here is given one unless the test asked for none (noBudget). Its address
+	// is in the config, and its database is the one buildBudgetWorld leases
+	// against. The field names the harness's own block, so a fixture that
+	// replaces that line with one of its own (buildBudgetWorld) or takes it out
+	// (noBudget, appendConfig) clears it: no helper goes looking for a line
+	// that is gone.
 	budget *testutil.Budget
 }
 
