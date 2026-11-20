@@ -28,8 +28,9 @@ import (
 // **A stub returns the shape it is named for and decides nothing**, which is
 // the same rule the other scaffolding in this tree follows (internal/cli's
 // after_write_stub.go, internal/mobilesession's stub.go): it reads no policy,
-// no kill switch, no state, no outcome and no node, holds no repository table,
-// offers no credential, selects no token, takes no room and keeps no figure.
+// no kill switch, no state, no repository's auth record, no outcome and no
+// node, holds no repository table, offers no credential, selects no token,
+// takes no room and keeps no figure.
 // A side written against C1 compiles and runs its own tests against a signature
 // that exists, and no side can pass on a decision nothing made — because
 // nothing here makes one.
@@ -75,7 +76,8 @@ func (stubScope) Caller() Identity { return Identity{} }
 
 func (stubScope) Policy() PolicyReader     { return stubPolicy{} }
 func (stubScope) Kills() KillReader        { return stubKills{} }
-func (stubScope) State() creds.Store       { return stubState{} }
+func (stubScope) State() StateStore        { return stubState{} }
+func (stubScope) RepoAuth() RepoAuthReader { return stubRepoAuth{} }
 func (stubScope) Outcomes() OutcomeReader  { return stubOutcomes{} }
 func (stubScope) Offering() OfferingReader { return stubOffering{} }
 func (stubScope) Forge() ForgeReader       { return stubForge{} }
@@ -88,9 +90,10 @@ func (stubScope) Repos() map[string]string { return nil }
 
 // Meter answers nil, which is a deployment with no workspace cap — the state
 // every installation is in and the state a workspace that declared none is in
-// (D1301 as amended). It is a refusal in the sense that matters here: nothing
-// is reserved against it, so nothing is served that the stub would have paid
-// for.
+// (D1301 as amended). It is the ONE accessor of this scope whose zero answer is
+// not a refusal (Scope's own rule): a route serves unreserved where the meter
+// is nil, so what keeps the stub from paying for anything is that Serves is
+// false for every route and the offering holds nothing — never the nil itself.
 func (stubScope) Meter() *WorkspaceMeter { return nil }
 
 // Serves answers false for every path, including the paths this service really
@@ -128,9 +131,10 @@ func (stubKills) Stop(context.Context, string) (bool, string, error) {
 }
 
 // stubState reads and writes nothing: no mark, no lease, no placement and no
-// tie-breaker, and no repository's auth record. Every method refuses, including
-// the writes — a mark a stub wrote would outlive the stub, and a placement it
-// wrote would be stickiness nothing selected.
+// tie-breaker. Every method refuses, including the writes — a mark a stub wrote
+// would outlive the stub, and a placement it wrote would be stickiness nothing
+// selected. The repository's auth record is not here at all: it is the member's
+// and not the state's (Scope.State), and stubRepoAuth below is its reader.
 type stubState struct{}
 
 func (stubState) Marks(context.Context) (map[string]creds.Mark, error) {
@@ -155,7 +159,14 @@ func (stubState) Current(context.Context, creds.Run) (string, bool, error) {
 
 func (stubState) RoundRobin(context.Context) (int64, error) { return 0, errStubScope }
 
-func (stubState) RepoAuth(context.Context, string) (creds.RepoAuth, bool, error) {
+// stubRepoAuth answers no repository's auth record: the record is what narrows
+// a repository's reach to the auth its own configuration names, and found=false
+// with no error would be the answer "this repository has no record", which
+// narrowToRepoAuth reads as the cascade unchanged (D2070 (a)) — a decision
+// about a member's configuration and not a stub's to make.
+type stubRepoAuth struct{}
+
+func (stubRepoAuth) RepoAuth(context.Context, string) (creds.RepoAuth, bool, error) {
 	return creds.RepoAuth{}, false, errStubScope
 }
 
@@ -179,8 +190,10 @@ func (stubOffering) Offering(context.Context, *Bundle) ([]creds.Credential, erro
 
 // stubForge holds no Bitbucket token and covers no repository: a nil selector
 // is what makes the proxy refuse the call rather than serve it with a token
-// nothing chose (T8), and coverage refuses rather than answering true, which
-// would serve a repository no workspace owner declared.
+// nothing chose (T8, and Scope.Forge's own rule that nil refuses in both modes
+// — the route's legacy fallback is WS1's to replace with this answer), and
+// coverage refuses rather than answering true, which would serve a repository
+// no workspace owner declared.
 type stubForge struct{}
 
 func (stubForge) Bitbucket() bbtokens.Selector { return nil }

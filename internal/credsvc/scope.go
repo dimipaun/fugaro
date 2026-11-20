@@ -52,9 +52,20 @@ import (
 // **The zero answer of every accessor is the fail-closed one**, and that is a
 // rule of the shape rather than a property of the two implementations: a scope
 // that names no caller, serves no route, accepts no slip, holds no repository
-// table and answers nil readers is a scope a route can be handed without
+// table and answers refusing readers is a scope a route can be handed without
 // anything being served by accident. The stub (scope_stub.go) is exactly that
 // scope, and TestStubScopeRefusesEveryCall holds every accessor of it to it.
+//
+// **Meter is the one exception, and it is named here rather than left to be
+// inferred.** Every other accessor's zero answer refuses a call; Meter's nil
+// means "this deployment has no workspace cap", and a route that pays for a
+// call serves it UNRESERVED where the meter is nil (D1301 as amended) — so a
+// resolver that holds a cap and answers nil has not refused the call, it has
+// removed the cap. Nothing in the shape can tell the two apart at the point the
+// route asks, so the requirement sits on the resolver that has the cap: WS2
+// holds, with a test of its own, that a workspace with a cap configured never
+// answers a nil meter (and WS8, which wires the reservation, holds the other
+// side of it).
 type Scope interface {
 	// Caller is the run identity this call's token proved, and the zero
 	// Identity on a call that carries none — every route this service answers
@@ -92,14 +103,36 @@ type Scope interface {
 	// switches. What the shape fixes is only that the answer is chosen for the
 	// caller and asked before the bundle.
 	Kills() KillReader
-	// State is the cascade's state — the marks, the leases, a run's placement,
-	// the tie-breaker and the per-repository auth record — as THIS caller's
-	// deployment keeps it. The installation's is its own database's; a
-	// workspace's is the workspace's OWN database and never a member's, because
-	// a cooldown, a rotation position and a spend figure for a workspace
-	// credential are facts about the workspace's pool and the service holds no
-	// write on any member (R8, D1299 as amended).
-	State() creds.Store
+	// State is the cascade's own state — the marks, the leases, a run's
+	// placement and the tie-breaker — as THIS caller's deployment keeps it. The
+	// installation's is its own database's; a workspace's is the workspace's OWN
+	// database and never a member's, because a cooldown, a rotation position and
+	// a spend figure for a workspace credential are facts about the workspace's
+	// pool and the service holds no write on any member (R8, D1299 as amended).
+	//
+	// **The per-repository auth record is NOT here.** It is written by the
+	// MEMBER's own `fugaro update` into the member's database, so it is read
+	// through RepoAuth below and never through the state store a workspace owns:
+	// a workspace that read it here would find nothing, and narrowToRepoAuth
+	// reads an absent record as the cascade unchanged (cascade.go, D2070 (a)),
+	// which would serve a member's run the whole of the workspace's pool. The
+	// type carries that and not only the comment — StateStore is creds.Store
+	// without the method, so a route cannot reach the wrong database by habit.
+	State() StateStore
+	// RepoAuth is the record of what ONE repository's runs go out on
+	// (creds/repoauth/<slug>, D2070 (a), R7), read from the CALLER's database:
+	// the installation's own, and for a workspace the MEMBER's, because the
+	// member's own `fugaro update` is what wrote it
+	// (internal/creds/repoauth.go). It is the reader the admission is narrowed
+	// by last (narrowToRepoAuth) and it is deliberately not part of State: the
+	// marks, the leases and the counters are the workspace's, and this record is
+	// the member's.
+	//
+	// found=false is a repository no update has recorded — an installation this
+	// release has not written, or a member whose own update predates the record
+	// — and it is not an error: the caller decides what an absent record means,
+	// which for the cascade is "unchanged" (D2070 (a)).
+	RepoAuth() RepoAuthReader
 	// Outcomes is the reader that answers whether a run of this caller's
 	// repository has already ended. It is the one the resolver's verification
 	// asked (an ended run's token is not honoured again, W2) and it is carried
@@ -138,6 +171,13 @@ type Scope interface {
 	// A route that pays for a call reserves against a non-nil meter and serves
 	// unreserved where it is nil, which is today's behaviour unchanged; the
 	// wiring itself is WS8's.
+	//
+	// **It is the one accessor whose zero answer does not refuse** (see the
+	// Scope comment above), so the answer is the resolver's to get right: a
+	// workspace whose pool has a cap must answer that cap here and never nil,
+	// and WS2 holds that with a test of its own rather than leaving the shape to
+	// be trusted. A resolver that answered nil for a capped workspace would not
+	// refuse a call — it would pay for every one of them.
 	Meter() *WorkspaceMeter
 	// Serves reports whether this deployment serves the route at path at all.
 	//
@@ -169,6 +209,47 @@ type Scope interface {
 	// server.go's own rule and not a resolution of this one).
 	AcceptsSlip() bool
 }
+
+// StateStore is the cascade state a Scope answers: creds.Store without the
+// per-repository auth record, which is a fact about a MEMBER's repository and
+// not about the workspace's pool, so it is read from the caller's database
+// through RepoAuthReader instead (Scope.RepoAuth).
+//
+// It is spelled out rather than taken as creds.Store because Go cannot subtract
+// a method from an interface, and the subtraction is the point: a workspace's
+// state store is over the workspace's OWN database, so a route that read a
+// member's auth record through it would find nothing and treat the repository
+// as unrestricted (narrowToRepoAuth, D2070 (a)). creds.Store satisfies this
+// interface, so a side answers it with the store it already holds; the methods
+// are creds.Store's own and are documented there.
+type StateStore interface {
+	Marks(ctx context.Context) (map[string]creds.Mark, error)
+	UpdateMark(ctx context.Context, name string, f func(prev creds.Mark, found bool) (creds.Mark, error)) (creds.Mark, error)
+	Leases(ctx context.Context, now time.Time) ([]creds.Lease, error)
+	SetPlacement(ctx context.Context, run creds.Run, name string, l creds.Lease) error
+	Current(ctx context.Context, run creds.Run) (name string, found bool, err error)
+	RoundRobin(ctx context.Context) (int64, error)
+}
+
+// RepoAuthReader reads one repository's auth record — what its own fugaro.yaml
+// says its runs go out on (creds/repoauth/<slug>, D2070 (a), R7) — out of the
+// database the repository's own `fugaro update` wrote it in: the installation's
+// for an installation, and the MEMBER's for a workspace.
+//
+// creds.Store satisfies it, so an installation answers it with the store it
+// already holds; what the interface fixes is that the answer comes from the
+// CALLER's database and never from the workspace's own state store.
+type RepoAuthReader interface {
+	RepoAuth(ctx context.Context, slug string) (creds.RepoAuth, bool, error)
+}
+
+// The split held by the compiler rather than by the two comments above: a side
+// answers both with the one store it already holds, and a creds.Store that
+// stopped satisfying either would fail to build here rather than at WS1.
+var (
+	_ StateStore     = (creds.Store)(nil)
+	_ RepoAuthReader = (creds.Store)(nil)
+)
 
 // ScopeResolver answers the scope of one request: which caller made it, and
 // therefore which readers serve it.
@@ -239,9 +320,22 @@ type OfferingReader interface {
 // implementations in the same sweep — and never a second reader reached around
 // the scope.
 type ForgeReader interface {
-	// Bitbucket is the token store a proxied call is served with, or nil where
-	// this deployment holds none — in which case the proxy refuses the call
+	// Bitbucket is the token store a proxied call is served with, and nil where
+	// this deployment holds none — in which case the proxy REFUSES the call
 	// rather than serving it with a token nothing chose (T8, D2355).
+	//
+	// **nil means refuse in BOTH modes, and an installation that wired no store
+	// of its own answers the legacy selector explicitly** (bitbucketproxy.go's
+	// legacySelector, which serves the bundle's legacy entry and the contract's
+	// no_bitbucket_token class where the bundle holds none). Today the route
+	// reads nil as "the legacy entry" itself (chooseBitbucketToken's own
+	// fallback), and that fallback is what WS1 replaces with the scope's answer
+	// when it takes the selector from here: a single-token installation is then
+	// served exactly as it is now — which is why no existing test changes — and
+	// a workspace scope that answers nil refuses, instead of being handed the
+	// workspace bundle's legacy token by a fallback nobody chose. The two modes'
+	// answers differ in kind here, so it is written down rather than left to the
+	// route's reading of a nil.
 	//
 	// An installation's is its own store, over its own database. A workspace's
 	// is the workspace's, and the tokens it holds are the workspace owner's

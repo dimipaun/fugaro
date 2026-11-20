@@ -7,10 +7,10 @@ and the two questions it answers for the route half are **R14** (what workspace 
 D2980 (a second Cloud Run service on the same binary), D2981 (a member's run calls it directly),
 D2982 (the route is decided once at the run's start), D2988 (a member's runs only), D2992 (shared
 project jobs are served) and D1299 as amended (the service holds no write on a member). The shapes
-are `internal/credsvc/scope.go`: `Scope`, `ScopeResolver`, `OfferingReader`, `ForgeReader`,
-`WorkspaceNodeReader`, `WorkspaceScopeConfig`, `WorkspaceScopeResolverFunc`,
-`NewWorkspaceScopeResolver` and `WorkspaceKeepWarmPath`. The stub this package ships while the sides
-are built (`scope_stub.go`, with its test) is deleted by **I1**.
+are `internal/credsvc/scope.go`: `Scope`, `ScopeResolver`, `StateStore`, `RepoAuthReader`,
+`OfferingReader`, `ForgeReader`, `WorkspaceNodeReader`, `WorkspaceScopeConfig`,
+`WorkspaceScopeResolverFunc`, `NewWorkspaceScopeResolver` and `WorkspaceKeepWarmPath`. The stub this
+package ships while the sides are built (`scope_stub.go`, with its test) is deleted by **I1**.
 
 **WS1** (the installation's scope), **WS2** (the workspace's scope) and **WS5** (the process) are
 written against this document in parallel; **WS13** reads the keep-warm path from it, and **WS16**
@@ -33,12 +33,13 @@ may be served from.
 | `Caller() Identity` | the resolver's verification | the run identity the call's token proved; the zero `Identity` on a route answered ahead of the shared parse (a person, a daemon, a launcher or a build holds none) |
 | `Policy() PolicyReader` | the installation's one node, or the member's own published policy | the project's shared node and one repository's own admission node, for **this** caller |
 | `Kills() KillReader` | the installation's database, or whatever the workspace's resolver chooses | the operator's stop switches the call is held to, read before the bundle |
-| `State() creds.Store` | the installation's database, or the **workspace's own** | the marks, the leases, a run's placement, the tie-breaker and the per-repository auth record |
+| `State() StateStore` | the installation's database, or the **workspace's own** | the marks, the leases, a run's placement and the tie-breaker — the cascade's own state, and **never** the per-repository auth record |
+| `RepoAuth() RepoAuthReader` | the installation's database, or the **member's** | what one repository's own configuration says its runs go out on (`creds/repoauth/<slug>`, D2070 (a)) — written by that repository's own `fugaro update`, so it is read where it was written and not out of the workspace's state |
 | `Outcomes() OutcomeReader` | the installation's database, or the member's | whether a run of this caller's repository has already ended (W2) |
 | `Repos() map[string]string` | the installation's repository table, or the **calling job account's** repositories | the slug a run identity carries to the canonical name the policy speaks; a slug it does not hold is refused at the pairing, never guessed (D1066) |
 | `Offering() OfferingReader` | the bundle's own credentials, or the intersection over the workspace's pool | the pool the call may be served from — a narrowing, never a widening |
-| `Forge() ForgeReader` | the installation's token store and its table, or the workspace's | the Bitbucket token a proxied call is served with, and the coverage a forge call is admitted by |
-| `Meter() *WorkspaceMeter` | nil on an installation; the workspace's own meter | the workspace's cap, taken where a call is paid for (D1301 as amended) |
+| `Forge() ForgeReader` | the installation's token store and its table, or the workspace's | the Bitbucket token a proxied call is served with, and the coverage a forge call is admitted by; a nil token store refuses the call in both modes (rule 10) |
+| `Meter() *WorkspaceMeter` | nil on an installation; the workspace's own meter | the workspace's cap, taken where a call is paid for (D1301 as amended) — the one accessor whose zero answer is a declared absence and not a refusal (rule 9) |
 | `Serves(path string) bool` | the deployment's route set | whether this deployment serves that route at all (R14) |
 | `AcceptsSlip() bool` | the deployment's caller rule | whether a call that presents a slip is served under it (R18) |
 
@@ -74,12 +75,19 @@ constructor and gets either the workspace's resolver or a refusal, never a nil.
    spellings of one rule drift.
 
 2. **The workspace's readers are the member's, and the state is the workspace's own (R1, R8, D1299 as
-   amended).** The policy, the outcomes and the repository table are read where the member's own
-   administrator wrote them: the member's database, through the verifier's `iss` (finding 6). The
-   **state is not**: a cooldown, a rotation position and a spend figure for a workspace
-   credential are facts about the workspace's pool, so they live in the workspace's own database. The
-   service holds no write on any member at all, which is a property of this split and not a promise
-   about it.
+   amended).** The policy, the outcomes, the repository table and the per-repository auth record are
+   read where the member's own administrator — or the member's own `fugaro update` — wrote them: the
+   member's database, through the verifier's `iss` (finding 6). The auth record is the sharpest case
+   of it, and it is why it is a reader of its own (`RepoAuth()`) and not a method of the state store:
+   it is what narrows a repository's reach to the auth its own configuration names (D2070 (a), R7),
+   `fugaro update` writes it into that repository's own project's database, and a workspace scope that
+   read it out of its own database would find nothing — an absent record the cascade reads as "the
+   cascade, unchanged" (D2070 (a)), which would serve a member's run the whole of the workspace's
+   pool. The **state is not** the member's: a cooldown, a rotation position and a spend figure for a
+   workspace credential are facts about the workspace's pool, so they live in the workspace's own
+   database — which is why `State()` is `StateStore`, `creds.Store` without the auth-record method, so
+   that the wrong database cannot be reached by habit. The service holds no write on any member at
+   all, which is a property of this split and not a promise about it.
 
 3. **The repository table is the caller's, and it is where R19 lands (R6, D2992, R19, F28).** An
    installation's table is every repository it serves. A workspace's holds the repositories of the
@@ -90,10 +98,11 @@ constructor and gets either the workspace's resolver or a refusal, never a nil.
 
 4. **The offering is a narrowing, never a widening (R5).** Whatever the offering reader leaves out is
    never served; what it answers is still held to the legs the route applies itself — the repository's
-   own admission, the crafts a node publishes and the repository's own auth record. A workspace
-   answers the intersection of the workspace's pool with the **member's** policy and the repository's
-   admission in the member's own database, which is the same intersection R5 fixes: a member's run is
-   never served a credential its own administrator did not admit.
+   own admission, the crafts a node publishes and the repository's own auth record (read through
+   `RepoAuth()`, from the member's database — rule 2). A workspace answers the intersection of the
+   workspace's pool with the **member's** policy and the repository's admission in the member's own
+   database, which is the same intersection R5 fixes: a member's run is never served a credential its
+   own administrator did not admit.
 
 5. **Workspace mode serves a closed set of routes (R14, D2988, A2).** The model routes
    (`/v1/messages`, `/v1/messages/count_tokens`); the forge routes a run calls — the git proxy under
@@ -130,11 +139,29 @@ constructor and gets either the workspace's resolver or a refusal, never a nil.
    admits what it said. A member's **new repository** still needs the workspace owner to declare it and
    run `fugaro update`, for the invoke grant and for the account's list.
 
-9. **The meter is declared and not yet wired.** `Meter()` is the scope's answer to "what is the
-   workspace's cap for this call", and the reservation, the settle and the advisory headroom the
-   member is answered with are **WS8**'s (R15). Nothing in this contract reserves anything: an
-   installation answers nil, a workspace answers its meter, and the wiring is a behavior change with a
-   task of its own rather than something half-landed here.
+9. **The meter is declared and not yet wired, and it is the shape's one non-refusing zero.** `Meter()`
+   is the scope's answer to "what is the workspace's cap for this call", and the reservation, the
+   settle and the advisory headroom the member is answered with are **WS8**'s (R15). Nothing in this
+   contract reserves anything: an installation answers nil, a workspace answers its meter, and the
+   wiring is a behavior change with a task of its own rather than something half-landed here. **The
+   nil itself is the exception to the shape's rule that every accessor's zero answer refuses**: a
+   route serves a call UNRESERVED where the meter is nil, so a resolver that holds a cap and answers
+   nil has removed the cap rather than refused the call. Nothing in the shape can tell a declared
+   absence from a forgotten one at the point the route asks, so the requirement sits on the resolver:
+   **WS2 holds, with a test of its own, that a workspace with a cap configured never answers a nil
+   meter**, and WS8 holds the other side of it where the reservation is wired.
+
+10. **A nil Bitbucket selector refuses the call, in both modes (T8, D2355).** `Forge().Bitbucket()`
+    answers the store a proxied call is served with, and nil where the deployment holds none; the
+    proxy refuses rather than forwarding with a token nothing chose. Today the ROUTE reads a nil as
+    "the bundle's legacy entry" (`chooseBitbucketToken`'s own fallback), so the contract fixes which
+    side answers what: **an installation whose configuration wired no store answers the legacy selector
+    explicitly** — the one this package already holds (`legacySelector`, bitbucketproxy.go), which
+    serves the bundle's legacy entry and the contract's `no_bitbucket_token` class where the bundle
+    holds none — and **WS1 replaces the route's own fallback with the scope's answer** when it takes
+    the selector from here. A single-token installation is served exactly as it is now, which is why
+    no existing test changes; and a workspace scope that answers nil refuses, instead of being handed
+    the workspace bundle's legacy token by a fallback nobody chose.
 
 ## What this contract cannot promise
 
@@ -176,15 +203,18 @@ refusals are the stub's, and I1 deletes them.
 
 - **The installation's scope (WS1)** may rely on: every accessor answering out of today's `Config` and
   today's verifier, with **no existing test in `internal/credsvc` changing**; `Serves` true for every
-  route this service has and `AcceptsSlip` true, which is today's behaviour; and `Meter()` nil. It may
-  not read the scope's readers before the resolver has answered a scope, and it may not reach a
+  route this service has and `AcceptsSlip` true, which is today's behaviour; `Meter()` nil; `RepoAuth()`
+  answered from its own database, which is where its own `fugaro update` wrote every record; and
+  `Bitbucket()` answered with the legacy selector where its configuration wired no store (rule 10). It
+  may not read the scope's readers before the resolver has answered a scope, and it may not reach a
   `Config` field a route is supposed to take from the scope.
 - **The workspace's scope (WS2)** may rely on: the `MemberCall` `Workspace.Verify` produced as the one
   thing that names the member, its database and its verified slug; C3's node as what the offering and
   the forge coverage are read from, with `WorkspaceShared`'s signature as WS15 changes it; and the
   constructor's signature as written here, which it supplies the body of by assigning
-  `NewWorkspaceScopeResolver`. It may not write to a member's database (R8) and may not serve a route
-  outside R14's set.
+  `NewWorkspaceScopeResolver`. It answers `RepoAuth()` from the MEMBER's database and never from the
+  state store (rule 2), and it answers its meter — never nil — for a workspace whose pool has a cap
+  (rule 9). It may not write to a member's database (R8) and may not serve a route outside R14's set.
 - **The process (WS5)** may rely on: `NewWorkspaceScopeResolver` being non-nil whatever state the
   sides are in — a nil constructor is a panic at startup rather than a refusal — and on the stub
   answering a refusing scope rather than an error, so that a workspace-mode process starts and refuses

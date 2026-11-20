@@ -21,9 +21,12 @@ import (
 // it keeps no figure, and every reader it answers refuses.
 //
 // The readers are asked method by method rather than through a summary,
-// because the property is per method: a stub store whose Marks refused while
-// its RepoAuth answered would be a stub that decided the one question the
-// cascade narrows a call by, and no assertion over "the store" would see it.
+// because the property is per method: a stub whose state refused while its
+// auth-record reader answered would be a stub that decided the one question the
+// cascade narrows a call's reach by, and no assertion over "the readers" would
+// see it. That the auth record is a reader of its own and not a method of the
+// state is itself part of the contract (Scope.RepoAuth): it is the member's and
+// not the workspace's, so the two are asked here separately.
 //
 // Mutation (run, restore): make stubScope.Serves answer true. A scope that
 // serves a route it can read no caller, no policy, no kill switch and no pool
@@ -134,9 +137,19 @@ func TestStubScopeRefusesEveryCall(t *testing.T) {
 		if _, err := state.RoundRobin(ctx); err == nil {
 			t.Error("the stub scope's state advanced the tie-breaker: the counter is a write, and a stub that advanced one would turn a rotation")
 		}
-		if _, _, err := state.RepoAuth(ctx, "acme-sandbox"); err == nil {
-			t.Error("the stub scope's state answered a repository's auth record: that record is what narrows a repository's reach, and an absent one is not a readable one")
-		}
+	}
+
+	// The repository's auth record is its own reader and not a method of the
+	// state (Scope.RepoAuth): it is written in the MEMBER's database and the
+	// state is the workspace's, so a state store that could answer it would be
+	// the wrong database behind the one question that narrows a repository's
+	// reach (D2070 (a)). found=false with no error would be the answer "this
+	// repository has no record", which the cascade reads as unrestricted.
+	repoAuth := scope.RepoAuth()
+	if repoAuth == nil {
+		t.Error("the stub scope answers no auth-record reader: the cascade narrows a repository's reach to what its own configuration records")
+	} else if _, _, err := repoAuth.RepoAuth(ctx, "acme-sandbox"); err == nil {
+		t.Error("the stub scope answered a repository's auth record: that record is what narrows a repository's reach, and an absent one is not a readable one")
 	}
 
 	outcomes := scope.Outcomes()
@@ -161,6 +174,10 @@ func TestStubScopeRefusesEveryCall(t *testing.T) {
 	if forge == nil {
 		t.Error("the stub scope answers no forge reader: the run's git traffic and its own token mint are served out of it")
 	} else {
+		// nil is the refusing answer in both modes (Scope.Forge): the
+		// installation answers the legacy selector explicitly so that today's
+		// single-token behaviour is kept and nil can mean refuse, and the stub
+		// answers nil, which is what a deployment holding no store at all says.
 		if sel := forge.Bitbucket(); sel != nil {
 			t.Errorf("the stub scope's forge reader answers the Bitbucket selector %T, want none: a token selected by a stub is one nothing chose (T8)", sel)
 		}
@@ -169,6 +186,12 @@ func TestStubScopeRefusesEveryCall(t *testing.T) {
 		}
 	}
 
+	// Meter's nil is the one zero answer of the shape that does not refuse
+	// (Scope): it means "this deployment has no workspace cap", and a route
+	// serves unreserved where it is nil. The stub declares no cap, which is the
+	// honest answer for a scope that has no workspace behind it; the requirement
+	// that a CAPPED workspace never answers nil is WS2's test, because nothing
+	// in this shape can tell a declared absence from a forgotten one.
 	if meter := scope.Meter(); meter != nil {
 		t.Error("the stub scope holds a workspace meter: the stub takes no room and keeps no figure, and a meter it held would settle a call against a workspace nothing declared")
 	}
