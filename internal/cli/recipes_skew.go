@@ -3318,6 +3318,107 @@ func checkCloneTriageImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Con
 	return checkCloneImageSince(lc, spec, triageSince, subject, triageKnows, "; or "+alt, warn)
 }
 
+// reviewAgainstTaskKnows names, for the image gates' messages, what the job
+// image's runner has to know: the check itself and the key that turns it off.
+// The message reads "needs a job image whose runner knows <this>".
+const reviewAgainstTaskKnows = "the review-against-task check and its switch (agent.review_against_task)"
+
+// reviewAgainstTaskSubject is triageSubject for agent.review_against_task, and
+// for its reason: the absent key means the check on (Agent.ReviewAgainstTaskOn),
+// so a file that wrote true loses nothing by removing the key, while one that
+// wrote false gives the check back to its default on the first image that reads
+// the file. written is the key's own field (Agent.ReviewAgainstTask): nil is the
+// key absent, which no caller reaches — reviewAgainstTaskSources gates all four —
+// and reads as false, the branch that has a cost to name.
+func reviewAgainstTaskSubject(repo string, written *bool) (subject, alt string) {
+	subject = "fugaro.yaml's agent.review_against_task of " + repo
+	if written != nil && *written {
+		return subject, "remove agent.review_against_task from fugaro.yaml: the absent key means the check on, which is what this file writes, and a job image that predates the check reviews the code alone whatever the file says"
+	}
+	return subject, "remove agent.review_against_task from fugaro.yaml only if the off-switch may go with it: a job image that predates the check reviews the code alone, and the first image that reads the key finds the check on again"
+}
+
+// reviewAgainstTaskSources reports, for the launch's reviewSpecSince gate,
+// whether the configuration the run will read writes the key: the repository's
+// own fugaro.yaml and nothing else (Config.RepoReviewAgainstTaskSet). There is
+// no layer to ask, for triageSources' reason — config.Scopes gives
+// agent.review_against_task InRepo alone, so a project layer writing it never
+// reaches a resolution at all. The owner's published policy node is the other
+// home of the answer (policy.Layer.ReviewAgainstTask) and is not judged here:
+// it is not a key any file of this repository's decodes, so an older runner
+// does not refuse it at bootstrap.
+func reviewAgainstTaskSources(cfg *config.Config) bool {
+	return cfg != nil && cfg.RepoReviewAgainstTaskSet
+}
+
+// reviewAgainstTaskImageWarnings warns, once, that a configuration which writes
+// agent.review_against_task (RepoReviewAgainstTaskSet) needs every job image on
+// reviewSpecSince. It is validate's half of checkReviewAgainstTaskImage, and a
+// warning rather than a Problem for triageImageWarnings' reason: the file is
+// valid, and what has to move is the installation's image, which is why both
+// ways to move one are named.
+func reviewAgainstTaskImageWarnings(c *config.Config) []config.Problem {
+	if !reviewAgainstTaskSources(c) {
+		return nil
+	}
+	return []config.Problem{{Path: "agent.review_against_task", Message: "this file's agent.review_against_task needs fugaro " + reviewSpecSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
+// refuseReviewAgainstTaskSkew refuses fugaro update --repo, before any cloud
+// effect, when the configuration the checkout resolves writes
+// agent.review_against_task and the installation's base image predates
+// reviewSpecSince — a runner built from it decodes fugaro.yaml with KnownFields
+// and refuses the run at bootstrap on a key it does not know. It is the half
+// checkReviewAgainstTaskImage cannot be: a launch from outside a checkout reads
+// no fugaro.yaml at all, so the key the run will find once it has one is judged
+// here, by the operator's own converge (refuseTriageSkew's shape and its
+// reason). The states of ref are read as refuseTriageSkew reads them: no base
+// image passes, one that is not a release only warns. It takes the
+// configuration rather than the one bit a predicate would pass, because the way
+// out its message offers is worded for the answer the file wrote
+// (reviewAgainstTaskSubject, Agent.ReviewAgainstTask).
+func refuseReviewAgainstTaskSkew(repo string, cfg *config.Config, ref string, warn io.Writer) error {
+	if !reviewAgainstTaskSources(cfg) {
+		return nil
+	}
+	subject, alt := reviewAgainstTaskSubject(repo, cfg.Agent.ReviewAgainstTask)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, reviewSpecSince):
+		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the file strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, reviewAgainstTaskKnows, reviewSpecSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// checkReviewAgainstTaskImage refuses a launch whose job image runs a fugaro
+// older than reviewSpecSince while the configuration the run reads writes
+// agent.review_against_task: that runner decodes fugaro.yaml with KnownFields,
+// so the key alone kills the run at bootstrap, whatever it says. The judge is
+// the build record's base_ref, as every checkImageSince gate's is, and cfg is
+// the file the run will read — nil, a launch that could not read one, gated by
+// nothing, as reviewAgainstTaskSources' nil is.
+func checkReviewAgainstTaskImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
+	if !reviewAgainstTaskSources(cfg) {
+		return nil
+	}
+	subject, alt := reviewAgainstTaskSubject(spec.Repo, cfg.Agent.ReviewAgainstTask)
+	return checkImageSince(ctx, env, slug, spec, kind, reviewSpecSince, subject, reviewAgainstTaskKnows, "; or "+alt, warn)
+}
+
+// checkCloneReviewAgainstTaskImage is checkReviewAgainstTaskImage for a
+// checkout: clone workflow: see checkCloneImageSince.
+func checkCloneReviewAgainstTaskImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	if !reviewAgainstTaskSources(cfg) {
+		return nil
+	}
+	subject, alt := reviewAgainstTaskSubject(spec.Repo, cfg.Agent.ReviewAgainstTask)
+	return checkCloneImageSince(lc, spec, reviewSpecSince, subject, reviewAgainstTaskKnows, "; or "+alt, warn)
+}
+
 // followUpSince names the release that carries the two fields `fugaro followups
 // --launch` writes into a task: the parent run and the finding keys it settles
 // (task.Spec.FollowUpOf) and the debt mark (task.Spec.Debt). A runner built

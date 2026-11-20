@@ -17,22 +17,29 @@ shape and no operation changes because of it. The spec's section 5 is the groupi
 | `source` | The console operation whose answer the kind decodes (`members.list`, `budget.show`) |
 | `columns` | The table's columns: a `key`, the `title` drawn above it, and the `TEXT_CLASSES` class every cell of it passes under |
 | `decode(doc)` | The only place the kind's document is known: `unknown` in, the `ManageRow[]` the table draws out |
-| `actions` | What the kind offers beside a row: `copy-command {argv}` or `open-view {view}` |
+| `actions` | What the kind offers beside **every** row it decodes: `copy-command {argv, consequence}` or `open-view {view}` |
 
-A `ManageRow` is a `key` (the row's identity among the rows of one read), `cells`, one string per column, keyed by
-the column's `key`, and an optional `actions`: the commands that act on **that** row. There is no separate status
-member: "status" in the spec's list view is a column like any other, so a kind that has one names it in `columns`.
+A `ManageRow` is a `key` (the row's identity among the rows of one read) and `cells`, one string per column, keyed by
+the column's `key`. There is no separate status member: "status" in the spec's list view is a column like any other,
+so a kind that has one names it in `columns`.
 
-**Row actions, and why the kind-level list is not enough.** A read that is a list of objects says two different
-things: how the whole list is added to (`fugaro user grant`, `fugaro accounts add`), which is `actions`, and what
-happens to one of its rows (`fugaro user revoke`, `fugaro accounts rm`, `fugaro user offboard`, MO-P's; a
-repository's removal, MO-C's), which is the row's own `actions`. A command that acts on one row cannot sit in the
-kind's list: a revoke names one member's role and scope pair and a removal names one account, so the kind-level
-copy of it could only carry placeholders -- a command the operator has to repair by hand, which is what a
-Copy-command exists not to be. The kind-level list holds the commands whose values only the operator knows, and the
-row's list holds the ones the read already answered. `actions` is absent, never empty, on a row no command is
-offered on: a member this machine's own lists hold as a group is not one `fugaro user offboard` names, and a row
-says so by carrying no action rather than one that would fail.
+**A cell the document holds no value for is the empty string, and it is drawn as nothing** -- never as the console's
+mark and never as a word. The mark (`n/a`, `availability.ts`) is the console's answer to a value it could not *read*,
+and an empty cell is not that: the document answered, and its answer is that it holds no value there. A column's class
+is the class of the value it holds, and the classes that read a value (`repoPattern`, `repository`) refuse an empty
+string, so a shell that handed one to its class would draw a refusal where there is nothing to refuse. The CLI prints a
+word of its own for the same state in its own table ("not admitted"); that word is the CLI's rendering of an empty
+cell, not a value of the document, and it stays there. `repos.ts`'s two enrolment halves are the case: the allow-list
+entry that admits a repository and the config key this machine holds it under, each an empty cell where the document
+has none.
+
+**A row may carry `actions` of its own** (`ManageRow.actions`, added by MO-C), and it is `optional` for the reason the
+kind's own list is not: the command D2903 puts on the clipboard names the row it came from -- `fugaro project repos rm
+github/acme/app` is one repository's -- and that value is a value of that row's document, which only the kind holds. A
+command declared on the kind alone could only be one that names no repository, person or key at all, so a kind whose
+rows each need their own declares them on the row, and a row that leaves the member out draws the kind's own
+`actions` and nothing else. People & access's are MO-P's three -- a pair's `fugaro user revoke`, a person's
+`fugaro user offboard` and an account's `fugaro accounts rm` -- and Code's are MO-C's repository removal.
 
 **It is a descriptor, not a contract.** The console's contract is `console/docs/json-contract.md`, which is about
 what the CLI sends and the console reads back; a descriptor is neither, and no reader outside this binary consumes
@@ -65,7 +72,9 @@ at the point the kind is defined rather than a section missing from the Project 
 A kind is defined under `console/src/renderer/manage/kinds/` and nowhere else -- never in the shell, never in
 `types.ts` and never in `entry.ts`. That directory is the kinds' own; the plan's slices assign the files
 (`people.ts`, `models.ts`, `keys.ts`, `budget.ts`, `repos.ts`, `images.ts`, `recipes.ts`), and where a slice gives
-one file to several kinds of one subject, that file holds them: People & access's three rows are `people.ts`'s.
+one file to several kinds of one subject, that file holds them: People & access's three rows are `people.ts`'s, and
+Code's repositories are `repos.ts`'s two -- the spec's subject answers it with two reads (`repos.ls` for what each
+repository is made of, `repos.status` for the doctor of one repository's enrolment), and a kind names one `source`.
 `manage/kinds/index.ts` (task I-MG) lists the files as the kinds in `MANAGE_GROUPS`' order, which is the list the
 Project tab mounts.
 
@@ -105,16 +114,20 @@ unambiguous exactly because no admitted word can hold a space, a tab or a newlin
 The refusal is an ordinary outcome and never a repair: `;`, `$(`, a backtick, a newline, a space, a leading `-`,
 `=` `@` or `~`, and a `..` segment are each a value the console will not copy.
 
-**A destructive copy carries the command's own sentence.** Spec section 8 asks a destructive action to state its
-consequences, and the console's answer is the one it is allowed to give: the copy carries `consequence`, a fixed
-sentence that is **a run of the command's own help text** -- `fugaro user revoke`'s pair leaving the installation's
-own record, `fugaro user offboard`'s deletion of the secrets stored under the member's prefix, `fugaro accounts
-rm`'s delete of the secret and the token it does not revoke -- quoted rather than composed, so the console cannot
-come to say about a command something the command does not say. A kind's test holds each sentence to the Go source
-it came from (the file is read as text and the whole run is matched against it, whitespace collapsed, as the
-console's other cross-language tests do -- a run of the sentence is not enough, since a quoted beginning and end
-would let a rewritten middle claim something the command never says). A copy that states nothing -- adding a pair, adding an account -- has no
-`consequence` at all, and the field's absence is what the shell draws nothing from.
+**The action also carries a `consequence`, and it is the console's own sentence rather than a word of the command.**
+What a destructive command takes away is what the operator has to read before they paste, and D2909 gives a removal no
+confirmation window to say it in: the next step after the Copy is a terminal, so the sentence travels with the
+command. `buildCopyCommand` takes it as an argument, so the composition is the console's own and the sentence is not held
+to the alphabets above: a sentence is not a word, and the two never mix. That is not an exemption for a **value** inside
+it: the one part of a consequence a document supplies -- the repository a removal is about, the allow-list entry that
+still admits it -- is read through the `TEXT_CLASSES` class its column declares before it is interpolated (`repos.ts`'s
+`repoTextOf`), and a value the class refuses draws no action at all rather than a sentence with the value left out. What
+the sentence must state is the CLI's own account of the command (spec section 8), which is why MO-C's two are composed of
+phrases copied verbatim out of `internal/cli/project_repos_rm.go` and `project_enroll_converge.go` and held back to those
+files by `manage-code.test.ts`, and MO-P's three -- a revoke's, an offboarding's and an account removal's -- out of
+`internal/cli/user_grant.go`, `internal/cli/offboard.go` and `internal/cli/accounts_rm.go`, held back by
+`manage-people.test.ts`, and it is the empty string for a command with nothing to state. A refused action takes
+its consequence with it: nothing is drawn for a command that was refused.
 
 ## What is not here
 

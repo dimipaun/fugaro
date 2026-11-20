@@ -1221,39 +1221,6 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 // source of the fact.
 const websiteBuildDir = "website/dist"
 
-// websiteHostNames reports whether line names host: the host itself, and not the
-// beginning of a longer name.
-//
-// **A host ends where a name does.** `website/test/privacy.mjs` holds the same
-// rule for the shipped code, and this scan has to agree with it: a bare
-// `strings.Contains` read any word merely BEGINNING with the host's letters as a
-// naming of the host, so the site's own test file -- where that example word is
-// written in a comment, to say where the boundary is -- was reported as a second
-// source of the canonical URL. The rule the sister scan already holds is the fix,
-// not a weaker match: every spelling of the host itself, with a path, a quote, a
-// slash or a line end behind it, is still a hit.
-//
-// A host name continues in `[A-Za-z0-9-]` and nothing else: a dot, a slash, a
-// colon, a quote or a space ends it.
-func websiteHostNames(line, host string) bool {
-	for at := 0; ; {
-		next := strings.Index(line[at:], host)
-		if next < 0 {
-			return false
-		}
-		end := at + next + len(host)
-		if end == len(line) || !websiteHostNameByte(line[end]) {
-			return true
-		}
-		at = end
-	}
-}
-
-// websiteHostNameByte reports whether b continues a host name.
-func websiteHostNameByte(b byte) bool {
-	return b == '-' || (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
-}
-
 // websiteHostHit is one line of one file under website/ that names a host.
 type websiteHostHit struct {
 	file string
@@ -1262,13 +1229,21 @@ type websiteHostHit struct {
 }
 
 // websiteHostHits is the host scan: every line under root's website/ that names
-// host (websiteHostNames: the host itself, not a longer word that begins with its
-// letters). It is the whole mechanism, so the tests that state a rule and the
+// host. It is the whole mechanism, so the tests that state a rule and the
 // positive control that proves the mechanism sees a planted copy read the same
 // code rather than two copies of it. The files come from
 // websiteBoundaryFiles, so the scan cannot pass by walking an empty directory,
 // and every file is read: a host in a lockfile, a document or a built page is a
 // line of a file under website/ like any other.
+//
+// A host ends where a name does, which is the rule the site's own half of this
+// scan states (reachFailures in website/test/privacy.mjs): the app's
+// secure-store key prefix `fugaro.device-key.` (mobile-identity-pairing C1)
+// only begins with the canonical host's letters, and reading the needle as a
+// bare substring refused the file that records it. Go's regexp has no
+// lookahead, so the character after the host is consumed rather than asserted:
+// "not a name character" is the end of the line, or something that is not a
+// letter, a digit or a hyphen.
 //
 // skipBuild steps over the build output (websiteBuildDir), and the two rules
 // below disagree about it for a reason that is each rule's own. The canonical
@@ -1280,6 +1255,7 @@ type websiteHostHit struct {
 // exists for -- or of a revision that did, and both are worth failing on.
 func websiteHostHits(t *testing.T, root, host string, skipBuild bool) []websiteHostHit {
 	t.Helper()
+	needle := regexp.MustCompile(regexp.QuoteMeta(host) + `(?:$|[^A-Za-z0-9-])`)
 	var hits []websiteHostHit
 	for _, rel := range websiteBoundaryFiles(t, root) {
 		if skipBuild && (rel == websiteBuildDir || strings.HasPrefix(rel, websiteBuildDir+"/")) {
@@ -1290,7 +1266,7 @@ func websiteHostHits(t *testing.T, root, host string, skipBuild bool) []websiteH
 			t.Fatal(err)
 		}
 		for i, line := range strings.Split(string(data), "\n") {
-			if websiteHostNames(line, host) {
+			if needle.MatchString(line) {
 				hits = append(hits, websiteHostHit{file: rel, line: i + 1, text: strings.TrimSpace(line)})
 			}
 		}

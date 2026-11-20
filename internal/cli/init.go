@@ -4690,6 +4690,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateTriage(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// agent.review_against_task is the same kind of break on
+	// reviewSpecSince, in the repository's own file alone, for gateTriage's
+	// reason: the key is InRepo, so no layer can carry it.
+	if err := r.gateReviewAgainstTask(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	// The security: block, in either file, is the same kind of break, on
 	// securitySince: the repository writes it in fugaro.yaml, the project in
 	// the layer file it publishes (D1501).
@@ -5367,6 +5373,29 @@ func (r *initRun) gateTriage(o *initOptions, repo string, lc *localcfg.Config, c
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseTriageSkew(repo, cfg, lc.BaseImage(config.BaseKind), w)
+}
+
+// gateReviewAgainstTask is fugaro update --repo's gate for reviewSpecSince:
+// refuseReviewAgainstTaskSkew, with gateTriage's escapes and for its reason. One
+// file can write the key and not two — agent.review_against_task is repo-scope
+// alone (config.Scopes), so there is no layer half here the way
+// gateStopFraction has one, and the layer's own loader refuses the key before
+// any image is judged.
+//
+// The half it asks is the key being written rather than the value it holds
+// (gateSecurity's own reading): RepoReviewAgainstTaskSet, because a runner
+// older than reviewSpecSince is refused by the key whatever it says. The
+// configuration goes along because the value is what words the way out the
+// refusal offers (refuseReviewAgainstTaskSkew's own reading of it).
+func (r *initRun) gateReviewAgainstTask(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseReviewAgainstTaskSkew(repo, cfg, lc.BaseImage(config.BaseKind), w)
 }
 
 // gateSecurity is fugaro update --repo's gate for securitySince:

@@ -37,45 +37,57 @@
 // the credentials block is the keys kind's read, and this file draws names, roles,
 // scopes and states. Nothing below reads a key the CLI could put a value in.
 //
-// **A destructive copy carries the command's own sentence** (spec section 8).
-// The three sentences below are quoted runs of the commands' own help -- the
-// revocation's pair leaving the installation's own record, the offboarding's
-// deletion of the secrets stored under the member's prefix, and the account
-// removal's delete of the secret and the token it does not revoke -- and
-// `manage-people.test.ts` reads those Go files as text and holds the whole of
-// each sentence to them whitespace-normalised, so every word a copy states is a
-// word the command's own help states. They are quoted rather than written here,
-// so this file cannot come to say about a command something the command does not
-// say.
+// **A destructive copy carries a sentence in the console's own voice, and holds
+// the command's own account of what it does** (spec section 8). The sentence is
+// this file's (`types.ts`'s `CopyCommandAction`, whose `consequence` is the
+// console's rather than a word of the command), and the clauses inside it that
+// state what the CLI does are the `export`ed phrases below, copied verbatim out
+// of its help -- `REVOKE_RECORD`, `OFFBOARD_SECRETS` and `ACCOUNTS_RM_DELETE`,
+// from `internal/cli/user_grant.go`, `offboard.go` and `accounts_rm.go` -- which
+// `manage-people.test.ts` holds back to those files. So the console cannot come
+// to say about a command something the command does not say, and a rewording of
+// either side fails the test. The two adding copies (a grant, `accounts add`)
+// have nothing to state and carry `buildCopyCommand`'s empty sentence.
 
 import { buildCopyCommand, commandValue, commandWord } from '../command'
 import { defineManageKind } from '../types'
 import type { CommandPart } from '../command'
-import type { CopyCommandAction, ManageAction, ManageColumn, ManageRow } from '../types'
+import type { ManageAction, ManageColumn, ManageRow } from '../types'
 
-/** REVOKE_CONSEQUENCE is the run of `internal/cli/user_grant.go`'s own help that
- * says what a revoke does to the pair: it leaves the installation's own record of
- * who may do what -- the grants node at config/admin/access -- and the next
- * `fugaro update` derives the IAM lists from that record.
- *
- * It begins at `one person` because that is where the help's sentence becomes
- * fixed text: the words before it are the two the direction decides
- * (`pairWord`'s verb and `pairTo`'s preposition), so a run that reached further
- * back would be a run this file composed rather than quoted. */
-const REVOKE_CONSEQUENCE =
-  "one person, in the installation's own record of who may do what: the grants node at config/admin/access, which is what its next fugaro update derives the installation's IAM lists from."
+/** REVOKE_RECORD is the half of a revoke's account that is the command's own: the
+ * help in `internal/cli/user_grant.go` names where a stored pair lives -- the
+ * grants node at config/admin/access -- and what reads it, and this clause is
+ * that sentence's fixed text, copied rather than paraphrased so the claim about
+ * where the IAM lists come from is the command's. */
+export const REVOKE_RECORD =
+  "the grants node at config/admin/access, which is what its next fugaro update derives the installation's IAM lists from"
 
-/** OFFBOARD_CONSEQUENCE is `internal/cli/offboard.go`'s own sentence about the
- * half of an offboarding a person cannot see from the command's line: the intake
+/** OFFBOARD_SECRETS is `internal/cli/offboard.go`'s own sentence about the half
+ * of an offboarding a person cannot see from the command's line: the intake
  * deletes the secrets the member stored under their own prefix. */
-const OFFBOARD_CONSEQUENCE =
+export const OFFBOARD_SECRETS =
   "The installation's intake deletes the secrets stored under the member's own prefix, found by the owner annotation it wrote (R10)."
 
-/** ACCOUNTS_RM_CONSEQUENCE is `internal/cli/accounts_rm.go`'s own sentence: the
- * declaration's removal deletes the secret, that delete cannot be undone, and what
- * is left behind is the token at the provider. */
-const ACCOUNTS_RM_CONSEQUENCE =
-  "Removing the declaration also deletes the secret claude-oauth-token-<name> through Secret Manager's own delete. That delete cannot be undone — Secret Manager keeps no grace period for a secret — and the copy of the credential left behind is the token at the provider."
+/** ACCOUNTS_RM_DELETE is `internal/cli/accounts_rm.go`'s own sentence about the
+ * delete behind an account's removal: it cannot be undone, and what is left
+ * behind is the token at the provider. */
+export const ACCOUNTS_RM_DELETE =
+  "That delete cannot be undone — Secret Manager keeps no grace period for a secret — and the copy of the credential left behind is the token at the provider."
+
+/** REVOKE_CONSEQUENCE is the sentence a revoke's Copy draws: this file's words
+ * about the pair leaving, carrying the command's own account of where it lived
+ * and what reads that record next. */
+const REVOKE_CONSEQUENCE = `Revoking this pair takes the role away from this member in the installation's own record of who may do what: ${REVOKE_RECORD}.`
+
+/** OFFBOARD_CONSEQUENCE is the sentence an offboarding's Copy draws: the roster
+ * half in this file's words, and the deletion of the member's stored secrets in
+ * the command's, which is the half the command's own line does not show. */
+const OFFBOARD_CONSEQUENCE = `Offboarding does more than drop this member's grants from the roster: ${OFFBOARD_SECRETS}`
+
+/** ACCOUNTS_RM_CONSEQUENCE is the sentence an account removal's Copy draws: this
+ * file's words about the secret going with the declaration, and the command's own
+ * words about the delete behind it and the token it leaves at the provider. */
+const ACCOUNTS_RM_CONSEQUENCE = `Removing this account also deletes its stored secret through Secret Manager's own delete. ${ACCOUNTS_RM_DELETE}`
 
 /** The `accounts add` argv's placeholder, and the reason it is upper case: a
  * Claude account name the CLI accepts is lower-case throughout, so this word is
@@ -150,19 +162,17 @@ function asStrings(value: unknown): readonly string[] {
   return asArray(value).filter((each): each is string => typeof each === 'string' && each !== '')
 }
 
-/** copyAction is a built copy-command plus the sentence it carries, or nothing at
- * all when the builder refused a value. The refusal is the builder's ordinary
- * outcome and this file draws no Copy for it -- the row is drawn without one, as
- * `command.ts` says it should be, and never with a repaired line. */
-function copyAction(parts: readonly CommandPart[], consequence?: string): ManageAction[] {
-  const built = buildCopyCommand(parts)
-  if (!built.ok) {
-    return []
-  }
-  const action: CopyCommandAction = consequence === undefined
-    ? built.action
-    : { ...built.action, consequence }
-  return [action]
+/** copyAction is a built copy-command, or nothing at all when the builder refused
+ * a value. The refusal is the builder's ordinary outcome and this file draws no
+ * Copy for it -- the row is drawn without one, as `command.ts` says it should be,
+ * and never with a repaired line.
+ *
+ * The sentence is the builder's second argument and defaults to the empty one:
+ * the adding copies have nothing to state, and a copy that states nothing draws
+ * nothing (`command.ts`'s rule for a command whose consequence is empty). */
+function copyAction(parts: readonly CommandPart[], consequence = ''): ManageAction[] {
+  const built = buildCopyCommand(parts, consequence)
+  return built.ok ? [built.action] : []
 }
 
 /** grantCopy is the kind-level command a pair is added with, and it is the row

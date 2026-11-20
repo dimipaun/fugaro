@@ -69,28 +69,21 @@ export interface ManageColumn {
  * The row carries no status of its own: "status" in the spec's list view is a
  * column like any other, so a kind that has one names it in `columns` and fills
  * it here, and a kind whose document has none does not draw one.
+ *
+ * **`actions` is the row's own, and it is a member of the row for a reason.**
+ * The command D2903 puts on the clipboard names the row it came from -- `fugaro
+ * project repos rm github/acme/app` is one repository's, `fugaro user grant
+ * ana@example.invalid` is one person's -- and the value it names is a value of
+ * that row's document, which the kind is the only thing holding. A command
+ * declared on the kind alone could only be one that names no repository, person
+ * or key at all, so a kind whose rows each need their own declares them here
+ * (MO-C and MO-P are the first), and a row that leaves the member out draws the
+ * kind's own `actions` and nothing else (MG0's descriptor, whose `actions` is
+ * what a kind offers beside every row it decodes).
  */
 export interface ManageRow {
   readonly key: string
   readonly cells: Readonly<Record<string, string>>
-  /**
-   * actions are the commands this row alone is acted on with, and they are where
-   * a read that is a LIST of objects says what happens to one of them (spec
-   * section 5; MO-P's revoke and removal, MO-C's repository remove).
-   *
-   * A command that acts on one row cannot live in `ManageKind.actions`: a revoke
-   * names one person's role and scope pair and an account's removal names one
-   * account, so a kind-level command could only carry placeholders, which is a
-   * command the operator has to repair by hand and exactly what a Copy-command
-   * exists not to be. The kind-level list keeps the commands that are NOT about
-   * a row -- adding a pair, adding an account -- and those are the ones whose
-   * values only the operator knows.
-   *
-   * Absent (not empty) for a row no command is offered on: a member this
-   * machine's own lists hold as a group is not one `fugaro user offboard` names,
-   * and a row says so by having no action rather than by an action that would
-   * fail. The shell draws what is here and never an action of its own.
-   */
   readonly actions?: readonly ManageAction[]
 }
 
@@ -107,20 +100,25 @@ export interface CopyCommandAction {
   readonly kind: 'copy-command'
   readonly argv: readonly string[]
   /**
-   * consequence is what the command will do that the operator cannot see from
-   * its line, in **the CLI's own words** (spec section 8: a destructive action
-   * states its consequences, and the sentence the console shows is the one the
-   * command's own help prints -- MO-P's revoke, offboard and `accounts rm`).
+   * consequence is the fixed sentence the shell draws beside the Copy, and the
+   * empty string for a command that destroys nothing (`secrets set`, an
+   * enrolment).
    *
-   * It is a fixed sentence rather than a sentence a kind composed, and the test
-   * that pins a kind's actions holds it to that: each one is a run of the
-   * command's own help text, so the console cannot come to say something about a
-   * command that the command does not say. A copy-command with nothing to state
-   * -- adding a pair, adding an account -- has no `consequence`, and the field's
-   * absence is what the shell draws nothing from: an empty string would be a
-   * sentence that failed to load.
+   * It is the console's own words and never a document's sentence:
+   * `buildCopyCommand` takes it as an argument, so the composition is text a
+   * kind's author wrote. The one part of it a document supplies is a value the
+   * sentence names -- the repository a removal is about, the allow-list entry
+   * that still admits it -- and a kind reads such a value through its
+   * `TEXT_CLASSES` class before it interpolates it (`manage/kinds/repos.ts`),
+   * because the copy alphabets are about a word a shell will run and this is a
+   * sentence a person reads. What it must state is the CLI's own account of what
+   * the command does -- spec section 8
+   * asks a destructive action to state its consequences, and D2909 gives a
+   * removal no confirmation window to state them in: the operator's next step
+   * after the copy is the terminal, so the sentence travels with the command.
+   * The argv beside it is what a person runs; this is what they read first.
    */
-  readonly consequence?: string
+  readonly consequence: string
 }
 
 /**

@@ -27,10 +27,12 @@
 //     commands carry the values the read answered, and a value the builder refuses
 //     (the fixture's comma-separated scope) is a row with no Copy rather than a
 //     repaired one;
-//   * **each destructive copy carries the command's own sentence** (spec section
-//     8), held here to the Go file it is quoted from: the file is read as text and
-//     the run is matched against it with whitespace collapsed, as the console's
-//     other cross-language pins do (`schema.test.ts`, `fixture.test.ts`).
+//   * **each destructive copy carries a sentence, and the command's own account
+//     inside it** (spec section 8): the sentence is the kind's own, and every
+//     clause of it that states what the CLI does is a phrase held here to the Go
+//     file it was copied from -- the file is read as text and the phrase is
+//     matched against it with whitespace collapsed, as the console's other
+//     cross-language pins do (`schema.test.ts`, `fixture.test.ts`).
 //
 // **No secret is drawn (D2905).** The accounts document below is written with the
 // parts of `accounts ls --json` that are not accounts -- the credential block, the
@@ -45,7 +47,15 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { copyCommandText } from '../../src/renderer/manage/command'
-import { PEOPLE_KINDS, accounts, members, roles } from '../../src/renderer/manage/kinds/people'
+import {
+  ACCOUNTS_RM_DELETE,
+  OFFBOARD_SECRETS,
+  PEOPLE_KINDS,
+  REVOKE_RECORD,
+  accounts,
+  members,
+  roles,
+} from '../../src/renderer/manage/kinds/people'
 import { sanitizeText } from '../../src/shared/sanitize'
 import type { CopyCommandAction, ManageAction, ManageKind, ManageRow } from '../../src/renderer/manage/types'
 
@@ -83,11 +93,11 @@ const ACCOUNTS_DOC: unknown = {
   secret_id: NOT_DRAWN,
 }
 
-/** goSource is one Go file read as text: the revoke, offboarding and account
- * removal sentences below are quoted from those files, and each is read for the
- * reason `schema.test.ts` reads the Go structs -- a test that imported nothing from
- * the CLI cannot drift from it silently, because the pin fails when the Go side's
- * sentence changes. */
+/** goSource is one Go file read as text: the phrases the kind's three
+ * consequences carry are copied out of those files, and each is read for the
+ * reason `schema.test.ts` reads the Go structs -- a test that imported nothing
+ * from the CLI cannot drift from it silently, because the pin fails when the Go
+ * side's sentence changes. */
 function goSource(path: string): string {
   return readFileSync(fileURLToPath(new URL(`../../../${path}`, import.meta.url)), 'utf8')
 }
@@ -313,11 +323,7 @@ describe('no write control', () => {
     for (const kind of PEOPLE_KINDS) {
       for (const action of actionsOf(kind)) {
         expect(Object.keys(action).sort()).toEqual(
-          action.kind === 'copy-command' && action.consequence !== undefined
-            ? ['argv', 'consequence', 'kind']
-            : action.kind === 'copy-command'
-              ? ['argv', 'kind']
-              : ['kind', 'view'],
+          action.kind === 'copy-command' ? ['argv', 'consequence', 'kind'] : ['kind', 'view'],
         )
         for (const value of Object.values(action)) {
           expect(typeof value).not.toBe('function')
@@ -326,9 +332,17 @@ describe('no write control', () => {
     }
   })
 
-  it('exports the three kinds and their list, and no control of its own', async () => {
+  it('exports the three kinds, their list and the phrases they quote, and no control of its own', async () => {
     const module = await import('../../src/renderer/manage/kinds/people')
-    expect(Object.keys(module).sort()).toEqual(['PEOPLE_KINDS', 'accounts', 'members', 'roles'])
+    expect(Object.keys(module).sort()).toEqual([
+      'ACCOUNTS_RM_DELETE',
+      'OFFBOARD_SECRETS',
+      'PEOPLE_KINDS',
+      'REVOKE_RECORD',
+      'accounts',
+      'members',
+      'roles',
+    ])
   })
 })
 
@@ -378,58 +392,73 @@ describe('every write is a line to copy', () => {
   })
 })
 
-describe('the consequence a destructive copy states', () => {
-  /** Each case is one destructive copy and the Go file the command's own help is
-   * written in. The check is the WHOLE sentence the copy carries, whitespace
-   * collapsed, matched against that file: a run of it is not enough, because a
-   * sentence whose middle was rewritten here and whose ends were quoted would
-   * pass such a check while claiming something the command does not say. */
+describe('the sentence a destructive copy states', () => {
+  /** Each case is one destructive copy, the phrase of the command's own text that
+   * its sentence carries, the clause the kind wrote around that phrase, and the Go
+   * file the phrase was copied out of. The phrase is checked both ways -- the
+   * sentence contains it, and (whitespace collapsed) the file still says it -- and
+   * the lead is checked against the file too, the other way round: the kind's own
+   * words must NOT be a run of the command's help, or the sentence would be the
+   * help quoted whole rather than a sentence in the console's voice carrying the
+   * command's account (`types.ts`'s `CopyCommandAction.consequence`). */
   const CASES: readonly {
     readonly what: string
     readonly source: string
     readonly file: string
+    readonly lead: string
+    readonly phrase: string
     readonly action: CopyCommandAction
   }[] = [
     {
       what: 'fugaro user revoke',
       source: USER_GRANT_SOURCE,
       file: 'internal/cli/user_grant.go',
+      lead: 'Revoking this pair takes the role away from this member',
+      phrase: REVOKE_RECORD,
       action: only(row(roles, '["user:admin@example.com","admin","project"]').actions),
     },
     {
       what: 'fugaro user offboard',
       source: OFFBOARD_SOURCE,
       file: 'internal/cli/offboard.go',
+      lead: "Offboarding does more than drop this member's grants from the roster",
+      phrase: OFFBOARD_SECRETS,
       action: only(row(members, 'user:admin@example.com').actions),
     },
     {
       what: 'fugaro accounts rm',
       source: ACCOUNTS_RM_SOURCE,
       file: 'internal/cli/accounts_rm.go',
+      lead: 'Removing this account also deletes its stored secret',
+      phrase: ACCOUNTS_RM_DELETE,
       action: only(row(accounts, 'team').actions),
     },
   ]
 
-  it('states a sentence for each destructive command, and none for an adding one', () => {
+  it('states a sentence for each destructive command, and the empty one for an adding command', () => {
     for (const { what, action } of CASES) {
-      expect(action.consequence, what).toBeTruthy()
+      expect(action.consequence, what).not.toBe('')
     }
-    expect(only(roles.actions).consequence).toBeUndefined()
-    expect(only(accounts.actions).consequence).toBeUndefined()
+    // The two adds destroy nothing, so their Copy draws no sentence at all --
+    // which is the empty string and never an absent member (`types.ts`).
+    expect(only(roles.actions).consequence).toBe('')
+    expect(only(accounts.actions).consequence).toBe('')
   })
 
-  it('quotes the whole of each sentence out of the command’s own help text', () => {
-    for (const { what, source, file, action } of CASES) {
-      const consequence = action.consequence
-      if (consequence === undefined) throw new Error(`${what} carries no sentence at all`)
-      expect(collapsed(source), `${file} does not carry, whole: ${consequence}`).toContain(collapsed(consequence))
+  it('holds the account of the command inside each sentence to the file it came from', () => {
+    for (const { source, file, lead, phrase } of CASES) {
+      expect(collapsed(source), `${file} no longer says: ${phrase}`).toContain(collapsed(phrase))
+      expect(collapsed(source), `${file} now says the kind's own words: ${lead}`).not.toContain(
+        collapsed(lead),
+      )
     }
   })
 
-  it('carries no sentence on a copy whose command states none', () => {
-    const adding = [...copies(roles.actions), ...copies(accounts.actions)]
-    expect(adding).toHaveLength(2)
-    expect(adding.every((each) => each.consequence === undefined)).toBe(true)
+  it('carries that account inside a sentence the kind wrote', () => {
+    for (const { what, lead, phrase, action } of CASES) {
+      expect(action.consequence, `${what} omits: ${phrase}`).toContain(phrase)
+      expect(action.consequence, `${what} opens with something else`).toContain(lead)
+    }
   })
 })
 
