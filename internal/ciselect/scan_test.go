@@ -79,6 +79,7 @@ func TestScanFindsLiteralRepoPaths(t *testing.T) {
 		"docs/x.md":             "x\n",
 		"docs/how-to/a.md":      "a\n",
 		"internal/a/b.go":       "package a\n",
+		"internal/c/d.go":       "package c\n",
 		"internal/a/testdata/y": "y\n",
 		"internal/a/a_test.go": `package a
 
@@ -89,6 +90,7 @@ import (
 
 func TestReads(t *testing.T) {
 	_ = readRepoFile("../../docs/x.md")
+	_ = readRepoFile("internal/c/d.go")
 	_, _ = os.ReadFile(filepath.Join(repoRoot(), "internal", "a", "b.go"))
 	_, _ = filepath.Glob("../../docs/how-to/*.md")
 	_, _ = os.ReadFile("testdata/" + os.Getenv("FUGARO_FIXTURE"))
@@ -104,6 +106,7 @@ func repoRoot() string { return "../.." }
 	wantReads(t, p,
 		"docs/x.md",              // a literal climbing out of the package
 		"internal/a/b.go",        // filepath.Join of the repository root
+		"internal/c/d.go",        // a helper handed a path from the repository root
 		"docs/how-to/*.md",       // a literal pattern, kept as written
 		"internal/a/testdata/**", // the literal prefix of a name built at run time
 	)
@@ -459,4 +462,34 @@ func TestLoadReadMapRefusesAnUnknownField(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "walks") {
 		t.Errorf("the refusal does not name the field: %v", err)
 	}
+}
+
+func TestScanNamesAnEmbeddedFile(t *testing.T) {
+	m := scanTree(t, map[string]string{
+		"go.mod":                  goMod,
+		"internal/embed/guide.md": "the guide\n",
+		"internal/embed/embed.go": `package embed
+
+import _ "embed"
+
+//go:embed guide.md
+var guide string
+
+func Guide() string { return guide }
+`,
+		"internal/embed/embed_test.go": `package embed
+
+import "testing"
+
+func TestGuide(t *testing.T) {
+	if Guide() == "" {
+		t.Fatal("no guide")
+	}
+}
+`,
+	})
+
+	// The build reads an embedded file into the package's binary, so a change to
+	// it is a change to that package and no import edge of any test says so.
+	wantReads(t, entry(t, m, "./internal/embed"), "internal/embed/guide.md")
 }

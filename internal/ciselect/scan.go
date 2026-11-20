@@ -222,6 +222,12 @@ func (s *scanner) scanGo() error {
 			// of every package that imports the table.
 			p.helper.merge(got.reads)
 		}
+		for _, e := range got.embeds {
+			// An embedded file is the package's own: it is built into that
+			// package's binary, and an importer reads it only through that
+			// package's code.
+			p.self.add(e)
+		}
 		for _, imp := range got.imports {
 			p.imports[imp] = true
 		}
@@ -354,7 +360,8 @@ func (s *scanner) reaches(dir string) map[string]bool {
 type fileScan struct {
 	reads   reads
 	imports []string
-	spread  bool // the file opens, walks or builds something of the repository
+	embeds  []string // the repository files the file's //go:embed directives name
+	spread  bool     // the file opens, walks or builds something of the repository
 }
 
 // scanGoFile parses rel and reports what it reads and which repository
@@ -367,7 +374,7 @@ func (s *scanner) scanGoFile(rel string) (fileScan, error) {
 		return fileScan{}, err
 	}
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, rel, src, parser.SkipObjectResolution)
+	f, err := parser.ParseFile(fset, rel, src, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		return fileScan{}, err
 	}
@@ -382,8 +389,35 @@ func (s *scanner) scanGoFile(rel string) (fileScan, error) {
 			fs.imports = append(fs.imports, dir)
 		}
 	}
+	fs.embeds = s.embeds(rel, f)
 	fsm.file(f)
 	return *fs, nil
+}
+
+// embeds is the repository files a file's //go:embed directives name. The build
+// reads them into the binary, so a change to one is a change to the package it
+// is built into — the same reach a test literal has, and no import edge of the
+// package says it (the diagnose agent's guide, the recipe catalog's YAML).
+func (s *scanner) embeds(rel string, f *ast.File) []string {
+	dir := path.Dir(rel)
+	seen := map[string]bool{}
+	for _, group := range f.Comments {
+		for _, c := range group.List {
+			rest, ok := strings.CutPrefix(c.Text, "//go:embed")
+			if !ok {
+				continue
+			}
+			for _, pattern := range strings.Fields(rest) {
+				for _, p := range s.resolve(dir, strings.TrimPrefix(pattern, "all:")) {
+					seen[p] = true
+				}
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	return sorted(seen)
 }
 
 // dirOf resolves an import path to a repository directory, and reports whether
