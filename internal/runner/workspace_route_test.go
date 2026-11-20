@@ -11,11 +11,17 @@ package runner_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -98,5 +104,116 @@ func TestTheGatewayStopsOnARouteRecordItCannotRead(t *testing.T) {
 	}
 	if got := b.fake.Count(); got != 0 {
 		t.Errorf("the run made %d model calls on a record it could not read, want none", got)
+	}
+}
+
+// wsAnswer is what the workspace's service answers a served model call with:
+// the body, and the two headers a service settles a call by (the tier and the
+// credential's name). An answer without them is one the gateway halts on, so a
+// stand-in here answers as the real service does.
+func wsAnswer() anthropicfake.Reply {
+	rep := anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 11, Output: 13})
+	rep.Header = http.Header{
+		gateway.HeaderTier:       []string{gateway.TierA},
+		gateway.HeaderCredential: []string{"workspace-shared"},
+	}
+	return rep
+}
+
+// routePolicy is the project policy every run here is admitted under: this
+// repository, and nothing else about the route.
+const routePolicy = `{"version":9,"allow_repos":["github/acme/*"]}`
+
+// TestTheGatewayReadsARecordTheRulesDenyAsNoRecord: the node exists and this run's token may
+// not read it, which is the state of every member until WS22 deploys the rule
+// that grants the read — WS22's own red step is "a run's token is refused the
+// read". The denial is read as "no record", which is today's run, and this test
+// is what holds that arm: the record here would move the model kind to the
+// workspace, so a run that halted on the denial would stop (there is nothing to
+// call), and a run that acted on the record anyway would call the workspace.
+// Neither may happen: the model call reaches this run's own upstream, and the
+// workspace's service is not called at all.
+//
+// contract-wire.md states the arm and its expiry: a denial is a state the
+// contract's reader has no answer for, and until the rules land every member is
+// in it, so the run behaves as it did before the record existed rather than
+// stopping every run of every project for a feature none of them uses.
+func TestTheGatewayReadsARecordTheRulesDenyAsNoRecord(t *testing.T) {
+	// No script: a request to the workspace's service fails the test by name.
+	wsFake, wsSrv := anthropicfake.New(t)
+	b := admissionRun(t, "github", "acme/app", "observe", "", routePolicy, out4k())
+	b.deps.Local = false
+	b.deps.Project = "aurora"
+	b.db.Set(creds.RoutePath(repoSlug), routeRecord(t, creds.Route{
+		Version: creds.RouteVersion, Address: wsSrv.URL, Model: creds.HolderWorkspace,
+	}))
+	b.db.DenyRead(creds.RoutePath(repoSlug))
+
+	var st []int
+	rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("a run whose route record the rules refuse stopped: rec = %+v, err = %v", rec, err)
+	}
+	if len(st) != 1 || st[0] != 200 {
+		t.Fatalf("the run's model call was answered %v", st)
+	}
+	if got := b.fake.Count(); got != 1 {
+		t.Errorf("the run's own upstream served %d calls, want the one it made: a denial on the record is today's run, and today's run is the project for every kind", got)
+	}
+	if got := wsFake.Count(); got != 0 {
+		t.Errorf("the workspace's service received %d calls on a record this run may not read, want none: a denial is not an answer to route a credential by", got)
+	}
+}
+
+// TestTheGatewayCallsTheRecordsAddressAndNotTheEnvironments: the address the run
+// calls is the one its own record carries, and no name in the job's environment
+// moves it (R3, F32). The environment is the launcher's to write — the launcher
+// is what sets this job's variables — and the run presents its own Firebase
+// token to whatever address it calls, so an address from there is a token sent
+// where a launcher chose.
+//
+// The stand-in the environment names answers as a service does, so a run that
+// read the address from there would complete: this test fails on the counter
+// rather than on a halt, which is the failure a fallback would produce.
+func TestTheGatewayCallsTheRecordsAddressAndNotTheEnvironments(t *testing.T) {
+	envFake, envSrv := anthropicfake.New(t)
+	envFake.Func = func(*http.Request, []byte) anthropicfake.Reply { return wsAnswer() }
+	wsFake, wsSrv := anthropicfake.New(t)
+	wsFake.Func = func(*http.Request, []byte) anthropicfake.Reply { return wsAnswer() }
+
+	// The job's Google identity, which the workspace's service verifies the
+	// call by: the metadata server's answer, from a stand-in.
+	meta := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "job-id-token-from-the-metadata-stand-in")
+	}))
+	t.Cleanup(meta.Close)
+
+	b := admissionRun(t, "github", "acme/app", "observe", "", routePolicy, out4k())
+	b.deps.Local = false
+	b.deps.Project = "aurora"
+	b.deps.Env = append(b.deps.Env,
+		// The name a launcher would have to invent for the workspace's
+		// service: nothing in this release reads one, and the run's own
+		// service's name — which the run does read — is the member's own
+		// address and is not what this is about.
+		"FUGARO_WORKSPACE_SERVICE_URL="+envSrv.URL,
+		runner.MetadataHostEnv+"="+strings.TrimPrefix(meta.URL, "http://"))
+	b.db.Set(creds.RoutePath(repoSlug), routeRecord(t, creds.Route{
+		Version: creds.RouteVersion, Address: wsSrv.URL, Model: creds.HolderWorkspace,
+	}))
+
+	var st []int
+	rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("the run routed to the record's address stopped: rec = %+v, err = %v", rec, err)
+	}
+	if got := envFake.Count(); got != 0 {
+		t.Errorf("the address the run's environment named received %d calls, want none: the run's address is the one its record carries (R3, F32)", got)
+	}
+	if got := wsFake.Count(); got != 1 {
+		t.Errorf("the record's address received %d calls, want the run's model call", got)
+	}
+	if got := b.fake.Count(); got != 0 {
+		t.Errorf("this run's own upstream served %d calls, want none: the record serves the model kind from the workspace (D2989)", got)
 	}
 }
