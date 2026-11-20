@@ -23,14 +23,11 @@ package orchestrator
 //     that added the plan's next task.
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -344,166 +341,30 @@ func PlanBrief(plan, node, title, commit, digest string) string {
 		PlanBriefHead, plan, node, title, plan, node, commit, digest)
 }
 
-// planBriefPinRE is the pin `PlanBrief` writes, read back: the commit and the
-// section digest of a brief this release wrote.
-var planBriefPinRE = regexp.MustCompile(` at commit ([0-9a-f]{7,64}), whose SHA-256 is (sha256:[0-9a-f]{64}): `)
-
 // planBriefPin is the section digest a brief pins, or false for a brief that
 // carries no pin at all — one a session wrote by hand, or one an earlier
 // release wrote before the section was hashed. A brief with no pin is a brief
 // this import cannot leave alone (D2745 keeps a brief whose section's hash is
 // unchanged, and an unreadable hash is not an unchanged one).
+//
+// The parser is internal/plan's (BriefPin), beside the section it hashes,
+// because the review stage reads the same pin out of the same text (D2932).
 func planBriefPin(brief string) (string, bool) {
-	m := planBriefPinRE.FindStringSubmatch(brief)
-	if m == nil {
+	pin, ok := plan.BriefPin(brief)
+	if !ok {
 		return "", false
 	}
-	return m[2], true
+	return pin.Digest, true
 }
 
 // PlanSectionDigest is the SHA-256 of the section of a plan document that
 // describes one task, in the spelling `Digest` uses everywhere else, or false
 // when the document carries no such section.
 //
-// The section is found by its heading: the first heading whose text names the
-// task id, and everything under it down to the next heading at the same level
-// or above. That is what a reader of a plan would call the task's section, and
-// it is the whole of the rule — a plan that names its tasks in its own style
-// still has one heading per task, and what the hash covers is that heading and
-// the text beneath it rather than anything about the document around it.
+// The parser is internal/plan's (SectionDigest) and not this package's: the
+// review stage inside a run's job reads the same section to check a pull
+// request against the task it was written for, and the job's binary does not
+// link the orchestrator (D2932).
 func PlanSectionDigest(doc, node string) (string, bool) {
-	section, ok := planSection(doc, node)
-	if !ok {
-		return "", false
-	}
-	sum := sha256.Sum256([]byte(section))
-	return "sha256:" + hex.EncodeToString(sum[:]), true
-}
-
-// planSection is that section as text: its heading's line through the last line
-// before the next heading at the same level or above, with the blank lines
-// after the last of them dropped and the whole ended by one newline.
-//
-// The lines inside a fenced code block are never read as headings. A `#` at
-// column 0 in a shell example is a comment, and a section that ended at one
-// would be hashed only down to the fence: everything below it — the rest of
-// what the person approves — could then change with the digest standing still,
-// which is exactly what D2745's re-import rule reads as an unchanged section
-// and what the run's own read of the plan would disagree with. A fence is
-// tracked rather than escaped because the plans this reads are Markdown, and a
-// plan that shows a command is showing a `#`.
-//
-// The blank lines at the end are dropped because they are the whitespace before
-// the next heading rather than anything the plan says, and a plan edited by
-// adding a blank line to a section is the same section. The newline at the end
-// is kept because every line of the text has one, the last included.
-func planSection(doc, node string) (string, bool) {
-	lines := strings.Split(doc, "\n")
-	start, level := -1, 0
-	fence := ""
-	for i, line := range lines {
-		if marker, rest, ok := fenceAt(line); ok {
-			switch {
-			case fence == "":
-				fence = marker
-			case marker[0] == fence[0] && len(marker) >= len(fence) && strings.TrimSpace(rest) == "":
-				// A closing fence carries no info string: a ```` ```go ```` inside
-				// a fence is a line of the code it shows.
-				fence = ""
-			}
-			continue
-		}
-		if fence != "" {
-			continue
-		}
-		lvl, text, ok := atxHeading(line)
-		if !ok {
-			continue
-		}
-		if start < 0 {
-			if planHeadingNames(text, node) {
-				start, level = i, lvl
-			}
-			continue
-		}
-		if lvl <= level {
-			return joinPlanSection(lines[start:i]), true
-		}
-	}
-	if start < 0 {
-		return "", false
-	}
-	return joinPlanSection(lines[start:]), true
-}
-
-// joinPlanSection is those lines as the hash reads them.
-func joinPlanSection(lines []string) string {
-	end := len(lines)
-	for end > 0 && strings.TrimSpace(lines[end-1]) == "" {
-		end--
-	}
-	return strings.Join(lines[:end], "\n") + "\n"
-}
-
-// fenceAt reads a line as a code-fence delimiter: the marker it is written with
-// — three or more backticks or tildes, indented by at most three spaces, which
-// is what makes it a fence rather than indented code — and whatever follows the
-// marker. It reports false for a line that is not one.
-//
-// It does not decide whether the line opens a fence, closes the one in force or
-// is a line of code: that is the walk's, which is the only place the state is.
-func fenceAt(line string) (string, string, bool) {
-	s := line
-	for i := 0; i < 3 && strings.HasPrefix(s, " "); i++ {
-		s = s[1:]
-	}
-	if len(s) < 3 || (s[0] != '`' && s[0] != '~') {
-		return "", "", false
-	}
-	n := 0
-	for n < len(s) && s[n] == s[0] {
-		n++
-	}
-	if n < 3 {
-		return "", "", false
-	}
-	return s[:n], s[n:], true
-}
-
-// atxHeading reads a line as an ATX heading: how many `#` it opens with and the
-// text after them, or false for a line that is not one. A heading is unindented
-// and followed by a space or a tab.
-//
-// A `#` at column 0 in a fenced example is a heading to this function, because
-// nothing on the line says otherwise. Keeping code out of the walk is the
-// reader's job and not this one's (planSection), which is why this is a rule
-// about one line rather than about a document.
-func atxHeading(line string) (int, string, bool) {
-	i := 0
-	for i < len(line) && i < 7 && line[i] == '#' {
-		i++
-	}
-	if i == 0 || i > 6 || i >= len(line) || (line[i] != ' ' && line[i] != '\t') {
-		return 0, "", false
-	}
-	return i, strings.TrimSpace(line[i:]), true
-}
-
-// planHeadingNames reports whether a heading's text names one task. The task id
-// is the heading's first word — what precedes a separator or the end of the
-// heading — so `### G1: the import` is G1's section and `### G10: ...` is not.
-func planHeadingNames(text, node string) bool {
-	rest, ok := strings.CutPrefix(text, node)
-	if !ok {
-		return false
-	}
-	if rest == "" {
-		return true
-	}
-	r, _ := utf8.DecodeRuneInString(rest)
-	switch r {
-	case ' ', '\t', ':', ',', '.', ';', '—', '–':
-		return true
-	}
-	return false
+	return plan.SectionDigest(doc, node)
 }
