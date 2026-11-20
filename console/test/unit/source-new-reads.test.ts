@@ -418,6 +418,23 @@ describe('the caps a feed is read under', () => {
     expect(child.killed).toContain('SIGTERM')
   })
 
+  it('counts a line nested deeper than a recursive serializer can write', async () => {
+    // A legal line -- it parses, and it is nowhere near the per-line ceiling --
+    // that V8's `JSON.stringify` cannot write at all: it throws a RangeError a
+    // few thousand frames down. Counting the byte bound with it must not throw
+    // out of the child's stdout listener, where nothing catches it and the
+    // process, not the read, is what fails.
+    const depth = 20_000
+    const nested = `{"type":"row","row":${'['.repeat(depth)}${']'.repeat(depth)}}`
+    expect(nested.length).toBeLessThan(MAX_FEED_LINE_LENGTH)
+    expect(() => JSON.stringify(JSON.parse(nested))).toThrow(RangeError)
+
+    const { document } = await feedOver(`${nested}\n${JSON.stringify({ type: 'end', count: 1 })}\n`)
+
+    expect(document['lines']).toHaveLength(2)
+    expect(lastType(document)).toBe('end')
+  })
+
   it('keeps every line the child wrote before the bound', async () => {
     const { document } = await feedOver(linesOf([aRowLine(1), { type: 'end', count: 1 }]))
     expect(document).toEqual({ lines: [aRowLine(1), { type: 'end', count: 1 }] })

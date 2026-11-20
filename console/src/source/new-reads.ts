@@ -68,6 +68,7 @@ import type { ValidatedArguments } from '../main/ipc'
 import { NEW_OPERATION_TEXT_CLASSES } from '../shared/new-ops'
 import { LITERAL_PLACEHOLDER, sanitizeText } from '../shared/sanitize'
 import type { TextClass } from '../shared/sanitize'
+import { stringifyDeep } from '../shared/stringify'
 import { UNREADABLE_VERSION, meetsCliFloor } from '../shared/version'
 import { parseStdout } from './cli'
 import { SourceRefusal, refusalFrom } from './source'
@@ -324,9 +325,16 @@ const NODE_TIMERS: Timers = {
 
 /** lineLength is how much text one kept line is, which is what the byte bound
  * counts: the answer carries parsed lines, so the text the console holds for a
- * line is the JSON its document is written back as. */
+ * line is the JSON its document is written back as.
+ *
+ * `stringifyDeep` rather than `JSON.stringify`, because the line is a child's:
+ * a line nested deeper than V8's recursive serialiser can descend is legal on
+ * the wire (it is far under `MAX_FEED_LINE_LENGTH`), and a `RangeError` thrown
+ * here would leave this module's stdout listener and reach the process as an
+ * uncaught exception -- a lost window, where the console owes a refusal or an
+ * interrupted read. It writes the same bytes, so the bound is unchanged. */
 function lineLength(document: JSONObject): number {
-  return JSON.stringify(document).length
+  return stringifyDeep(document).length
 }
 
 /** cliNewReads is the six reads over a `fugaro` child. */
