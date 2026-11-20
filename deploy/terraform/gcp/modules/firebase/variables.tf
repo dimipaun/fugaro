@@ -142,6 +142,17 @@ variable "history_account" {
   }
 }
 
+variable "mobile_account" {
+  description = "The email of the public mobile service's runtime account (mobile plan task P5; D2782 as amended by F31, O1, O8): the account the installation root creates (modules/installation/mobile_service.tf) and the service runs as, handed over here because this is the root that creates the account it SIGN AS. When set, iam.tf creates the device-only signer account and grants this account iam.serviceAccounts.signJwt on it — the one grant, in the one plan, that makes a custom token a phone can redeem. Empty, which is every installation until the credentials image runs the mode the module starts that service in, creates neither the signer nor a grant naming anyone: IAM refuses a member that does not exist, and the installation root is applied BEFORE this one on every `fugaro update` (internal/cli/init_stages.go), so a grant left there would be a plan that fails the first update that carried it."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.mobile_account == "" || can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", var.mobile_account))
+    error_message = "mobile_account must be empty or a service account email, <id>@<project>.iam.gserviceaccount.com."
+  }
+}
+
 variable "coordinator_account" {
   description = "The email of the coordinator's writer account (D194): the aggregation job's own, which the installation root creates (P5) as it creates the history account's. When set, it is granted roles/firebasedatabase.admin here to write the coordinator's subtree under the rules' floor. Empty, the default until P5 creates the account, grants nothing: IAM refuses a member that does not exist."
   type        = string

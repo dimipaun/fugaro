@@ -850,6 +850,63 @@ func TestCatalogRefusesAnEntryThatMountsASecret(t *testing.T) {
 	}
 }
 
+// TestCatalogMarksTheRefusalsItMakes: the refusals this package makes of a
+// definition's own text carry their own mark (Refused), and a read that failed
+// carries none.
+//
+// The two are what a caller has to tell apart before it hands a person a
+// command: these bytes are refused the same way every time they are read, so a
+// command that reads them refuses where it stands — while a read that failed
+// (a provider that would not open, a network that did not answer) may well
+// answer on the next run, and the command is still the reader's. The mark adds
+// no sentence of its own: what reads it prints the refusal, which is what names
+// the line and the change (internal/cli's catalog step).
+func TestCatalogMarksTheRefusalsItMakes(t *testing.T) {
+	ctx := context.Background()
+	over := strings.Repeat("RUN true\n", MaxDockerfileBytes/9+2)
+	if len(over) <= MaxDockerfileBytes {
+		t.Fatalf("the fixture is %d bytes, not over the %d-byte bound", len(over), MaxDockerfileBytes)
+	}
+	for _, def := range []string{
+		"FROM example.invalid/base\nRUN --mount=type=secret,id=git-credentials true\n",
+		"FROM example.invalid/base\nARG NPM_TOKEN=value\n",
+		"FROM example.invalid/base\nRUN git clone https://user:" + fakeCredential(t) + "@example.invalid/acme/app.git /work/repo\n",
+		over,
+	} {
+		_, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
+		if err == nil {
+			t.Errorf("the definition %q was accepted", def)
+			continue
+		}
+		if !IsRefused(err) {
+			t.Errorf("the refusal of %q is not marked as one this package makes: %v", def, err)
+		}
+		if err.Error() == "" {
+			t.Errorf("the refusal of %q says nothing: the mark is not a sentence of its own", def)
+		}
+	}
+	// The fetched shape is marked the same way: the objection is to the
+	// definition, not to how it was found.
+	o := &fetchOpener{
+		p:    &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": "FROM example.invalid/base\nRUN --mount=type=secret,id=x true\n"}}},
+		cred: fakeCredential(t),
+	}
+	if _, err := Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", "")); !IsRefused(err) {
+		t.Errorf("a fetched definition that mounts a secret is not marked: %v", err)
+	}
+	// A read that failed is not a refusal of the text, and nothing else marks
+	// it: the caller must not be told the same bytes will be refused again
+	// where the next run may read them.
+	o = &fetchOpener{p: quietReader{}, cred: fakeCredential(t)}
+	_, err := Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
+	if err == nil {
+		t.Fatal("a read that failed was accepted")
+	}
+	if IsRefused(err) {
+		t.Errorf("a read that failed is marked as a refusal of the definition: %v", err)
+	}
+}
+
 // TestCatalogGuidanceNoLongerTeachesTheGitCredentialMount: the refusals an
 // author reads no longer teach the mount this release refuses. Both of the
 // guards that used to name it — the credential-shaped ARG or ENV and the URL
