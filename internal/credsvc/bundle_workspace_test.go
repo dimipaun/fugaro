@@ -157,20 +157,32 @@ func TestThePoolCarriesForgeEntries(t *testing.T) {
 	}
 	got := WorkspaceShared(b, node)
 
-	// Every entry the bundle holds, in the node's order, and each with the kind
-	// and the coverage the node declared.
-	var names []string
-	for _, s := range got {
-		names = append(names, s.Name)
+	// Every entry the bundle holds, in the node's order, each carrying the kind
+	// it is and the coverage the owner declared — and no tier, because a forge
+	// credential is spent nowhere (Entry's own rule).
+	want := []creds.Shared{
+		{Credential: creds.Credential{Name: legacy}, Projects: []string{wsMemberA, wsMemberB}, Kind: gitprov.KindBitbucket, Covers: []string{"bitbucket/acme/app"}},
+		{Credential: creds.Credential{Name: named}, Projects: []string{wsMemberA}, Kind: gitprov.KindBitbucket, Covers: []string{"bitbucket/acme/app", "bitbucket/acme/other"}},
+		{Credential: creds.Credential{Name: config.GitHubAppKeySecret}, Projects: []string{wsMemberB}, Kind: gitprov.KindGitHub, Covers: []string{"github/acme/app"}},
 	}
-	want := []string{legacy, named, config.GitHubAppKeySecret}
-	if strings.Join(names, ",") != strings.Join(want, ",") {
-		t.Fatalf("WorkspaceShared = %v, want %v: the pool carries every kind of credential the bundle holds and the owner shared, and a forge entry the bundle does not hold is skipped as a model one is", names, want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("WorkspaceShared =\n%+v\nwant\n%+v\nthe pool carries every kind of credential the bundle holds and the owner shared, with the kind and the coverage the node declares, and a forge entry the bundle does not hold is skipped as a model one is", got, want)
 	}
 	for _, s := range got {
 		if s.Name == gone {
 			t.Errorf("WorkspaceShared offered %q, which the bundle does not hold: a name with no value behind it is not a credential", gone)
 		}
+	}
+
+	// A node entry whose kind and whose name disagree names no credential this
+	// bundle holds: the App key's name under a Bitbucket kind is a skip and
+	// never the other forge's credential.
+	confused := &projectpolicy.WorkspaceCredentials{
+		Name:   wsWorkspace,
+		Shared: []projectpolicy.WorkspaceShared{{Name: config.GitHubAppKeySecret, Kind: gitprov.KindBitbucket, Projects: []string{wsMemberA}, Covers: []string{"bitbucket/acme/app"}}},
+	}
+	if got := WorkspaceShared(b, confused); len(got) != 0 {
+		t.Errorf("WorkspaceShared offered %+v for an entry whose kind and name disagree: the kind is what tells the service which route may serve the entry (C3's rule 4), so the two have to name one credential", got)
 	}
 
 	// No value, anywhere in the answer: a forge credential is a name, a kind
