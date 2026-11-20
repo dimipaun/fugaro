@@ -594,6 +594,44 @@ describe('the Manage section’s shell', () => {
     expect(reason).not.toContain('acme/apps/extra')
   })
 
+  it('keeps a document key out of the row attribute, and draws the row without one when the key is refused', async () => {
+    const { root, handles } = mounted([MEMBERS])
+    open(root, 'People & access')
+    // The key is a *document* string -- the CLI's own id, address or name -- and
+    // it is drawn as an attribute, so it goes through the sanitizer like every
+    // other document string (`rowKey`). A token-shaped key is redacted; a key the
+    // class refuses loses the attribute. The row itself is drawn either way: the
+    // cells are what the operator reads and the key is bookkeeping.
+    const token = githubToken()
+    handles.answer(0, [
+      { key: 'ada', cells: { person: 'ada', role: 'operator' } },
+      { key: token, cells: { person: 'grace', role: 'operator' } },
+      { key: 'two\nlines', cells: { person: 'linus', role: 'operator' } },
+    ])
+    await settle()
+
+    const drawn = kindSection(root, 'members')
+    expect(all(drawn, MANAGE_ROW_CLASS).map((row) => row.getAttribute(MANAGE_ROW_ATTRIBUTE))).toEqual([
+      'ada',
+      TOKEN_PLACEHOLDER,
+      null,
+    ])
+    expect(texts(drawn, MANAGE_CELL_CLASS)).toEqual([
+      'ada',
+      'operator',
+      'grace',
+      'operator',
+      'linus',
+      'operator',
+    ])
+    // And nothing the tree carries as an attribute holds the token: a key drawn
+    // as written would put a credential on screen through the markup, where the
+    // cell's own class would never see it (`projects.test.ts`'s guard, over this
+    // section's tree).
+    const values = walk(drawn).flatMap((node) => [...node.attributes.values()])
+    for (const value of values) expect(value).not.toContain(token)
+  })
+
   it('says the console’s own sentence for a kind that answered with nothing, and draws its actions beside it', async () => {
     const { root, handles } = mounted([REPOS])
     open(root, 'Code')
