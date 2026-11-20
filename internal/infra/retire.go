@@ -657,6 +657,80 @@ func ProxiedTokenAccessorAllowDelete(p *tf.Plan, spec RepoSpec) []string {
 	})
 }
 
+// ModelAccessorAllowDelete is the guard's allow-list for p when this
+// repository's job gives up its account's accessor on the model credentials
+// the credentials service now serves it (B2.7, S2; D2072): one address per
+// Claude credential a workflow this spec deploys stopped mounting — the paid
+// key of an `api-key` repository, and the OAuth token of an `oauth` one, the
+// default account's or the one this variant is for.
+//
+// It is B1.13's rule and B3.8's for the S2 flip, and it exists for the same
+// reason (CLAUDE.md's HARD RULE; the finding B2.7's own review left open, PR
+// 3152): the plan that lands the flip deletes an accessor the state holds and
+// this tree's spec no longer produces — a managed project's own retirement
+// converges it (init's retireManaged, whose guard is RetireAllowDelete) and a
+// project that is not managed takes the ordinary plan, where the run would
+// stop with `--retire`'s two typed confirmations or `--allow-delete` as the
+// only ways past a delete fugaro itself decided. One plain
+// `fugaro update --repo` applies it instead.
+//
+// The filter is the drop's own effect, because — unlike the Bitbucket token,
+// whose drop is Readiness' and whose mount is therefore still in the spec the
+// guard is handed — the model drop runs while the spec is BUILT
+// (repoCtx.workflow, so that the tfvars and the module read one answer about
+// one job): by the time any guard sees this spec, the mounts it took are gone
+// from WorkflowSpec.SecretEnv. What is left to read is the record the drops
+// that keep the container make of themselves: dropModelMounts and
+// dropVaultMounts clear the mount and leave the name in
+// WorkflowSpec.SecretIDs (the container stays declared — it carries
+// prevent_destroy and it is still the service's, D2074), while Readiness' own
+// drops (dropMount: a job that reads nothing from the container any more) take
+// the name out of SecretIDs with its mount. So a name this root still declares
+// and this job no longer mounts is one of those two flips', and
+// VaultSecretNames is the fetched class's own list of its half (B3.8,
+// dropVaultMounts): what is left is exactly the model drop's. The arm's own
+// exclusions fall out of the same difference rather than being stated again —
+// a mixed stage account's token and a provider's key are still mounted, so
+// they are not in it (B0, docs/design/mixed-credentials.md §11; R6, D1634) —
+// and RepoSpec.ModelSecretsServed is the gate, so the repository the switch
+// holds off admits nothing here and neither does the cascade, whose job mounts
+// no model credential at all (D2072, G17). Nothing else a plan does to any
+// address is touched: the guard judges every other change as before.
+func ModelAccessorAllowDelete(p *tf.Plan, spec RepoSpec) []string {
+	if p == nil || spec.ModelSecretsServed != config.ModelSecretServedAnthropic {
+		return nil
+	}
+	return jobAccessorAllowDelete(p, spec, modelMountDropped)
+}
+
+// modelMountDropped reports whether name is one the model drop took off ws:
+// this root still declares its container and this job no longer mounts it, and
+// it is not one the fetched class's drop took instead. Those two are the drops
+// that leave a name in SecretIDs without a mount (dropModelMounts and
+// dropVaultMounts, readiness.go; dropMount takes the name with the mount), and
+// VaultSecretNames is the second's own list — which is why the subtraction is
+// what is left of the first, and why a drop added later that keeps a container
+// has to record its names the way dropVaultMounts does.
+//
+// It is a function of the spec alone and not of the arm, which is the caller's
+// own gate: the same name on a repository the switch holds off is a mount that
+// never went anywhere, and the plan that deletes its accessor there is the
+// operator's own change.
+func modelMountDropped(ws WorkflowSpec, name string) bool {
+	if _, declared := ws.SecretIDs[name]; !declared {
+		return false
+	}
+	if slices.Contains(ws.VaultSecretNames, name) {
+		return false
+	}
+	for _, logical := range ws.SecretEnv {
+		if logical == name {
+			return false
+		}
+	}
+	return true
+}
+
 // VaultAccessorAllowDelete is the guard's allow-list for p when this
 // repository's job gives up its account's accessor on the workflow secrets the
 // credentials service FETCHES for it (B3.8, S3; RepoSpec.Workflows' own
