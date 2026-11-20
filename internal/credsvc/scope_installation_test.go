@@ -8,16 +8,36 @@ package credsvc
 // readers from the scope, there was no installation resolver to resolve at all.
 // The second is the front door: a route the scope does not serve reaches no
 // handler, and the refusal it gets is written with or without a caller
-// according to what the resolver verified (R14). The rest are the front door's
+// according to what the resolver verified (R14). Then come the front door's
 // other two guards — a scope that brings no caller, and a scope that accepts no
 // slip (R18) — each refused before any handler is dispatched.
+//
+// The last two are R1's guarantee itself, and they are the reason the ones
+// before them are not enough: a scope that answers the deployment's own
+// objects is indistinguishable from the deployment, so every test above passes
+// against a model path that reads Config directly — which is what the first
+// test's assertion is worth nothing without. Each gives the call a scope whose
+// policy, kill switches and state are objects of the test's own, wraps the
+// deployment's in tripwires that fail what is read of them, and asserts one
+// call reach the scope's readers and the deployment's none: the model path's
+// five reads (ServeHTTP's stop switches, its policy and the selector's store;
+// the cascade's repository record and its admission's policy) and the probe's
+// marks.
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // TestInstallationScopeIsTodaysBehaviour holds the installation's scope to the
@@ -307,16 +327,196 @@ func TestAScopeThatAcceptsNoSlipRefusesOne(t *testing.T) {
 	}
 }
 
+// TestTheModelPathReadsTheScopesReadersAndNotTheDeployments is R1's guarantee
+// itself, over one served model call: the policy, the kill switches and the
+// state this call is decided by are the SCOPE's three readers, and the
+// deployment's are read nowhere.
+//
+// This is the assertion every other test in this file is worth nothing without.
+// An installation's scope answers exactly the deployment's own objects, so a
+// model path that read Config directly — the shape the seam replaced — serves
+// the same call, writes the same state and passes everything above this test.
+// What tells the two apart is a scope whose readers are objects of the test's
+// own: the call below is served from those and refused by the deployment's,
+// which are tripwires that fail every read of them.
+//
+// It covers the model path's five R1 reads: ServeHTTP's stop switches, its
+// policy's shared node and the store the selector is built over; and
+// candidates' policy (the admission) and its state (the repository's recorded
+// auth).
+func TestTheModelPathReadsTheScopesReadersAndNotTheDeployments(t *testing.T) {
+	// The deployment's three, as tripwires: each fails every read of it, so a
+	// path that reached one answers that read's refusal instead of serving the
+	// call.
+	deployKills := &fakeKills{err: errors.New("the deployment's stop switches were read")}
+	deployPolicy := &fakePolicy{
+		sharedErr: errors.New("the deployment's policy was read"),
+		admErr:    errors.New("the deployment's policy was read"),
+	}
+	deployState := newFakeStore()
+	s := newSvcWith(t, func(_ *svc, cfg *Config) {
+		cfg.Kills = deployKills
+		cfg.Policy = deployPolicy
+		cfg.State = deployState
+	})
+	// The record is keyed by the slug the cascade reads its state with
+	// (candidates' id.Slug), and the deployment's copy says `vertex`: the one
+	// recorded auth this service serves no call by at all (narrowToRepoAuth),
+	// so a path that read it there would refuse this call.
+	deployState.setRepoAuth(s.slug, creds.RepoAuth{Version: creds.RepoAuthVersion, Auth: "vertex"})
+
+	// The scope's three, as a workspace's would be: objects of their own,
+	// working, and recording what the call reads of them.
+	scopedKills := &fakeKills{repos: map[string]bool{}}
+	scopedPolicy := &fakePolicy{
+		shared:      decodeTestPolicy(t, testPolicyDoc()),
+		sharedFound: true,
+		admissions:  map[string]*projectpolicy.RepoPolicy{s.slug: decodeTestChild(t, testChildDoc("default", testAccount))},
+	}
+	scopedState := newFakeStore()
+	scopedState.setRepoAuth(s.slug, creds.RepoAuth{Version: creds.RepoAuthVersion, Auth: config.AuthCascade})
+	// Installed after NewServer, because the resolver it wraps is the server's.
+	s.server.resolver = resolverWithout{
+		inner:  installationResolver{s: s.server},
+		kills:  scopedKills,
+		policy: scopedPolicy,
+		state:  scopedState,
+	}
+
+	resp, body := s.call(t, callBody("ws1-scope-readers"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the model call is answered %d, want the call served out of the scope's readers: %s", resp.StatusCode, body)
+	}
+	if len(s.up.Seen()) != 1 {
+		t.Errorf("the upstream saw %d calls, want the one this call was forwarded as", len(s.up.Seen()))
+	}
+
+	// Reached: the stop switches, the policy's shared node (read by the front
+	// door and again by the admission), the repository's own node, and the
+	// state the selection is made over and written back to.
+	if got := scopedKills.readCount(); got != 1 {
+		t.Errorf("the scope's stop switches were read %d times, want the one read every routed call makes", got)
+	}
+	if got := policySharedReads(scopedPolicy); got < 2 {
+		t.Errorf("the scope's policy answered %d reads of the shared node, want the front door's own and the admission's", got)
+	}
+	if got := scopedPolicy.readAdmissions(); len(got) != 1 || got[0] != s.slug {
+		t.Errorf("the scope's policy answered the admissions read %v, want the caller's own repository %q", got, s.slug)
+	}
+	if placed, ok := scopedState.placed(s.credsRun()); !ok {
+		t.Error("the call wrote no placement in the scope's state, and the selector has to be built over it")
+	} else if placed == "" {
+		t.Error("the call's placement in the scope's state names no credential")
+	}
+
+	// And the deployment's three were read nowhere.
+	if got := deployKills.readCount(); got != 0 {
+		t.Errorf("the deployment's stop switches were read %d times by a call the scope's own answered", got)
+	}
+	if got := policySharedReads(deployPolicy); got != 0 {
+		t.Errorf("the deployment's policy answered %d reads of the shared node, want none: the policy is the scope's", got)
+	}
+	if got := deployPolicy.readAdmissions(); len(got) != 0 {
+		t.Errorf("the deployment's policy answered the admissions read %v, want none: the admission is the scope's", got)
+	}
+	if placed, ok := deployState.placed(s.credsRun()); ok {
+		t.Errorf("the call wrote its placement on %q in the deployment's state, want the scope's", placed)
+	}
+}
+
+// TestTheProbeReadsTheScopesStateAndNotTheDeployments pins the probe's own read
+// (probe.go's probeDue, R1, R8): the marks that decide whether a probe is owed,
+// and on which credential, are the CALL's scope's — the same state the
+// selection that answered the wait was made over.
+//
+// The two stores are what tells it apart. The scope's is the fixture's own and
+// carries the backed-off mark; the deployment's is empty and counts the reads
+// of its marks. A probe decided from the deployment's marks finds nothing due
+// and answers the run the wait it was given, so the call below is served at all
+// only if the marks came from the scope.
+func TestTheProbeReadsTheScopesStateAndNotTheDeployments(t *testing.T) {
+	deployState := newCountingStore()
+	s, _ := probeSvc(t, func(_ *svc, cfg *Config) { cfg.State = deployState })
+	s.backedOff("default", s.now.Add(-time.Hour), creds.DefaultBackoffInitial)
+	s.up.Script = []anthropicfake.Reply{
+		// The probe's own answer first, and one no run may ever be served: the
+		// marker is what says which of the two the run was given.
+		{Status: http.StatusOK, Body: `{"type":"message","probe_answer":"probe-answer"}`},
+		anthropicfake.MessageOK(testModel, testUsage),
+	}
+	// The scope answers the fixture's own state — the one the mark was planted
+	// in — and the deployment's store is left out of the call entirely.
+	s.server.resolver = resolverWithout{inner: installationResolver{s: s.server}, state: s.state}
+
+	resp, body := s.call(t, callBody("ws1-probe-state"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call is answered %d, want the probe made and the run's own call served: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "msg_fake") || strings.Contains(string(body), "probe-answer") {
+		t.Errorf("the run was given an answer that is not the upstream's answer to its own call: %s", body)
+	}
+	if got := s.up.Count(); got != 2 {
+		t.Fatalf("the upstream saw %d requests, want the probe and then the run's call", got)
+	}
+	if m, ok := s.state.mark("default"); !ok || !m.Available() {
+		t.Errorf("the successful probe left the scope's mark at %+v, want it cleared", m)
+	}
+	if got := deployState.markReads(); got != 0 {
+		t.Errorf("the deployment's state was read for its marks %d times by a call whose state is the scope's", got)
+	}
+}
+
+// countingStore is a store of the test's own that counts the reads of its
+// marks: the probe's own mark read is one two stores can differ by with no
+// observable answer at all — a store with no due mark and a store nobody asked
+// both answer "nothing is due" — so a test that pins WHICH store the probe read
+// has to count it.
+type countingStore struct {
+	*fakeStore
+	mu     sync.Mutex
+	marksR int
+}
+
+func newCountingStore() *countingStore { return &countingStore{fakeStore: newFakeStore()} }
+
+func (c *countingStore) Marks(ctx context.Context) (map[string]creds.Mark, error) {
+	c.mu.Lock()
+	c.marksR++
+	c.mu.Unlock()
+	return c.fakeStore.Marks(ctx)
+}
+
+// markReads is how many of those reads it answered.
+func (c *countingStore) markReads() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.marksR
+}
+
+// policySharedReads is how many times a policy of the test's own was asked for
+// the project's shared node, which fakePolicy records under its own lock.
+func policySharedReads(p *fakePolicy) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.sharedReads
+}
+
 // resolverWithout is an installation's resolver answering its scope with one of
-// three answers changed: the path the scope does not serve, the caller it does
-// not report, or the slip it does not accept. Each is a deployment whose scope
-// and whose front door disagree, which is exactly what the front door's own
-// guards are for, and the three are the three guards.
+// six answers changed, and the two groups are the two things a scope can
+// disagree with: the three the front door's own guards read (the path the scope
+// does not serve, the caller it does not report, the slip it does not accept),
+// each a deployment whose scope and whose front door disagree; and the three
+// readers R1's seam is about (the policy, the kill switches and the state),
+// each answered from an object of the test's own where the test sets one, which
+// is what makes a reader that read the deployment instead of the scope fail.
 type resolverWithout struct {
 	inner    ScopeResolver
 	path     string
 	noCaller bool
 	noSlip   bool
+	policy   PolicyReader
+	kills    KillReader
+	state    creds.Store
 }
 
 func (r resolverWithout) Resolve(w http.ResponseWriter, req *http.Request) (Scope, bool) {
@@ -324,7 +524,8 @@ func (r resolverWithout) Resolve(w http.ResponseWriter, req *http.Request) (Scop
 	if !ok {
 		return nil, false
 	}
-	return scopeWithout{Scope: sc, path: r.path, noCaller: r.noCaller, noSlip: r.noSlip}, true
+	return scopeWithout{Scope: sc, path: r.path, noCaller: r.noCaller, noSlip: r.noSlip,
+		policy: r.policy, kills: r.kills, state: r.state}, true
 }
 
 type scopeWithout struct {
@@ -336,6 +537,13 @@ type scopeWithout struct {
 	// noSlip refuses the slip (R18): a workspace's scope, whose callers present
 	// none.
 	noSlip bool
+	// policy, kills and state are the scope's readers where the test answers
+	// them from its own object, and nil where it does not: a nil one answers
+	// the scope this wraps, so a test names only the readers its claim is
+	// about.
+	policy PolicyReader
+	kills  KillReader
+	state  creds.Store
 }
 
 func (s scopeWithout) Serves(path string) bool { return path != s.path }
@@ -348,3 +556,24 @@ func (s scopeWithout) Caller() (Caller, bool) {
 }
 
 func (s scopeWithout) AcceptsSlip() bool { return !s.noSlip && s.Scope.AcceptsSlip() }
+
+func (s scopeWithout) Policy() PolicyReader {
+	if s.policy == nil {
+		return s.Scope.Policy()
+	}
+	return s.policy
+}
+
+func (s scopeWithout) Kills() KillReader {
+	if s.kills == nil {
+		return s.Scope.Kills()
+	}
+	return s.kills
+}
+
+func (s scopeWithout) State() creds.Store {
+	if s.state == nil {
+		return s.Scope.State()
+	}
+	return s.state
+}
