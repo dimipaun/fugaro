@@ -2703,7 +2703,13 @@ func isNewCredsPath(p string) bool {
 //     paired device's read of `outcomes/$day/$slug/$run` is a **grant**, one
 //     node a signed-in phone may read and did not before, and this time the
 //     grant is to `USER` alone — the run token's own read set does not move — so
-//     the phone's running-jobs view (J2) names a run that is still going.
+//     the phone's running-jobs view (J2) names a run that is still going. WS22
+//     (workspace-service, D2982, R3 and R4) moves it to 9 for P5.3.1's reason:
+//     the credential-route leaf (`config/policy/route/$slug`, which
+//     `creds.RoutePath` builds and `TestRoutePathIsGrantedInTheDeployedRules`
+//     holds this document to) is a **grant** to a run token too — the run reads
+//     its route before its first call, and did not read this leaf before — so a
+//     run under the document behind is refused a read the routing depends on.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -2722,8 +2728,8 @@ func isNewCredsPath(p string) bool {
 // Hand mutation this fails on: bumping any of the four (or lowering one of the
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 8 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 8: the generation that carries the paired device's read of outcomes/$day/$slug/$run (mobile identity-pairing J1, F30, D2797, O3)", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 9 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 9: the generation that carries the credential-route leaf config/policy/route/$slug and the run token's read of it (workspace-service WS22, D2982, R3, R4)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)
