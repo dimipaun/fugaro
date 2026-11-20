@@ -69,8 +69,8 @@
 
 import type { ValidatedArguments } from './ipc'
 import type { LaunchConfirmer, SettingsConfirmView } from './launch'
-import type { SettingsView, SettingsViewRow } from './settingsview'
-import { settingsDryRun, settingsView } from './settingsview'
+import type { SettingsEntryDefault, SettingsEntryMeta, SettingsEntryRow, SettingsEntryView, SettingsView } from './settingsview'
+import { settingsDryRun, settingsEntryView, settingsView } from './settingsview'
 import type { SettingsEditPhase } from './spawn'
 import type { SettingsEditSpawn } from '../source/source'
 
@@ -263,20 +263,16 @@ function request(args: ValidatedArguments): SettingsRequest | null {
   return { op, key, value: value ?? null }
 }
 
-/** SettingsReadRow is one row of the read, with the two members this flow
- * decides on that C2's window does not draw: `writable` (the CLI's own answer to
- * "may this console write this key", D1102) and, through `targetLayer`, whether
- * the CLI named a layer at all. Both are checked here, and only a row that
- * passes both reaches the window. */
-interface SettingsReadRow extends SettingsViewRow {
-  readonly writable: boolean
-}
-
 /** SettingsRead is the read document decoded down to the two facts this flow
- * uses: the project the layers belong to, and the row one key is. */
+ * uses: the project the layers belong to, and the rows a key may be found in. A
+ * row is `SettingsEntryRow` -- C2's four members plus the write's own answer
+ * (D1102), the command the read names for a key this path does not write
+ * (D1178), and the metadata and built-in default the entry form draws (SU1,
+ * D2902, R6) -- so the one row the flow finds is the whole of what both halves
+ * of the window are built from. */
 interface SettingsRead {
   readonly project: string
-  readonly rows: readonly SettingsReadRow[]
+  readonly rows: readonly SettingsEntryRow[]
 }
 
 /** SettingsReadResult is the decoded read, or the sentence saying why there is
@@ -316,7 +312,7 @@ export function decodeRead(document: unknown): SettingsReadResult {
   if (typeof project !== 'string' || project === '' || !Array.isArray(settings)) {
     return { ok: false, because: SETTINGS_READ_SHAPE_BECAUSE }
   }
-  const rows: SettingsReadRow[] = []
+  const rows: SettingsEntryRow[] = []
   for (const entry of settings) {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
       return { ok: false, because: SETTINGS_READ_SHAPE_BECAUSE }
@@ -328,16 +324,21 @@ export function decodeRead(document: unknown): SettingsReadResult {
     const writable = row['writable']
     const sensitive = row['sensitive']
     const value = row['value']
+    const owner = row['owner']
     if (
       typeof key !== 'string' ||
       typeof wins !== 'string' ||
       typeof targetLayer !== 'string' ||
       typeof writable !== 'boolean' ||
       (sensitive !== undefined && typeof sensitive !== 'boolean') ||
-      (value !== undefined && typeof value !== 'string')
+      (value !== undefined && typeof value !== 'string') ||
+      (owner !== undefined && typeof owner !== 'string')
     ) {
       return { ok: false, because: SETTINGS_READ_SHAPE_BECAUSE }
     }
+    const meta = metaAt(row)
+    const fallback = defaultAt(row)
+    if (meta === null || fallback === null) return { ok: false, because: SETTINGS_READ_SHAPE_BECAUSE }
     if (sensitive === true) continue
     rows.push({
       key,
@@ -345,9 +346,70 @@ export function decodeRead(document: unknown): SettingsReadResult {
       wins,
       targetLayer,
       writable,
+      owner: typeof owner === 'string' ? owner : '',
+      meta,
+      default: fallback,
     })
   }
   return { ok: true, read: { project, rows } }
+}
+
+/** metaAt reads the eight metadata members (SM-E) off one row, and answers null
+ * for a member present with a type the contract does not give it. An **absent**
+ * member is the fallback rather than a refusal -- `label` empty means the raw
+ * key and `type` empty means a text control (D2908) -- which is why every member
+ * is read as its empty spelling and only a wrongly-typed one refuses the whole
+ * document, exactly as `key` and `writable` do above. */
+function metaAt(row: Record<string, unknown>): SettingsEntryMeta | null {
+  const text = (name: string): string | null => {
+    const raw = row[name]
+    if (raw === undefined) return ''
+    return typeof raw === 'string' ? raw : null
+  }
+  const label = text('label')
+  const description = text('description')
+  const group = text('group')
+  const type = text('type')
+  const min = text('min')
+  const max = text('max')
+  const format = text('format')
+  if (
+    label === null ||
+    description === null ||
+    group === null ||
+    type === null ||
+    min === null ||
+    max === null ||
+    format === null
+  ) {
+    return null
+  }
+  const values = row['enum']
+  let options: readonly string[] = []
+  if (values !== undefined) {
+    if (!Array.isArray(values) || values.some((value) => typeof value !== 'string')) return null
+    options = values as readonly string[]
+  }
+  return { label, description, group, type, enum: options, min, max, format }
+}
+
+/** defaultAt reads the built-in default R6 draws: the value and the constant
+ * holding it, or the sentence saying what unset means (`default.value` and
+ * `default.unset`, both optional and both `omitempty` on the wire). */
+function defaultAt(row: Record<string, unknown>): SettingsEntryDefault | null {
+  const raw = row['default']
+  if (raw === undefined) return { value: '', unset: '' }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const members = raw as Record<string, unknown>
+  const value = members['value']
+  const unset = members['unset']
+  if ((value !== undefined && typeof value !== 'string') || (unset !== undefined && typeof unset !== 'string')) {
+    return null
+  }
+  return {
+    value: typeof value === 'string' ? value : '',
+    unset: typeof unset === 'string' ? unset : '',
+  }
 }
 
 /** sentenceOf is the CLI's own sentence for a refused read, and this module's
@@ -549,5 +611,253 @@ export function phaseOf(view: SettingsView): SettingsEditPhase {
  */
 export const DECLINING_SETTINGS_EDITOR: SettingsEditRunner = Object.freeze({
   edit: (): Promise<SettingsEditOutcome> => Promise.resolve(refused(SETTINGS_EDIT_UNBUILT)),
+  cancelFor: (): void => undefined,
+})
+
+/**
+ * SettingsEditorAnswer is what the one modal's window answers `settings.editor.open`
+ * with, and it is the flow's own type rather than the window's envelope
+ * (`src/preload/confirm.ts`'s `ConfirmAnswer`): that one is the renderer's
+ * message off the channel, and this one is what the main-process window delivers
+ * once it has checked it. There are exactly three, and each is a **phase**'s
+ * answer -- the entry form's value or reset, the diff's confirmation, and the
+ * operator's way out of either (D2902, rule 12).
+ *
+ * `submitted` carries the value the operator typed, or `null` for "Reset to
+ * default": the reset writes no value at all (`settings unset`, A4), so the two
+ * are told apart here rather than by a spelling of the empty string. `confirmed`
+ * carries no tick: a widening's tick is the **window's** gate, checked in the
+ * main process before a yes is delivered (`CONFIRM_TICK_NEEDED`), so a flow can
+ * never see a confirmation that skipped it.
+ */
+export type SettingsEditorAnswer =
+  | { readonly kind: 'declined' }
+  | { readonly kind: 'submitted'; readonly value: string | null }
+  | { readonly kind: 'confirmed' }
+
+/**
+ * SettingsEditorConfirmer is the seam `createConfirmWindow` fills for this flow,
+ * and it is the **two-phase** half of D1115's one window: the launch's half is
+ * `LaunchConfirmer.open`, whose one phase is the whole question, and this one
+ * asks, then shows the diff, in the same window.
+ *
+ *   - `ask` opens the window on the entry form and delivers the form's answer.
+ *     It is `open`'s shape with the entry's own subject, and it is called
+ *     **once** per edit.
+ *   - `settle` puts the dry run's diff into the window the entry form is still
+ *     open in, and answers whether it took it: false means the window is gone
+ *     (the operator declined, closed it, or an installation moved under it) and
+ *     the flow cancels the edit rather than writing. It is called once, after
+ *     the dry run, and only for the window `ask` opened.
+ *   - `close` is the seam's second half, unchanged: an installation removed or
+ *     re-chosen while the window is open closes it as a cancel.
+ *
+ * The flow holds no window of its own and reads no clock: what a window is, when
+ * a yes is answerable and what a document may answer are the window's own
+ * (rules 11 and 12), and this interface is what keeps that true.
+ */
+export interface SettingsEditorConfirmer {
+  ask(subject: SettingsEntryView, decide: (answer: SettingsEditorAnswer) => void): void
+  settle(id: string, subject: SettingsConfirmView): boolean
+  close(id: string): void
+}
+
+/** SettingsEditorDeps is `SettingsEditDeps` with the two-phase confirmer: the
+ * read, the argv builder and the two spawns are the same seams, because both
+ * flows drive the same CLI over the same source. */
+export type SettingsEditorDeps = Omit<SettingsEditDeps, 'confirmer'> & {
+  readonly confirmer: SettingsEditorConfirmer
+}
+
+/** SettingsEditorRunner is what the entry point wires `settings.editor.open`
+ * to. `open` takes the operation's validated arguments -- `{key}` and nothing
+ * else (C-OPS) -- and answers the same outcome `settings.edit` does, so the
+ * screen that asked for the window has one shape to draw. */
+export interface SettingsEditorRunner {
+  open(args: ValidatedArguments): Promise<SettingsEditOutcome>
+  cancelFor(project: string): void
+}
+
+/** Answers is one edit's queue of window answers, and it exists because a
+ * window answers **twice**: the entry form's submit and the diff's confirmation
+ * are delivered by the same `decide`, and the two can arrive in either order
+ * relative to the flow's own awaits -- a `close(id)` from an installation that
+ * moved delivers a decline while the flow is still running the dry run. The
+ * queue holds one until the flow asks for it, so no answer is dropped and none
+ * is delivered twice. */
+interface Answers {
+  next(): Promise<SettingsEditorAnswer>
+  deliver(answer: SettingsEditorAnswer): void
+}
+
+/** answerQueue builds one edit's queue. */
+function answerQueue(): Answers {
+  const queued: SettingsEditorAnswer[] = []
+  const waiting: ((answer: SettingsEditorAnswer) => void)[] = []
+  return {
+    next(): Promise<SettingsEditorAnswer> {
+      return new Promise<SettingsEditorAnswer>((resolve) => {
+        const held = queued.shift()
+        if (held === undefined) waiting.push(resolve)
+        else resolve(held)
+      })
+    },
+    deliver(answer: SettingsEditorAnswer): void {
+      const waiter = waiting.shift()
+      if (waiter === undefined) queued.push(answer)
+      else waiter(answer)
+    },
+  }
+}
+
+/**
+ * createSettingsEditor builds the flow behind `settings.editor.open` (SU1,
+ * D2902): **one modal does the entry, the dry run's diff and the confirmation**,
+ * where `createSettingsEdit` above does the dry run first and shows the
+ * operator the result.
+ *
+ * The order is the whole of the difference between the two, and it is what R5
+ * asks for: the operator types a value into the window (validated on the client
+ * from the metadata, the entry form's own rule), OK runs the dry run, and the
+ * **same** window then shows what that edit would do -- the old and new values,
+ * the layer, the classification and the exact argv a second OK spawns. The dry
+ * run is still the authority at OK: a value the client let through and the CLI
+ * refuses is the CLI's own sentence, and no window and no write follow it.
+ *
+ * `settings.edit` and its flow are left standing beside this one: the two are
+ * the same four steps in a different order, an installed renderer still calls
+ * the older operation, and the write floor both are held to is one floor.
+ */
+export function createSettingsEditor(deps: SettingsEditorDeps): SettingsEditorRunner {
+  const editing = new Set<string>()
+  const cancelled = new Set<string>()
+
+  /** give up is the one path out of a window this flow holds: it closes the
+   * window (which the window itself reads as the operator's decline, resolving
+   * any answer still pending on it) and answers the sentence. */
+  function giveUp(id: string, sentence: string): SettingsEditOutcome {
+    deps.confirmer.close(id)
+    return refused(sentence)
+  }
+
+  async function open(args: ValidatedArguments): Promise<SettingsEditOutcome> {
+    const asked = args['key']
+    if (typeof asked !== 'string' || asked === '') return refused(SETTINGS_EDIT_SHAPE)
+
+    let read: SettingsReadResult
+    try {
+      read = decodeRead((await deps.readSettings()).document)
+    } catch (error) {
+      return refused(sentenceOf(error))
+    }
+    if (!read.ok) return refused(read.because)
+
+    const project = read.read.project
+    if (editing.has(project)) return refused(SETTINGS_EDIT_BUSY)
+    editing.add(project)
+    let id: string | null = null
+    try {
+      const row = read.read.rows.find((candidate) => candidate.key === asked)
+      if (row === undefined) return refused(SETTINGS_EDIT_NO_ROW)
+      const layer = row.targetLayer
+      id = settingsConfirmID(project)
+      const window = id
+      const answers = answerQueue()
+      try {
+        deps.confirmer.ask(settingsEntryView({ project, row }), (answer) => {
+          answers.deliver(answer)
+        })
+      } catch {
+        // A confirmer that throws is a window that did not open: the edit
+        // declines rather than waiting for an answer nothing will give.
+        return refused(SETTINGS_EDIT_CANCELLED)
+      }
+
+      const first = await answers.next()
+      if (first.kind !== 'submitted') return refused(SETTINGS_EDIT_CANCELLED)
+      // The window draws no control for a key this path does not write, and its
+      // only answer is Cancel, so a value for one is a document that did not
+      // follow the view it was shown. It is refused here rather than at the
+      // dry run: a key with no layer to write has no argv at all.
+      if (!row.writable || layer === '') return giveUp(window, SETTINGS_EDIT_NOT_WRITABLE)
+
+      // The arguments object the argv builder and both spawns are given. The
+      // operation's payload carries `{key}` and nothing else (C-OPS), because the
+      // value is the operator's and it is typed into the window rather than sent
+      // by the renderer that asked for it: the two words a `settings set` takes
+      // are composed here, from the answer the window's own top frame delivered.
+      const fields: Record<string, string> = { op: first.value === null ? 'unset' : 'set', key: asked }
+      if (first.value !== null) fields['value'] = first.value
+      const request: ValidatedArguments = Object.freeze(fields)
+      const dryArgv = await deps.argvForEdit(request, 'dry-run', layer)
+      const dry = await deps.spawnEdit(request, 'dry-run', layer, dryArgv)
+      if (dry.refusal !== null) return giveUp(window, dry.refusal)
+
+      // The dry run is the document the diff and the write are built over, so it
+      // has to be a document **about this edit** before either is shown: the
+      // three ways it can fail to be are the three `settings.edit` refuses for
+      // the same reasons (`SETTINGS_EDIT_DISAGREES`, `SETTINGS_EDIT_REFUSED`),
+      // and each is answered with the window closed and nothing written.
+      const dryRead = settingsDryRun(dry.document)
+      if (!dryRead.ok) return giveUp(window, dryRead.because)
+      if (dryRead.dryRun.key !== asked || dryRead.dryRun.layer !== layer) {
+        return giveUp(window, SETTINGS_EDIT_DISAGREES)
+      }
+      if (dryRead.dryRun.refusal !== '') return giveUp(window, SETTINGS_EDIT_REFUSED)
+
+      const classified = settingsView({ dryRun: dry.document, row, argv: [], because: null })
+      if (!classified.ok) return giveUp(window, classified.because)
+      const writeArgv = await deps.argvForEdit(request, phaseOf(classified.view), layer)
+      const diff = settingsView({ dryRun: dry.document, row, argv: writeArgv, because: null })
+      if (!diff.ok) return giveUp(window, diff.because)
+
+      if (cancelled.has(project)) return refused(SETTINGS_EDIT_CANCELLED)
+      const subject: SettingsConfirmView = Object.freeze({
+        ...diff.view,
+        kind: 'settings' as const,
+        project,
+      })
+      if (!deps.confirmer.settle(window, subject)) return refused(SETTINGS_EDIT_CANCELLED)
+
+      const second = await answers.next()
+      // The mark is read again after the answer, as `settings.edit` reads it:
+      // an installation that moved while the window was open must not write even
+      // though the operator said yes.
+      if (second.kind !== 'confirmed' || cancelled.has(project)) return refused(SETTINGS_EDIT_CANCELLED)
+
+      const wrote = await deps.spawnEdit(request, phaseOf(diff.view), layer, writeArgv)
+      if (wrote.refusal !== null) return refused(wrote.refusal)
+      return Object.freeze({ ok: true, sentence: wrote.text })
+    } catch (error) {
+      return refused(sentenceOf(error))
+    } finally {
+      // Every way out of the steps above closes this flow's window, whatever it
+      // is still showing: a window left open would hold a pending answer for the
+      // life of the process, and the operator would be looking at a form whose
+      // edit was already over.
+      if (id !== null) deps.confirmer.close(id)
+      editing.delete(project)
+      cancelled.delete(project)
+    }
+  }
+
+  return Object.freeze({
+    open,
+    cancelFor(project: string): void {
+      if (!editing.has(project)) return
+      cancelled.add(project)
+      deps.confirmer.close(settingsConfirmID(project))
+    },
+  })
+}
+
+/**
+ * DECLINING_SETTINGS_EDITOR_FLOW is the fail-closed default for
+ * `settings.editor.open`, `DECLINING_SETTINGS_EDITOR`'s twin: the runner this
+ * process starts with, before `main` has built a window. Every open is declined
+ * with `SETTINGS_EDIT_UNBUILT` and every cancel is nothing.
+ */
+export const DECLINING_SETTINGS_EDITOR_FLOW: SettingsEditorRunner = Object.freeze({
+  open: (): Promise<SettingsEditOutcome> => Promise.resolve(refused(SETTINGS_EDIT_UNBUILT)),
   cancelFor: (): void => undefined,
 })
