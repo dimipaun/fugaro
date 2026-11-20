@@ -58,6 +58,10 @@ func TestDocsBucketIAMNamesThePRIndexResidual(t *testing.T) {
 			"the erasure's residual is not stated: what it can hide is bounded by the recent-window union, and a reader has to know which bound (D2964, F5)"},
 		{"a forged entry adds a read and never a row, because every run the index names is read and checked against its own records",
 			"the other half is not stated: the index is a hint and never a source of rows, which is what keeps a forged entry from inventing one (D2963)"},
+		{"the fallback that scans the window as the listing did before the index existed is the empty index's alone, so one entry — forged, or an ordinary run's own — turns it off for the whole pull request",
+			"the forged entry is stated as costing a read and no row, and nothing more; runs_pr.go falls back to the window scan only when the index is empty, so one entry turns that fallback off for the whole pull request, and its runs older than the 24-hour union are hidden the way an erased entry's are"},
+		{"a run of it older than the 24-hour union the listing reads beside the index drops out unless the index names it",
+			"the residual the fallback's suppression hides is not stated: which runs an index that holds anything leaves out (F9, D2964)"},
 	} {
 		if !strings.Contains(doc, want.phrase) {
 			t.Errorf("%s does not say %q: %s", runsLsSpeedBucketIAM, want.phrase, want.why)
