@@ -18,7 +18,10 @@ func TestEffectiveModeOfUnsetIsObserve(t *testing.T) {
 		want string
 	}{
 		{"", policy.ModeObserve},
-		{policy.ModeOff, policy.ModeObserve},
+		// The old word is written as the literal and never through the
+		// constant, so this file needs no edit when I1 deletes it
+		// (docs/always-a-budget/contract-mode.md §3).
+		{"off", policy.ModeObserve},
 		{"no such mode", policy.ModeObserve},
 		{policy.ModeObserve, policy.ModeObserve},
 		{policy.ModeEnforce, policy.ModeEnforce},
@@ -33,8 +36,8 @@ func TestEffectiveModeOfUnsetIsObserve(t *testing.T) {
 // predicate and named by one text, so no reader has to spell it and no two
 // refusals of it can say different things (D3009).
 func TestTheRemovedModeIsNamed(t *testing.T) {
-	if !policy.Mode(policy.ModeOff).Removed() {
-		t.Errorf("Mode(%q).Removed() = false, want true", policy.ModeOff)
+	if !policy.Mode("off").Removed() {
+		t.Errorf("Mode(%q).Removed() = false, want true", "off")
 	}
 	for _, m := range []policy.Mode{"", "off ", "OFF", "no such mode", policy.ModeObserve, policy.ModeEnforce} {
 		if m.Removed() {
@@ -43,7 +46,7 @@ func TestTheRemovedModeIsNamed(t *testing.T) {
 	}
 	// The one refusal says what the word is now and what to write instead: it
 	// names the word it refuses and both live modes it offers as the fix.
-	for _, want := range []string{policy.ModeOff, policy.ModeObserve, policy.ModeEnforce} {
+	for _, want := range []string{"off", policy.ModeObserve, policy.ModeEnforce} {
 		if !strings.Contains(policy.ModeOffRefusal, want) {
 			t.Errorf("ModeOffRefusal does not name %q: %q", want, policy.ModeOffRefusal)
 		}

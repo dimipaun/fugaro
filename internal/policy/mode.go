@@ -38,9 +38,11 @@ func (m Mode) Effective() string {
 // answers ModeOffRefusal; a reader that only needs the mode asks Effective and
 // never learns the word existed.
 //
-// The comparison is written as the literal rather than through ModeOff because
-// this line is the one place the word outlives the constant: I1 deletes
-// ModeOff, and what is left of it is here. Nothing else may spell it.
+// The comparison is written as the literal rather than through policy's own
+// constant for the word, because this line is the one place the word outlives
+// that constant: I1 deletes it, and what is left of the word is here. Nothing
+// else may spell it, and the identifier for it is deliberately not named in
+// this file, so I1's sweep of that identifier has no line here to change.
 func (m Mode) Removed() bool { return m == "off" }
 
 // ModeOffRefusal is the whole of what every refusal of the old word says: that
