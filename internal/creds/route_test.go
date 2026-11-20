@@ -64,7 +64,10 @@ func validatesAgainstRouteSchema(t *testing.T, sch *jsonschema.Schema, raw strin
 // (the plan's red step): a decoder that tolerated it would answer the project
 // for a kind a newer member's `fugaro update` had moved to the workspace, which
 // is a run waiting on a project that holds nothing rather than the run the
-// member published.
+// member published. The keys are read exactly, and written once: encoding/json
+// alone matches a key to a field case-insensitively and lets the later of two
+// spellings win, so `MODEL` and a repeated `model` would move a credential with
+// no key this contract names anywhere in the record.
 func TestRouteRecordDecodesStrictly(t *testing.T) {
 	const addr = "https://workspace.example.com"
 	for _, tc := range []struct {
@@ -92,6 +95,26 @@ func TestRouteRecordDecodesStrictly(t *testing.T) {
 			name: "an unknown key",
 			raw:  `{"version":1,"address":"` + addr + `","modle":"workspace"}`,
 			why:  "unknown field",
+		},
+		{
+			name: "a key spelled in another case",
+			raw:  `{"version":1,"address":"` + addr + `","MODEL":"workspace"}`,
+			why:  `"MODEL"`,
+		},
+		{
+			name: "another case of a key beside the exact one",
+			raw:  `{"version":1,"address":"` + addr + `","model":"project","Model":"workspace"}`,
+			why:  `"Model"`,
+		},
+		{
+			name: "a field written twice",
+			raw:  `{"version":1,"address":"` + addr + `","model":"project","model":"workspace"}`,
+			why:  `"model" twice`,
+		},
+		{
+			name: "a field written twice with one value",
+			raw:  `{"version":1,"address":"` + addr + `","model":"workspace","model":"workspace"}`,
+			why:  `"model" twice`,
 		},
 		{
 			name: "a version this code does not read",
@@ -229,9 +252,15 @@ func TestRouteRecordRoundTripsAndMatchesItsSchema(t *testing.T) {
 	}
 
 	// The schema is the contract's other half, so it refuses what the decoder
-	// refuses: an unknown key, and a holder outside the vocabulary.
+	// refuses: an unknown key, a key spelled in another case (its properties are
+	// matched exactly, which is why the decoder matches them exactly too), and a
+	// holder outside the vocabulary. A field written twice is the one refusal the
+	// schema cannot make — JSON Schema has no way to say that a key appears once
+	// — so it is the decoder's alone and is asserted in the table above.
 	for _, bad := range []string{
 		`{"version":1,"address":"` + addr + `","modle":"workspace"}`,
+		`{"version":1,"address":"` + addr + `","MODEL":"workspace"}`,
+		`{"version":1,"address":"` + addr + `","model":"project","Model":"workspace"}`,
 		`{"version":1,"address":"` + addr + `","model":"fugaro"}`,
 		`{"version":2,"address":"` + addr + `"}`,
 	} {

@@ -86,8 +86,12 @@ One repository's record is one JSON object:
   the address is where a *moved* kind is called, and nothing is called there for a kind `Holder` answers
   `HolderProject` for.
 - **The record is closed, and `DecodeRoute` decodes it strictly**: a key this code does not model is a refusal, not a
-  key decoded past. The version is read first, so a record a later release wrote is refused as a version this code
-  does not know rather than as one unknown field.
+  key decoded past, and a key is matched **exactly and written once** — `MODEL` is not `model`, and a record that
+  carries a field twice is refused. `encoding/json` alone matches a key to a field case-insensitively and lets the
+  later of two spellings win, and a Realtime Database node holds the two spellings as two children, so a record
+  spelled that way would move a credential to the workspace with no key this contract names anywhere in it. The
+  version is read first, so a record a later release wrote is refused as a version this code does not know rather
+  than as one unknown field.
 - **A node that is not there at all is not a refusal**: `DecodeRoute(null)` answers `found == false` and no error.
 - **One route has one spelling.** `RouteRecord` writes a kind only when the route moves it to the workspace, so a
   route that spells `project` for a kind and one that leaves the kind out are the same bytes: `HolderProject` is the
@@ -109,7 +113,8 @@ adds the rule (`TOKEN && auth.token.fs == $slug`), bumps `RulesVersion` and conv
 
 `schemas/credential-route.schema.json` is the published half of the record's shape, and
 `TestRouteRecordRoundTripsAndMatchesItsSchema` holds the two together: the schema refuses what `DecodeRoute` refuses
-and accepts what it reads.
+and accepts what it reads, with one thing it cannot say — a JSON object has no way to declare that a key appears
+once, so a field written twice is `DecodeRoute`'s refusal alone.
 
 ## The import boundary this contract crosses
 

@@ -296,9 +296,11 @@ func RouteRecord(r Route) ([]byte, error) {
 //
 // It decodes strictly: a key this code does not model is refused rather than
 // decoded past, because the record moves a member's credential from one service
-// to another and a key nobody read is a decision nobody made. The version is
-// read first and by name, so a record a later release wrote is refused as a
-// version this code does not know rather than as one unknown field.
+// to another and a key nobody read is a decision nobody made. The keys
+// themselves are matched exactly and written once, which the typed decode below
+// cannot do (refuseOtherSpellings). The version is read first and by name, so a
+// record a later release wrote is refused as a version this code does not know
+// rather than as one unknown field.
 func DecodeRoute(raw []byte) (Route, bool, error) {
 	if projectpolicy.IsNull(raw) {
 		return Route{}, false, nil
@@ -311,6 +313,9 @@ func DecodeRoute(raw []byte) (Route, bool, error) {
 	}
 	if head.Version != RouteVersion {
 		return Route{}, true, fmt.Errorf("%w: it is version %d and this Fugaro reads version %d", ErrRouteRecord, head.Version, RouteVersion)
+	}
+	if err := refuseOtherSpellings(raw); err != nil {
+		return Route{}, true, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -333,6 +338,63 @@ func DecodeRoute(raw []byte) (Route, bool, error) {
 		Bitbucket: w.Bitbucket,
 		GitHub:    w.GitHub,
 	}, true, nil
+}
+
+// refuseOtherSpellings walks the record's object and refuses a field this
+// contract does not name, spelled exactly, written once. It is the half of
+// strictness the typed decode cannot have — internal/access/store.go walks the
+// grants node the same way for the same reason.
+//
+// encoding/json matches an object key to a struct field case-insensitively and
+// lets the later of two spellings of a key win, so
+// {"version":1,"address":"…","MODEL":"workspace"} would move the model
+// credential to the workspace, and so would
+// {"model":"project","Model":"workspace"}, while DisallowUnknownFields stays
+// quiet: "MODEL" is field model as far as it is concerned. The schema, whose
+// properties are matched exactly and whose additionalProperties is false,
+// refuses both, and a Realtime Database node holds the two spellings as two
+// children of the record. A record that spells one of its fields any other way
+// is one this reader cannot vouch for, and a key nobody wrote in this contract
+// must not move a member's credential. Every other way the record can be wrong
+// — an unknown value, a holder outside the vocabulary, an address a run may not
+// be sent to — is still the typed decode's and the checks after it.
+func refuseOtherSpellings(raw []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrRouteRecord, err)
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return fmt.Errorf("%w: it is not one JSON object", ErrRouteRecord)
+	}
+	seen := map[string]bool{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrRouteRecord, err)
+		}
+		name, ok := tok.(string)
+		if !ok {
+			return fmt.Errorf("%w: a field name is not a string", ErrRouteRecord)
+		}
+		switch name {
+		case "version", "address", "model", "bitbucket", "github":
+		default:
+			return fmt.Errorf("%w: it carries the unknown field %q: the record's fields are version, address, model, bitbucket and github, spelled exactly", ErrRouteRecord, name)
+		}
+		if seen[name] {
+			return fmt.Errorf("%w: it carries the field %q twice: a record writes each of its fields once", ErrRouteRecord, name)
+		}
+		seen[name] = true
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return fmt.Errorf("%w: %v", ErrRouteRecord, err)
+		}
+	}
+	if _, err := dec.Token(); err != nil {
+		return fmt.Errorf("%w: %v", ErrRouteRecord, err)
+	}
+	return nil
 }
 
 // movedHolder is the holder the record writes for one kind: HolderWorkspace when
