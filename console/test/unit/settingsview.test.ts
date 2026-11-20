@@ -341,7 +341,7 @@ describe('the settings entry form', () => {
     const view = settingsEntryView({ project: 'sandbox', row: ENTRY_ROW })
     expect(view.defaultValue).toBe('5')
     expect(view.defaultUnset).toBe('')
-    expect(view.caveat).toBe(SETTINGS_ENTRY_RESET_CAVEAT)
+    expect(view.caveat).toBe(SETTINGS_ENTRY_CAVEAT)
 
     const sentence = settingsEntryView({
       project: 'sandbox',
@@ -439,7 +439,10 @@ describe('the settings entry form', () => {
       expect(settingsEntryError(view, good), `${format}: ${good}`).toBeNull()
       expect(settingsEntryError(view, bad), `${format}: ${bad}`).not.toBeNull()
     }
-    const free = settingsEntryView({ project: 'sandbox', row: ENTRY_ROW })
+    const free = settingsEntryView({
+      project: 'sandbox',
+      row: { ...ENTRY_ROW, meta: { ...ENTRY_ROW.meta, type: 'string', min: '', max: '', format: '' } },
+    })
     expect(settingsEntryError(free, 'anything at all')).toBeNull()
   })
 
