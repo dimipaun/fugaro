@@ -191,7 +191,11 @@ func WorkspaceDatabaseRole(project string) string {
 // member from the table deletes its grants, and the workspace's plan refusing
 // that would leave an operator repair — a state this design has none of
 // (the plan's own constraint "Removing a member needs no operator repair",
-// pinned by TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant). Everything
+// pinned by TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant). That deletion
+// is held to the project, the role, the plan's own service name and a service
+// account principal, and deliberately not to memberAccounts: the caller passes
+// the table the workspace holds now, and the member who left is the account
+// already gone from it (workspaceInvokeGrant). Everything
 // else — the workspace's service, its accessor, its account, its role and its
 // database grant — is what the whole group's record and meter are kept by, and
 // a plan that deletes or replaces one of them is refused here by name.
@@ -206,7 +210,10 @@ func WorkspaceDatabaseRole(project string) string {
 // empty memberAccounts admits no invoke grant, which is the fail-closed
 // direction: a caller that knows neither the container nor the members is a
 // caller reading a plan that holds no service at all (WS6's own state, before
-// WS7 wires both from the workspace's config).
+// WS7 wires both from the workspace's config). memberAccounts is a reach being
+// made and not a deletion being admitted: the table is the one the workspace
+// holds now, so it is read for the grants a plan binds and never for the ones
+// it removes.
 //
 // The receiver is the run's own cover, and it carries the fourth thing no plan
 // holds: the image identity the service is held to (Registry, Ghcr, Owner), for
@@ -682,10 +689,18 @@ func workspaceBundleAccessor(ch Change, project, wantAccount, bundleSecret strin
 // workspaceInvokeGrant says why an invoke grant of a plan is not a member's own
 // (F17), in either of the two states the plan can hold it in: a create or an
 // update, read from the change; or the ONE deletion this cover admits (F25),
-// read from the state the workspace held. Both are held to the same four facts —
-// the project, the role, the service and the principal — and the deletion is
-// admitted only for the same member's account, so removing a member converges
-// with no operator repair while a deletion of anything else is refused.
+// read from the state the workspace held. A create or an update is held to four
+// facts — the project, the role, the service, and a member of the table the
+// caller passes — because it is a reach being made.
+//
+// The deletion is held to the project, the role, the service and to a member
+// that is a service account address, and to nothing else. It is NOT held to the
+// caller's table: that table is the one the workspace holds NOW, so the member
+// who left is exactly the account already absent from it, and a membership check
+// here would refuse every real removal — the operator repair F25 exists to
+// prevent (the plan's own constraint "Removing a member needs no operator
+// repair"). A deletion only narrows reach, which is why a service-account
+// principal on this plan's own service is the whole of what bounds it.
 //
 // service is the name of the plan's own workspace service
 // (planWorkspaceServiceName): a member's grant is on THAT service and on no
@@ -708,8 +723,8 @@ func workspaceInvokeGrant(ch Change, deletion bool, project string, memberAccoun
 			return fmt.Sprintf("an invoke grant on the service %q deleted, and the workspace's own service is this plan's own workspace service (%s): a grant on another service is another service's caller table", safetext.Field(got), safetext.Field(service))
 		}
 		m := str(b["member"])
-		if email, ok := workspaceAccountOf(m); !ok || !slices.Contains(memberAccounts, email) {
-			return fmt.Sprintf("an invoke grant deleted for %s, which is not a member's own job account of this plan: the ONE change this root's cover admits beyond its own resources is a member leaving the workspace's table, and a deletion of anything else — the workspace's own service, its bundle accessor, its account or its role — is a repair nobody chose (F25)", safetext.Field(m))
+		if _, ok := workspaceAccountOf(m); !ok {
+			return fmt.Sprintf("an invoke grant deleted for %s, which is not a service account address: the ONE change this root's cover admits beyond its own resources is a member's own job account leaving the workspace's table, and this root binds an invoke grant to an account and to nothing else — a person, a group, a domain, a principalSet or an empty member here is state this root did not write, so a deletion of it is not the table converging, and a deletion of anything else (the workspace's own service, its bundle accessor, its account or its role) is a repair nobody chose (F25)", safetext.Field(m))
 		}
 		return ""
 	}

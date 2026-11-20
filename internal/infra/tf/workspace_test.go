@@ -257,7 +257,16 @@ func wsDeployed() []string {
 
 func wsWhy(t *testing.T, p *Plan) string {
 	t.Helper()
-	return strings.Join(wsCover.WorkspaceNotCovered(p, wsProject, WorkspaceServiceAccountID, wsBundle, wsMembers), "; ")
+	return wsWhyMembers(t, p, wsMembers)
+}
+
+// wsWhyMembers is wsWhy against the member table the workspace holds now, which
+// the removal case below gives as the shrunk table: the cover is handed the
+// members of the workspace's own config, so a member who has left the table is
+// by definition not one of them.
+func wsWhyMembers(t *testing.T, p *Plan, members []string) string {
+	t.Helper()
+	return strings.Join(wsCover.WorkspaceNotCovered(p, wsProject, WorkspaceServiceAccountID, wsBundle, members), "; ")
 }
 
 // wsAdd is the root's plan with one change appended, which every refusal case
@@ -320,8 +329,18 @@ func TestWorkspacePlanAdmitsTheService(t *testing.T) {
 // `fugaro update` converges a shrunk member table with no repair — and the
 // deletion of anything else stays refused, the workspace's service and the
 // bundle accessor included.
+//
+// The cover is handed the table the workspace holds AFTER the removal, which is
+// the case that matters: the member who left is exactly the account that table
+// no longer names, so the deletion is held to the project, the role and the
+// plan's own service and not to the members — a rule that asked for the deleted
+// principal to be among them would refuse every real removal and leave the
+// operator repair this design has none of.
 func TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant(t *testing.T) {
-	if why := wsWhy(t, wsPlan(t,
+	// The table the cover is given is the workspace's OWN, after the removal:
+	// wsMemberA is the member who has left, so its account is exactly what the
+	// table no longer names — which is why the deletion is not held to it.
+	if why := wsWhyMembers(t, wsPlan(t,
 		wsPinnedRole(),
 		wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
 		wsComputedGrant(wsProject, wsRole, "no-op"),
@@ -329,7 +348,7 @@ func TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant(t *testing.T) {
 		wsAccessor("", "", "", "", "no-op"),
 		wsInvokerDelete(wsMemberA),
 		wsInvoker(wsMemberB, "no-op"),
-	)); why != "" {
+	), []string{wsMemberB}); why != "" {
 		t.Errorf("removing a member must be no operator repair (F25): the plan that deletes its invoke grant and nothing else is this root's, got: %s", why)
 	}
 
@@ -350,8 +369,8 @@ func TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant(t *testing.T) {
 			`"project":"`+wsProject+`","role_id":"`+WorkspaceDatabaseRoleID+`"`, "delete"), "actions delete"},
 		{"an invoke grant replaced rather than deleted", wsChange("google_cloud_run_v2_service_iam_member.workspace_invoker", workspaceInvokerType,
 			wsInvokerAfter("", "fugaro-workspace-credentials-v2", "", wsMemberA), "delete", "create"), "actions delete, create"},
-		{"a member's invoke grant deleted for an account that is not a member", wsInvokerDelete("fugaro-run-stranger@member-gamma-9012.iam.gserviceaccount.com"),
-			"not a member's"},
+		{"an invoke grant deleted for a principal that is not a service account", wsInvokerDelete("group:workspace-owners@example.com"),
+			"not a service account address"},
 	}
 	for _, c := range refused {
 		t.Run(c.name, func(t *testing.T) {
