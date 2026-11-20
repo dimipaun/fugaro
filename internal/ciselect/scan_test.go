@@ -237,16 +237,19 @@ func TestWalkFixture(t *testing.T) {
 }
 
 func TestScanFollowsABuildByImportPath(t *testing.T) {
+	// The built package sorts after the package that builds it, so a closure
+	// taken while the tree is still being read would miss the dependency: the
+	// scan only learns a package's imports when it reaches its files.
 	m := scanTree(t, map[string]string{
 		"go.mod": goMod,
-		"internal/build/gen/main.go": `package main
+		"internal/z/gen/main.go": `package main
 
-import "example.com/m/internal/build/gen/dep"
+import "example.com/m/internal/z/gen/dep"
 
 func main() { dep.Do() }
 `,
-		"internal/build/gen/dep/dep.go": "package dep\n\nfunc Do() {}\n",
-		"internal/consumer/x_test.go": `package consumer
+		"internal/z/gen/dep/dep.go": "package dep\n\nfunc Do() {}\n",
+		"internal/a/a_test.go": `package a
 
 import (
 	"os/exec"
@@ -254,8 +257,8 @@ import (
 )
 
 func TestBuild(t *testing.T) {
-	cmd := exec.Command("go", "run", "example.com/m/internal/build/gen")
-	cmd.Dir = filepath.Join(repoRoot(), "internal", "build", "gen")
+	cmd := exec.Command("go", "run", "example.com/m/internal/z/gen")
+	cmd.Dir = filepath.Join(repoRoot(), "internal", "z", "gen")
 	_ = cmd.Run()
 }
 
@@ -267,10 +270,10 @@ func repoRoot() string { return "../.." }
 	// everything it imports, which no import edge of the test's own package
 	// leads to (F2). The scan of path literals alone cannot see it: the import
 	// path names no file.
-	p := entry(t, m, "./internal/consumer")
-	wantReads(t, p, "internal/build/gen/**", "internal/build/gen/dep/**")
+	p := entry(t, m, "./internal/a")
+	wantReads(t, p, "internal/z/gen/**", "internal/z/gen/dep/**")
 	if p.Any {
-		t.Errorf("./internal/consumer is any, want the closure of the built package: %v", p.Reads)
+		t.Errorf("./internal/a is any, want the closure of the built package: %v", p.Reads)
 	}
 }
 

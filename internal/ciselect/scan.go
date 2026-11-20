@@ -202,37 +202,62 @@ func (s *scanner) scanGo() error {
 	if err := s.module(); err != nil {
 		return err
 	}
+	type file struct {
+		dir  string
+		test bool
+		got  fileScan
+	}
+	var files []file
 	for _, rel := range s.goFiles() {
-		isTest := strings.HasSuffix(rel, "_test.go")
-		dir := path.Dir(rel)
 		got, err := s.scanGoFile(rel)
 		if err != nil {
 			return err
 		}
-		p := s.pkg(dir)
-		if isTest {
+		files = append(files, file{dir: path.Dir(rel), test: strings.HasSuffix(rel, "_test.go"), got: got})
+	}
+	// Two passes: every import edge is known before any closure is taken, so a
+	// package that follows the file naming it in the tree counts like any other.
+	for _, f := range files {
+		for _, imp := range f.got.imports {
+			s.pkg(f.dir).imports[imp] = true
+		}
+	}
+	for _, f := range files {
+		p := s.pkg(f.dir)
+		if f.test {
 			p.tests = true
-			p.self.merge(got.reads)
-		} else if got.spread {
+			p.self.merge(f.got.reads)
+			p.self.merge(s.builds(f.got.builds))
+		} else if f.got.spread {
 			// A helper that opens, walks or builds something hands its reads to
 			// every test package that imports it. A file that merely mentions a
 			// path-shaped string — a classifier's table of patterns, a file name
 			// in a constant — hands over nothing: it read no file, and spreading
 			// its strings would put a change to scripts/release.sh in the reach
 			// of every package that imports the table.
-			p.helper.merge(got.reads)
+			p.helper.merge(f.got.reads)
+			p.helper.merge(s.builds(f.got.builds))
 		}
-		for _, e := range got.embeds {
+		for _, e := range f.got.embeds {
 			// An embedded file is the package's own: it is built into that
 			// package's binary, and an importer reads it only through that
 			// package's code.
 			p.self.add(e)
 		}
-		for _, imp := range got.imports {
-			p.imports[imp] = true
-		}
 	}
 	return nil
+}
+
+// builds turns the packages a file builds into the reads that building them
+// implies: their directories and the directories of everything they import.
+func (s *scanner) builds(dirs []string) reads {
+	out := newReads()
+	for _, dir := range dirs {
+		for _, d := range s.closure(dir) {
+			out.add(d + "/**")
+		}
+	}
+	return out
 }
 
 // goFiles lists the Go files the go tool would build, in the tree's own sorted
@@ -361,6 +386,7 @@ type fileScan struct {
 	reads   reads
 	imports []string
 	embeds  []string // the repository files the file's //go:embed directives name
+	builds  []string // the package directories the file builds with the go command
 	spread  bool     // the file opens, walks or builds something of the repository
 }
 
@@ -969,10 +995,8 @@ func (f *fileScanner) goTool(c *ast.CallExpr) {
 		if !ok {
 			continue
 		}
-		for _, d := range f.closure(dir) {
-			f.out.reads.add(d + "/**")
-			f.out.spread = true
-		}
+		f.out.builds = append(f.out.builds, dir)
+		f.out.spread = true
 	}
 }
 
@@ -993,13 +1017,13 @@ func (f *fileScanner) packageDir(text string) (string, bool) {
 
 // closure is a package's directory and every repository directory it imports,
 // directly or transitively: what building it reads.
-func (f *fileScanner) closure(dir string) []string {
+func (s *scanner) closure(dir string) []string {
 	seen := map[string]bool{dir: true}
 	queue := []string{dir}
 	for len(queue) > 0 {
 		next := queue[len(queue)-1]
 		queue = queue[:len(queue)-1]
-		p, ok := f.scan.pkgs[next]
+		p, ok := s.pkgs[next]
 		if !ok {
 			continue
 		}
