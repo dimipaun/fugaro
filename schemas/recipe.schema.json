@@ -15,7 +15,7 @@
     "roles": { "$ref": "#/$defs/roles" },
     "by_level": {
       "type": "object",
-      "description": "The recipe's one conditional: the roles: mapping the run uses at a given rigor level, which replaces roles: at that level. A level written with an empty roles block runs with no mapping (recipe.RolesFor). Nothing else is conditioned: the per-run cap is the level's own and the loop's shape is the recipe's, so any other key is refused.",
+      "description": "The recipe's one conditional: the roles: mapping the recipe resolves at a given rigor level, which replaces roles: at that level (recipe.RolesFor). A level written with an empty roles block resolves to no mapping. Nothing else is conditioned: the per-run cap is the level's own and the loop's shape is the recipe's, so any other key is refused. No run applies the block yet: the runner and the level resolver both apply the recipe's own roles: once, at bootstrap, before the run's level is known, so a recipe that writes it runs on its top-level roles: at every level.",
       "propertyNames": { "enum": ["poc", "startup", "pro", "critical", "hotfix"] },
       "additionalProperties": { "$ref": "#/$defs/levelRoles" }
     },

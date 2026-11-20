@@ -74,7 +74,7 @@ var NameRE = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$`)
 // whose tests import it is an import cycle Go refuses to compile ("import
 // cycle not allowed in test"). So this is a second copy of the vocabulary,
 // the way this file's mode and check enums are its own, and
-// TestRecipeLevelNamesMatchTheVocabulary (schemas/schemas_test.go, which may
+// TestRecipeSchemaByLevelMatchesGo (schemas/schemas_test.go, which may
 // import both) is what keeps the two from drifting — together with the
 // schema's own by_level enum, pinned against rigor.Rigors by the same test.
 var LevelNames = []string{"poc", "startup", "pro", "critical", "hotfix"}
@@ -409,10 +409,11 @@ type Recipe struct {
 	// through RolesFor, which applies that fallback, and never directly.
 	levelRoles map[string]RoleMap
 	// levelRolesWritten is set when the recipe text writes the by_level:
-	// key, whatever its entries hold, so UsesLevelRoles decides by presence
-	// the way UsesV07 does — and for the same reason: a parser older than
-	// the key refuses the whole recipe ("is not a recipe key"), so a
-	// by_level: {} recipe still needs a job image that knows it.
+	// key, whatever its entries hold — by_level: {} included, which is a
+	// mapping with nothing in it rather than an absent key. It is what the
+	// mode refusals below ask, because by_level is roles written per level
+	// and a mode with no agent step has no role to map: the level's own
+	// mapping is nil in that case, and the key would go unrefused.
 	levelRolesWritten bool
 	// Mode is ModeImplement, ModeReview or ModeArtifact, never "".
 	Mode  string
@@ -536,6 +537,13 @@ func UsesHandOver(r *Recipe) bool {
 // and the recipe's own roles: (Recipe.ReviewerIsCoder, Recipe.CoderIsReviewer)
 // for every other level, a level the recipe never named among them.
 //
+// Nothing in a run calls it yet: the runner and the level resolver both apply
+// the recipe's own roles: once, at bootstrap, before a level is resolved
+// (runner.ApplyRoles, internal/config's withRecipeRoles), so a by_level: block
+// is parsed and resolved here and ignored by a run until those two call this
+// at the level the run reached. docs/recipes.md says so where it describes the
+// key, which is the whole of the promise the format half makes today.
+//
 // level is a rigor level name, internal/rigor's Rigor value: this package
 // cannot import it (see LevelNames), so the caller converts. Parse refuses a
 // by_level: key that is not one of LevelNames, so a name this package does
@@ -546,25 +554,6 @@ func (r *Recipe) RolesFor(level string) RoleMap {
 		return m
 	}
 	return RoleMap{ReviewerIsCoder: r.ReviewerIsCoder, CoderIsReviewer: r.CoderIsReviewer}
-}
-
-// UsesLevelRoles reports whether the recipe text writes the by_level: key,
-// the recipe's one conditional (0.27.0): the level's own role mapping.
-//
-// It decides by presence (Recipe.levelRolesWritten), not by the parsed
-// mapping, for UsesV07's reason: a parser that predates the key refuses the
-// whole recipe ("is not a recipe key"), so a by_level: recipe whose entries
-// all hold the recipe's own mapping — or one that writes by_level: {} — still
-// needs a job image whose runner knows the key.
-//
-// It is read by the launch gate: recipeSinceFor chooses levelRolesSince when
-// the embedded recipe, or the launcher's own read of a repository recipe's
-// file, carries the key (internal/cli/recipes_skew.go), so a launch against a
-// job image whose runner predates the release that reads it is refused before
-// it starts, naming fugaro image refresh, rather than reaching the runner's
-// own parse refusal at bootstrap.
-func UsesLevelRoles(r *Recipe) bool {
-	return r.levelRolesWritten
 }
 
 // Renamed are catalog names removed in 0.7.0 and what replaced them.

@@ -169,35 +169,6 @@ func TestByLevelIsRefusedWhereRolesIs(t *testing.T) {
 	}
 }
 
-// TestUsesLevelRolesDecidesByPresence: the launch gate asks whether the job
-// image's runner knows the key, and a parser that predates it refuses the
-// whole recipe — so the answer is the key being written, never what its
-// entries hold. by_level: {} is the case that separates the two.
-func TestUsesLevelRolesDecidesByPresence(t *testing.T) {
-	if r := mustParse(t, byLevelText); !UsesLevelRoles(r) {
-		t.Error("a recipe with a by_level: block does not use level roles")
-	}
-	empty := mustParse(t, "version: 1\nname: a\nby_level: {}\nsteps:\n  - review: {}\n")
-	if !UsesLevelRoles(empty) {
-		t.Error("by_level: {} does not use level roles: a parser older than the key refuses it, so the image gate must see it")
-	}
-	if r := mustParse(t, "version: 1\nname: a\nroles: { reviewer: coder }\nsteps:\n  - review: {}\n"); UsesLevelRoles(r) {
-		t.Error("a recipe with no by_level: uses level roles")
-	}
-}
-
-// TestByLevelIsNotTheV07Flag: by_level: is 0.27.0's construct and newKeys is
-// the 0.7.0 gate — the release every current job image already satisfies.
-// Setting it here would send a by_level: launch through a gate that says
-// nothing about the key, and the run would die at the bootstrap parse
-// instead of being refused at the terminal; the gate it needs is its own,
-// newer one (internal/cli/recipes_skew.go, levelRolesSince).
-func TestByLevelIsNotTheV07Flag(t *testing.T) {
-	if r := mustParse(t, byLevelText); r.newKeys || r.newKeysV08 {
-		t.Error("a by_level: recipe carries an older release's gate: it needs its own")
-	}
-}
-
 // mustProblems is the problem list Parse returns for text that must be
 // refused, for the tests that assert on the message as a whole.
 func mustProblems(t *testing.T, text string) []Problem {
