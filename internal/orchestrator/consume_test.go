@@ -134,7 +134,11 @@ func consumeInboxPath(id string) string {
 	return "mailbox/" + consumeMailboxUID + "/inbox/" + id
 }
 
-func consumeOutboxID(messageID string) string { return "r-" + messageID }
+// consumeOutboxID is the id an answer is written under, from the module rather
+// than spelled again here: a copy of the derivation would go on passing after
+// the derivation moved, and the derived id IS the create-only rule's whole
+// mechanism (mailbox.ReplyID).
+func consumeOutboxID(messageID string) string { return mailbox.ReplyID(messageID) }
 
 func consumeOutboxPath(id string) string {
 	return "mailbox/" + consumeMailboxUID + "/outbox/" + id

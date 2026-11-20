@@ -200,9 +200,9 @@ func TestOrchestratorTickConsumesTheMailboxItIsWiredWith(t *testing.T) {
 	// (internal/orchestrator's consume_test holds the sentence against the
 	// constant): what matters here is that the phone's text is nowhere in it —
 	// the consumer carries nothing, so no answer may read like a result.
-	out := orchestratorConsumeNode(t, f, orchestratorConsumeOutboxPath("r-msg-1"))
+	out := orchestratorConsumeNode(t, f, orchestratorConsumeOutboxPath(mailbox.ReplyID("msg-1")))
 	if out == nil {
-		t.Fatalf("the tick answered nothing: %s holds nothing", orchestratorConsumeOutboxPath("r-msg-1"))
+		t.Fatalf("the tick answered nothing: %s holds nothing", orchestratorConsumeOutboxPath(mailbox.ReplyID("msg-1")))
 	}
 	if out["reply_to"] != "msg-1" || out["sender"] != orchestratorConsumeUID {
 		t.Errorf("the answer reads %#v, and it is this phone's reply to msg-1", out)
@@ -272,7 +272,7 @@ func TestOrchestratorTickServesTheNodeWhenAMailboxIsRefused(t *testing.T) {
 	if f.Value(orchestratorConsumeHeartbeatPath) != nil {
 		t.Error("the refused heartbeat was written anyway")
 	}
-	if f.Value(orchestratorConsumeOutboxPath("r-msg-1")) != nil {
+	if f.Value(orchestratorConsumeOutboxPath(mailbox.ReplyID("msg-1"))) != nil {
 		t.Error("the pass answered a mailbox it holds no lease on: a reply is written under the lease and nowhere else")
 	}
 }

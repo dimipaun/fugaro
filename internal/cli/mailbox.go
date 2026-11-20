@@ -123,15 +123,6 @@ const (
 // command's output and a message's text never does.
 const mailboxStaleReply = "nothing was performed: the message arrived outside its window"
 
-// mailboxCodeUnreadable is the code the inbox reader answers for a record its
-// strict decoder cannot read at all — a duplicated key, a lone surrogate, two
-// JSON values in one object. It is this reader's own code and not a protocol
-// one: the schema's vocabulary is shared/mailbox-schema's, and a record the
-// reader never got as far as is a fact about the store rather than about the
-// message. A value that decodes but is not an object is refused with the
-// module's own not-an-object, which is what that code means.
-const mailboxCodeUnreadable = mailbox.Code("unreadable-record")
-
 // mailboxCodeDuplicate is the module's own word for a redelivery. §4.4 counts
 // duplicates among the refusals a pass reports — the message was read and
 // nothing was done with it — so a duplicate lands in refused[] beside the codes
@@ -1224,62 +1215,20 @@ type mailboxInbox struct {
 // commit a record whose action belongs to another message. A child whose `at`
 // cannot be read is sorted first and refused by the checks that follow it.
 func (c *mailboxConsumer) readInbox(ctx context.Context, uid string) ([]mailboxInbox, error) {
-	path, err := mailbox.InboxPath(uid)
-	if err != nil {
-		return nil, err
-	}
-	var raw map[string]json.RawMessage
-	found, err := c.db.Get(ctx, path, &raw)
+	// The read itself is the module's, and so are the strict decode, the refusal
+	// vocabulary for a child that cannot be read and the oldest-first order: the
+	// resident orchestrator's consumer (P5.1f) reads the same node through the
+	// same function, and two consumers of one mailbox whose readers differed
+	// would be two answers to "which children does this inbox hold".
+	read, err := mailbox.ReadInbox(ctx, c.db, uid)
 	if err != nil {
 		return nil, dbErr(c.lc, err, false)
 	}
-	if !found {
-		return nil, nil
+	items := make([]mailboxInbox, 0, len(read))
+	for _, item := range read {
+		items = append(items, mailboxInbox{id: item.ID, record: item.Record, refusal: item.Refusal, at: item.At})
 	}
-	items := make([]mailboxInbox, 0, len(raw))
-	for id, data := range raw {
-		item := mailboxInbox{id: id}
-		record, err := mailbox.Decode(data)
-		switch {
-		case err == nil:
-			item.record = record
-			item.at = mailboxRecordAt(record)
-		case errors.Is(err, mailbox.ErrNotAnObject):
-			item.refusal = &mailbox.Refusal{Code: mailbox.CodeNotAnObject}
-		default:
-			item.refusal = &mailbox.Refusal{Code: mailboxCodeUnreadable}
-		}
-		items = append(items, item)
-	}
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].at != items[j].at {
-			return items[i].at < items[j].at
-		}
-		return items[i].id < items[j].id
-	})
 	return items, nil
-}
-
-// mailboxRecordAt is the record's own `at` for ordering, and zero when it has
-// none a reader can use: a message without one is refused by the gate a moment
-// later, and ordering it first is what keeps it from displacing an older
-// delivery.
-func mailboxRecordAt(record mailbox.Record) int64 {
-	switch at := record["at"].(type) {
-	case json.Number:
-		if n, err := at.Int64(); err == nil && n > 0 {
-			return n
-		}
-	case float64:
-		if n := int64(at); n > 0 {
-			return n
-		}
-	case int64:
-		if at > 0 {
-			return at
-		}
-	}
-	return 0
 }
 
 // deliver is one message's turn through §7's loop: verify (§8.1), let the
@@ -1836,7 +1785,7 @@ func mailboxTargetName(record *mailbox.ConfirmRecord) string {
 // refusal of a completed pass — exit 0, M4's third row — and nothing is
 // recorded for it, so the reply is owed again on the next pass.
 func (c *mailboxConsumer) reply(ctx context.Context, pairing mailboxPairing, message *mailbox.Message, pass *mailboxPass) error {
-	id := mailboxReplyID(message.ID)
+	id := mailbox.ReplyID(message.ID)
 	run, err := mailbox.WriteReply(ctx, c.db, pairing.signer, mailbox.Reply{
 		ID:      id,
 		Sender:  pairing.uid,
@@ -1857,14 +1806,6 @@ func (c *mailboxConsumer) reply(ctx context.Context, pairing mailboxPairing, mes
 	}
 	return nil
 }
-
-// mailboxReplyID is the outbox key one message's answer is written under:
-// `r-` + the message's id, which is the merged simulator's own `replyId`
-// (`shared/mailbox-sim`). It is derived rather than drawn so that a reply owed
-// and not written is owed under the same id on the next pass, and the outbox's
-// create-only rule makes the second write of that id a no-op rather than a
-// second answer.
-func mailboxReplyID(messageID string) string { return "r-" + messageID }
 
 // refuse records one refusal against a message: its id, and the module's own
 // code — never the message's text, and never a paraphrase.
@@ -2115,7 +2056,7 @@ func (s *mailboxSweeper) mailbox(ctx context.Context, uid string, now time.Time)
 		if kind, _ := record["kind"].(string); kind != mailboxKindPrompt {
 			continue
 		}
-		if at := mailboxRecordAt(record); at <= 0 || nowMs-at < mailboxPromptTtlMs {
+		if at := mailbox.RecordAt(record); at <= 0 || nowMs-at < mailboxPromptTtlMs {
 			out.Kept++
 			continue
 		}

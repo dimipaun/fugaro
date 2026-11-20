@@ -11,9 +11,10 @@
 //
 // **It is the same pass and not a second implementation of one.** Every rule
 // the phase-1 consumer applies is the mailbox module's, and this pass calls
-// the same functions the command calls: the same reader's rules (`Decode`,
-// which refuses a record that is not one this build wrote — the command's own
-// reader adds only its reporting types), the same verification (`Gate.Verify`
+// the same functions the command calls: the same reader (`mailbox.ReadInbox`,
+// which decodes each child strictly, refuses a child that is not an object and
+// orders the inbox oldest-first, so the command's reporting types are the only
+// thing it adds), the same verification (`Gate.Verify`
 // — M4a's "the tag before the ledger", and there is no second tag function in
 // this tree), the same lease (`Take`, `Renew`, `HeartbeatPath` — M1's one node
 // and its compare-and-swap), and the same create-only answer (`WriteReply`,
@@ -42,9 +43,10 @@
 // and is what M2's "a reply the ledger has not retired is a reply still owed"
 // asks for. The sentence is this file's (`consumerNotCarried`), the reply is
 // the module's (`mailbox.WriteReply`), and the record is answered once: the
-// reply's id is derived from the message's (`mailboxReplyID`'s own spelling,
-// `r-<id>`, which the merged simulator also uses), so the node's create-only
-// rule makes a second pass' attempt a `ReplyPresent` and never a second answer.
+// reply's id is derived from the message's by the module's own `mailbox.ReplyID`
+// — the one spelling, which the phase-1 command and the merged simulator use
+// too — so the node's create-only rule makes a second pass' attempt a
+// `ReplyPresent` and never a second answer.
 //
 // **There is no ledger here, and that is a fact about where this pass runs.**
 // The phase-1 consumer commits each delivery to a file-backed ledger before it
@@ -82,10 +84,8 @@ package orchestrator
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/mailbox"
@@ -287,15 +287,31 @@ func consumeMailbox(ctx context.Context, st ConsumerStore, m ConsumerMailbox, ho
 	}
 	run.leased = true
 
-	items, err := readInbox(ctx, st, m.Mailbox)
+	// The reader is the module's (mailbox.ReadInbox) and not one written here:
+	// the phase-1 consumer of `fugaro mailbox` (P4.1) reads this same node
+	// through this same function, and the task's own brief is that the cloud
+	// consumer is that pass run by a different process rather than a second
+	// implementation of it. What differs between the two is what they do with a
+	// record, not how one is read: the order, the strict decode, the absent-node
+	// reading and the code an unreadable child is refused with are the module's
+	// and are one answer for both.
+	items, err := mailbox.ReadInbox(ctx, st, m.Mailbox)
 	if err != nil {
-		return run, err
+		return run, fmt.Errorf("the inbox of mailbox %s could not be read: %w", m.Mailbox, err)
 	}
 	run.read = len(items)
 	gate := mailbox.NewGate(m.Key, mailbox.GateOptions{Now: func() time.Time { return at }})
 	signer := mailbox.NewOutboxSigner(m.Key)
 	for _, item := range items {
-		message, why := gate.Verify(item.record)
+		if item.Refusal != nil {
+			// A child the reader could not read at all: recorded against the
+			// record's own id and never answered, which is the phase-1 pass' own
+			// reading of the same item and the reason the reader hands the
+			// refusal back rather than an error.
+			run.refused++
+			continue
+		}
+		message, why := gate.Verify(item.Record)
 		if why != nil {
 			// Recorded against the record's own id and never answered: a
 			// refusal is a record this pass will not act on, and a reply to it
@@ -314,7 +330,7 @@ func consumeMailbox(ctx context.Context, st ConsumerStore, m ConsumerMailbox, ho
 			continue
 		}
 		answer, err := mailbox.WriteReply(ctx, st, signer, mailbox.Reply{
-			ID:      consumerReplyID(message.ID),
+			ID:      mailbox.ReplyID(message.ID),
 			Sender:  m.Mailbox,
 			Text:    consumerNotCarried,
 			At:      at.UnixMilli(),
@@ -369,68 +385,4 @@ func consumerCarries(kind string) bool {
 		return true
 	}
 	return false
-}
-
-// consumerReplyID is the outbox key one message's answer is written under. It
-// is the phase-1 command's spelling of the same id (`mailboxReplyID`, which is
-// also the merged simulator's `replyId`): derived rather than drawn, so that an
-// answer owed and not written is owed under the same id on the next pass, and
-// the outbox's create-only rule makes the second write of that id a no-op
-// rather than a second answer.
-func consumerReplyID(messageID string) string { return "r-" + messageID }
-
-// consumerMessage is one record read out of an inbox: its node key, and the
-// value the gate is asked about. It is not the phase-1 command's reporting
-// type — nothing here is reported to a person — and it holds no `at` of its
-// own, because this pass acts on nothing and therefore orders nothing.
-//
-// The two ids a record has — this node key and the `id` field inside the value
-// — are deliberately not compared against each other: the phase-1 command's
-// reader does not compare them either, and the node key is what the record was
-// addressed by, so the gate is asked about the value that was handed in.
-type consumerMessage struct {
-	id     string
-	record mailbox.Record
-}
-
-// readInbox reads one phone's inbox: `mailbox/<mailbox>/inbox`, every child
-// decoded strictly, in id order.
-//
-// The order is the node's ids and not the records' `at`, and it is only about
-// determinism: this pass answers each record on its own, so nothing below
-// depends on the sequence (the phase-1 command orders its items oldest-first
-// because an offer and a prompt expiry race each other there, and neither is
-// this pass').
-//
-// A child this build cannot decode is NOT an error: it is a record that fails
-// the gate a moment later, and the phase-1 reader's own refusals are the same
-// two (`mailbox.ErrNotAnObject` for a child that is not an object, its own code
-// for one that is and does not read). A child that is not an object is kept
-// with a nil record so that the gate's answer is the recorded refusal it is for
-// every other bad record.
-func readInbox(ctx context.Context, st ConsumerStore, mbox string) ([]consumerMessage, error) {
-	path, err := mailbox.InboxPath(mbox)
-	if err != nil {
-		return nil, err
-	}
-	var raw map[string]json.RawMessage
-	found, err := st.Get(ctx, path, &raw)
-	if err != nil {
-		return nil, fmt.Errorf("the inbox at %s could not be read: %w", path, err)
-	}
-	if !found {
-		// A phone that has never spoken: the node is not there, and an absent
-		// inbox is not an empty one (the phase-1 reader's own distinction).
-		return nil, nil
-	}
-	items := make([]consumerMessage, 0, len(raw))
-	for id, data := range raw {
-		item := consumerMessage{id: id}
-		if record, err := mailbox.Decode(data); err == nil {
-			item.record = record
-		}
-		items = append(items, item)
-	}
-	sort.Slice(items, func(i, j int) bool { return items[i].id < items[j].id })
-	return items, nil
 }
