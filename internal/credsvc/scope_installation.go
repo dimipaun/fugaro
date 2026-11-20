@@ -2,12 +2,11 @@ package credsvc
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/creds"
-	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // The installation's scope (WS1, R1): the deployment this service has always
@@ -20,45 +19,54 @@ import (
 // Config, so a workspace's scope can be served by the same code without a
 // second copy of the cascade — which is the whole of R1.
 //
-// Nothing here decides anything new. The pairing, the refusals and the audit
-// lines are the code that was in ServeHTTP, moved into the resolver because
-// that is where the reads it makes belong (C1: the resolver owns the reads that
-// come before any route is dispatched), and the readers below are the Config
-// fields the handlers used to read directly.
+// Nothing here decides anything new. The two identities and the pairing are the
+// reads ServeHTTP made before it dispatched anything, moved into the resolver
+// because that is where the reads that come before a route belong (C1: the
+// resolver owns them and answers the refusal itself), and the readers below are
+// the Config fields the model path used to read directly.
 type installationResolver struct {
 	s *Server
 }
 
 // Resolve answers the scope for one call of an installation's own service: the
-// verified caller, the canonical repository the pairing resolved, and the
-// deployment's readers.
+// verified caller and the deployment's readers.
 //
 // A route answered BEFORE the shared parse is resolved with no identity read at
 // all, and that is not an optimisation: those routes' callers hold no run
 // identity — a verifier, a launcher, a build, the orchestrator daemon — so
 // RequestFromHTTP would refuse the call for the missing headers before its own
 // class ever read anything (server.go's own account of each). What the scope
-// answers for them is the uncalled scope: Serves is still asked, so a
-// deployment that does not serve such a route refuses it before it reaches a
-// handler, and the refusal is the service's own and writes no audit line
-// (Caller, C1).
-func (res installationResolver) Resolve(w http.ResponseWriter, r *http.Request) (Scope, bool) {
+// answers for them is the uncalled one: Serves is still asked, so a deployment
+// that does not serve such a route refuses it before it reaches a handler, and
+// the refusal is the service's own and writes no audit line (Caller, C1).
+//
+// The three answers C1 fixes are the three below: a scope, a callerRefusal
+// where the caller could not be admitted, and — for a scope that could not be
+// built at all — a *ScopeFault, which nothing in this resolver answers because
+// an installation's readers are fields of a configuration that was already
+// validated when the process started (NewServer).
+func (res installationResolver) Resolve(ctx context.Context, r *http.Request) (Scope, error) {
 	s := res.s
 	if aheadOfTheSharedParse(r) {
-		return installationScope{s: s}, true
+		return installationScope{s: s}, nil
 	}
-	ctx := r.Context()
 	req, err := RequestFromHTTP(r)
 	if err != nil {
 		// The contract's own reading of the headers, never this server's
 		// (review finding m7). Its errors name a header and never a value.
-		s.refuse(w, StatusUnverified, ErrorUnverifiedRunIdentity, err.Error())
-		return nil, false
+		return nil, refuseCaller(err.Error(), func(_ context.Context, w http.ResponseWriter, _ *http.Request) {
+			s.refuse(w, StatusUnverified, ErrorUnverifiedRunIdentity, err.Error())
+		})
 	}
 	id, err := s.cfg.Auth.Verify(ctx, req)
 	if err != nil {
-		s.refuseIdentity(ctx, w, r, err)
-		return nil, false
+		// refuseIdentity is the one answer a Verify refusal has, and it does the
+		// work a refusal can require (an ended run's placement and slip) — which
+		// is why the refusal travels as a closure and not as a status and a
+		// sentence: what the front door writes is that function, unchanged.
+		return nil, refuseCaller(err.Error(), func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+			s.refuseIdentity(ctx, w, r, err)
+		})
 	}
 	// The purpose the call asks for and the credential a line for it names, and
 	// what every refusal below is recorded as (C1.13): the route decides both
@@ -87,36 +95,24 @@ func (res installationResolver) Resolve(w http.ResponseWriter, r *http.Request) 
 	// calling account (pairReview). Either way the call reads the repository
 	// from the pairing and not from the job account, because a review caller has
 	// no job account to read it from.
-	call := Caller{Identity: id, Request: req}
 	switch id.JobClass {
 	case ClassReview:
-		repo, err := s.pairReview(ctx, id)
-		if err != nil {
-			s.refusePairing(ctx, w, id, purpose, credential, err)
-			return nil, false
+		if _, err := s.pairReview(ctx, id); err != nil {
+			return nil, refuseCaller(err.Error(), func(ctx context.Context, w http.ResponseWriter, _ *http.Request) {
+				s.refusePairing(ctx, w, id, purpose, credential, err)
+			})
 		}
-		call.Canonical = repo
-		// What the mint is handed in place of a job account: the same account,
-		// the run identity's slug and the repository the pairing resolved. The
-		// mint's own shape is unchanged — C3.9b is the task that chooses its
-		// permission set from the class — and what it is scoped to is already
-		// the pairing's answer here.
-		call.Job = JobAccount{Email: id.JobAccount, Slug: id.Slug, Repo: repo}
 	case ClassShared:
 		// The shared class's pairing (G21, F40): the repository is the run
 		// identity's own slug and the job's row says which profile's
 		// repositories that may be, so the comparison the per-repository class
 		// makes against its one repository is made here against the profile's
-		// list. What is handed to the mint is spelled the way a review caller's
-		// is, and for the same reason: the account names no repository, so the
-		// pairing's answer is the repository.
-		repo, err := s.pairShared(ctx, id)
-		if err != nil {
-			s.refusePairing(ctx, w, id, purpose, credential, err)
-			return nil, false
+		// list.
+		if _, err := s.pairShared(ctx, id); err != nil {
+			return nil, refuseCaller(err.Error(), func(ctx context.Context, w http.ResponseWriter, _ *http.Request) {
+				s.refusePairing(ctx, w, id, purpose, credential, err)
+			})
 		}
-		call.Canonical = repo
-		call.Job = JobAccount{Email: id.JobAccount, Slug: id.Slug, Repo: repo}
 	default:
 		ja, bound := s.jobs[id.JobAccount]
 		if !bound || ja.Slug != id.Slug {
@@ -126,14 +122,42 @@ func (res installationResolver) Resolve(w http.ResponseWriter, r *http.Request) 
 			// route's credential and no other, which for a model call is none
 			// (the bundle has not been read) and for a mint is the App key's
 			// name.
-			s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
-				"the run identity is not a run of the calling job's repository")
-			return nil, false
+			const message = "the run identity is not a run of the calling job's repository"
+			return nil, refuseCaller(message, func(ctx context.Context, w http.ResponseWriter, _ *http.Request) {
+				s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity, message)
+			})
 		}
-		call.Canonical = ja.Repo
-		call.Job = ja
 	}
-	return installationScope{s: s, call: call, called: true}, true
+	return installationScope{s: s, id: id}, nil
+}
+
+// callerRefusal is the resolver's answer when the CALLER could not be admitted,
+// and it is a channel of its own beside C1's *ScopeFault: a fault is the
+// SCOPE's failure and this is a verdict about the caller, which the front door
+// answers exactly as it answered the read before the resolver owned it.
+//
+// **Why the answer and not the facts of it.** C1 gives Resolve no
+// http.ResponseWriter — the seam is a value and not a branch, and a resolver
+// that wrote a refusal would be a second place this service's answers are
+// spelled — so the refusal travels as the one thing that cannot drift from what
+// it was: the call itself. A status, a type and a sentence carried as fields
+// would leave the cleanup an ended run's refusal performs (refuseIdentity), the
+// status a pairing refusal chooses from its error (refusePairing) and the
+// purpose and credential the audit line is written with to be re-derived in the
+// gate, which is exactly how two spellings of one rule appear. The message is
+// kept beside it because an error has to say something: it is the sentence the
+// refusal carries, and the gate logs it if it ever meets one it cannot write.
+type callerRefusal struct {
+	message string
+	answer  func(ctx context.Context, w http.ResponseWriter, r *http.Request)
+}
+
+func (e *callerRefusal) Error() string { return e.message }
+
+// refuseCaller is a resolver's refusal of the caller, with the answer the front
+// door writes for it.
+func refuseCaller(message string, answer func(ctx context.Context, w http.ResponseWriter, r *http.Request)) error {
+	return &callerRefusal{message: message, answer: answer}
 }
 
 // aheadOfTheSharedParse is the routes ServeHTTP answers before the two
@@ -162,14 +186,16 @@ func aheadOfTheSharedParse(r *http.Request) bool {
 
 // installationScope is an installation's per-call scope. It holds the server it
 // reads the deployment from and the caller the resolver verified; a scope
-// resolved ahead of the shared parse holds no caller at all (called is false).
+// resolved ahead of the shared parse holds the zero Identity, which is C1's own
+// spelling of a route that carries no caller (Caller).
 type installationScope struct {
-	s      *Server
-	call   Caller
-	called bool
+	s  *Server
+	id Identity
 }
 
-func (sc installationScope) Caller() (Caller, bool) { return sc.call, sc.called }
+// Caller answers the run identity the call's token proved, and the zero
+// Identity on a route resolved ahead of the shared parse.
+func (sc installationScope) Caller() Identity { return sc.id }
 
 // Serves answers true for every path: an installation serves every route of
 // this service, and WS1 changes nothing about which ones those are. The scope
@@ -180,11 +206,51 @@ func (sc installationScope) Serves(string) bool { return true }
 // run of this installation claims one from the service it is calling.
 func (sc installationScope) AcceptsSlip() bool { return true }
 
+// Repos answers the installation's own repository table: every repository it
+// serves, as the deployment derived it from its job accounts
+// (RepositoryTableFor). The call's slug is resolved through it and never
+// guessed from its own text (D1066).
+//
+// The configuration's table answers it wherever the deployer set one, which
+// every deployment of this service does: it is the map the read mints, the
+// label and issue routes and the review and shared pairings already read. Where
+// it set none, the table is derived from the job rows it did give — and that is
+// not a second spelling of the deployer's rule, because Repos IS
+// RepositoryTableFor over the same job rows JobAccountsFor produced the
+// configured accounts from, so the two agree by construction. What the
+// derivation buys is that a service built without the field still resolves the
+// repositories its own jobs are bound to, which is what the pairing answered
+// for this class before C1 gave the table its name. An installation whose
+// deployment carries an EMPTY table keeps it: empty says this installation
+// serves no repository, which is a different answer from "none was given" and
+// one this accessor must not overrule.
+func (sc installationScope) Repos() map[string]string {
+	if sc.s.cfg.Repos != nil {
+		return sc.s.cfg.Repos
+	}
+	out := make(map[string]string, len(sc.s.cfg.JobAccounts))
+	for _, ja := range sc.s.cfg.JobAccounts {
+		out[ja.Slug] = ja.Repo
+	}
+	return out
+}
+
 func (sc installationScope) Policy() PolicyReader { return sc.s.cfg.Policy }
 
 func (sc installationScope) Kills() KillReader { return sc.s.cfg.Kills }
 
-func (sc installationScope) State() creds.Store { return sc.s.cfg.State }
+// State is the installation's own cascade state, and the whole of it: the
+// configuration's store is a creds.Store, which StateStore (creds.CascadeState)
+// and RepoAuthReader both take, so the installation answers the split's two
+// readers with the one value it has always held.
+func (sc installationScope) State() StateStore { return sc.s.cfg.State }
+
+// RepoAuth answers the record one repository's own fugaro.yaml wrote out of the
+// installation's database, which is where its own `fugaro update` wrote every
+// record. It is the caller's reader and never the workspace's (C1's rule 2):
+// a workspace answers it from the MEMBER's database, because that is whose
+// update wrote it.
+func (sc installationScope) RepoAuth() RepoAuthReader { return sc.s.cfg.State }
 
 // Outcomes is the installation's write-once outcomes node, derived from the
 // database the service was configured with rather than from a field of its own:
@@ -192,9 +258,7 @@ func (sc installationScope) State() creds.Store { return sc.s.cfg.State }
 // client by the deployment (internal/cli/credentials_serve.go wires one
 // *rtdb.Client into both), so a second configuration field would be a second
 // answer to one question. A database this process cannot read as a Getter —
-// which no deployment of this service is — answers nil, and the scope asks no
-// outcome question itself: Outcomes is what the scope hands a caller that
-// verifies something (WS2's scope over a member's database).
+// which no deployment of this service is — answers nil.
 func (sc installationScope) Outcomes() OutcomeReader {
 	if db, ok := sc.s.cfg.DB.(Getter); ok {
 		return RTDBOutcomes{DB: db}
@@ -202,138 +266,79 @@ func (sc installationScope) Outcomes() OutcomeReader {
 	return nil
 }
 
-func (sc installationScope) Table() BindingTable { return installationTable{sc.s} }
+// Offering answers the credentials this installation may serve a call out of:
+// the bundle's own, which the crafts and the admissions then narrow on the model
+// path (candidates, poolOffering). The narrowing is deliberately not here: C1
+// fixes the reader as the POOL a call may be served from, before any credential
+// is chosen, and an installation's pool is its bundle — the intersection over a
+// workspace's own pool is WS2's answer and is the only one the two deployments
+// differ in.
+func (sc installationScope) Offering() OfferingReader { return installationOffering{} }
 
-func (sc installationScope) Offering() Offering { return installationOffering{sc.s} }
-
-func (sc installationScope) Forge() ForgeReads { return installationForge{sc.s} }
+// Forge is the installation's forge reader: its own token store, and the
+// coverage its table answers. The forge handlers still read the bundle and the
+// configuration directly and switch to this reader in WS16 and WS17 — WS1
+// declares the reader and changes nothing about the routes.
+func (sc installationScope) Forge() ForgeReader { return installationForge{sc.s} }
 
 // Meter answers nil: an installation's calls are metered by the installation's
 // own budget, taken where it always was, and R15's meter is the workspace's.
+// nil is the one accessor's zero answer that is not a refusal (C1, D1301 as
+// amended): it means "this deployment has no workspace cap", which is what an
+// installation is.
 func (sc installationScope) Meter() *WorkspaceMeter { return nil }
 
-// installationTable is the installation's binding table: the maps NewServer
-// built, behind the lookups the pairing and the front door make.
-type installationTable struct {
-	s *Server
-}
-
-func (t installationTable) Job(email string) (JobAccount, bool) {
-	ja, ok := t.s.jobs[email]
-	return ja, ok
-}
-
-func (t installationTable) Review(email string) (ReviewJobAccount, bool) {
-	return t.s.reviewAccount(email)
-}
-
-func (t installationTable) Shared(email string) (SharedJobAccount, bool) {
-	return t.s.sharedAccount(email)
-}
-
-func (t installationTable) Repo(slug string) (string, bool) {
-	repo, ok := t.s.cfg.Repos[slug]
-	return repo, ok
-}
-
-// installationOffering is what an installation offers a caller: the bundle, as
-// candidates has always read it.
-type installationOffering struct {
-	s *Server
-}
-
-// Offer answers the caller's list out of the bundle. It is candidates' own
-// head, moved: b.Credentials() and never b.Entries(), because the bundle holds
-// the GitHub App key (C2.1), the upstream Bitbucket token (D506), the read
-// consumer (F21), the review-signing keys (D1069) and the provider key (AK6b)
-// as well, and none of them is a candidate for a caller's Anthropic calls. A
-// cascade that offered one would attach an App private key, the caller's own
-// git token or a signing key to an Anthropic call as its credential, and the
-// provider key would refuse the whole call (a tier-C candidate is refused by
-// checkCandidates rather than skipped) — so the filter is the accessor's rather
-// than this loop's.
+// installationOffering is what an installation offers a caller: the bundle's
+// own credentials, and nothing else.
 //
-// A review caller's list is its own (reviewOfferings, reviewCandidates) and it
-// is final: that class's credentials are decided before the cascade's own
-// narrowing, and what it is served is the account's read-only set rather than
-// the pool.
-func (o installationOffering) Offer(ctx context.Context, c Caller, shared *projectpolicy.Policy, b *Bundle) (Offered, error) {
-	if c.Identity.JobClass == ClassReview {
-		// The lookup is guarded although the pairing has already refused an
-		// account this table does not hold (pairReview): the class is the
-		// verifier's answer and the two lists are configured separately, so a
-		// caller admitted as a review one whose email this table does not carry
-		// is a deployment disagreeing with itself — and a service that panicked
-		// on a state it cannot name would be the worse answer to it.
-		ra, ok := o.s.reviewAccount(c.Identity.JobAccount)
-		if !ok {
-			return Offered{}, fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable)
-		}
-		out, skipped := reviewCandidates(reviewOfferings(b), ra.Account)
-		return Offered{Credentials: out, Strategy: creds.StrategyFailover, NotAdmitted: skipped, Final: true}, nil
-	}
-	offer, strategy, narrowed, err := poolOffering(shared, b)
-	if err != nil {
-		// The crafts leave this call nothing at all (poolRefusal): the refusal's
-		// own sentence is the answer, and it travels as this error rather than
-		// as an empty list, which the selector would answer with a sentence
-		// about the bundle.
-		return Offered{}, err
-	}
-	// A node that publishes no crafts narrows nothing, and every list that is
-	// not the crafts' is answered with the cascade's own rule (MC7): a list no
-	// strategy was written for has always been served by it.
-	offered := Offered{Credentials: b.Credentials(), Strategy: creds.StrategyFailover}
-	if narrowed {
-		offered = Offered{Credentials: offer, Strategy: strategy}
-		// The credentials the crafts leave out are ones this call may not be
-		// served by, which is what not_admitted means for a caller (the rule a
-		// review caller's list is built by). They are reported rather than
-		// dropped, so the run's halt message reads the same list either way:
-		// what was considered, and why each one was skipped. A fifth reason
-		// would be a value this contract's closed set does not carry.
-		for _, cred := range b.Credentials() {
-			if !named(offer, cred.Name) {
-				offered.NotAdmitted = append(offered.NotAdmitted, Tried{Name: cred.Name, Tier: wireTier(cred.Tier), Reason: ReasonNotAdmitted})
-			}
-		}
-	}
-	return offered, nil
+// It is b.Credentials() and never b.Entries(): the bundle holds the GitHub App
+// key (C2.1), the upstream Bitbucket token (D506), the read consumer (F21), the
+// review-signing keys (D1069) and the provider key (AK6b) as well, and none of
+// them is a candidate for a caller's Anthropic calls. A cascade that offered
+// one would attach an App private key, the caller's own git token or a signing
+// key to an Anthropic call as its credential, and the provider key would refuse
+// the whole call (a tier-C candidate is refused by checkCandidates rather than
+// skipped) — so the filter is the accessor's rather than this reader's.
+//
+// The bundle is the one the ROUTE loaded, handed in and never held here (C1's
+// OfferingReader): a reader that loaded its own would be a second read of the
+// one secret this service holds, and the values a call is finally served are
+// the route's to read.
+type installationOffering struct{}
+
+func (installationOffering) Offering(_ context.Context, b *Bundle) ([]creds.Credential, error) {
+	return b.Credentials(), nil
 }
 
-// installationForge is the installation's forge-credential reader: the two
-// entries of its own bundle that the forge routes read today (bundle.go's
-// BitbucketToken and AppKey).
-//
-// The repository is not a narrowing here and that is the installation's own
-// answer rather than a gap: an installation's bundle is one credential for its
-// whole deployment, so every repository it serves is served by the same token
-// and the same App key. Which repository a call is for decides nothing until a
-// workspace's node says which of its shared entries covers it (WS15, WS16), and
-// the NAMED Bitbucket tokens a selection chooses among by status stay the
-// proxy's own read (bbtokens.Selector, T8) until WS16 moves the whole of that
-// read behind the scope — this reader is what those handlers switch to, not a
-// second selection written beside them.
+// installationForge is the installation's forge reader: the token store its
+// configuration wired, and the coverage its own table answers.
 type installationForge struct {
 	s *Server
 }
 
-func (f installationForge) BitbucketToken(ctx context.Context, _ string) (Entry, bool, error) {
-	b, err := f.s.cfg.Bundles.Load(ctx)
-	if err != nil {
-		return Entry{}, false, err
+// Bitbucket answers the installation's own token store, and the legacy selector
+// EXPLICITLY where the configuration wired none (C1's rule 10): an installation
+// that stored only the bundle's legacy entry is served exactly as it was before
+// a store existed, and nil stays what a workspace's scope answers to mean
+// "refuse", so the proxy's own fallback (chooseBitbucketToken) is never the
+// thing that decides which token a call is served with.
+func (f installationForge) Bitbucket() bbtokens.Selector {
+	if f.s.cfg.Selector != nil {
+		return f.s.cfg.Selector
 	}
-	e, ok := b.BitbucketToken()
-	return e, ok, nil
+	return legacySelector{}
 }
 
-func (f installationForge) AppKey(ctx context.Context, _ string) (Entry, bool, error) {
-	b, err := f.s.cfg.Bundles.Load(ctx)
-	if err != nil {
-		return Entry{}, false, err
+// Covers reports whether this call's forge traffic may reach the canonical
+// repository at all: an installation covers every repository its table holds,
+// which is every repository it serves.
+func (f installationForge) Covers(_ context.Context, canonical string) (bool, error) {
+	for _, held := range f.s.cfg.Repos {
+		if held == canonical {
+			return true, nil
+		}
 	}
-	e, ok := b.AppKey()
-	return e, ok, nil
+	return false, nil
 }
 
 // scopeOfCall is the scope of a call that reached the cascade or one of the
@@ -352,4 +357,31 @@ func scopeOfCall(ctx context.Context, s *Server) Scope {
 		return sc
 	}
 	return installationScope{s: s}
+}
+
+// scopeCtxKey is the context key the scope travels under. It is unexported and
+// of its own type so that no other package can put a value under it and no
+// handler can be handed another package's scope.
+type scopeCtxKey struct{}
+
+// withScope hands the scope to every handler dispatched under it, which is what
+// lets a handler read its caller and its readers without a signature change:
+// the routes of this service are dispatched by path, and a handler that took a
+// scope argument would be a handler whose caller had to know which deployment
+// it was serving.
+//
+// It is written in the installation's own file because the FRONT DOOR is
+// WS1's: the gate that resolves a scope and hands it down is one code path for
+// both deployments (server.go), and what a workspace's deployment differs in is
+// the resolver it is built with.
+func withScope(ctx context.Context, sc Scope) context.Context {
+	return context.WithValue(ctx, scopeCtxKey{}, sc)
+}
+
+// scopeOf is the scope ServeHTTP resolved for this call. ok is false for a call
+// that reached a handler without one — a test calling a handler directly, which
+// is why it is an answer rather than a panic.
+func scopeOf(ctx context.Context) (Scope, bool) {
+	sc, ok := ctx.Value(scopeCtxKey{}).(Scope)
+	return sc, ok
 }

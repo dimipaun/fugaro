@@ -653,14 +653,14 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	// and the front door is held to asking it first, which is the same fact
 	// said where the code now puts it: the identity verification's own database
 	// read is the first read of a call.
-	resolve := check96FuncBody(t, readDoc(t, "internal/credsvc/scope_installation.go"), "func (res installationResolver) Resolve(w http.ResponseWriter, r *http.Request) (Scope, bool)")
+	resolve := check96FuncBody(t, readDoc(t, "internal/credsvc/scope_installation.go"), "func (res installationResolver) Resolve(ctx context.Context, r *http.Request) (Scope, error)")
 	body := check96FuncBody(t, readDoc(t, "internal/credsvc/server.go"), "func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request)")
 	if !strings.Contains(resolve, "s.cfg.Auth.Verify(ctx, req)") {
 		t.Errorf("internal/credsvc/scope_installation.go's Resolve no longer verifies the identities (%q): Check 96 states the identity verification as the first read of a call, and the resolver is where the front door asks for it", strings.TrimSpace(resolve))
 	}
-	if !strings.Contains(body, "s.resolver.Resolve(w, r)") || !strings.Contains(body, "sc.Kills().Stop(ctx, id.Slug)") {
+	if !strings.Contains(body, "s.resolver.Resolve(ctx, r)") || !strings.Contains(body, "sc.Kills().Stop(ctx, id.Slug)") {
 		t.Errorf("internal/credsvc/server.go's ServeHTTP no longer resolves the call's scope before it reads the stop switches (%q): Check 96 states that order — the identity verification's own database read comes first — and the scope's resolver is what now makes it", strings.TrimSpace(body))
-	} else if strings.Index(body, "s.resolver.Resolve(w, r)") > strings.Index(body, "sc.Kills().Stop(ctx, id.Slug)") {
+	} else if strings.Index(body, "s.resolver.Resolve(ctx, r)") > strings.Index(body, "sc.Kills().Stop(ctx, id.Slug)") {
 		t.Errorf("internal/credsvc/server.go's ServeHTTP now reads the stop switches before it resolves the call's scope: Check 96 states the opposite order (the identity verification's database read is the first read of a call), so the check and the code have moved apart")
 	}
 	// The same order inside the verifier: checkLive's outcome read is what

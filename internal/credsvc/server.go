@@ -1191,8 +1191,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// configuration for a caller. Everything below this line reads the scope,
 	// and the scope travels to every handler through the request's context
 	// (withScope), which is what keeps a handler's signature a handler's own.
-	sc, ok := s.resolver.Resolve(w, r)
-	if !ok {
+	//
+	// The resolver's three answers are told apart here, and the two failures are
+	// NOT the same refusal (C1, ScopeFault): a refusal of the CALLER is the
+	// verdict about the call the front door has always written, and a
+	// *ScopeFault is the service's own failure — StatusUnavailable with
+	// ErrorStateUnavailable, because a run's gateway reads a 403 as a missing
+	// invoke grant and halts the run on it (R16), and a node that could not be
+	// read is not a caller who is not admitted.
+	sc, err := s.resolver.Resolve(ctx, r)
+	if err != nil {
+		s.refuseResolve(ctx, w, r, err)
 		return
 	}
 	ctx = withScope(ctx, sc)
@@ -1338,19 +1347,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The caller this call was resolved as (the resolver's own work: the two
-	// identities verified, the pairing made), and the request they were read
-	// from — which the claim route and the sign route read for the claims
-	// beside the tokens. A route below this line is one the shared parse
-	// answers, so a scope that brought no caller here is a resolver
+	// identities verified, the pairing made). A route below this line is one the
+	// shared parse answers, so a scope that named no caller here is a resolver
 	// disagreeing with the front door, and it is refused rather than served an
 	// empty identity: a service that paired nobody and served the call anyway
 	// would be a service that admitted nobody in particular.
-	call, called := sc.Caller()
-	if !called {
+	id := sc.Caller()
+	if !callerNamed(id) {
 		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the call reached a route with no caller")
 		return
 	}
-	id, req, canonical, ja := call.Identity, call.Request, call.Canonical, call.Job
+	// The request the call was parsed as, read here for the two raw tokens the
+	// routes hand their readers as SCRUB values — the run's and the job's
+	// identity, which must never reach a log — and for nothing else: every claim
+	// a route acts on is a field of the identity the scope answered (C1.10),
+	// which is what keeps this service from reading the caller's text twice.
+	// The resolver made the same read before it verified the caller and refused
+	// a malformed call itself, so a call that got this far cannot fail here; it
+	// is read rather than assumed because a second reading of the same headers
+	// has no other answer.
+	req, err := RequestFromHTTP(r)
+	if err != nil {
+		s.refuse(w, StatusUnverified, ErrorUnverifiedRunIdentity, err.Error())
+		return
+	}
 	// The purpose the call asks for and the credential a line for it names, and
 	// what every refusal below is recorded as (C1.13): the route decides both
 	// (routeAct, the one rule), and they are read here because every refusal
@@ -1365,6 +1385,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// name for it, not a value read out of a bundle, which is why the mint
 	// itself (auditMint, refuseMint) takes both from the same rule.
 	purpose, credential := routeAct(r.URL.Path)
+	// The canonical repository the pairing resolved: the run identity's own slug
+	// through the CALLER'S table (Repos, D1066), never guessed from the slug's
+	// own text. The resolver refused a call its pairing could not resolve, and
+	// the lookup is made here as well because the table is what the policy, the
+	// admission, the proxy and the mint are keyed by: a scope that answered a
+	// table without the slug it has just admitted is a deployment disagreeing
+	// with itself, and it is refused rather than served under an empty name.
+	canonical, paired := sc.Repos()[id.Slug]
+	if !paired {
+		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
+			"the run identity is not a run of the calling job's repository")
+		return
+	}
 	// The operator's stop switches this scope's callers are held to: the
 	// installation's own pair for an installation, and the workspace's for a
 	// workspace (R8's neighbour — a member's own stop switches are its own
@@ -1464,7 +1497,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// review is about. The pairing above already refused a review identity
 		// of any other shape, so a coding run launched into the review job never
 		// reaches a mint at all.
-		s.mint(ctx, w, r, id, ja)
+		s.mint(ctx, w, r, id, s.jobRow(id, canonical))
 		return
 	}
 	if r.URL.Path == ContextTokenPath {
@@ -1509,7 +1542,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// `fugaro update` wrote for the caller's repository and the one
 		// container that record names, and nothing a caller sends can reach
 		// either beyond the variable's name.
-		s.workflowSecrets(ctx, w, r, id, ja)
+		s.workflowSecrets(ctx, w, r, id, s.jobRow(id, canonical))
 		return
 	}
 	if r.URL.Path == SignPath {
@@ -1715,13 +1748,83 @@ func (s *Server) refuse(w http.ResponseWriter, status int, typ, message string) 
 // admit to that route — which is what the type says.
 func (s *Server) refuseNotServed(ctx context.Context, w http.ResponseWriter, r *http.Request, sc Scope) {
 	const message = "this service does not serve this route: a run calls its own project's service for the routes its workspace does not serve"
-	call, called := sc.Caller()
-	if !called {
+	call := sc.Caller()
+	if !callerNamed(call) {
 		s.refuse(w, StatusUnverified, ErrorUnverifiedJobIdentity, message)
 		return
 	}
 	purpose, credential := routeAct(r.URL.Path)
-	s.refuseCall(ctx, w, call.Identity, purpose, credential, "", StatusUnverified, ErrorUnverifiedJobIdentity, message)
+	s.refuseCall(ctx, w, call, purpose, credential, "", StatusUnverified, ErrorUnverifiedJobIdentity, message)
+}
+
+// refuseResolve answers what the resolver's Resolve returned, and it is the one
+// place the three answers C1 fixes are read apart.
+//
+// A *ScopeFault is the SCOPE's own failure and never a verdict about the caller:
+// it is answered as this service's own — StatusUnavailable with
+// ErrorStateUnavailable — because a 403 halts a run's gateway as a missing
+// invoke grant (R16) and a node that could not be re-read is not a caller who is
+// not admitted (D143: a refusal the run halts on, never a fallback). The audit
+// rule is not suspended for it: a fault carries the Caller the resolver had
+// verified when it failed, and that identity gets the one line every refusal
+// after a verification writes — while a fault that carries none is answered
+// before there is an identity to record, exactly as today's pre-identity
+// refusals are (audit.go, SECURITY.md).
+//
+// Everything else a resolver answers is a refusal of the CALLER, and the
+// resolver built it where the read that refused the call happened: it is
+// answered here by the very function it carries, which is the code this gate
+// ran before the reads moved into the resolver. An error that is neither is a
+// resolver disagreeing with C1, and it is answered as the service's own failure
+// with its sentence — never as a refusal of a caller whose verification nothing
+// described.
+func (s *Server) refuseResolve(ctx context.Context, w http.ResponseWriter, r *http.Request, err error) {
+	var fault *ScopeFault
+	if errors.As(err, &fault) {
+		const message = "the scope this call is served under could not be built"
+		if fault.Caller == nil {
+			s.refuse(w, StatusUnavailable, ErrorStateUnavailable, message)
+			return
+		}
+		purpose, credential := routeAct(r.URL.Path)
+		s.refuseCallCause(ctx, w, *fault.Caller, purpose, credential, "", StatusUnavailable, ErrorStateUnavailable, message, fault)
+		return
+	}
+	var refusal *callerRefusal
+	if errors.As(err, &refusal) {
+		refusal.answer(ctx, w, r)
+		return
+	}
+	s.refuse(w, StatusUnavailable, ErrorStateUnavailable, err.Error())
+}
+
+// callerNamed reports whether a scope named a caller at all. C1's Caller
+// answers the run identity the call's token proved for every route the shared
+// parse answers, and the zero Identity for a route answered ahead of it (a
+// person, a daemon, a launcher or a build holds no run identity), so what tells
+// a scope that admitted a caller from one that named none is that every
+// verified class fills a repository slug or a build id and no class fills
+// neither: `Run` is the fr claim and `Slug` the fs one, and a build's proxy
+// identity carries the build id instead of both.
+func callerNamed(id Identity) bool {
+	return id.Slug != "" || id.Run != "" || id.BuildID != ""
+}
+
+// jobRow is the per-repository job's own row as the deployment published it:
+// the account, the repository the call's pairing resolved and the workflow whose
+// job it is (a repository has one job account per workflow, and the account and
+// not the caller's header is what says which one a call is served by).
+//
+// It is read where a route serves a job account — the mint and the workflow
+// secrets, neither of which a workspace's deployment serves (R14) — and never on
+// the model path, which is what keeps the cascade's readers the scope's. The
+// pairing has already held the call to this account, so the two assignments fill
+// a review or a shared caller's row, whose account names no repository of its
+// own and whose repository is the pairing's answer.
+func (s *Server) jobRow(id Identity, canonical string) JobAccount {
+	ja := s.jobs[id.JobAccount]
+	ja.Email, ja.Slug, ja.Repo = id.JobAccount, id.Slug, canonical
+	return ja
 }
 
 // presentsSlip answers whether the call carries either of the slip's two

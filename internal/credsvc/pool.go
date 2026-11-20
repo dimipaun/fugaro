@@ -379,3 +379,26 @@ func named(offer []creds.Credential, name string) bool {
 	}
 	return false
 }
+
+// heldBy is the crafts' list restricted to the names the call's POOL holds, in
+// the crafts' own order.
+//
+// The pool is the scope's answer and the crafts are the project's, so the two
+// can disagree in exactly one direction that matters: a workspace's pool is a
+// member's own shared node, and a craft may name a credential that node does not
+// admit. Serving the crafts' list unchanged would let a project's crafts widen a
+// member's pool, so the intersection is what a call is served from — while the
+// strategy stays the crafts' own (candidates), because which rule a pool of one
+// entry is walked under is still the crafts' to say.
+func heldBy(crafts, pool []creds.Credential) []creds.Credential {
+	if len(crafts) == 0 {
+		return nil
+	}
+	out := make([]creds.Credential, 0, len(crafts))
+	for _, c := range crafts {
+		if named(pool, c.Name) {
+			out = append(out, c)
+		}
+	}
+	return out
+}

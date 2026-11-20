@@ -61,38 +61,72 @@ import (
 // cascade's rule, which is what a list no strategy was written for has always
 // had.
 func (s *Server) candidates(ctx context.Context, id Identity, canonical string, shared *projectpolicy.Policy, b *Bundle) ([]creds.Credential, creds.Strategy, []Tried, error) {
-	// The caller this call was resolved as, and the offering it may be served
-	// out of, are the SCOPE's (C1, R1): which list a call may be served is a
-	// fact about the caller the scope verified — its class, the account it
-	// paired with, the repository it resolved to — and the scope is what
-	// decides it, out of the bundle's entries for an installation and out of
-	// the workspace's shared node over the same bundle's entries for a member
-	// (Offering). The identity and the repository arrive as arguments because
-	// that is how the front door passes them down; they were read from the
-	// scope (ServeHTTP), and so is every reader below.
+	// The pool this call may be served from is the SCOPE's (C1, R1): which
+	// credentials a call may be served is a fact about the caller the scope
+	// verified — the member it resolved to — and the scope is what decides it,
+	// out of the bundle's entries for an installation and out of the
+	// workspace's shared node over them for a member. The identity and the
+	// repository arrive as arguments because that is how the front door passes
+	// them down; they were read from the scope (ServeHTTP), and so is every
+	// reader below.
 	sc := scopeOfCall(ctx, s)
-	call := Caller{Identity: id, Canonical: canonical}
-	if c, ok := sc.Caller(); ok {
-		call = c
-	}
-	offered, err := sc.Offering().Offer(ctx, call, shared, b)
+	pool, err := sc.Offering().Offering(ctx, b)
 	if err != nil {
-		// The crafts leave this call nothing at all (poolRefusal) or the scope
-		// could not read what it offers: either way the refusal's own sentence
-		// is the answer, and it travels as this error rather than as an empty
-		// list, which the selector would answer with a sentence about the
-		// bundle.
+		// The scope could not read what it offers: the refusal's own sentence is
+		// the answer, and it travels as this error rather than as an empty list,
+		// which the selector would answer with a sentence about the bundle.
 		return nil, creds.StrategyFailover, nil, err
 	}
-	if offered.Final {
-		// A review caller's list is its own and final (Offered): that class's
-		// credentials are decided before the cascade's own narrowing, and what
-		// it is served is the account's read-only set rather than the pool.
-		return offered.Credentials, offered.Strategy, offered.NotAdmitted, nil
+	if id.JobClass == ClassReview {
+		// A review caller's list is its own and final (reviewCandidates): that
+		// class's credentials are decided before the cascade's own narrowing,
+		// and what it is served is the account's read-only set rather than the
+		// pool. The rule is the class's and not the scope's, because it is the
+		// pairing's answer read one way for one class (spec §2.3); what the
+		// scope answered above is asked for the same reason every other reader
+		// is — it is the pool this call belongs to — and is then not what a
+		// review call is served by.
+		ra, ok := s.reviewAccount(id.JobAccount)
+		if !ok {
+			// The lookup is guarded although the pairing has already refused an
+			// account this table does not hold (pairReview): the class is the
+			// verifier's answer and the two lists are configured separately, so
+			// a caller admitted as a review one whose email this table does not
+			// carry is a deployment disagreeing with itself — and a service that
+			// panicked on a state it cannot name would be the worse answer to
+			// it.
+			return nil, creds.StrategyFailover, nil, fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable)
+		}
+		out, skipped := reviewCandidates(reviewOfferings(b), ra.Account)
+		return out, creds.StrategyFailover, skipped, nil
 	}
-	cands := offered.Credentials
-	strategy := offered.Strategy
-	skipped := offered.NotAdmitted
+	// The project's crafts narrow the pool one step further (poolOffering, MC6),
+	// which is where a pool's members enter this list and where a credential no
+	// craft names leaves it. A node that publishes no crafts block narrows
+	// nothing and the call is served the whole pool — which is every
+	// installation today.
+	crafted, strategy, narrowed, err := poolOffering(shared, b)
+	if err != nil {
+		// The crafts leave this call nothing at all (poolRefusal): the refusal's
+		// own sentence is the answer, and it names the crafts and not the bundle
+		// an operator would otherwise go looking in.
+		return nil, creds.StrategyFailover, nil, err
+	}
+	cands := pool
+	var skipped []Tried
+	if narrowed {
+		// The crafts are a narrowing of the POOL and never a widening of it: the
+		// list is the intersection, so a workspace's pool can only ever lose
+		// entries to a node that names more, and the credentials the crafts
+		// leave out of the pool this call belongs to are reported rather than
+		// dropped, so the run's halt message reads the same list either way.
+		cands = heldBy(crafted, pool)
+		for _, cred := range pool {
+			if !named(crafted, cred.Name) {
+				skipped = append(skipped, Tried{Name: cred.Name, Tier: wireTier(cred.Tier), Reason: ReasonNotAdmitted})
+			}
+		}
+	}
 	hasA := false
 	for _, c := range cands {
 		if c.Tier == creds.TierA {
@@ -126,10 +160,17 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 	// wrote rather than from what this call declares (creds/repoauth, D2070 (a),
 	// R7): the declaration is checked against the record and never trusted, and
 	// a repository whose record says something this call does not declare is
-	// refused rather than served the cascade (G16). The record is read in the
-	// scope's own state, which is the database the pairing's repository is on
-	// (R8).
-	rec, found, err := sc.State().RepoAuth(ctx, id.Slug)
+	// refused rather than served the cascade (G16).
+	//
+	// The record is read through the scope's OWN reader and never through its
+	// state (C1's rule 2): `fugaro update` writes it in the database of the
+	// repository's own project, so an installation answers it out of its own
+	// database and a workspace out of the MEMBER's, while the state the cascade
+	// keeps its marks and leases in is the workspace's own — and a record read
+	// out of the wrong database is an absent one, which narrowToRepoAuth reads
+	// as "the cascade, unchanged" and would serve a member's run the whole of
+	// the workspace's pool.
+	rec, found, err := sc.RepoAuth().RepoAuth(ctx, id.Slug)
 	if err != nil {
 		return nil, creds.StrategyFailover, nil, err
 	}
