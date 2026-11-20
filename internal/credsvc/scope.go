@@ -74,11 +74,23 @@ type Scope interface {
 	// published policy, read from the member's own database, because that is
 	// the policy its administrator wrote (R1, R5).
 	Policy() PolicyReader
-	// Kills is the operator's stop switches this caller honours. The
-	// installation reads its own; a workspace reads the member's, because the
-	// switches a member's own operator writes are the ones that stop that
-	// member's runs, and the workspace's own stop is its deployment's business
-	// rather than a member's (R1).
+	// Kills is the operator's stop switches the call is held to: the reader is
+	// read before the bundle on every route, and a call whose switch is on is
+	// refused before any credential is touched. The installation's is its own
+	// database's (RTDBKills).
+	//
+	// **Whose switches a workspace-mode call honours is not settled by this
+	// contract**, and the workspace's resolver is where the answer goes: the
+	// caller's own operator's, read from the member's database, is what makes
+	// "stop my runs" mean what it means today even for a call the member's own
+	// service no longer serves — and the WORKSPACE's own switch, which
+	// workspace_cap.go's comment already names as one of the three refusals the
+	// workspace's service answers on its own account, is the one that stops
+	// everything the workspace's pool pays for. Both readings are defensible and
+	// nothing in R1 to R19 picks one; a resolver that wants both reads both,
+	// because the interface answers one reader and a reader may hold two
+	// switches. What the shape fixes is only that the answer is chosen for the
+	// caller and asked before the bundle.
 	Kills() KillReader
 	// State is the cascade's state — the marks, the leases, a run's placement,
 	// the tie-breaker and the per-repository auth record — as THIS caller's
@@ -91,10 +103,14 @@ type Scope interface {
 	// Outcomes is the reader that answers whether a run of this caller's
 	// repository has already ended. It is the one the resolver's verification
 	// asked (an ended run's token is not honoured again, W2) and it is carried
-	// here because the database that holds the outcomes is the caller's: an
-	// installation's one database, or the database of the member the call
-	// resolved to. No route reads it today; it is declared because R1 names it
-	// and because the scope is the only place that can name the right one.
+	// here because the database that holds the outcomes is the caller's: a
+	// run's outcome node is written in its own project's database, so an
+	// installation reads its own and a workspace reads the member's the call
+	// resolved to — the same database that member's policy is read from, and
+	// not the workspace's own.
+	//
+	// No route reads it today; it is declared because R1 names it and because
+	// the scope is the only place that can name the right database.
 	Outcomes() OutcomeReader
 	// Repos is the repository table this call's pairing resolves through: the
 	// slug a run identity carries (task.Slug) to the canonical repository name

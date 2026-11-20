@@ -32,7 +32,7 @@ may be served from.
 | --- | --- | --- |
 | `Caller() Identity` | the resolver's verification | the run identity the call's token proved; the zero `Identity` on a route answered ahead of the shared parse (a person, a daemon, a launcher or a build holds none) |
 | `Policy() PolicyReader` | the installation's one node, or the member's own published policy | the project's shared node and one repository's own admission node, for **this** caller |
-| `Kills() KillReader` | the installation's database, or the member's | the operator's stop switches this caller honours — the switches that stop **its** runs |
+| `Kills() KillReader` | the installation's database, or whatever the workspace's resolver chooses | the operator's stop switches the call is held to, read before the bundle |
 | `State() creds.Store` | the installation's database, or the **workspace's own** | the marks, the leases, a run's placement, the tie-breaker and the per-repository auth record |
 | `Outcomes() OutcomeReader` | the installation's database, or the member's | whether a run of this caller's repository has already ended (W2) |
 | `Repos() map[string]string` | the installation's repository table, or the **calling job account's** repositories | the slug a run identity carries to the canonical name the policy speaks; a slug it does not hold is refused at the pairing, never guessed (D1066) |
@@ -74,9 +74,9 @@ constructor and gets either the workspace's resolver or a refusal, never a nil.
    spellings of one rule drift.
 
 2. **The workspace's readers are the member's, and the state is the workspace's own (R1, R8, D1299 as
-   amended).** The policy, the kill switches, the outcomes and the repository table are read where the
-   member's own administrator wrote them: the member's database, through the verifier's `iss` (finding
-   6). The **state is not**: a cooldown, a rotation position and a spend figure for a workspace
+   amended).** The policy, the outcomes and the repository table are read where the member's own
+   administrator wrote them: the member's database, through the verifier's `iss` (finding 6). The
+   **state is not**: a cooldown, a rotation position and a spend figure for a workspace
    credential are facts about the workspace's pool, so they live in the workspace's own database. The
    service holds no write on any member at all, which is a property of this split and not a promise
    about it.
@@ -198,6 +198,13 @@ refusals are the stub's, and I1 deletes them.
 
 - **How a route is refused** — the status, the error type and the sentence. That is WS1's, and WS2's
   tests read it through the server rather than through this shape.
+- **Whose stop switches a workspace-mode call honours** — the member's own operator's, the
+  workspace's, or both read together. Nothing in R1 to R19 picks one, and `workspace_cap.go`'s
+  comment already names the workspace's own switch as a refusal the workspace's service answers on
+  its own account, so the two readings are live. The shape fixes only that the answer is chosen for
+  the caller and read before the bundle; a resolver that wants both holds both behind one
+  `KillReader`, because the interface answers one reader and a reader may hold two switches. WS2's
+  to decide, and the decision belongs in its own comment and in the review.
 - **The node's caching and its clock** — where the 60 seconds are measured, how the re-read is made
   conditional, and what the scope does with a node it decoded but does not validate. R13 and R17 fix
   the behaviour; the mechanism is WS2's, and `WorkspaceScopeConfig.Now` is there for its tests.
