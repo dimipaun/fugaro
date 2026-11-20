@@ -77,9 +77,13 @@
 #             config (a price row, a route claim, the switch), the published
 #             policy node, the sandbox checkout's `fugaro.yaml` pin, and the
 #             repository's job environment through `fugaro update --repo .`.
-#             Every one of them is put back by step 7 from a copy taken before
-#             anything was written, and the runs' own branches and pull requests
-#             are left for YOU to decline — this check merges nothing.
+#             Every one of them is put back by step 7 — the checkout's pin from
+#             HEAD, that file having been read with no uncommitted change in it
+#             before anything was written (a checkout whose `fugaro.yaml` is
+#             dirty is refused rather than written and discarded), and the rest
+#             from copies taken before anything was written — and the runs' own
+#             branches and pull requests are left for YOU to decline: this check
+#             merges nothing.
 # Costs:      real money on both sides of the comparison — Anthropic tokens on
 #             the direct runs and provider credit on the routed ones.
 # Runs:       by YOU. No agent runs any step of it: what it measures is a live
@@ -799,6 +803,16 @@ step_installation() {
   if ! printf '%s' "$origin" | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$'; then
     stop "the checkout at $SANDBOX has origin '${origin:-none}' and Check 50 runs in the sandbox repository (edgeappinc/fugarosandbox) only: every write below — the checkout's own fugaro.yaml, the operator's config, the policy node and the job's environment — lands in the repository this checkout belongs to, so a checkout of another repository is never the one this check runs in"
   fi
+  # The pin is written into this file and put back with `git checkout --
+  # fugaro.yaml`, so a change the owner has not committed would be destroyed by
+  # step 7 — and the restore would still read PASS, because the empty diff that
+  # proves the file is back is the same empty diff a discard leaves. The
+  # checkout is read before anything is written instead.
+  local dirty
+  dirty=$(git -C "$SANDBOX" status --porcelain -- fugaro.yaml 2>/dev/null) || dirty=""
+  if [ -n "$dirty" ]; then
+    stop "${SANDBOX}/fugaro.yaml has uncommitted changes in this checkout (git status --porcelain -- fugaro.yaml reads '${dirty}'): this check writes that file — the reviewer pin — and puts it back from HEAD, which would discard the change and then report the file restored, because the empty diff that proves it is back is the same empty diff the discard leaves. Commit or stash it, or run this check from a clean checkout of the sandbox repository"
+  fi
   CONFIG_PATH=$HOME/.config/fugaro/projects/fugaro.yaml
   if [ ! -f "$CONFIG_PATH" ]; then
     unmeasured installation "the operator's project config ${CONFIG_PATH} is not a file: routing.claude is written in that file and in no other (D1a), and a project with no config of its own has no provider route and no model_prices to write. Run 'fugaro update' once from a checkout of this installation, or pass CHECK50_CONFIG"
@@ -1440,7 +1454,7 @@ step_restore() {
   if [ "$CHECKOUT_TOUCHED" = yes ]; then
     git -C "$SANDBOX" checkout -- fugaro.yaml 2>/dev/null || true
     if git -C "$SANDBOX" diff --quiet -- fugaro.yaml 2>/dev/null; then
-      notes="$notes fugaro.yaml is unchanged since HEAD, as step 1 found it (git diff -- fugaro.yaml is empty);"
+      notes="$notes fugaro.yaml is unchanged since HEAD, as step 1 found it (git diff -- fugaro.yaml is empty) — and step 1 read that file with no uncommitted change in it before this check wrote anything, so HEAD is what was there;"
       CHECKOUT_TOUCHED=no
     else
       notes="$notes fugaro.yaml STILL differs from HEAD (git diff -- fugaro.yaml is not empty) — read the diff and restore it by hand;"
@@ -1525,7 +1539,7 @@ restore_after_abort() {
   if [ "$CHECKOUT_TOUCHED" = yes ]; then
     git -C "$SANDBOX" checkout -- fugaro.yaml 2>/dev/null || true
     if git -C "$SANDBOX" diff --quiet -- fugaro.yaml 2>/dev/null; then
-      notes="$notes the sandbox checkout's fugaro.yaml was put back from HEAD;"
+      notes="$notes the sandbox checkout's fugaro.yaml was put back from HEAD, which step 1 read clean before this check wrote anything;"
     else
       notes="$notes the sandbox checkout's fugaro.yaml still differs from HEAD — run 'git -C $SANDBOX checkout -- fugaro.yaml';"
       failed=yes

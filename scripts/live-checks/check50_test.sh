@@ -821,6 +821,15 @@ checkout)
     cp "$FAKE_STATE_DIR/head-fugaro.yaml" "$FAKE_CHECKOUT/fugaro.yaml"
   fi
   ;;
+status)
+  # What the check reads before it writes anything: ` M` when the working copy
+  # differs from HEAD — a checkout the check refuses to write, because putting
+  # the file back from HEAD would discard the change and leave the same empty
+  # diff a discard leaves.
+  if [ "${2:-}" = "--porcelain" ] && ! cmp -s "$FAKE_STATE_DIR/head-fugaro.yaml" "$FAKE_CHECKOUT/fugaro.yaml"; then
+    printf ' M fugaro.yaml\n'
+  fi
+  ;;
 diff)
   if [ "${2:-}" = "--quiet" ]; then
     cmp -s "$FAKE_STATE_DIR/head-fugaro.yaml" "$FAKE_CHECKOUT/fugaro.yaml" || exit 1
@@ -1262,6 +1271,26 @@ test_an_installation_other_than_fugaro_dev_stops_the_check() {
   expect_absent "$fugaro_calls" "policy publish" "an installation that is not fugaro-dev: nothing is published"
 }
 
+test_a_checkout_with_uncommitted_changes_to_fugaro_yaml_is_refused() {
+  local dir=$work/dirty-checkout
+  prepare "$dir"
+  # The owner's own edit, not committed: step 7 puts the file back from HEAD, so
+  # running would discard it — and the restore row would read PASS, because the
+  # empty diff that proves the file is back is the same empty diff a discard
+  # leaves.
+  printf 'budget:\n  mode: off\n' >>"$dir/sandbox/fugaro.yaml"
+  cp "$dir/sandbox/fugaro.yaml" "$dir/state/dirty-copy"
+  run_check "$dir"
+  expect_status "$status" 1 "a checkout whose fugaro.yaml is dirty"
+  expect_contains "$out" "FACT aborted: FAIL" "a checkout whose fugaro.yaml is dirty: the row"
+  expect_contains "$out" "has uncommitted changes" "a checkout whose fugaro.yaml is dirty: why"
+  expect_contains "$out" "Commit or stash it" "a checkout whose fugaro.yaml is dirty: the fix"
+  expect_absent "$fugaro_calls" "models add" "a checkout whose fugaro.yaml is dirty: nothing is claimed"
+  expect_absent "$fugaro_calls" "policy publish" "a checkout whose fugaro.yaml is dirty: nothing is published"
+  cmp -s "$dir/state/dirty-copy" "$dir/sandbox/fugaro.yaml" || fail "a checkout whose fugaro.yaml is dirty: the owner's edit was discarded anyway"
+  assert_scratch_removed "a checkout whose fugaro.yaml is dirty"
+}
+
 test_a_missing_sandbox_is_refused() {
   local dir=$work/no-sandbox
   prepare "$dir"
@@ -1424,6 +1453,7 @@ t test_the_policy_routing_arm_republishes
 t test_a_restore_that_cannot_republish_says_what_is_still_published
 t test_a_checkout_that_is_not_the_sandbox_stops_the_check
 t test_an_installation_other_than_fugaro_dev_stops_the_check
+t test_a_checkout_with_uncommitted_changes_to_fugaro_yaml_is_refused
 t test_a_missing_sandbox_is_refused
 t test_a_doctor_that_prints_nothing_readable_is_not_measured
 t test_a_senior_that_is_not_priced_is_not_measured
