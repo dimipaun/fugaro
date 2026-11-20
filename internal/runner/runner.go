@@ -152,6 +152,10 @@ type Deps struct {
 	// internal/cli), never from repository content, so nothing on a run's
 	// branch can reach it.
 	StartHeadroom func(context.Context, headroomproc.Options) (SidecarProcess, error)
+	// WrapUpBound, for tests only, shortens how long a wrap-up turn may run
+	// before the coder stage ends (rule 3). The owner's own bound is fifteen
+	// minutes, which no test can wait for; zero means that bound.
+	WrapUpBound time.Duration
 }
 
 type run struct {
@@ -4146,9 +4150,13 @@ func (r *run) agentLoop(ctx context.Context) {
 		// the retry is the same stage, and a second take would find the queue
 		// already drained.
 		mb := r.messageBlock(ctx, "implement")
+		brief := req.Prompt
 		if mb != "" {
 			req.Prompt += "\n\n" + mb
 		}
+		// A `now` or `wrap_up` message may stop this stage where it stands and
+		// resume it with the brief and the message (yield.go, rules 2 and 3).
+		opts.Yield = &yieldOpts{Resume: func(block string) string { return brief + "\n\n" + block }}
 		res, ok, err := r.stage(ctx, "implement", req, opts)
 		r.noteSession(req, res)
 		r.countTokens(res)
@@ -4160,7 +4168,11 @@ func (r *run) agentLoop(ctx context.Context) {
 			if mb != "" {
 				req.Prompt += "\n\n" + mb
 			}
-			res, ok, _ = r.stage(ctx, "implement", req, stageOpts{})
+			// The same stage, so the same yield: a message may stop the retry
+			// too, and it resumes on this prompt rather than the first one.
+			fresh := req.Prompt
+			res, ok, _ = r.stage(ctx, "implement", req,
+				stageOpts{Yield: &yieldOpts{Resume: func(block string) string { return fresh + "\n\n" + block }}})
 			r.noteSession(req, res)
 			r.countTokens(res)
 		}
@@ -4770,6 +4782,10 @@ func (r *run) fix(ctx context.Context, findings []Finding, sys, sessionID string
 	if r.sessionID != "" {
 		sessionID = r.sessionID
 	}
+	// Rule 1's third call site, with rule 4 in it: FixPrompt writes the
+	// widening sentence for the block, so the turn a message resumes this fix
+	// into carries it the same way the first turn did (D2943).
+	opts := stageOpts{Yield: &yieldOpts{Resume: func(block string) string { return FixPrompt(findings, block) }}}
 	req := agent.Request{Prompt: FixPrompt(findings, r.messageBlock(ctx, "fix")), AppendSystemPrompt: sys}
 	if sessionID == "" {
 		// No session exists to resume: a Fixed check gate (gate.go) skipped
@@ -4782,7 +4798,7 @@ func (r *run) fix(ctx context.Context, findings []Finding, sys, sessionID string
 	} else {
 		req.SessionID, req.Resume = sessionID, true
 	}
-	res, ok, _ := r.stage(ctx, "fix", req, stageOpts{})
+	res, ok, _ := r.stage(ctx, "fix", req, opts)
 	r.noteSession(req, res)
 	r.countTokens(res)
 	if !ok || r.capReached() {
@@ -5125,6 +5141,27 @@ type stageOpts struct {
 	// which review round a row is for a reader, and not which triage round.
 	Round int
 	Level policy.Level
+	// Yield marks a coder stage — a first run's implement, a follow-up's
+	// implement, a fix (rule 1) — as one a `now` or `wrap_up` message may
+	// stop mid-stage and resume (yield.go, rules 2 and 3). It carries how
+	// the turn that resumes is prompted. Every other stage leaves it nil
+	// and is therefore never run with a yield request at all.
+	Yield *yieldOpts
+	// The three fields below are the yield's own, set by stage for each
+	// attempt of a coder stage and left zero everywhere else.
+	//
+	// YieldAsk is the ask the attempt's segment is stopped by: the message
+	// watch closes it when a flagged message reaches the run's queue, and a
+	// wrap-up turn's own bound closes it too.
+	YieldAsk <-chan struct{}
+	// BudgetUSD, when non-nil, is what is left of the stage's model budget:
+	// a segment resumed after a stop gets the stage's remainder and not a
+	// second agent.max_budget_usd (rule 2).
+	BudgetUSD *float64
+	// Bounds, when non-nil, carries the stage's own clock from its first
+	// attempt to the ones that resume it: a resume does not restart the
+	// stage's deadline or its governance.stage_timeout (rule 2).
+	Bounds *stageBounds
 }
 
 // transientRetries is the run's own bound on the retry a closed model stream
@@ -5182,10 +5219,66 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	// round of its own — is a stage of its own with its own one retry, under
 	// the run's own ceiling the same way.
 	retried := false
+	// A coder stage runs under the message channel's stop-and-resume
+	// (yield.go, rules 2 and 3): the watch that closes a segment's ask when a
+	// flagged message reaches the run's queue, and what each stop cost the
+	// stage it is resuming into. Bounds is filled by the first attempt, so
+	// every resume runs under the clock the stage started with.
+	var y *coderYield
+	var ys *yieldStage
+	if opts.Yield != nil {
+		y = r.beginYield(name)
+		defer y.stop()
+		opts.Bounds = &stageBounds{}
+		ys = &yieldStage{before: r.stageSpend()}
+	}
 	for {
 		once := opts
 		once.RetryTransient = !retried && r.transientRetryLeft()
+		if y != nil {
+			once.YieldAsk = y.segment(ys.wrapUp)
+			once.BudgetUSD = ys.remaining
+			if ys.forced {
+				once.Recoverable = yieldRecoverable(opts.Recoverable)
+			}
+		}
 		res, ok, err := r.stageOnce(ctx, name, req, once)
+		if y != nil {
+			y.endSegment()
+		}
+		// A forced stop may leave a session that cannot be resumed at all:
+		// the agent was killed at its bound, on an unanswered tool call, and
+		// the next turn finds no session to continue (rule 2's fallback). The
+		// stage starts again from the repository, in a fresh session, with
+		// the message and the instruction to read what is already there
+		// first, and the record says why.
+		var rec recoveredError
+		if y != nil && ys.forced && errors.As(err, &rec) && errors.Is(err, agent.ErrNoSession) {
+			ys.forced = false
+			r.retagYield(ys.msgs, yieldSessionLost)
+			req.Prompt = opts.Yield.Resume(r.resumeBlock(ys.msgs, ys.wrapUp, true))
+			req.SessionID, req.Resume = agent.NewSessionID(), false
+			continue
+		}
+		// The message's stop, and not a failure: the agent stopped itself
+		// between two tool calls, the session is intact, and the segment just
+		// ended is charged for what it spent before the stage carries on in
+		// that same session with the message in its next prompt (D2945). It
+		// is stage's own loop and not a second call to stage, so the attempt
+		// counts against the run's caps and deadlines exactly as a transient
+		// retry's does.
+		if y != nil && err == nil && res.Yielded {
+			next, done := r.yieldStopped(name, res, &req, opts, ys)
+			if done {
+				// Rule 3: the wrap-up turn ended, or reached its own bound,
+				// and the coder stage ends here as succeeded (D2946). The
+				// run carries on to its reviews and its finalize on whatever
+				// the turn committed.
+				return res, true, nil
+			}
+			req = next
+			continue
+		}
 		// The model's stream ended before it finished, and nothing about
 		// the work did: the stage is run once more, in the session it
 		// already had, so the conversation and everything it committed are
@@ -5483,9 +5576,15 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		// absolute path, so nothing else moves with the working directory.
 		req.Dir = opts.Dir
 	}
-	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.cfg.Agent.MaxBudgetUSD
+	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.stageBudget(opts)
+	if opts.YieldAsk != nil {
+		// The agent stops itself at its next quiet point when this closes
+		// (RM3, internal/agent/quiet.go); the bound is rule 2's ten minutes,
+		// after which the agent stops where it stands instead.
+		req.Yield = &agent.YieldRequest{Ask: opts.YieldAsk, Bound: nowQuietWait}
+	}
 
-	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
+	deadlineCtx, cancelDeadline := opts.stageDeadline(ctx, r.budget)
 	defer cancelDeadline()
 	// The stage's own governance.stage_timeout, when the run resolved one: it
 	// only ever shortens a stage, so a value at or above the run's own
@@ -5506,7 +5605,13 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	r.noteIgnoredStageBound(name, own)
 	ownCtx, cancelOwn := deadlineCtx, context.CancelFunc(func() {})
 	if own > 0 && own < r.budget.Stage {
-		ownCtx, cancelOwn = context.WithTimeout(deadlineCtx, own)
+		// An attempt that resumes a stage a message stopped runs under that
+		// stage's own bound and not a fresh one (rule 2).
+		if b := opts.Bounds; b != nil && !b.own.IsZero() {
+			ownCtx, cancelOwn = context.WithDeadline(deadlineCtx, b.own)
+		} else {
+			ownCtx, cancelOwn = context.WithTimeout(deadlineCtx, own)
+		}
 	} else {
 		if own > 0 {
 			r.noteStageTimeoutClamped(name, own)
@@ -5516,6 +5621,20 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	defer cancelOwn()
 	if dl, ok := ownCtx.Deadline(); ok {
 		r.beginBudgetStage(name, n, dl)
+	}
+	// The stage's own clock, kept for the attempts that resume it: this one
+	// is the first, and what it runs under is what they run under (rule 2).
+	if b := opts.Bounds; b != nil {
+		if b.deadline.IsZero() {
+			if dl, ok := deadlineCtx.Deadline(); ok {
+				b.deadline = dl
+			}
+		}
+		if b.own.IsZero() && own > 0 && own < r.budget.Stage {
+			if dl, ok := ownCtx.Deadline(); ok {
+				b.own = dl
+			}
+		}
 	}
 	// The halt's way to stop this stage: cancelling with the halt as the
 	// cause, which StageError reads.
@@ -5735,6 +5854,18 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.noteStageExhausted(name)
 		r.save(ctx)
 		return res, false, exhausted
+	}
+
+	// The message's stop, before everything below: the agent stopped itself
+	// at a quiet point between two tool calls because the ask closed (rules 2
+	// and 3), so this attempt did not fail and must not be read as one — not
+	// as a recoverable error, not as a skipped stage, and above all not as
+	// the ordinary failure the exit path would otherwise make of an attempt
+	// whose process was told to stop. What it spent is recorded above, like
+	// any attempt's; stage's own loop resumes it with the message.
+	if res.Yielded && err == nil && stageCtx.Err() == nil {
+		r.save(ctx)
+		return res, false, nil
 	}
 
 	switch {
@@ -6589,7 +6720,8 @@ func (r *run) finalize(ctx context.Context) error {
 		fu = r.followUpSection()
 		fu.MovedToDraft = r.follow.wasReady && !ready
 	}
-	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu, notes), r.secretList())
+	report := agent.Redact(reportWithMessages(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu, notes,
+		r.reportMessages(pr.Number)), r.secretList())
 	// A follow-up's pull request is the one people watch: an earlier
 	// attempt of this execution may already have posted this report.
 	if r.follow != nil && r.reportPosted(ctx, pr) {
