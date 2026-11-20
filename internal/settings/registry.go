@@ -572,6 +572,13 @@ const (
 	// of the stage's own would take the row over.
 	docTriage    = "docs/post-review-triage/implementation-plan.md"
 	docCloneURLs = "docs/project-claude-accounts.md"
+	// docReviewAgainstTask is the document that states the check every review
+	// stage makes of the task a pull request was written for, and the local key
+	// the publish carries the switch from (R7 of docs/review-against-task/). It
+	// is the work's plan, docTriage's reason: the key, its default and D2935's
+	// two directions are stated there and nowhere else yet, and a document of
+	// the check's own would take the row over.
+	docReviewAgainstTask = "docs/review-against-task/implementation-plan.md"
 	// docABJobmax is the document that states the A/B reviewer arm's key (O12).
 	// It is the work's plan rather than a spec, for docOrchestrator's reason:
 	// the ask is named there and in the reconciliation that records the ruling,
@@ -1207,6 +1214,17 @@ var localRows = []Row{
 	// a pull request back (D1854), and the publish is what carries the value to
 	// the node every run of the project reads it from.
 	loc("triage", "true: a review round's findings are judged by the triage stage in the modes that triage at all, and a written false turns the stage off for the project", "settings set", docTriage),
+	// The review-against-task switch is that policy key's shape one over (R7 of
+	// docs/review-against-task/, D2935): a local key the node is published from,
+	// whose owner is `settings set` for the triage row's reason — a boolean in
+	// the machine's own config is the generic path's. It is the owner's answer
+	// for the whole project, and the publish is what carries it to the node
+	// every run of the project reads it from. The absent key reads as on rather
+	// than as "none", because a reader would take "none" for the check itself
+	// being off; a written false is the project-wide default a repository's own
+	// `true` overrides, and a written true is the check no repository may walk
+	// out of.
+	loc("review_against_task", "on: every review stage is handed the task its pull request was written for, and a written false is the project-wide default a repository's own true turns back on", "settings set", docReviewAgainstTask),
 	// The clone URLs the project's repositories clone from (settings spec
 	// §5.6, SD5, D842). The block moved out of the policy node and into the
 	// owner's local config, and `fugaro project clone-url` is the family that
@@ -1453,25 +1471,33 @@ var localRows = []Row{
 	// read has to be able to name.
 	loc("repos.*.credentials_service_ready", "false: no update has applied this repository's root with the service on — its bundle holds no model credential, or its agent.auth is not the cascade", "project", docSetup),
 
-	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all eleven of
+	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all seventeen of
 	// them local-only: the pin is the member's own trust and the member table
-	// is the workspace owner's own declaration, and a launcher who could write
-	// either into the shared file could aim this project's exchange and this
-	// project's database grant (internal/cli/sharedcfg.go's sharedForbidden).
-	// Their owner is the `fugaro workspace` family, so the generic writer
-	// refuses them (D853) — a member entry and a pin are written whole by the
-	// commands that know what the four values have to agree about.
+	// and shared list are the workspace owner's own declaration, and a launcher
+	// who could write any of them into the shared file could aim this project's
+	// exchange, this project's database grant and this project's calls, or
+	// choose what the workspace's credentials service offers
+	// (internal/cli/sharedcfg.go's sharedForbidden). Their owner is the `fugaro
+	// workspace` family, so the generic writer refuses them (D853) — a member
+	// entry, a pin and a shared entry are written whole by the commands that
+	// know what the values have to agree about.
 	locLocal("workspace", "this project is a member of no workspace", "workspace", docWorkspace),
 	locLocal("workspace_pin.firebase_project", "no workspace is pinned", "workspace", docWorkspace),
 	locLocal("workspace_pin.issuer", "no workspace is pinned", "workspace", docWorkspace),
 	locLocal("workspace_pin.assertion_key", "no workspace is pinned", "workspace", docWorkspace),
 	locLocal("workspace_pin.service_account", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_pin.service_address", "this project takes no workspace credential", "workspace", docWorkspace),
 	locLocal("workspace_members.*.repos", "the member contributes no repository", "workspace", docWorkspace),
-	locLocal("workspace_members.*.job_service_accounts", "no job service account is declared for the member", "workspace", docWorkspace),
+	locLocal("workspace_members.*.job_service_accounts.*.account", "no job service account is declared for the member", "workspace", docWorkspace),
+	locLocal("workspace_members.*.job_service_accounts.*.repos", "the account is a job of no repository", "workspace", docWorkspace),
+	locLocal("workspace_members.*.database_region", "the member's database lives in its project's default region", "workspace", docWorkspace),
 	locLocal("workspace_members.*.firebase_project", "none", "workspace", docWorkspace),
 	locLocal("workspace_members.*.fp", "none", "workspace", docWorkspace),
 	locLocal("workspace_members.*.exchange_url", "none", "workspace", docWorkspace),
 	locLocal("workspace_cap.monthly", "the workspace states no cap", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.kind", "the workspace offers no credential", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.projects", "the credential is offered to no member", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.covers", "the credential covers no repository", "workspace", docWorkspace),
 
 	// The terminal Issues section's nudge thresholds (T-IS15). They are
 	// local-only rather than loc's two layers: the section is printed on the
@@ -1784,7 +1810,7 @@ var defaultValues = map[string]Default{
 	// release writes for a file that sets it nowhere (localcfg.Parse), which is
 	// localcfg.ConfigVersion, so the value is written here and read back out of
 	// a parsed config like the two above.
-	"local.version": value("2", "localcfg.ConfigVersion"),
+	"local.version": value("3", "localcfg.ConfigVersion"),
 	// The Issues section's nudge thresholds (T-IS15): the loader answers the
 	// constants for a file that sets neither, through the accessors rather
 	// than the fields, so "the file wrote nothing" and "the file wrote the
