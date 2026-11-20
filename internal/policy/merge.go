@@ -111,6 +111,26 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 			}
 		}
 
+		// The review-against-task switch is the triage rule with the polarity
+		// inverted, because ON is the stricter value for it (docs/review-against-task,
+		// D2935): the owner's node forces the check on for every repository of an
+		// installation, a repository turns it on for itself under a node that is
+		// silent or published it off, and none may turn it off under a layer
+		// that turned it on — the one direction Triage records, and the one this
+		// key must let through. A layer that writes nothing passes the earlier
+		// layers through, which is a nil ReviewAgainstTask and not a false one:
+		// the two cannot share a zero value, which is why the field is a
+		// pointer.
+		if l.ReviewAgainstTask != nil {
+			switch {
+			case e.ReviewAgainstTask == nil || (*l.ReviewAgainstTask && !*e.ReviewAgainstTask):
+				e.ReviewAgainstTask, e.Sources[KeyReviewAgainstTask] = l.ReviewAgainstTask, src
+			case !*l.ReviewAgainstTask && *e.ReviewAgainstTask:
+				e.Ignored = append(e.Ignored, Ignored{KeyReviewAgainstTask,
+					strconv.FormatBool(*l.ReviewAgainstTask), strconv.FormatBool(*e.ReviewAgainstTask), e.Sources[KeyReviewAgainstTask]})
+			}
+		}
+
 		if l.MaxRunTokens > 0 {
 			switch {
 			case e.MaxRunTokens == 0 || l.MaxRunTokens < e.MaxRunTokens:

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "run_id": "20261119-120006-a1b2",
+  "repo": "acme/app",
+  "ref": "main",
+  "review_prs": [7],
+  "review_spec": {
+    "source": "none"
+  }
+}

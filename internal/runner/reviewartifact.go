@@ -87,7 +87,7 @@ const ReviewArtifactVersion = 1
 // directory; schemas_test.go's TestReviewArtifactSchemaMatchesStruct pins the
 // two together, so a field added to one and not the other fails there rather
 // than silently at a reviewer's parser.
-const ReviewArtifactSchema = `{"type":"object","additionalProperties":false,"required":["verdict","overview","strengths","issues","security","performance","test_coverage"],"properties":{"verdict":{"type":"string","enum":["ship","fix first","reject"]},"overview":{"type":"string"},"strengths":{"type":"array","items":{"type":"string"}},"issues":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["severity","class","file","summary","fix","evidence"],"properties":{"severity":{"type":"string","enum":["blocker","major","minor"]},"class":{"type":"string","enum":["correctness","performance","security","data_loss","maintainability","cosmetic"]},"file":{"type":"string"},"line":{"type":"integer","minimum":1},"summary":{"type":"string"},"fix":{"type":"string"},"evidence":{"type":"string"},"likelihood":{"type":"integer","minimum":1,"maximum":5},"impact":{"type":"integer","minimum":1,"maximum":5},"fix_cost":{"type":"integer","minimum":1,"maximum":5}}}},"security":{"type":"string"},"performance":{"type":"string"},"test_coverage":{"type":"string"}}}`
+const ReviewArtifactSchema = `{"type":"object","additionalProperties":false,"required":["verdict","overview","strengths","issues","security","performance","test_coverage"],"properties":{"verdict":{"type":"string","enum":["ship","fix first","reject"]},"overview":{"type":"string"},"strengths":{"type":"array","items":{"type":"string"}},"issues":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["severity","class","file","summary","fix","evidence"],"properties":{"severity":{"type":"string","enum":["blocker","major","minor"]},"class":{"type":"string","enum":["correctness","performance","security","data_loss","maintainability","cosmetic"]},"scope":{"type":"string","enum":["unmet","beyond","differs"]},"file":{"type":"string"},"line":{"type":"integer","minimum":1},"summary":{"type":"string"},"fix":{"type":"string"},"evidence":{"type":"string"},"likelihood":{"type":"integer","minimum":1,"maximum":5},"impact":{"type":"integer","minimum":1,"maximum":5},"fix_cost":{"type":"integer","minimum":1,"maximum":5}}}},"security":{"type":"string"},"performance":{"type":"string"},"test_coverage":{"type":"string"}}}`
 
 // The vocabularies the artifact's own reader closes, each the set the shape
 // that already exists carries: severity is the in-job finding's
@@ -110,7 +110,12 @@ var (
 type ReviewIssue struct {
 	Severity string `json:"severity"`
 	Class    string `json:"class"`
-	File     string `json:"file"`
+	// Scope is whether the issue is about the task the pull request was
+	// written for, and it is absent on an issue about the code alone
+	// (D2930, issuescope.go). It is unrelated to review_scope, the range of
+	// files a review was handed, and to a budget's Scope.
+	Scope string `json:"scope,omitempty"`
+	File  string `json:"file"`
 	// Line is a claim about the head the review read, which is why HeadSHA is
 	// recorded beside it: a reader that finds the file moved still knows which
 	// commit the line meant.
@@ -179,18 +184,24 @@ type ReviewArtifact struct {
 	// Repository is the run's own slug, the spelling its path uses
 	// (runs/<slug>/<review-run>/artifacts/), so the coordinator compares like
 	// with like.
-	Repository   string         `json:"repository"`
-	PR           int            `json:"pr"`
-	HeadSHA      string         `json:"head_sha"`
-	Base         string         `json:"base"`
-	Reviewer     ReviewReviewer `json:"reviewer"`
-	Verdict      string         `json:"verdict"`
-	Overview     string         `json:"overview"`
-	Strengths    []string       `json:"strengths"`
-	Issues       []ReviewIssue  `json:"issues"`
-	Security     string         `json:"security"`
-	Performance  string         `json:"performance"`
-	TestCoverage string         `json:"test_coverage"`
+	Repository string         `json:"repository"`
+	PR         int            `json:"pr"`
+	HeadSHA    string         `json:"head_sha"`
+	Base       string         `json:"base"`
+	Reviewer   ReviewReviewer `json:"reviewer"`
+	// Against is what this review was checked against -- the task of the run
+	// that opened the pull request, or a file a person supplied (R8). It is
+	// the launcher's claim and never evidence (R16), and it is absent on a
+	// review written before the shape had it: the field is optional and
+	// ReviewArtifactVersion does not move.
+	Against      *runstore.Against `json:"against,omitempty"`
+	Verdict      string            `json:"verdict"`
+	Overview     string            `json:"overview"`
+	Strengths    []string          `json:"strengths"`
+	Issues       []ReviewIssue     `json:"issues"`
+	Security     string            `json:"security"`
+	Performance  string            `json:"performance"`
+	TestCoverage string            `json:"test_coverage"`
 	// MutationChecks is the runner's own list, [] for a review that ran none.
 	MutationChecks []ReviewMutationCheck `json:"mutation_checks"`
 }
@@ -822,6 +833,14 @@ func DecodeReviewArtifact(data []byte) (ReviewArtifact, error) {
 			return art, fmt.Errorf("%w: issues[%d]: %v", ErrReviewArtifact, i, err)
 		}
 	}
+	if err := checkVerdictScopes(art.Verdict, art.Issues); err != nil {
+		return art, fmt.Errorf("%w: %v", ErrReviewArtifact, err)
+	}
+	if art.Against != nil {
+		if err := art.Against.Validate(); err != nil {
+			return art, fmt.Errorf("%w: against: %v", ErrReviewArtifact, err)
+		}
+	}
 	return art, nil
 }
 
@@ -839,6 +858,12 @@ func checkReviewIssue(is ReviewIssue) error {
 		return fmt.Errorf("severity is %q, and the three words are %s", is.Severity, strings.Join(reviewSeverity, ", "))
 	case !slices.Contains(reviewClasses, is.Class):
 		return fmt.Errorf("class is %q, and the closed set is %s", is.Class, strings.Join(reviewClasses, ", "))
+	}
+	// After the severity, which checkIssueScope's rule about an unmet or
+	// differing issue reads: a severity that is absent or a fourth word has
+	// already been refused above rather than read as a small one here.
+	if err := checkIssueScope(is); err != nil {
+		return err
 	}
 	for _, f := range []struct{ name, value string }{
 		{"file", is.File}, {"summary", is.Summary}, {"fix", is.Fix}, {"evidence", is.Evidence},
@@ -909,6 +934,13 @@ func decodeReviewAnswer(data []byte) (reviewAnswer, error) {
 		if err := checkReviewIssue(is); err != nil {
 			return ans, fmt.Errorf("%w: issues[%d]: %v", ErrReviewArtifact, i, err)
 		}
+	}
+	// The rule holds on the reviewer's own answer too, not only on an object
+	// read out of the bucket: a ship beside an issue that says the task is not
+	// done ends the review as an invalid verdict (finishReviewJob) rather than
+	// being signed and stored (R6).
+	if err := checkVerdictScopes(ans.Verdict, ans.Issues); err != nil {
+		return ans, fmt.Errorf("%w: %v", ErrReviewArtifact, err)
 	}
 	return ans, nil
 }
@@ -998,6 +1030,7 @@ func (r *run) writeReviewArtifact(ctx context.Context, res agent.Result) error {
 			Model:   r.stageModel("review"),
 			Effort:  r.artifactReviewEffort(),
 		},
+		Against:        r.reviewAgainst(ctx),
 		Verdict:        answer.Verdict,
 		Overview:       answer.Overview,
 		Strengths:      answer.Strengths,
@@ -1059,6 +1092,28 @@ func (r *run) writeReviewArtifact(ctx context.Context, res agent.Result) error {
 	r.skipPR = true
 	r.storeReviewEnded(ctx)
 	return nil
+}
+
+// reviewAgainst is what this review is recorded as having been checked
+// against (R8): RA1's own record — the source the launcher named, the root
+// run, the digest of the brief the reviewer was shown, and, for none, why
+// there is none — in the shape both records carry it (runstore.Against). The
+// artifact's `against` is this, and so is the line the review's own comment
+// gives (againstLine, F36), so the two can never say different things about
+// one review.
+//
+// It is resolved when the record is written rather than remembered from the
+// prompt's own call: resolveReviewSpec is a pure reading of the run's task and
+// the checkout, and it is a run's own code that asks — never a second claim
+// written beside the first (reviewjob: no run reads another run's task).
+func (r *run) reviewAgainst(ctx context.Context) *runstore.Against {
+	found := r.resolveReviewSpec(ctx)
+	return &runstore.Against{
+		Source: string(found.source.source),
+		Run:    found.source.run,
+		SHA256: found.source.sha256,
+		Reason: found.source.reason,
+	}
 }
 
 // artifactReviewEffort is the effort the artifact's reviewer block records: the

@@ -237,6 +237,14 @@ type run struct {
 	// spec.IsFollowUp(); cross-checked against the resolved recipe's own
 	// Mode once it is known, since the two must always agree.
 	review bool
+	// reviewSpec is what this run's reviews are checked against (taskspec.go):
+	// the brief the pull request was written for, the follow-up's own text
+	// beside it and the plan task the brief names. It is read once at
+	// bootstrap and before any agent stage — the run's own task, the root
+	// task the branch names for a follow-up, or the block the launcher wrote
+	// for a launched review — and never from the branch under review, which
+	// the run's own agent controls (R16).
+	reviewSpec *task.ReviewSpec
 	// reviewHeads is what bootstrap's checkReviewPRs resolved for a review
 	// run: one entry per spec.ReviewPRs, in order, each already past the
 	// fork and open checks. Empty for any other run.
@@ -2754,6 +2762,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if len(spec.ReviewPRs) > 0 {
 		r.review = true
 	}
+	// What this run's reviews are checked against, read here rather than at the
+	// review stage: the root task of a follow-up is read out of the runs bucket
+	// before any agent of this run has run, so an agent that rewrote the record
+	// it is judged against could not (taskspec.go, R16, F34).
+	r.readReviewSpec(ctx)
 	// An artifact run's shape comes from the TASK SPEC's mode, beside
 	// r.review and for the same reason: resolveRecipe runs further down,
 	// after the configuration is read, and the checkout arm above is

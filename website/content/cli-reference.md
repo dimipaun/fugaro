@@ -72,6 +72,7 @@ Subcommands:
 - `fugaro settings` -- Show every setting, what decides it, and its default
 - `fugaro setup` -- Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform
 - `fugaro stats` -- Aggregate one installation's run records into figures a page can publish
+- `fugaro tell` -- Send a message to a run that is already going
 - `fugaro troubleshoot` -- Explain a Fugaro command that failed on this machine, locally
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
 - `fugaro update-skills` -- Install or update the Fugaro plugin in your own Claude Code
@@ -8498,7 +8499,15 @@ the one its task reviews, which its record names only when the review
 ends: while it is going, its row reads that pull request's state though
 its pr is still empty. A run's own state is in its result.json, so this
 filter reads every run it filters -- it narrows the listing, never the
-reads.
+reads. running and launching are the exception: a run that is going, and a
+run whose launch is in flight, are answered from the live set -- the
+executions the backend is still running, and the claims a launch in flight
+holds -- so those two read only the runs that set names, never every run of
+the window (D2960). One run launching can miss: a relaunch under an older
+run ID (run --retry, or a re-issue by the resident launcher) holds a fresh
+claim on a run older than the claim window, which is what bounds the
+listing those claims are found by, so a scan shows that run and this query
+does not.
 
 The fourth state of a pull request, orphan (no run ever produced or follows
 it), is one no listing of runs can name: such a pull request has no run and
@@ -10177,6 +10186,7 @@ Flags:
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then the person at the terminal confirms it, and a run with no terminal prints the line and writes nothing) |
+| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, region, name, rigor, bake_repos — the five questions a first run asks (--gcp-project, --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
 | `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |
@@ -10290,6 +10300,50 @@ Flags:
 | `--project` | string | "" | yes | the installation whose run records are read (required: this command never guesses one, and the sandbox is named like any other) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--since` | string | `90d` | no | the window: Nd days back from today, or a Go duration (90d) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro tell`
+
+Send a message to a run that is already going
+
+Tell RUN (a full run ID, or <repo-slug>/<run-id>) something.
+
+The message is written into the run's own prefix of the runs bucket
+(tokens/<repo-slug>/<run-id>/messages/NNNN.msg.json, where no job account
+may write) and read by its runner at the next coder stage: a first run's
+implement, a follow-up's implement, or a fix. A review round never sees one.
+tell prints the number the message took and returns at once; it never waits
+for delivery, and what became of the message is in the run's record.
+
+Given an ending (the last four or more characters of a run ID), tell sends
+nothing: as cancel does, it looks the ending up among the active runs and
+refuses with the full run IDs it names, so an ending never steers a run
+nobody named in full.
+
+A run that is past finalize, whose runner does not read messages, or whose
+recipe has no coder stage is refused, with the reason; so is a text over
+4 KiB and a 21st message. --now asks for the message at the agent's next
+quiet point, inside the coder stage that is running; --wrap-up asks the run
+to finish: commit what it has and stop. Either flag is refused for a run
+whose runner does not honour it.
+
+Usage: `fugaro tell RUN "text"`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for tell |
+| `--json` | bool | `false` | no | print the result as JSON |
+| `--now` | bool | `false` | no | ask for the message at the agent's next quiet point, inside the coder stage that is running |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--wrap-up` | bool | `false` | no | ask the run to commit what it has and stop |
 
 Subcommands:
 
@@ -10427,6 +10481,7 @@ Flags:
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then the person at the terminal confirms it, and a run with no terminal prints the line and writes nothing) |
+| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, region, name, rigor, bake_repos — the five questions a first run asks (--gcp-project, --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
 | `--ask` | bool | `false` | no | ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer "managed" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed |
 | `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |

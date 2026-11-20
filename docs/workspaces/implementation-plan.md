@@ -195,7 +195,7 @@ among them either** — O1's answer dropped the bucket grant, and nothing derive
 that database is not among them yet, and no task in this plan carries it**: the verb has no option
 for it and `localcfg.WorkspaceMember` has no field for it, so the credentials node's
 `database_region` has no writer anywhere in the tree — the node's own comment says so
-(`internal/projectpolicy/workspace_credentials.go`:101) and spec.md §5 states it — and a member whose
+(`internal/projectpolicy/workspace_credentials.go`:113) and spec.md §5 states it — and a member whose
 Firebase project was adopted with a **regional** database is therefore derived the legacy
 `<firebase_project>-default-rtdb` host until a later task takes the field. **The owner answered that
 on 2026-11-10, as recommended**: the field is taken by the task that gives the node its writer, so
@@ -473,7 +473,7 @@ task's service and W3's root of the workspace's own project carry the table) —
 member's machine and never taken from `workspaces/<name>`, which names the members and carries the cap
 and nothing else (spec.md §2, §5). **The stage that writes this node is not this task's, and no task
 in this plan is it**: nothing in the tree writes `workspace_credentials` today — the node's own
-comment says so (`internal/projectpolicy/workspace_credentials.go`:101), and W1's `workspace member
+comment says so (`internal/projectpolicy/workspace_credentials.go`:113), and W1's `workspace member
 add` records no region for it to carry — so what this task ships is the shape a later task's publish
 fills, `database_region` included (spec.md §5 states the same gap). A member the table does not bind
 is refused at this front door, and
@@ -486,7 +486,7 @@ set is the member's own policy, the repository's own admission child and the mem
 compared is that slug against the repository the **calling job account** belongs to — the check the
 installation's own front door makes (`internal/credsvc/server.go`:737) — because a member's row names
 its job accounts and no repository (`WorkspaceCredentialMember`,
-`internal/projectpolicy/workspace_credentials.go`:115, `JobAccounts` at `:149`), so an account bound
+`internal/projectpolicy/workspace_credentials.go`:127, `JobAccounts` at `:161`), so an account bound
 to one of a member's repositories can present a run identity of another of them. The reach is bounded
 by the member's own lists (both legs are asked), and closing it is a **column** beside each job
 account — the pair `credsvc.JobAccount` already carries for the installation's own jobs — which is an
