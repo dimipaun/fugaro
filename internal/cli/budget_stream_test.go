@@ -191,6 +191,38 @@ func slugsOf(rows []budgetStreamRow) []string {
 	return out
 }
 
+// TestBudgetShowStreamKillRowAlwaysComes: the project's kill switch is a row of
+// the feed whether or not it is on. A row that vanished with the switch would
+// leave a consumer unable to tell a switch nobody fired from a feed that never
+// carried one -- and the feed would then have no row saying which is which.
+func TestBudgetShowStreamKillRowAlwaysComes(t *testing.T) {
+	f := budgetStreamFixture(t)
+	f.db.Set(budget.PathKillGlobal, nil)
+	f.db.Set(budget.PathKillRepo(appSlug), nil)
+
+	out, errOut, err := execute(t, "budget", "show", "--all", "--json", "--stream")
+	if err != nil {
+		t.Fatalf("budget show --stream: %v (%s)", err, errOut)
+	}
+	rows, feed := readBudgetFeed(t, out)
+	if len(rows) == 0 || rows[len(rows)-1].Slug != budgetKillRowSlug {
+		t.Fatalf("the feed's rows are %v, want the project's kill switch last:\n%s", slugsOf(rows), out)
+	}
+	last := rows[len(rows)-1]
+	var row struct {
+		Kill json.RawMessage `json:"kill"`
+	}
+	if err := json.Unmarshal(last.Raw, &row); err != nil {
+		t.Fatal(err)
+	}
+	if string(row.Kill) != "null" {
+		t.Errorf("a switch that is not on is carried as %s, want null:\n%s", row.Kill, last.Raw)
+	}
+	if feed.end == nil || feed.end.Count != len(rows) {
+		t.Errorf("the feed does not end over its rows: %+v", feed.end)
+	}
+}
+
 // TestBudgetShowStreamCompute: --compute means in the feed what it means in the
 // document. The figure is the repository row's own member, so a row drawn as it
 // arrives carries the compute of the day it was read on, null where the day
