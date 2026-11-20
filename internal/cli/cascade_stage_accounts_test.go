@@ -206,6 +206,7 @@ func TestClaudeAccountForSkipsTheProjectStageAccountsOfACascadeRun(t *testing.T)
 // whatever answers next in the launch.
 func TestARunOfACascadeRepositoryPrintsTheNote(t *testing.T) {
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	f.appendConfig(t, claudeAccountsConfig+"  acme-elsewhere:\n    allow_data_to: [\"acme/person-1\"]\n"+
 		"default_claude_account: acme-elsewhere\n"+
 		stagesBlock("review", "acme-elsewhere", "adversarial", "acme-personal"))

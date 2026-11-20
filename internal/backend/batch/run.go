@@ -29,15 +29,13 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	if spec.Repo.Slug == "" || spec.Workflow == "" || spec.RunID == "" {
 		return backend.ExecutionRef{}, notCreated(fmt.Errorf("launching: a run needs a repository slug, a workflow and a run id (got %q, %q, %q)", spec.Repo.Slug, spec.Workflow, spec.RunID))
 	}
-	if spec.Job != "" {
-		// A shared project job (phase 3, plan task 3.4 step 1) is a Cloud Run
-		// job the installation deploys per profile, with the profile's own
-		// account, secrets and limits. This backend builds a single-use job per
-		// run from the repository's own settings and has no counterpart for a
-		// profile yet, so running the per-repository job here would run the
-		// workflow as an identity the project's policy did not choose. Refused,
-		// not guessed at, until the compute backend learns project jobs.
-		return backend.ExecutionRef{}, notCreated(fmt.Errorf("launching %s/%s: the workflow runs on the project job %s, and Cloud Batch has no project jobs yet; nothing was created", spec.Repo.Slug, spec.Workflow, spec.Job))
+	// The account is asked for before the timeout, so a workflow on a project
+	// job is refused before anything else about the run is worked out -- the
+	// order this check has always had, and the one BR10's red step names
+	// (account.go).
+	account, err := b.jobAccount(spec)
+	if err != nil {
+		return backend.ExecutionRef{}, notCreated(err)
 	}
 	timeout, err := b.timeout(spec)
 	if err != nil {
@@ -45,7 +43,7 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	}
 	id := JobID(spec.Repo.Slug, spec.Workflow, spec.RunID)
 	full := b.location() + "/jobs/" + id
-	job, err := b.jobDefinition(spec, id, full, timeout)
+	job, err := b.jobDefinition(spec, id, full, timeout, account)
 	if err != nil {
 		return backend.ExecutionRef{}, notCreated(err)
 	}
@@ -85,10 +83,22 @@ func (b *Backend) timeout(spec backend.LaunchSpec) (time.Duration, error) {
 // jobDefinition is the Batch job of one run: a single-use job whose one task
 // is the run, on a VM of the installation's machine type booted from the
 // preloaded image, placed in the named network and subnetwork with no
-// external IP, running as the repository's dedicated service account, with
-// the VM's Docker socket mounted when the workflow asked for Docker (design
-// §2.2, §2.3, §2.4; §8.1 Task 7).
-func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeout time.Duration) (*batch.Job, error) {
+// external IP, running as the account the workflow's deployed job runs as,
+// with the VM's Docker socket mounted when the workflow asked for Docker
+// (design §2.2, §2.3, §2.4; §8.1 Task 7).
+//
+// **The definition is split along the seams of the identity work**, so that
+// the tasks that change what a run is told about itself each own a file
+// (batch-run-identity): the account a run's VMs run as (account.go, BR10), the
+// task's environment (env.go, BR8, which asks seal.go, BR1, what a secret
+// entry becomes) and the secrets the VM mounts (secrets.go, BR11). What
+// remains here is the shape of the job: the labels, the container's own recipe
+// and the fields that are the same for every run. The split changes nothing a
+// job built today contains, byte for byte (`TestTheSplitBuildsTheSameJob`),
+// and the order the pieces are asked in is the order this function has always
+// asked them in: the machine type and the docker recipe before the
+// environment, the environment before the secrets it is checked against.
+func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeout time.Duration, account string) (*batch.Job, error) {
 	labels, err := Labels(spec.Repo.Slug, spec.Workflow, spec.RunID)
 	if err != nil {
 		return nil, fmt.Errorf("launching %s: %w", full, err)
@@ -96,22 +106,6 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 	mt, err := MachineTypeOf(b.o.MachineType)
 	if err != nil {
 		return nil, fmt.Errorf("launching %s: %w", full, err)
-	}
-	vars := map[string]string{
-		// The run's own record, which the backend reports back as
-		// Execution.Run (a hint: anyone who can create the job can set it).
-		"FUGARO_RUN": spec.Repo.Slug + "/" + spec.RunID,
-		// The launcher's record of which backend it chose, which launch.json
-		// and the prices path read (design §2.5).
-		"FUGARO_BACKEND": backend.CloudBatch,
-		// Batch injects BATCH_TASK_INDEX/BATCH_TASK_COUNT but nothing that
-		// names the job, so the launcher writes the job's own name in: the
-		// codec's FromEnv reads it back (design §2.5). Launcher-forgeable,
-		// like FUGARO_RUN.
-		backend.BatchJobEnv:  full,
-		"FUGARO_PROJECT":     b.o.FugaroProject,
-		"FUGARO_GCP_PROJECT": b.o.GCPProject,
-		"FUGARO_REGION":      b.o.Region,
 	}
 	// The socket recipe (design §2.2, C2), and with it the docker tag's rule
 	// on this backend (D1149): the tag means a Docker daemon, and this is the
@@ -124,6 +118,11 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 	// needs either answer. They name both ways a run comes to need one,
 	// because which it was is what the operator changes.
 	container := &batch.Container{ImageUri: b.o.Image}
+	// socket is the VM's Docker socket as the container sees it, "" when the
+	// run asked for no daemon: the environment's DOCKER_HOST is built from it
+	// (env.go), so it has to leave this block the same way the container's own
+	// recipe does.
+	socket := ""
 	if spec.Docker {
 		d := b.o.Docker
 		if d.SocketGID == 0 {
@@ -140,79 +139,18 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 		p := d.path()
 		container.Volumes = []string{p + ":" + p}
 		container.Options = fmt.Sprintf("--group-add %d", d.SocketGID)
-		// The agent's own docker commands read this rather than a compiled-in
-		// default path (design §2.2, §4.3); it is allowlisted on the agent's
-		// side only for a run that has a socket.
-		vars["DOCKER_HOST"] = "unix://" + p
+		// The agent's own docker commands read the environment's DOCKER_HOST
+		// rather than a compiled-in default path (design §2.2, §4.3); it is
+		// allowlisted on the agent's side only for a run that has a socket.
+		socket = p
 	}
-	// The launch's own variables (the launcher's budget marker) land in the
-	// same map, which is the whole of the task's environment on the VM
-	// (design §2.2). The map is what makes the identity entries above
-	// reserved: a later write to a map key is what a run would believe about
-	// itself, so an entry naming one of them is refused rather than applied
-	// (backend.LaunchEnv, asked with every key this job already sets). The
-	// merge is after the Docker block so DOCKER_HOST is one of them.
-	//
-	// The platform's own five join those keys (backend.ReservedEnvNames), the
-	// same list Cloud Run hands the same function: four of them are map keys
-	// here and FUGARO_BUCKET is not — no Batch job writes the runs bucket, and
-	// this backend's launcher wiring is not built yet — so without the shared
-	// list an entry naming FUGARO_BUCKET would be the one way a launcher could
-	// choose which bucket a run writes to on this backend while Cloud Run
-	// refused it (the review finding on this change). Reserving a name the map
-	// does not hold costs a launcher nothing it was allowed to set: the bucket
-	// is the installation's configuration either way (backend.PlatformEnvNames).
-	reserved := make([]string, 0, len(vars)+len(backend.PlatformEnvNames)+1)
-	for name := range vars {
-		reserved = append(reserved, name)
-	}
-	// The catalog stamp joins them although no Batch job writes it: this
-	// backend applies every non-secret entry into the task's variables, which
-	// are the run's environment, so an entry naming it would tell a run its
-	// image came from the operator's catalog when it did not — and the runner
-	// reads exactly that name to decide whether the image's own variables reach
-	// the agent (docs/image-env, D1371). Reserving it is what keeps this
-	// backend's set the one Cloud Run asks for (backend.ImageEntryEnv).
-	reserved = append(reserved, backend.ImageEntryEnv)
-	reserved = backend.ReservedEnvNames(reserved...)
-	extra, err := backend.LaunchEnv(spec, reserved...)
+	// The task's whole environment: the run's identity, the launch's own
+	// variables and what a secret entry becomes (env.go, seal.go). It is
+	// asked for after the Docker block so DOCKER_HOST is one of the names the
+	// launched entries may not set.
+	vars, err := b.jobVariables(spec, full, socket)
 	if err != nil {
-		return nil, fmt.Errorf("launching %s: %w", full, err)
-	}
-	for _, kv := range extra {
-		if kv.Secret {
-			// A secret entry is the budget seal key (D15): the only place this
-			// backend could put it is the job definition's plain variables,
-			// which every launcher (roles/batch.jobsEditor on the Fugaro job
-			// prefix, compute/iam.tf) and the reaper (batch.jobs.get) can read
-			// back with `gcloud batch jobs describe`, for as long as the job is
-			// kept, and which may reach the CreateJob audit record — not a peer
-			// run (its account holds only agentReporter and logWriter). What
-			// that carrier adds is a standing copy in the job resource, and the
-			// reaper as a reader: the launchers are already in the Cloud Run
-			// override's audience in kind, and
-			// docs/design/budget-token-channel.md calls the seal itself "a
-			// capability, not a boundary: it removes the value of what a peer
-			// can reach; it does not narrow what a peer can reach".
-			//
-			// This refusal is the **answer** and not a waiting state (the
-			// compute backend plan's P1, 2026-10-19): the seal's carrier on
-			// Batch is a documented limit, because the one carrier this
-			// backend could use makes the key a standing copy in the job
-			// resource and widens its audience to the reaper, and the only
-			// other one the design allows is its rejected C2 (a per-run Secret
-			// Manager secret on a shared per-(profile, account) account). So
-			// Batch carries no sealed budget run. **A launch is sealed
-			// whenever its installation mints** (internal/cli/launch_budget.go's
-			// budgetMintOn), and an installation has one backend, so this is
-			// not a per-run fallback: an installation that mints budget tokens
-			// cannot launch any run on Batch. The message below says all of
-			// that to the operator, and it never quotes the value
-			// (LaunchSpec.SecretEnv's own contract: the value leaves the
-			// launcher once, as the execution's override member).
-			return nil, fmt.Errorf("launching %s: the launch carries %s as a secret (the budget token's seal key), and a Batch job has no per-execution override: its variables are the job's definition, which every launcher the Fugaro job-name condition admits and the reaper can read back for as long as the job is kept, so the key is not put there and nothing was created; this refusal is deliberate, and it is the documented limit (docs/design/budget-token-channel.md, \"The Batch backend refuses a sealed launch\"): every launch of an installation that mints is sealed, so an installation that mints budget tokens — a budget database with budget mode on, or a published policy — cannot launch any run on Batch, and such an installation has to stay on backend: cloud-run", full, kv.Name)
-		}
-		vars[kv.Name] = kv.Value
+		return nil, err
 	}
 	// The other fast start, and the one a Docker run cannot have: with
 	// streaming on Batch disregards container.options (design §1.2, §2.2).
@@ -222,26 +160,11 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 	// Batch. maxRunDuration bounds a task once it is running; nothing bounds
 	// the queue, which is the reaper's queue deadline (design §1.4).
 	env := &batch.Environment{Variables: vars}
-	if len(b.o.Secrets) > 0 {
-		// Names, never values: the VM reads the named secrets itself.
-		//
-		// A secret may not also be one of the job's own variables. Both fields
-		// are one env map on the VM, so a name in both leaves which entry wins
-		// to the platform -- and the entries in `vars` are how the job tells
-		// the runner which run it is, which backend it is on and which project
-		// it is in (§2.1, §2.5). A run whose FUGARO_RUN came from a secret
-		// would be a run the launcher could not find again.
-		secretNames := make([]string, 0, len(b.o.Secrets))
-		for name := range b.o.Secrets {
-			secretNames = append(secretNames, name)
-		}
-		sort.Strings(secretNames)
-		for _, name := range secretNames {
-			if _, ok := vars[name]; ok {
-				return nil, fmt.Errorf("launching %s: the secret %s is also one of the job's own environment variables, and the job's value is the one the run reads its own identity and configuration from (design §2.1, §2.5): refusing rather than leaving which entry wins to the platform", full, name)
-			}
-		}
-		env.SecretVariables = b.o.Secrets
+	// Names, never values: the VM reads the named secrets itself, and secrets.go
+	// is what mounts them (and what refuses a name the job's own variables
+	// already carry).
+	if err := b.secretVariables(env, full); err != nil {
+		return nil, err
 	}
 	return &batch.Job{
 		// The labels go in both fields (C13): Job.labels reach the job and
@@ -265,8 +188,10 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 					},
 				},
 			}},
-			// Never the default Compute Engine account: New refuses it.
-			ServiceAccount: &batch.ServiceAccount{Email: b.o.ServiceAccount},
+			// Never the default Compute Engine account: New refuses it. Which
+			// account it is -- the workflow's deployed job's, or the block's
+			// single one today -- is account.go's answer, asked in Launch.
+			ServiceAccount: &batch.ServiceAccount{Email: account},
 			// The VMs carry no external IP (design §1.7, C7). Both names are
 			// sent because Check 57a measured that Batch refuses
 			// noExternalIpAddress unless the network and the subnetwork are

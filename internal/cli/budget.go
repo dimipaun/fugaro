@@ -352,6 +352,10 @@ type budgetShowOptions struct {
 	// compute asks for each repository's compute dollars, which are read from
 	// the runs bucket's own records: the database holds no compute at all.
 	compute bool
+	// stream prints the caps listing as newline-delimited JSON -- one line per
+	// repository and per kill switch, then the line that ends the feed --
+	// instead of as one document (D2906, O3).
+	stream bool
 }
 
 func newBudgetShowCmd() *cobra.Command {
@@ -376,7 +380,17 @@ func newBudgetShowCmd() *cobra.Command {
 			"leaves it off. The figure is an estimate by design, priced from each run's\n" +
 			"own price table, and covers the runs that started today and recorded a\n" +
 			"result: a run still in flight has recorded none, so today's is partial, and\n" +
-			"a repository whose runs recorded no estimate is null, never 0.",
+			"a repository whose runs recorded no estimate is null, never 0.\n\n" +
+			"--stream, with --json, prints the caps listing as newline-delimited JSON instead\n" +
+			"of as one document: a line per repository, each carrying one element of the\n" +
+			"document's repos array unchanged under `row`, then the project's kill switch as\n" +
+			"a row of its own, then a line saying how many rows the feed carried (`end`). A\n" +
+			"consumer draws the caps table as its lines arrive rather than holding the whole\n" +
+			"document, and a feed with no end line is a read that was interrupted. A feed\n" +
+			"that stopped after its first line writes an `error` line with the sentence the\n" +
+			"command would have printed, and exits non-zero. --repo, --all and --compute mean\n" +
+			"here what they mean without it, so the feed carries the rows of the listing they\n" +
+			"ask for.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetShow(cmd, &o) },
 	}
@@ -384,6 +398,7 @@ func newBudgetShowCmd() *cobra.Command {
 	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.all, "all", false, "every repository in the database")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
+	f.BoolVar(&o.stream, "stream", false, "with --json: one line per repository and per kill switch, then a line saying how many there were")
 	f.BoolVar(&o.compute, "compute", false, "also read each repository's compute dollars from the runs bucket (an estimate; null and n/a where the day's runs recorded none)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
@@ -572,6 +587,12 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 	if o.repo != "" && o.all {
 		return userErr("--repo and --all don't go together")
 	}
+	// The feed is JSON lines -- one element of --json's repos array per line --
+	// so --stream without --json would be a listing in a shape the flag does
+	// not write.
+	if o.stream && !o.json {
+		return userErr("--stream needs --json: the feed is JSON lines, one per repository and per kill switch")
+	}
 	var err error
 	if o.repo, err = repoArg(ctx, o.cloud, o.repo); err != nil {
 		return err
@@ -750,6 +771,13 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 		}
 		doc.Repos = append(doc.Repos, rs)
 		listed++
+	}
+	// The feed carries the rows and the project's kill switch and nothing else:
+	// the warnings below are readings of the whole listing (a repository the
+	// document does not name, counters that do not add up), and RS1's end line
+	// has no room for them, so a consumer that needs them reads the document.
+	if o.stream {
+		return streamBudgetRows(cmd.OutOrStdout(), doc.Repos, doc.Global.Kill)
 	}
 	if !o.all && o.repo == "" {
 		all := map[string]bool{}

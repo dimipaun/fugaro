@@ -46,14 +46,14 @@ import (
 // thing the test below asserts about it is the direction the route takes.
 var errCoverageUnreadable = errors.New("credsvc test: the coverage could not be read")
 
-// wsScope is a workspace's scope for the mint's tests: the caller's own
+// ghWsScope is a workspace's scope for the mint's tests: the caller's own
 // installation-side resolution — which is what verifies the two identities and
 // makes the pairing, so that nothing in these tests is served an identity the
 // deployment would not have verified — with the three answers a workspace's
 // deployment differs in written by the test: the table a slug is resolved
 // through, the forge coverage, and the policy a context repository is admitted
 // by.
-type wsScope struct {
+type ghWsScope struct {
 	Scope
 	repos  map[string]string
 	forge  ForgeReader
@@ -63,95 +63,95 @@ type wsScope struct {
 // Repos is the CALLING job account's own repositories and no other's: the
 // narrowing a workspace's table is (C1's Repos), which is why the test writes
 // it per call rather than leaving it to the deployment.
-func (sc wsScope) Repos() map[string]string { return sc.repos }
+func (sc ghWsScope) Repos() map[string]string { return sc.repos }
 
-func (sc wsScope) Forge() ForgeReader { return sc.forge }
+func (sc ghWsScope) Forge() ForgeReader { return sc.forge }
 
-func (sc wsScope) Policy() PolicyReader { return sc.policy }
+func (sc ghWsScope) Policy() PolicyReader { return sc.policy }
 
 // Serves is held to the two routes these tests reach: a workspace serves a
 // run's own token mint and its context tokens, and refuses everything else
 // (R14, D2988 — the read mints, the merge mint and the label and issue routes
 // stay installation-only). The rest of that set is WS2's and is not pinned
 // here.
-func (sc wsScope) Serves(path string) bool {
+func (sc ghWsScope) Serves(path string) bool {
 	return path == MintPath || path == ContextTokenPath
 }
 
 // AcceptsSlip is false, and that is a workspace's answer rather than this
 // fixture's convenience (R18): a member's call carries the job's identity and
 // the run's token and nothing else of the member's.
-func (sc wsScope) AcceptsSlip() bool { return false }
+func (sc ghWsScope) AcceptsSlip() bool { return false }
 
-// wsResolver serves every call of one workspace, over the installation's own
+// ghWsResolver serves every call of one workspace, over the installation's own
 // resolver: what it replaces is the three answers above and nothing else, so
 // the identity a test presents is verified from the request exactly as the
 // deployment verifies it.
-type wsResolver struct {
+type ghWsResolver struct {
 	inner  ScopeResolver
 	repos  map[string]string
 	forge  ForgeReader
 	policy PolicyReader
 }
 
-func (r wsResolver) Resolve(ctx context.Context, req *http.Request) (Scope, error) {
+func (r ghWsResolver) Resolve(ctx context.Context, req *http.Request) (Scope, error) {
 	sc, err := r.inner.Resolve(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return wsScope{Scope: sc, repos: r.repos, forge: r.forge, policy: r.policy}, nil
+	return ghWsScope{Scope: sc, repos: r.repos, forge: r.forge, policy: r.policy}, nil
 }
 
-// wsForge is a workspace's forge reader for these tests: the coverage the
+// ghWsForge is a workspace's forge reader for these tests: the coverage the
 // workspace owner's declaration names for the calling job account, written out
 // as a set — and Bitbucket nil, which is a workspace's answer for the token
 // store this route never reads (C1's rule 10).
-type wsForge struct {
+type ghWsForge struct {
 	covers map[string]bool
 	err    error
 }
 
-func (f wsForge) Bitbucket() bbtokens.Selector { return nil }
+func (f ghWsForge) Bitbucket() bbtokens.Selector { return nil }
 
-func (f wsForge) Covers(_ context.Context, canonical string) (bool, error) {
+func (f ghWsForge) Covers(_ context.Context, canonical string) (bool, error) {
 	if f.err != nil {
 		return false, f.err
 	}
 	return f.covers[canonical], nil
 }
 
-// wsCovering is the coverage a workspace owner's declaration leaves behind,
+// ghWsCovering is the coverage a workspace owner's declaration leaves behind,
 // spelled as the canonical names it names.
-func wsCovering(repos ...string) wsForge {
+func ghWsCovering(repos ...string) ghWsForge {
 	covers := make(map[string]bool, len(repos))
 	for _, repo := range repos {
 		covers[repo] = true
 	}
-	return wsForge{covers: covers}
+	return ghWsForge{covers: covers}
 }
 
-// wsTable is the table a workspace's scope answers for a caller of one
+// ghWsTable is the table a workspace's scope answers for a caller of one
 // repository: the calling job account's own repository, keyed the way every
 // table is — the run identity's slug to the canonical name.
-func wsTable(t *testing.T, canonical string) map[string]string {
+func ghWsTable(t *testing.T, canonical string) map[string]string {
 	t.Helper()
 	return map[string]string{testSlug(t, strings.TrimPrefix(canonical, "github/")): canonical}
 }
 
-// wsMintSvc is a mint fixture served as a workspace's: mintSvc with a scope of
+// ghWsMintSvc is a mint fixture served as a workspace's: mintSvc with a scope of
 // this file's on the front door, so the caller is the fixture's own run of the
 // repository the table names.
-func wsMintSvc(t *testing.T, repos map[string]string, forge ForgeReader, policy PolicyReader, mutate func(*svc, *Config)) (*svc, *ghFake) {
+func ghWsMintSvc(t *testing.T, repos map[string]string, forge ForgeReader, policy PolicyReader, mutate func(*svc, *Config)) (*svc, *ghFake) {
 	t.Helper()
 	s, gh := mintSvc(t, mutate)
-	s.server.resolver = wsResolver{inner: installationResolver{s: s.server}, repos: repos, forge: forge, policy: policy}
+	s.server.resolver = ghWsResolver{inner: installationResolver{s: s.server}, repos: repos, forge: forge, policy: policy}
 	return s, gh
 }
 
-// wsPolicy is a workspace scope's policy reader: the member's published policy,
+// ghWsPolicy is a workspace scope's policy reader: the member's published policy,
 // which is the only list a context repository of that member's run is admitted
 // by.
-func wsPolicy(t *testing.T, doc string) *fakePolicy {
+func ghWsPolicy(t *testing.T, doc string) *fakePolicy {
 	t.Helper()
 	return &fakePolicy{shared: decodeTestPolicy(t, doc), sharedFound: true}
 }
@@ -194,7 +194,7 @@ func twoMemberAuth(t *testing.T, s *svc) *Authenticator {
 // credential on.
 func TestWorkspaceMintServesOnlyACoveredRepository(t *testing.T) {
 	t.Run("a covered repository is served", func(t *testing.T) {
-		s, gh := wsMintSvc(t, wsTable(t, testRepo), wsCovering(testRepo), wsPolicy(t, testPolicyDoc()), nil)
+		s, gh := ghWsMintSvc(t, ghWsTable(t, testRepo), ghWsCovering(testRepo), ghWsPolicy(t, testPolicyDoc()), nil)
 		resp, body := s.mintCall(t, mintBody(testAppID))
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
@@ -214,7 +214,7 @@ func TestWorkspaceMintServesOnlyACoveredRepository(t *testing.T) {
 		// table the covered half serves — and the owner's coverage names
 		// ANOTHER repository, which is what a workspace whose declaration does
 		// not reach this member's repository looks like.
-		s, gh := wsMintSvc(t, wsTable(t, testRepo), wsCovering(testOtherRepo), wsPolicy(t, testPolicyDoc()), nil)
+		s, gh := ghWsMintSvc(t, ghWsTable(t, testRepo), ghWsCovering(testOtherRepo), ghWsPolicy(t, testPolicyDoc()), nil)
 		resp, body := s.mintCall(t, mintBody(testAppID))
 		if resp.StatusCode != StatusUnavailable {
 			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
@@ -244,8 +244,8 @@ func TestWorkspaceMintServesOnlyACoveredRepository(t *testing.T) {
 	})
 
 	t.Run("a coverage that could not be read is refused", func(t *testing.T) {
-		forge := wsForge{err: errCoverageUnreadable}
-		s, gh := wsMintSvc(t, wsTable(t, testRepo), forge, wsPolicy(t, testPolicyDoc()), nil)
+		forge := ghWsForge{err: errCoverageUnreadable}
+		s, gh := ghWsMintSvc(t, ghWsTable(t, testRepo), forge, ghWsPolicy(t, testPolicyDoc()), nil)
 		resp, body := s.mintCall(t, mintBody(testAppID))
 		if resp.StatusCode != StatusUnavailable {
 			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
@@ -275,7 +275,7 @@ func TestARepositoryNamedOnlyByTheMemberIsRefusedAMint(t *testing.T) {
 	// The member's own policy admits BOTH repositories — the one the run is
 	// paired with and the one the owner's coverage names — so a mint that read
 	// this list would have something to admit the call with.
-	s, gh := wsMintSvc(t, wsTable(t, testRepo), wsCovering(testOtherRepo), wsPolicy(t, testPolicyDoc()), nil)
+	s, gh := ghWsMintSvc(t, ghWsTable(t, testRepo), ghWsCovering(testOtherRepo), ghWsPolicy(t, testPolicyDoc()), nil)
 	if !projectpolicy.AdmitRepo(s.policy.shared.AllowRepos, testRepo) {
 		t.Fatal("the fixture's own policy does not admit the repository under test, so this test could not tell which fence refused the call")
 	}
@@ -306,7 +306,7 @@ func TestARepositoryNamedOnlyByTheMemberIsRefusedAMint(t *testing.T) {
 // was read rather than about a repository the workspace cannot serve at all.
 func TestAnotherMembersRepositoryIsRefusedAMint(t *testing.T) {
 	t.Run("a member's run is not minted for another member's repository", func(t *testing.T) {
-		s, gh := wsMintSvc(t, wsTable(t, testRepo), wsCovering(testOtherRepo), wsPolicy(t, testPolicyDoc()), nil)
+		s, gh := ghWsMintSvc(t, ghWsTable(t, testRepo), ghWsCovering(testOtherRepo), ghWsPolicy(t, testPolicyDoc()), nil)
 		resp, body := s.mintCall(t, mintBody(testAppID))
 		if resp.StatusCode != StatusUnavailable {
 			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
@@ -326,11 +326,11 @@ func TestAnotherMembersRepositoryIsRefusedAMint(t *testing.T) {
 		// table and the coverage that member's own declaration leaves behind.
 		otherSlug := testSlug(t, testOtherRepoPath)
 		s, gh := mintSvc(t, func(sv *svc, cfg *Config) { cfg.Auth = twoMemberAuth(t, sv) })
-		s.server.resolver = wsResolver{
+		s.server.resolver = ghWsResolver{
 			inner:  installationResolver{s: s.server},
 			repos:  map[string]string{otherSlug: testOtherRepo},
-			forge:  wsCovering(testOtherRepo),
-			policy: wsPolicy(t, testPolicyDoc()),
+			forge:  ghWsCovering(testOtherRepo),
+			policy: ghWsPolicy(t, testPolicyDoc()),
 		}
 		other := s.runToken(func(c map[string]any) {
 			c["fs"] = otherSlug
@@ -376,11 +376,11 @@ func TestWorkspaceContextTokensAreFenced(t *testing.T) {
 		s, _ := contextSvc(t, func(sv *svc, _ *Config) {
 			sv.policy.shared = decodeTestPolicy(t, narrowDoc)
 		})
-		s.server.resolver = wsResolver{
+		s.server.resolver = ghWsResolver{
 			inner:  installationResolver{s: s.server},
-			repos:  wsTable(t, testRepo),
-			forge:  wsCovering(testRepo, contextRepo),
-			policy: wsPolicy(t, memberPolicy),
+			repos:  ghWsTable(t, testRepo),
+			forge:  ghWsCovering(testRepo, contextRepo),
+			policy: ghWsPolicy(t, memberPolicy),
 		}
 		resp, body := s.contextCall(t, []string{contextRepo}, contextBody(contextRepo))
 		if resp.StatusCode != http.StatusOK {
@@ -396,11 +396,11 @@ func TestWorkspaceContextTokensAreFenced(t *testing.T) {
 		if !projectpolicy.AdmitRepo(s.policy.shared.AllowRepos, testOtherRepo) {
 			t.Fatal("the fixture's own policy does not admit the repository under test, so this test could not tell which reader refused the call")
 		}
-		s.server.resolver = wsResolver{
+		s.server.resolver = ghWsResolver{
 			inner:  installationResolver{s: s.server},
-			repos:  wsTable(t, testRepo),
-			forge:  wsCovering(testRepo, contextRepo),
-			policy: wsPolicy(t, narrowDoc),
+			repos:  ghWsTable(t, testRepo),
+			forge:  ghWsCovering(testRepo, contextRepo),
+			policy: ghWsPolicy(t, narrowDoc),
 		}
 		resp, body := s.contextCall(t, []string{contextRepo}, contextBody(contextRepo))
 		if resp.StatusCode != StatusRequestRefused {
@@ -417,11 +417,11 @@ func TestWorkspaceContextTokensAreFenced(t *testing.T) {
 
 	t.Run("the claim is still the boundary", func(t *testing.T) {
 		s, _ := contextSvc(t, nil)
-		s.server.resolver = wsResolver{
+		s.server.resolver = ghWsResolver{
 			inner:  installationResolver{s: s.server},
-			repos:  wsTable(t, testRepo),
-			forge:  wsCovering(testRepo, contextRepo),
-			policy: wsPolicy(t, memberPolicy),
+			repos:  ghWsTable(t, testRepo),
+			forge:  ghWsCovering(testRepo, contextRepo),
+			policy: ghWsPolicy(t, memberPolicy),
 		}
 		// The claim names the run's OWN repository, and the call asks for
 		// another one the member's policy does admit: naming a repository is

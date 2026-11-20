@@ -914,8 +914,9 @@ func TestHaltedRecordSchema(t *testing.T) {
 // or its transcript. (The API key is not secret but is redacted like one.)
 func TestBudgetSecretScan(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "", capScript(2)...)
-	// Real values from the job's environment, as on Cloud Run.
-	b.deps.Env = append(b.deps.Env, runner.RTDBURLEnv+"="+b.db.URL, runner.FirebaseAPIKeyEnv+"="+bkAPIKey)
+	// The job's environment carries the run's Firebase identity, as on Cloud
+	// Run: the harness's budget database is where the run's address and web
+	// API key come from (testutil.NewBudget).
 	custom := func() string {
 		objs := allObjects(t, b.harness.bucket)
 		tok, err := token.Unseal(b.key, token.ObjectKey(repoSlug, runID), []byte(objs[token.ObjectKey(repoSlug, runID)]))

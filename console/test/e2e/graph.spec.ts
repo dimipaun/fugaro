@@ -137,6 +137,14 @@ const RUNS: readonly string[] = Object.freeze([
   '20261027-030000-aa05',
 ])
 
+/** NARROW_WINDOW is the width a case takes the console's window down to when it
+ * wants the canvas pane **under** the picture's own floor: 780 px is well below
+ * the 1180 px the console opens at, and the pane under it -- the window less the
+ * page's own 32 px at each side -- is under the 771 px the committed document's
+ * picture carries at `GRAPH_MIN_SCALE` (the reading asserts that it is, rather
+ * than trusting this number). */
+const NARROW_WINDOW = 780
+
 /** THE_MOUNT is where the golden describe draws the screen, and therefore what
  * its goldens frame: the mount and never the page (see the header). */
 const THE_MOUNT = '#graph-mount'
@@ -355,6 +363,62 @@ async function strokeDash(page: Page, selector: string): Promise<string> {
  * mark is drawn with has come to rest. */
 async function strokeOffset(page: Page, selector: string): Promise<string> {
   return page.locator(selector).first().evaluate((element) => getComputedStyle(element).strokeDashoffset)
+}
+
+/** PaneReading is what the canvas pane's own box says about scrolling across:
+ * the width it has, the width its content wants, the width the canvas is
+ * actually drawn at, and the picture's own **floor** (`GRAPH_MIN_SCALE`'s width,
+ * which the canvas carries as its `width` attribute). Only a browser computes
+ * any of the four, and the fourth is what makes a reading say whether the pane
+ * is *under* the floor -- the one pane where the stylesheet's answer is the
+ * change rather than the behaviour it replaced. */
+interface PaneReading {
+  readonly clientWidth: number
+  readonly scrollWidth: number
+  readonly canvasWidth: number
+  readonly floor: number
+  readonly overflowX: string
+}
+
+/** paneReading reads the canvas pane, or `null` where the screen drew none --
+ * which is a claim of its own (the list has no picture to scroll), and never a
+ * reading a case may take as zero. */
+async function paneReading(page: Page): Promise<PaneReading | null> {
+  return page.evaluate(() => {
+    const pane = document.querySelector('div.graph-canvas-pane')
+    const canvas = document.querySelector('section.graph svg.graph-canvas')
+    if (pane === null || canvas === null) return null
+    return {
+      clientWidth: pane.clientWidth,
+      scrollWidth: pane.scrollWidth,
+      canvasWidth: canvas.getBoundingClientRect().width,
+      floor: Number(canvas.getAttribute('width')),
+      overflowX: getComputedStyle(pane).overflowX,
+    }
+  })
+}
+
+/** windowWidth is the console window's own width, which only the main process
+ * knows: Playwright's viewport in an Electron app is the window's, and it is not
+ * the side that moves. */
+function windowWidth(app: ElectronApplication): Promise<number> {
+  return app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    if (window === undefined) throw new Error('the console has no window')
+    return window.getSize()[0] ?? 0
+  })
+}
+
+/** resizeWindow takes the console's window to `width` and leaves its height
+ * alone. `BrowserWindow.setSize` is the main process's own door and the only one
+ * a spec has to a window narrower than the console opens in. */
+async function resizeWindow(app: ElectronApplication, width: number): Promise<void> {
+  await app.evaluate(({ BrowserWindow }, wanted) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    if (window === undefined) throw new Error('the console has no window')
+    const [, height = 0] = window.getSize()
+    window.setSize(wanted, height)
+  }, width)
 }
 
 /** COMET, PULSE and FLOW are the three marks GV2.4's motion is drawn on: the
@@ -650,6 +714,86 @@ test.describe('the graph view in a window', () => {
       const mine = streams.get(plan ?? '') ?? ''
       const holders = reading.bands.filter((band) => band.box !== null && card.box !== null && holds(band.box, card.box))
       expect(holders.map((band) => band.stream), `${card.key} is inside its plan's own band`).toEqual([mine])
+    }
+  })
+
+  test('never scrolls across, and draws the picture at the pane’s own width', async () => {
+    // **The picture never scrolls sideways** (D2900's second half). The layout is
+    // top to bottom and a level wider than a row is stacked into rows of four, so
+    // the picture grows downward -- the page around the pane is what carries it
+    // down, the pane's own height being unbounded -- and where the pane is
+    // narrower than the picture's own floor the canvas is drawn at the pane's
+    // width and scaled with it rather than held at a width the reader has to
+    // scroll to. The claim is the pane's own box, which only a browser computes:
+    // `scrollWidth` is the width the pane's content wants, `clientWidth` the
+    // width it has, and the canvas's box the width the picture is drawn at.
+    //
+    // **Only a pane *under* the picture's floor tells this stylesheet from the
+    // one it replaced**, which held the canvas at its floor (`min-width: 100%`
+    // over the `width` attribute) and scrolled the pane across the rest of it.
+    // Everywhere else both rules draw the canvas at the pane's width and both
+    // boxes agree, so a reading taken there would pass on the old stylesheet too
+    // and pin nothing. Two widths are therefore read, and the case **asserts
+    // which one it is reading**: at the console's own width the pane is at or
+    // above the floor, and then the window -- which only the main process can
+    // move -- is taken under it, where the canvas has to be the pane's own width
+    // and the two boxes have to agree within the pixel a fractional width rounds
+    // in.
+    const atRest = await paneReading(page)
+    expect(atRest, 'the screen drew no canvas pane, so this case would read nothing').not.toBeNull()
+    const resting = atRest as PaneReading
+    expect(resting.overflowX, 'the pane still offers a scrollbar across').toBe('hidden')
+    expect(
+      resting.clientWidth,
+      'the console’s own pane is under the floor, so this reading is not the one the comment describes',
+    ).toBeGreaterThanOrEqual(resting.floor)
+    expect(resting.scrollWidth, 'the pane scrolls across at the console’s own width').toBeLessThanOrEqual(
+      resting.clientWidth,
+    )
+    expect(
+      Math.abs(resting.canvasWidth - resting.clientWidth),
+      'the canvas is not the pane’s own width at the console’s own width',
+    ).toBeLessThanOrEqual(1)
+
+    const opened = await windowWidth(app)
+    await resizeWindow(app, NARROW_WINDOW)
+    try {
+      await expect
+        .poll(async () => (await paneReading(page))?.clientWidth ?? 0, {
+          timeout: 15_000,
+          message: 'the window never narrowed, so the pane was never taken under the floor',
+        })
+        .toBeLessThan(resting.clientWidth)
+      const narrowedPane = await paneReading(page)
+      expect(narrowedPane, 'the pane went out with the window').not.toBeNull()
+      const narrowed = narrowedPane as PaneReading
+      expect(
+        narrowed.clientWidth,
+        'the pane is still at or above the picture’s floor, so the old stylesheet would pass this reading too',
+      ).toBeLessThan(narrowed.floor)
+      expect(narrowed.overflowX, 'the pane offers a scrollbar across under the floor').toBe('hidden')
+      expect(narrowed.scrollWidth, 'the pane scrolls across under the floor').toBeLessThanOrEqual(narrowed.clientWidth)
+      expect(
+        narrowed.canvasWidth,
+        'the canvas is held at its floor instead of drawn at the pane’s width',
+      ).toBeLessThan(narrowed.floor)
+      expect(
+        Math.abs(narrowed.canvasWidth - narrowed.clientWidth),
+        'the canvas is not the pane’s own width under the floor',
+      ).toBeLessThanOrEqual(1)
+    } finally {
+      // The window is the file's, not this case's: every case after this one
+      // reads the same pane, so it goes back to the width it opened at and the
+      // case waits for the pane to say so. The tolerance is the scrollbar a page
+      // that scrolls may or may not give back, and it is far under the gap a
+      // window left at `NARROW_WINDOW` would leave.
+      await resizeWindow(app, opened)
+      await expect
+        .poll(async () => (await paneReading(page))?.clientWidth ?? 0, {
+          timeout: 15_000,
+          message: 'the window never came back to the width it opened at',
+        })
+        .toBeGreaterThan(resting.clientWidth - 20)
     }
   })
 
