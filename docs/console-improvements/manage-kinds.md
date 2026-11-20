@@ -23,6 +23,16 @@ A `ManageRow` is a `key` (the row's identity among the rows of one read) and `ce
 the column's `key`. There is no separate status member: "status" in the spec's list view is a column like any other,
 so a kind that has one names it in `columns`.
 
+**A cell the document holds no value for is the empty string, and it is drawn as nothing** -- never as the console's
+mark and never as a word. The mark (`n/a`, `availability.ts`) is the console's answer to a value it could not *read*,
+and an empty cell is not that: the document answered, and its answer is that it holds no value there. A column's class
+is the class of the value it holds, and the classes that read a value (`repoPattern`, `repository`) refuse an empty
+string, so a shell that handed one to its class would draw a refusal where there is nothing to refuse. The CLI prints a
+word of its own for the same state in its own table ("not admitted"); that word is the CLI's rendering of an empty
+cell, not a value of the document, and it stays there. `repos.ts`'s two enrolment halves are the case: the allow-list
+entry that admits a repository and the config key this machine holds it under, each an empty cell where the document
+has none.
+
 **A row may carry `actions` of its own** (`ManageRow.actions`, added by MO-C), and it is `optional` for the reason the
 kind's own list is not: the command D2903 puts on the clipboard names the row it came from -- `fugaro project repos rm
 github/acme/app` is one repository's -- and that value is a value of that row's document, which only the kind holds. A

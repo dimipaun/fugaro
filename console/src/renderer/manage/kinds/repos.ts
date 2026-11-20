@@ -15,15 +15,22 @@
 // anyway: the listing is what they browse and the status is what they read when
 // a run will not start.
 //
-// **The cells are the CLI's own words.** Every folded cell below ("none", "not
-// admitted", "not in this machine's config", the four image sentences) is the
-// sentence `internal/cli/project_repos_ls.go` prints for the same member, and
-// the column is filled with it rather than with a value the console composed:
-// an operator reading the console and an operator reading `fugaro project repos
-// ls` are looking at the same repository, and two vocabularies for one fact
-// would make them compare screens instead of states. `manage-code.test.ts` reads
-// that file as text and holds each of these phrases to it, so a rewording in the
-// CLI is a failing test here rather than a drift nobody sees.
+// **The cells are the CLI's own words.** Every folded cell below ("none", the
+// four image sentences) is the sentence `internal/cli/project_repos_ls.go`
+// prints for the same member, and the column is filled with it rather than with
+// a value the console composed: an operator reading the console and an operator
+// reading `fugaro project repos ls` are looking at the same repository, and two
+// vocabularies for one fact would make them compare screens instead of states.
+// `manage-code.test.ts` reads that file as text and holds each of these phrases
+// to it, so a rewording in the CLI is a failing test here rather than a drift
+// nobody sees.
+//
+// What is *not* folded is what the document holds as a **value**: a repository's
+// published and local halves are the allow-list entry and the config key the
+// document spells (`REPOS_COLUMNS`), each under the class of the shape it has,
+// because a column has one class and those two are classes of a value. The CLI's
+// word for an absent half ("not admitted", "not in this machine's config") is the
+// CLI's own way of printing an empty cell, and the class could not hold it.
 //
 // **The two Copy-commands, and why their sentences are computed here.** D2903
 // keeps `repos add` and `repos rm` out of the console and gives the operator the
@@ -282,19 +289,29 @@ function reposListCell(values: readonly string[]): string {
   return values.length === 0 ? 'none' : values.join(', ')
 }
 
-/** reposPublishedCell is a row's published half: the entry that admits it, or
- * the CLI's word for an allow-list that does not. */
+/** reposPublishedCell is a row's published half: the allow-list entry that
+ * admits it, and nothing where none does. The entry is the document's value and
+ * the cell is that value -- `github/acme/*` as readily as a concrete name -- so
+ * the column carries the entry's own class (`repoPattern`, the class the
+ * repository column declares). The CLI's table says `not admitted` where the
+ * allow-list names nothing, and that word cannot be this cell: the column's
+ * class reads a repository pattern, so it would refuse the word, and a column
+ * whose cells are words is a column no class of the entry can belong to. An
+ * empty half is drawn as nothing (`REPOS_COLUMNS`). */
 function reposPublishedCell(published: JsonObject | null): string {
-  if (published === null || !boolAt(published, 'admitted')) return 'not admitted'
-  return textAt(published, 'pattern') || 'not admitted'
+  if (published === null || !boolAt(published, 'admitted')) return ''
+  return textAt(published, 'pattern')
 }
 
 /** reposLocalCell is a row's local half: the key this machine's config holds the
- * repository under, or the CLI's word for a machine that does not hold it. */
+ * repository under, and nothing where it does not hold it. The CLI renders the
+ * same member as a config line (`repos: <key>`, `reposLsLocalCell`); that prefix
+ * is the CLI's own spelling of a line in a file and not a value, so the cell
+ * here is the key itself, under the class of the shape the key has
+ * (`repository`: `owner/name`, which is what the contract's `local.key` is). */
 function reposLocalCell(local: JsonObject | null): string {
-  if (local === null || !boolAt(local, 'present')) return "not in this machine's config"
-  const key = textAt(local, 'key')
-  return key === '' ? "not in this machine's config" : `repos: ${key}`
+  if (local === null || !boolAt(local, 'present')) return ''
+  return textAt(local, 'key')
 }
 
 /** reposRowActions is one repository's two Copy-commands, and each is dropped
@@ -332,7 +349,10 @@ function reposRowActions(canonical: string, allow: readonly string[]): readonly 
  * its enrolment. The two halves are two columns and never one word (D2409): a
  * repository the allow-list admits that this machine has never configured is a
  * different state from one configured here the list does not admit -- the first
- * runs, the second does not. */
+ * runs, the second does not. Each half's cell is the value the document holds
+ * and nothing where it holds none, because each column has one class and these
+ * two are classes of a value (a pattern, a key): an absent half is an empty
+ * cell, which the shell draws as nothing rather than as a mark. */
 export const REPOS_COLUMNS: readonly ManageColumn[] = Object.freeze([
   { key: 'repo', title: 'Repository', class: 'repoPattern' },
   { key: 'provider', title: 'Provider', class: 'label' },
@@ -340,8 +360,8 @@ export const REPOS_COLUMNS: readonly ManageColumn[] = Object.freeze([
   { key: 'image', title: 'Image', class: 'label' },
   { key: 'workflows', title: 'Workflows', class: 'label' },
   { key: 'accounts', title: 'Claude accounts', class: 'label' },
-  { key: 'published', title: 'Published', class: 'label' },
-  { key: 'local', title: 'This machine', class: 'label' },
+  { key: 'published', title: 'Published', class: 'repoPattern' },
+  { key: 'local', title: 'This machine', class: 'repository' },
 ])
 
 /** reposKind decodes `repos.ls` (contract section 6.27): the document's own

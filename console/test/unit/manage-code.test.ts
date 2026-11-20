@@ -14,11 +14,16 @@
 //     operations, and a build without them answers the gap whose sentence the
 //     section draws beside RB1's Retry.
 //   - the cells are the CLI's own words. Every folded cell of the repositories
-//     table ("none", "not admitted", "not in this machine's config", the four
-//     image sentences) is a sentence `internal/cli/project_repos_ls.go` prints,
-//     and the recipes table's `steps` cell is `stepsSummary`
-//     (`internal/cli/recipes.go`). Each is held to that file's text here, so a
-//     rewording in the CLI fails this test rather than drifting.
+//     table ("none", the four image sentences) is a sentence
+//     `internal/cli/project_repos_ls.go` prints, and the recipes table's `steps`
+//     cell is `stepsSummary` (`internal/cli/recipes.go`). Each is held to that
+//     file's text here, so a rewording in the CLI fails this test rather than
+//     drifting. What is *not* drawn as a word is what the document holds as a
+//     value: the two halves of a repository's enrolment are the allow-list entry
+//     and the config key as the document spells them, each under the class of
+//     the shape it has, and the CLI's `not admitted` / `not in this machine's
+//     config` for an absent half is an empty cell here (a column has one class,
+//     and neither `repoPattern` nor `repository` reads a word).
 //   - the two consequences are the CLI's account of the two writes. Every clause
 //     the console draws comes from `internal/cli/project_repos_rm.go` or
 //     `project_enroll_converge.go`, and the constants are held to that text
@@ -90,11 +95,31 @@ const IPC_TS = readFileSync(join(CONSOLE, 'src', 'main', 'ipc.ts'), 'utf8')
  * from the group's two documents (contract sections 6.26 and 6.27). */
 const THE_KINDS: readonly ManageKind[] = [reposKind, reposStatusKind, imagesKind, recipesKind]
 
-/** REPOS_DOC is `repos.ls --json` (contract section 6.27): one repository this
- * machine's config holds and the allow-list admits by a pattern, and one the
+/** VALUE_COLUMNS are the cells that are a **value the document wrote** rather
+ * than a sentence somebody wrote: the repository itself and the two halves of
+ * its enrolment, one column each (`REPOS_COLUMNS`). The guard below holds each of
+ * them to the cell itself and not merely to `ok`, because a redaction is an `ok`
+ * answer -- naming them is what makes that assertion bite when a column's class
+ * is changed to one that redraws its value. Every other cell of these four kinds
+ * is prose: a CLI sentence (a row's `problem` and `fix`), a word the console
+ * folded it into (`none`, the image sentences), or -- in the image and recipe
+ * kinds -- a field whose class is `NEW_OPERATION_TEXT_CLASSES`' answer rather
+ * than this task's, for which the free-text rules rewriting a path or an address
+ * is `sanitize.ts`'s own behaviour. */
+const VALUE_COLUMNS: readonly string[] = Object.freeze([
+  'repos.repo',
+  'repos.published',
+  'repos.local',
+  'repos-status.repo',
+])
+
+/** REPOS_DOC is `repos.ls --json` (contract section 6.27): a repository this
+ * machine's config holds and the allow-list admits by a pattern, one the
  * allow-list names and this machine has never configured -- the two states the
  * document keeps in two halves, and the two the removal sentence reads the
- * allow-list for. */
+ * allow-list for -- and one the allow-list admits by its own exact entry, which
+ * is the contract's ordinary case and the one whose two names are long enough
+ * for a free-text class to redact (see the cells case below). */
 const REPOS_DOC = {
   version: 1,
   project: 'fugaro-dev',
@@ -124,10 +149,21 @@ const REPOS_DOC = {
       published: { admitted: false, pattern: '' },
       local: { present: false, key: '' },
     },
+    {
+      canonical: 'github/dimipaun/fugaro',
+      provider: 'github',
+      base_branch: 'main',
+      workflows: [{ name: 'implement', entry: 'base', source: 'default' }],
+      image_entry: 'base',
+      image_source: 'default',
+      claude_accounts: [],
+      published: { admitted: true, pattern: 'github/dimipaun/fugaro' },
+      local: { present: true, key: 'dimipaun/fugaro' },
+    },
   ],
-  allow: { entries: ['github/acme/*', 'github/other/tool'], generation: '42', state: '' },
+  allow: { entries: ['github/acme/*', 'github/other/tool', 'github/dimipaun/fugaro'], generation: '42', state: '' },
   seen: { entries: [], notes: [], state: '' },
-  local: { repos: ['acme/app'], state: '' },
+  local: { repos: ['acme/app', 'dimipaun/fugaro'], state: '' },
 }
 
 /** STATUS_DOC is `repos.status --json` (contract section 6.26): a repository
@@ -342,7 +378,11 @@ describe('the Code group’s kinds', () => {
 describe('the repositories kind', () => {
   it('draws one row per repository, with the CLI’s own words for the folded cells', () => {
     const rows = reposKind.decode(REPOS_DOC)
-    expect(rows.map((row) => row.key)).toEqual(['github/acme/app', 'github/other/tool'])
+    expect(rows.map((row) => row.key)).toEqual([
+      'github/acme/app',
+      'github/other/tool',
+      'github/dimipaun/fugaro',
+    ])
     expect(rows[0]?.cells).toEqual({
       repo: 'github/acme/app',
       provider: 'github',
@@ -351,8 +391,12 @@ describe('the repositories kind', () => {
       workflows: 'implement, review',
       accounts: 'ana@example.invalid',
       published: 'github/acme/*',
-      local: 'repos: acme/app',
+      local: 'acme/app',
     })
+    // The second repository's two halves are the document's own emptiness: the
+    // allow-list admits it by nothing and this machine holds it under no key, so
+    // both cells are empty and the shell draws nothing for them. A word there
+    // would be a cell of a column whose class reads a value.
     expect(rows[1]?.cells).toEqual({
       repo: 'github/other/tool',
       provider: 'github',
@@ -360,22 +404,29 @@ describe('the repositories kind', () => {
       image: 'image this project builds for the repository (repo)',
       workflows: 'none',
       accounts: 'none',
-      published: 'not admitted',
-      local: "not in this machine's config",
+      published: '',
+      local: '',
     })
+    // The third repository's two halves are the values a free-text class gets
+    // wrong: both of its names are long enough for the rules that redact a
+    // repository-shaped run (`label` draws this pattern as `github<path>` and
+    // this key as `[redacted]`), and each cell is the document's own value.
+    expect(rows[2]?.cells['published']).toBe('github/dimipaun/fugaro')
+    expect(rows[2]?.cells['local']).toBe('dimipaun/fugaro')
   })
 
   it('spells those folded cells the way the CLI spells them', () => {
     // Each phrase is the kind's and the CLI's at once: the console draws it and
     // `internal/cli/project_repos_ls.go` prints it. `none` is not in the list
-    // because the exact-cells case above already pins it as a cell value.
+    // because the exact-cells case above already pins it as a cell value, and
+    // neither are the CLI's two words for an absent half, which the console does
+    // not draw: `not admitted` and `not in this machine's config` say what an
+    // empty cell of each column says.
     const phrases = [
       'image this project builds for the repository (repo)',
       'image the installation ships as its base (base)',
       'image the shared dependency layer (shared)',
       'image unresolved (no answer chose one)',
-      'not admitted',
-      "not in this machine's config",
     ]
     for (const phrase of phrases) {
       expect(REPOS_LS_GO, `the CLI no longer prints ${phrase}`).toContain(phrase)
@@ -396,23 +447,51 @@ describe('the repositories kind', () => {
     }
   })
 
-  it('fills every cell with text its own column admits', () => {
+  it('fills every cell with text its own column admits, and draws a value as the document wrote it', () => {
+    // `ok` alone is not the assertion, and that is this case's point: a
+    // **redaction is an `ok` answer**, so a column whose class does not match the
+    // value it holds passes an `ok`-only guard while drawing a redaction the
+    // document does not contain. `label` draws `github/dimipaun/fugaro` as
+    // `[redacted]` and `github/acme/app` as `github<path>` -- the failure
+    // `sanitize.ts`'s `repoPattern`/`imageRef` note says those two classes exist
+    // to prevent, and what the repositories kind's published and local columns
+    // drew until they carried the value's own class.
+    //
+    // So a cell that is a **value the document wrote** (VALUE_COLUMNS) is held to
+    // the cell itself, and not merely to `ok`: a class that reads a value accepts
+    // it whole or refuses it, and one that draws it as a redaction is the failure
+    // above. The other cells are **prose** -- a sentence the CLI wrote (a row's
+    // `problem` and `fix`, the console's folding words) -- and the free-text rules
+    // rewriting a path or an address inside a sentence are the console's own rule
+    // (`sanitize.ts`), not a mismatch: `repos-status.fix`'s own doctor command, or
+    // `repos.accounts`' address, is drawn that way on purpose.
     for (const [kind, doc] of [
       [reposKind, REPOS_DOC],
       [reposStatusKind, STATUS_DOC],
       [imagesKind, IMAGE_DOC],
       [recipesKind, RECIPES_DOC],
     ] as readonly (readonly [ManageKind, unknown])[]) {
-      const rows = kind.decode(doc)
-      expect(rows.length, `${kind.id} decoded nothing`).toBeGreaterThan(0)
-      for (const row of rows) {
+      const decoded = kind.decode(doc)
+      expect(decoded.length, `${kind.id} decoded nothing`).toBeGreaterThan(0)
+      for (const row of decoded) {
         for (const entry of kind.columns) {
           const cell = row.cells[entry.key] ?? ''
-          const sanitized = sanitizeText(cell, entry.class, `${kind.id}.${entry.key}`)
-          expect(sanitized.ok, `${kind.id}.${entry.key}: ${cell}`).toBe(true)
+          const field = `${kind.id}.${entry.key}`
+          if (cell === '') continue
+          const sanitized = sanitizeText(cell, entry.class, field)
+          expect(sanitized.ok, `${field}: ${cell}`).toBe(true)
+          if (!sanitized.ok) continue
+          if (!VALUE_COLUMNS.includes(field)) continue
+          expect(sanitized.text, `${field}: ${cell}`).toBe(cell)
         }
       }
     }
+    // Non-vacuity, in this file's own idiom (`spawnsToo` below): the fixture's
+    // third repository carries the two names a free-text class redraws, so the
+    // assertion above is one that can fail -- `label`, the class the two columns
+    // declared until this round, draws exactly that.
+    const asFreeText = sanitizeText('github/dimipaun/fugaro', 'label', 'repos.published')
+    expect(asFreeText.ok && asFreeText.text === 'github/dimipaun/fugaro').toBe(false)
   })
 
   it('gives each row its own two Copy-commands, and none to the kind', () => {
@@ -718,6 +797,8 @@ describe('a Copy-command only copies', () => {
       'fugaro project repos rm github/acme/app',
       'fugaro project repos add github/other/tool',
       'fugaro project repos rm github/other/tool',
+      'fugaro project repos add github/dimipaun/fugaro',
+      'fugaro project repos rm github/dimipaun/fugaro',
     ])
     for (const [method, spy] of Object.entries(bridge)) {
       expect(spy.mock.calls.length, `${method} was called`).toBe(0)
@@ -737,13 +818,17 @@ describe('a Copy-command only copies', () => {
       'fugaro project repos rm github/acme/app',
       'fugaro project repos add github/other/tool',
       'fugaro project repos rm github/other/tool',
+      'fugaro project repos add github/dimipaun/fugaro',
+      'fugaro project repos rm github/dimipaun/fugaro',
     ])
-    expect(mutant.spawns).toHaveLength(4)
+    expect(mutant.spawns).toHaveLength(6)
     expect(bridge.spawn.mock.calls).toEqual([
       [['fugaro', 'project', 'repos', 'add', 'github/acme/app']],
       [['fugaro', 'project', 'repos', 'rm', 'github/acme/app']],
       [['fugaro', 'project', 'repos', 'add', 'github/other/tool']],
       [['fugaro', 'project', 'repos', 'rm', 'github/other/tool']],
+      [['fugaro', 'project', 'repos', 'add', 'github/dimipaun/fugaro']],
+      [['fugaro', 'project', 'repos', 'rm', 'github/dimipaun/fugaro']],
     ])
     // And a row with no Copy at all is one the mutant cannot spawn: the refusal
     // is what keeps a `..` segment out of a child as well as off the clipboard.
