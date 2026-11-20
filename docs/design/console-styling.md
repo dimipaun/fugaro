@@ -670,7 +670,8 @@ it is a **sibling** of the body rather than a child of it, because `fillProjects
 the seven panels to the body and a host inside it would push the models panel ahead of
 them. The settings read is the third of those hosts —
 `section.projects > div.projects-settings > div.console-busy-slot` — and it is a sibling
-of both for the same reason: one row per setting, in a `ul.projects-settings-list`, with a
+of both for the same reason: one row per setting, in a `ul.projects-settings-list` under its
+group's own section (the accordion below), with a
 pencil on a row the document says is writable and a target layer it names, the owning
 command family on a row the generic path may not write, and **no row at all** for one the
 document marks sensitive. The pencil is a real `<button>`, in the tab order and bound by the
