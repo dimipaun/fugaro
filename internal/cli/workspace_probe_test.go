@@ -284,6 +284,55 @@ func TestProbeSkipsPersonalTokens(t *testing.T) {
 	}
 }
 
+// TestProbeAsksNoKeyCredentialOfAnotherProvider: the credential-<name>-key
+// namespace is every KEY credential's, OpenRouter's included
+// (config.KeyCredentialType is true for both), and which type a named
+// credential is lives in the member's own config, which the probe does not
+// read — CredentialBySecret answers the name and never the type. Asking
+// Anthropic about one would disclose a third party's key to Anthropic and
+// report a working credential refused, so the family is not asked about at
+// all: nothing is read, nothing is sent.
+func TestProbeAsksNoKeyCredentialOfAnotherProvider(t *testing.T) {
+	const id = "wu22-container-openrouter-key"
+	store := &wu22FakeSecrets{t: t,
+		creds:  []probeCredential{{Name: config.CredentialSecret("openrouter"), ID: id}},
+		values: map[string]string{id: "wu22-openrouter-value"}}
+	provider := &wu22FakeProvider{t: t, status: http.StatusOK}
+
+	results, err := wu22Probe(t, store, provider, nil).Probe(context.Background(), "member-project")
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("Probe = %+v, want no answer: a named key credential's type is the member's config's, and this namespace holds other providers' keys", results)
+	}
+	if len(store.read) != 0 {
+		t.Errorf("the probe read %v, want nothing read", store.read)
+	}
+	if len(provider.headers) != 0 {
+		t.Errorf("the probe made %d calls, want none: another provider's key is never sent to Anthropic", len(provider.headers))
+	}
+}
+
+// TestProbeNeverFallsBackToTheDefaultClient: a probe built with no client asks
+// nothing. The fallback this pins was http.DefaultClient, which follows a
+// redirect and carries x-api-key with it — the leak the client's own
+// CheckRedirect prevents — so "no client" must be a refusal and never the plan
+// B path (D2820's "never the value" covers never sending it elsewhere).
+func TestProbeNeverFallsBackToTheDefaultClient(t *testing.T) {
+	store := &wu22FakeSecrets{t: t,
+		creds:  []probeCredential{{Name: config.AnthropicSecret, ID: "wu22-container-model-key"}},
+		values: map[string]string{"wu22-container-model-key": "wu22-value-that-must-not-travel"}}
+	p := &WorkspaceProbe{getenv: func(string) string { return "" }, terminal: true, open: wu22Open(store)}
+
+	if _, err := p.Probe(context.Background(), "member-project"); err == nil {
+		t.Fatal("a probe with no HTTP client asked anyway: the default client follows a redirect with the credential attached")
+	}
+	if store.listed != 0 || len(store.read) != 0 {
+		t.Errorf("the probe with no client read the member's secrets (%d listings, %v)", store.listed, store.read)
+	}
+}
+
 // TestProbeDoesNotFollowARedirect: the credential travels in a header, and a
 // redirect is where it could reach a host the owner never named — Go drops
 // Authorization across hosts but not a header it does not know, and x-api-key

@@ -53,6 +53,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -256,29 +257,35 @@ const (
 )
 
 // probeKindOf is which credential a name is, and whether it is one this probe
-// asks about at all: the project's own model key and the key credentials its
-// config declares (config.AnthropicSecret, config.CredentialSecret) go on
-// x-api-key, and the project-owned Claude accounts (config.ClaudeOAuthSecret)
-// on the bearer header.
+// asks about at all: the project's own model key (config.AnthropicSecret) goes
+// on x-api-key, and the project-owned Claude accounts (config.ClaudeOAuthSecret)
+// on the bearer header. Those two families are the only ones a name settles.
+//
+// A named key credential is NOT one of them, and that is deliberate:
+// credential-<name>-key is the container of every KEY credential, OpenRouter's
+// included (config.KeyCredentialType is true for both, and CredentialBySecret
+// returns the name and never the type, which lives in the member's own config —
+// a config this probe does not read). Sending an OpenRouter key to Anthropic
+// would disclose a third party's credential to Anthropic and report a working
+// credential refused: the same misreport the Codex rule below exists to avoid,
+// with the credential spent as well. If a later task hands this probe the
+// declared types, the family comes back with a type test and not before.
 //
 // Every other name a member's project holds is left alone, and the list being
 // this short is the point. A workflow's own secret, a repository's token, the
-// credentials service's one bundle and a project-shared container the intake
-// wrote (fugaro_p_<name>) are credentials of some kind, and none of them is a
-// model credential whose kind could be read off its name; a Codex OAuth token
-// (config.CodexOAuthSecret) is one, of another provider, and the one call here
-// is Anthropic's, so asking would report a working credential refused. Asking
-// about any of them would spend a credential the owner never offered for this
-// question.
+// credentials service's one bundle, a named key credential and a project-shared
+// container the intake wrote (fugaro_p_<name>) are credentials of some kind,
+// and none of them is a model credential whose kind could be read off its name;
+// a Codex OAuth token (config.CodexOAuthSecret) is one, of another provider,
+// and the one call here is Anthropic's, so asking would report a working
+// credential refused. Asking about any of them would spend a credential the
+// owner never offered for this question.
 func probeKindOf(name string) (probeKind, bool) {
 	switch {
 	case name == config.AnthropicSecret:
 		return probeModelKey, true
 	case config.ClaudeOAuthSecret(name):
 		return probeClaudeAccount, true
-	}
-	if _, ok := config.CredentialBySecret(name); ok {
-		return probeModelKey, true
 	}
 	return 0, false
 }
@@ -292,14 +299,17 @@ type WorkspaceProbe struct {
 	getenv   func(string) string
 	terminal bool
 	// open reaches one member project's Secret Manager, and client makes the
-	// call — nil for the default one, which is what a command leaves it as.
-	// Both are seams, and neither reaches a network in a test.
+	// call. Both are seams, and neither reaches a network in a test. There is
+	// no default for client: a probe built with none refuses in Probe rather
+	// than falling back to http.DefaultClient, which follows a redirect with
+	// the credential attached.
 	open   func(ctx context.Context, gcpProject string) (probeSecrets, error)
 	client *http.Client
 }
 
 // NewWorkspaceProbe is the probe a command builds: lc's endpoints, the
-// caller's own credentials and the default HTTP client.
+// caller's own credentials and this file's own client — bounded by a timeout,
+// and refusing to follow a redirect.
 func NewWorkspaceProbe(lc *localcfg.Config) *WorkspaceProbe {
 	return &WorkspaceProbe{
 		getenv:   os.Getenv,
@@ -331,10 +341,17 @@ func probeOptions(lc *localcfg.Config, gcpProject string) gcp.Options {
 // Firebase project holds none, which is why this takes the one name (F2/R10
 // keep the two apart, and the secrets are on this side of the split).
 //
-// An error is a refusal — an agent's session — or a read that did not answer
-// at all. A credential the provider refused is a result and not an error: the
-// caller is printing it.
+// An error is a refusal — an agent's session — a probe built with no client,
+// or a read that did not answer at all. A credential the provider refused is a
+// result and not an error: the caller is printing it.
 func (p *WorkspaceProbe) Probe(ctx context.Context, gcpProject string) ([]ProbeResult, error) {
+	if p.client == nil {
+		// Never the default client by fallback: it follows a redirect, and it
+		// carries x-api-key verbatim to whatever host one names — the leak
+		// refuseRedirect exists for. A probe with no client of its own asks
+		// nothing rather than asking with that one.
+		return nil, errors.New("the probe has no HTTP client: a credential is never spent on the default one, which follows a redirect carrying it")
+	}
 	if err := refuseKeyReadAt(p.getenv, p.terminal, checkCredentialsFlag, "a member project's model credentials"); err != nil {
 		return nil, err
 	}
@@ -406,11 +423,7 @@ func (p *WorkspaceProbe) ask(ctx context.Context, secret string, kind probeKind,
 	} else {
 		req.Header.Set("x-api-key", value)
 	}
-	client := p.client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		// The value travels in a header and never in the URL, so a transport
 		// error — which carries the URL — cannot echo it.
