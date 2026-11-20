@@ -1,0 +1,470 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
+// The voice hop's client: the one place this app puts a spoken sentence on a
+// wire (mobile plan, Task P5.3.7; D118, D123, D124; the design is
+// docs/mobile/design/voice-evaluation-switch.md §4.4 and §4.5).
+//
+// **What the hop is, and why the app talks to one at all.** Point 5 of the
+// owner's ruling: the remote provider's credential never ships inside the app
+// binary, so the app calls a Fugaro-hosted service (`internal/voicesvc`, the
+// hop) which holds the key and makes the provider call. What the app presents
+// is the **Firebase Auth ID token it already holds** -- item (1) of D111's two
+// items -- and **no credential of its own**: no provider key (there is none on
+// the device), no service-account JSON, no Fugaro admin credential, and the
+// pairing MAC key is not this service's business and is never sent here.
+//
+// **The three routes, and the two that carry speech.** `POST
+// <baseUrl>/v1/voice/status` carries a slug and nothing else and answers what
+// the project's policy is for this device; `POST <baseUrl>/v1/voice/stt/<engine>`
+// carries the audio; `POST <baseUrl>/v1/voice/tts/<engine>` carries the text to
+// speak. The path, the engine's name pattern and the header names are
+// `internal/voicesvc/wire.go`'s, `forward.go`'s and `register.go`'s, restated
+// here so that a change to either side is a failing test rather than a call
+// that 404s.
+//
+// **The URL is checked against the allow-list on every call, and the list ships
+// empty.** D124's answer names no host, so `shared/url`'s
+// `DEFAULT_HOST_ALLOW_LIST` is empty and every URL is refused `allow-list-empty`
+// -- which is the correct behaviour for a gate whose list nobody has written:
+// the app serves locally, says so, and no byte leaves. The hop's host is the
+// owner's to name (the plan's P5.3, item 2), and the caller passes the list it
+// was configured with; this file names no host of its own.
+//
+// **What this file deliberately does NOT do.** It does not decide *whether* a
+// turn may go -- that is `egress.js`, the ten rules, and this client is the
+// transport the rules hand a decision to. It does not retry, redirect, queue,
+// spool, buffer or cache anything: one call is one request, a failure is a
+// failure, and the answer is handed back as it arrived. It does not read the
+// provider's answer into a shape of its own -- the hop streams the provider's
+// own answer through (`internal/voicesvc/forward.go`), so what an engine's
+// answer *says* is that engine's business and the app's engine table is where
+// it would be read; this client hands back the bytes and the content type.
+// And it logs nothing: the app has no logger at all (the boundary scan's rule),
+// and a request line carrying a project slug or a transcript is exactly what
+// must not appear in one.
+
+import { DEFAULT_HOST_ALLOW_LIST, validateExternalUrl } from '../../../shared/url/index.js';
+
+/**
+ * The hop's three paths, exactly as `internal/voicesvc` declares them
+ * (`wire.go`'s `StatusPath`, `forward.go`'s `STTPathPrefix` and
+ * `TTSPathPrefix`). The direction's word is the service's own and the engine's
+ * name follows it, so the URL this client builds is the only URL it can build.
+ */
+export const HOP_PATHS = Object.freeze({
+  STATUS: '/v1/voice/status',
+  STT: '/v1/voice/stt/',
+  TTS: '/v1/voice/tts/',
+});
+
+/**
+ * The header names, exactly as the service reads them (`wire.go`'s
+ * `HeaderAuth` and `authScheme`, `forward.go`'s `HeaderProject`).
+ *
+ * `SCHEME` includes its trailing space on purpose: the service cuts the scheme
+ * off the header and refuses anything else, so a scheme assembled here without
+ * the space would be a call the hop refuses.
+ */
+export const HOP_HEADER = Object.freeze({
+  AUTHORIZATION: 'Authorization',
+  PROJECT: 'X-Fugaro-Project',
+  SCHEME: 'Bearer ',
+  CONTENT_TYPE: 'Content-Type',
+});
+
+/**
+ * The one content type the text direction sends. The audio direction's is the
+ * caller's own -- the capture knows which container it recorded -- and the hop
+ * refuses anything that is not an `audio/` type, so the check below is the same
+ * rule one hop earlier rather than a second opinion about it.
+ */
+export const HOP_TEXT_TYPE = 'text/plain; charset=utf-8';
+
+/**
+ * The engine's name, as `internal/voicesvc`'s `registerNameRE` spells it. A
+ * name is what the hop's register holds and never a path: this pattern is what
+ * keeps a caller's string from reaching the URL as anything else.
+ */
+const ENGINE_NAME = /^[a-z][a-z0-9-]{0,19}$/;
+
+/**
+ * How this client refuses. A refusal is never a boolean and never an exception:
+ * it is `{ ok: false, code, field, detail }`, where `field` names the input
+ * that was wrong and `detail` carries the vocabulary of whoever refused --
+ * `shared/url`'s own code for a URL, and the hop's wire reason for a call the
+ * service answered with one.
+ */
+export const HOP_CODES = Object.freeze({
+  /**
+   * The composed URL is not one this app may open: it failed `shared/url`'s
+   * validator, and `detail` is that validator's own code (`allow-list-empty`
+   * while the owner has named no host, `host-not-allowed` for another host, and
+   * the rest of its set). It is a refusal and never a fallback to another host.
+   */
+  BAD_URL: 'bad-url',
+  /** The token port answered nothing this client can present. */
+  NO_TOKEN: 'no-token',
+  /** The request never reached the hop, or the transport failed. */
+  UNREACHABLE: 'unreachable',
+  /**
+   * The hop answered, and refused. `detail` is its wire reason
+   * (`token_unverified`, `device_unknown`, `force_local`, `provider_failed`,
+   * ...) or `null` for a refusal whose body this app could not read, which is
+   * the case `internal/voicesvc`'s own `ReasonOf` answers `state_unavailable`
+   * for.
+   */
+  REFUSED: 'refused',
+  /** The hop answered with something this client will not read as its contract. */
+  BAD_ANSWER: 'bad-answer',
+});
+
+/**
+ * The hop's wire reasons, as `internal/voicesvc/wire.go` declares them. They
+ * are the service's vocabulary and not this file's: a reason not on this list
+ * is read as `state_unavailable` (the app falls back to local either way), and
+ * the list exists so that the app branches on a reason it knows rather than on
+ * whatever a body happened to carry.
+ */
+export const HOP_REASON = Object.freeze({
+  FORCE_LOCAL: 'force_local',
+  NO_ADMISSION: 'no_admission',
+  POLICY_UNREADABLE: 'policy_unreadable',
+  NOT_ADMITTED: 'not_admitted',
+  NOT_A_DEVICE: 'not_a_device',
+  DEVICE_UNKNOWN: 'device_unknown',
+  TOKEN_UNVERIFIED: 'token_unverified',
+  STATE_UNAVAILABLE: 'state_unavailable',
+  UNKNOWN_ENGINE: 'unknown_engine',
+  PROVIDER_FAILED: 'provider_failed',
+  BAD_REQUEST: 'bad_request',
+  NOT_FOUND: 'not_found',
+});
+
+/** Every reason above, for the membership check a refusal body's is put to. */
+const REASONS = Object.freeze(Object.values(HOP_REASON));
+
+/**
+ * The most answer this client will hold in memory, in bytes.
+ *
+ * The hop sets no bound on the answer it streams (the provider's own end of it
+ * is what says a call is over), and a phone is not the place to discover that a
+ * provider answered with something enormous. 4 MiB is generous for a spoken
+ * turn's text and for a synthesised sentence, and it is a bound rather than a
+ * measurement -- what it stops is this app holding an answer it never asked
+ * for. A `Content-Length` over it is refused **before** the body is read, and
+ * the bytes that did arrive are counted again, because the header is a claim.
+ */
+export const MAX_ANSWER_BYTES = 4 << 20;
+
+/** A frozen refusal, in the shape this repository's modules use. */
+function refuse(code, field, detail = null) {
+  return Object.freeze({ ok: false, code, field, detail });
+}
+
+/** Whether a value is a plain object this module will read. */
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Build the hop's client.
+ *
+ * Every argument is required and checked here rather than trusted, for the
+ * reason `createVoiceSwitch` and `createVoiceScreen` check theirs: a client
+ * built without a transport or a token is a client that fails at the first
+ * thing the owner says.
+ *
+ * @param {object} options
+ * @param {string} options.baseUrl the hop's own address, with no trailing slash
+ * @param {string[]} [options.hosts] the allow-list this installation was
+ *   configured with; `DEFAULT_HOST_ALLOW_LIST` (empty) until the owner names
+ *   the hop's host, and an empty list refuses every URL
+ * @param {Function} options.fetch the transport: `fetch(url, init)`
+ * @param {() => (string | Promise<string>)} options.token the Firebase ID token
+ *   (D111's item 1), read per call so an expired one can be refreshed
+ * @returns {object} the client: `status`, `transcribe` and `speak`
+ * @throws {TypeError} for a port, an address or a value that cannot be used
+ */
+export function createVoiceHop({ baseUrl, hosts = DEFAULT_HOST_ALLOW_LIST, fetch, token } = {}) {
+  if (typeof baseUrl !== 'string' || baseUrl.length === 0) {
+    throw new TypeError('baseUrl is the hop’s own address: a non-empty string');
+  }
+  // The hop matches its two forwarding routes on an exact path and the status
+  // route on an exact path too (server.go), so an address ending in a slash
+  // would build `//v1/...` and reach no route at all. It is refused where it is
+  // written rather than discovered as a 404 on the owner's first sentence.
+  if (baseUrl.endsWith('/')) {
+    throw new TypeError('baseUrl is the hop’s address with no trailing slash');
+  }
+  if (!Array.isArray(hosts)) {
+    throw new TypeError('hosts is the allow-list of hosts this app may open: an array, empty until the hop’s host is named');
+  }
+  if (typeof fetch !== 'function') throw new TypeError('fetch is the transport');
+  if (typeof token !== 'function') throw new TypeError('token reads the Firebase ID token');
+
+  /**
+   * The token to present, or a refusal.
+   *
+   * The port answers the token itself or refuses; a value this client cannot
+   * present as one -- an empty string, a non-string, a rejection -- is refused
+   * as `no-token` rather than sent. Nothing here reads, stores or logs the
+   * token: it is read per call, it goes into one header, and no branch below
+   * puts it anywhere else.
+   */
+  async function present() {
+    let value;
+    try {
+      value = await token();
+    } catch {
+      return refuse(HOP_CODES.NO_TOKEN, 'token');
+    }
+    if (typeof value !== 'string' || value.length === 0) return refuse(HOP_CODES.NO_TOKEN, 'token');
+    return Object.freeze({ ok: true, token: value });
+  }
+
+  /**
+   * One request, and exactly one.
+   *
+   * The URL is the address the app was configured with plus a constant path
+   * (plus an engine name that has already been matched against
+   * `registerNameRE`'s shape), and it is put through `shared/url` **whole** --
+   * so the scheme, the authority, the absence of userinfo and of a port, the
+   * absence of an encoded or internationalised host, and the exact allow-list
+   * are all checked on the string that is actually opened.
+   *
+   * What is in the request is the whole of what this app sends: one
+   * `Authorization` header carrying the ID token, one `Content-Type`, the
+   * project header on the two routes that carry speech, and the payload as the
+   * body. `credentials: 'omit'`, `redirect: 'error'` and `cache: 'no-store'`
+   * are stated rather than defaulted: no cookie or ambient credential is
+   * attached to this request, a redirect is a failed call rather than a call to
+   * a host the allow-list never saw, and no intermediary keeps the answer.
+   */
+  async function call({ path, project, body, contentType, signal }) {
+    const target = validateExternalUrl(baseUrl + path, hosts);
+    if (!target.ok) return refuse(HOP_CODES.BAD_URL, 'baseUrl', target.code);
+    const presented = await present();
+    if (!presented.ok) return presented;
+
+    const headers = {
+      [HOP_HEADER.AUTHORIZATION]: HOP_HEADER.SCHEME + presented.token,
+      [HOP_HEADER.CONTENT_TYPE]: contentType,
+    };
+    if (project !== null) headers[HOP_HEADER.PROJECT] = project;
+
+    let response;
+    try {
+      response = await fetch(target.url, {
+        method: 'POST',
+        headers,
+        body,
+        credentials: 'omit',
+        redirect: 'error',
+        cache: 'no-store',
+        signal,
+      });
+    } catch {
+      // A transport failure is never carried: what a fetch rejects with is not
+      // this tree's text, and the app's answer to it is the local engine either
+      // way (§4.5). Nothing is retried, and no second host is tried.
+      return refuse(HOP_CODES.UNREACHABLE, 'hop');
+    }
+
+    const status = readStatus(response);
+    if (status === null) return refuse(HOP_CODES.BAD_ANSWER, 'answer');
+    if (status < 200 || status >= 300) return refusedBy(response, status);
+    return accept(response);
+  }
+
+  /** The response's own status line, or `null` for an answer that has none. */
+  function readStatus(response) {
+    if (!isPlainObject(response)) return null;
+    return Number.isInteger(response.status) ? response.status : null;
+  }
+
+  /** What the hop refused with: its wire reason when the body carries one. */
+  async function refusedBy(response, status) {
+    let reason = null;
+    try {
+      const body = await readText(response, MAX_ANSWER_BYTES);
+      const parsed = JSON.parse(body);
+      if (isPlainObject(parsed) && typeof parsed.error === 'string' && REASONS.includes(parsed.error)) {
+        reason = parsed.error;
+      }
+    } catch {
+      // A refusal body this app cannot read is a refusal with no reason, which
+      // internal/voicesvc's own ReasonOf answers state_unavailable for -- and
+      // the app's answer to any of them is the local engine (§4.5).
+      reason = null;
+    }
+    return Object.freeze({ ok: false, code: HOP_CODES.REFUSED, field: 'hop', detail: reason, status });
+  }
+
+  /** The answer body, bounded, whatever the hop streamed through. */
+  async function accept(response) {
+    const contentType = readContentType(response);
+    const bounded = await readBytes(response);
+    if (!bounded.ok) return bounded;
+    return Object.freeze({ ok: true, contentType, body: bounded.body });
+  }
+
+  /** The answer's content type, or `null` when it named none. */
+  function readContentType(response) {
+    const headers = response.headers;
+    if (headers === null || typeof headers !== 'object' || typeof headers.get !== 'function') return null;
+    const value = headers.get('content-type');
+    return typeof value === 'string' ? value : null;
+  }
+
+  /** A `Content-Length` claim over the bound, refused before the body is read. */
+  function claimed(response) {
+    const headers = response.headers;
+    if (headers === null || typeof headers !== 'object' || typeof headers.get !== 'function') return false;
+    const value = Number(headers.get('content-length'));
+    return Number.isFinite(value) && value > MAX_ANSWER_BYTES;
+  }
+
+  /** The answer's bytes, held to `MAX_ANSWER_BYTES` on the way in. */
+  async function readBytes(response) {
+    if (claimed(response)) return refuse(HOP_CODES.BAD_ANSWER, 'answer');
+    let buffer;
+    try {
+      buffer = await response.arrayBuffer();
+    } catch {
+      return refuse(HOP_CODES.BAD_ANSWER, 'answer');
+    }
+    const bytes = new Uint8Array(buffer);
+    if (bytes.byteLength > MAX_ANSWER_BYTES) return refuse(HOP_CODES.BAD_ANSWER, 'answer');
+    return Object.freeze({ ok: true, body: bytes });
+  }
+
+  /** The answer's text, held to `max` bytes. */
+  async function readText(response, max) {
+    if (claimed(response)) throw new RangeError('the answer is over this client’s bound');
+    const text = await response.text();
+    if (typeof text !== 'string' || text.length > max) throw new RangeError('the answer is over this client’s bound');
+    return text;
+  }
+
+  return Object.freeze({
+    /**
+     * Ask what the project's policy is for this device (§4.4 point 7).
+     *
+     * The answer is the hop's own `StatusAnswer`, read strictly enough that the
+     * app cannot mistake a body it does not understand for an admission: the
+     * fields this app uses are checked, the project is required to be the one
+     * that was asked about (a cached answer read against another project is the
+     * one thing that answer must never be), and anything else is `bad-answer`,
+     * which the caller treats exactly as it treats no answer at all.
+     *
+     * @param {{project: string, signal?: object}} input
+     * @returns {Promise<object>} `{ ok: true, answer }` or a refusal
+     */
+    async status({ project, signal } = {}) {
+      if (typeof project !== 'string' || project.length === 0) return refuse(HOP_CODES.BAD_ANSWER, 'project');
+      const called = await call({
+        path: HOP_PATHS.STATUS,
+        project: null,
+        body: JSON.stringify({ project }),
+        contentType: 'application/json',
+        signal,
+      });
+      if (!called.ok) return called;
+      return readStatusAnswer(called.body, project);
+    },
+
+    /**
+     * Send one turn's audio to the hop (§4.4 point 1).
+     *
+     * `contentType` is the capture's own container and is checked here as the
+     * hop checks it, so a turn whose audio cannot be typed is refused before
+     * the bytes go rather than after they arrived. `audio` is the payload
+     * itself: this client sends what it is handed, adds nothing to it, and
+     * keeps no copy.
+     *
+     * @param {{project: string, engine: string, audio: object, contentType: string, signal?: object}} input
+     * @returns {Promise<object>} `{ ok: true, contentType, body }` or a refusal
+     */
+    async transcribe({ project, engine, audio, contentType, signal } = {}) {
+      return forward({ direction: 'stt', project, engine, audio, contentType, signal });
+    },
+
+    /**
+     * Send one turn's text to the hop to be spoken (§4.4 point 1).
+     *
+     * The text arriving here has already been through the redactor (D118's
+     * rule, `egress.js`): this client does not redact, because a transport that
+     * also decided what may leave would be a second place for that decision to
+     * be wrong.
+     *
+     * @param {{project: string, engine: string, text: string, signal?: object}} input
+     * @returns {Promise<object>} `{ ok: true, contentType, body }` or a refusal
+     */
+    async speak({ project, engine, text, signal } = {}) {
+      if (typeof text !== 'string' || text.length === 0) return refuse(HOP_CODES.BAD_ANSWER, 'text');
+      return forward({ direction: 'tts', project, engine, audio: text, contentType: HOP_TEXT_TYPE, signal });
+    },
+  });
+
+  /**
+   * The two forwarding routes, which differ in their payload and in nothing
+   * else: the same checks, the same path shape, the same one request.
+   */
+  async function forward({ direction, project, engine, audio, contentType, signal }) {
+    if (typeof project !== 'string' || project.length === 0) return refuse(HOP_CODES.BAD_ANSWER, 'project');
+    if (typeof engine !== 'string' || !ENGINE_NAME.test(engine)) return refuse(HOP_CODES.BAD_ANSWER, 'engine');
+    if (direction === 'stt' && (typeof contentType !== 'string' || !contentType.startsWith('audio/'))) {
+      return refuse(HOP_CODES.BAD_ANSWER, 'contentType');
+    }
+    if (audio === undefined || audio === null) return refuse(HOP_CODES.BAD_ANSWER, 'audio');
+    const called = await call({
+      path: HOP_PATHS[direction === 'stt' ? 'STT' : 'TTS'] + engine,
+      project,
+      body: audio,
+      contentType,
+      signal,
+    });
+    if (!called.ok) return called;
+    return Object.freeze({ ok: true, engine, contentType: called.contentType, body: called.body });
+  }
+}
+
+/**
+ * The hop's project-status answer, read into the four fields this app uses.
+ *
+ * The wire's members are `wire.go`'s `StatusAnswer`; what is returned here is
+ * that answer with the detail sentence dropped and `project` checked, and it is
+ * **an answer and not a copy of the policy node** -- no member here is a policy
+ * field the app may read a rule out of (§4.4 point 7).
+ */
+async function readStatusAnswer(called, project) {
+  let parsed;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(called.body));
+  } catch {
+    return refuse(HOP_CODES.BAD_ANSWER, 'answer');
+  }
+  if (!isPlainObject(parsed)) return refuse(HOP_CODES.BAD_ANSWER, 'answer');
+  if (parsed.project !== project) return refuse(HOP_CODES.BAD_ANSWER, 'project');
+  if (typeof parsed.remote !== 'boolean') return refuse(HOP_CODES.BAD_ANSWER, 'remote');
+  if (!Array.isArray(parsed.providers) || parsed.providers.some((name) => typeof name !== 'string')) {
+    return refuse(HOP_CODES.BAD_ANSWER, 'providers');
+  }
+  const direction = parsed.direction;
+  if (!isPlainObject(direction) || typeof direction.stt !== 'boolean' || typeof direction.tts !== 'boolean') {
+    return refuse(HOP_CODES.BAD_ANSWER, 'direction');
+  }
+  if (parsed.reason !== undefined && parsed.reason !== '' && !REASONS.includes(parsed.reason)) {
+    return refuse(HOP_CODES.BAD_ANSWER, 'reason');
+  }
+  return Object.freeze({
+    ok: true,
+    answer: Object.freeze({
+      project,
+      remote: parsed.remote,
+      providers: Object.freeze([...parsed.providers]),
+      direction: Object.freeze({ stt: direction.stt, tts: direction.tts }),
+      reason: typeof parsed.reason === 'string' && parsed.reason !== '' ? parsed.reason : null,
+    }),
+  });
+}
