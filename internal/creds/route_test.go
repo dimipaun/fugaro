@@ -84,7 +84,7 @@ func TestRouteRecordDecodesStrictly(t *testing.T) {
 			want: Route{Version: 1, Address: addr, Model: HolderWorkspace},
 		},
 		{
-			name: "the address alone",
+			name: "an address with no kind moved to the workspace",
 			raw:  `{"version":1,"address":"` + addr + `"}`,
 			want: Route{Version: 1, Address: addr},
 		},
@@ -254,6 +254,33 @@ func TestRouteRecordRoundTripsAndMatchesItsSchema(t *testing.T) {
 		t.Errorf("a null node is an absent record and not a refusal: %v", err)
 	} else if _, found, _ := DecodeRoute([]byte("null")); found {
 		t.Error("a null node is reported as a record")
+	}
+}
+
+// TestRouteAddressIsCarriedWithoutMovingAKind: the address is what a published
+// record carries, and it is not the answer to whether the workspace serves
+// anything. A record may name every kind the project's — a member in a workspace
+// whose own bundle covers the repository — and a run that read its address as a
+// call to make would build a second upstream and keep a beat warm for a service
+// nothing is ever sent to; Holder is the answer, and the zero Route a repository
+// with no record reads has no address at all.
+func TestRouteAddressIsCarriedWithoutMovingAKind(t *testing.T) {
+	const addr = "https://workspace.example.com"
+	r, found, err := DecodeRoute([]byte(`{"version":1,"address":"` + addr + `"}`))
+	if err != nil || !found {
+		t.Fatalf("DecodeRoute of a record that moves no kind = %+v, %v, %v", r, found, err)
+	}
+	if r.Address != addr {
+		t.Errorf("the record's address = %q, want %q: a published record always carries one", r.Address, addr)
+	}
+	for _, kind := range Kinds {
+		if got := r.Holder(kind); got != HolderProject {
+			t.Errorf("Holder(%s) of a record that moves no kind = %q, want %q: the address is not a kind served from the workspace", kind, got, HolderProject)
+		}
+	}
+	var none Route
+	if none.Address != "" {
+		t.Errorf("the zero Route's address = %q: it is what a repository with no record reads, and it has no second service to call", none.Address)
 	}
 }
 

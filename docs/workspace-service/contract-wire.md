@@ -51,7 +51,11 @@ workspace the moment one of them is uncovered (F34).
 out, for a kind spelled `project`, and for a kind this code has never heard of — a kind no record moved is served
 where every kind was served before the record existed. That is why the zero `Route` is a safe answer and why the stub
 may carry it: a record that is truncated, mistyped or half-understood cannot send a call anywhere but the project.
-`Address` is empty exactly when no kind is served from the workspace.
+
+**`Address` is empty exactly when the route came from no record at all** — the zero `Route` a repository with no
+published route reads, which is what the stub answers — and it is not a promise in the other direction: every
+published record carries an address (a record without one is refused on both sides), and a record may name every kind
+the project's, whose address is then never called.
 
 **`RouteReader` answers the zero `Route` and no error for a repository with no record**, which is today's run and not
 a failure. An error means the record could not be read or is one this code refuses; a caller that treated an error as
@@ -77,7 +81,10 @@ One repository's record is one JSON object:
   drifts.
 - **`model`, `bitbucket`, `github`** are each kind's `Holder`. A record names a kind it moves to the workspace, and
   leaving a kind out is the same answer as spelling it `project`: `Holder` answers `HolderProject` for both, which is
-  why a reader accepts `project` and a writer never writes it (below).
+  why a reader accepts `project` and a writer never writes it (below). A record may therefore name every kind the
+  project's — a member in a workspace whose own bundle covers the repository — and it still carries its address:
+  the address is where a *moved* kind is called, and nothing is called there for a kind `Holder` answers
+  `HolderProject` for.
 - **The record is closed, and `DecodeRoute` decodes it strictly**: a key this code does not model is a refusal, not a
   key decoded past. The version is read first, so a record a later release wrote is refused as a version this code
   does not know rather than as one unknown field.
@@ -169,7 +176,9 @@ entry's allow-list, the member's policy, the repository's admission) is R5's and
 keeps the answer: a model call goes to the service the model route names and never to the other, exhausted or not
 (D2982, D2989). The address it calls is the one `Route.Address` carries, never one from the run's environment (R3,
 F32) — an address a launcher supplies is an address a launcher can move, and the run mints an identity token for
-whatever address it reads. It is the one side of this contract that reads it from run-side code, which is what the
+whatever address it reads. It builds the second upstream, and starts the beat, on `Holder` and not on `Address`: a
+route that moves no kind is one the run never calls, so it adds no upstream and keeps nothing warm. It is the one
+side of this contract that reads it from run-side code, which is what the
 boundary section above is about: its directories join `credsImporters` in its own change, with their reason.
 `WorkspaceBeatSetting` is the setting that turns the keep-warm beat off; it is on by default, and its key is an
 `agent.` one because the beat is the run's.
@@ -187,6 +196,9 @@ over that path and moves `RulesVersion` with it.
 - **A kind this code does not know moving anywhere.** `Kinds` is the closed vocabulary of this contract and `Holder`
   has no third value. A side that added a kind moves it in a new version of the record, in this package, and not by
   spelling it into a record and hoping.
+- **An address as a promise.** Every published record carries one, so its presence says nothing about what the
+  workspace serves: a record may name every kind the project's and never be called. A run builds its second upstream
+  and starts its beat on `Holder`, never on `Address`.
 - **The record as a decision about the workspace.** It says where each kind is *served from*; it says nothing about
   whether the workspace admits the repository or the member. That verdict is the workspace's own (R5, D1298) and is
   made again where the call arrives.

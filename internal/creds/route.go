@@ -171,9 +171,16 @@ type Route struct {
 	// Version is the record's version: RouteVersion for every record DecodeRoute
 	// reads.
 	Version int
-	// Address is the workspace's service, from the member's own pin (R3). It is
-	// empty exactly when no kind is served from the workspace — a Run with no
-	// second service has nowhere to send anything.
+	// Address is the workspace's service, from the member's own pin (R3). Every
+	// record carries one — RouteRecord refuses to write one without it and
+	// DecodeRoute refuses to read one without it — so it is empty exactly for a
+	// Route that came from no record at all: the zero Route a repository with no
+	// published route reads, and what the stub answers.
+	//
+	// It is not the answer to whether the workspace serves anything. A record may
+	// name every kind the project's, and its address is then never called: it is
+	// Holder(kind) that says where a kind is served, and a run builds no second
+	// upstream and keeps no beat warm for an address nothing is served from.
 	Address string
 	// Model, Bitbucket and GitHub are each kind's holder, empty where the record
 	// names none.
