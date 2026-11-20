@@ -29,8 +29,11 @@
 #               PREVIOUS release, and on one already migrated every row below
 #               would be a row about nothing.
 #   in-flight   a run is launched BEFORE the update and its id recorded.
-#   update      `fugaro update` is run for the installation as its project
-#               owner; the command must exit 0.
+#   update      `fugaro update` is run as the project owner, TWICE as the
+#               after-deploy steps name it: for the installation (which creates
+#               the database and migrates the config and the published policy)
+#               and for the repository (`--repo` in its checkout, which is what
+#               re-applies its job). Both commands must exit 0.
 #   database    the same job, read back: it now carries FUGARO_RTDB_URL, and the
 #               update's own output named the database it created.
 #   in-flight-2 the run launched before the update is read until it ends: the
@@ -44,8 +47,9 @@
 #               `observe` — an unset mode is observe (C1, U4).
 #   operator    a SECOND installation, at the previous release too, is updated
 #               with the operator's own credential: the command must change
-#               nothing (its job still carries no database address) and must say
-#               that a project owner has to run it (U1, D3023).
+#               nothing (no job of ITS OWN project, read from its local config,
+#               may carry a database address) and must say that a project owner
+#               has to run it (U1, D3023).
 #
 # It launches TWO runs of a sandbox repository on the installation you name, and
 # a project owner's `fugaro update` on it. Both COST MONEY: the runs' own model
@@ -213,16 +217,28 @@ try:
     doc = json.load(open(sys.argv[1]))
 except Exception:
     sys.exit(0)
-for c in containers(doc):
-    for e in c.get("env", []) or []:
-        name = e.get("name", "")
-        if not name:
-            continue
-        if "valueSource" in e:
-            src = e["valueSource"].get("secretKeyRef", {}) or {}
-            print("secret:%s" % src.get("name", name))
-        else:
-            print("%s=%s" % (name, e.get("value", "")))
+
+# A `jobs describe` document is one job; a `jobs list` document carries them
+# under `items`, and the same reader is what lets a row read every job of an
+# installation the check may not name one of.
+if isinstance(doc, dict) and isinstance(doc.get("items"), list):
+    jobs = [d for d in doc["items"] if isinstance(d, dict)]
+elif isinstance(doc, list):
+    jobs = [d for d in doc if isinstance(d, dict)]
+else:
+    jobs = [doc]
+
+for job in jobs:
+    for c in containers(job):
+        for e in c.get("env", []) or []:
+            name = e.get("name", "")
+            if not name:
+                continue
+            if "valueSource" in e:
+                src = e["valueSource"].get("secretKeyRef", {}) or {}
+                print("secret:%s" % src.get("name", name))
+            else:
+                print("%s=%s" % (name, e.get("value", "")))
 PY
 }
 
@@ -254,6 +270,27 @@ def containers(doc):
 cs = containers(doc)
 if cs:
     print(cs[0].get("image", ""))
+PY
+}
+
+# config_key FILE KEY prints a top-level key of a local config file, with the
+# quotes a YAML writer may have put around it stripped. It is how the operator's
+# own installation is named: a local config carries its project and region, and
+# no job name.
+config_key() { # config_key <file> <key>
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+try:
+    text = open(sys.argv[1]).read()
+except Exception:
+    sys.exit(0)
+m = re.search(r"(?m)^%s:\s*(.*)$" % re.escape(sys.argv[2]), text)
+if not m:
+    sys.exit(0)
+v = m.group(1).strip()
+if v[:1] in ("'", '"') and v[-1:] == v[:1]:
+    v = v[1:-1]
+print(v)
 PY
 }
 
@@ -373,7 +410,8 @@ What it would do, in order:
   in-flight    fugaro run --task-file <a task the check writes> --json   (in ${SANDBOX:-<sandbox>})
                -> the FIRST paid run, launched before the update.
   update       fugaro update --project ${INSTALLATION:-<installation>}
-               -> the project owner's upgrade; it must exit 0.
+               fugaro update --repo --project ${INSTALLATION:-<installation>}   (in ${SANDBOX:-<sandbox>})
+               -> the project owner's upgrade and the repository's own re-apply; both must exit 0.
   database     the same job, read back: FUGARO_RTDB_URL must now be PRESENT, and the update's output
                must name the database it created.
   in-flight-2  fugaro runs ls --json, polled until the FIRST run's row is terminal: the rules
@@ -470,7 +508,7 @@ finish() {
     if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then status=2; fi
   fi
   if [ "$SCRATCH_REMOVED" = yes ]; then
-    facts="${facts}"$'\n'"restore|PASS|the scratch directory is gone (its documents: a job's describe, the published policy, two runs' rows, the update's output and the task file this check wrote). The two runs it launched are left to end on their own"
+    facts="${facts}"$'\n'"restore|PASS|the scratch directory is gone (its documents: a job's describe before and after, the published policy, two runs' rows, the two updates' own outputs, the second installation's job list and the task file this check wrote). The two runs it launched are left to end on their own"
   else
     facts="${facts}"$'\n'"restore|FAIL|the scratch directory is STILL THERE, at ${SCRATCH} — remove it yourself"
   fi
@@ -545,7 +583,17 @@ step_update() {
     fact update FAIL "the project owner's 'fugaro update --project ${INSTALLATION}' did not exit 0: $(head -c 500 "$SCRATCH/update.out" 2>/dev/null). The whole upgrade is that one command, and a run that did not finish it leaves the installation where it was"
     stop "the owner's update failed — nothing below can be read"
   fi
-  fact update PASS "the project owner's 'fugaro update --project ${INSTALLATION}' exited 0"
+  # The installation's converge creates the database and migrates the config and
+  # the published policy; the REPOSITORY's own root is re-applied by the update
+  # run for that repository (`--repo`, in its checkout), which is what puts the
+  # mode and the database in the job the rows below read (F20, and the plan's
+  # after-deploy steps: once for the installation and once for each repository).
+  say "re-applying the repository's own root ('fugaro update --repo')"
+  if ! (cd "$SANDBOX" && fugaro update --repo --project "$INSTALLATION") >"$SCRATCH/update-repo.out" 2>&1; then
+    fact update FAIL "the project owner's 'fugaro update --repo --project ${INSTALLATION}', run in ${SANDBOX}, did not exit 0: $(head -c 500 "$SCRATCH/update-repo.out" 2>/dev/null). A repository's job is re-applied by the update run for that repository, and a run that did not finish it leaves the job without its mode and its database (F20)"
+    stop "the owner's repository update failed — the job's own rows cannot be read"
+  fi
+  fact update PASS "the project owner's 'fugaro update --project ${INSTALLATION}' and the repository's own 'fugaro update --repo' both exited 0"
 }
 
 step_database() {
@@ -563,7 +611,7 @@ step_database() {
     fact database UNVERIFIED "the job now carries the database address, but the update's own output does not name the database it created: the row that says WHICH database a run will spend against is not read here. Read the update's output yourself and record the URL in the register's section"
     return 0
   fi
-  fact database PASS "the update created the budget database and re-applied the job '${JOB}', which now carries FUGARO_RTDB_URL; the update's own output names the database it created"
+  fact database PASS "the project owner's update created the budget database and the repository's own 'fugaro update --repo' re-applied the job '${JOB}', which now carries FUGARO_RTDB_URL; the update's own output names the database it created"
 }
 
 step_inflight_finished() {
@@ -695,27 +743,10 @@ step_operator() {
     return 0
   fi
   say "running the operator's 'fugaro update' on the second installation"
-  local operator operator_job
-  operator=$(python3 - "$OPERATOR_CONFIG" <<'PY'
-import re, sys
-try:
-    text = open(sys.argv[1]).read()
-except Exception:
-    sys.exit(0)
-m = re.search(r"(?m)^\s*name:\s*(\S+)", text)
-print(m.group(1) if m else "")
-PY
-)
-  operator_job=$(python3 - "$OPERATOR_CONFIG" <<'PY'
-import re, sys
-try:
-    text = open(sys.argv[1]).read()
-except Exception:
-    sys.exit(0)
-m = re.search(r"(?m)^\s*job:\s*(\S+)", text)
-print(m.group(1) if m else "")
-PY
-)
+  local operator operator_project operator_region
+  operator=$(config_key "$OPERATOR_CONFIG" name)
+  operator_project=$(config_key "$OPERATOR_CONFIG" gcp_project)
+  operator_region=$(config_key "$OPERATOR_CONFIG" region)
   if ! (cd "$SANDBOX" && fugaro update --config "$OPERATOR_CONFIG") >"$SCRATCH/operator.out" 2>&1; then
     fact operator FAIL "the operator's 'fugaro update --config ${OPERATOR_CONFIG}' did not exit 0: $(head -c 500 "$SCRATCH/operator.out" 2>/dev/null). An operator's update on an installation with no database must skip that stage and say who must run it, never fail"
     return 0
@@ -724,14 +755,24 @@ PY
     fact operator FAIL "the operator's update exited 0 without naming a project owner: an installation with no budget database launches nothing until a project owner runs the update (D3023), and an update that says nothing about it leaves the operator with an installation that silently launches nothing"
     return 0
   fi
-  if [ -n "$operator_job" ]; then
-    gcloud run jobs describe "$operator_job" --project "$GCP_PROJECT" --region "$REGION" --format=json >"$SCRATCH/operator-job.json" 2>/dev/null || true
-    if printf '%s\n' "$(job_env "$SCRATCH/operator-job.json")" | grep -q '^FUGARO_RTDB_URL='; then
-      fact operator FAIL "the operator's update CHANGED the second installation: its job '${operator_job}' now carries a database address, which an operator's roles must not be able to create. An operator's update on an installation with no database skips that stage and changes nothing (U1)"
-      return 0
-    fi
+  # "Changed nothing" is read against the SECOND installation's own project, from
+  # the config the operator's update was run with (its gcp_project and region; a
+  # local config carries no job name, and one of the first installation's would
+  # be a reading of the wrong project). An operator cannot create the database,
+  # so no job of that project may carry a database address.
+  if [ -z "$operator_project" ]; then
+    fact operator UNVERIFIED "the operator's update exited 0 and says a project owner must run it, but ${OPERATOR_CONFIG} names no gcp_project, so whether the second installation was CHANGED is NOT measured: read its own jobs ('gcloud run jobs list --project <its project>') for a FUGARO_RTDB_URL and record it in the register's section"
+    return 0
   fi
-  fact operator PASS "the operator's update on '${operator:-the second installation}' exited 0, changed nothing (its job still carries no database address) and says a project owner must run it: an operator's roles do not suffice, and the update says so rather than failing (U1, D3023)"
+  gcloud run jobs list --project "$operator_project" ${operator_region:+--region "$operator_region"} --format=json >"$SCRATCH/operator-jobs.json" 2>"$SCRATCH/operator-jobs.json.err" || {
+    fact operator UNVERIFIED "the operator's update exited 0 and says a project owner must run it, but the second installation's jobs could not be listed in ${operator_project}${operator_region:+/${operator_region}}, so whether it was CHANGED is NOT measured: $(head -c 300 "$SCRATCH/operator-jobs.json.err" 2>/dev/null)"
+    return 0
+  }
+  if printf '%s\n' "$(job_env "$SCRATCH/operator-jobs.json")" | grep -q '^FUGARO_RTDB_URL='; then
+    fact operator FAIL "the operator's update CHANGED the second installation: a job of ${operator_project} now carries a database address, which an operator's roles must not be able to create. An operator's update on an installation with no database skips that stage and changes nothing (U1)"
+    return 0
+  fi
+  fact operator PASS "the operator's update on '${operator:-the second installation}' exited 0, says a project owner must run it, and left every job of ${operator_project} without a database address: an operator's roles do not suffice, and the update says so rather than failing (U1, D3023)"
 }
 
 step_premise

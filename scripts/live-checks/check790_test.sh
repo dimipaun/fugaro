@@ -53,16 +53,16 @@ case "${1:-} ${2:-}" in
 "run jobs")
   case "${3:-}" in
   describe)
-    job=${4:-}
-    if [ -n "${FAKE790_OPERATOR_JOB:-}" ] && [ "$job" = "$FAKE790_OPERATOR_JOB" ]; then
-      cat "$dir/operator-job.json"
-    else
-      state=$(cat "$dir/state" 2>/dev/null || printf 'before')
-      case "$state" in
-      after) cat "$dir/job-after.json" ;;
-      *) cat "$dir/job-before.json" ;;
-      esac
-    fi
+    state=$(cat "$dir/state" 2>/dev/null || printf 'before')
+    case "$state" in
+    after) cat "$dir/job-after.json" ;;
+    *) cat "$dir/job-before.json" ;;
+    esac
+    ;;
+  list)
+    # Every job of the SECOND installation, which the operator's own config
+    # names by its project: the operator row reads this list.
+    cat "$dir/operator-jobs.json"
     ;;
   executions)
     cat "$dir/exec.json"
@@ -130,6 +130,15 @@ update)
     cat "$dir/operator.out"
     exit "${FAKE790_OPERATOR_STATUS:-0}"
   fi
+  # The check runs the installation's update and then the repository's own
+  # (`--repo`), so a case can fail either half: the second one is what re-applies
+  # the job the rows below read.
+  case " $* " in
+  *" --repo "*)
+    if [ -f "$dir/update-repo.out" ]; then cat "$dir/update-repo.out"; else cat "$dir/update.out"; fi
+    exit "${FAKE790_UPDATE_REPO_STATUS:-0}"
+    ;;
+  esac
   cat "$dir/update.out"
   printf 'after' >"$dir/state"
   exit "${FAKE790_UPDATE_STATUS:-0}"
@@ -173,6 +182,20 @@ for raw in sys.argv[3:]:
 doc = {"spec": {"template": {"spec": {"template": {"spec": {"containers": [{"image": image, "env": env}]}}}}}}
 open(out, "w").write(json.dumps(doc))
 PY
+}
+
+# jobs_json writes the shape `gcloud run jobs list` really prints: one job
+# document per entry, under `items`.
+jobs_json() { # jobs_json <outfile> <image> [ENTRY...]
+  local out=$1
+  shift
+  job_json "$out.one" "$@"
+  python3 - "$out" "$out.one" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[2]))
+open(sys.argv[1], "w").write(json.dumps({"items": [doc]}))
+PY
+  rm -f "$out.one"
 }
 
 # exec_json writes a Cloud Run EXECUTION document, in the shape an execution
@@ -220,15 +243,16 @@ case_dir() { # case_dir <name>
   make_sandbox "$sandbox"
   job_json "$answers/job-before.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b"
   job_json "$answers/job-after.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid"
-  job_json "$answers/operator-job.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b"
+  jobs_json "$answers/operator-jobs.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b"
   exec_json "$answers/exec.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid"
   printf '{"budget":{"mode":"observe"}}' >"$answers/policy.json"
   printf 'fugaro update: created the budget database at https://db.invalid and re-applied the jobs\n' >"$answers/update.out"
   printf "fugaro update: this installation has no budget database yet, and only a project owner can create it: ask a project owner to run 'fugaro update'\n" >"$answers/operator.out"
-  printf 'name: second-install\njob: fugaro-app-operator\n' >"$answers/operator-config.yaml"
+  printf 'name: second-install\ngcp_project: second-project\nregion: us-test2\n' >"$answers/operator-config.yaml"
   runs_json "$answers/runs.json" "acme-app/20261120-120001-abcd" "" observe
   runs_json "$answers/runs2.json" "acme-app/20261120-120001-abcd" succeeded observe
   FAKE790_UPDATE_STATUS=0
+  FAKE790_UPDATE_REPO_STATUS=0
   FAKE790_OPERATOR_STATUS=0
   FAKE790_RUN_STATUS=0
   FAKE790_POLICY_STATUS=0
@@ -240,8 +264,8 @@ run790() {
     -u CURSOR_AGENT -u AI_AGENT \
     PATH="$fakebin:$PATH" \
     FAKE790_LOG="$CALLS" FAKE790_DIR="$answers" \
-    FAKE790_OPERATOR_JOB="${FAKE790_OPERATOR_JOB:-}" \
     FAKE790_UPDATE_STATUS="${FAKE790_UPDATE_STATUS:-0}" \
+    FAKE790_UPDATE_REPO_STATUS="${FAKE790_UPDATE_REPO_STATUS:-0}" \
     FAKE790_OPERATOR_STATUS="${FAKE790_OPERATOR_STATUS:-0}" \
     FAKE790_RUN_STATUS="${FAKE790_RUN_STATUS:-0}" \
     FAKE790_POLICY_STATUS="${FAKE790_POLICY_STATUS:-0}" \
@@ -274,10 +298,6 @@ test_a_dry_run_calls_nothing() {
 
 test_the_happy_path_reads_every_row() {
   case_dir happy
-  # The operator-config names the second installation's job; the fake answers
-  # that job name out of operator-job.json.
-  printf 'name: second-install\njob: operator-job\n' >"$answers/operator-config.yaml"
-  FAKE790_OPERATOR_JOB="operator-job"
   run790 --operator-config "$answers/operator-config.yaml"
   expect_status "$status" 0 "every row of a clean upgrade passes"
   expect_contains "$out" "premise" "the premise is a row"
@@ -289,6 +309,14 @@ test_the_happy_path_reads_every_row() {
   expect_contains "$out" "old-image" "the pre-release image is a row"
   expect_contains "$out" "operator" "the second installation is a row"
   expect_contains "$out" "CHECK 790 RESULT: PASS (exit 0)" "the verdict is PASS"
+  case "$(cat "$CALLS")" in
+  *"update --project test"*) ;;
+  *) fail "the installation's own update was not run: $(cat "$CALLS")" ;;
+  esac
+  case "$(cat "$CALLS")" in
+  *"update --repo --project test"*) ;;
+  *) fail "the repository's own re-apply ('fugaro update --repo') was not run: $(cat "$CALLS")" ;;
+  esac
 }
 
 test_an_installation_already_migrated_stops_the_check() {
@@ -309,6 +337,24 @@ test_a_policy_that_already_names_a_database_stops_the_check() {
   run790
   expect_status "$status" 2 "a published policy that names a database is the release having arrived"
   expect_contains "$out" "published policy carries a budget database URL" "the premise names what it read"
+}
+
+test_a_repository_update_that_fails_is_a_finding() {
+  case_dir update-repo-fails
+  FAKE790_UPDATE_REPO_STATUS=1
+  printf 'fugaro update: apply failed for the repository root\n' >"$answers/update-repo.out"
+  run790
+  expect_status "$status" 2 "the check stops when the repository's own re-apply did not finish"
+  expect_contains "$out" "update" "the update row is the finding"
+  expect_contains "$out" "re-applied by the update run for that repository" "the finding names why the repository half matters"
+}
+
+test_an_operator_config_with_no_project_leaves_the_row_unverified() {
+  case_dir operator-no-project
+  printf 'name: second-install\n' >"$answers/operator-config.yaml"
+  run790 --operator-config "$answers/operator-config.yaml"
+  expect_status "$status" 3 "a second installation whose project was not named is not read"
+  expect_contains "$out" "names no gcp_project" "the row says what it could not read"
 }
 
 test_an_update_that_fails_is_a_finding() {
@@ -381,9 +427,7 @@ test_an_image_that_carries_the_checkout_head_is_not_a_pre_release_image() {
 
 test_an_operator_update_that_changes_things_is_a_finding() {
   case_dir operator-changes
-  printf 'name: second-install\njob: operator-job\n' >"$answers/operator-config.yaml"
-  job_json "$answers/operator-job.json" "us-docker.pkg.dev/p/jobs/app:0.35.0" "FUGARO_RTDB_URL=https://db.invalid"
-  FAKE790_OPERATOR_JOB="operator-job"
+  jobs_json "$answers/operator-jobs.json" "us-docker.pkg.dev/p/jobs/app:0.35.0" "FUGARO_RTDB_URL=https://db.invalid"
   run790 --operator-config "$answers/operator-config.yaml"
   expect_status "$status" 1 "an operator's roles must not create the database"
   expect_contains "$out" "operator" "the row is the finding"
@@ -392,7 +436,6 @@ test_an_operator_update_that_changes_things_is_a_finding() {
 
 test_an_operator_update_that_says_nothing_is_a_finding() {
   case_dir operator-silent
-  printf 'name: second-install\njob: operator-job\n' >"$answers/operator-config.yaml"
   printf 'fugaro update: done\n' >"$answers/operator.out"
   run790 --operator-config "$answers/operator-config.yaml"
   expect_status "$status" 1 "an installation that launches nothing until a project owner acts must say so"
@@ -458,6 +501,7 @@ t test_the_happy_path_reads_every_row
 t test_an_installation_already_migrated_stops_the_check
 t test_a_policy_that_already_names_a_database_stops_the_check
 t test_an_update_that_fails_is_a_finding
+t test_a_repository_update_that_fails_is_a_finding
 t test_a_job_that_never_learned_its_database_is_a_finding
 t test_an_in_flight_run_that_dies_is_a_finding
 t test_an_in_flight_run_that_never_ends_leaves_the_row_unverified
@@ -467,6 +511,7 @@ t test_an_image_that_carries_the_checkout_head_is_not_a_pre_release_image
 t test_an_operator_update_that_changes_things_is_a_finding
 t test_an_operator_update_that_says_nothing_is_a_finding
 t test_no_operator_config_leaves_that_row_unverified
+t test_an_operator_config_with_no_project_leaves_the_row_unverified
 t test_a_missing_flag_is_refused
 t test_a_sandbox_that_is_not_a_checkout_is_refused
 t test_an_agent_session_is_refused
