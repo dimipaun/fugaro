@@ -433,6 +433,15 @@ func stagesNamed(e *initEngine, names ...string) (stages []initflow.Stage, unans
 // decides is what is applied and in what order — the canonical one
 // (initflow.Names), not the order the questions were asked in.
 func (e *initEngine) converge(ctx context.Context) error {
+	// The owner's own local config, read before anything else this run does and
+	// before the first stage plans (update_catalog_guard.go): every image
+	// catalog entry this release will refuse is named here, and the one entry
+	// whose fix is unambiguous — a pin to a branch the repository no longer has
+	// whose file the default branch also has — is fixed in the file itself. It
+	// touches nothing in the installation's cloud and it can fail nothing, so it
+	// is safe with runs in flight and never a step the one command the upgrade
+	// is can be stopped at.
+	e.guardCatalogEntries(ctx)
 	e.announceAlreadySetUp()
 	stages := initStages(e)
 	e.r.review = &runReview{cover: e.cover, firebase: e.firebaseVerified, owner: e.owner, screen: e.reviewScreen}
@@ -588,6 +597,17 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// this run leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
+	// And D2965's, the seventh: the runs that opened, followed or reviewed a
+	// pull request before this release wrote an entry as it came to be on one,
+	// so `runs ls --pr N` finds them in the index instead of scanning the
+	// repository
+	// (update_prindex.go). It is here for the reason the six above are — the
+	// converge applied everything it had, so the runs it walks are the ones this
+	// run leaves behind — and it is beside writeAdminList because it is the
+	// other object of this run's that a later read of the installation takes:
+	// both are derived from what the installation holds and neither fails an
+	// update (the HARD RULE).
+	e.backfillPRIndex(ctx)
 	// And D2716's: the checkout's docs/backlog/ folder, folded into the
 	// project's standing backlog once (update_backlog.go). It is here for the
 	// reason the four above are — the converge has applied everything it had, so

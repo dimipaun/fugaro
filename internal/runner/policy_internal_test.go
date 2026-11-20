@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -221,6 +222,10 @@ func TestPolicyKeyPathGovernance(t *testing.T) {
 		// operator it is meant to send to agent.triage would look in a block
 		// that cannot carry it.
 		{policy.KeyTriage, "agent.triage"},
+		// The review-against-task switch (D2935) is the same case with the
+		// other polarity: it is the repository's agent.review_against_task,
+		// and the ignored false a published true drops is reported under it.
+		{policy.KeyReviewAgainstTask, "agent.review_against_task"},
 	} {
 		if got := PolicyKeyPath(c.key); got != c.want {
 			t.Errorf("PolicyKeyPath(%q) = %q, want %q", c.key, got, c.want)
@@ -579,5 +584,132 @@ func TestChainRecordsAreReadByNameNotListed(t *testing.T) {
 		if strings.Contains(req.Query, "prefix=") || strings.Contains(req.Query, "delimiter=") {
 			t.Errorf("the chain was listed: %s %s?%s", req.Method, req.Path, req.Query)
 		}
+	}
+}
+
+// reviewAgainstTaskRun is a run that has resolved its policy with the owner's
+// published node and the base configuration a test plants, beside the log it
+// wrote while resolving it. The base configuration is planted rather than read
+// because the two homes of the switch are what these tests are about, and the
+// run carries no project so that resolvePolicy skips the default-branch read
+// that would otherwise be the third home: no repository is needed, and the
+// value under test is the one the run's own base file carries.
+func reviewAgainstTaskRun(t *testing.T, node *projectpolicy.Policy, base *config.Config) (*run, *bytes.Buffer) {
+	t.Helper()
+	var logs bytes.Buffer
+	r, _ := reviewSpecRun(t, reviewSpecTask(t, reviewRootRun, "the brief"), nil)
+	r.cfg, r.rec = &config.Config{}, &runstore.Record{}
+	r.d.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	r.baseCfg = base
+	r.projPolicy = policyRead{done: true, policy: node, found: true}
+	if err := r.resolvePolicy(context.Background(), r.cfg); err != nil {
+		t.Fatal(err)
+	}
+	return r, &logs
+}
+
+// reviewAgainstTaskBrief is the block a launcher writes for a review of a run
+// whose review_spec is its own brief: the one source the repository's setting
+// still closes (R1, R7).
+func reviewAgainstTaskBrief() *task.ReviewSpec {
+	return &task.ReviewSpec{Source: task.ReviewSpecRun, Run: reviewRootRun, Text: "the brief"}
+}
+
+// TestReviewAgainstTaskPolicyForcesOn: the owner's published `true` is a gate
+// over the repository's own answer, read before it (R7, D2935). A repository
+// whose base file turns the check off keeps it on — the state the plan's red
+// step is written from: without the gate, a published true over a base false
+// leaves the check off.
+func TestReviewAgainstTaskPolicyForcesOn(t *testing.T) {
+	on, off := true, false
+	r, _ := reviewAgainstTaskRun(t, &projectpolicy.Policy{ReviewAgainstTask: &on},
+		&config.Config{Agent: config.Agent{ReviewAgainstTask: &off}})
+	if !r.policy.ReviewAgainstTaskForced() {
+		t.Fatal("the node's true did not reach the effective policy as the forcing value")
+	}
+	if !r.reviewAgainstTaskOn() {
+		t.Fatal("a published true over a base false left the check off: the gate must be read before the base value")
+	}
+	r.reviewSpec = reviewAgainstTaskBrief()
+	if got := r.resolveReviewSpec(context.Background()); !got.found() {
+		t.Fatalf("resolveReviewSpec = %v (reason %q), want the brief the reviews are checked against", got.found(), got.source.reason)
+	}
+}
+
+// TestReviewAgainstTaskPolicyDefaultOffRepoOn: the owner's published `false` is
+// a project-wide default and not a ceiling (D2935), so a repository whose base
+// file turns the check on keeps it: on is the stricter value for this key, the
+// merge takes a true wherever it appears, and neither home overrules the
+// other's.
+func TestReviewAgainstTaskPolicyDefaultOffRepoOn(t *testing.T) {
+	on, off := true, false
+	r, _ := reviewAgainstTaskRun(t, &projectpolicy.Policy{ReviewAgainstTask: &off},
+		&config.Config{Agent: config.Agent{ReviewAgainstTask: &on}})
+	if r.policy.ReviewAgainstTaskDefaultOff() {
+		t.Fatal("the repository's own true did not override the published default off")
+	}
+	if !r.reviewAgainstTaskOn() {
+		t.Fatal("a repository's own true under a published false left the check off (D2935)")
+	}
+	r.reviewSpec = reviewAgainstTaskBrief()
+	if got := r.resolveReviewSpec(context.Background()); !got.found() {
+		t.Fatalf("resolveReviewSpec = %v (reason %q), want the brief", got.found(), got.source.reason)
+	}
+}
+
+// TestReviewAgainstTaskPolicyDefaultOffRepoSilent: a repository whose base file
+// says nothing about the switch takes the owner's published `false`, which is
+// what "a project-wide default off" means (D2935) — and the run records it as
+// the setting being off, the same reason a repository that turned the check off
+// itself gets, because what a review is judged against is nothing either way
+// (R7).
+func TestReviewAgainstTaskPolicyDefaultOffRepoSilent(t *testing.T) {
+	off := false
+	r, _ := reviewAgainstTaskRun(t, &projectpolicy.Policy{ReviewAgainstTask: &off}, &config.Config{})
+	if !r.policy.ReviewAgainstTaskDefaultOff() {
+		t.Fatal("the node's false did not reach the effective policy as the default off")
+	}
+	if r.reviewAgainstTaskOn() {
+		t.Fatal("a published false left the check on for a repository that sets nothing")
+	}
+	r.reviewSpec = reviewAgainstTaskBrief()
+	got := r.resolveReviewSpec(context.Background())
+	if got.found() || got.source.reason != specReasonSettingOff {
+		t.Fatalf("resolveReviewSpec = %v (reason %q), want no brief with %q", got.found(), got.source.reason, specReasonSettingOff)
+	}
+}
+
+// TestReviewAgainstTaskPolicyRepoOffIgnored: under a published `true` the
+// repository's own `false` is a layer value the merge drops, and the record
+// says so — the key, the value written, the effective true and the layer the
+// value it lost to came from — with the key reported as
+// agent.review_against_task, the key the file writes (D2935, PolicyKeyPath).
+// The check itself is on: the false was ignored, not honoured.
+func TestReviewAgainstTaskPolicyRepoOffIgnored(t *testing.T) {
+	on, off := true, false
+	r, logs := reviewAgainstTaskRun(t, &projectpolicy.Policy{ReviewAgainstTask: &on},
+		&config.Config{Agent: config.Agent{ReviewAgainstTask: &off}})
+	if !r.reviewAgainstTaskOn() {
+		t.Fatal("the repository's false was honoured under the owner's published true")
+	}
+	if got := r.policy.Sources[policy.KeyReviewAgainstTask]; got != policy.SourcePolicy {
+		t.Errorf("sources[%s] = %q, want %q: the effective value is the node's", policy.KeyReviewAgainstTask, got, policy.SourcePolicy)
+	}
+	if got := PolicyKeyPath(policy.KeyReviewAgainstTask); got != "agent.review_against_task" {
+		t.Fatalf("PolicyKeyPath(%s) = %q, want agent.review_against_task", policy.KeyReviewAgainstTask, got)
+	}
+	rec := r.rec.Policy
+	if rec == nil {
+		t.Fatal("the run recorded no policy, so nothing says the repository's false was ignored")
+	}
+	// The base file is the branch layer's here: the run has no project, so
+	// there is no default branch for its base configuration to have come from.
+	want := runstore.PolicyIgnored{Key: policy.KeyReviewAgainstTask, Value: "false", Effective: "true",
+		Source: policy.SourcePolicy, From: policy.SourceBranch}
+	if !slices.Equal(rec.Ignored, []runstore.PolicyIgnored{want}) {
+		t.Fatalf("ignored = %+v, want %+v", rec.Ignored, want)
+	}
+	if !strings.Contains(logs.String(), "key=agent.review_against_task") {
+		t.Errorf("the run did not warn about the ignored key:\n%s", logs.String())
 	}
 }

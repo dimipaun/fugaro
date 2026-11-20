@@ -481,11 +481,12 @@ func (o resolveRunOptions) notes() io.Writer {
 // that cannot answer is handed a run it did not choose. An ending that names
 // none is D1709's refusal, whose way out is the full ID.
 //
-// activeOnly is the option the one command that acts on the answer sets:
-// `cancel` takes it, so an ending is read against the active runs alone and
-// the answer is the list of them rather than a run. The one destructive
-// command is then only ever given a run a person named in full, and what an
-// ending gets back is the full IDs to paste (D1710).
+// activeOnly is the option the commands that act on the answer set: `cancel`
+// and `tell` take it, so an ending is read against the active runs alone and
+// the answer is the list of them rather than a run. The command that stops a
+// run is then only ever given a run a person named in full, and so is the one
+// that steers a going run: what an ending gets back is the full IDs to paste
+// (D1710).
 func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOptions) (slug, runID string, err error) {
 	// A full ID and <slug>/<run-id> are locateRun's, refusals included: this
 	// adds endings to what a command accepts and changes nothing about what it

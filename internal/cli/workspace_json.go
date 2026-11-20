@@ -3,6 +3,8 @@ package cli
 import (
 	"maps"
 	"slices"
+
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // The document `fugaro workspace ls --json` and `fugaro workspace show --json`
@@ -23,7 +25,11 @@ import (
 // additionalProperties is left true everywhere in the schema — because a
 // consumer that refused a member this schema does not know would refuse a newer
 // CLI's document under the same version.
-const workspaceLsDocVersion = 1
+// Version 2 made job_service_accounts a list of objects, each naming the
+// account and the repositories it is a job of, and added database_region, the
+// pin's service_address and the owner's shared list. A consumer of version 1
+// read a list of strings there, so the retype is what bumps the version.
+const workspaceLsDocVersion = 2
 
 // workspaceDoc is the whole document.
 type workspaceDoc struct {
@@ -60,6 +66,23 @@ type workspaceDocRow struct {
 	// two-sided check, as far as this machine can make it). Empty on a machine
 	// that holds no owner's config.
 	Problems []string `json:"problems"`
+	// Shared is the owner's own list of what the workspace's credentials
+	// service may offer its members, in name order (D1298). [] is a workspace
+	// whose owner has shared nothing, and null is a machine that does not hold
+	// that config at all. A member never sees this: a member reads nothing the
+	// workspace publishes, so the only copy is the owner's own file.
+	Shared []workspaceDocShared `json:"shared"`
+}
+
+// workspaceDocShared is one credential the workspace offers, as the owner's
+// config declares it: the name the workspace's bundle holds it under, its kind
+// spelled as the route record spells it, the member projects it may be served
+// to, and — for a forge entry — the repositories it covers.
+type workspaceDocShared struct {
+	Name     string   `json:"name"`
+	Kind     string   `json:"kind"`
+	Projects []string `json:"projects"`
+	Covers   []string `json:"covers"`
 }
 
 // workspaceDocCap is the workspace's own spend ceiling, in the file's own unit:
@@ -74,12 +97,27 @@ type workspaceDocCap struct {
 // fields and never will be — it is derived from the Firebase project the
 // verified iss names (finding 6) — and neither is a runs bucket (O1).
 type workspaceDocMember struct {
-	Project            string   `json:"project"`
-	JobServiceAccounts []string `json:"job_service_accounts"`
-	FirebaseProject    string   `json:"firebase_project"`
-	FP                 string   `json:"fp"`
-	ExchangeURL        string   `json:"exchange_url"`
-	Repos              []string `json:"repos"`
+	Project string `json:"project"`
+	// JobServiceAccounts are the member's job service accounts, each with the
+	// repositories it is a job of (R6, D2992). One repository is the ordinary
+	// case; a shared project job serving several names all of them. They are
+	// concrete owner/name values and never a pattern.
+	JobServiceAccounts []workspaceDocJobAccount `json:"job_service_accounts"`
+	// DatabaseRegion is where the member's Realtime Database lives, empty for a
+	// database in its project's default region. It is not whose database it is:
+	// that is derived from the Firebase project.
+	DatabaseRegion  string   `json:"database_region"`
+	FirebaseProject string   `json:"firebase_project"`
+	FP              string   `json:"fp"`
+	ExchangeURL     string   `json:"exchange_url"`
+	Repos           []string `json:"repos"`
+}
+
+// workspaceDocJobAccount is one job service account of a member with the
+// repositories it is a job of.
+type workspaceDocJobAccount struct {
+	Account string   `json:"account"`
+	Repos   []string `json:"repos"`
 }
 
 // workspaceDocMembership is one project config on this machine that names the
@@ -91,6 +129,11 @@ type workspaceDocMembership struct {
 	FirebaseProject string `json:"firebase_project"`
 	Issuer          string `json:"issuer"`
 	ServiceAccount  string `json:"service_account"`
+	// ServiceAddress is the pin's address of the workspace's own credentials
+	// service, empty for a membership that takes no workspace credential (R3).
+	// It is the member's own value, and this document reads it from the
+	// member's file and never from anything the workspace publishes.
+	ServiceAddress string `json:"service_address"`
 }
 
 // document is one workspace's row as the document prints it.
@@ -110,26 +153,53 @@ func (r *workspaceRow) document(m *workspaceMachine) workspaceDocRow {
 			FirebaseProject: mem.pin.FirebaseProject,
 			Issuer:          mem.pin.Issuer,
 			ServiceAccount:  mem.pin.ServiceAccount,
+			ServiceAddress:  mem.pin.ServiceAddress,
 		})
 	}
 	if r.owner == nil {
 		return row
 	}
 	row.Members = []workspaceDocMember{}
+	row.Shared = []workspaceDocShared{}
 	if r.owner.WorkspaceCap != nil {
 		row.Cap = &workspaceDocCap{MonthlyUSD: r.owner.WorkspaceCap.Monthly}
 	}
 	table := workspaceTable(r.owner)
 	for _, p := range slices.Sorted(maps.Keys(table)) {
 		mm := table[p]
+		accounts := make([]workspaceDocJobAccount, 0, len(mm.JobAccounts))
+		for _, a := range mm.JobAccounts {
+			accounts = append(accounts, workspaceDocJobAccount{Account: a.Account, Repos: nonNil(a.Repos)})
+		}
 		row.Members = append(row.Members, workspaceDocMember{
 			Project:            p,
-			JobServiceAccounts: nonNil(mm.JobServiceAccounts),
+			JobServiceAccounts: accounts,
+			DatabaseRegion:     mm.DatabaseRegion,
 			FirebaseProject:    mm.FirebaseProject,
 			FP:                 mm.FP,
 			ExchangeURL:        mm.ExchangeURL,
 			Repos:              nonNil(mm.Repos),
 		})
 	}
+	shared := workspaceShared(r.owner)
+	for _, name := range slices.Sorted(maps.Keys(shared)) {
+		sh := shared[name]
+		row.Shared = append(row.Shared, workspaceDocShared{
+			Name:     name,
+			Kind:     sh.Kind,
+			Projects: nonNil(sh.Projects),
+			Covers:   nonNil(sh.Covers),
+		})
+	}
 	return row
+}
+
+// workspaceShared is a config's shared list, empty when it holds none: a
+// config is the workspace's own when its table, its cap or its shared list is
+// written, and this is the third of the three.
+func workspaceShared(lc *localcfg.Config) map[string]localcfg.WorkspaceShared {
+	if lc == nil || lc.WorkspaceShared == nil {
+		return nil
+	}
+	return *lc.WorkspaceShared
 }

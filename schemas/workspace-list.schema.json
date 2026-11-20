@@ -11,8 +11,8 @@
   ],
   "properties": {
     "version": {
-      "const": 1,
-      "$comment": "workspaceLsDocVersion in internal/cli/workspace_json.go."
+      "const": 2,
+      "$comment": "workspaceLsDocVersion in internal/cli/workspace_json.go. 2 made job_service_accounts a list of objects and added database_region, the pin's service_address and the owner's shared list; a consumer of 1 read a list of strings there."
     },
     "workspaces": {
       "type": "array",
@@ -38,7 +38,8 @@
         "owner",
         "members",
         "memberships",
-        "problems"
+        "problems",
+        "shared"
       ],
       "properties": {
         "name": {
@@ -48,7 +49,7 @@
         },
         "owner": {
           "type": "boolean",
-          "description": "This machine holds the workspace's own project config, which is where the member table and the cap are written. It is what makes members readable: false means the members are on the workspace owner's machine and this document says nothing about them, rather than saying the workspace has none."
+          "description": "This machine holds the workspace's own project config, which is where the member table, the cap and the shared list are written. It is what makes members readable: false means the members are on the workspace owner's machine and this document says nothing about them, rather than saying the workspace has none."
         },
         "cap": {
           "$ref": "#/$defs/cap",
@@ -62,6 +63,16 @@
           "description": "The member table of the workspace's own config here, in name order. [] is a workspace whose table declares no member yet, and null is a machine that does not hold that config at all. A consumer reads owner before it reads this.",
           "items": {
             "$ref": "#/$defs/member"
+          }
+        },
+        "shared": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "description": "The credentials the workspace offers, as the owner's own config declares them, in name order (D1298). [] is a workspace that offers nothing, and null is a machine that does not hold that config at all. A member never reads this: a member's runs read the route its own update publishes, so a member holds no copy of the workspace's list.",
+          "items": {
+            "$ref": "#/$defs/shared"
           }
         },
         "memberships": {
@@ -94,11 +105,54 @@
         }
       }
     },
+    "shared": {
+      "type": "object",
+      "required": [
+        "name",
+        "kind",
+        "projects",
+        "covers"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The credential's name, which is the name the workspace's bundle holds it under and the name the workspace's service speaks. It is a name and never a value: no document here carries a credential."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "model",
+            "bitbucket",
+            "github"
+          ],
+          "description": "What the credential is for, spelled as the route record spells it (R4). A model credential is offered by name; a forge credential is offered for the repositories it covers."
+        },
+        "projects": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The member projects this credential may be served to, in name order. The effective set is this list intersected with the member's own policy (D1298), and it is never empty: an entry that named no project would either widen the pool to every member or hide a half-written declaration.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "covers": {
+          "type": "array",
+          "description": "The repositories a forge credential reaches, as owner/name, in the order the owner wrote them. Empty for a model entry, which names no repository, and never empty for a forge one: a forge route is decided per repository, so an entry with no coverage is one the workspace's service could not decide a request against.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "member": {
       "type": "object",
       "required": [
         "project",
         "job_service_accounts",
+        "database_region",
         "firebase_project",
         "fp",
         "exchange_url",
@@ -112,11 +166,14 @@
         },
         "job_service_accounts": {
           "type": "array",
-          "description": "The member's job service accounts: the identities the workspace's service resolves a caller by (spec §5).",
+          "description": "The member's job service accounts: the identities the workspace's service resolves a caller by (spec §5), each with the repositories it is a job of. The service holds a run's verified repository to the calling account's own list, so the two are one statement and an account with no repository is refused at the load (R6, D2992, F42).",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "$ref": "#/$defs/job_account"
           }
+        },
+        "database_region": {
+          "type": "string",
+          "description": "The region of the member's Realtime Database, empty for a database in the project's default region. It is not whose database it is: the project is derived from the Firebase project the verified iss names, and this says only where in that project it lives."
         },
         "firebase_project": {
           "type": "string",
@@ -140,13 +197,37 @@
         }
       }
     },
+    "job_account": {
+      "type": "object",
+      "required": [
+        "account",
+        "repos"
+      ],
+      "properties": {
+        "account": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One job service account of the member, by its IAM address."
+        },
+        "repos": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The repositories this account is a job of, as owner/name and never a pattern (F42): one for a repository's own job, several for a shared project job. The workspace's service compares a run's verified repository to this list.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "membership": {
       "type": "object",
       "required": [
         "project",
         "firebase_project",
         "issuer",
-        "service_account"
+        "service_account",
+        "service_address"
       ],
       "properties": {
         "project": {
@@ -165,6 +246,10 @@
         "service_account": {
           "type": "string",
           "description": "The pin's service_account: the workspace service account this project's own fugaro update binds its read-only database grant to."
+        },
+        "service_address": {
+          "type": "string",
+          "description": "The pin's service_address: where this project's runs call the workspace's own credentials service, empty for a membership that takes no workspace credential (R3). It is the member's own value and is read from the member's file here; nothing the workspace publishes can move it."
         }
       }
     }

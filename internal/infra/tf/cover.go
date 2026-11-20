@@ -1852,13 +1852,16 @@ var (
 
 // orchestratorServiceResource, orchestratorServiceArgs, orchestratorServiceEnv
 // and orchestratorTickPath are the same quartet for the resident orchestrator's
-// own service (mobile plan task P5.1c; modules/installation/orchestrator.tf):
-// the resource name the service case dispatches on, the argv of the released
-// image's `orchestrator serve` subcommand, the three names
-// internal/cli/orchestrator_serve.go reads and nothing else — the project that
-// names this installation's node, the Firebase project it belongs to and the
-// database URL it is read from — and the one route that process answers, which
-// is the only path a tick of this installation may be pointed at.
+// own service (mobile plan tasks P5.1c and P5.1d;
+// modules/installation/orchestrator.tf): the resource name the service case
+// dispatches on, the argv of the released image's `orchestrator serve`
+// subcommand, the six names internal/cli/orchestrator_serve.go reads and nothing
+// else — the project that names this installation's node, the Firebase project
+// it belongs to and the database URL it is read from, plus the launch's own
+// three (the GCP project the jobs are in, the region they were deployed to and
+// the runs bucket's URL, which P5.1d's launcher builds a launch from) — and the
+// one route that process answers, which is the only path a tick of this
+// installation may be pointed at.
 //
 // A scheduling job of this service is the tree's ONE tick whose target is a
 // run.app URL rather than the run API's job path, and whose token is therefore
@@ -1871,7 +1874,7 @@ const (
 
 var (
 	orchestratorServiceArgs = []string{"orchestrator", "serve"}
-	orchestratorServiceEnv  = []string{"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL"}
+	orchestratorServiceEnv  = []string{"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_GCP_PROJECT", "FUGARO_REGION", "FUGARO_BUCKET"}
 )
 
 // CredentialsServiceEnvAwaitingTheModule are the names credentialsServiceEnv
@@ -4744,11 +4747,11 @@ func (c Cover) voiceServiceChange(rc ResourceChange, a map[string]any, unk any, 
 }
 
 // orchestratorServiceChange holds the resident orchestrator's own service
-// (mobile plan task P5.1c, modules/installation/orchestrator.tf) to the same
-// four rules intakeServiceChange holds the intake's to, and the reasoning for
-// the shape is that function's and credentials.tf's case above. It is a case of
-// its own and not an arm of the intake's, because two of the four are this
-// service's own:
+// (mobile plan tasks P5.1c and P5.1d, modules/installation/orchestrator.tf) to
+// the same four rules intakeServiceChange holds the intake's to, and the
+// reasoning for the shape is that function's and credentials.tf's case above.
+// It is a case of its own and not an arm of the intake's, because two of the
+// four are this service's own:
 //
 //   - the argv. This process is the released image's `orchestrator serve`
 //     subcommand (internal/cli/orchestrator_serve.go), and the image's own
@@ -4758,15 +4761,18 @@ func (c Cover) voiceServiceChange(rc ResourceChange, a map[string]any, unk any, 
 //     or the intake's routes from this URL as an account that may mint a token
 //     for any uid, and anything else would run code orchestrator.tf does not
 //     write. The command is empty, as the two other services' is.
-//   - the environment, which is THREE names and not four
-//     (orchestratorServiceEnv): the project that names this installation's
-//     node, the Firebase project it belongs to, and the database URL it is read
-//     from. Those three are what internal/cli/orchestrator_serve.go reads, and
-//     an environment is the one path a credential could reach this process
-//     without a Secret Manager read — so an entry off the list, or one whose
-//     value comes from a source, is refused here rather than under the one
-//     confirmation that covered the plan. The database URL is on the list as a
-//     NAME; the check that the value is THIS installation's database is the
+//   - the environment, which is SIX names and not seven
+//     (orchestratorServiceEnv): P5.1c's three — the project that names this
+//     installation's node, the Firebase project it belongs to and the database
+//     URL it is read from — beside P5.1d's own three, the GCP project the jobs
+//     are in, the region they were deployed to and the runs bucket's URL (the
+//     same three names a run's own container carries). Those six are what
+//     internal/cli/orchestrator_serve.go reads, and an environment is the one
+//     path a credential could reach this process without a Secret Manager read
+//     — so an entry off the list, or one whose value comes from a source, is
+//     refused here rather than under the one confirmation that covered the
+//     plan. The database URL is on the list as a NAME; the check that the value
+//     is THIS installation's database is the
 //     process's own (it compares the host to the Firebase project it was
 //     given), because only the project's own services know which database is
 //     theirs.

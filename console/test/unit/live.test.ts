@@ -1042,6 +1042,296 @@ describe('the two write buttons the redesign draws', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// The Live stylesheets.
+// ---------------------------------------------------------------------------
+
+/**
+ * The screen's size and its contrast are the stylesheets' facts and not this
+ * file's: `screens.css` draws the burn line and the runs box's scrolling, and
+ * `flight-deck.css` the hour line beside it and the table's own floor. Two
+ * questions below are asked of the rules themselves -- how big a sparkline's box
+ * is, and what a text colour is read against -- because neither can be answered
+ * from the markup: a bar carries no width and no colour, and a rule's pair is
+ * two declarations a browser resolves.
+ */
+
+/** themeSheet reads one stylesheet of the theme, failing by name rather than
+ * with an ENOENT from somewhere further along. */
+function themeSheet(name: string): string {
+  return readFileSync(path.join(SRC, 'renderer', 'theme', name), 'utf8')
+}
+
+/** withoutAtRules removes every `@name { ... }` block with its braces matched, so
+ * that the rules inside one are not read as the stylesheet's own. **This is not
+ * tidiness.** `@media (forced-colors: active)` repaints these hooks in the
+ * reader's own colours -- `CanvasText`, `GrayText`, `Highlight` -- which are the
+ * system's and not the console's, so a ratio computed from them would be a ratio
+ * nobody chose; and a `@keyframes` body is a transition's frame rather than a
+ * pair a person reads at rest. */
+function withoutAtRules(css: string): string {
+  let out = ''
+  let from = 0
+  for (let at = css.indexOf('@', from); at !== -1; at = css.indexOf('@', from)) {
+    out += css.slice(from, at)
+    const open = css.indexOf('{', at)
+    if (open === -1) return out
+    let depth = 1
+    let end = open + 1
+    while (end < css.length && depth > 0) {
+      if (css[end] === '{') depth++
+      else if (css[end] === '}') depth--
+      end++
+    }
+    from = end
+  }
+  return out + css.slice(from)
+}
+
+/** plainRules is a stylesheet's own rules, as their selector and their body, in
+ * file order. A rule of an at-rule is not in the list (`withoutAtRules`). */
+function plainRules(css: string): readonly { readonly selector: string; readonly body: string }[] {
+  const source = withoutAtRules(css.replace(/\/\*[\s\S]*?\*\//g, ''))
+  const rules: { selector: string; body: string }[] = []
+  for (const [, selector, body] of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    rules.push({ selector: (selector ?? '').trim().replace(/\s+/g, ' '), body: body ?? '' })
+  }
+  return rules
+}
+
+/** declarationsOf is a rule body's declarations: property, in lower case, to
+ * value. The last one wins, which is what a browser does with a repeated
+ * property. */
+function declarationsOf(body: string): ReadonlyMap<string, string> {
+  const found = new Map<string, string>()
+  for (const declaration of body.split(';')) {
+    const colon = declaration.indexOf(':')
+    if (colon === -1) continue
+    found.set(declaration.slice(0, colon).trim().toLowerCase(), declaration.slice(colon + 1).trim())
+  }
+  return found
+}
+
+/** liveRule is the one rule of a sheet whose selector is exactly `selector`,
+ * asserted to be one: two rules for the same hook would mean the declarations
+ * this case reads are not the ones the window paints. */
+function liveRule(sheet: string, selector: string): ReadonlyMap<string, string> {
+  const found = plainRules(themeSheet(sheet)).filter((rule) => rule.selector === selector)
+  expect(found, `${sheet} carries ${String(found.length)} rules for ${selector}`).toHaveLength(1)
+  const first = found[0]
+  if (first === undefined) throw new Error(`${sheet} carries no ${selector} rule`)
+  return declarationsOf(first.body)
+}
+
+/** paint is an opaque sRGB triple, the only shape a contrast ratio is computed
+ * from. */
+type Paint = readonly [number, number, number]
+
+/** hexPaint reads an opaque hex literal; anything else is refused rather than
+ * skipped, because a colour this file cannot compute is exactly the colour a
+ * regression would hide in. */
+function hexPaint(value: string, where: string): Paint {
+  const hex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(value.trim())
+  if (hex === null) {
+    throw new Error(
+      `${where}: ${JSON.stringify(value)} is not an opaque hex colour, so the pairs below cannot ` +
+        `be computed from it`,
+    )
+  }
+  const digits = hex[1]?.length === 3 ? [...(hex[1] ?? '')].map((one) => one + one).join('') : (hex[1] ?? '')
+  return [0, 2, 4].map((i) => Number.parseInt(digits.slice(i, i + 2), 16)) as unknown as Paint
+}
+
+/** liveTokens is every colour name a Live rule resolves against: the set
+ * `palette.css` declares and the Flight Deck block `flight-deck.css` declares on
+ * `:root`, which is the layer the redesigned screens are painted from. The later
+ * sheet wins a name both declare, which is the order the bundle loads them in. */
+function liveTokens(): ReadonlyMap<string, string> {
+  const found = new Map<string, string>()
+  for (const sheet of ['palette.css', 'flight-deck.css']) {
+    for (const rule of plainRules(themeSheet(sheet))) {
+      if (!rule.selector.split(',').map((one) => one.trim()).includes(':root')) continue
+      for (const [name, value] of declarationsOf(rule.body)) found.set(name, value)
+    }
+  }
+  return found
+}
+
+/** colourOf resolves one declaration's colour to an opaque triple, over the
+ * `ground` a tint lands on. A `var()` is followed by name; a tint is composited
+ * over the ground, because a chip's background is one of the theme's own with
+ * alpha and what a person reads the text against is the panel underneath. */
+function colourOf(
+  value: string,
+  tokens: ReadonlyMap<string, string>,
+  ground: Paint,
+  where: string,
+): Paint {
+  const named = /^var\((--[a-z0-9-]+)\)$/.exec(value.trim())
+  if (named !== null) {
+    const declared = tokens.get(named[1] ?? '')
+    if (declared === undefined) throw new Error(`${where}: ${value} names a token the theme does not declare`)
+    return colourOf(declared, tokens, ground, where)
+  }
+  const tint = /^rgba?\(([^)]+)\)$/.exec(value.trim())
+  if (tint !== null) {
+    const parts = (tint[1] ?? '').split(',').map((one) => Number.parseFloat(one))
+    const [r, g, b] = parts
+    const alpha = parts[3] ?? 1
+    if (r === undefined || g === undefined || b === undefined || Number.isNaN(alpha)) {
+      throw new Error(`${where}: ${value} is not a colour this test can composite`)
+    }
+    return [r, g, b].map((channel, i) => Math.round(channel * alpha + (ground[i] ?? 0) * (1 - alpha))) as unknown as Paint
+  }
+  return hexPaint(value, where)
+}
+
+/** channelLuminance and relativeLuminance are WCAG 2.1's relative luminance, and
+ * contrastRatio is `(L1+0.05)/(L2+0.05)` with the lighter one first. The
+ * arithmetic is the same four lines `theme-tokens.test.ts` and
+ * `website/test/a11y.mjs` carry -- written out here rather than imported, since
+ * both are module-local and the a11y module runs its own cases on import. */
+function channelLuminance(channel: number): number {
+  const c = channel / 255
+  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+}
+
+function contrastRatio(fg: Paint, bg: Paint): number {
+  const [a, b] = [fg, bg].map((rgb) => {
+    const [r, g, bl] = rgb.map(channelLuminance) as [number, number, number]
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl
+  }) as [number, number]
+  const [hi, lo] = a >= b ? [a, b] : [b, a]
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+/** isLiveSelector says whether a selector is this screen's: a rule is Live's when
+ * a class it names is `live` or begins `live-`, which is how §2 of the styling
+ * design marks a hook. `button.run-crumb-live` is Run's and is not one of them. */
+function isLiveSelector(selector: string): boolean {
+  for (const [, name] of selector.matchAll(/\.([\w-]+)/g)) {
+    if (name === 'live' || (name ?? '').startsWith('live-')) return true
+  }
+  return false
+}
+
+/** GROUNDS are the panels a Live rule's background can land on: the page, the
+ * panel the redesigned screen paints on, and the sunken one its cells use. A
+ * tint's ratio depends on what is under it and a rule does not say which panel
+ * that is, so every pair below is measured against all three -- the answer must
+ * not depend on the choice. */
+const GROUNDS: readonly string[] = Object.freeze(['--bg', '--surface-2', '--surface-sunken'])
+
+describe('the Live stylesheets', () => {
+  it('paints every text colour above 4.5:1 on the background its rule paints with it', () => {
+    // The owner's report of 2026-11-18 named "grey text on light blue, looks like
+    // a percentage": the sparkline's burn bar is `--text-muted` on `--accent`,
+    // about 1.24:1. The repair is the text going away rather than the pair being
+    // disguised (the bar is geometry, `spark()`), and this case is what keeps a
+    // pair from arriving again: a rule of either stylesheet that paints a text
+    // colour and a background together is measured, whatever it selects.
+    const tokens = liveTokens()
+    const failures: string[] = []
+    let pairs = 0
+    for (const sheet of ['screens.css', 'flight-deck.css']) {
+      for (const rule of plainRules(themeSheet(sheet))) {
+        if (!isLiveSelector(rule.selector)) continue
+        const declarations = declarationsOf(rule.body)
+        const fg = declarations.get('color')
+        const bg = declarations.get('background') ?? declarations.get('background-color')
+        if (fg === undefined || bg === undefined) continue
+        // A rule that paints no background of its own paints no pair: what its
+        // text is read against is an ancestor's, and that is the palette table's
+        // question (`theme-tokens.test.ts`), not a rule's.
+        if (bg === 'none' || bg === 'transparent') continue
+        pairs++
+        for (const ground of GROUNDS) {
+          const under = hexPaint(tokens.get(ground) ?? '', ground)
+          const where = `${sheet}: ${rule.selector}`
+          const ratio = contrastRatio(
+            colourOf(fg, tokens, under, `${where} color`),
+            colourOf(bg, tokens, under, `${where} background`),
+          )
+          if (ratio < 4.5) {
+            failures.push(`${where} -- ${fg} on ${bg} is ${ratio.toFixed(1)}:1 over ${ground}, needs 4.5:1`)
+          }
+        }
+      }
+    }
+    // A scan that found nothing would pass this case without checking anything,
+    // so the floor is asserted: the two tinted chips, the two disabled writes and
+    // the fleet's full warning are Live rules that paint their own pair.
+    expect(pairs, 'no Live rule paints a text colour and a background together').toBeGreaterThanOrEqual(3)
+    expect(failures, 'text below 4.5:1 in the Live stylesheets').toEqual([])
+  })
+
+  it('is one fixed-size box per sparkline, so a window of samples cannot widen the pane', () => {
+    // The line is a single element with a fixed size that clips and packs to
+    // its end, and its ticks are capped: the newest samples are the ones kept, and
+    // a window of a thousand is the same box as a window of three. Every
+    // declaration is asserted by name, because each is one of the ways the row
+    // grew or vanished before -- an untamed `height`, an `overflow` that spilled
+    // into the panel, a tick that followed its text's width, a box that packed
+    // from the start and so hid the newest sample when it clipped, and, once the
+    // text was gone, a box with **no width of its own**: a flex item sized to its
+    // content, whose content was empty ticks of zero width, resolved to its gaps
+    // alone -- every tick 0 px and the box still 1 px wider per sample. The width
+    // is a constant and the tick has a floor, which is what those two are.
+    const burn = liveRule('screens.css', 'ol.live-burn')
+    expect(burn.get('display')).toBe('flex')
+    expect(burn.get('width')).toBe('calc(8 * var(--row-height))')
+    expect(burn.get('height')).toBe('var(--row-height)')
+    expect(burn.get('overflow')).toBe('hidden')
+    expect(burn.get('justify-content')).toBe('flex-end')
+    const burnBar = liveRule('screens.css', 'li.live-burn-bar')
+    expect(burnBar.get('height')).toBe('100%')
+    expect(burnBar.get('min-width')).toBe('1px')
+    expect(burnBar.get('max-width')).toBe('12px')
+    expect(burnBar.get('overflow')).toBe('hidden')
+    const hour = liveRule('flight-deck.css', 'ol.live-hour')
+    expect(hour.get('width')).toBe('calc(8 * var(--row-height))')
+    expect(hour.get('height')).toBe('var(--row-height)')
+    expect(hour.get('overflow')).toBe('hidden')
+    expect(hour.get('justify-content')).toBe('flex-end')
+    const hourBar = liveRule('flight-deck.css', 'li.live-hour-bar')
+    expect(hourBar.get('height')).toBe('100%')
+    expect(hourBar.get('min-width')).toBe('1px')
+    expect(hourBar.get('max-width')).toBe('12px')
+  })
+
+  it('draws no sample as a text cell', () => {
+    // The percent inside every tick was the whole of the growth: an `li` with
+    // text has a minimum width of its own, so a window of samples pushed the
+    // panel wider whatever the stylesheet said. A bar is geometry -- the share in
+    // `data-height`, the state in `data-state`, the rate in `title` -- and the
+    // text is gone, at every sample count.
+    const history = new BurnHistory()
+    const base = Date.parse('2026-10-15T12:00:00Z')
+    for (let second = 0; second < 240; second++) {
+      history.observe(theLastFrame().repos[0]?.slug ?? '', {
+        at: new Date(base + second * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+        reading: measured(0.02),
+      })
+    }
+    const model = buildLiveModel(frameAt(AT_CAP), history)
+    const tree = renderLive(factory, model, 'light')
+    // One element per sparkline: the two windows are one `ol` each, and the word
+    // beside each is the console's own name for the window rather than a line.
+    expect(all(tree, 'live-burn')).toHaveLength(model.repos.length)
+    expect(all(tree, 'live-hour')).toHaveLength(model.repos.length)
+    const bars = [...all(tree, 'live-burn-bar'), ...all(tree, 'live-hour-bar')]
+    expect(bars.length).toBeGreaterThanOrEqual(240)
+    for (const bar of bars) {
+      expect(bar.textContent, `${bar.classes.join(' ')} carries text`).toBeNull()
+    }
+    // And the bar keeps what a person needs from it: the share it is drawn at,
+    // whether it is a sample at all, and the rate the sample measured.
+    const sample = all(tree, 'live-burn-bar').find((bar) => bar.getAttribute('data-height') !== null)
+    expect(sample?.getAttribute('data-state')).toBe('measured')
+    expect(sample?.getAttribute('title')).toContain('$')
+  })
+})
+
 describe('the runs table\'s own scrolling box', () => {
   it('scrolls the table sideways inside its box rather than widening the panel', () => {
     // The table is seven columns wide with a floor (`min-width`), so at a narrow
@@ -1053,6 +1343,19 @@ describe('the runs table\'s own scrolling box', () => {
     expect(box?.[1]).toContain('overflow-x: auto')
     const table = /table\.live-table\s*\{([^}]*)\}/.exec(css)
     expect(table?.[1]).toContain('min-width: 1080px')
+  })
+
+  it('bounds the rows so a long list scrolls inside the box instead of lengthening the page', () => {
+    // A repository's runs are its longest list and nothing capped them: the rows
+    // ran down the page and pushed everything under them away. The box is bounded
+    // and scrolls its own rows, which is the same answer the width already had --
+    // and it is the box's declaration that does it, not a limit on the rows the
+    // model builds, so a taller window shows more rows rather than the console
+    // deciding which of them a person may see.
+    const box = liveRule('flight-deck.css', 'div.live-runs')
+    expect(box.get('max-height')).toBe('320px')
+    expect(box.get('overflow-y')).toBe('auto')
+    expect(box.get('overflow-x')).toBe('auto')
   })
 })
 
@@ -1548,16 +1851,22 @@ describe('the rows the fixture does not carry', () => {
 })
 
 describe('the burn bars of a repository with no history', () => {
-  it('draws a gap, in the gap\'s mark and state and with its reason as the title', () => {
+  it('draws one bar, in the gap\'s state and with its reason as the title', () => {
     // An unparseable `now` gives the window no stamp to end at, so the history
     // has nothing to draw: the console has not seen a sample, which
-    // availability.ts calls a gap (an em dash), not an unavailable value (n/a).
+    // availability.ts calls a gap, not an unavailable value (n/a). The bar is the
+    // empty line's one mark and carries **no text** like every other bar -- the
+    // mark a reading would be drawn as is what made a bar a text cell, and the
+    // reason it is empty is the `title` either way. It carries no `data-height`
+    // at all, which is the one thing that tells it from a sample drawn at the
+    // em dash: there is no share to draw.
     const frame = { ...theLastFrame(), now: 'not a time' }
     const tree = renderLive(factory, buildLiveModel(frame, new BurnHistory()), 'light')
     const bars = all(tree, 'live-burn-bar')
     expect(bars).toHaveLength(1)
     expect(bars[0]?.getAttribute('data-state')).toBe('gap')
-    expect(bars[0]?.textContent).toBe(GAP_MARK)
+    expect(bars[0]?.getAttribute('data-height')).toBeNull()
+    expect(bars[0]?.textContent).toBeNull()
     expect(bars[0]?.getAttribute('title') ?? '').not.toBe('')
   })
 })

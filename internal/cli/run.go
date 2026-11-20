@@ -38,6 +38,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/redact"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -123,6 +124,13 @@ type launchResult struct {
 	// block wherever the read could answer one at all, even with nothing but an
 	// empty chain in it.
 	*ChainLimits
+	// ReviewSpecReason is why this launch's review spec was dropped: the job
+	// image predates reviewSpecSince and cannot read review_spec, from_findings
+	// or own_text, so the launcher leaves them out and the review judges the
+	// code alone (D2933, reviewSpecSkew). It is the same reason the one warning
+	// line on stderr carries, so a caller reading only the document is told
+	// what the person read; empty for every launch whose spec was not dropped.
+	ReviewSpecReason string `json:"review_spec_reason,omitempty"`
 	// Error is the refusal this launch is answered with, nil for a launch
 	// that was not refused: a --retry of a run that already started starts
 	// nothing, and the document carries the refusal the command exits with,
@@ -233,6 +241,21 @@ type runOptions struct {
 	// fact; the release that owns that file documents it (reconciliation
 	// F22/E4).
 	reviewRun string
+	// codeOnly is --code-only: review the pull request's code alone. It is one
+	// of the two flags `fugaro review` and `fugaro run --recipe <a mode: review
+	// recipe>` share (R11, D2934), and it is the per-launch switch beside the
+	// repository's and the project's setting (spec §3): the launcher resolves a
+	// spec of no spec, reason --code-only, so the review job records that it
+	// judged the code alone. Refused with --spec, and refused on a recipe that
+	// is not mode: review, which is a launch that has no review to switch.
+	codeOnly bool
+	// specFile is --spec: the FILE whose text is the task this review judges
+	// the pull request's diff against, overriding the task of the run that
+	// opened it (spec §4). It is the way an orphan pull request — one no run
+	// produced — is reviewed against something, and its text is redacted like
+	// any other a launcher adds (R13). A file over MaxReviewSpecBytes is
+	// refused with its size rather than clipped (R4).
+	specFile string
 	// ownerRuled is --owner-ruled: the repository owner's answer to the
 	// findings a run on this PR left for them (OD1). A follow-up whose
 	// previous run stopped waiting on owner decisions is refused without it
@@ -298,6 +321,14 @@ type runOptions struct {
 	// display fact and reaches no other reader: the task is the record, and
 	// it carries the resolved account alone (F4).
 	account launchAccount
+	// reviewSpecReason is why this launch's review spec was dropped, set by
+	// the gate that drops it (reviewSpecSkew) where the launch begins
+	// (finishLaunch) and read there into the reply (launchResult.
+	// ReviewSpecReason), so the one reason reaches both the warning line on
+	// stderr and the launch's --json document. Empty is every launch whose
+	// spec was not dropped, and the field is cleared before the gates run, so
+	// one attempt's drop never lands in the next attempt's document.
+	reviewSpecReason string
 	// allowDuplicate is --allow-duplicate: the launcher's own word that a
 	// second run of the plan task above is deliberate, and the one way past
 	// the duplicate refusal (planTaskDuplicate). False (the default) is the
@@ -524,6 +555,8 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.reviewRun, "review-run", "", "carry the findings of review RUN (<repo-slug>/<run-id> or a run ID) into this fix round's brief; needs --pr, and refused with a mode: review recipe")
 	_ = f.MarkHidden("review-run")
 	f.StringVar(&o.ownerRuled, "owner-ruled", "", "the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run")
+	f.BoolVar(&o.codeOnly, "code-only", false, "review the pull request's code alone: the reviewer is given no task and judges the diff on its own merits (the per-launch switch beside the repository's agent.review_against_task and the project's published key). Needs a mode: review recipe and --pr, and refused with --spec")
+	f.StringVar(&o.specFile, "spec", "", "review against the task in this FILE instead of the task of the run that opened the pull request: the way to review a pull request no run produced. Its text is redacted like any other a launcher adds, and a file over "+fmt.Sprint(task.MaxReviewSpecBytes)+" bytes is refused with its size. Needs a mode: review recipe and --pr, and refused with --code-only")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
 	f.BoolVar(&o.security, "security", false, "ask for the strongest review this run can get: it turns review level 3 on for the run whatever paths it changed, over the repository's own security: rows and the project layer's always_level_3. It only ever turns the level on — there is no way to ask for less — as --mode raises a mode and never lowers one, and a run that says nothing resolves its levels from its configuration alone")
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
@@ -825,6 +858,21 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			}
 		}
 	}
+	// --code-only and --spec, R11's two refusals: together they ask a review
+	// for different things, and on a launch that resolved no mode: review
+	// recipe (an ordinary recipe, a follow-up, a retry) neither has a review to
+	// switch. Made here, where the recipe's mode is known and before any spec
+	// builder runs, so a launch refused over the flags leaves nothing behind —
+	// and before --attempts and --change-set return below, because neither of
+	// those takes a review either, and a batch's own refusals are its own
+	// (runAttempts).
+	mode := ""
+	if reviewRecipe != nil {
+		mode = recipe.ModeReview
+	}
+	if err := reviewSpecFlagsRefusal(o.codeOnly, o.specFile, mode); err != nil {
+		return err
+	}
 	if attemptsSet {
 		// The batch opens its own reporter once its own refusals are behind
 		// it (runAttempts): a batch this launcher refuses is no run to keep a
@@ -867,6 +915,12 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// a repeated --run-id against and the whole of what it stores, so a
 		// repeat of this same launch finds the task it stored instead of a
 		// text that differs from it by the findings.
+		//
+		// ownText is the person's own words, kept before the findings are put
+		// in front of them: a review of this pull request quotes them and
+		// leaves the reviewer's report out (from_findings and own_text, R2,
+		// F30).
+		ownText := text
 		if o.reviewRun != "" {
 			repo := o.repo
 			if repo == "" {
@@ -881,6 +935,17 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			text = findings + text
 		}
 		slug, spec, reused, err = prSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
+		// A stored task that is this same launch keeps what it was launched
+		// with, and a fresh one carries the two fields now: a follow-up
+		// accepted today keeps being accepted, so the person's text is
+		// clipped rather than refused (R2).
+		if err == nil && o.reviewRun != "" && !reused {
+			spec.FromFindings = true
+			spec.OwnText = clipReviewSpecText(redact.Text(ownText, nil))
+			if err := spec.Validate(); err != nil {
+				return userErr("%v", err)
+			}
+		}
 	default:
 		slug, spec, err = newSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
 		firstRun = true
@@ -1213,6 +1278,10 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			skipBudget = true
 		}
 	}
+	// This attempt's own reasons, cleared before the gates below fill them: the
+	// options are the caller's and a batch runs this once per attempt, so a
+	// line kept from one attempt must not be reported as the next one's.
+	o.reviewSpecReason = ""
 	if prior == nil {
 		caps, err := freshLaunchGates(ctx, env, o, slug, s, spec, compressionGate, warn, skipBudget)
 		if err != nil {
@@ -1258,6 +1327,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// path would be a second telling of it on a launch that never happened.
 	res.Project = env.lc.Name
 	res.Recipe = launchRecipeOf(spec, chooses)
+	res.ReviewSpecReason = o.reviewSpecReason
 	if spec.ProjectLayer != nil {
 		res.ProjectLayer = &launchProjectLayer{SHA256: spec.ProjectLayer.SHA256, Generation: spec.ProjectLayer.Generation}
 	}
@@ -1858,6 +1928,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// (baseBranchSkew). Here, and not with the gates below, because it
 	// decides what the task createTask writes.
 	baseBranchSkew(ctx, env, slug, spec, mode, warn)
+	// The review spec's own gate, beside it and for the same reason: a runner
+	// older than reviewSpecSince refuses a task carrying review_spec,
+	// from_findings or own_text outright, so a review's spec is dropped rather
+	// than the launch, with one line naming `fugaro update` (reviewSpecSkew,
+	// D2933). Here, and not with the gates below, because it decides what the
+	// task createTask writes.
+	o.reviewSpecReason = reviewSpecSkew(ctx, env, slug, spec, mode, warn)
 	// What this launch asks of its job image's runner about review
 	// levels, resolved once for the two branches below (a derived image
 	// and a checkout: clone workflow), the way compressionGate is: a
@@ -3519,6 +3596,17 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, BaseBranch: base, Workflow: workflow, Task: text, Title: o.title, PlanTask: o.planTask,
 		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...),
 		Rigor: rigor.Mode(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier)}
+	// The task the pull request was written for, resolved here rather than by
+	// the job: the launcher is the only side that reads the runs bucket, and
+	// the review job is handed the answer (R1, D2934). A review of a pull
+	// request no run produced, or one whose runs are older than the lookback,
+	// carries a none with the reason instead of no block at all — the review
+	// says so in its artifact, and the person reads why it judged the code
+	// alone.
+	ask := launchSpecAsk{PRs: o.pr, CodeOnly: o.codeOnly, SpecFile: o.specFile}
+	if spec.ReviewSpec, err = resolveLaunchSpec(ctx, env, slug, ask, warn); err != nil {
+		return "", nil, err
+	}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
@@ -6240,6 +6328,12 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s launches the task only if it never started, and refuses with nothing launched, naming the run's pull request, if it did",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))
 	}
+	// The pull-request index entry of a `--pr` launch, written here: the run
+	// really exists from the line above, and a follow-up started on a job
+	// image older than the index writes none of its own (followup.go's
+	// writePRIndex). The runner's own write of the same run is a no-op
+	// against this one, whichever lands first.
+	writePRIndex(ctx, env, slug, spec, now, launchWarn)
 	// The backend the launch actually used, from the seam, as above: the
 	// launch succeeded on env.be, so env.be's codec is what names it.
 	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: launchBackend(env.be), Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, PlanTask: spec.PlanTask, LaunchedAt: now.UTC()}
