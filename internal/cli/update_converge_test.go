@@ -20,6 +20,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -1800,5 +1802,262 @@ func TestUpdateConvergesACachePriceWrittenTheOldWay(t *testing.T) {
 	// differently from the file the owner reads, with nothing on the screen.
 	if got := convergeNode(t, r).Prices["deepseek/deepseek-v4.1-flash"].CacheRead; got == nil || *got != 0.0042 {
 		t.Errorf("after one fugaro update the published policy prices deepseek/deepseek-v4.1-flash's cache read at %v, want the 0.0042 the owner wrote", got)
+	}
+}
+
+// wsMemberBAccount is the job account of update_workspace_test.go's owner table
+// (wsOwnerTable): the principal the workspace root binds one invoke grant to,
+// and the address the cover admits a grant to.
+const wsMemberBAccount = "job-account-b@member-b-gcp.iam.gserviceaccount.com"
+
+// wsApplies counts the applies of the workspace root in a converge's transcript:
+// every apply is logged with the directory it ran in, and the workspace root's
+// own is the one named "workspace".
+func wsApplies(t *testing.T, r *convergeRig) int {
+	t.Helper()
+	n := 0
+	for _, root := range r.applies(t) {
+		if root == "workspace" {
+			n++
+		}
+	}
+	return n
+}
+
+// wsPlanSeq is the plans the workspace root is read under in one owner's run
+// that DEPLOYS the service, in the order the door makes them: the plan view's
+// check and the run's own, the apply's read, the URL fill's second plan, and the
+// verify behind the apply — which is the one that finds nothing, the root having
+// just been applied. The last step repeats, so a run that reads one more plan
+// than this is not a failure of the fixture.
+func wsPlanSeq() []map[string]any {
+	return []map[string]any{{"exit": 2}, {"exit": 2}, {"exit": 2}, {"exit": 2}, {"exit": 0}}
+}
+
+// wsPlanSeqConverged is the same for a run that deploys nothing and applies one
+// change: the fill has no second plan — a run that writes no service has no
+// audience to fill (serviceBlock, fillServiceURL) — so the verify is the fourth
+// read and the one that finds nothing.
+func wsPlanSeqConverged() []map[string]any {
+	return []map[string]any{{"exit": 2}, {"exit": 2}, {"exit": 2}, {"exit": 0}}
+}
+
+// wsOwnerConvergeRig is the fixture the workspace owner's converge is read over:
+// an installation one release behind whose config declares a workspace of its own
+// (ownerExtra is which half: the owner's, or the owner's with a member taken out),
+// the installation's OWN credentials service as the release behind left it, and
+// this release's credentials image published in the fake source.
+//
+// The image is what makes the run resolve one at all, and the resolve is the
+// same one for both services: a fixture whose source publishes none deploys
+// neither, so the state a workspace's own service is deployed in has to have it.
+// The installation-side dance around its own service — the image's move, the
+// audience's fill — is the fixture the sibling tests of this file already carry,
+// and the four lines below put the rig in exactly that state.
+func wsOwnerConvergeRig(t *testing.T, ownerExtra string) *convergeRig {
+	t.Helper()
+	r := newConvergeRig(t, v7Node())
+	publishCredentialsImage(t, r.imagesRig, convergeRelease)
+	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
+	// The installation root's plan moves the service onto this release's image,
+	// and its state read is the rig's own document under the other spelling.
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
+	})}
+	// The owner's half, and the copy the doors read: the rig cleared
+	// FUGARO_CONFIG, so the config an update reads and writes is the
+	// installation's own file in the XDG projects directory, which
+	// registerInstallation is what takes from the rig's seed.
+	r.appendConfig(t, ownerExtra)
+	registerInstallation(t, r.initRig)
+	return r
+}
+
+// TestUpdateConvergesAWorkspaceFromThePreviousRelease is WS7's red step, and the
+// two halves of what the workspace owner's one command owes: the workspace's own
+// credentials service is DEPLOYED by `fugaro update` alone — the root's new
+// variables (`members` and `credentials_service`) are written and applied, with
+// this release's resolved image, the owner's member job accounts and the URL
+// Cloud Run assigned — and an installation at the previous release converges in
+// that same run, needing no second command (the HARD RULE).
+//
+// Before this task the run wrote the root's tfvars with `project`, `workspace`
+// and `names` alone: the service was never planned, never applied and never had
+// an audience, so an owner who ran the one command they are told to run got a
+// workspace with no service and nothing saying so. That is what the assertions
+// below fail on.
+//
+// The second case is the other side of the same pin: a MEMBER's installation —
+// the config that names the workspace and one pin, and no part of the owner's
+// half — converges untouched, and the run writes no service address into it. A
+// pin without an address is the member's own trust in the workspace (WS3), and
+// inventing one here would be this release admitting a service the member's
+// owner never told it about.
+func TestUpdateConvergesAWorkspaceFromThePreviousRelease(t *testing.T) {
+	t.Run("the workspace's own project, one release behind", func(t *testing.T) {
+		r := wsOwnerConvergeRig(t, wsOwnerTable+wsOwnerCap)
+		// The workspace root's own plan: the whole root, on the image the run
+		// resolves, with one invoke grant for member-b — and the URL Cloud Run
+		// assigned in the root's own outputs, which is what the second apply
+		// writes into credentials_service.url.
+		r.script["plan@workspace"] = wsPlanSeq()
+		r.setPlanAt(t, "workspace", wsRootPlan(initProjectName, r.credentialsRefAt(convergeRelease), wsMemberBAccount)...)
+		r.script["output@workspace"] = map[string]any{
+			"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
+		r.save(t)
+
+		convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+		v := wsRootVars(t)
+		want := map[string]workspaceMemberVar{"member-b": {JobServiceAccounts: []string{wsMemberBAccount}}}
+		if !reflect.DeepEqual(v.Members, want) {
+			t.Errorf("the workspace root's members = %+v, want %+v: the invoke grants are made from this table, and a run that writes none leaves every member's run unable to invoke the workspace's service (F17)\n", v.Members, want)
+		}
+		if v.Service == nil {
+			t.Fatalf("the workspace root's tfvars carry no credentials_service after an update that had one to deploy: %+v", v)
+		}
+		for _, c := range []struct {
+			name, got, want string
+		}{
+			{"service", v.Service.Service, creds.WorkspaceServiceName},
+			{"image", v.Service.Image, r.credentialsRefAt(convergeRelease)},
+			{"region", v.Service.Region, "us-east5"},
+			{"bundle_secret", v.Service.BundleSecret, credsvc.WorkspaceBundleSecretID(initProjectName)},
+			{"firebase_project", v.Service.FirebaseProject, initProject},
+			{"rtdb_url", v.Service.RTDBURL, r.db.URL},
+			{"url", v.Service.URL, wsServiceURL},
+		} {
+			if c.got != c.want {
+				t.Errorf("the workspace root's credentials_service.%s = %q, want %q: the service is the same image an installation's runs, in the workspace's own project, reading the workspace's own database and reached at its own URL (D2980)", c.name, c.got, c.want)
+			}
+		}
+		// The image written is the one the run resolved through the
+		// installation's remote repository, not a value the run composed: the
+		// root's own validation and the cover both hold it to that shape.
+		if !strings.HasPrefix(v.Service.Image, "us-east5-docker.pkg.dev/"+initProject+"/"+infra.GhcrRegistry+"/") {
+			t.Errorf("the workspace's service image %q is not this installation's remote repository's", v.Service.Image)
+		}
+		// TWO applies of the root, and both are the stage's: the one that creates
+		// the service, and the one that writes the URL Cloud Run assigned back
+		// into its audience (fillServiceURL). A run that stopped at the first
+		// leaves a revision whose audience is the module's unassigned placeholder,
+		// which admits no member's run at all.
+		if n := wsApplies(t, r); n != 2 {
+			t.Errorf("the update applied the workspace root %d time(s), want 2 (the create and the audience's own URL): %v", n, r.applies(t))
+		}
+	})
+	t.Run("a member's pin names no address and is left alone", func(t *testing.T) {
+		r := newConvergeRig(t, v7Node())
+		r.appendConfig(t, wsPin)
+		registerInstallation(t, r.initRig)
+
+		convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+		// The config the doors read and write, of which the rig's own file is
+		// only the seed (registerInstallation).
+		b, err := os.ReadFile(filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", initProjectName+".yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		written := string(b)
+		if strings.Contains(written, "service_address") {
+			t.Errorf("one fugaro update wrote a service address into a member's pin, and the pin the owner leaves without one converges untouched — the address is the workspace's own fact and not something this member's machine may invent (WS3):\n%s", written)
+		}
+		for _, want := range []string{"workspace: " + wsProjectName, "workspace_pin:", "firebase_project: project-ws",
+			"service_account: marker-workspace@project-ws.iam.gserviceaccount.com"} {
+			if !strings.Contains(written, want) {
+				t.Errorf("the member's pin no longer carries %q after the update:\n%s", want, written)
+			}
+		}
+		// A member's project is not a workspace's own, so the stage that deploys
+		// the workspace's service skips it and never opens the root's workdir.
+		if _, err := os.Stat(filepath.Join(os.Getenv("XDG_STATE_HOME"), "fugaro", "terraform", initProject, "workspace")); !os.IsNotExist(err) {
+			t.Errorf("a member's update opened the workspace root's workdir: %v", err)
+		}
+	})
+}
+
+// TestUpdateDeploysTheWorkspaceServiceWithARunInFlight is R11's own line: the
+// workspace owner's one command puts a new revision of the workspace's
+// credentials service behind the address a member's run is already calling, over
+// a run that is going on, and the note the door prints names that step — the
+// revision drains rather than stops, so the run keeps the environment and the
+// route it bootstrapped with.
+//
+// The fixture is the state that makes the step real: the workspace's own workdir
+// holds the block the release behind deployed, on that release's image, which is
+// the block this run replaces. workspaceServiceRevisionStale reads exactly that
+// document, and the run in flight is started before the update, as a person's own
+// run would be going when they converge the installation it belongs to.
+func TestUpdateDeploysTheWorkspaceServiceWithARunInFlight(t *testing.T) {
+	r := wsOwnerConvergeRig(t, wsOwnerTable+wsOwnerCap)
+	wsSeedRecorded(t, initProjectName, oldCredentialsRef(convergePrev))
+	r.script["plan@workspace"] = wsPlanSeq()
+	r.setPlanAt(t, "workspace", wsRootPlan(initProjectName, r.credentialsRefAt(convergeRelease), wsMemberBAccount)...)
+	r.script["output@workspace"] = map[string]any{
+		"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
+	r.save(t)
+
+	startRunInFlight(t, r)
+	line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+
+	if !strings.Contains(line, "workspace service:") {
+		t.Errorf("the note does not name the workspace's service over a run in flight that this update puts a new revision of it behind (R11):\n%s", line)
+	}
+	if !strings.Contains(line, "drains") {
+		t.Errorf("the note does not say the new revision drains the one a run started on, which is the whole of why the run keeps the environment and the route it bootstrapped with:\n%s", line)
+	}
+	// And the step the line named really happened: the document the root wrote is
+	// this release's image, watched over the same plan that deploys it — a line
+	// naming a step no run makes is worse than no line at all.
+	v := wsRootVars(t)
+	if v.Service == nil || v.Service.Image != r.credentialsRefAt(convergeRelease) {
+		t.Errorf("after the update the workspace's service is %+v, want this release's image %s: the note named a step the run did not make", v.Service, r.credentialsRefAt(convergeRelease))
+	}
+}
+
+// TestUpdateRemovesAMembersInvokeGrant is F25's own converge, the half of
+// removing a member that is the workspace's own: the owner's table no longer
+// names member-b, and the same one command takes that member's job account off
+// the workspace's service — the ONE deletion the workspace root's cover admits,
+// so `fugaro update` converges a shrunk member table with no repair and no second
+// step.
+//
+// The plan is the one terraform really makes on that removal: the service the run
+// is not moving (a no-op, where the plan's own service name is read from) and the
+// grant going away. What the run must NOT do is refuse it, which is what
+// convergeOn fails on — and what the case before this task did, the cover having
+// held the deletion to the member table the workspace's config no longer names.
+func TestUpdateRemovesAMembersInvokeGrant(t *testing.T) {
+	r := wsOwnerConvergeRig(t, "workspace_members: {}\n"+wsOwnerCap)
+	// The block this release's own run deployed: the member table is what moved,
+	// and the service is not — so the run carries the block forward and applies
+	// the removal alone, which is the one apply below.
+	wsSeedRecorded(t, initProjectName, r.credentialsRefAt(convergeRelease))
+	r.script["plan@workspace"] = wsPlanSeqConverged()
+	r.setPlanAt(t, "workspace",
+		wsServiceNoOpPlan(r.credentialsRefAt(convergeRelease)), wsInvokerRemovedPlan(wsMemberBAccount))
+	r.save(t)
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if n := wsApplies(t, r); n != 1 {
+		t.Errorf("the update applied the workspace root %d time(s), want 1 (the member's grant going away): %v", n, r.applies(t))
+	}
+	// The document the run wrote names the account nowhere: F17's grant per job
+	// account is that same table, one direction.
+	raw, err := os.ReadFile(filepath.Join(wsWorkdirRoot(), infra.VarsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), wsMemberBAccount) {
+		t.Errorf("the workspace root's tfvars still name the member who left (%s), so nothing took the grant away:\n%s", wsMemberBAccount, raw)
+	}
+	if v := wsRootVars(t); len(v.Members) != 0 {
+		t.Errorf("the workspace root's members = %+v, want none: the only member the owner's table named is gone", v.Members)
 	}
 }
