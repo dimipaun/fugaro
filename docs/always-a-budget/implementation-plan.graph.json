@@ -21,6 +21,25 @@
       "kind": "contract"
     },
     {
+      "id": "AB0",
+      "title": "the test harnesses have a budget",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/testutil/budget.go",
+          "internal/testutil/budget_test.go",
+          "internal/gcpfake/crm.go",
+          "internal/runner/*harness*_test.go",
+          "internal/cli/*harness*_test.go",
+          "internal/e2e/e2e_test.go"
+        ]
+      }
+    },
+    {
       "id": "AB1a",
       "title": "the run always opens its session",
       "run": null,
@@ -57,7 +76,10 @@
           "internal/agent/env.go",
           "internal/runner/agentenv.go",
           "internal/runner/gateway_always_test.go",
-          "internal/agent/env_always_test.go"
+          "internal/agent/env_always_test.go",
+          "internal/runner/routing_internal_test.go",
+          "internal/cli/init_test.go",
+          "internal/cli/validate_test.go"
         ]
       }
     },
@@ -231,7 +253,9 @@
         "prediction": true,
         "paths": [
           "ee/ab/admit.go",
-          "ee/coordinator/cli/declare.go"
+          "ee/ab/admit_test.go",
+          "ee/coordinator/cli/declare.go",
+          "ee/coordinator/cli/declare_test.go"
         ]
       }
     },
@@ -248,7 +272,7 @@
           "internal/settings/registry.go",
           "schemas/settings.schema.json",
           "schemas/result.schema.json",
-          "internal/runstore/result_schema_off_test.go"
+          "schemas/result_off_test.go"
         ]
       }
     },
@@ -304,6 +328,7 @@
           "scripts/live-checks/check790*.sh",
           "scripts/live-checks/check791*.sh",
           "scripts/live-checks/check-580.sh",
+          "scripts/live-checks/check193*.sh",
           "scripts/live-checks/check197.sh",
           "scripts/live-checks/check610.sh",
           "scripts/live-checks/check611.sh",
@@ -345,8 +370,13 @@
         "paths": [
           "internal/policy/policy.go",
           "internal/policy/craft.go",
+          "internal/policy/mode_removed_test.go",
           "internal/config/config.go",
           "internal/localcfg/localcfg.go",
+          "internal/runner/routing.go",
+          "internal/cli/validate.go",
+          "internal/cli/doctor_brokering.go",
+          "internal/cli/init_firebase.go",
           "internal/cli/budget_always_end_to_end_test.go"
         ]
       },
@@ -394,6 +424,21 @@
       "task": "AB10",
       "needs": "C1",
       "reason": "what a mode string means"
+    },
+    {
+      "task": "AB1a",
+      "needs": "AB0",
+      "reason": "the other tests need a database once a run without one is refused"
+    },
+    {
+      "task": "AB4",
+      "needs": "AB0",
+      "reason": "the other tests need a database once a launch without one is refused"
+    },
+    {
+      "task": "AB7",
+      "needs": "AB0",
+      "reason": "its probe needs the fake project's permission test"
     },
     {
       "task": "AB1b",
@@ -622,7 +667,7 @@
     {
       "change": "R-mode-text",
       "contract": "C1",
-      "raised_by": "AB7",
+      "raised_by": "AB3",
       "reason": "if the one refusal text cannot name the right fix for both a flag and a file",
       "affects": [
         "AB2",

@@ -4,7 +4,8 @@
 [docs/status.md](../status.md) for the current table. Spec owner: Dimi Paun (the owner). Date:
 2026-11-20. Checked against `origin/main` at `fb0aeb9aa`.
 
-Budget mode off is removed. Every run has a gateway and an identity, every installation has the
+Budget mode off is removed. Every run has an identity and, except an `oauth` run the credentials
+service does not serve (D3026), a gateway; every installation has the
 budget database, and `fugaro update` carries an installation there alone. It carries out D3009 to
 D3011 of [every model key through the credentials service](../keys-through-service/README.md),
 whose tasks KS14 and KS15 wait on this plan's I1.
@@ -12,8 +13,8 @@ whose tasks KS14 and KS15 wait on this plan's I1.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's rulings, quoting his words; no typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A4, findings F1–F32, decisions D3020–D3026 with the owner's answers, resolutions R1–R12, open items O1–O9, UNVERIFIED U1–U6. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Contract C1, tasks AB1a to AB15 (AB6 dropped, its number not reused), integration I1 (18 runs in one release, and one contract change that runs only if raised); levels, critical path, shared files; Checks 790 and 791 |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A4, findings F1–F34, decisions D3020–D3026 with the owner's answers, resolutions R1–R12, open items O1–O12 (O9 withdrawn), UNVERIFIED U1–U7. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Contract C1, tasks AB0 to AB15 (AB6 dropped, its number not reused), integration I1 (19 runs in one release, and one contract change that runs only if raised); levels, critical path, shared files; Checks 790 and 791 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
 **Numbers reserved:** decisions **D3020–D3039** (D3020–D3026 used), checks **790–799** (790 and
@@ -38,6 +39,12 @@ repository" or "oauth repository" is stupid and should die." This plan writes no
 of a repository's auth; retiring that setting is a spec of its own, and until it lands an `oauth`
 run the credentials service does not serve has no gateway. AB6 (removing the Terraform switch)
 was dropped.
+
+**Review round 3** changed no answer. It added AB0 (the test harnesses get a budget database
+before any task refuses a run without one), corrected the shared project job and the stage on an
+installation that already has its database, and stated that D3020, D3022 and D3023 set the hard
+rule about `fugaro update` aside by the owner's choice. Its fixes are the last commit and were not
+reviewed again.
 
 **What a reader should not take from here:** no task is approved; each needs the owner's go by name.
 No release, a hotfix included, is cut from `main` between the merge of AB7 and I1. Checks 790 and 791 are owner-run after the release.

@@ -53,7 +53,10 @@ project's owners and editors as the budget's admins, applies the Firebase root (
 in `us-central1`, a web key, a signer account, a custom role and project IAM grants), writes the
 rules and the mode over REST, and records the result in the local config (`localcfg.Budget`).
 Nothing links billing. The Firestore location is confirmed only by a person at a terminal, and a
-piped run leaves that step undone, as today. Consequence: R2.
+run with no terminal leaves that step undone. *(Corrected by review round 3.)* That confirmation
+comes before the database's own write (`confirmLocation` in `deployDatabase`), so with no
+terminal, in a pipe or in an agent's session, the database is not written at all.
+Consequence: R2, O10.
 
 **F5 — Rule: creating it takes more than an operator holds.** The Firebase root creates a custom
 role, project IAM grants and service accounts. No code gates the stage on ownership today, and the
@@ -147,11 +150,12 @@ database. Consequence: AB10.
 
 **F20 — Wrong (review round 1), corrects F13 and R6.** Two kinds of job do not get their mode
 from `budgetEnv`. A shared project job's environment (`projectJobEnv`,
-`internal/infra/projectjobs.go`) never names a mode; it rides the execution. And a repository's
+`internal/infra/projectjobs.go`) never names a mode, and no launcher puts one on the execution, so
+such a job takes its mode from the published policy alone. And a repository's
 job is re-applied only by `fugaro update` run for that repository, so a job applied before the
 database existed carries no database address, and a minted launch on it is refused by the runner
-(`strayTokenNoBackend`, `internal/runner/budget_session.go`). Consequence: AB5 covers the shared
-job, and AB4 refuses such a launch itself, with the fix.
+(`strayTokenNoBackend`, `internal/runner/budget_session.go`). Consequence: AB5 gives the shared
+job's environment the same entry, and AB4 refuses such a launch itself, with the fix.
 
 **F21 — Rule (review round 1): the database has a mode of its own.** A run's effective mode is the
 stricter of the database's `config/mode` and the repository's (`internal/budget/evaluate.go`).
@@ -170,10 +174,10 @@ before validation, and AB2 follows them.
 also called from `internal/cli/run.go`. `enable_budget` is also set in
 `roots/installation/main.tf` and declared in its `variables.tf`, and tested in
 `tests/installation.tftest.hcl` and `licence.tftest.hcl`; dropping a `count` moves a resource's
-address, which destroys and recreates it unless a `moved` block says otherwise.
-`newMachineBudget` reads `HistoryServiceAccount`, which becomes always set. Four live-check
-scripts assert facts about a published mode of off (`check-580.sh`, `check197.sh`, `check610.sh`,
-`check611.sh`). `internal/cli/exec.go` (`checkTestHooks`) and `settings_cloud.go` read the mode.
+address, which destroys and recreates it unless a `moved` block says otherwise. Five live-check
+scripts assert facts about a published mode of off (`check-580.sh`, `check193.sh`, `check197.sh`,
+`check610.sh`, `check611.sh`). `internal/cli/init_firebase.go` warns about a mode of off in three
+places. `internal/cli/exec.go` (`checkTestHooks`) and `settings_cloud.go` read the mode.
 11 test files name the constants as words. Consequence: AB15, AB7, AB14, AB3 and I1 as amended;
 AB6 was later dropped (F28).
 
@@ -191,8 +195,9 @@ Consequence: R11, O6.
 **F26 — Rule (review round 1): the switch widens.** With the mode argument gone, an `api-key` or
 `oauth` repository that was in mode off passes `CredentialsServiceServes` where its bundle is
 ready, and its next apply drops its model key from the job (`internal/cli/doctor_brokering.go`).
-That is the credentials service's existing behaviour for every other repository. Consequence:
-AB15 states it and R8's listing names it.
+That is the credentials service's existing behaviour for every other repository. It first shows
+at AB2's merge, where unset stops meaning off (`flipServes` passes the local config's mode), and
+is complete at AB15's. Consequence: AB15 states it and R8's listing names it.
 
 **F27 — Gap (review round 2): an `oauth` run has no gateway in any mode.** `runner.GatewayOn`
 never answers true for `oauth`, and `agent.BuildEnv`'s `oauth` arm puts the subscription's token
@@ -221,12 +226,26 @@ the fix is the upgrade.
 **F31 — Rule (review round 2): the new database is seeded as today's.** A database created with no
 mode chosen is seeded observe with no `config/modeSet`, so `doctor` gives its existing note that
 the mode was seeded and not chosen (`internal/cli/doctor_budget_mode.go`), and `raiseBudgetMode`
-raises a managed project to enforce once it has caps. Consequence: stated, unchanged.
+raises a managed project to enforce once it has caps, in the same update if the caps are already
+there, with the line it prints today. Consequence: stated, unchanged.
 
 **F32 — Rule (review round 2): the state can be deleted.** The adoption probe learns that a
 database exists from the Firebase state alone. With that state gone, an update would try to create
 over a database that exists. `internal/infra/firebase.go` already lists a project's databases.
 Consequence: AB7 checks the listing before it creates.
+
+**F33 — Gap (review round 3): the tests assume no budget.** Almost no hermetic test of the runner
+or the CLI sets up a database: one runner test file in about two hundred names a backend, and
+about two dozen CLI test files name a database address, while the end-to-end tests run the
+container's entry point with none. Once a run with no database is refused, they fail. The fake
+project API (`internal/gcpfake/crm.go`) has no permission-test endpoint either. Consequence: AB0
+comes first, and AB1a, AB4 and AB7 run their whole packages.
+
+**F34 — Gap (review round 3): the stage on an installation that has its database.** Today the
+Firebase stage is skipped without its flag. Run on every update, it would re-apply the Firebase
+root and read the project's owners, which an operator's update does not need today and may not be
+able to do. Consequence: AB7's stage acts only to adopt or to create, and is skipped as today
+where the database is known.
 
 ## 4. Decisions
 
@@ -254,6 +273,12 @@ config's shape, with its own readers and migration, and it is a spec of its own 
 plan it means that no new rule is written in terms of a repository's auth: an `oauth` run opens
 its identity and its session like every other run, and what it holds and what meters it stay as
 they are until that spec. "Every run has a gateway" is true of every run but those.
+
+**Three answers set the hard rule aside, knowingly.** `CLAUDE.md` says `fugaro update` is the whole
+upgrade, with no manual repair. D3020 leaves a `model_prices` entry for a person to add, D3022 a
+one-line removal for a person to commit, and D3023 an update that only a project owner can
+complete. The owner chose each against the recommendation that would have kept the rule. The
+update still does everything it can and names the rest.
 
 **What D3020 and D3022 cost, stated once.** The brief's line 7 says nobody starts being refused by
 a cap they did not choose. That still holds: no cap refuses anyone. But two things that ran under
@@ -283,8 +308,8 @@ it (D3022).
   no flag, in the installation's own project. It first probes for a database that exists and is
   only unknown on this machine, and adopts it (F6). Where there is none, it probes whether the
   person can make the project's IAM changes (`testIamPermissions`). If they can, it creates the
-  database, in `observe`. If they cannot, or the project has no billing, the update skips that
-  stage, says in one line that a project owner must run `fugaro update` once (or that billing must
+  database, in `observe`. If they cannot, or the project has no billing, or the run has no
+  terminal for the stage's existing location confirmation (F4), the update skips that stage, says in one line that a project owner must run `fugaro update` once (or that billing must
   be linked), and carries on with the rest. The cloud side is left as it was; the new CLI's
   launches are refused with that fix until the database exists (D3023). Adoption is pinned to the
   installation's own project (F24), and the stage lists the project's databases before it creates
@@ -324,14 +349,13 @@ it (D3022).
   `docs/design/update-in-flight.md`, `SECURITY.md` and `internal/cli/recipes_skew.go`, and its
   KS14 and KS15 wait on this plan's I1. A task of this plan is not launched while a task of that plan that edits the
   same file is live, and whichever lands second rebases.
-
+- **R11. A managed project.** Under the managed gate the database stage only adopts. Creating a
+  database is a change that shapes the installation, and it stays the act of the person the gate
+  already lets shape it; anyone else gets R2's one line (F25, U5).
 - **R12. Auth is not this plan's subject** (D3026). Retiring a repository's auth mode, so that a
   key or a subscription belongs to the models that use it, is a spec of its own, the third of this
   series. Until it lands an `oauth` run the credentials service does not serve has no gateway
   (F27).
-- **R11. A managed project.** Under the managed gate the database stage only adopts. Creating a
-  database is a change that shapes the installation, and it stays the act of the person the gate
-  already lets shape it; anyone else gets R2's one line (F25, U5).
 
 ## 6. Open tensions and open items
 
@@ -339,14 +363,6 @@ No two answers pull against each other.
 
 - **O1.** D3025 leaves an older CLI able to publish off into a version 10 node, which stops every
   new run until the policy is published again. Accepted by the owner; `doctor` names it.
-- **O6.** How the managed gate treats the database stage run with no flag is unverified (U5). If
-  AB7 finds the gate refuses it for the manager too, that is a question for the owner before AB7
-  merges.
-- **O8.** "Every run has a gateway" waits on the spec R12 names for `oauth` runs the credentials
-  service does not serve.
-- **O9.** Review round 2's fixes are followed by one more round, the last the skill allows.
-- **O7.** R1's freeze on releases is a rule for whoever cuts them; nothing in the repository
-  enforces it.
 - **O2.** Every run now halts if the budget database stays unreachable past its grace, in observe
   too (F8). Today only installations that chose a budget carry that dependency.
 - **O3.** D3020, D3022 and D3023 stop some runs that work today until a person acts (§4).
@@ -354,6 +370,20 @@ No two answers pull against each other.
 - **O5.** The database costs about two dollars a month at the design's own estimate and needs
   billing on the project (F18). An installation with no billing gets R2's line with that fix, and
   launches nothing until it is linked.
+- **O6.** How the managed gate treats the database stage run with no flag is unverified (U5). If
+  AB7 finds the gate refuses it for the manager too, that is a question for the owner before AB7
+  merges.
+- **O7.** R1's freeze on releases is a rule for whoever cuts them; nothing in the repository
+  enforces it.
+- **O8.** "Every run has a gateway" waits on the spec R12 names for `oauth` runs the credentials
+  service does not serve.
+- **O10.** The database stage keeps its existing confirmation of a permanent location, so an
+  update with no terminal cannot create the database (F4). Whether that confirmation goes, now
+  that the location is fixed and the database is no longer a choice, is the owner's.
+- **O11.** Review round 3's fixes are the last commit and were not reviewed again; three rounds is
+  the cap.
+- **O12.** The graph cannot say that AB2, AB8a and AB8b wait for C1. A launcher follows the plan's
+  levels table.
 
 ## 7. UNVERIFIED
 
@@ -362,9 +392,11 @@ No two answers pull against each other.
 - **U2.** What a run in flight does when the database's rules are deployed for the first time
   underneath it. It holds no session, so nothing is expected; Check 790 runs one.
 - **U3.** *Settled by review round 2 (F17):* two sentences are pinned.
+- **U4.** That an older runner under an explicit `observe` on a database created minutes earlier
+  behaves as any observe run. Check 790.
 - **U5.** What the managed gate does with the Firebase stage's IAM changes when no flag is given
   (F25). Settled by AB7's first test.
 - **U6.** Which record says a repository's job was applied before the database existed (R6). The
   local config's repository entry is the candidate; settled by AB4.
-- **U4.** That an older runner under an explicit `observe` on a database created minutes earlier
-  behaves as any observe run. Check 790.
+- **U7.** The exact entry points of the runner's and the CLI's test harnesses that AB0 changes.
+  Settled by AB0.
