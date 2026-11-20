@@ -290,8 +290,17 @@ const (
 // scope key of `fugaro.yaml`, read from the base branch, and the `agent.` prefix
 // reaches it — the shape `agent.triage` beside it has — so the allowlist carries
 // one key more and the rows without a generic writer do not move.
+//
+// WS3 of docs/workspace-service/ is the last mover, by six rows and by none:
+// the member's pin gains the address its runs call the workspace's credentials
+// service at (R3), the member row gains where its database lives and splits its
+// job service accounts into the account and the repositories it is a job of (R6,
+// D2992), and the owner's shared list is three rows of its own (D1298). All six
+// name the `workspace` family, whose writer is `fugaro workspace` and never the
+// generic path (D853), so the allowlist carries the same 228 keys and the rows
+// without a generic writer move by the six.
 const (
-	cfmRegistryRows   = 506
+	cfmRegistryRows   = 512
 	cfmAllowlistNamed = 118
 )
 
