@@ -27,12 +27,26 @@ const (
 	// derivation and a rule that read it out of the plan would accept
 	// whatever container the plan named.
 	wsBundle = "fugaro-project-workspace-alpha-creds-bundle-0123456789abcdef"
-	wsImage  = "europe-west1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/fugaro/fugaro-base:1.2.3@sha256:" + wsDigest
+	// wsImage is the released pin the root's service is written with: the
+	// workspace's own registry, the remote (pull-through) repository, the
+	// recorded owner, a fugaro-<kind> image, a release version tag and a
+	// digest — the closure wsCover holds it to (credentialsImageOK), which is
+	// the same shape an installation's credentials service is deployed with.
+	wsImage  = "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:" + wsDigest
 	wsDigest = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
 
 	wsMemberA = "fugaro-run-alpha-a@member-alpha-1234.iam.gserviceaccount.com"
 	wsMemberB = "fugaro-run-alpha-b@member-beta-5678.iam.gserviceaccount.com"
 )
+
+// wsCover is the image identity the workspace cover holds the service to: this
+// run's registry, the remote (pull-through) repository and the owner the run's
+// config records — tf.Cover's own three fields, the same three init's review and
+// managed_apply read off the config (infra.RegistryHost, infra.GhcrRegistry,
+// baseOwner), spelled as literals here because this package sits below both. An
+// owner of "" would refuse every remote reference, which is the other half of
+// what these cases test.
+var wsCover = Cover{Registry: "us-central1-docker.pkg.dev", Ghcr: "fugaro-ghcr", Owner: "dimipaun"}
 
 // wsMembers is the member table the cover is given: the job accounts a plan may
 // bind an invoke grant to, and no other principal.
@@ -243,7 +257,7 @@ func wsDeployed() []string {
 
 func wsWhy(t *testing.T, p *Plan) string {
 	t.Helper()
-	return strings.Join(WorkspaceNotCovered(p, wsProject, WorkspaceServiceAccountID, wsBundle, wsMembers), "; ")
+	return strings.Join(wsCover.WorkspaceNotCovered(p, wsProject, WorkspaceServiceAccountID, wsBundle, wsMembers), "; ")
 }
 
 // wsAdd is the root's plan with one change appended, which every refusal case
@@ -436,8 +450,34 @@ func TestWorkspacePlanRefusesAnythingElse(t *testing.T) {
 			wsServiceChange(wsServiceAttrs{account: wsMemberA}, "create"),
 		}, "the workspace's own service runs as"},
 		{"the service on an image with no digest", []string{
-			wsServiceChange(wsServiceAttrs{image: "europe-west1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/fugaro/fugaro-base:latest"}, "create"),
-		}, "not a digest pin"},
+			wsServiceChange(wsServiceAttrs{image: "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/dimipaun/fugaro-base:latest"}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
+		// The image cases below are the closure's own half, one reference each:
+		// the same digest under another registry (a foreign project's, which is
+		// the minimum this rule has to refuse), another owner's path through the
+		// remote repository, a mutable tag that is not a release, the
+		// operators' own writable base repository rather than the remote
+		// repository, and an image that is not a fugaro-<kind> at all. The
+		// reference is what an operator chooses, and the account behind it reads
+		// every model credential the workspace holds.
+		{"the service on a digest under another registry", []string{
+			wsServiceChange(wsServiceAttrs{image: "europe-west1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:" + wsDigest}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
+		{"the service on another project's registry", []string{
+			wsServiceChange(wsServiceAttrs{image: "us-central1-docker.pkg.dev/member-project-5678/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:" + wsDigest}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
+		{"the service on another owner's image through the remote repository", []string{
+			wsServiceChange(wsServiceAttrs{image: "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/stranger/fugaro-base:1.2.3@sha256:" + wsDigest}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
+		{"the service on a mutable tag through the remote repository", []string{
+			wsServiceChange(wsServiceAttrs{image: "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/dimipaun/fugaro-base:latest@sha256:" + wsDigest}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
+		{"the service on the run's own base repository rather than the remote one", []string{
+			wsServiceChange(wsServiceAttrs{image: "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-base/dimipaun/fugaro-base:1.2.3@sha256:" + wsDigest}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
+		{"the service on an image that is not a fugaro-<kind>", []string{
+			wsServiceChange(wsServiceAttrs{image: "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/dimipaun/base:1.2.3@sha256:" + wsDigest}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
 		{"the service with a command of its own", []string{
 			wsServiceChange(wsServiceAttrs{command: `,"command":["/bin/sh"]`}, "create"),
 		}, "sets a command or args"},
@@ -582,8 +622,26 @@ func TestWorkspacePlanRefusesAnotherRoleAThirdPermissionAndTheUnknownService(t *
 // TestWorkspacePlanRefusesNoPlan is the nil case every cover has: a plan that
 // could not be read is not a plan to confirm.
 func TestWorkspacePlanRefusesNoPlan(t *testing.T) {
-	if why := WorkspaceNotCovered(nil, wsProject, WorkspaceServiceAccountID, wsBundle, wsMembers); len(why) == 0 {
+	if why := wsCover.WorkspaceNotCovered(nil, wsProject, WorkspaceServiceAccountID, wsBundle, wsMembers); len(why) == 0 {
 		t.Fatal("a nil plan must be refused")
+	}
+}
+
+// TestWorkspacePlanRefusesAnImageWithoutARecordedOwner is the fail-closed end of
+// the image rule, and the half that makes the owner a GIVEN rather than a read:
+// the owner a pin is checked against is the one this machine's config records
+// (init's baseOwner, over localcfg's image_source), so a cover built from a
+// config that records none admits no reference through the remote repository at
+// all — the root's own pin included. A rule that read the owner out of the
+// reference it is judging would admit whoever published the image, run as the
+// account that reads every model credential the workspace holds.
+func TestWorkspacePlanRefusesAnImageWithoutARecordedOwner(t *testing.T) {
+	unrecorded := wsCover
+	unrecorded.Owner = ""
+	why := strings.Join(unrecorded.WorkspaceNotCovered(wsPlan(t, wsDeployed()...), wsProject,
+		WorkspaceServiceAccountID, wsBundle, wsMembers), "; ")
+	if !strings.Contains(why, "released pin an installation's credentials service runs and nothing else") {
+		t.Fatalf("a cover with no recorded owner must refuse the service's image, got: %s", why)
 	}
 }
 

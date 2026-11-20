@@ -402,21 +402,42 @@ func (s *workspaceProjectStage) readPlan(ctx context.Context, guard bool) (*tf.P
 // invoke grants, and nothing else. tf.WorkspaceNotCovered answers what of the
 // plan is not, so the message can name it rather than say "refused".
 //
-// Its two hand-written arguments are the half of the plan a reader outside it
-// has to supply, because neither is a value any plan carries: the workspace's
+// Its hand-written arguments are the half of the plan a reader outside it has
+// to supply, because none of them is a value any plan carries: the workspace's
 // own bundle container is DERIVED from the workspace's name
 // (credsvc.WorkspaceBundleSecretID — the same container this project's own
-// installation already holds every model credential in), and the members' job
+// installation already holds every model credential in), the members' job
 // accounts are the owner's member table, which is this machine's config and not
-// terraform's. A rule that read either out of the plan would accept whatever the
-// plan named.
+// terraform's, and the image identity the service is held to is the recorded
+// owner's released pin (workspaceImageCover). A rule that read any of them out
+// of the plan would accept whatever the plan named.
 func (s *workspaceProjectStage) guard(plan *tf.Plan) error {
-	why := tf.WorkspaceNotCovered(plan, s.e.lc.GCPProject, tf.WorkspaceServiceAccountID,
+	cover := workspaceImageCover(s.e.lc)
+	why := cover.WorkspaceNotCovered(plan, s.e.lc.GCPProject, tf.WorkspaceServiceAccountID,
 		credsvc.WorkspaceBundleSecretID(s.e.lc.Name), workspaceMemberAccounts(s.e.lc))
 	if len(why) > 0 {
 		return userErr("the workspace root's plan is not the workspace's own role, its service account and that account's one grant on the workspace's database, its own credentials service with the ONE bundle accessor and the members' invoke grants (%s); nothing was applied, and a plan that carries anything else is not this root's to apply: read it with terraform in %s", strings.Join(why, "; "), s.dir)
 	}
 	return nil
+}
+
+// workspaceImageCover is the image identity the workspace root's cover holds its
+// service to: the registry, the remote (pull-through) repository and the owner
+// this machine's config records — tf.Cover's own three fields, built the way
+// init's review and managedCover build them, so the workspace's service is held
+// to the same pin shape an installation's credentials service is
+// (tf.Cover.credentialsImageOK). The owner is the half of that pin no plan
+// holds and no tfvars may choose: an operator holds
+// roles/artifactregistry.writer on this project's own repositories, so a
+// reference whose owner was read out of the reference itself would admit the
+// code of whoever pushed it, run as the account that reads every model
+// credential the workspace holds.
+func workspaceImageCover(lc *localcfg.Config) tf.Cover {
+	c := tf.Cover{Ghcr: infra.GhcrRegistry, Owner: baseOwner(lc)}
+	if host, err := infra.RegistryHost(lc); err == nil {
+		c.Registry, _, _ = strings.Cut(host, "/")
+	}
+	return c
 }
 
 // workspaceMemberAccounts is the member table's job accounts, in one flat list:

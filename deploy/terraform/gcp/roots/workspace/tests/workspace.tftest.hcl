@@ -146,7 +146,7 @@ run "the_service_runs_as_the_workspaces_own_account_inside_r9s_limits" {
   variables {
     credentials_service = {
       service          = "fugaro-workspace-credentials"
-      image            = "europe-west1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/fugaro/fugaro-base:1.2.3@sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+      image            = "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
       region           = "us-central1"
       bundle_secret    = "fugaro-project-workspace-alpha-creds-bundle-0123456789abcdef"
       firebase_project = "workspace-alpha-1234"
@@ -302,4 +302,87 @@ run "the_service_runs_as_the_workspaces_own_account_inside_r9s_limits" {
     ])
     error_message = "the grants are bound to the member table's own job accounts and to no other principal"
   }
+}
+
+# The image half of this root's own fence, and the shape every instance of the
+# service is: the released pin an installation's credentials service is deployed
+# with (D2980), which is what the Go-side cover holds a plan to as well
+# (internal/infra/tf's credentialsImageOK, the closure an independent security
+# review gave the installation's own service). This root states everything of
+# that shape its own variables can — the run's registry and the remote
+# (pull-through) repository, which is not the project's own writable one — and
+# the owner, the one part a tfvars here does not carry, is checked against the
+# machine's recorded config on the plan side.
+#
+# Every instance of this service reads every model credential the workspace
+# holds, and every operator holds roles/artifactregistry.writer on this project's
+# own repositories, so a digest an operator pushed and named is theirs to choose:
+# what these four runs refuse is that choice, and a registry that is not this
+# installation's.
+run "the_service_on_an_image_from_another_registry_is_refused" {
+  command = plan
+
+  variables {
+    credentials_service = {
+      service          = "fugaro-workspace-credentials"
+      image            = "europe-west1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+      region           = "us-central1"
+      bundle_secret    = "fugaro-project-workspace-alpha-creds-bundle-0123456789abcdef"
+      firebase_project = "workspace-alpha-1234"
+      rtdb_url         = "https://workspace-alpha-1234.firebaseio.com"
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+run "the_service_on_an_image_from_another_project_is_refused" {
+  command = plan
+
+  variables {
+    credentials_service = {
+      service          = "fugaro-workspace-credentials"
+      image            = "us-central1-docker.pkg.dev/member-alpha-1234/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+      region           = "us-central1"
+      bundle_secret    = "fugaro-project-workspace-alpha-creds-bundle-0123456789abcdef"
+      firebase_project = "workspace-alpha-1234"
+      rtdb_url         = "https://workspace-alpha-1234.firebaseio.com"
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+run "the_service_on_an_image_from_the_projects_own_writable_repository_is_refused" {
+  command = plan
+
+  variables {
+    credentials_service = {
+      service          = "fugaro-workspace-credentials"
+      image            = "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-base/dimipaun/fugaro-base:1.2.3@sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+      region           = "us-central1"
+      bundle_secret    = "fugaro-project-workspace-alpha-creds-bundle-0123456789abcdef"
+      firebase_project = "workspace-alpha-1234"
+      rtdb_url         = "https://workspace-alpha-1234.firebaseio.com"
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+run "the_service_on_a_tag_with_no_digest_is_refused" {
+  command = plan
+
+  variables {
+    credentials_service = {
+      service          = "fugaro-workspace-credentials"
+      image            = "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/dimipaun/fugaro-base:1.2.3"
+      region           = "us-central1"
+      bundle_secret    = "fugaro-project-workspace-alpha-creds-bundle-0123456789abcdef"
+      firebase_project = "workspace-alpha-1234"
+      rtdb_url         = "https://workspace-alpha-1234.firebaseio.com"
+    }
+  }
+
+  expect_failures = [var.credentials_service]
 }

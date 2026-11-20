@@ -207,7 +207,14 @@ func WorkspaceDatabaseRole(project string) string {
 // direction: a caller that knows neither the container nor the members is a
 // caller reading a plan that holds no service at all (WS6's own state, before
 // WS7 wires both from the workspace's config).
-func WorkspaceNotCovered(p *Plan, project, accountID, bundleSecret string, memberAccounts []string) []string {
+//
+// The receiver is the run's own cover, and it carries the fourth thing no plan
+// holds: the image identity the service is held to (Registry, Ghcr, Owner), for
+// the same reason and from the same source as init's review and managed_apply
+// build a Cover — the owner of a released pin is a recorded fact of the run's
+// config, and a rule that read it out of the reference being judged would accept
+// any owner.
+func (c Cover) WorkspaceNotCovered(p *Plan, project, accountID, bundleSecret string, memberAccounts []string) []string {
 	if p == nil {
 		return []string{"no plan"}
 	}
@@ -282,7 +289,7 @@ func WorkspaceNotCovered(p *Plan, project, accountID, bundleSecret string, membe
 			// being the second — both are refusals, and the sentence an
 			// operator reads names the one that is true of the plan.
 			services++
-			why := workspaceService(rc.Change, project, wantAccount, memberAccounts)
+			why := c.workspaceService(rc.Change, project, wantAccount, memberAccounts)
 			if why == "" && services > 1 {
 				why = "a second service in the workspace's own project, and the workspace deploys one service: its own credentials service, which reads the workspace's own bundle and refuses every route a member's project's service would serve it (R14, D2980). A second one here is a second process holding a bundle the workspace's whole group pays for"
 			}
@@ -463,8 +470,11 @@ func workspaceGrant(ch Change, project, wantAccount string, own bool) string {
 //     one a reader would mistake for the right answer (the workspace admits
 //     member job accounts — as CALLERS of the service, through an invoke grant
 //     and an ID token, and never as its identity);
-//   - its image is not digest-pinned (a tag is a reference anybody who can push
-//     to the repository can move), or its container sets a command or args: the
+//   - its image is not the released pin an installation's own credentials
+//     service runs — the same image, through this run's remote repository, with
+//     the owner the run's config records, a fugaro-<kind> name, a release
+//     version tag and a digest (credentialsImageOK, whose whole argument the
+//     image case below carries) — or its container sets a command or args: the
 //     image's own entrypoint is the service, and an override is a hand-edited
 //     tfvars running something else as the identity that reads the bundle;
 //   - its environment carries a name the process does not read, takes a value
@@ -477,8 +487,14 @@ func workspaceGrant(ch Change, project, wantAccount string, own bool) string {
 //     other than R9's, which are three numbers a person decides here.
 //
 // memberAccounts is the member table the plan is judged against, so that the
-// member case above can name it.
-func workspaceService(ch Change, project, wantAccount string, memberAccounts []string) string {
+// member case above can name it. The image case is the one rule here that is
+// cover.go's rather than this file's (credentialsImageOK): it is the closure an
+// independent security review gave the installation's credentials service, and
+// the workspace's service is that same image running the same code (D2980),
+// read as the account that reads every model credential the workspace holds.
+// The cover's receiver is what carries the half of it no plan holds — the
+// registry, the remote repository and the owner the run's config records.
+func (c Cover) workspaceService(ch Change, project, wantAccount string, memberAccounts []string) string {
 	a, unk := ch.After, ch.AfterUnknown
 	if unknown(ch, "project") || unknown(ch, "name") || unknown(ch, "location") {
 		return "a service whose project, name or location terraform knows only at apply, in a root that writes all three"
@@ -532,23 +548,23 @@ func workspaceService(ch Change, project, wantAccount string, memberAccounts []s
 	if len(cs) != 1 {
 		return fmt.Sprintf("a service with %d containers, and the workspace's own has one: the image and the environment below are read there", len(cs))
 	}
-	c := cs[0]
+	ctr := cs[0]
 	for _, attr := range []string{"image", "command", "args"} {
 		if unknownAt(unk, "template", 0, "containers", 0, attr) {
 			return "a container " + attr + " that is not known"
 		}
 	}
-	if img := str(c["image"]); !workspaceImagePinned(img) {
-		return fmt.Sprintf("runs the image %q, which is not a digest pin (<registry>/<project>/<repository>:<version>@sha256:<64 lower-case hex digits>): every instance of the workspace's own service reads every model credential the workspace holds, and a tag is a reference anybody who can push to the repository can move", safetext.Field(img))
+	if img := str(ctr["image"]); !c.credentialsImageOK(img, project) {
+		return fmt.Sprintf("runs the image %q, and the workspace's own service runs the released pin an installation's credentials service runs and nothing else (%s%s/<owner>/fugaro-<kind>:<version>@sha256:<64 lower-case hex digits>): every instance of it reads every model credential the workspace holds, and every operator holds roles/artifactregistry.writer on this project's own repositories, so a digest is not enough — the registry, the remote repository and the owner are read against this run's own recorded config", safetext.Field(img), c.registryPrefix(project), c.Ghcr)
 	}
-	if cmd, args := strList(c["command"]), strList(c["args"]); len(cmd) != 0 || len(args) != 0 {
+	if cmd, args := strList(ctr["command"]), strList(ctr["args"]); len(cmd) != 0 || len(args) != 0 {
 		return "a container that sets a command or args, which the workspace root does not: the image's own entrypoint is the service"
 	}
 	if unknownAt(unk, "template", 0, "containers", 0, "env") {
 		return "an environment that is not known"
 	}
 	mode := false
-	for i, e := range objects(c["env"]) {
+	for i, e := range objects(ctr["env"]) {
 		ep := []any{"template", 0, "containers", 0, "env", i}
 		for _, attr := range []string{"name", "value", "value_source"} {
 			if unknownAt(unk, append(slices.Clone(ep), attr)...) {
@@ -749,15 +765,4 @@ func workspaceAccountOf(member string) (string, bool) {
 		return "", false
 	}
 	return member, true
-}
-
-// workspaceImagePinned reports whether ref names an image by digest:
-// <something>@sha256:<64 lower-case hex digits>. It is the pin rule for the
-// workspace's own service, in the shape pinDigestRE already spells for every
-// other image of this tree — the workspace root's service is the same released
-// image an installation runs, and the reference it is written with is resolved
-// and re-pinned by the same update that plans this root.
-func workspaceImagePinned(ref string) bool {
-	_, digest, ok := strings.Cut(ref, "@")
-	return ok && pinDigestRE.MatchString(digest)
 }
