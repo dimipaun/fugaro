@@ -23,7 +23,10 @@ import (
 // organizations.search, projects.move (an operation) and the project read
 // that answers a project's parent. A project's parent is what it was added,
 // created or moved with, so a move is visible in the read that follows it
-// (ProjectParent, Moves).
+// (ProjectParent, Moves). v1 projects.setIamPolicy is served too, for the
+// same one-writer reason in reverse: the end-to-end test (WU21, level 5) drives
+// a member's own policy write against this fake, and WU2 is the only writer
+// crm.go has, so the write is here before the test that needs it.
 //
 // Like the real API, it answers a project it doesn't know with 403, not
 // 404, so a caller can't tell a missing project from one it may not read.
@@ -116,6 +119,7 @@ const FirstCreatedFolderNumber = 700000000001
 var (
 	crmProjectRE     = regexp.MustCompile(`^/v1/projects/([^/:]+)$`)
 	crmPolicyRE      = regexp.MustCompile(`^/v1/projects/([^/:]+):getIamPolicy$`)
+	crmSetPolicyRE   = regexp.MustCompile(`^/v1/projects/([^/:]+):setIamPolicy$`)
 	crmV3GetRE       = regexp.MustCompile(`^/v3/projects/([^/:]+)$`)
 	crmV3MoveRE      = regexp.MustCompile(`^/v3/projects/([^/:]+):move$`)
 	crmV3OpRE        = regexp.MustCompile(`^/v3/(operations/[^/]+)$`)
@@ -600,6 +604,28 @@ func (f *CRM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			bs = []Binding{}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"version": 3, "etag": "BwX0", "bindings": bs})
+		return
+	}
+	if m := crmSetPolicyRE.FindStringSubmatch(r.URL.Path); m != nil && r.Method == http.MethodPost {
+		if _, ok := f.projects[m[1]]; !ok || f.noPolicy[m[1]] {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
+			return
+		}
+		var in struct {
+			Policy struct {
+				Bindings []Binding `json:"bindings"`
+			} `json:"policy"`
+		}
+		if err := json.Unmarshal(body, &in); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a policy is required")
+			return
+		}
+		f.policies[m[1]] = in.Policy.Bindings
+		bs := f.policies[m[1]]
+		if bs == nil {
+			bs = []Binding{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"version": 3, "etag": "BwX1", "bindings": bs})
 		return
 	}
 	m := crmProjectRE.FindStringSubmatch(r.URL.Path)

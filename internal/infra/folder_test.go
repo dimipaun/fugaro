@@ -4,7 +4,8 @@ package infra
 // its end, a folder's display name and parent read back, the roles/owner
 // binding read, added and removed without disturbing the folder's other
 // bindings, the organizations a credential can see, and a project's parent
-// read and moved.
+// read and moved. The fake's v1 project policy write — added here for the
+// end-to-end test that drives it — is pinned too.
 
 import (
 	"context"
@@ -12,6 +13,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	crm "google.golang.org/api/cloudresourcemanager/v1"
+	"google.golang.org/api/option"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 )
@@ -180,6 +184,32 @@ func TestFoldersOperationError(t *testing.T) {
 	}
 	if _, _, err := fs.Get(ctx, fmt.Sprintf("folders/%d", gcpfake.FirstCreatedFolderNumber)); err == nil {
 		t.Error("the folder a refused create made is still there, want the create to have left nothing behind")
+	}
+}
+
+// TestFolderFakeServesTheProjectPolicyWrite: the v1 projects.setIamPolicy the
+// fake gains with this task (the plan puts it in crm.go, whose only writer this
+// task is, for the end-to-end test WU21 drives against it), pinned here so the
+// surface another level leans on is exercised by the task that added it.
+func TestFolderFakeServesTheProjectPolicyWrite(t *testing.T) {
+	ctx := context.Background()
+	f, _ := newFolderFake(t)
+	f.AddProject("member-a", 900000000123)
+	svc, err := crm.NewService(ctx, option.WithEndpoint(f.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &crm.Policy{Bindings: []*crm.Binding{{Role: "roles/viewer", Members: []string{"user:ada@example.com"}}}}
+	if _, err := svc.Projects.SetIamPolicy("member-a", &crm.SetIamPolicyRequest{Policy: want}).Context(ctx).Do(); err != nil {
+		t.Fatalf("SetIamPolicy: %v", err)
+	}
+	got, err := svc.Projects.GetIamPolicy("member-a", &crm.GetIamPolicyRequest{}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("GetIamPolicy: %v", err)
+	}
+	if len(got.Bindings) != 1 || got.Bindings[0].Role != "roles/viewer" ||
+		!slices.Equal(got.Bindings[0].Members, []string{"user:ada@example.com"}) {
+		t.Errorf("the project's policy is %+v, want the binding that was written", got.Bindings)
 	}
 }
 
