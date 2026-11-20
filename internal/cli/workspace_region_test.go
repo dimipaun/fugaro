@@ -116,6 +116,21 @@ func TestARegionThatIsNoDatabaseLocationIsRefused(t *testing.T) {
 	workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
 }
 
+// workspaceLinkedEntry is the table entry an earlier declaration wrote, region
+// and all: the entry a re-declaration is read against when the question is
+// whether it keeps what it records.
+const workspaceLinkedEntry = `workspace_members:
+  aurora:
+    job_service_accounts:
+      - account: marker-old@aurora-gcp.iam.gserviceaccount.com
+        repos:
+          - marker-org/aurora
+    database_region: europe-west1
+    firebase_project: aurora-fb
+    fp: aurora
+    exchange_url: https://exchange.example.com/v1
+`
+
 // TestAMemberWhoseConfigIsNotHereRecordsNoRegion: a member's config is another
 // machine's file. A member this machine holds no config for and the table does
 // not declare yet is linked with no region — what is read is a file that happens
@@ -141,17 +156,7 @@ func TestAMemberWhoseConfigIsNotHereRecordsNoRegion(t *testing.T) {
 
 	t.Run("a member already linked", func(t *testing.T) {
 		_, aurora, owner := workspaceOwnerHome(t)
-		workspaceAppend(t, owner, `workspace_members:
-  aurora:
-    job_service_accounts:
-      - account: marker-old@aurora-gcp.iam.gserviceaccount.com
-        repos:
-          - marker-org/aurora
-    database_region: europe-west1
-    firebase_project: aurora-fb
-    fp: aurora
-    exchange_url: https://exchange.example.com/v1
-`)
+		workspaceAppend(t, owner, workspaceLinkedEntry)
 		if err := os.Remove(aurora); err != nil {
 			t.Fatal(err)
 		}
@@ -167,6 +172,25 @@ func TestAMemberWhoseConfigIsNotHereRecordsNoRegion(t *testing.T) {
 		}
 		workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
 	})
+}
+
+// TestAMemberWhoseConfigNamesNoDatabaseKeepsTheRegionItRecords: a member's own
+// config is right here and its budget names no Realtime Database at all — an
+// installation that never wrote that key. That is silence about where the
+// member's database is, not a member whose database is in the default location,
+// so an entry the table already declares keeps the region it records: reading
+// the silence as "no region" would move where the workspace's service reads that
+// member's database, which is what a re-declaration must never do (D3084).
+func TestAMemberWhoseConfigNamesNoDatabaseKeepsTheRegionItRecords(t *testing.T) {
+	_, aurora, owner := workspaceOwnerHome(t)
+	workspaceAppend(t, owner, workspaceLinkedEntry)
+	workspaceAppend(t, aurora, "budget: { mode: observe, per_run_usd: 5 }\n")
+
+	out, _, chainErr := execute(t, workspaceMemberAddArgs()...)
+	if got := workspaceOwnerRegion(t, owner); got != "europe-west1" {
+		t.Errorf("database region = %q, want europe-west1: the member's own config names no database, so nothing says the region the entry records is wrong", got)
+	}
+	workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
 }
 
 // TestALegacyHostRecordsNoRegion: a member whose database URL names no region —

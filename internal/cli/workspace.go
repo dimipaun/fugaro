@@ -808,7 +808,11 @@ func workspaceJobAccountsPhrase(o *workspaceMemberAddOptions) string {
 // the workspace to read that member's database at another host. The flag is the
 // owner's own word, for a member the table declared before this change or one
 // whose config this machine never held. A member whose config is here and names
-// no database records none, because that is what its own installation says.
+// no database records none, because that is what its own installation says —
+// unless its entry already records one, which stands: an absent budget.rtdb_url
+// is a member's own installation saying nothing about where its database is, and
+// reading that silence as the default location would move a member the table had
+// already placed, which is the same loss as a config this machine cannot read.
 func workspaceMemberRegion(member, flag, current string) (string, error) {
 	if flag != "" {
 		return flag, nil
@@ -821,7 +825,7 @@ func workspaceMemberRegion(member, flag, current string) (string, error) {
 		return "", userErr("member %s's own config could not be read, so where its database is cannot be told from it: %v; fix that file, or pass --database-region to record the region without reading it", member, err)
 	}
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
-		return "", nil
+		return current, nil
 	}
 	return workspaceDatabaseRegion(member, lc.Budget.RTDBURL)
 }
