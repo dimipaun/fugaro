@@ -276,10 +276,10 @@ func TestParallelismSkillIsGeneric(t *testing.T) {
 // not a row, and it is the rows a planner reads the pass's own behaviour off.
 func TestSkillRigorTableMatchesInternalRigor(t *testing.T) {
 	rows := rigorTableRows(t)
-	if len(rows) != len(rigor.Modes) {
-		t.Fatalf("the rigor table has %d row(s) and internal/rigor carries %d mode(s) (%s): every mode needs the pass's behaviour written down, and a row for a mode the vocabulary dropped is a row no run can resolve", len(rows), len(rigor.Modes), rigor.ModeList())
+	if len(rows) != len(rigor.Rigors) {
+		t.Fatalf("the rigor table has %d row(s) and internal/rigor carries %d mode(s) (%s): every mode needs the pass's behaviour written down, and a row for a mode the vocabulary dropped is a row no run can resolve", len(rows), len(rigor.Rigors), rigor.RigorList())
 	}
-	for i, mode := range rigor.Modes {
+	for i, mode := range rigor.Rigors {
 		if rows[i].mode != string(mode) {
 			t.Errorf("the table's row %d is %q and internal/rigor's mode %d is %q: the table reads in the vocabulary's own order, so a reader matches one to the other by position", i+1, rows[i].mode, i+1, mode)
 		}

@@ -100,7 +100,7 @@ func TestTriageStageIsTheSeniorReviewersRole(t *testing.T) {
 // take the stage away: there is no mode a key turns the stage on in.
 func TestAgentTriageDefaultsOnOnlyInStartupAndPro(t *testing.T) {
 	var absent Agent
-	for _, mode := range rigor.Modes {
+	for _, mode := range rigor.Rigors {
 		want := mode == rigor.Startup || mode == rigor.Pro
 		if got := absent.TriageOn(mode); got != want {
 			t.Errorf("an absent key: TriageOn(%s) = %v, want %v", mode, got, want)
@@ -112,7 +112,7 @@ func TestAgentTriageDefaultsOnOnlyInStartupAndPro(t *testing.T) {
 		t.Error("agent.triage: false: the stage still runs in Startup and Pro")
 	}
 	absent.Triage = &on
-	for _, mode := range []rigor.Mode{rigor.POC, rigor.Critical, rigor.Hotfix} {
+	for _, mode := range []rigor.Rigor{rigor.POC, rigor.Critical, rigor.Hotfix} {
 		if absent.TriageOn(mode) {
 			t.Errorf("agent.triage: true: TriageOn(%s) = true, and no mode but Startup and Pro makes a triage call (D1851)", mode)
 		}

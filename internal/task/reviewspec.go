@@ -9,7 +9,7 @@ import (
 // ReviewSpecSource is where the spec a review is checked against came from:
 // the three values ReviewSpec.Source may carry (docs/review-against-task
 // reconciliation R2). It is a named string type with one exported list, as
-// rigor.Mode and tier.Tier are, because a near miss is a launcher's bug
+// rigor.Rigor and tier.Tier are, because a near miss is a launcher's bug
 // rather than a review's opinion about what it was handed.
 type ReviewSpecSource string
 

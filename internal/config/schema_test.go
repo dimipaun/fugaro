@@ -395,3 +395,67 @@ func TestCraftBlockDescriptionsNameTheCraftTheyFollow(t *testing.T) {
 		})
 	}
 }
+
+// TestRigorAreaKeySchemaAgreesWithTheDecoder: an area rule's level is written
+// `level:` since LD2 renamed the axis, and `mode:` — the key the level was
+// released under — is still read as that rule's level in both loaders. Both
+// published schemas have to admit it for the same reason the decoder does: a
+// repository's own fugaro.yaml and the project layer `fugaro update` publishes
+// are files nobody has rewritten, and the schema is the half an editor or a
+// repository's CI checks them against, so a schema that called the old key
+// invalid would be the red check nobody can reproduce.
+//
+// The fallback is a fallback and not a second truth: `level:` decides where a
+// rule carries both, and a value outside the vocabulary is refused under either
+// key — by the decoder at load and by the schema's enum — which is why every
+// row below carries one verdict for both surfaces.
+func TestRigorAreaKeySchemaAgreesWithTheDecoder(t *testing.T) {
+	for _, s := range []struct {
+		name, schema, head, line, tail string
+		parse                          func([]byte) []Problem
+	}{
+		{
+			name:   "fugaro.yaml",
+			schema: "fugaro.schema.json",
+			head:   minimalRepo + "git: { provider: github }\nrigor:\n  areas:\n",
+			line:   "    - RULE\n",
+			tail:   "workflows:\n  app:\n    commands: { build: make, test: make test }\n",
+			parse:  func(b []byte) []Problem { _, ps := Parse(b); return ps },
+		},
+		{
+			name:   "project-layer.yaml",
+			schema: "project-layer.schema.json",
+			head:   layerHead + "defaults:\n  rigor:\n    areas:\n",
+			line:   "      - RULE\n",
+			parse:  func(b []byte) []Problem { _, ps := ParseProjectLayer(b, testAnchor); return ps },
+		},
+	} {
+		sch := compileABSchema(t, s.schema)
+		for _, tc := range []struct {
+			name, rule string
+			ok         bool
+		}{
+			{"the new key", `{ name: docs, match: "docs/**", level: pro }`, true},
+			{"the old key alone", `{ name: docs, match: "docs/**", mode: pro }`, true},
+			// One rule carrying both: `level:` decides, so a rule a person has
+			// already upgraded cannot be dragged back by the line beside it, and
+			// the document is one both surfaces still take.
+			{"both keys", `{ name: docs, match: "docs/**", mode: poc, level: critical }`, true},
+			{"neither key", `{ name: docs, match: "docs/**" }`, false},
+			{"a level outside the vocabulary, new key", `{ name: docs, match: "docs/**", level: Paranoid }`, false},
+			{"a level outside the vocabulary, old key", `{ name: docs, match: "docs/**", mode: Paranoid }`, false},
+			{"a level outside the vocabulary beside a good one", `{ name: docs, match: "docs/**", mode: pro, level: Paranoid }`, false},
+			{"a key the rule does not carry", `{ name: docs, match: "docs/**", mode: pro, mode_of: pro }`, false},
+		} {
+			t.Run(s.name+"/"+tc.name, func(t *testing.T) {
+				text := s.head + strings.Replace(s.line, "RULE", tc.rule, 1) + s.tail
+				if ps := s.parse([]byte(text)); (len(ps) == 0) != tc.ok {
+					t.Fatalf("the decoder accepted = %v, want %v (problems: %v)", len(ps) == 0, tc.ok, ps)
+				}
+				if got := abSchemaAccepts(t, sch, text); got != tc.ok {
+					t.Errorf("%s accepted = %v, want %v: the schema and the decoder disagree", s.schema, got, tc.ok)
+				}
+			})
+		}
+	}
+}

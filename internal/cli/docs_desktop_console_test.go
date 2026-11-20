@@ -7335,14 +7335,17 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	// modes plan T1.7: internal/watch/json.go's JSONRun.Mode/.From, filled from
 	// the registry entry the run writes out of its own record, so the scrub's
 	// two lists are what a document can carry and not a vocabulary anyone may
-	// choose). The modes are internal/rigor's own five. The layers are its
+	// choose). The values are internal/rigor's own five levels, read off the
+	// `Rigor` type's constants: the level's key in the record is `level` now
+	// (LD2), but the document's own row key is still `mode`, which is what
+	// VOCAB.rigorMode names. The layers are its
 	// `Layers` minus `reached`: that is the resolver's answer to a later moment
 	// asking again -- "hold what you already have" (D22) -- and the fold keeps
 	// the earlier, narrower layer instead, so a record's `from` is never it
 	// (internal/runstore's KnownRigorFrom). Both carry the `-`
 	// internal/watch/build.go's `dash` writes for an entry that has neither.
 	sameSet(t, "rigor mode", append(sourceValues(t, "internal/rigor/mode.go",
-		readDoc(t, "internal/rigor/mode.go"), `Mode = "([a-z]+)"`), "-"),
+		readDoc(t, "internal/rigor/mode.go"), `Rigor = "([a-z]+)"`), "-"),
 		tsList(t, scrub, `\brigorMode: \[([^\]]*)\]`, "VOCAB.rigorMode"))
 	sameSet(t, "rigor from", append(without(sourceValues(t, "internal/rigor/resolve.go",
 		readDoc(t, "internal/rigor/resolve.go"), `Layer = "([a-z]+)"`), "reached"), "-"),

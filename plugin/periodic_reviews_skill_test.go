@@ -150,6 +150,56 @@ func TestWorkingSkillCarriesTheDueSignalAndTheReportsPlace(t *testing.T) {
 	}
 }
 
+// TestWorkingSkillNamesTheCommitRun (R16, D2754): committing the project's
+// stored reports is the one opt-in step of the cadence that needs a command of
+// its own, and the command is the launcher's — the reports are read with the
+// person's own account, at their terminal, and handed to the run in its task
+// (no job account ever reads the store's folder). A reader who is told "commit
+// the reports" and not told which command, or where to run it, invents one:
+// R3's own sentence about where a report lands is the digest command, and the
+// two are not interchangeable.
+//
+// Mutation (drop the paragraph from SKILL.md): the first pin fails, and a
+// reader reaching the opt-in commit has no command for it.
+func TestWorkingSkillNamesTheCommitRun(t *testing.T) {
+	files := workingSkillFiles(t)
+	skill, ok := files["skills/working/SKILL.md"]
+	if !ok {
+		t.Fatal("the working skill has no SKILL.md")
+	}
+	var all strings.Builder
+	for _, text := range files {
+		all.WriteString(text)
+		all.WriteString("\n")
+	}
+	tree := all.String()
+	// The command and where it is launched are SKILL.md's: an agent reads that
+	// file every session, and a reader who reaches the opt-in commit is one
+	// step away from the digest command that wrote the reports it commits.
+	for _, want := range []struct{ what, text string }{
+		{"the commit run's own command, both flags together", `fugaro run --recipe commit-reports --commit-reports`},
+		{"the checkout it is launched from", "the designated repository"},
+		{"whose account reads the stored reports", "your own account"},
+		{"the folder the run commits into", "mirror folder"},
+	} {
+		if !strings.Contains(skill, want.text) {
+			t.Errorf("skills/working/SKILL.md never names %s (%q): the commit run is an opt-in step, and a reader who reaches it needs the command, where to run it and whose credential reads the store", want.what, want.text)
+		}
+	}
+	// The carry-on facts are the reference's, where the cadence and its steps
+	// are described at length.
+	for _, want := range []struct{ what, text string }{
+		{"the designation the run is launched on", "reports_commit"},
+		{"that the recipe is what reads the reports", "`--commit-reports` needs the recipe"},
+		{"that the two flags are refused apart", "`--commit-reports` with `--attach`"},
+		{"what the launcher's own credential means for the runs", "no job account is given access"},
+	} {
+		if !strings.Contains(tree, want.text) {
+			t.Errorf("the working skill never names %s (%q): the commit run's two flags, the designation it is launched on and whose credential reads the store are what a reader has to know before running it", want.what, want.text)
+		}
+	}
+}
+
 // TestSetupSkillNamesTheReviewCadence (R3, D965, F18): the reviews are the
 // user's cadence, and setup is the one moment it is cheapest to decide. The
 // skill prints the three ways to schedule a report -- a cron job or a CI

@@ -57,7 +57,7 @@ func TestApplyNeverDefersAFloorFinding(t *testing.T) {
 		{Likelihood: 1, Impact: 1, FixCost: 5, Class: rigor.Cosmetic, Scope: rigor.ScopeUnmet},
 		{},
 	}
-	for _, m := range rigor.Modes {
+	for _, m := range rigor.Rigors {
 		for _, s := range floorScores {
 			if !rigor.Floor(m, s) {
 				// Hotfix's row keeps the security gate alone (F28), so a

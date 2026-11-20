@@ -138,7 +138,7 @@ func newBudgetPreviewCmd() *cobra.Command {
 	f.StringVar(&o.recipe, "recipe", "", "the recipe to preview ("+strings.Join(recipe.CatalogNames(), ", ")+")")
 	f.IntVar(&o.runs, "runs", 0, "how many runs to estimate")
 	f.StringVar(&o.repo, "repo", "", "the repository (owner/name, or a path inside its checkout); default: the checkout's origin")
-	f.StringVar(&o.mode, "mode", "", "the rigor mode to preview: "+rigor.ModeList()+"; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing — except hotfix, which is taken whole and needs no opt-in, as it is for a run. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce)")
+	f.StringVar(&o.mode, "mode", "", "the rigor mode to preview: "+rigor.RigorList()+"; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing — except hotfix, which is taken whole and needs no opt-in, as it is for a run. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce)")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
 	for _, name := range []string{"recipe", "runs"} {
@@ -160,7 +160,7 @@ type previewKnobs struct {
 	first, rounds int
 	maxStageUSD   float64
 	from          string
-	mode          rigor.Mode
+	mode          rigor.Rigor
 }
 
 // previewKnobsOf reads a checkout's numbers, if there is a checkout at all.
@@ -182,12 +182,12 @@ type previewKnobs struct {
 // more: the run's request may raise a mode and never lower it (D6), and a
 // preview that let it lower one would quote a ceiling the launched run would
 // never be held to — the unsafe direction for a spend estimate. Hotfix is the
-// one mode the request takes whole (rigor.Mode.PerRun), so the preview prices it
+// one mode the request takes whole (rigor.Rigor.PerRun), so the preview prices it
 // exactly as a hotfix run would be priced rather than calling it a lower mode.
-func previewKnobsOf(cfg *config.Config, project rigor.Config, asked rigor.Mode) previewKnobs {
-	k := previewKnobs{from: "defaults", mode: rigor.Resolve(project, rigor.Request{Mode: asked}).Mode}
+func previewKnobsOf(cfg *config.Config, project rigor.Config, asked rigor.Rigor) previewKnobs {
+	k := previewKnobs{from: "defaults", mode: rigor.Resolve(project, rigor.Request{Level: asked}).Level}
 	if cfg != nil {
-		k = previewKnobs{from: "checkout", mode: rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: asked}).Mode,
+		k = previewKnobs{from: "checkout", mode: rigor.Resolve(cfg.RigorConfig(), rigor.Request{Level: asked}).Level,
 			first: cfg.Agent.FirstLineRounds, rounds: cfg.Agent.ReviewRounds, maxStageUSD: cfg.Agent.MaxBudgetUSD}
 	}
 	defaults := rigor.DefaultRounds(k.mode)
@@ -259,7 +259,7 @@ func previewProjectRigor(ctx context.Context, lc *localcfg.Config) rigor.Config 
 // whose row leaves level 3 off can still run it — the figure here is the
 // mode's own answer, and the note printed beside it says the numbers are the
 // mode's defaults.
-func previewLevel3Rounds(cfg *config.Config, root string, rcp *recipe.Recipe, mode rigor.Mode) int {
+func previewLevel3Rounds(cfg *config.Config, root string, rcp *recipe.Recipe, mode rigor.Rigor) int {
 	if cfg == nil {
 		cfg = &config.Config{}
 	}
@@ -378,7 +378,7 @@ type previewHeadroom struct {
 // a cap another layer wrote (internal/runner/policy.go scales that one cap in
 // envCeiling, and resolvePolicy's SourceCeiling branch takes every other
 // layer's as it is).
-func previewPerRun(lc *localcfg.Config, caps budget.Caps, mode rigor.Mode) (best budget.Micros, srcs []string, origin string, ok bool, err error) {
+func previewPerRun(lc *localcfg.Config, caps budget.Caps, mode rigor.Rigor) (best budget.Micros, srcs []string, origin string, ok bool, err error) {
 	take := func(m budget.Micros, what, short string) {
 		srcs = append(srcs, what+" "+usdFixed(m.USD()))
 		if !ok || m < best {
@@ -453,7 +453,7 @@ type previewDoc struct {
 	// unset. It is not on the wire: knobs_from and knobs are the contract the
 	// console already reads, and a field it does not know is a field a strict
 	// reader refuses. The text output names it instead.
-	RigorMode rigor.Mode `json:"-"`
+	RigorMode rigor.Rigor `json:"-"`
 	// PerStageCapUSD is agent.max_budget_usd; null when no checkout here
 	// named one.
 	PerStageCapUSD *float64 `json:"per_stage_cap_usd"`
@@ -510,11 +510,11 @@ type previewTypical struct {
 func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	ctx := cmd.Context()
 	switch {
-	case o.mode != "" && !rigor.Known(rigor.Mode(o.mode)):
+	case o.mode != "" && !rigor.Known(rigor.Rigor(o.mode)):
 		// The closed vocabulary, checked before any read: a near miss is the
 		// caller's own mistake, as run's rigorFlags reads it, and it names the
 		// modes this flag takes rather than budget set --mode's two.
-		return userErr("--mode %q: use %s, or leave it off to resolve the mode from the repository's own configuration", o.mode, rigor.ModeList())
+		return userErr("--mode %q: use %s, or leave it off to resolve the mode from the repository's own configuration", o.mode, rigor.RigorList())
 	case o.runs <= 0:
 		return userErr("--runs must be more than 0")
 	case o.runs > previewMaxRuns:
@@ -568,7 +568,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	if cfg == nil {
 		project = previewProjectRigor(ctx, lc)
 	}
-	knobs := previewKnobsOf(cfg, project, rigor.Mode(o.mode))
+	knobs := previewKnobsOf(cfg, project, rigor.Rigor(o.mode))
 	level3 := previewLevel3Rounds(cfg, root, rr.Recipe, knobs.mode)
 	stages := recipe.StageBound(rr.Recipe, knobs.first, knobs.rounds, level3)
 	doc := &previewDoc{Project: lc.Name, GCPProject: lc.GCPProject, Repo: repo, Slug: slug,
@@ -583,7 +583,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	// A request the resolution landed on exactly is not this case: it took
 	// effect, whether or not the layer that set the mode is the request — and
 	// hotfix always lands on exactly itself, since the request takes it whole.
-	if o.mode != "" && knobs.mode != rigor.Mode(o.mode) {
+	if o.mode != "" && knobs.mode != rigor.Rigor(o.mode) {
 		doc.Notes = append(doc.Notes, fmt.Sprintf("--mode %s has no effect: this repository resolves to %s, and a request may raise a mode and never lower it", o.mode, knobs.mode))
 	}
 	// resolveRecipe's note says where the stages come from when the recipe

@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/streams"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -517,5 +518,317 @@ func TestValidateWarnsWhenTheProjectLayerSetsRigor(t *testing.T) {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("stderr %q lacks %q", errOut, want)
 		}
+	}
+}
+
+// spellingSkewLayer is a project layer whose rigor block carries one area rule
+// written with this release's key, parsed the way repoEngine's resolution
+// parses one.
+func spellingSkewLayer(t *testing.T) *config.ProjectLayer {
+	t.Helper()
+	l, ps := config.ParseProjectLayer([]byte("version: 1\nproject: acme\ngcp_project: acme-fugaro\ndefaults:\n  rigor:\n    areas:\n      - {name: db, match: \"db/*\", level: pro}\n"),
+		config.LayerAnchor{Project: "acme", GCPProject: "acme-fugaro"})
+	if len(ps) > 0 {
+		t.Fatalf("layer problems: %v", ps)
+	}
+	return l
+}
+
+// TestUpdateRepoRefusesTheNewRigorSpellingsOnAnOlderBaseImage is
+// rigorSpellingSince's gate, the shape rigorSince's is and for a break that
+// gate cannot see: the rigor: key is 0.11.0's and passes every installation
+// newer than it, while the two spellings this release adds to that key — an
+// area rule's `level:` and the scalar `rigor:` shorthand — are refused at
+// bootstrap by every runner older than this release ("field level not found in
+// type rigor.Area", "cannot unmarshal !!str into config.Rigor"). The boundary
+// is the constant's own: one release below is refused, the constant and one
+// above pass, a base that is not a release only warns, and no base at all
+// passes.
+func TestUpdateRepoRefusesTheNewRigorSpellingsOnAnOlderBaseImage(t *testing.T) {
+	below, above := shiftRelease(t, rigorSpellingSince, -1), shiftRelease(t, rigorSpellingSince, 1)
+	lc := func(ref string) *localcfg.Config {
+		if ref == "" {
+			return &localcfg.Config{}
+		}
+		return &localcfg.Config{BaseImages: map[string]string{"base": ref}}
+	}
+	var out, errOut bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	r := &initRun{o: &initOptions{}, cmd: cmd, w: &out}
+	older := "ghcr.io/dimipaun/fugaro-base:" + below
+	layer := &config.Config{Layer: spellingSkewLayer(t)}
+
+	for _, c := range []struct {
+		name string
+		cfg  *config.Config
+		want []string
+	}{
+		{"the area key", &config.Config{RepoRigorLevelSet: true},
+			[]string{"fugaro.yaml's rigor area rule `level:` key of acme/app"}},
+		{"the shorthand", &config.Config{RepoRigorScalarSet: true},
+			[]string{"fugaro.yaml's scalar `rigor:` shorthand of acme/app"}},
+		{"both in the file", &config.Config{RepoRigorLevelSet: true, RepoRigorScalarSet: true},
+			[]string{"fugaro.yaml's rigor area rule `level:` key and scalar `rigor:` shorthand of acme/app"}},
+		{"the layer's area key", layer,
+			[]string{"the project layer's rigor area rule `level:` key (read for acme/app)", "every repository of the project"}},
+		{"the file's and the layer's", &config.Config{RepoRigorLevelSet: true, Layer: layer.Layer},
+			[]string{"fugaro.yaml's rigor area rule `level:` key, and the project layer's rigor area rule `level:` key of acme/app"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			err := r.gateRigorSpelling(r.o, "acme/app", lc(older), c.cfg)
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want refused", err)
+			}
+			for _, want := range append([]string{"fugaro " + rigorSpellingSince + " or later", older + ", release " + below, "fugaro update --base base"}, c.want...) {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if errOut.Len() != 0 {
+				t.Errorf("stderr = %q, want none (refused, not warned)", errOut.String())
+			}
+		})
+	}
+
+	// The constant and one release above pass, so does an installation with no
+	// base image at all, and so does every file that writes neither spelling —
+	// including one whose area rule still carries the released `mode:`.
+	for _, cfg := range []*config.Config{
+		{RepoRigorLevelSet: true}, {RepoRigorScalarSet: true},
+		{RepoRigorLevelSet: true, RepoRigorScalarSet: true, Layer: spellingSkewLayer(t)},
+		{RepoRigorSet: true, RepoRigor: &config.Rigor{Default: rigor.Hotfix}},
+		{}, nil,
+	} {
+		for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + rigorSpellingSince, "ghcr.io/dimipaun/fugaro-base:" + above, ""} {
+			var warn bytes.Buffer
+			if err := refuseRigorSpellingSkew("acme/app", cfg != nil && cfg.RepoRigorLevelSet, cfg != nil && cfg.RepoRigorScalarSet,
+				cfg != nil && cfg.Layer != nil, ref, &warn); err != nil || warn.Len() != 0 {
+				t.Errorf("%q with %+v: err = %v, warn = %q, want neither", ref, cfg, err, warn.String())
+			}
+		}
+	}
+	var warn bytes.Buffer
+	if err := refuseRigorSpellingSkew("acme/app", true, true, false, "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", &warn); err != nil {
+		t.Errorf("dev base: err = %v, want a warning only", err)
+	}
+	if !strings.Contains(warn.String(), "not a release base image") || !strings.Contains(warn.String(), "is not checked") {
+		t.Errorf("dev base: warn = %q", warn.String())
+	}
+
+	// --forget and --plan-only deploy nothing, so neither is refused;
+	// --print-vars is judged like a deploy and writes nothing to stdout.
+	spelled := &config.Config{RepoRigorLevelSet: true, RepoRigorScalarSet: true}
+	for _, o := range []*initOptions{{planOnly: true}, {forget: true}} {
+		if err := (&initRun{o: o, cmd: cmd, w: &out}).gateRigorSpelling(o, "acme/app", lc(older), spelled); err != nil {
+			t.Errorf("%+v: err = %v, want none", o, err)
+		}
+	}
+	out.Reset()
+	pv := &initOptions{printVars: true}
+	if err := (&initRun{o: pv, cmd: cmd, w: io.Discard}).gateRigorSpelling(pv, "acme/app", lc(older), spelled); err == nil {
+		t.Fatal("--print-vars: want refused")
+	}
+	if out.Len() != 0 {
+		t.Errorf("--print-vars wrote to stdout: %q", out.String())
+	}
+}
+
+// TestRigorSpellingSkewNamesTheFileThatWroteIt: the refusal names which file
+// wrote which spelling, because the cure differs — the repository's own lines
+// are the repository's to rewrite, while the layer's area key is read by every
+// repository of the project and only its operator can remove it. The cure it
+// names is the spelling every release reads, never the release, which the gate
+// cannot move for a file an older image reads.
+func TestRigorSpellingSkewNamesTheFileThatWroteIt(t *testing.T) {
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, rigorSpellingSince, -1)
+	for _, c := range []struct {
+		name                 string
+		level, scalar, layer bool
+		subject, absent      string
+		cure                 string
+	}{
+		{"the area key", true, false, false, "fugaro.yaml's rigor area rule `level:` key of acme/app", "shorthand", "write the area rule's level under `mode:`"},
+		{"the shorthand", false, true, false, "fugaro.yaml's scalar `rigor:` shorthand of acme/app", "`level:`", "write the rigor: key as a block carrying `default:`"},
+		{"the layer's key", false, false, true, "the project layer's rigor area rule `level:` key (read for acme/app)", "fugaro.yaml's", "write the area rule's level under `mode:` in the project layer and publish it again"},
+		{"both files", true, false, true, "fugaro.yaml's rigor area rule `level:` key, and the project layer's rigor area rule `level:` key of acme/app", "", "fugaro.yaml"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			err := refuseRigorSpellingSkew("acme/app", c.level, c.scalar, c.layer, older, io.Discard)
+			if err == nil {
+				t.Fatal("want refused")
+			}
+			if !strings.Contains(err.Error(), c.subject) {
+				t.Errorf("the refusal does not name %q: %v", c.subject, err)
+			}
+			if c.absent != "" && strings.Contains(err.Error(), c.absent) {
+				t.Errorf("the refusal names %q, which did not write it: %v", c.absent, err)
+			}
+			if !strings.Contains(err.Error(), c.cure) {
+				t.Errorf("the refusal does not name the cure %q: %v", c.cure, err)
+			}
+		})
+	}
+}
+
+// TestRepoEngineRefusesTheNewRigorSpellingsOnAnOlderBaseImage is the gate at
+// its call site, before the plan or the apply, for both places a spelling can
+// be written: the repository's own fugaro.yaml (the area key, and the scalar
+// shorthand) and the project layer the checkout resolves over (the area key).
+// The base image is one release below the constant and still newer than
+// rigorSince, which is the whole point: the rigor: key gate above passes it.
+func TestRepoEngineRefusesTheNewRigorSpellingsOnAnOlderBaseImage(t *testing.T) {
+	below := shiftRelease(t, rigorSpellingSince, -1)
+	base := "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:" + below + "}\n"
+	const wf = "workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	const head = "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\n"
+	const area = "rigor:\n  areas:\n    - {name: db, match: \"db/*\", level: pro}\n"
+	for _, c := range []struct {
+		name, yaml, layer, subject string
+	}{
+		{"the file's area key", head + area + wf, "", "fugaro.yaml's rigor area rule `level:` key of"},
+		{"the file's shorthand", head + "rigor: pro\n" + wf, "", "fugaro.yaml's scalar `rigor:` shorthand of"},
+		{"the layer's area key", head + wf, "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  rigor:\n    areas:\n      - {name: db, match: \"db/*\", level: pro}\n", "the project layer's rigor area rule `level:` key"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newInitRig(t)
+			isolateCache(t)
+			extra := base
+			if c.layer == "" {
+				noProjectLayerBucket(t)
+			} else {
+				runs := t.TempDir()
+				if err := os.MkdirAll(filepath.Join(runs, "fugaro"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(runs, config.LayerKey), []byte(c.layer), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				extra += "bucket_url: file://" + runs + "\n"
+			}
+			r.appendConfig(t, extra)
+			r.save(t)
+			t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", c.yaml))
+			e := rigEngine(t, r, &initOptions{})
+			err := e.r.repoEngine(t.Context(), ".", "", true)
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("exit = %d, err = %v: want the spelling refused on this installation's base image", ExitCode(err), err)
+			}
+			for _, want := range []string{rigorSpellingSince, below, "fugaro update --base base", c.subject} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if applies := r.ran(t, "apply"); len(applies) != 0 {
+				t.Errorf("the refusal applied anyway: %v", applies)
+			}
+		})
+	}
+	// A file whose area rule still writes the released `mode:` is not gated
+	// here: its side of the line is TestRigorSpellingsAreReadFromTheText's and
+	// the launch's below, where a `mode:` file on this same image is not
+	// refused.
+}
+
+// TestRunRefusesTheNewRigorSpellingsOnAnOlderBaseImage is the launch's half of
+// the same gate, judged on the workflow's build record as every other
+// per-workflow image gate is: without it a launch from a checkout whose file
+// writes either spelling starts a paid job that dies at bootstrap. A file that
+// writes the released key on the same image still launches.
+func TestRunRefusesTheNewRigorSpellingsOnAnOlderBaseImage(t *testing.T) {
+	below := shiftRelease(t, rigorSpellingSince, -1)
+	for _, c := range []struct {
+		name    string
+		rigor   string
+		subject string
+	}{
+		{"the area key", "rigor:\n  areas:\n    - {name: db, match: \"db/*\", level: pro}\n", "fugaro.yaml's rigor area rule `level:` key of acme/other"},
+		{"the shorthand", "rigor: pro\n", "fugaro.yaml's scalar `rigor:` shorthand of acme/other"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			configSkewCheckout(t, f, configSkewHead+c.rigor+configSkewWorkflow)
+			writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+below)
+			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+			for _, want := range []string{
+				c.subject,
+				"fugaro " + rigorSpellingSince + " or later",
+				"ghcr.io/dimipaun/fugaro-base:" + below + ", release " + below,
+				imageGateRemedy,
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Errorf("%d executions, want none", n)
+			}
+		})
+	}
+	f := newCloudFixture(t)
+	configSkewCheckout(t, f, configSkewHead+"rigor:\n  areas:\n    - {name: db, match: \"db/*\", mode: pro}\n"+configSkewWorkflow)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+below)
+	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+		t.Fatalf("a file written with the released key must not be gated: %v", err)
+	}
+}
+
+// TestRigorSpellingSinceHasAReleaseBullet: rigorSpellingSince names the release
+// that ships the two spellings, and that release is not tagged yet, so
+// docs/release.md's Before-you-tag list is where a release verifies it against
+// the tag actually cut.
+func TestRigorSpellingSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `rigorSpellingSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no rigorSpellingSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+rigorSpellingSince+"\"`") {
+		t.Errorf("docs/release.md's rigorSpellingSince bullet does not carry the constant's release (%q)", rigorSpellingSince)
+	}
+	for _, want := range []string{
+		"an area rule's `level:` key", "scalar shorthand", "not tagged yet",
+		"gateRigorSpelling", "checkRigorSpellingImage", "checkCloneRigorSpellingImage",
+	} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's rigorSpellingSince bullet does not say %q", want)
+		}
+	}
+	if !strings.Contains(bullet, "rigorSince") {
+		t.Error("docs/release.md's rigorSpellingSince bullet does not say why it is not rigorSince")
+	}
+}
+
+// TestRigorSpellingSinceIsNotAheadOfTheReleaseThatShipsIt: the release that
+// ships the spellings is this tree's own release or the one the stream makes
+// next (one name per minor, and a hotfix is never merged back), and a constant
+// above THAT refuses update --repo and every launch on installations whose base
+// image is the release that ships it. The direction below it — a constant
+// naming an older release, which admits a file an older image dies on — is
+// what the bullet above is verified against at the tag actually cut.
+func TestRigorSpellingSinceIsNotAheadOfTheReleaseThatShipsIt(t *testing.T) {
+	cat, err := streams.Parse("docs/release-streams.yaml", []byte(readDoc(t, "docs/release-streams.yaml")))
+	if err != nil {
+		t.Fatalf("docs/release-streams.yaml: %v", err)
+	}
+	cli, ok := cat.Lookup(streams.CLI)
+	if !ok {
+		t.Fatal("docs/release-streams.yaml carries no cli stream, so the release this tree is on cannot be read")
+	}
+	shipping := cli.Current
+	if imagePredates(cli.Current.String(), rigorSpellingSince) {
+		shipping = streams.Version{Major: cli.Current.Major, Minor: cli.Current.Minor + 1}
+	}
+	if imagePredates(shipping.String(), rigorSpellingSince) {
+		t.Errorf("rigorSpellingSince = %q is ahead of %s, the release that ships the spellings: the cli stream is at %s, and one release spends one minor", rigorSpellingSince, shipping, cli.Current)
 	}
 }

@@ -201,7 +201,7 @@ func TestDiagnoseRedactsEveryStringOfAToleratedFinding(t *testing.T) {
 		Status: runstore.StatusSucceeded, Stage: "writeback",
 		Tolerated: &runstore.ToleratedFindings{
 			Findings: []runstore.ToleratedFinding{{
-				Title: secret, Mode: rigor.Mode(secret), Label: rigor.Label(secret), Class: rigor.Class(secret),
+				Title: secret, Mode: rigor.Rigor(secret), Label: rigor.Label(secret), Class: rigor.Class(secret),
 				Likelihood: 1, Impact: 1, FixCost: 1}},
 			Total: 1}}
 	if err := s.WriteRecord(ctx, rec); err != nil {

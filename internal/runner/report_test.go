@@ -19,7 +19,7 @@ func toleratedRec(findings []runstore.ToleratedFinding) *runstore.Record {
 		RunID:   "20261027-120000-abcd",
 		Outcome: runstore.OutcomeReady,
 		Rigor: &runstore.RigorRecord{
-			Mode: rigor.Pro, From: rigor.FromRepo, At: runstore.RigorAtFinalize, Revision: "origin/main",
+			Level: rigor.Pro, From: rigor.FromRepo, At: runstore.RigorAtFinalize, Revision: "origin/main",
 		},
 		Reviews:   []runstore.ReviewSummary{{Round: 1, Tier: runstore.TierSenior, Verdict: "changes", Findings: len(findings)}},
 		Tolerated: runstore.NewTolerated(findings),
@@ -38,7 +38,7 @@ func TestReportOmitsToleratedForARoundTheModeBlocked(t *testing.T) {
 		HeadSHA: "abc",
 		Outcome: runstore.OutcomeDraft,
 		Rigor: &runstore.RigorRecord{
-			Mode: rigor.Startup, From: rigor.FromRepo, At: runstore.RigorAtFinalize, Revision: "origin/main",
+			Level: rigor.Startup, From: rigor.FromRepo, At: runstore.RigorAtFinalize, Revision: "origin/main",
 		},
 		Reviews: []runstore.ReviewSummary{{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 2}},
 		Tolerated: runstore.NewTolerated([]runstore.ToleratedFinding{{
@@ -143,7 +143,7 @@ func TestReportWithoutToleratedDiffersByTheModeLine(t *testing.T) {
 	rec.Rigor = nil
 	today := Report(rec, "runs/acme-app/20261027-120000-abcd/", nil)
 
-	rec.Rigor = &runstore.RigorRecord{Mode: rigor.Pro, From: rigor.FromRepo, At: runstore.RigorAtFinalize}
+	rec.Rigor = &runstore.RigorRecord{Level: rigor.Pro, From: rigor.FromRepo, At: runstore.RigorAtFinalize}
 	got := Report(rec, "runs/acme-app/20261027-120000-abcd/", nil)
 
 	const line = "**Rigor:** pro, from repo, at finalize\n\n"

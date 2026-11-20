@@ -194,10 +194,12 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/compute/outputs.tf",
 		"gcp/roots/compute/.terraform.lock.hcl",
 		"gcp/roots/compute/tests/compute.tftest.hcl",
-		// The workspace root (workspaces plan W3): the workspace's own service
-		// and the one grant that reaches the workspace's own database, and
-		// nothing else — a job, a bucket or a repository here would be a
-		// workspace holding a member's work (spec §9).
+		// The workspace root (workspaces plan W3; WU3 of the
+		// workspace-projects-users plan added its second account): the
+		// workspace's own service, the SA fallback's IAM account that Terraform
+		// grants nothing, and the one grant that reaches the workspace's own
+		// database, and nothing else — a job, a bucket or a repository here
+		// would be a workspace holding a member's work (spec §9).
 		"gcp/roots/workspace/main.tf",
 		"gcp/roots/workspace/variables.tf",
 		"gcp/roots/workspace/outputs.tf",
@@ -1765,6 +1767,19 @@ var (
 	// that root's (internal/infra/tf's WorkspaceNotCovered, which reads the
 	// member out of the plan, and the runAccountGrants row in
 	// internal/infra/managed, which pins the whole grant).
+	// google_service_account.workspace_iam — the SA fallback's IAM account, the
+	// second account the same root creates (WU3 of the workspace-projects-users
+	// plan, D2803) — is deliberately ABSENT from the expression list below, and
+	// the absence is a decision rather than an omission: Terraform grants that
+	// account nothing anywhere in the tree. Its reach on a member is the member
+	// owner's `roles/owner` grant and its token creators are the workspace
+	// admins, both written live by the CLI (D2818, WU20), so a member
+	// expression naming it would be a plan granting an identity that already
+	// holds `roles/owner` on every linked member some further reach — and the
+	// add has to be a reviewed one.
+	// TestTheWorkspaceIAMAccountIsGrantedNowhere pins both halves: the
+	// expression is refused here, and no .tf file outside the root names the
+	// account at all.
 	// CI's `terraform` job does not reach this root yet — its loop names
 	// `installation firebase repo compute`, and the `workspace` root is staged
 	// as docs/pending-workflows/ci.yml for the owner to copy in
@@ -1898,6 +1913,12 @@ var (
 	// cover.go's grantRules, are about an installation's plan).
 	workspaceRolePath = "gcp/roots/workspace/main.tf"
 	workspaceRoleType = "google_project_iam_custom_role"
+
+	// workspaceIAMResource is the resource label of the SA fallback's account
+	// in the workspace root (WU3): the second account that root creates
+	// (D2803), which Terraform grants nothing and writes no key for. It is
+	// named here so the tests below read the root by one spelling.
+	workspaceIAMResource = "workspace_iam"
 
 	// A custom role of one of this run's projects, spelled as the literal path
 	// "projects/${var.<project>}/roles/<id>" rather than read from the role
@@ -6510,6 +6531,68 @@ func TestWorkspaceDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	}
 }
 
+// TestTheWorkspaceIAMAccountIsGrantedNowhere is the tree-level half of the
+// workspace root's second account (WU3 of
+// docs/workspace-projects-users/implementation-plan.md, D2803, F20): Terraform
+// grants it nothing and writes no key for it, so no file outside the root that
+// creates it may name it, and a member expression for it is refused by the
+// allowlist the whole tree is held to.
+//
+// What the account IS granted is written live by the CLI, never by a plan: a
+// member's owner gives it roles/owner on their own project and its Firebase
+// project (WU20's Link), and the workspace admins hold its token-creator
+// bindings (D2818). Both are audited where they happen (D2811) and neither is
+// Terraform's to write — a plan carrying either would put the workspace's
+// authority over every linked member into the same apply that converges the
+// workspace's own project, under one confirmation.
+//
+// "Terraform writes no key" is a fact about this tree and not a claim that no
+// key can exist: iam.serviceAccounts.actAs (which roles/editor and
+// roles/iam.serviceAccountUser carry) and iam.serviceAccountKeys.create (which
+// roles/editor resolves to) make one anyway on a project Fugaro does not own
+// alone, and constraints/iam.disableServiceAccountKeyCreation is the only
+// control that closes the second. What this test reads is the tree's text;
+// internal/infra/tf/workspace_test.go's TestWorkspaceRootMakesNoKeyForTheIAMAccount
+// reads the root's, and the tftest case beside the root says what the claim is.
+func TestTheWorkspaceIAMAccountIsGrantedNowhere(t *testing.T) {
+	raw, err := os.ReadFile(workspaceRolePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), workspaceIAMResource) {
+		t.Fatalf("%s names no %s: this test is not reading the root it is about, which creates the SA fallback's account", workspaceRolePath, workspaceIAMResource)
+	}
+	// The only files that may name the account at all: the root that creates it
+	// and the outputs that publish its address. A module or another root cannot
+	// reference another root's resource, so a mention anywhere else is a string
+	// somebody wrote by hand.
+	allowed := map[string]bool{
+		"gcp/roots/workspace/main.tf":    true,
+		"gcp/roots/workspace/outputs.tf": true,
+	}
+	walk(t, func(path string, b []byte) {
+		if !strings.HasSuffix(path, ".tf") || allowed[path] {
+			return
+		}
+		if strings.Contains(stripComments(string(b)), "workspace_iam") {
+			t.Errorf("%s names the workspace's IAM account: the SA fallback's account is created by %s and granted nothing by Terraform — its roles/owner on a member and its token creators are written live by the CLI (D2803, D2818)", path, workspaceRolePath)
+		}
+	})
+	if memberAllowed(workspaceRolePath, "google_service_account_iam_member.workspace_iam", "google_service_account.workspace_iam.member") {
+		t.Errorf("a member expression of the SA fallback's IAM account is admitted by allowedMemberExprs: Terraform never grants that account, and admitting the expression here would let the next grant of it pass this whole suite")
+	}
+	code := stripComments(string(raw))
+	for _, bad := range []struct{ needle, why string }{
+		{"google_service_account_key", "a key resource, and the SA fallback's account is never keyed by Terraform (D2803): a key here is a credential of the account that holds roles/owner on every linked member"},
+		{"workspace_iam.member", "a reference to the account as a grant's member"},
+		{"google_service_account_iam_member", "a service-account IAM resource: the root's one IAM resource is the project member that binds its database role"},
+	} {
+		if strings.Contains(code, bad.needle) {
+			t.Errorf("%s mentions %s: %s", workspaceRolePath, bad.needle, bad.why)
+		}
+	}
+}
+
 // resourceCountSentence is the sentence in credentials.tf's locals block that
 // counts the file's own resources: the number is what the test above reads.
 var resourceCountSentence = regexp.MustCompile(`keeps\s+the\s+(\w+)\s+resources\s+of\s+this\s+file`)
@@ -7157,6 +7240,83 @@ func TestVaultFetchedClassesMatchTheModule(t *testing.T) {
 	// set to this expression.
 	if !strings.Contains(code, "toset(concat(values(local.job_mounts), local.vault_secret_names))") {
 		t.Errorf("%s: service_secret_names does not add local.vault_secret_names to the mounts: the service has no accessor on a container the job no longer mounts, so every fetch of a workflow secret fails for the runs the flip exists to serve (D2074, B3.4):\n%s", path, code)
+	}
+}
+
+// TestBuildServedClassesMatchTheModule pins the S4 flip's class list to the
+// module that has to spell it out — config.BuildServedSecretClasses and
+// modules/repo/build.tf's build_served_secret_classes — and the two clauses it
+// drives to the halves they are made of (B4.9, D2076, D2077).
+//
+// It is TestVaultFetchedClassesMatchTheModule for a second flip, and the drift
+// it refuses is the same in both directions: a class filled in Go and not in
+// the module leaves a build naming no secret whose accessor its account still
+// holds (a grant nothing reads), and a class the module names and Go does not
+// is a repository whose build account loses the accessor its request still
+// mounts the secret under — Cloud Build fails that build at its first clone,
+// long after it was billed.
+//
+// The empty list is a state of its own and it is asserted as one: with it
+// empty both gates below are false, so the two clauses read exactly the
+// variables they read before this file knew about the service — that is the
+// inertness the release before the flip plans, and the reason a reader may
+// apply this module before the flip's second commit.
+func TestBuildServedClassesMatchTheModule(t *testing.T) {
+	const path = "gcp/modules/repo/build.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+
+	m := regexp.MustCompile(`build_served_secret_classes\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(code)
+	if m == nil {
+		t.Fatalf("%s declares no build_served_secret_classes list: the classes the credentials service serves to a switched repository's builds are Go's config.BuildServedSecretClasses, and this is the module's only account of them", path)
+	}
+	var got []string
+	for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+		got = append(got, q[1])
+	}
+	want := slices.Clone(config.BuildServedSecretClasses)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s: build_served_secret_classes = %v, config.BuildServedSecretClasses = %v: the two are filled in one commit, and a list on one side an empty one on the other plans a drop the other does not produce", path, got, config.BuildServedSecretClasses)
+	}
+
+	// The build account's accessor list goes whole with the class "build"
+	// (D2077), and only for a repository the service serves: the module reads
+	// the list through its own gate rather than off var.repo.build_secrets,
+	// which Go has already emptied of it — so a class filled in Go alone would
+	// leave a plan whose accessor list the module still declares.
+	local := func(name string) string {
+		t.Helper()
+		re := regexp.MustCompile(`(?s)\b` + name + `\s*=\s*(var\.installation\.credentials_service[^\n]+)`)
+		found := re.FindStringSubmatch(code)
+		if found == nil {
+			t.Fatalf("%s declares no %s local of the served-repository shape", path, name)
+		}
+		return squash(found[1])
+	}
+	if got, want := local("build_mounts_served"), `var.installation.credentials_service != null && contains(local.build_served_secret_classes, "build")`; got != want {
+		t.Errorf("%s: build_mounts_served = %s, want %s: the accessor list leaves with the class \"build\" (D2077), for a repository the service serves alone (G9, D147)", path, got, want)
+	}
+	if got, want := local("check_mount_served"), `var.installation.credentials_service != null && length(local.build_served_secret_classes) > 0`; got != want {
+		t.Errorf("%s: check_mount_served = %s, want %s: the check job's mount leaves with either class — it mounts the git credential, whose accessor is the build account's own — and for a repository the service serves alone (C2.3, G9)", path, got, want)
+	}
+
+	// Both clauses, and each is read through one of those gates: the accessor
+	// resource drops the list whole, and the check job's mount is the one
+	// resource in the module that mounts a secret by secret_key_ref.
+	check, err := fs.ReadFile(FS, "gcp/modules/repo/check.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(code, "for_each = toset(local.build_mounts_served ? [] : var.repo.build_secrets)") {
+		t.Errorf("%s: google_secret_manager_secret_iam_member.build does not read local.build_mounts_served: the build account keeps an accessor on every secret the served request no longer names (D2076, D2077):\n%s", path, code)
+	}
+	if !strings.Contains(stripComments(string(check)), "for_each = local.check_mount_served ? {} : var.repo.check.secret_env") {
+		t.Errorf("gcp/modules/repo/check.tf: the check job's secret_key_ref mounts do not read local.check_mount_served: a repository the service serves would keep a mount whose credential nothing reads, and the accessor it goes with is the build account's own (B4.9, C2.3)")
 	}
 }
 

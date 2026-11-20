@@ -1,6 +1,7 @@
 package tf
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -19,7 +20,8 @@ import (
 // workspace's own credentials service running as that account (D2980), the ONE
 // bundle accessor that account reads its bundle through (F4) and one invoke
 // grant per member job account (F17)
-// (deploy/terraform/gcp/roots/workspace).
+// (deploy/terraform/gcp/roots/workspace) — and the SA fallback's IAM account,
+// which holds no role here at all (WorkspaceIAMAccountID).
 //
 // This is a cover of its own rather than rows in cover.go's tables, because the
 // question is different in kind. cover.go asks "is this plan the installation's
@@ -73,9 +75,42 @@ const (
 	// job's role, and this account's reach is one database grant, the one
 	// bundle accessor and nothing else.
 	WorkspaceServiceAccountID = "fugaro-workspace"
+	// WorkspaceIAMAccountID is the account id of the workspace IAM account:
+	// the service-account fallback's identity (D2803, WU3), over which WU20's
+	// Link has a member's owner grant `roles/owner` on their project and their
+	// Firebase project, and which is only ever IMPERSONATED — a workspace
+	// admin holds the account's token-creator binding and assumes it, where
+	// the folder mechanism moves the project instead.
+	//
+	// It is a SECOND account and not the workspace's own service above, and
+	// that is the security property F20 states (two accounts, never one): the
+	// workspace's own service reads the workspace's own database and the
+	// members' ledgers, while this one holds `roles/owner` on every linked
+	// member, so a compromise of either is not the other's reach. It is
+	// distinct from the credentials service's account too, which holds no
+	// write on any member at all (D1299).
+	//
+	// The root spells it as a literal rather than through var.names, the way
+	// it spells WorkspaceDatabaseRoleID, and for the same reason: this cover
+	// holds the account by the id it pins, with no value the plan could name
+	// differently, and TestWorkspaceRootDeclaresTheTypesTheCoverHolds reads
+	// the two spellings against each other.
+	//
+	// Terraform MAKES NO KEY for the account and grants it nothing: its token
+	// creators are the workspace admins, written live by `workspace user add
+	// --admin` (D2818) and never by a plan. "Makes no key" is a fact about
+	// what this root writes and not a claim that no key can exist — the
+	// account lives in a project Fugaro does not own alone, and
+	// iam.serviceAccounts.actAs (roles/editor and
+	// roles/iam.serviceAccountUser) and iam.serviceAccountKeys.create
+	// (roles/editor resolves to it) both make one anyway; only the
+	// organization policy constraints/iam.disableServiceAccountKeyCreation
+	// closes the second (WU11's `status` takes both up).
+	WorkspaceIAMAccountID = "fugaro-workspace-iam"
 	// workspaceRoleType, workspaceAccountType and workspaceGrantType are the
-	// root's first three resource types: the role, the account, and the member
-	// resource that binds them. workspaceServiceType, workspaceAccessorType and
+	// root's first three resource types: the role, the TWO accounts (the
+	// workspace's own service above and the IAM account) and the member
+	// resource that binds the role to the service. workspaceServiceType, workspaceAccessorType and
 	// workspaceInvokerType are the other three: the workspace's own credentials
 	// service, the ONE accessor grant on its bundle container, and the invoke
 	// grant a member's job account reaches that service through. A type outside
@@ -167,9 +202,10 @@ func WorkspaceDatabaseRole(project string) string {
 
 // WorkspaceNotCovered lists why the workspace root's plan is not the workspace
 // design's plan, empty when it is: every resource is one the root declares, the
-// custom role is the one role with the two pinned permissions, the account is
-// the workspace's own service account in the workspace's own project, the
-// single grant binds that role to that account and to no other principal, the
+// custom role is the one role with the two pinned permissions, the accounts are
+// the workspace's own two — its service and the SA fallback's IAM account — in
+// the workspace's own project, the single grant binds that role to the service
+// and to no other principal, the
 // workspace's service is the one bundle-reading process the workspace holds —
 // running as that account, digest-pinned, invoked by member job accounts alone
 // and inside R9's limits — its one accessor is on the workspace's own bundle
@@ -180,7 +216,8 @@ func WorkspaceDatabaseRole(project string) string {
 // repository — spec §9), a second service, a data source or another mode, an
 // authoritative IAM resource, a service account key, a replace, a custom role
 // of another id or with another permission, a grant of another role, a grant to
-// another principal, a role, an account or a grant in another project, a
+// another principal, an account of any other id, a role, an account or a grant
+// in another project, a
 // service in another project, running as another identity or on an image that
 // is not digest-pinned, an environment outside the names the process reads, an
 // accessor on another container or with another role, or an invoke grant on
@@ -200,7 +237,8 @@ func WorkspaceDatabaseRole(project string) string {
 // database grant — is what the whole group's record and meter are kept by, and
 // a plan that deletes or replaces one of them is refused here by name.
 //
-// project is the workspace's own project, accountID its account id,
+// project is the workspace's own project, accountID its own service account's
+// id (WorkspaceIAMAccountID is the SA fallback's),
 // bundleSecret the Secret Manager ID of the workspace's own bundle container
 // (credsvc.WorkspaceBundleSecretID of the workspace's name) and memberAccounts
 // the job service accounts of the workspace's member table. All four are GIVEN
@@ -226,10 +264,14 @@ func (c Cover) WorkspaceNotCovered(p *Plan, project, accountID, bundleSecret str
 		return []string{"no plan"}
 	}
 	wantAccount := accountID + "@" + project + ".iam.gserviceaccount.com"
-	// own is whether the plan itself creates the workspace's own account: a
-	// member terraform knows only at apply is accepted for the account this
-	// plan creates, and for nothing else.
-	own := planWorkspaceAccount(p, project, accountID)
+	// own is the ADDRESS of the account resource the plan itself creates whose
+	// account_id is accountID — the workspace's own service, and NOT the SA
+	// fallback's IAM account, which holds nothing here. It is the address and
+	// not a yes or no because the plan's configuration writes a computed
+	// grant's member as a reference, and holding the two together is what tells
+	// the root's own computed member from one that reads the other account
+	// (workspaceComputedMember).
+	own := workspaceOwnAccount(p, project, accountID)
 	// service is the name the plan's own service carries: what every invoke
 	// grant of the plan is held to, so a grant on another service of the same
 	// project is refused rather than admitted by its type.
@@ -286,7 +328,7 @@ func (c Cover) WorkspaceNotCovered(p *Plan, project, accountID, bundleSecret str
 				add(rc, why)
 			}
 		case rc.Type == workspaceGrantType:
-			if why := workspaceGrant(rc.Change, project, wantAccount, own); why != "" {
+			if why := workspaceGrant(p, rc, project, wantAccount, own); why != "" {
 				add(rc, why)
 			}
 		case rc.Type == workspaceServiceType:
@@ -318,22 +360,28 @@ func (c Cover) WorkspaceNotCovered(p *Plan, project, accountID, bundleSecret str
 	return out
 }
 
-// planWorkspaceAccount is whether a plan creates the workspace's own service
-// account: an account resource, not deleted, in the workspace's own project and
-// with the workspace's account id. What it is for is the plan's computed member
-// (workspaceGrant): terraform knows the address <id>@<project>.iam... only at
-// apply, so the member of the root's own grant arrives unknown, and the account
-// this plan creates is what makes that member readable rather than refused.
-func planWorkspaceAccount(p *Plan, project, accountID string) bool {
+// workspaceOwnAccount is the address of the account resource a plan creates
+// whose account_id is accountID — the workspace's OWN service account, the one
+// the root's single grant binds, and not the SA fallback's IAM account — or the
+// empty string when the plan creates none. It is what the plan's computed
+// member is held to (workspaceGrant): terraform knows the address
+// <id>@<project>.iam... only at apply, so the member of the root's own grant
+// arrives unknown, and the plan's configuration writes what that member
+// expression reads as a REFERENCE to this address (workspaceComputedMember).
+// The SA fallback's account being created is not this: the grant binds the
+// service, and a plan whose own account no resource creates has a member that
+// could be anyone.
+func workspaceOwnAccount(p *Plan, project, accountID string) string {
 	for _, rc := range p.ResourceChanges {
 		if rc.Type != workspaceAccountType || slices.Contains(rc.Change.Actions, "delete") {
 			continue
 		}
-		if workspaceAccount(rc.Change, project, accountID) == "" {
-			return true
+		if ch := rc.Change; !unknown(ch, "account_id") && !unknown(ch, "project") &&
+			str(ch.After["project"]) == project && str(ch.After["account_id"]) == accountID {
+			return rc.Address
 		}
 	}
-	return false
+	return ""
 }
 
 // planWorkspaceServiceName is the name of the workspace's own credentials
@@ -356,18 +404,24 @@ func planWorkspaceServiceName(p *Plan) string {
 }
 
 // workspaceAccount says why the service account a plan creates or updates is not
-// the workspace's own: its project or its id. It is the empty string for an
-// account the plan has to compute (its id or project unknown), and
-// planWorkspaceAccount is where such an account is weighed instead.
+// one of the workspace's own two: its project, or its id. The root creates two
+// accounts and no third — the workspace's own service (accountID, the id
+// `fugaro update` writes into var.names) and the SA fallback's IAM account
+// (WorkspaceIAMAccountID, the root's own literal) — so an account of any other
+// id here is a workspace whose second identity someone replaced.
+//
+// It is the empty string for either of them and a refusal for everything else,
+// an account terraform knows only at apply included; workspaceOwnAccount is
+// where the one account the grant may bind is looked for instead.
 func workspaceAccount(ch Change, project, accountID string) string {
 	if unknown(ch, "account_id") || unknown(ch, "project") {
-		return "an account whose id or project terraform knows only at apply, in a root that writes both as the names it was given"
+		return "an account whose id or project terraform knows only at apply, in a root that writes both itself"
 	}
 	if got := str(ch.After["project"]); got != project {
 		return fmt.Sprintf("an account in project %q, and the workspace's own is %s: an account in another project is another project's identity", safetext.Field(got), safetext.Field(project))
 	}
-	if got := str(ch.After["account_id"]); got != accountID {
-		return fmt.Sprintf("the account %q, and the workspace's own service account is %s", safetext.Field(got), safetext.Field(accountID))
+	if got := str(ch.After["account_id"]); got != accountID && got != WorkspaceIAMAccountID {
+		return fmt.Sprintf("the account %q, and the workspace root creates two and no third: the workspace's own service %s and the SA fallback's IAM account %s", safetext.Field(got), safetext.Field(accountID), safetext.Field(WorkspaceIAMAccountID))
 	}
 	return ""
 }
@@ -415,11 +469,16 @@ func workspaceCustomRole(ch Change, project string) string {
 //
 // A member the plan does not know is the root's own shape — terraform computes
 // the address the account will have — and it is accepted only while the same
-// plan creates that account (own), whose project and id workspaceAccount has
-// already held. A member that is known must be that account's address, bare or
-// prefixed serviceAccount: as the root's own file writes it, so a plan that
-// names a person, a domain, allUsers or another account is refused by name.
-func workspaceGrant(ch Change, project, wantAccount string, own bool) string {
+// plan creates the workspace's own service account (own, its address) AND the
+// plan's configuration shows the member expression reading that account and
+// nothing else (workspaceComputedMember): the root has two accounts now, so
+// "the plan creates the service account" alone would accept a grant to the SA
+// fallback's IAM account, whose member terraform computes in exactly the same
+// way. A member that is known must be that account's address, bare or prefixed
+// serviceAccount: as the root's own file writes it, so a plan that names a
+// person, a domain, allUsers or another account is refused by name.
+func workspaceGrant(p *Plan, rc ResourceChange, project, wantAccount, own string) string {
+	ch := rc.Change
 	if unknown(ch, "role") || unknown(ch, "project") {
 		return "a grant whose role or project terraform knows only at apply, in a root that writes both as the names it was given"
 	}
@@ -435,10 +494,10 @@ func workspaceGrant(ch Change, project, wantAccount string, own bool) string {
 		return fmt.Sprintf("a grant of %q, and the workspace's own service account holds %s and nothing else: a second role here is a reach nobody decided on", safetext.Field(str(ch.After["role"])), want)
 	}
 	if unknown(ch, "member") {
-		if !own {
+		if own == "" {
 			return fmt.Sprintf("a grant whose member terraform knows only at apply, and this plan does not create the workspace's own service account: the member could be anyone, and the workspace's database is reached by %s alone", wantAccount)
 		}
-		return ""
+		return workspaceComputedMember(p, rc.Address, own, wantAccount)
 	}
 	m := str(ch.After["member"])
 	switch {
@@ -780,4 +839,72 @@ func workspaceAccountOf(member string) (string, bool) {
 		return "", false
 	}
 	return member, true
+}
+
+// workspaceComputedMember says why a grant whose member terraform knows only at
+// apply is not the root's own grant, empty when it is: the member expression of
+// that grant, as the plan's configuration writes it, must read the account
+// resource the cover found (own, whose account_id is accountID) and nothing
+// else.
+//
+// The change itself cannot answer this. The root's grant is
+// google_service_account.workspace.member, which terraform knows only at apply
+// while the plan creates that account, and a plan that binds the same role to
+// the SA fallback's IAM account — google_service_account.workspace_iam.member —
+// carries after_unknown.member exactly as true: the workspace's own service
+// account is created in both, so "this plan creates that account" is true of
+// both plans and tells them apart from nothing. The configuration does: it
+// writes the resource's member expression, and terraform writes an attribute
+// path as the path and the resource
+// ({"references":["google_service_account.a.unique_id","google_service_account.a"]},
+// testdata's own plans), so the reference names the account the member is the
+// address of. A member of the SA fallback's IAM account is the widening this
+// cover exists to refuse: that account ends up holding roles/owner on every
+// linked member (D2803, F20), and the workspace's database role on it in the
+// same apply would give one identity the members' authority and the workspace's
+// record at once.
+//
+// A plan that carries NO configuration at all is the one case accepted without
+// the reference, and it is a gap by construction: terraform writes the
+// configuration of every plan it shows (terraform show -json has included it
+// since 0.15, and this root's ground pins 1.9 or newer; managed_cover reads the
+// same section), so a document without one is not one terraform produced — the
+// CLI's own stage tests build plans by hand and carry none. Where a plan does
+// carry a configuration, the reference is required: one whose grant or member
+// expression the configuration does not have is refused.
+func workspaceComputedMember(p *Plan, address, own, wantAccount string) string {
+	if p.Configuration == nil {
+		return ""
+	}
+	expr, found := workspaceMemberExpression(p.Configuration, address)
+	if !found {
+		return fmt.Sprintf("a grant whose member terraform knows only at apply, and the plan's configuration has no member expression on %s: nothing shows the member is the workspace's own service account, and the workspace's database is reached by %s alone", safetext.Field(address), wantAccount)
+	}
+	var e managedExpr
+	if json.Unmarshal(expr, &e) != nil || len(e.References) == 0 {
+		return fmt.Sprintf("a grant whose member terraform knows only at apply and whose member expression the plan's configuration shows with no reference to a resource: the member is read from something the plan does not show, and the workspace's database is reached by %s alone", wantAccount)
+	}
+	for _, r := range e.References {
+		if r == own || strings.HasPrefix(r, own+".") {
+			continue
+		}
+		return fmt.Sprintf("a grant whose member terraform knows only at apply and whose member expression reads %s, and that is not the account this plan creates (%s): the workspace's database is reached by %s alone, and an expression reading anything else — the SA fallback's IAM account among them — binds a principal the root's own grant never names", safetext.Field(r), safetext.Field(own), wantAccount)
+	}
+	return ""
+}
+
+// workspaceMemberExpression is the member expression of one resource of a plan's
+// configuration: the raw expression terraform writes, and whether the resource
+// and the expression are both there. A resource of a module is not read — the
+// workspace root declares none, and WorkspaceNotCovered refuses a module's
+// resources by their type anyway.
+func workspaceMemberExpression(cfg *Configuration, address string) (json.RawMessage, bool) {
+	for _, r := range cfg.RootModule.Resources {
+		if r.Address != address || r.Mode != "managed" {
+			continue
+		}
+		expr, ok := r.Expressions["member"]
+		return expr, ok
+	}
+	return nil, false
 }
