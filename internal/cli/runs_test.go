@@ -1966,8 +1966,17 @@ func (d *lsWidthDriver) ListPaged(_ context.Context, opts *driver.ListOptions) (
 		if !ok {
 			continue
 		}
+		// A listing that asked for no delimiter answers the objects themselves:
+		// that is the listing a pull request's index is read with
+		// (runstore.ListPRIndex), whose objects all sit under one prefix. What
+		// it answers carries no generation either way (AsFunc is unset), so the
+		// run cache is still no cache over this bucket.
+		if opts.Delimiter == "" {
+			page.Objects = append(page.Objects, &driver.ListObject{Key: k})
+			continue
+		}
 		i := strings.Index(rest, opts.Delimiter)
-		if opts.Delimiter == "" || i < 0 {
+		if i < 0 {
 			continue
 		}
 		dir := opts.Prefix + rest[:i+len(opts.Delimiter)]
