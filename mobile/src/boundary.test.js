@@ -48,7 +48,10 @@
 //   6. `fetch(` -- the network (P5.3.7). It may be opened from
 //      `src/voice-switch/hop.js` and nowhere else, so the one file that can put
 //      a byte in front of a third party is a file a reviewer reads whole, and a
-//      second call site is a failing test rather than a new egress path. The
+//      second call site is a failing test rather than a new egress path. **In
+//      any spelling**: `fetch(`, `globalThis.fetch(`, `window.fetch(` and
+//      `self.fetch(` are one call under four names, and a rule that caught only
+//      the first would leave three ways to open the network unwatched. The
 //      scan below it (rule 7, which has no pattern list of its own) holds §5's
 //      fifth rule over the same directory: the egress half keeps no timer, no
 //      file and no store between one utterance and the next.
@@ -128,9 +131,12 @@ const RULES = [
   },
   {
     name: 'the network is opened in one file, and it is the hop',
-    // A call and not a mention: `fetch(` preceded by anything that could make
-    // it another identifier (`prefetch(`, `x.fetch(`) is not this rule's.
-    pattern: /(?<![A-Za-z0-9_$.])fetch\s*\(/,
+    // A call and not a mention: `\b` is a boundary between the identifier and
+    // whatever precedes it, so `prefetch(` and `refetch(` are not this rule's
+    // while `globalThis.fetch(`, `window.fetch(` and `self.fetch(` are -- the
+    // same call through a global's name, and a lookbehind that excluded `.`
+    // would let all three through.
+    pattern: /\bfetch\s*\(/,
     allow: ['src/voice-switch/hop.js'],
     why: 'P5.3.7: the egress path is the only thing in the app that talks to a third party, and a second file that could open the network is a second place a byte could leave from',
   },
@@ -221,8 +227,14 @@ for (const rule of RULES) {
 // store), which is exactly why the rule has to name its scope: what may not
 // happen *here* is that anything is held between one utterance and the next.
 
-/** The primitives a spool, a file or a store is made of. */
-const SPOOL = /\b(setTimeout|setInterval|setImmediate|requestAnimationFrame|writeFile|appendFile|createWriteStream|createReadStream|openSync|AsyncStorage|SecureStore|localStorage)\b/;
+/**
+ * The primitives a spool, a file or a store is made of: a timer, a store's
+ * name, a file module, a file call's async spelling -- and, because a file
+ * primitive is **one call under two names**, any `*Sync` call at all, which is
+ * what catches `writeFileSync(`, `appendFileSync(`, `readFileSync(` and every
+ * spelling a later hand adds.
+ */
+const SPOOL = /\b(setTimeout|setInterval|setImmediate|requestAnimationFrame|AsyncStorage|SecureStore|localStorage|sessionStorage|indexedDB)\b|\b(fs|FileSystem|expo-file-system)\b|\b(writeFile|appendFile|createWriteStream|createReadStream|readFile|unlink|mkdir|rmdir)\w*\s*\(|\b\w*Sync\s*\(/;
 
 test('the egress half holds nothing between turns — no timer, no file, no store', () => {
   // The positive control: the pattern must flag real code, or a green run below
@@ -231,6 +243,9 @@ test('the egress half holds nothing between turns — no timer, no file, no stor
     'const t = setTimeout(flush, 0)',
     'setInterval(flush, 1000)',
     'await writeFile(path, text)',
+    'fs.writeFileSync(file, text)',
+    'await appendFileSync(path, text)',
+    'await FileSystem.writeAsStringAsync(file, text)',
     "await AsyncStorage.setItem('m', text)",
   ]) {
     assert.ok(SPOOL.test(line), line);
@@ -260,7 +275,9 @@ function control(rule) {
     case RULES[4].name:
       return 'const session = createVoiceSession({ machine, screen, pipeline, native });';
     case RULES[5].name:
-      return "const answer = await fetch(url, { method: 'POST' });";
+      // Both spellings: the bare call, and the same call through a global --
+      // the spelling a bare-name pattern misses.
+      return "const answer = await fetch(url); globalThis.fetch(url, { method: 'POST' })";
     default:
       return "console.log('x')";
   }
