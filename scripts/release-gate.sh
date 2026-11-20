@@ -5,10 +5,17 @@
 # carry a prefix on (docs/release.md, "Mobile releases") -- its commit is
 # reachable from origin/main (or, for a patch release vX.Y.Z with Z of 1 or more,
 # from the maintenance branch release/X.Y, which must descend from the vX.Y.0
-# tag that is itself on main), and every GitHub Actions check in `names` below
-# succeeded on that commit.
-# Needs: a full-history checkout, GH_TOKEN (checks: read), GITHUB_SHA,
-# GITHUB_REPOSITORY. Usage: scripts/release-gate.sh vX.Y.Z|mobile-vX.Y.Z
+# tag that is itself on main), and every check in `names` below succeeded on
+# that commit, read from a **full** `ci` run: `test`, `terraform` and `rules`
+# come from the check suite of the run of .github/workflows/ci.yml titled
+# `ci (full)` (or `ci`, the title a ci.yml without a run-name: gives its runs),
+# never from a `ci (selected)` run's (R1, D3040). A commit whose `ci` runs are
+# none of them full is refused at once, with the command that dispatches one.
+# Needs: a full-history checkout, GH_TOKEN (checks: read; actions: read too on a
+# private repository, whose runs API a token without it cannot read -- this
+# repository is public, and listed them with no credential at all when CS7
+# measured it, 2026-11-20), GITHUB_SHA, GITHUB_REPOSITORY.
+# Usage: scripts/release-gate.sh vX.Y.Z|mobile-vX.Y.Z
 # Optional: GATE_WAIT_SECONDS=N (default 0: no waiting, as in the workflows)
 # polls every GATE_POLL_SECONDS (default 30) while a check is missing, still
 # running or cancelled, so scripts/release.sh can run it right after a merge,
@@ -52,6 +59,7 @@ if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
   # The required checks below are read from the commit itself, on any branch, so
   # CI dispatched on the maintenance branch is what vouches for the commit.
   maintenance_ok=""
+  maintenance_branch=""
   if [[ $tag =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.([1-9][0-9]*)$ ]]; then
     line="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
     branch="release/$line"
@@ -85,6 +93,7 @@ if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
         exit 1
       fi
       maintenance_ok=1
+      maintenance_branch=$branch
       echo "$tag ($GITHUB_SHA) is on the maintenance branch $branch, which descends from v$line.0 on main"
     fi
   fi
@@ -96,6 +105,7 @@ fi
 wait_seconds=${GATE_WAIT_SECONDS:-0}
 poll_seconds=${GATE_POLL_SECONDS:-30}
 deadline=$(($(date +%s) + wait_seconds))
+main_tip=$(git rev-parse refs/remotes/origin/main)
 # names is the required-check set: what must be success on the tag's commit
 # and, in the identical_tree_checks fallback, on the pull request head whose
 # tree matches. An array so every loop keeps a name whole.
@@ -108,6 +118,13 @@ deadline=$(($(date +%s) + wait_seconds))
 #   terraform
 #   rules
 names=("test" "terraform" "rules")
+# suite_names is the part of that set a full `ci` run owns: the three jobs of
+# .github/workflows/ci.yml, whose check suite carries them. They are read from
+# the run's suite and never from the commit's own check runs, which is what
+# makes D3040 hold -- a `ci (selected)` run answers a different check suite and
+# is not read at all (R1). The console legs appended below come from
+# console-tests.yml, which no `ci` run owns, and keep the older reading.
+suite_names=("${names[@]}")
 # A CLI or mobile tag must not wait on, or be refused for, console tests: the
 # console releases on its own stream (console-vX.Y.Z). Only console-release.yml
 # sets GATE_REQUIRE_CONSOLE=1, which adds the two matrix legs GitHub names for
@@ -116,14 +133,124 @@ if [ "${GATE_REQUIRE_CONSOLE:-}" = 1 ]; then
   names+=("console (ubuntu-latest)" "console (macos-latest)")
 fi
 
+# full_run_command is the command that puts a full run on the commit the gate is
+# reading, printed when every `ci` run on it is a selected one. A dispatch is by
+# ref, so the command names one that is at the commit: main for main's tip, the
+# maintenance branch for a patch release the gate resolved above, and otherwise
+# a ref of the person's own -- the gate invents none.
+if [ "$GITHUB_SHA" = "$main_tip" ]; then
+  dispatch_ref=main
+elif [ -n "$maintenance_branch" ]; then
+  dispatch_ref=$maintenance_branch
+else
+  dispatch_ref="<a ref pointing at $GITHUB_SHA>"
+fi
+full_run_command="gh workflow run ci --ref $dispatch_ref -f full=true"
+
+# check_runs_jq NAME is the --jq every reading of a required check name asks the
+# API with: the check runs named NAME that the GitHub Actions app owns --
+# a check of that name from another app must never satisfy the gate -- reduced
+# to one state. No runs at all is missing; every one of them cancelled is
+# cancelled (a superseded run is not a failure); any other run that completed
+# without success is failed; any still going is pending; and only then success.
+check_runs_jq() {
+  printf '%s' "[.check_runs[] | select(.name == \"$1\" and .app.slug == \"github-actions\")] as \$r | if (\$r | length) == 0 then \"missing\" else [\$r[] | select(.conclusion != \"cancelled\")] as \$live | if (\$live | length) == 0 then \"cancelled\" elif any(\$live[]; .status == \"completed\" and .conclusion != \"success\") then \"failed\" elif any(\$live[]; .status != \"completed\") then \"pending\" else \"success\" end end"
+}
+
+# commit_check_state SHA NAME prints missing | cancelled | failed | pending |
+# success for NAME over the commit's own check runs. This is the reading the
+# console legs keep: they belong to console-tests.yml, whose runs are not `ci`
+# runs and have no suite for the gate to ask for.
+commit_check_state() {
+  retry_read gh api "repos/$GITHUB_REPOSITORY/commits/$1/check-runs?per_page=100" --jq "$(check_runs_jq "$2")"
+}
+
+# ci_run_rows SHA prints one tab-separated line per run of the `ci` workflow
+# file on SHA: the run's check suite id and its display title. `.path` is what
+# makes a run a `ci` run: another workflow that copied the title must not vouch
+# for the commit, and the title is what says whether the run was full (R1).
+ci_run_rows() {
+  retry_read gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$1&per_page=100" \
+    --jq '.workflow_runs[] | select(.path == ".github/workflows/ci.yml") | [.check_suite_id, .display_title] | @tsv'
+}
+
+# full_run_title TITLE succeeds for the two titles that name a full run:
+# `ci (full)`, which run-name: gives a ci.yml that has one, and a bare `ci`,
+# which is what every run on a commit whose ci.yml predates run-name: is
+# titled. A `ci (selected)` run is neither, and vouches for nothing here.
+full_run_title() {
+  case "$1" in
+    "ci (full)" | ci) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# full_run_suites SHA prints, one per line, the check suite ids of the full
+# `ci` runs on SHA, in the order the API lists them.
+full_run_suites() {
+  rows=$(ci_run_rows "$1") || return 1
+  while IFS=$'\t' read -r suite title; do
+    [ -n "$suite" ] || continue
+    if full_run_title "$title"; then
+      printf '%s\n' "$suite"
+    fi
+  done <<<"$rows"
+}
+
+# no_full_ci_run SHA succeeds when SHA has `ci` runs and not one of them is a
+# full run: every run that could vouch for the commit is a selected one (or one
+# whose title names neither variant), and no amount of waiting changes that.
+no_full_ci_run() {
+  rows=$(ci_run_rows "$1") || return 1
+  [ -n "$rows" ] || return 1
+  while IFS=$'\t' read -r suite title; do
+    [ -n "$suite" ] || continue
+    if full_run_title "$title"; then
+      return 1
+    fi
+  done <<<"$rows"
+  return 0
+}
+
+# merge_state A B prints what two readings of one check name say together: a
+# failure anywhere is a failure, a running check anywhere is a wait, a name that
+# only ever ran cancelled is cancelled. It is the rule one reading always
+# applied, carried across the suites of several full runs on one commit (a
+# nightly that landed on a release's tip, a re-dispatch).
+merge_state() {
+  case "$1$2" in
+    *failed*) printf failed ;;
+    *pending*) printf pending ;;
+    *success*) printf success ;;
+    *cancelled*) printf cancelled ;;
+    *) printf missing ;;
+  esac
+}
+
+# suite_check_state SHA NAME prints missing | cancelled | failed | pending |
+# success for NAME over the check suites of the full `ci` runs on SHA, with the
+# same rules commit_check_state applies to one listing. missing is a commit with
+# no full run at all, which is all a selected run leaves behind.
+suite_check_state() {
+  suites=$(full_run_suites "$1") || return 1
+  [ -n "$suites" ] || { printf missing; return 0; }
+  state=""
+  while IFS= read -r suite; do
+    [ -n "$suite" ] || continue
+    one=$(retry_read gh api "repos/$GITHUB_REPOSITORY/check-suites/$suite/check-runs?per_page=100" --jq "$(check_runs_jq "$2")") || return 1
+    state=$(merge_state "$state" "$one")
+  done <<<"$suites"
+  printf '%s' "$state"
+}
+
 # check_state SHA NAME prints missing | cancelled | failed | pending | success
-# for the GitHub Actions runs named NAME on SHA. Only the GitHub Actions app
-# counts: a third-party check named like a required one must not satisfy the
-# gate. Cancelled runs (superseded by a newer one) are ignored while another
-# run of the name exists; every other run must have completed successfully.
+# for the required check NAME: the three a `ci` run owns from that run's check
+# suite, the console legs from the commit's own check runs.
 check_state() {
-  retry_read gh api "repos/$GITHUB_REPOSITORY/commits/$1/check-runs?per_page=100" \
-    --jq "[.check_runs[] | select(.name == \"$2\" and .app.slug == \"github-actions\")] as \$r | if (\$r | length) == 0 then \"missing\" else [\$r[] | select(.conclusion != \"cancelled\")] as \$live | if (\$live | length) == 0 then \"cancelled\" elif any(\$live[]; .status == \"completed\" and .conclusion != \"success\") then \"failed\" elif any(\$live[]; .status != \"completed\") then \"pending\" else \"success\" end end"
+  case " ${suite_names[*]} " in
+    *" $2 "*) suite_check_state "$1" "$2" ;;
+    *) commit_check_state "$1" "$2" ;;
+  esac
 }
 
 # lookup_failed WHICH notes, once per run on stderr, that an identical-tree
@@ -152,7 +279,9 @@ lookup_failed() {
 #   - every check in `names` (the same set the target is held to, console legs included when
 #     GATE_REQUIRE_CONSOLE=1) is success on it, with the same strictness as on
 #     the target (a failed, cancelled, still running or missing run, or a
-#     check from another app, is never accepted).
+#     check from another app, is never accepted) -- read the same way too, so
+#     the head's `test`, `terraform` and `rules` must come from a full run of
+#     its own and a selected one there vouches for nothing either (R1).
 # The commits/SHA/pulls listing needs no token on a public repository, so the
 # tag workflows may use this too (same rules); on a private repository without
 # pull-requests: read it fails, is noted, and the old behaviour remains. Only
@@ -208,6 +337,16 @@ while :; do
     esac
   done
   [ -n "$pending_name" ] || break
+  # A commit with `ci` runs but no full one can never satisfy the gate: the
+  # checks it requires are read from a full run's check suite, and only a
+  # dispatch makes a full run (D3040). Polling to the deadline for one that does
+  # not exist only spends the wait, so the gate refuses now and prints the
+  # command that puts the full run there.
+  if no_full_ci_run "$GITHUB_SHA"; then
+    echo "::error::required check '$pending_name' is $pending_state on $GITHUB_SHA: no ci run on that commit is a full one (its titles are neither 'ci (full)' nor 'ci'), and the gate requires the checks of a full run" >&2
+    echo "dispatch a full run and re-run this job: $full_run_command" >&2
+    exit 1
+  fi
   # No conclusive failure on the target, only missing or running checks: a
   # release bump merged by squash has the tree its (green) pull request had.
   if identical_tree_checks; then
