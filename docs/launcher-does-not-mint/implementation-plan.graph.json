@@ -407,7 +407,11 @@
      "internal/projectpolicy/version.go",
      "internal/projectpolicy/migrate.go",
      "internal/projectpolicy/migrate_test.go",
-     "internal/cli/launch_budget_test.go"
+     "internal/cli/launch_budget_test.go",
+     "internal/projectpolicy/version_since_test.go",
+     "internal/credsvc/policy_test.go",
+     "docs/release.md",
+     "docs/project-layer.md"
     ]
    }
   },
@@ -439,13 +443,14 @@
     "prediction": true,
     "paths": [
      "internal/credsvc/identity_scope.go",
-     "internal/credsvc/identity_scope_test.go"
+     "internal/credsvc/identity_scope_test.go",
+     "internal/cli/access_issuer_agree_test.go"
     ]
    }
   },
   {
    "id": "LM24",
-   "title": "the issuer judges the committer of an orchestrated attempt",
+   "title": "the orchestrator's asks are bound to its record",
    "run": null,
    "version": null,
    "tier": "small",
@@ -649,6 +654,11 @@
    "task": "I1",
    "needs": "LM24",
    "reason": "the integration runs every side together"
+  },
+  {
+   "task": "LM15",
+   "needs": "LM14",
+   "reason": "before the grant has moved doctor would report every launcher as still signing"
   }
  ],
  "decoupling": [
@@ -731,7 +741,7 @@
     "needs": "LM23"
    },
    "integration": "I1",
-   "reason": "the committer's check needs the scope check's interface, not LM23's resolver"
+   "reason": "the orchestrator's check needs the scope hook's interface, not LM23's resolver"
   }
  ],
  "contract_changes": []

@@ -16,8 +16,8 @@ shaped it:
   `update` names them first.
 - **D3124**: one release; the grant goes only after the issuer answers, and the policy version
   moves so an older CLI is told to upgrade.
-- **D3125** (amended by D3136): the resident orchestrator asks the issuer, and gets a ticket for
-  an attempt only where the person who committed it may launch that repository.
+- **D3125** (amended by D3136): the resident orchestrator asks the issuer, and gets a ticket only
+  for a recorded, unstarted attempt of its own record, with no context repositories.
 - **D3126**: the issuer mints pairing and device tokens.
 - **D3127**: operators lose the standing grant; the documents state what they can still reach.
 - **D3128**: tasks start after always-a-budget's I1 and keys-through-service's release A. Only
@@ -27,8 +27,9 @@ shaped it:
   BR11 go. LM19 may start as soon as this plan's C1 merges.
 - **D3131** (added by review round 2): the policy bump's halt of executions queued and not
   started is accepted, and the update says the count at its door.
-- **D3132 to D3136** (asked after the pull request opened): the orchestrator's launch path was
-  traced (F34) and its asks are judged on the committer (D3136); a fourth review round was run
+- **D3132 to D3137** (asked after the pull request opened): the orchestrator's launch path was
+  traced (F34) and its asks are bound to its record (D3136, amended after review round 4); a
+  roster service account is admitted unscoped, as today (D3137); a fourth review round was run
   (D3133); D3126 stands with H1 narrowed (D3134); LM14's first step settles whether an
   installation can launch with no published policy (D3135).
 - **D3130** (amended after review, answered again): the issuer enforces the roles-and-scopes
@@ -75,7 +76,8 @@ after review round 1 and its number is not reused. LM18 ships one release after 
 | The issuance record is unwritable and unreadable with any signed-in identity | LM5 |
 | A claim retried after a lost response is not a second claim | C1, LM2, LM7 |
 | A caller with no launch scope on the repository gets no ticket | LM23 |
-| An orchestrated attempt gets a ticket only where its committer has the launch scope | LM24, LM6 |
+| The orchestrator's class gets a ticket only for a recorded, unstarted attempt, and never with context repositories | LM24, LM6 |
+| The probe admits operators only, returns no signature bytes, and audits each refusal | C1, LM2 |
 | The deletes the update makes are on its own allow-list, for an ordinary and a managed project | LM20 |
 | The people's row and the orchestrator's go only after the issuer answers; a failed probe leaves them and says why | LM14 |
 | An installation at the previous release converges with one `fugaro update` and nothing else | LM14 |
@@ -97,13 +99,14 @@ check. LM18 is the removal one release later.
 
 ### C1: the identity wire contract
 
-- Acceptance: one package declares the four routes' paths, request and response bodies, refusal
+- Acceptance: one package declares the five routes' paths (ticket, claim, pairing, device and
+  the probe, with the class each admits: the probe admits the roster's operators only), request and response bodies, refusal
   codes (among them "not served", a code of its own and not the existing `refuseNotServed`), the
   claim's nonce and what a repeated nonce gets (R2), the reference to an attempt that an
-  orchestrator's ask carries (D3136), the probe `update` makes, whose answer says
-  the service signed a fixed payload as the runs' signer (F33), what of the slip's mechanism the
+  orchestrator's ask carries (D3136), the probe's answer, which says the service signed a fixed payload as the runs' signer and
+  carries no signature bytes (F33, R2), what of the slip's mechanism the
   routes reuse (F1), the ticket's execution variable name, and the issuance record's shape, with the nonce's
-  digest, and its place under `creds` (R3); the service mounts the four
+  digest, and its place under `creds` (R3); mounts the five
   routes on stubs that answer "not served", listed where the service lists the routes it serves
   and the routes it answers ahead of the shared parse; a test pins the answer a service of the
   release behind gives these paths, as `slipRouteAbsent` reads it, which is the bridge's other
@@ -170,8 +173,8 @@ check. LM18 is the removal one release later.
 - Acceptance: a job's Google ID token plus an unclaimed ticket, from the account on the record,
   yields one custom token signed as the runs' signer with the claims on the record, after the
   record itself is checked again (the account is in the job tables, the uid comes from the
-  record's path, the claims pass R4); the probe signs a fixed payload as the runs' signer and
-  discards it; the nonce is in no log and no audit line; the same
+  record's path, the claims pass R4); the probe, for a verified operator, signs a fixed payload as the runs' signer, discards it
+  and returns no signature bytes, with one audit line per refusal; the nonce is in no log and no audit line; the same
   nonce again gets the same answer and no audit line of a second claim; another nonce after a
   success, a wrong account, an expired or unknown ticket are each refused with one audit line.
 - Files: `internal/credsvc/identity_claim.go` (new), `internal/credsvc/identity_sign.go` (new),
@@ -372,7 +375,7 @@ check. LM18 is the removal one release later.
 - Interfaces: consumes LM11's and LM12's variables.
 - Tests: `TestIssuerMinterGrantIsCovered`, `TestLauncherServiceAccountsRendered`,
   `TestFreshSetupPlansNoRowForAMissingAccount`.
-- Command: `go test ./internal/infra/... -run 'IssuerMinterGrant|LauncherServiceAccounts|FreshSetupPlansNoRow' -count=1`
+- Command: `go test ./internal/infra/... ./internal/cli/ -run 'IssuerMinterGrant|LauncherServiceAccounts|FreshSetupPlansNoRow' -count=1`
 - Red step: `TestIssuerMinterGrantIsCovered` fails: the cover reports a grant it does not carry.
 - Depends on: LM11 and LM12 (the golden plans are generated from their variables).
 - Commit: `infra: update plans the issuer's row (LM13)`
@@ -386,7 +389,7 @@ check. LM18 is the removal one release later.
   on the bridge; one test runs
   a launch through the service to a session: ticket, claim, exchange. In the same test a second
   person's ask for that run is refused, a caller without the launch scope is refused, an
-  orchestrated attempt whose committer lacks the scope is refused, a copied
+  orchestrator's ask for a run its record does not carry is refused, a copied
   ticket's second claim is refused and the losing run halts, a retried claim with its nonce
   succeeds, a pairing completes, and no token of one kind is accepted on another kind's route.
 - Files: `internal/credsvc/identity_stub.go` (deleted), `internal/credsvc/identity_mount.go` (new:
@@ -417,8 +420,8 @@ check. LM18 is the removal one release later.
   LM20's list where that root is applied (F32). A probe that answers without a signature made as
   the runs' signer leaves the rows (F33). The stage runs on an
   ordinary and on a managed update. The orchestrator's row goes only when the resident service
-  already runs this release's image (R8). A stage after the credentials service's probes the ticket
-  route; when it answers, the stage applies both roots with the switch off and the people's and
+  already runs this release's image (R8). calls the probe
+  (R2); when it answers, the stage applies both roots with the switch off and the people's and
   the orchestrator's rows are gone; when it does not, the rows stay and one line says why. An
   installation at the previous release converges with this one command, with a run in flight and
   with stdin closed, and asks nothing.
@@ -453,7 +456,9 @@ check. LM18 is the removal one release later.
   `TestDoctorFlagsAGroupLauncher`.
 - Command: `go test ./internal/infra/ ./internal/cli/ -run 'DoctorNamesTheIssuer|DoctorFlagsAPerson|DoctorFlagsAGroup' -count=1`
 - Red step: `TestDoctorNamesTheIssuerAsTheDesignedSigner` fails: the account is unclassified.
-- Depends on: LM13 (the classification names the row it writes).
+- Depends on: LM13 (the classification names the row it writes) and LM14 (kept, behaviour: before
+  the grant has moved, doctor would report every launcher as still signing, with a fix that
+  does not clear it).
 - Commit: `doctor: the service is the designed signer (LM15)`
 - Reviewer tier: opus, independent review.
 
@@ -461,7 +466,9 @@ check. LM18 is the removal one release later.
 
 - Acceptance: SECURITY.md and its website mirror say a launcher may launch any repository and may
   not mint; they state both residuals of R5, the operators' reach (D3127), the bearer token (O5),
-  who writes past the rules (R3) and what the issuer is a single point of; H1 is restated as
+  who writes past the rules (R3), that a roster service account is the one class the scope check
+  does not judge (D3137), that `rb` is still the launcher's own word where the rules read it
+  (R11), and what the issuer is a single point of; H1 is restated as
   narrowed to operators and the service, not closed (O13); the orchestrator design records O14; `budget-token-channel.md`, `roles.md` and the
   orchestrator design say the same; the release notes' `### For operators` is "run
   `fugaro update`" plus what it will say (R10).
@@ -535,8 +542,7 @@ check. LM18 is the removal one release later.
   the orchestrator's. For an ordinary project the update's allow-list names exactly those, so
   `tf.Guard` admits them and still refuses any other delete, and no flag is asked of the
   operator. For a managed project the same addresses go through `managed.Spec.Upgrade`, where
-  `GuardManaged` warns about the deletes and records them, and the test pins that it does not
-  refuse (F25).
+  `GuardManaged` admits a delete whose address it was given, and the test pins that (F25).
 - Files: `internal/infra/identity_allow_delete.go` (new),
   `internal/infra/identity_allow_delete_test.go` (new), `internal/cli/init.go`,
   `internal/cli/update_managed.go`, `internal/managed/plan_test.go`.
@@ -558,11 +564,14 @@ check. LM18 is the removal one release later.
   place by the update's policy stage; a CLI of the release behind refuses with `SkewSentence`,
   naming this release; every version-10 node keeps its bytes but for the number.
 - Files: `internal/projectpolicy/version.go`, `internal/projectpolicy/migrate.go`,
-  `internal/projectpolicy/migrate_test.go`, `internal/cli/launch_budget_test.go`.
+  `internal/projectpolicy/migrate_test.go`, `internal/projectpolicy/version_since_test.go`,
+  `internal/credsvc/policy_test.go`, `internal/cli/launch_budget_test.go`, `docs/release.md` and
+  `docs/project-layer.md` (the version's row in each). Past five; it is what the version-10 bump
+  touched, one line each.
 - Interfaces: none.
 - Tests: `TestVersionSinceCoversEveryVersion`, `TestMigrateToTheIdentityVersionIsShapeFree`,
   `TestOlderCLIIsToldToUpgrade`.
-- Command: `go test ./internal/projectpolicy/ ./internal/cli/ -run 'VersionSince|MigrateToTheIdentityVersion|OlderCLIIsToldToUpgrade' -count=1`
+- Command: `go test ./internal/projectpolicy/ ./internal/credsvc/ ./internal/cli/ -run 'VersionSince|MigrateToTheIdentityVersion|OlderCLIIsToldToUpgrade|Policy|Docs' -count=1`
 - Red step: `TestVersionSinceCoversEveryVersion` fails until the new version has its row.
 - Depends on: I1 (the lever ships with what it levers). The rule in Conventions keeps a release
   from being cut between this and LM14.
@@ -593,46 +602,45 @@ check. LM18 is the removal one release later.
 - Acceptance: the ticket route's scope check runs `internal/access`'s resolver on the verified
   caller for the launch action on the repository, and gives the answer the CLI gate
   (`launchPolicyGates`) gives today, arm by arm (R16): the implicit admins come from the service's
-  configuration; a roster service account is admitted without a scope judgement; an installation
+  configuration; a roster service account is admitted without a scope judgement (D3137); an installation
   with no roles to judge by is allowed as the gate allows it; each context repository is judged
   for the view action and the policy's allow-list before the list is signed (F31); records that
   do not decode refuse; records that cannot be reached refuse, the one deliberate difference.
   A caller without the scope gets no ticket and one audit line; the orchestrator's class is
   judged by LM24 (D3130 as amended, D3136).
 - Files: `internal/credsvc/identity_scope.go` (new), `internal/credsvc/identity_scope_test.go`
-  (new).
+  (new), `internal/cli/access_issuer_agree_test.go` (new: the gate is unexported in
+  `internal/cli`, which imports the service's package, so the table that runs both lives there).
 - Interfaces: consumes C1 (the scope check's interface) and `internal/access`. First step: U10.
 - Tests: `TestIssuerRefusesACallerWithoutTheLaunchScope`,
   `TestIssuerAgreesWithTheCLIGate` (a table run through both, with a row for each arm of R16 and the outage row marked as the
   difference), `TestIssuerRefusesAContextRepositoryWithoutTheViewScope`,
   `TestOrchestratorClassIsLeftToItsOwnCheck`.
-- Command: `go test ./internal/credsvc/ -run 'IssuerRefusesA|IssuerAgreesWithTheCLIGate|OrchestratorClassIsLeftToItsOwnCheck' -count=1`
+- Command: `go test ./internal/credsvc/ ./internal/cli/ -run 'IssuerRefusesA|IssuerAgreesWithTheCLIGate|OrchestratorClassIsLeftToItsOwnCheck' -count=1`
 - Red step: `TestIssuerRefusesACallerWithoutTheLaunchScope` fails against the stub check, which
   admits everyone.
 - Depends on: C1.
 - Commit: `credsvc: no launch scope, no ticket (LM23)`
 - Reviewer tier: opus, independent review.
 
-### LM24: the issuer judges the committer of an orchestrated attempt
+### LM24: the orchestrator's asks are bound to its record
 
-- Acceptance: first step: U11, whether the orchestrator's record names the person whose patch
-  committed an attempt in a form that person could not have written for another; if not, stop
-  and raise a contract change, because the record needs a field and the patch command must write
-  it. Then: for an ask in the orchestrator's class the issuer reads the attempt the ask names
-  from the orchestrator's own record, takes its committer, and runs LM23's scope check on that
-  person for the repository; no committer, an attempt that does not match the ask, or no scope
-  each refuse with one audit line (D3136).
+- Acceptance: for an ask in the orchestrator's class the issuer reads the orchestrator's own
+  record and issues only where the run id the ask names is a recorded attempt of that repository
+  with no outcome; an ask for any other run id, for an attempt that has started or ended, or one
+  that names any context repository is refused with one audit line (D3136 as amended, F34). No
+  committer is read and no scope is judged for this class.
 - Files: `internal/credsvc/identity_orchestrated.go` (new),
   `internal/credsvc/identity_orchestrated_test.go` (new).
 - Interfaces: consumes C1 (the attempt reference and the scope check's interface) and the
-  orchestrator's record as `internal/orchestrator` stores it.
-- Tests: `TestOrchestratedAskIsJudgedOnItsCommitter`, `TestOrchestratedAskWithoutACommitterIsRefused`,
-  `TestOrchestratedAskForAnotherAttemptIsRefused`.
+  orchestrator's record as `internal/orchestrator` stores it (`Intent`).
+- Tests: `TestOrchestratedAskNeedsARecordedUnstartedAttempt`,
+  `TestOrchestratedAskForAnotherRunIsRefused`, `TestOrchestratedAskWithContextReposIsRefused`.
 - Command: `go test ./internal/credsvc/ -run 'OrchestratedAsk' -count=1`
-- Red step: `TestOrchestratedAskIsJudgedOnItsCommitter` fails against the stub check, which
+- Red step: `TestOrchestratedAskForAnotherRunIsRefused` fails against the stub check, which
   admits the orchestrator's class whole.
 - Depends on: C1.
-- Commit: `credsvc: an orchestrated attempt is judged on its committer (LM24)`
+- Commit: `credsvc: the orchestrator is issued only what its record carries (LM24)`
 - Reviewer tier: opus, independent review.
 
 ## Parallel execution
@@ -642,9 +650,9 @@ check. LM18 is the removal one release later.
 | 0 | C1, LM0, LM8, LM11, LM22 |
 | 1 | LM1, LM2, LM3, LM4, LM5, LM6, LM7, LM10, LM12, LM19, LM23, LM24 |
 | 2 | I1, LM13, LM20 |
-| 3 | LM15, LM21 |
+| 3 | LM21 |
 | 4 | LM14 |
-| 5 | LM16, LM17 |
+| 5 | LM15, LM16, LM17 |
 | after a release | LM18 |
 
 The graph read reports six levels and puts LM1 and LM19 at level 0 and LM18 at level 5: it has
@@ -653,8 +661,8 @@ later". **The table above is the order to launch in, and this graph is not to be
 automatic launching while C1 is unmerged.** D3128 holds LM1 behind two other plans, so in
 practice C1 has merged long before it; LM19 is launched by hand once C1 has merged (D3129).
 
-**Critical path**, as the read printed it: `C1 -> LM10 -> I1 -> LM21 -> LM14 -> LM16`,
-six tasks; every path through slice B or C to I1 is as long. LM14 is
+**Critical path**, as the read printed it: `C1 -> LM10 -> I1 -> LM21 -> LM14 -> LM15`,
+six tasks (LM16 and LM17 sit at the same last level); every path through slice B or C to I1 is as long. LM14 is
 sequential behind I1 because it removes the grant, and nothing may remove it before a launch has
 gone through the issuer in a test. LM18 waits a release by design.
 
@@ -688,7 +696,8 @@ keys-through-service's release A.
 | `internal/budget/rules/rules_test.go` | LM5 | 1 |
 | `internal/infra/tf/cover.go` | LM22, LM12, LM13 | 0, 1, 2 |
 | `deploy/terraform/gcp/modules/firebase/iam.tf` | LM11, LM18 | 0, after a release |
-| `internal/infra/tokensigners.go` | LM15 | 3 |
+| `internal/infra/tokensigners.go` | LM15 | 5 |
+| `internal/credsvc/policy_test.go`, `docs/release.md`, `docs/project-layer.md` | LM21 | 3 |
 | `internal/projectpolicy/version.go` | LM21 | 3 |
 | `docs/gcp-live-checklist.md` | LM0, LM17 | 0, 5 |
 
@@ -708,14 +717,16 @@ The pass is on for this repository (`planning.decoupling` is `true`, the default
 - LM5 → LM1: the test needs the record's path.
 - LM6 → LM1: the launcher needs the ticket route's shape, not a running route.
 - LM23 → LM1: the scope check needs the ticket route's hook, an interface, not the route.
-- LM24 → LM23: the committer's check needs the scope check's interface, not LM23's resolver.
+- LM24 → LM23: the orchestrator's check sits behind the same hook as the scope check; it needs
+  the hook's interface, not LM23's resolver.
 - LM7 → LM2: the runner needs the claim's shape.
 - LM4 → LM2: the pairing routes need a signer's interface, not LM2's signer.
 - LM10 → LM4: `fugaro pair` needs the pairing routes' shape.
 
 **Kept**, each with why a contract would not do:
 
-- LM12 → LM22: the cover's own rule orders them; the "interface" is two names, and LM22 is them.
+- LM12 → LM22: the cover's own rule orders them; the "interface" is three names, and LM22 is
+  them.
 - LM13 → LM11 and LM13 → LM12: the golden plans are generated from their variables.
 - LM20 → LM11 and LM20 → LM12: it lists the addresses of rows those tasks write; a list written
   ahead of the rows is a guess the guard would then enforce.
@@ -725,11 +736,12 @@ The pass is on for this repository (`planning.decoupling` is `true`, the default
 - LM14 → I1, LM13, LM20 and LM21: it removes the grant; each is something that must work, not a
   shape.
 - LM21 → I1: the version bump ships with what it levers.
-- LM15 → LM13: it classifies the row LM13 writes.
+- LM15 → LM13 and LM15 → LM14: it classifies the row LM13 writes, and it is right only once the
+  grant has moved.
 - LM16 → I1, LM14 and LM21; LM17 → LM14 and LM21: they state and prove what is true after them.
 - LM18 → LM14: a released version must sit between them.
 
-**The gain**, as the read printed it: `gain: 9 broken, 15 kept, 2 added; before 7 tasks, weight
+**The gain**, as the read printed it: `gain: 9 broken, 16 kept, 2 added; before 7 tasks, weight
 11; after 6 tasks, weight 10; improves`. The counts are the tool's own: it counts the edges of the
 graph as it was before the pass, so its "kept" is not the number of lines in the list above. The
 critical path goes from seven tasks to six.
@@ -795,6 +807,7 @@ the service.
 - **A lever other than the policy version** for older CLIs: none exists today (F14); O12 carries
   the cost of the one chosen.
 - **A verified-launcher claim**: out of scope; the record and the audit line carry it (R11).
-- **An unscoped orchestrator class** (D3125's first answer): replaced by D3136 after the trace
-  (F34). Chain-bound issuing, D3125's other alternative, stays declined: D3136 judges the
-  committer, not the chain.
+- **An unscoped orchestrator class** (D3125's first answer), and **judging the committer of an
+  attempt** (D3136's first answer): the first replaced after the trace (F34), the second after
+  review round 4 showed an attempt names no committer and only admins write the node.
+- **Judging a roster service account like a person** (D3137's alternative).

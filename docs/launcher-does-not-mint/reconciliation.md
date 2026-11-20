@@ -345,16 +345,22 @@ ticket signs nothing; the signature happens at the claim. A wrong signer account
 issuer row would pass a probe of the ticket route, the rows would go, and every run would halt
 at its claim. Consequence: R8's probe signs.
 
-**F34 (Gap, traced for D3132 after the pull request opened). Nothing in the cloud judges the
-launch scope of an orchestrated run.** `residentLauncher` (`internal/cli/orchestrator_launcher.go`)
-runs no gate block and no access check, and says so on purpose. It starts only re-issues
-(`ActionReissue`, `internal/orchestrator/resident_launch.go`): attempts a person's own
-`fugaro orchestrator patch` already committed. It refuses a stored task that differs from the
-approved item or that carries a field no item can express, context repositories among them. So
-the person's launch scope is judged by the CLI on that person's machine when the attempt is
-committed, and by nothing afterwards; under D3125 as first answered the issuer would not judge
-it either. A person who commits an attempt with a modified CLI would get it launched on a
-repository they hold no launch scope on. Consequence: D3136, which amends D3125.
+**F34 (Gap, traced for D3132 after the pull request opened; corrected by review round 4).
+Nothing in the cloud judges what the resident orchestrator asks for.** `residentLauncher`
+(`internal/cli/orchestrator_launcher.go`) runs no gate block and no access check, and says so on
+purpose. It starts only re-issues (`ActionReissue`, `internal/orchestrator/resident_launch.go`):
+attempts already committed on the orchestrator's node. It refuses, on its own side
+(`residentRunIsTheItems`), a stored task that differs from the approved item or that carries a
+field no item can express, context repositories among them. Two facts the first version of this
+finding had wrong. The node is closed to every signed-in identity by the rules (`orchestrator`,
+write false), so it is written over IAM by the database admins alone, the same people who write
+the roles records; a launcher with a modified CLI cannot write it. And an attempt names no
+committer: `Intent` (`internal/orchestrator/state.go`) holds an id, a run id, a spec digest,
+two times and an outcome. So there is no person to judge, and a committer field would be the
+admin's own word. What is open is the orchestrator's account itself: compromised, or
+impersonated by an operator, it could ask for a run of its own choosing on any repository with
+any context repositories, because every check above is on its own side. Consequence: D3136 as
+amended.
 
 ## What each option does to the trust boundary
 
@@ -372,16 +378,16 @@ for as long as its refresh token lives.
 
 ## Decisions
 
-Numbers D3120–D3136 are used; the block is D3120–D3139 (see the README for the reading).
+Numbers D3120–D3137 are used; the block is D3120–D3139 (see the README for the reading).
 
 | # | Question | Answer (owner, 2026-11-20) |
 | --- | --- | --- |
 | **D3120** | The spec's ruling section is a placeholder. Is the coordinator's reading right: no launcher or operator holds the grant that signs a run's identity, and a run gets its identity at launch from something off the launcher's machine that checks who launches, which repository and which run? | **Yes, as written.** As recommended. Why: the reading is the spec's six asks. `spec.md` keeps the placeholder; this cell is the confirmation. |
 | **D3121** | What issues the identity? Recommended: the credentials service, on new routes for the launcher class. Alternatives: a second service of the same image with its own account (about 3 more tasks, one more service; the rule in F7 untouched); the workspace service (no answer for an installation without one); the job's platform (C4, rejected). | **The credentials service.** As recommended. Why: its launcher class, its roster and the launch-time call exist (F1). Costs accepted as shown: it becomes the one minter and a single point of every launch, and whoever compromises it can sign any uid. **This amends the rule that the service account's only grant is its database role** (F7, F8): it gains the minter role on the runs' signer account. |
-| **D3122** | What does the launcher get back? Recommended: a one-time ticket the run redeems, so the launcher never holds the identity. Alternative: the token itself on today's sealed channel (runner and images untouched; a second launcher can still copy it silently, F9). | **A one-time ticket.** As recommended. Why: ask 3 says "obtain", and a copy becomes a race whose loser reports it. Cost accepted: the runner and the image contract change, every run start depends on the issuer, and on Cloud Run a peer launcher who also runs code as the job account can still win the race, detected and not prevented (R5). |
+| **D3122** | What does the launcher get back? Recommended: a one-time ticket the run redeems, so the launcher never holds the identity. Alternative: the token itself on today's sealed channel (runner and images untouched; a second launcher can still copy it silently, F9). | **A one-time ticket.** As recommended. Why: ask 3 says "obtain", and a copy becomes a race whose loser reports it. Cost accepted: the runner and the image contract change, every run start depends on the issuer, and on Cloud Run a peer launcher who also runs code as the job account can still win the race, detected and not prevented (R5). The reach of that race, every launcher of the same job, was found later (F30) and was not in the option's text. |
 | **D3123** | What happens to roster entries that are not a person? Recommended: a `serviceAccount:` entry becomes its own class at the issuer; a `group:` entry cannot be issued to, and `update` names each before it removes the grant. Alternatives: people only (matches batch-run-identity's D3109; a pipeline's service account stops); both, with groups resolved through a directory (a grant outside the managed project). | **Service accounts yes, groups no.** As recommended. Why: a service account's ID token names it exactly; a group needs a lookup the installation does not have. |
 | **D3124** | How does the removal reach a teammate's older CLI? Recommended: one release; `update` removes the people's grant only after the issuer answers, and the published policy's version moves so an older CLI refuses with the upgrade sentence. Alternatives: two releases (batch-run-identity's F24 open one more release); one release with no lever (IAM's 403 and the wrong fix). | **One release, with the policy version bump.** As recommended. Why: pre-1.0, and the older CLI's own refusal names the fix. Costs accepted as shown: every launcher upgrades before their next launch after the operator's update; a policy migration inside `update`; an installation with no published policy shows the older CLI IAM's own error (O4). A cost not shown then is D3131. |
-| **D3125** | The resident orchestrator loses its minter row and asks the issuer under its own class. What may it be issued? Recommended: a run of any repository of the installation, as it launches today. Alternatives: only chains a person started (about 2 more tasks; a root launched before the upgrade has no record); it keeps its own grant (a second minter). | First answer: "Any repository's run", as recommended. **Amended by D3136 (owner, 2026-11-20): any repository its attempt's committer may launch.** The orchestrator keeps its own class and loses its grant as answered; what changed is that its asks are scope-checked, on the person who committed the attempt. |
+| **D3125** | The resident orchestrator loses its minter row and asks the issuer under its own class. What may it be issued? Recommended: a run of any repository of the installation, as it launches today. Alternatives: only chains a person started (about 2 more tasks; a root launched before the upgrade has no record); it keeps its own grant (a second minter). | First answer: "Any repository's run", as recommended. **Amended by D3136 (owner, 2026-11-20): any attempt the orchestrator's own record carries.** The orchestrator keeps its own class and loses its grant as answered; what changed is that the issuer serves it only a recorded, unstarted attempt, and no context repositories. |
 | **D3126** | `fugaro pair` signs with the same grant (F3). What happens to pairing? Recommended: the issuer mints the pairing and device tokens for a verified person, on routes that take no uid and no claim. Alternatives: wait for the mobile plan's own minter (blocks the removal); pairing stops and `update` says so. | **The issuer mints both.** As recommended. Why: it keeps `fugaro pair` working and takes device tokens away from launchers. The option's text said it "closes" SECURITY.md's H1; review round 1 showed that overstates it, and O13 says what remains. |
 | **D3127** | Operators can still reach signing through the deployer account, and by re-granting (F6). What does the spec claim about operators? Recommended: no standing grant, and SECURITY.md says the rest; doctor lists every principal beyond the issuer. Alternatives: also narrow the deployer grant to `getAccessToken` (about 2 more tasks on the update's own impersonation chain; one hop removed, not the reach); claim it only where the Firebase project is a separate one. | **No standing grant; the documents say the rest.** As recommended. Why: an operator administers the installation's IAM; the honest claim is the standing grant and the audit trail. Ask 1 therefore holds in full for launchers, and as "no standing grant" for operators. |
 | **D3128** | When does it ship (F16, F17)? Recommended: tasks start after always-a-budget's I1 and keys-through-service's release A, and it ships in the CLI release after them. Alternatives: with always-a-budget (that plan's no-release window grows); ahead of both (built on code AB4 deletes). | **After both, in its own release.** As recommended. Why: one mint path to replace, and every job reaches the service. Cost accepted: batch-run-identity's F24 stays open until those two land. |
@@ -392,12 +398,14 @@ Numbers D3120–D3136 are used; the block is D3120–D3139 (see the README for t
 | **D3133** | The cap is three review rounds and round 3's fixes were unreviewed (O18). A fourth round? Recommended: yes. Alternative: land as it stands, with C1's own review to catch the rest. | **Yes, one more round.** As recommended. It goes past the skill's cap on the owner's word. |
 | **D3134** | D3126 was chosen from an option that said it "closes" H1; it narrows it (O13). Does D3126 stand? Recommended: it stands, and the documents say narrowed. Alternatives: stands, and a backlog entry for the device-held key; reconsider D3126. | **It stands; H1 is narrowed.** As recommended. No backlog entry was asked for. |
 | **D3135** | An installation with no published policy has no lever for an older CLI (O4), and whether one can exist after always-a-budget is unverified (U5). Recommended: LM14's first step settles the fact, and the question returns only if such an installation can exist. Alternatives: accept the gap; `update` publishes a minimal policy. | **Settle the fact first.** As recommended. |
-| **D3136** | The trace of D3132 (F34): the launch scope of an orchestrated run is judged only on the committer's machine. What does the issuer do with the orchestrator's asks? Recommended: the ask names the attempt, and the issuer runs the launch-scope check on the person who committed it. Alternatives: accept and say so; leave it to a spec of the orchestrator's. | **Judge the person who committed.** As recommended. No scope, no ticket. Cost accepted: about 2 more tasks and a field in the contract; if the orchestrator's record does not name its committer a field is added (U11); an attempt committed before the upgrade is refused until a person relaunches. **Amends D3125.** |
+| **D3136** | The trace of D3132 (F34). **Asked twice.** First, on a threat that review round 4 showed was wrong (a person with a modified CLI committing an attempt): recommended, judge the launch scope of the person who committed. Second, with the facts of F34 as corrected (only database admins write the node; an attempt names no committer): recommended, the issuer serves the orchestrator only a run id that is a recorded, unstarted attempt of that repository, and refuses an ask naming context repositories. Alternatives the second time: add a committer field and judge it as well (about 2 more tasks, a schema bump, the field being the admin's word); unscoped, as D3125 first stood. | First answer: "Judge the person who committed". **Amended after review, and answered again by the owner (2026-11-20): bind the ask to a recorded attempt.** As recommended. No committer field and no scope judgement for this class. Cost accepted: 1 task (LM24), no schema change. A compromised orchestrator account can launch only what an admin's patch already committed. **Amends D3125.** |
+| **D3137** | Raised by review round 4 as a decision this document had made unasked (R16, arm 2). After D3130 a roster service account would be the one class with a ticket for any repository and no scope judgement, because the CLI gate admits a service-account credential without judging it today. Recommended: parity, admitted unscoped, and SECURITY.md says so. Alternative: judge it like a person (a pipeline stops until its account is granted a scope; about 1 more task). | **Parity: admitted unscoped.** As recommended. Why: a pipeline that launches keeps working (ask 4). Cost accepted: a leaked roster service-account key launches on every repository. |
 
 No answer departs from its recommendation. No answer was "your call". Two answers were amended
 after review and put to the owner again, who answered the same day: D3129 (twice) and D3130.
-D3131 was added by review round 2. D3132 to D3136 were asked after the pull request opened, from
-its open items; D3136 amends D3125.
+D3131 was added by review round 2. D3132 to D3137 were asked after the pull request opened, from
+its open items and from review round 4; D3136 was itself amended after that round and answered
+again, and it amends D3125.
 
 ## Resolutions
 
@@ -410,8 +418,11 @@ One defensible answer each; stated, not asked.
   member's run does (workspace-service D2983). This answers one of the brief's unknowns without a
   question; it rests on D3121, whose stated cost is that the service is a single point of every
   launch.
-- **R2. The routes.** Four, on the credentials service: issue a ticket, claim an identity, mint a
-  pairing token, mint a device token. Their paths, bodies, refusal codes and the name of the
+- **R2. The routes.** Five, on the credentials service: issue a ticket, claim an identity, mint a
+  pairing token, mint a device token, and the probe `update` calls (R8). The probe admits the
+  person class (the roster's operators) only, writes one audit line per refusal, signs a fixed
+  payload and returns no signature bytes, so it is neither a signing oracle nor an open trigger
+  of the signing quota. Their paths, bodies, refusal codes and the name of the
   execution variable that carries the ticket are the contract task's (C1). The claim is answered
   ahead of the shared request parse, as the merge route is for `VerifyOrchestrator`, because the
   caller holds no run identity yet. A claim carries a nonce the runner draws and keeps in memory:
@@ -438,8 +449,10 @@ One defensible answer each; stated, not asked.
   classes (a person, a roster service account, the orchestrator). The repository is one the
   installation has a job for, and the caller holds the launch action on it by the resolver the
   CLI gate uses (D3130 as amended, F23): the issuer gives the answer `requireAccess` gives today
-  for every caller that gate judges, by R16. For the orchestrator's class the check runs on the
-  person who committed the attempt it re-issues, read from the orchestrator's own record (D3136). The account the launch names is that repository's job
+  for every caller that gate judges, by R16. For the orchestrator's class there is no person to judge
+  (F34): the issuer reads the orchestrator's own record and serves only a run id that is a
+  recorded, unstarted attempt of that repository, and refuses an ask that names context
+  repositories (D3136 as amended). The account the launch names is that repository's job
   account, the shared project job's or the review job's (F12). The run id is well formed. The
   project claim is the installation's own, and the expiry is no further out than the service's
   configured maximum. No record exists for this slug and run under another caller, no ticket of
@@ -502,7 +515,9 @@ One defensible answer each; stated, not asked.
   `fugaro pair` now asks the service; and, when executions are queued and not started, that those
   will halt and need a relaunch. And the standing line about runs in flight.
 - **R11. The launcher's name.** `rb` stays the self-asserted name it is: a field never changes
-  meaning. The verified address is on the issuance record (R3) and in the audit line. No claim is
+  meaning. The rules do read it in one place (`RBOK` in `rules.json.tmpl` ties a budget entry to
+  the token's `rb`), so a launcher can still book a run's spend under a name of its choosing;
+  LM16 says so. The verified address is on the issuance record (R3) and in the audit line. No claim is
   added (out of scope).
 - **R12. The mobile account's signer.** Unchanged. It is a service's grant on a signer of its
   own, not a person's, and the spec's ask 1 is about people. H1 narrows through D3126 (O13), not
@@ -514,10 +529,12 @@ One defensible answer each; stated, not asked.
 - **R15. Check 840 does not gate.** If it finds that an execution's identity token carries
   something of the execution, a contract change (R-C1-execution) binds the claim to it and the
   residual in R5 closes for Cloud Run.
-- **R16. The issuer's scope check gives the CLI gate's answer, arm by arm** (F29, F31). (1) The
-  implicit admins the gate reads from the local configuration are rendered to the service by
-  `update`, as a third environment entry beside the two of LM22, so an owner is not refused. (2)
-  A roster service account is admitted without a scope judgement, as the gate admits it today.
+- **R16. The issuer's scope check gives the CLI gate's answer, arm by arm** (F29, F31). The
+  resolver's input is the gate's: the roles records and the policy's allow-list for the
+  repository (`accessAllowRepos`). (1) The implicit admins the gate reads from the local
+  configuration are rendered to the service by `update`, as one of the three environment entries
+  LM22 names, so an owner is not refused. (2) A roster service account is admitted without a
+  scope judgement, as the gate admits it today (D3137: asked, parity).
   (3) An installation with no roles to judge by is allowed, as the gate allows it. (4) Each
   context repository the launch names is judged for the view action and for the policy's
   allow-list, as the gate judges it, before the list is signed. (5) Roles records that do not
@@ -562,7 +579,8 @@ None. No two answers pull against each other.
 - **O6. The launcher's other statements about a run** (branch, pull requests, and #3315's access
   entry) stay the launcher's; the context repositories are judged (F31, R16). The issuer signs what a roster
   caller asks for its own run (A6, F19).
-- **O7. A roster change waits for an update** to reach the issuer. A launcher removed from the
+- **O7. A roster change waits for an update** to reach the issuer, and so does a change to the
+  implicit admins, which are read from the updating operator's local configuration. A launcher removed from the
   roster keeps the class until then, as they keep the invoker grant today.
 - **O8. The other plans that may move the policy version.** The bump takes the next version at
   merge time; if another plan lands one first, this plan's bump is that plan's, or one more.
@@ -588,13 +606,16 @@ None. No two answers pull against each other.
 - **O16. Two approvals in another plan are on hold by D3129:** batch-run-identity's C1 and BR6.
   That plan's README and status row still say four tasks are approved; LM19 corrects the folder,
   and this pull request adds the hold to its status row only.
-- **O17. Settled by D3132 and D3136:** the orchestrator's asks are scope-checked on the person
-  who committed the attempt (F34). What remains stated: a compromised resident orchestrator can
-  still launch any attempt some person with the scope has committed.
-- **O18. Round 3's findings were fixed and then reviewed in a fourth round (D3133).** The cap is three rounds; the owner asked for one more. What
-  round 3 found and this document then changed: F31 to F33, R16's arms 4 to 6, the signing
-  probe in R8, F18's list (BR15), F1 and F10 on the slip, and LM13, LM14 and LM21's order in the
-  plan. A reader should treat those as unreviewed.
+- **O17. Settled by D3132 and D3136 as amended:** the issuer serves the orchestrator only a
+  recorded, unstarted attempt and no context repositories (F34). What remains stated: a
+  compromised orchestrator account, or an operator impersonating it, can start any attempt an
+  admin's patch committed, and the task it starts is the object in the runs bucket.
+- **O18. Four review rounds were run** (the cap is three; the owner asked for the fourth, D3133).
+  Round 4 reviewed round 3's fixes and found five more things, among them that D3136's first
+  question was wrong. **Round 4's own fixes are not reviewed**: D3136 as amended, D3137, the
+  probe's route and class in R2, LM24 as reshaped, LM15's place. A reader should treat those as
+  unreviewed.
+- **O19. A roster service account is the one class the scope check does not judge** (D3137).
 
 ## UNVERIFIED
 
@@ -621,6 +642,5 @@ None. No two answers pull against each other.
 - **U10.** How the service reads the access records the resolver needs (F23): its database role
   reads the database, but which node and which decode `internal/access` needs was not read. LM23's
   first step.
-- **U11.** Whether the orchestrator's record of an attempt names the person whose patch committed
-  it, in a form the service can read and that person could not have written for another. LM24's
-  first step; if not, the record gains the field and the patch command writes it.
+- **U11.** Settled by review round 4, and no longer needed: an attempt names no committer
+  (`Intent`, `internal/orchestrator/state.go`), and D3136 as amended asks for none.
