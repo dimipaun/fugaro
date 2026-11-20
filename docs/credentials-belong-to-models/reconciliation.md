@@ -4,7 +4,8 @@ Checked against `origin/main` at `d57d71ddb` on 2026-11-20. **Where this file di
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
 **D3040–D3053**, all answered by the owner on 2026-11-20, every one as recommended; **D3041 was
 amended by the owner the same day, and D3044 was amended after review round 1** with his answer
-to the question it raised. Findings F24 to F32 are that round's. It carries out
+to the question it raised. Findings F24 to F32 are that round's and F33 to F41 round 2's, which also
+rewrote R4 and R15. It carries out
 **D3007** of [every model key through the credentials service](../keys-through-service/reconciliation.md)
 (the keys plan, merged as #3299) and **D3026** of always a budget (pull request #3302, open, read
 at `8bf13231f` on branch `docs/always-a-budget`), and answers the keys plan's O4 and that plan's
@@ -88,6 +89,7 @@ with the access `vertex`, the default (`config.DefaultCredential`). Consequence:
 | The live registry entry | `agents/<slug>/<run>`, member `auth` (`budget.AgentEntry`); the database rules validate it as a string where present | none of its own |
 | `fugaro watch --json` | `runs[].auth`, always present, `-` when the entry has none (`watch.JSONRun`) | the document's own |
 | `fugaro budget show --json` | `auth`, left out when empty (`showRun`) | the document's own |
+| The run record and the task | No auth, but two members described by it: `oauth_account` ("this run's agent.auth: oauth workflow", `schemas/result.schema.json`) and the task's `oauth_token` (`schemas/task.schema.json`) | `version` const 1 each |
 | The console | Its parser requires `runs[].auth` (`console/src/shared/schema.ts`) and the Live screen shows it | follows `watch --json` |
 | Terraform's variables | Never the value: `workflows.*.vertex`, `repo.model_secrets_served` and `workflows.*.stage_account`, each worked out from it in `internal/infra/spec.go` | none |
 
@@ -302,6 +304,70 @@ Consequence: CM6 intersects an old-header answer with the access record wherever
 image resolves an unset access in the node to Vertex and knows no marked pool and no
 per-repository block, and the node decodes strictly. Consequence: R15.
 
+### Review round 2
+
+**F33 — Wrong (review round 2), corrects F10, F29's last sentence and R15.** No job image reads the
+per-repository node. `config/policy/repos/<slug>` is read by the credentials service
+(`RTDBPolicy.Admissions`, `internal/credsvc/server.go`) and by the CLI (`project_cmd.go`,
+`project_repos_rm.go`), and `RepoPolicy` has one member and no version. The strict reader a new
+member can break is a service not yet redeployed. A new runner has no read of that node at all.
+Consequence: R15 as rewritten: the block is gated on the deployed service, not on images; the run
+is handed its resolved access by the launcher; the marker stays out of the shared node.
+
+**F34 — Wrong (review round 2), corrects R4.** A record that names only "what the crafts resolve
+to" would refuse runs the plan keeps. Today's record under `oauth` names every allowed account
+(`repoAuthRecord`, through `infra.WorkflowAccounts`), because a run may name one with `--token`
+and the account walk may move to one. And a record of resolutions goes stale whenever the
+project's crafts change, for every repository at once, with nothing to rewrite it. Consequence:
+R4 as amended, CM34.
+
+**F35 — Gap (review round 2): the account walk has two conditions.** `accountWalkApplies` is off
+where an account was chosen explicitly (`--token`, `agent.oauth_token`). After the migration
+every access is written, so "one subscription credential" alone would turn the walk on for a
+repository pinned to one account. Consequence: C1's answer carries whether the credential was
+chosen or is the project's default account, the migration writes it, and CM11 walks only the
+second.
+
+**F36 — Gap (review round 2): the cascade's pool has no way to be published.**
+`publishedCraftPools` (`internal/cli/project_cmd.go`) clears `legacy_open` on every pool the
+config states and refuses one with no owner (D2608), and `doctorLegacyOpenPoolChecks` tells the
+owner to name an owner for every `legacy_open` pool. Consequence: CM32 adds the publisher's
+exception for the marked pool, and CM18 the doctor's.
+
+**F37 — Wrong (review round 2): the keys plan's KS13 waits on tasks this plan withdraws.** Its
+"Depends on" names KS6 and KS10, and KS10 names KS6 and KS9. Withdrawn with nothing put in their
+place, KS13 never becomes ready, and this plan's release 2 waits on KS13. Consequence: CM35, a
+documents task that amends the keys plan and its graph before anything else of this plan starts.
+
+**F38 — Gap (review round 2): model grades are a second place a file names a credential.**
+`model_grades.<grade>.access` may be written in a repository's file (`config.Scopes`),
+`applyGrade` (`internal/runner/routing.go`) writes it into the coder's and the merge judge's
+access, and `fugaro accounts grade set` writes the repository's file by default
+(`internal/cli/accounts_craft.go`). Consequence: D3042's answer reaches it: a grade's access is
+the project's alone, the file's key joins the retired list (R3), the question C1 writes takes
+the task's grade, and the command writes the project (CM34). Listed for the owner in O10.
+
+**F39 — Gap (review round 2): one generated file, three tasks.** `TestCliReferenceIsCurrent`
+(`ee/clidoc`) holds `website/content/cli-reference.md` to the command tree byte for byte, so a
+task that rewords a help string regenerates the page in the same pull request. Consequence: CM23
+alone rewords help strings, in every file that has one, and regenerates the page once.
+
+**F40 — Gap (review round 2): readers and writers the census missed.**
+`internal/config/example.yaml`, printed by `fugaro config example`, writes `auth: vertex`; this
+repository's own `fugaro.yaml` writes `auth: api-key`. Commands write the retired account keys:
+`accounts_switch.go`, `accounts_alias.go`, `accounts_rm.go`, `settings_set.go`,
+`init_policy_publish.go`. `internal/cli/project_routing.go` refuses removing the routing block
+because it would turn the cascade off. Messages phrased by auth sit in
+`internal/infra/retire.go`, `internal/runner/halt.go`, `internal/budget/lease.go` and
+`session.go`. Documents: `console/docs/json-contract.md` defines `auth` and `notional` by the
+auth mode; `docs/design/project-secrets.md`, `docs/design/v1.md` and `docs/release.md` use the
+phrasing. The counts of F1 and F18 are about: a second count gave 65 files and 76 occurrences in
+27. Consequence: each is given to a task (CM3, CM8, CM12, CM13, CM14, CM20, CM21, CM26, CM34).
+
+**F41 — Rule (review round 2): the always-a-budget branch moved.** It was read at `8bf13231f` and
+is at `03eb64578` on 2026-11-20, with D3027 and D3028, which change nothing here; D3040 is still
+the first free decision.
+
 ## 4. Decisions
 
 All answered by the owner on 2026-11-20, each as recommended; D3041 and D3044 carry a dated
@@ -310,7 +376,7 @@ amendment beside the first answer.
 | # | Question | Answer | Mark |
 | --- | --- | --- | --- |
 | **D3040** | What names the credential a stage's calls use, once a repository has no auth mode (F2)? | The craft's access, as built: it names a declared credential or pool, and the run's path follows that credential's type | as recommended. **It reverses model crafts' F24** |
-| **D3041** | What does an access no one wrote mean (F2)? | *First answer, kept:* the declared credentials that reach the craft's model, in the order the project lists them, Vertex last where the project has it on. **Amended by the owner, 2026-11-20:** "I don't like the idea of falling through to vertex, it will result in unexpected charges. User should explicitly specify it." So: **the first declared credential that reaches the craft's model, and nothing after it. Vertex is never implied**: a craft goes out on it only where its access, or a pool, names `vertex`. An unset access that no declared credential reaches is refused with the fix. Moving on from one credential to another needs a pool someone wrote. `fugaro update` writes today's answer explicitly, so nothing moves on upgrade | as recommended, then **amended by the owner**; the amendment's two parts were asked as questions and answered as recommended (the name stays `vertex`, not `native`; no move to a paid key without a pool). **It reverses D1624**, where unset meant Vertex |
+| **D3041** | What does an access no one wrote mean (F2)? | *First answer, kept:* the declared credentials that reach the craft's model, in the order the project lists them, Vertex last where the project has it on. **Amended by the owner, 2026-11-20:** "I don't like the idea of falling through to vertex, it will result in unexpected charges. User should explicitly specify it like 'vertex' or 'native', wdyt?" So: **the first declared credential that reaches the craft's model, and nothing after it. Vertex is never implied**: a craft goes out on it only where its access, or a pool, names `vertex`. An unset access that no declared credential reaches is refused with the fix. Moving on from one credential to another needs a pool someone wrote. `fugaro update` writes today's answer explicitly, so nothing moves on upgrade | as recommended, then **amended by the owner**; the amendment's two parts were asked as questions and answered as recommended (the name stays `vertex`, not `native`; no move to a paid key without a pool). **It reverses D1624**, where unset meant Vertex |
 | **D3042** | Does a repository's file keep `agent.crafts.<craft>.access` (F8)? | No. Access is written only in the project's config; `fugaro update` moves a file's existing choice there | as recommended |
 | **D3043** | What does the release do with a committed `fugaro.yaml` that still says `agent.auth` (F7)? | It is read, sets nothing and is named: `update`, `validate` and `doctor` say so and offer its removal as a diff. A later release rejects it, behind a gate on the job image's age | as recommended. *Made precise after review round 1 (F26, F27):* "sets nothing" holds from the moment `update` has migrated that repository; until then the key is read once more, by the migration's own rule, so that an unmigrated repository runs as it did (R3) |
 | **D3044** | What becomes of `cascade` (F11)? | *First answer, kept:* a pool that `fugaro update` writes, with the same members in the same order, and the crafts pointed at it; the service's ordering, stickiness and wait rule unchanged. **Amended after review round 1 (F24), by the owner's answer of 2026-11-20:** the pool `update` writes is **marked as the cascade's**. It carries the cascade's existing consent, so its subscriptions are served exactly as the cascade serves them today although `subscription_spread` is off, and it is published as `legacy_open`, so it needs no owner. A pool anyone writes afterwards still obeys the switch | as recommended, then **amended after review**: a plain pool would have stopped serving every subscription (F24). The amendment was asked as a question and answered as recommended |
@@ -360,12 +426,12 @@ amendment beside the first answer.
   where it is named (D3041 as amended).
   This is the brief's "declared once, for the models it reaches" without a new key: the
   credential's type and the project's `providers:` block already say it.
-- **R3. The retired keys, and their two releases.** `agent.auth`, `defaults.agent.auth`,
-  `agent.crafts.<craft>.access` in a repository's file, `agent.oauth_token`,
+- **R3. The retired keys, and their two releases.** `agent.auth`, `defaults.agent.auth`, `agent.crafts.<craft>.access` and
+  `model_grades.<grade>.access` in a repository's file (F38), `agent.oauth_token`,
   `stages.<stage>.claude_account`, `default_claude_account` and the node's
   `claude_account_stages` and `default_claude_account`. In the first release each still decodes and is named by
   `update`, `validate` and `doctor`; an older image goes on reading it. *(Amended after review
-  round 1: F26, F27.)* For a repository `update` has migrated (its per-repository block exists)
+  round 1: F26, F27.)* For a repository `update` has migrated (the launcher hands its run a resolved access, R15)
   the keys set nothing, the file's `access` included. For one it has not, a new CLI and a new
   runner work out the access from the file's keys by the migration's own rule, in memory, so it
   runs as it did; nothing else reads them. The removal of a key from a checkout is offered only
@@ -377,7 +443,15 @@ amendment beside the first answer.
   and nothing else. `fugaro update` writes both records in the first release, because an older
   image's calls are still narrowed by the old one; *(amended after review round 1, F27, F30)* the
   old one is derived from the migrated access and no longer from the key, and where both exist
-  the service never serves an old-header call more than the new record names. The second release stops writing the old one
+  the service never serves an old-header call more than the new record names. *(Amended after
+  review round 2, F34.)* The new record names what a repository's runs **may** be served by, as
+  the old one does, and not what one run resolves to: for each craft and grade the access the
+  project wrote, or, where it wrote none, every declared credential the project admits for that
+  repository; and every subscription credential a run may name with `--token`. It is worked out
+  from the project's config alone, so the commands that change that config rewrite it for every
+  enrolled repository (CM34), and no project-level change waits on an update per repository. A
+  call declares its craft; the service serves it what the record names for that craft, so a
+  run's whole reach is the union over its crafts, and the contract says so. The second release stops writing the old one
   and deletes it.
 - **R5. A new header beside the old.** A new runner declares the craft its call is for; the
   service resolves it against the record and never trusts the declaration for more than the
@@ -407,12 +481,19 @@ amendment beside the first answer.
   migration reads it as each repository's inherited value. Release 2's `fugaro update` rewrites
   the layer object in place without the key, where every job image of the project is at or
   after release 1, and says so in one line; elsewhere it leaves it and names the images.
-- **R15. An older image reads the node as it did** *(review round 1, F32)*. Everything this plan
-  adds to the published policy (the per-repository block, which is a new version of the
-  per-repository node, and the marked pool) is published only where every job image that reads
-  it is at or after release 1. Until then nothing in the node moves, the repository counts as
-  not migrated, and both old and new images run it from its file's keys (R3). The migration
-  never rewrites the project-level `crafts` an older image reads.
+- **R15. An older reader reads what it did** *(review round 1, F32; rewritten after round 2,
+  F33)*. Three rules. (1) The shared node, which job images read, gains no member: the migration
+  never rewrites its project-level `crafts`, and the cascade's pool is published there as an
+  ordinary `legacy_open` pool; the marker lives in the installation's config and in the access
+  record, which only the CLI and the service read. (2) The per-repository node, which the
+  service reads strictly, gains the crafts block only once the deployed service is at or after
+  release 1; `update` deploys the service before it writes the block, by the guard the bundle's
+  writers already use (`bundleReaderRequirement`), and holds the block back with one line where
+  it cannot. (3) A run learns its access from its launcher: a new launcher resolves each craft's
+  and grade's access and puts the answer in the execution's environment, under a name C1
+  declares; an older image ignores it and reads its file's keys, and a new runner with no such
+  entry (an older launcher, or a repository not migrated) applies the legacy rule (R3). The
+  runner's own answer is never a boundary: the service serves a call only what the record names.
 - **R8. Nothing stops without being told first** (the brief's item 6). Before it changes
   anything, `fugaro update` prints, for the repository it is run for: the access each craft will
   resolve to; each retired key its file still writes, with the removal offered as a diff; and, if
@@ -449,8 +530,9 @@ amendment beside the first answer.
 No two answers pull against each other.
 
 - **O1.** D3045 removes an operator's gate that the owner ruled in on 2026-10-17. The switch is
-  enforced by the runner alone (`applyRouting`); the service never reads it, so its removal
-  widens nothing the service bounds. The independent security review of CM8 is asked to confirm
+  enforced by the runner and the launcher (`applyRouting`, `cascadeLaunchRefusal`); nothing in
+  `internal/credsvc` or `internal/creds` reads it, so its removal widens nothing the service
+  bounds. The independent security review of CM8 is asked to confirm
   that, and that of CM32 that only a pool `update` wrote for a serving cascade carries the
   marker.
 - **O2.** D3052 sets the version rule aside. The exposure is the one stated under the decisions:
@@ -460,9 +542,7 @@ No two answers pull against each other.
   the key, for an unset craft; the migration writes today's answer explicitly, so this bites
   only a repository or a craft added later.
 - **O4.** The keys plan and always a budget are amended by F19 to F22 and by D3048. Their own
-  documents are not edited by this pull request; the first task of this plan to launch does not
-  start until the keys plan's README and plan say KS6, KS9 and KS10 are withdrawn (a documents
-  change the owner approves with this plan's tasks).
+  documents are not edited by this pull request; this plan's first task, CM35, amends the keys plan (F37, O11).
 - **O5.** `fugaro run --token` keeps a name that no longer describes it (D3049). Renaming it is a
   later change with its own readers (the plugin's skills, the orchestrator).
 - **O6.** The cascade's own settings (`fallback`, the wait threshold, the back-off) stay
@@ -479,18 +559,26 @@ No two answers pull against each other.
   a contract only for an edge the pass moved there. I1 waits on every side, so it loses nothing;
   the contract change is launched only if raised, by hand.
 - **O10.** D3044 is amended after review (F24) and D3043 made precise (F26, F27). The owner
-  answered the first as a question; the second changes no option he chose and is listed here for
-  him to confirm the wording.
+  answered the first as a question. The second changes no option he chose but does change what
+  "sets nothing" means until a repository is migrated, and **awaits his confirmation**. So does
+  F38's reading that D3042 reaches a model grade's access.
+- **O11.** The keys plan is amended by CM35, a task of this plan and so not approved. Until it
+  merges, the keys plan's KS13 names tasks that will not run (F37). If KS6, KS9 or KS10 is
+  launched before then, "withdrawn" becomes "superseded and reverted".
+- **O12.** Round 3's fixes, if any, are the last commit and are not reviewed again; three rounds
+  is the cap.
 
 ## 7. UNVERIFIED
 
 - **U1.** That the provider's terms let a subscription token be attached by the service for every
   run that uses it, as they do for the cascade's tier A today. The service already does exactly
   this for a switched repository; the owner confirms nothing new is implied.
-- **U2.** *Settled by review round 1 (F29):* `projectpolicy.DecodeRepo` is strict, so the block
-  is a new version of the per-repository node, published behind the image gate (R15).
+- **U2.** *Settled by review rounds 1 and 2 (F29, F33):* `projectpolicy.DecodeRepo` is strict and
+  its reader is the service, so the block waits on the deployed service (R15).
+- **U7.** Whether the workspace service, under its own plan, reads the per-repository node
+  strictly too, and so needs the same guard. Settled by CM2's first test once that service exists.
 - **U3.** *Settled by review round 1 (F29):* they do not; a rules change is needed.
-- **U4.** That the marked pool is offered exactly what the cascade offers, the wait-or-switch
+- **U4.** That the cascade's pool is offered exactly what the cascade offers, the wait-or-switch
   rule included (D3044 as amended). Settled by CM32's test, which compares what the service
   offers one repository before and after.
 - **U5.** That a run in flight on the release behind survives the node gaining the per-repository

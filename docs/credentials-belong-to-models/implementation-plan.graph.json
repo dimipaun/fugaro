@@ -77,7 +77,8 @@
         "paths": [
           "internal/config/retired.go",
           "internal/config/retired_test.go",
-          "internal/config/scope.go"
+          "internal/config/scope.go",
+          "internal/config/example.yaml"
         ]
       }
     },
@@ -167,6 +168,7 @@
           "internal/runner/routing.go",
           "internal/runner/gateway.go",
           "internal/runner/runner.go",
+          "internal/runner/halt.go",
           "internal/runner/access_resolve.go",
           "internal/runner/access_resolve_test.go",
           "internal/runner/accountchoice.go"
@@ -238,6 +240,7 @@
           "internal/budget/model.go",
           "internal/budget/registry.go",
           "internal/budget/rules/rules.json.tmpl",
+          "internal/budget/lease.go",
           "internal/runner/budget_session.go",
           "internal/watch/build.go",
           "internal/watch/json.go",
@@ -258,7 +261,8 @@
           "internal/infra/spec.go",
           "internal/infra/access_spec.go",
           "internal/infra/access_spec_test.go",
-          "internal/infra/spec_test.go"
+          "internal/infra/spec_test.go",
+          "internal/infra/retire.go"
         ]
       }
     },
@@ -274,6 +278,7 @@
         "paths": [
           "internal/cli/run.go",
           "internal/cli/run_attach.go",
+          "internal/cli/project_routing.go",
           "internal/cli/run_access_test.go"
         ]
       }
@@ -385,6 +390,8 @@
           "schemas/settings.schema.json",
           "schemas/fugaro.schema.json",
           "schemas/project-layer.schema.json",
+          "schemas/result.schema.json",
+          "schemas/task.schema.json",
           "schemas/schemas_test.go"
         ]
       }
@@ -402,7 +409,8 @@
           "console/src/shared/schema.ts",
           "console/src/renderer/screens/live.ts",
           "console/tools/scrub-fixture/scrub.ts",
-          "console/src/source/redact.ts"
+          "console/src/source/redact.ts",
+          "console/docs/json-contract.md"
         ]
       }
     },
@@ -417,7 +425,9 @@
         "prediction": true,
         "paths": [
           "scripts/live-checks/check800.sh",
+          "scripts/live-checks/check800_test.sh",
           "scripts/live-checks/check801.sh",
+          "scripts/live-checks/check801_test.sh",
           "scripts/live_checks_test.go",
           "docs/gcp-live-checklist.md"
         ]
@@ -437,7 +447,10 @@
           "internal/cli/runs_stats.go",
           "internal/cli/secrets.go",
           "internal/cli/setup.go",
-          "website/content/cli-reference.md"
+          "internal/cli/run.go",
+          "internal/cli/models_use.go",
+          "website/content/cli-reference.md",
+          "internal/cli/help_access_test.go"
         ]
       }
     },
@@ -511,6 +524,9 @@
           "docs/project-claude-accounts.md",
           "docs/design/mixed-credentials.md",
           "docs/design/agent-env.md",
+          "docs/design/project-secrets.md",
+          "docs/design/v1.md",
+          "docs/release.md",
           "docs/project-layer.md",
           "README.md",
           "docs/releases/",
@@ -612,6 +628,7 @@
         "paths": [
           "internal/cli/update_repoauth.go",
           "internal/cli/update_repoaccess_test.go",
+          "internal/cli/update_in_flight.go",
           "internal/gateway/service.go",
           "internal/gateway/gateway.go",
           "internal/credsvc/cascade.go"
@@ -631,7 +648,8 @@
           "internal/config/craft.go",
           "internal/config/craft_cascade_pool_test.go",
           "internal/credsvc/pool.go",
-          "internal/credsvc/pool_cascade_test.go"
+          "internal/credsvc/pool_cascade_test.go",
+          "internal/cli/project_cmd.go"
         ]
       }
     },
@@ -649,6 +667,43 @@
           "internal/cli/update_layer_auth.go",
           "internal/cli/update_layer_auth_test.go",
           "internal/cli/init.go"
+        ]
+      }
+    },
+    {
+      "id": "CM34",
+      "title": "the account and craft commands write the project's access",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/accounts_switch.go",
+          "internal/cli/accounts_alias.go",
+          "internal/cli/accounts_rm.go",
+          "internal/cli/accounts_craft.go",
+          "internal/cli/settings_set.go",
+          "internal/cli/init_policy_publish.go",
+          "internal/cli/accounts_access_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM35",
+      "title": "the keys plan says what this plan replaces",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/keys-through-service/README.md",
+          "docs/keys-through-service/reconciliation.md",
+          "docs/keys-through-service/implementation-plan.md",
+          "docs/keys-through-service/implementation-plan.graph.json"
         ]
       }
     },
@@ -789,6 +844,31 @@
       "task": "CM33",
       "needs": "I1",
       "reason": "it rewrites the layer release 1 kept readable; release 1 must be cut first"
+    },
+    {
+      "task": "CM34",
+      "needs": "CM2",
+      "reason": "it writes the block CM2 adds"
+    },
+    {
+      "task": "CM34",
+      "needs": "CM5",
+      "reason": "it calls the record store CM5 adds"
+    },
+    {
+      "task": "I1",
+      "needs": "CM34",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "CM31",
+      "needs": "CM28",
+      "reason": "one file: internal/cli/update_in_flight.go"
+    },
+    {
+      "task": "C1",
+      "needs": "CM35",
+      "reason": "the keys plan must say what this contract replaces before a side is written against it"
     },
     {
       "task": "CM8",
@@ -1135,7 +1215,7 @@
       "change": "R-pool-members",
       "contract": "C1",
       "raised_by": "CM4",
-      "reason": "if the cascade's members for one repository cannot be said as a pool of named credentials",
+      "reason": "if the access record must name the cascade's pool's members one by one for the service to narrow by it",
       "affects": [
         "CM5",
         "CM6"

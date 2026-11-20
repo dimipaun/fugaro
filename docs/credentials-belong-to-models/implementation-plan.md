@@ -64,30 +64,52 @@ kept readable.
 | A run in flight is disturbed in nothing it holds, and the update says the one line it owes | CM19 `TestUpdateLeavesARunInFlightRunning`, `TestTheInFlightLineForAccess` |
 | Nothing reads `agent.auth` after release 1 but the migration and the retired-key notice | I1 `TestNoReaderOfTheRetiredAuth` |
 | The run record's `model_basis`, `served_by` and `credential` are byte for byte what they were for a migrated configuration, a run the service serves included (F25) | CM10 `TestTheRecordIsUnchangedForAMigratedRun`, `TestServedByIsAbsentWhereTheServiceServes` |
-| An older image reads the published policy exactly as before, and a repository not yet migrated runs as its file says (R3, R15) | CM2 `TestTheRepoBlockIsHeldBackForAnOlderImage`, CM4 `TestTheProjectLevelCraftsAreNotRewritten`, C1 `TestTheLegacyRuleAnswersEveryOldAuthValue` |
+| An older image reads the shared node exactly as before, a service not yet redeployed never meets a member it refuses, and a repository not yet migrated runs as its file says (R3, R15) | CM32 `TestTheSharedNodeCarriesNoMarker`, CM4 `TestTheProjectLevelCraftsAreNotRewritten`, CM2 `TestTheRepoBlockWaitsForTheDeployedService`, C1 `TestTheLegacyRuleAnswersEveryOldAuthValue` |
+| A run that names an admitted account with `--token`, and a walk to one, are served as today (F34, F35) | CM5 `TestTheRecordNamesEveryAccountTokenMayName`, CM11 `TestAChosenAccountIsNeverWalked` |
+| A project-level change never leaves a repository's record stale (F34) | CM34 `TestAProjectChangeRewritesEveryRepositorysRecord` |
 | Only a pool `update` wrote for a serving cascade is served a subscription with the spread switch off (D3044 as amended) | CM32 `TestAnUnmarkedPoolStillObeysTheSwitch`, `TestTheMarkerIsRefusedWhereNoCascadeServes` |
 | An old-header call is never served more than the access record names (F30) | CM6 `TestAnOldHeaderIsNeverServedBeyondTheAccessRecord` |
 | An installation at the previous release converges through `fugaro update` alone | I1 `TestAnInstallationAtThePreviousReleaseConverges` |
 | Release 2 never leaves a repository with neither a token nor a service that serves it | CM28 `TestALaunchNotServedIsRefusedWithTheFix`, `TestAnOlderImageIsRefusedAtLaunch` |
 
-## 3. The contract
+## 3. The contract, and the task before it
+
+### CM35: the keys plan says what this plan replaces
+- Acceptance: `docs/keys-through-service/` says, in its README, reconciliation, plan and graph,
+  that KS6, KS9 and KS10 are withdrawn and replaced by this plan's CM16 and CM15, CM6, and CM9;
+  that KS13 waits on this plan's I1 in their place; that C1's second fact is not needed (F20);
+  and that KS3's "under every auth" clause is CM6's; its graph still reads; `docs/status.md`
+  is not touched.
+- Files: `docs/keys-through-service/README.md`, `docs/keys-through-service/reconciliation.md`,
+  `docs/keys-through-service/implementation-plan.md`,
+  `docs/keys-through-service/implementation-plan.graph.json`.
+- Interfaces: none.
+- Tests: the documents tests.
+- Command: `go test ./internal/cli/ -run Docs -count=1 && fugaro plan graph --plan docs/keys-through-service/implementation-plan.md`.
+- Red step: the keys plan's graph has KS13 waiting on KS10.
+- Depends on: none. It is the first task of this plan to launch.
+- Commit: `docs(keys-through-service): KS6, KS9 and KS10 are replaced by credentials-belong-to-models (CM35)`.
+- Reviewer tier: standard.
 
 ### C1: the access contract
 - Acceptance: one place declares what every side of this plan shares. (a) The question: for a
-  stage, the access (a credential or a pool), each member's name, type and serving path, and an
-  interface `Resolver` that answers it. (b) Which layers the resolver reads: for a migrated
-  repository (its per-repository block exists) the project's blocks and never the file's own
-  `access`; for one not migrated, the access its file's retired keys mean (R3). (c) That rule
-  itself, as a real function and not a stub: the access each old auth value, stage account and
-  file `access` means. It is the migration's rule, and the contract holds it because the
-  migration, the launch and the runner must give one answer. (d) The new record
-  `creds/repoaccess/<slug>`: its members, its version and its path (R4). (e) The header a new
-  runner declares its craft in, and its validation (R5). (f) The registry entry's new member
-  (R6). (g) The per-repository craft block's key in the installation's config and in the
-  per-repository node, and that node's new version (F9, F29). (h) One recorded fact per
-  repository, "its credentials are served", and the job entry a run reads it from (F20); CM15
-  records it. A stub resolver answers (c) alone, so every side compiles and behaves as today
-  until its real side lands; a stub accessor gives the runner the same.
+  stage, and for the task's grade where it names one (F38), the access (a credential or a pool),
+  each member's name, type and serving path, whether the credential was chosen or is the
+  project's default account (F35), and an interface `Resolver` that answers it. (b) How a run
+  learns its access: the name of the entry the launcher puts the resolved answer under in the
+  execution's environment, and its encoding; a run with no such entry applies the legacy rule
+  (R15). (c) That rule itself, as a real function and not a stub: the access each old auth
+  value, stage account, file `access` and grade `access` means. It is the migration's rule, and
+  the contract holds it because the migration, the launch and the runner must give one answer.
+  (d) The new record `creds/repoaccess/<slug>`: what a repository's runs may be served by, per
+  craft and grade, the subscription credentials `--token` may name, and whether a pool carries
+  the cascade's marker; its version and its path; and the statement that a run's reach is the
+  union over its crafts (R4). (e) The header a new runner declares its craft in, and its
+  validation (R5). (f) The registry entry's new member (R6). (g) The per-repository craft
+  block's key in the installation's config and in the per-repository node (F9). (h) One recorded
+  fact per repository, "its credentials are served", and the job entry a run reads it from
+  (F20); CM15 records it. A stub resolver answers (c) alone, so every side compiles and behaves
+  as today until its real side lands; a stub accessor gives the runner the same.
   The names live in the package that needs them, because `internal/gateway` cannot import
   `internal/credsvc` and `internal/config` imports neither; that is why it is past five files.
 - Files: `internal/craft/access.go` (new), `internal/craft/legacy.go` (new, the rule of (c)),
@@ -102,15 +124,15 @@ kept readable.
   `TestTheGatewayAndTheServiceSpellTheHeaderAlike`.
 - Command: `go test ./internal/craft/ -run 'TheLegacyRule|TheStubAnswers' -count=1 && go test ./internal/creds/ -run TheRecordNames -count=1 && go test ./internal/credsvc/ -run 'TheAccessHeader|SpellTheHeaderAlike' -count=1`.
 - Red step: the header's name equals `X-Fugaro-Auth-Mode`.
-- Depends on: none.
+- Depends on: CM35 (kept: the keys plan must say what this contract replaces before a side is written
+  against it).
 - Commit: `craft: the access contract (C1, R1, R4, R5)`.
 - Reviewer tier: opus, mandatory independent review (`fugaro review --pr N`) before any side is
   written against it: it is a contract over credentials and a wire.
 
 ## 4. Slices and tasks
 
-**Release 1. Slice 1, the question and its answer:** CM1 to CM3. **Slice 2, the migration and the
-record:** CM4, CM5. **Slice 3, the service and the run:** CM6 to CM12. **Slice 4, the launch and
+**Release 1. Slice 1, the question and its answer:** CM1 to CM3. **Slice 0, the plan before it:** CM35. **Slice 2, the migration and the record:** CM4, CM5, CM34. **Slice 3, the service and the run:** CM6 to CM12. **Slice 4, the launch and
 the cloud side:** CM13 to CM15. **Slice 5, the readers that judge and report:** CM16 to CM20, CM23. The cascade's pool, CM32, is
 part of slice 2. **Slice 6, the console and the checks:** CM21, CM22. **Integration:** I1. **Slice 7, the
 documents:** CM24 to CM27.
@@ -122,7 +144,8 @@ documents:** CM24 to CM27.
   one as the first declared credential, in the order the project lists them, that reaches the
   model and admits the repository, and nothing after it; Vertex only where an access or a pool
   names it; an unset access nothing declared reaches is a problem that names the two fixes,
-  declare a credential or write `access: vertex` (D3041 as amended, R2); an access whose
+  declare a credential or write `access: vertex` (D3041 as amended, R2); "unset" is judged after
+  a craft has followed the craft it inherits from (`config.CraftParent`); an access whose
   credential cannot reach its craft's model is a problem at the key that wrote it. It imports
   nothing of the contract; I1 puts it behind C1's interface.
 - Files: `internal/craft/reach.go` (new), `internal/craft/reach_test.go` (new).
@@ -140,17 +163,19 @@ documents:** CM24 to CM27.
 
 ### CM2: the project's per-repository crafts
 - Acceptance: the installation's config accepts a crafts block on a repository's entry, and the
-  per-repository node carries it under a new version of that node (F29); a repository's block may
-  only select among credentials and pools the project holds; the block is published only where
-  every job image of that repository is at or after release 1, and is held back with one line
-  elsewhere, the node left exactly as it was (R15); a reader of this release reads both versions.
+  per-repository node carries it as a new member; a repository's block may only select among
+  credentials and pools the project holds; `fugaro update` writes the node's member only once
+  the deployed credentials service is at or after release 1, deploying it first as it already
+  does, by the guard the bundle's writers use, and holds the member back with one line where it
+  cannot, the node left exactly as it was (F33, R15); the CLI of this release reads a node with
+  the member and one without.
 - Files: `internal/localcfg/localcfg.go`, `internal/projectpolicy/policy.go`,
   `internal/cli/project_cmd.go` (the per-repository node's writer),
   `internal/localcfg/repo_crafts_test.go` (new), `internal/projectpolicy/repo_crafts_test.go` (new).
 - Interfaces: consumes C1 (the block's key).
 - Tests: `TestARepositorysCraftsAreRead`, `TestARepositorysCraftNamesOnlyWhatTheProjectHolds`,
-  `TestTheRepoBlockIsHeldBackForAnOlderImage`, `TestAnOlderNodeVersionStillDecodes`.
-- Command: `go test ./internal/localcfg/ -run ARepositorysCraft -count=1 && go test ./internal/projectpolicy/ -run 'TheRepoBlock|AnOlderNodeVersion' -count=1 && go test ./internal/cli/ -run 'RepoPolicy|ProjectPolicy' -count=1`.
+  `TestTheRepoBlockWaitsForTheDeployedService`, `TestANodeWithoutTheBlockStillDecodes`.
+- Command: `go test ./internal/localcfg/ -run ARepositorysCraft -count=1 && go test ./internal/projectpolicy/ -run 'ANodeWithoutTheBlock|DecodeRepo' -count=1 && go test ./internal/cli/ -run 'TheRepoBlockWaits|RepoPolicy|ProjectPolicy' -count=1`.
 - Red step: a crafts block on a repository's entry is refused as an unknown key.
 - Depends on: C1.
 - Commit: `config: the project names a repository's crafts (CM2, D3042, F9)`.
@@ -161,12 +186,13 @@ documents:** CM24 to CM27.
   key it still writes (R3), with the path and the sentence a person reads; the keys still decode
   and still validate; `config.Scopes` marks them retired. It changes no reader.
 - Files: `internal/config/retired.go` (new), `internal/config/retired_test.go` (new),
-  `internal/config/scope.go`.
+  `internal/config/scope.go`, `internal/config/example.yaml` (the template `fugaro config example`
+  prints stops writing `auth`).
 - Interfaces: produces the list of retired keys and `config.RetiredKeyNotes`, read by CM17, CM18, CM19
   and CM20.
 - Tests: `TestEveryRetiredKeyIsNamedWhereItIsWritten`, `TestAFileWithNoRetiredKeySaysNothing`,
-  `TestARetiredKeyStillDecodes`.
-- Command: `go test ./internal/config/ -run 'RetiredKey|NoRetiredKey|Scope' -count=1`.
+  `TestARetiredKeyStillDecodes`. `TestTheExampleWritesNoRetiredKey`.
+- Command: `go test ./internal/config/ -run 'RetiredKey|NoRetiredKey|TheExampleWrites|Scope' -count=1`.
 - Red step: a file that writes `agent.auth` yields no note.
 - Depends on: none.
 - Commit: `config: the retired keys, named where they are written (CM3, D3043, R3)`.
@@ -180,9 +206,10 @@ documents:** CM24 to CM27.
   repository on Vertex, written or defaulted, gets an explicit `access: vertex` (D3041 as
   amended); each repository's crafts are written, in the project's per-repository block and
   nowhere an older image reads (R15), to what its runs go out on today, read from the
-  configuration a run checks out (`deploymentConfig`), the layer's inherited value included; a
-  file's own access is moved as written (D3042). It writes only what a craft does not already
-  say, is idempotent, prints one line per repository, and names what it could not convert on
+  configuration a run checks out (`deploymentConfig`), the layer's inherited value included; a file's
+  own access, a grade's included, is moved as written (D3042, F38); each written access carries
+  whether its account was chosen or was the project's default (F35). It writes only what a craft
+  does not already say, is idempotent, prints one line per repository, and names what it could not convert on
   every run. It asks nothing and fails no update.
 - Files: `internal/cli/init_craft_migrate.go`, `internal/cli/init_access_migrate.go` (new),
   `internal/cli/init_access_migrate_test.go` (new), `internal/cli/init.go`,
@@ -203,17 +230,19 @@ documents:** CM24 to CM27.
 
 ### CM5: the access record is written beside the old one
 - Acceptance: where `fugaro update` writes `creds/repoauth/<slug>` it also writes
-  `creds/repoaccess/<slug>`: the credentials and pools that repository's crafts resolve to, and
-  nothing else; the old record is derived from the same answer and no longer from the file's key,
-  so a file with the key removed leaves the old record as it was (F27); a plan-only run writes
-  neither; a failed write warns and fails nothing (R4).
+  `creds/repoaccess/<slug>` with what C1 (d) says: per craft and grade the access the project
+  wrote or, where it wrote none, every declared credential the project admits for that
+  repository; the subscription credentials `--token` may name; and the cascade's marker for a
+  pool that carries it (R4 as amended, F34); the old record is derived from the same answer and
+  no longer from the file's key, so a file with the key removed leaves the old record as it was
+  (F27); a plan-only run writes neither; a failed write warns and fails nothing.
 - Files: `internal/creds/repoaccess_store.go` (new), `internal/creds/repoaccess_store_test.go`
   (new), `internal/cli/update_repoauth.go`, `internal/cli/update_repoaccess_test.go` (new).
 - Interfaces: consumes C1 (the record).
-- Tests: `TestUpdateWritesBothRecords`, `TestTheAccessRecordNamesWhatTheCraftsResolveTo`,
-  `TestTheOldRecordSurvivesTheKeysRemoval`, `TestAPlanWritesNeitherRecord`,
-  `TestARecordOfAnotherVersionIsRefused`.
-- Command: `go test ./internal/creds/ -run 'RepoAccess|ARecordOfAnotherVersion' -count=1 && go test ./internal/cli/ -run 'UpdateWritesBothRecords|TheAccessRecordNames|TheOldRecordSurvives|APlanWritesNeither|RepoAuth' -count=1`.
+- Tests: `TestUpdateWritesBothRecords`, `TestTheAccessRecordNamesWhatARunMayBeServedBy`,
+  `TestTheRecordNamesEveryAccountTokenMayName`, `TestTheOldRecordSurvivesTheKeysRemoval`,
+  `TestAPlanWritesNeitherRecord`, `TestARecordOfAnotherVersionIsRefused`.
+- Command: `go test ./internal/creds/ -run 'RepoAccess|ARecordOfAnotherVersion' -count=1 && go test ./internal/cli/ -run 'UpdateWritesBothRecords|TheAccessRecordNames|TheRecordNamesEveryAccount|TheOldRecordSurvives|APlanWritesNeither|RepoAuth' -count=1`.
 - Red step: `update` writes no `repoaccess` node.
 - Depends on: C1.
 - Commit: `update: the access record, beside the auth record (CM5, R4)`.
@@ -223,7 +252,7 @@ documents:** CM24 to CM27.
 - Acceptance: a call that carries the new header is narrowed to what the access record names for
   the declared craft, and to nothing the record does not name; a call that carries the old header
   is narrowed by the old record as today and then, where an access record exists, to nothing that
-  record does not name (F30); a call that carries neither, where a record exists, is refused; a
+  record does not name (F30); a call that carries neither header is answered as today (an older image's); a
   provider credential is offered wherever the record names it (the clause the keys plan's KS3
   planned "under every auth", F21); the review class is untouched (R11); every refusal writes one
   audit line and names no value. It is past five files because one read has that many wrappers.
@@ -232,9 +261,9 @@ documents:** CM24 to CM27.
   `internal/credsvc/refusallog.go`, `internal/credsvc/cascade_access_test.go` (new).
 - Interfaces: consumes C1 (the record, the header).
 - Tests: `TestACallIsNeverServedBeyondItsRecord`, `TestAnOlderImagesCallIsNarrowedByTheOldRecord`,
-  `TestAnOldHeaderIsNeverServedBeyondTheAccessRecord`, `TestACallThatDeclaresNothingIsRefused`,
+  `TestAnOldHeaderIsNeverServedBeyondTheAccessRecord`, `TestACallWithNoHeaderIsAnsweredAsToday`,
   `TestTheAccessRefusalWritesOneAuditLine`, `TestAReviewCallerIsUnchanged`.
-- Command: `go test ./internal/credsvc/ -run 'NeverServedBeyond|AnOlderImagesCall|AnOldHeaderIsNever|DeclaresNothing|OneAuditLine|AReviewCallerIsUnchanged|Cascade|AuthMode' -count=1`.
+- Command: `go test ./internal/credsvc/ -run 'NeverServedBeyond|AnOlderImagesCall|AnOldHeaderIsNever|NoHeaderIsAnswered|OneAuditLine|AReviewCallerIsUnchanged|Cascade|AuthMode' -count=1`.
 - Red step: a call with the new header is refused as carrying no auth mode.
 - Depends on: C1.
 - Commit: `credsvc: a call is narrowed by its repository's access (CM6, R4, R5)`.
@@ -257,22 +286,25 @@ documents:** CM24 to CM27.
 - Reviewer tier: opus, mandatory independent review.
 
 ### CM8: the run's model path follows its access
-- Acceptance: the run resolves each stage's access through C1's resolver and builds its gateway
-  from the answer: a run has a gateway whatever its credentials are, and reaches the service
-  wherever its job carries the "credentials served" fact; a subscription the job is not served
-  for keeps today's path for this release (D3047); the consent switch is no longer required and
-  the allow-list refusal stays (D3045); the review class is asked by its own name (R11);
-  `cascade` is no longer refused for a local invocation, which never reaches the service (D3053);
-  a usage-limit failure switches account where the stage's access is one subscription credential
-  and not a pool, as today (F25). Every message it prints is rewritten (the brief's item 3).
+- Acceptance: the run takes each stage's access from the entry its launcher put in the
+  execution's environment, and where there is none applies C1's legacy rule (R15); it builds its
+  gateway from the answer: a run has a gateway whatever its credentials are, and reaches the
+  service wherever its job carries the "credentials served" fact; a subscription the job is not
+  served for keeps today's path for this release (D3047); the consent switch is no longer
+  required and the allow-list refusal stays (D3045); the review class is asked by its own name
+  (R11); `cascade` is no longer refused for a local invocation, which never reaches the service
+  (D3053); a usage-limit failure switches account as today (F25, F35); nothing the run works out
+  for itself widens what the service serves it. Every message it prints is rewritten, the halt
+  reasons included (the brief's item 3).
 - Files: `internal/runner/routing.go`, `internal/runner/gateway.go`, `internal/runner/runner.go`,
-  `internal/runner/access_resolve.go` (new), `internal/runner/access_resolve_test.go` (new), and
-  the one call of `subscriptionUsageLimit` in `internal/runner/accountchoice.go`.
+  `internal/runner/halt.go`, `internal/runner/access_resolve.go` (new),
+  `internal/runner/access_resolve_test.go` (new), and the one call of `subscriptionUsageLimit` in
+  `internal/runner/accountchoice.go`. It is past five files for the messages.
 - Interfaces: consumes C1; sets the upstream members CM7 adds and the environment member CM9 adds.
 - Tests: `TestEveryAccessHasAGateway`, `TestNoSwitchNoWiderReach`,
   `TestASubscriptionNotServedKeepsItsPath`, `TestAReviewRunIsAskedByItsOwnName`,
-  `TestALocalInvocationNeverReachesTheService`.
-- Command: `go test ./internal/runner/ -run 'EveryAccessHasAGateway|NoSwitchNoWiderReach|ASubscriptionNotServed|AReviewRunIsAsked|ALocalInvocation|Routing|ServiceAuth' -count=1`.
+  `TestALocalInvocationNeverReachesTheService`. `TestARunWithNoHandedAccessAppliesTheLegacyRule`.
+- Command: `go test ./internal/runner/ -run 'EveryAccessHasAGateway|NoHandedAccess|NoSwitchNoWiderReach|ASubscriptionNotServed|AReviewRunIsAsked|ALocalInvocation|Routing|ServiceAuth' -count=1`.
 - Red step: a run whose coder resolves to a subscription has no gateway where it is served.
 - Depends on: C1; CM7 and CM9 (kept: it sets members those tasks add to shared structs);
   CM11 (kept: one file, `accountchoice.go`). Not launched before always a budget's AB1b has merged.
@@ -319,7 +351,9 @@ documents:** CM24 to CM27.
 - Reviewer tier: standard.
 
 ### CM11: the run's account rules, by credential
-- Acceptance: the account walk applies where a stage's access is one subscription credential;
+- Acceptance: the account walk applies where a stage's access is one subscription credential
+  that is the project's default account and was not chosen, the two conditions it has today
+  (F35);
   the shared project job's account check, the direct model call and a pool member's "held here"
   read the credential's type and never an auth word; a subscription member of a pool marked as
   the cascade's is not skipped for the spread switch (CM32); the layers the runner hands the
@@ -329,8 +363,8 @@ documents:** CM24 to CM27.
   `internal/runner/directcall.go`, `internal/runner/poolchoice.go`, with their tests.
 - Interfaces: consumes C1 (the accessor, the layers rule) and CM32's marker.
 - Tests: `TestTheAccountWalkFollowsTheCredential`, `TestAVertexMemberIsHeldWhereTheStageIsVertex`,
-  `TestTheProjectJobsAccountIsCheckedForASubscription`.
-- Command: `go test ./internal/runner/ -run 'TheAccountWalkFollows|AVertexMemberIsHeld|TheProjectJobsAccount|AccountChoice|PoolChoice|DirectCall' -count=1`.
+  `TestTheProjectJobsAccountIsCheckedForASubscription`. `TestAChosenAccountIsNeverWalked`.
+- Command: `go test ./internal/runner/ -run 'TheAccountWalkFollows|AChosenAccount|AVertexMemberIsHeld|TheProjectJobsAccount|AccountChoice|PoolChoice|DirectCall' -count=1`.
 - Red step: the walk is skipped for a craft on a subscription in a run whose file names no auth.
 - Depends on: C1; CM32 (kept: it reads a member CM32 adds to a shared struct). Not launched before
   the keys plan's KS5 has merged (both edit `poolchoice.go`).
@@ -345,9 +379,10 @@ documents:** CM24 to CM27.
   rules gain the member, deployed by `update` as the rules are, and a runner that meets rules
   without it drops the member and writes the rest, as it does for `recipe`.
 - Files: `internal/budget/model.go`, `internal/budget/registry.go`,
-  `internal/budget/rules/rules.json.tmpl`, `internal/runner/budget_session.go`,
-  `internal/watch/build.go`, `internal/watch/json.go`, `internal/cli/budget.go`, with their
-  tests. It is past five files because one member is printed in that many places.
+  `internal/budget/rules/rules.json.tmpl`, `internal/budget/lease.go` and `session.go` (their
+  messages), `internal/runner/budget_session.go`, `internal/watch/build.go`,
+  `internal/watch/json.go`, `internal/cli/budget.go`, with their tests. It is past five files
+  because one member is printed in that many places.
 - Interfaces: consumes C1 (the member's name, the accessor).
 - Tests: `TestANewRunWritesNoAuth`, `TestWatchPrintsADashAndTheAccess`,
   `TestNotionalIsOneSubscriptionOnly`, `TestTheRulesAcceptTheNewMember`,
@@ -366,7 +401,8 @@ documents:** CM24 to CM27.
   they were for every migrated configuration, so no `.tf` file changes (R12); the old function
   stays until I1.
 - Files: `internal/infra/spec.go`, `internal/infra/access_spec.go` (new),
-  `internal/infra/access_spec_test.go` (new), `internal/infra/spec_test.go`.
+  `internal/infra/access_spec_test.go` (new), `internal/infra/spec_test.go`,
+  `internal/infra/retire.go` (its message).
 - Interfaces: consumes C1; produces `infra.ServiceServes`, called by CM14, CM15 and CM18.
 - Tests: `TestTheMountsAreUnchangedForAMigratedRepository` (one case per old auth value and the
   mix), `TestAVertexOnlyRepositoryIsNotServed`, `TestTheTfvarsAreUnchanged`.
@@ -378,18 +414,22 @@ documents:** CM24 to CM27.
 
 ### CM14: the launch, by access
 - Acceptance: `fugaro run` decides the account, the job variant and whether the job is told about
-  the service from the crafts' access; `--token` names a subscription credential for the run's
-  coder, only among those the project admits for the repository, and is refused otherwise with
-  the list (D3049); the launch refusals that named the cascade's switch are gone and the
-  allow-list one stays (D3045); `fugaro run --attach` phrases its route by credential.
-- Files: `internal/cli/run.go`, `internal/cli/run_attach.go`,
+  the service from the crafts' access; it resolves each craft's and grade's access and puts the
+  answer in the execution's environment under C1's entry, for a migrated repository, and puts
+  nothing there for one that is not (R15); `--token` names a subscription credential for the
+  run's coder, only among those the project admits for the repository, and is refused otherwise
+  with the list (D3049); the launch refusals that named the cascade's switch are gone and the
+  allow-list one stays, and removing the routing block is no longer refused for the cascade's
+  sake (D3045); `fugaro run --attach` phrases its route by credential. It changes no help
+  string; CM23 does.
+- Files: `internal/cli/run.go`, `internal/cli/run_attach.go`, `internal/cli/project_routing.go`,
   `internal/cli/run_access_test.go` (new), and the launch tests that pin the old messages
   (`cascade_test.go`, `run_credentials_env_test.go`, `cascade_stage_accounts_test.go`), which no
   other task of its level edits.
 - Interfaces: consumes C1 and CM13's `infra.ServiceServes`.
 - Tests: `TestTheLaunchFollowsTheCraftsAccess`, `TestTokenNamesAnAdmittedCredential`,
-  `TestTokenOutsideTheAdmittedListIsRefused`, `TestNoLaunchRefusalNamesTheSwitch`.
-- Command: `go test ./internal/cli/ -run 'TheLaunchFollowsTheCrafts|TokenNamesAnAdmitted|TokenOutsideTheAdmitted|NoLaunchRefusalNames|Cascade|RunCredentialsEnv' -count=1`.
+  `TestTokenOutsideTheAdmittedListIsRefused`, `TestNoLaunchRefusalNamesTheSwitch`. `TestTheLauncherHandsTheRunItsAccess`, `TestAnUnmigratedRepositoryIsHandedNothing`.
+- Command: `go test ./internal/cli/ -run 'TheLaunchFollowsTheCrafts|TheLauncherHandsTheRun|AnUnmigratedRepositoryIsHanded|TokenNamesAnAdmitted|TokenOutsideTheAdmitted|NoLaunchRefusalNames|Cascade|RunCredentialsEnv' -count=1`.
 - Red step: a launch reads `agent.auth` from the checkout to choose the job.
 - Depends on: C1; CM13 (kept, behaviour: it decides whether a job is told about the service, and
   a stub there would launch a job with no credential).
@@ -440,7 +480,7 @@ documents:** CM24 to CM27.
 ### CM17: validate, craft ls, models use and the enterprise code
 - Acceptance: `fugaro validate` judges budget, providers, routing and crafts by CM16's checks and
   prints CM3's notes for each retired key; `fugaro craft ls` prints what each craft resolves to,
-  with "by reach" where no one wrote it; `fugaro models use` and `ee/ab` admit a model by reach.
+  with "by reach" where no one wrote it; `fugaro models use` and `ee/ab` admit a model by reach. It changes no help string; CM23 does.
 - Files: `internal/cli/validate.go`, `internal/cli/craft.go`, `internal/cli/models_use.go`,
   `ee/ab/admit.go`, `ee/ab/launch.go`, with their tests.
 - Interfaces: consumes CM16 and CM3.
@@ -457,7 +497,7 @@ documents:** CM24 to CM27.
 - Acceptance: every doctor check that named a repository's auth reads the crafts: the brokering
   checks (`flipServes`, `flipNotServed`, `doctorModelKeyInAgent`), the account checks and the
   routing checks; doctor names each retired key, each repository whose subscription is not yet
-  served and what makes it served (R8), and an image older than the gate (D3052).
+  served and what makes it served (R8), and an image older than the gate (D3052); it does not ask for an owner for the cascade's pool (F36).
 - Files: `internal/cli/doctor.go`, `internal/cli/doctor_brokering.go`,
   `internal/cli/project_status.go`, `internal/cli/doctor_access_test.go` (new).
 - Interfaces: consumes CM3, CM13 and the helpers CM17 changes in `validate.go`.
@@ -500,7 +540,9 @@ documents:** CM24 to CM27.
   at this folder (F23); the per-repository craft keys have rows; the three schemas keep the
   retired keys with a description that says so, and describe the new block.
 - Files: `internal/settings/registry.go`, `schemas/settings.schema.json`,
-  `schemas/fugaro.schema.json`, `schemas/project-layer.schema.json`, `schemas/schemas_test.go`.
+  `schemas/fugaro.schema.json`, `schemas/project-layer.schema.json`,
+  `schemas/result.schema.json` and `schemas/task.schema.json` (two descriptions that name the
+  auth mode; no member changes), `schemas/schemas_test.go`. It is past five files for those.
 - Interfaces: consumes CM2 and CM3.
 - Tests: `TestTheRetiredRowsSaySo`, `TestTheSchemasDescribeTheRepoCrafts`, and the registry's
   own coverage test.
@@ -515,8 +557,9 @@ documents:** CM24 to CM27.
   it on the Live screen in place of the auth column; a document without it, and one whose `auth`
   is `-`, both parse; the scrubber's vocabulary knows the member.
 - Files: `console/src/shared/schema.ts`, `console/src/renderer/screens/live.ts`,
-  `console/tools/scrub-fixture/scrub.ts`, `console/src/source/redact.ts`, and the unit tests and
-  fixtures that hold them.
+  `console/tools/scrub-fixture/scrub.ts`, `console/src/source/redact.ts`,
+  `console/docs/json-contract.md` (which defines `auth` and `notional` by the auth mode), and the
+  unit tests and fixtures that hold them.
 - Interfaces: consumes C1 (the member's name).
 - Tests: the console's `schema`, `live` and `scrub-vocabulary` unit tests, with one new case each.
 - Command: `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 schema live scrub-vocabulary`.
@@ -529,7 +572,8 @@ documents:** CM24 to CM27.
 ### CM22: the live checks, as scripts
 - Acceptance: Checks 800 and 801 exist as one script each, registered where every check script
   is, each printing what it measures and exiting non-zero on a failed row (§8).
-- Files: `scripts/live-checks/check800.sh` (new), `scripts/live-checks/check801.sh` (new),
+- Files: `scripts/live-checks/check800.sh` (new), `scripts/live-checks/check800_test.sh` (new),
+  `scripts/live-checks/check801.sh` (new), `scripts/live-checks/check801_test.sh` (new),
   `scripts/live_checks_test.go`, `docs/gcp-live-checklist.md`.
 - Interfaces: none.
 - Tests: `TestLiveCheckScripts` (the registry of scripts), and the documents test that reads the
@@ -544,40 +588,68 @@ documents:** CM24 to CM27.
 - Owner-run: the scripts themselves, after each release (§8). No agent runs one.
 
 ### CM32: the cascade's pool is served as the cascade
-- Acceptance: a pool may carry a marker that says it is the cascade's (D3044 as amended); the
+- Acceptance: a pool in the installation's config may carry a marker that says it is the
+  cascade's (D3044 as amended); the marker is carried to the service in the access record and
+  never in the shared node, where the pool is published as an ordinary `legacy_open` pool, the
+  publisher's rule that clears `legacy_open` and asks for an owner excepting it (F36, R15); the
   service offers a marked pool's subscription members whatever the spread switch says, admitted
   per repository exactly as the cascade admits them today, and what it offers one repository is
-  what the cascade offered it; a marked pool is published as `legacy_open`; a pool written with
-  the marker by anything but the migration is refused where it is validated for publishing,
-  unless the project's cascade serves today; an unmarked pool obeys the switch as before; the
-  marked pool is published only behind R15's image gate.
+  what the cascade offered it; the marker is refused, where the config is validated, on a pool
+  the migration did not write for a cascade that serves; an unmarked pool obeys the switch as
+  before.
 - Files: `internal/config/craft.go`, `internal/config/craft_cascade_pool_test.go` (new),
-  `internal/credsvc/pool.go`, `internal/credsvc/pool_cascade_test.go` (new).
+  `internal/credsvc/pool.go`, `internal/credsvc/pool_cascade_test.go` (new),
+  `internal/cli/project_cmd.go` (`publishedCraftPools`).
 - Interfaces: produces the marker, read by CM4 and CM11.
 - Tests: `TestAMarkedPoolServesItsSubscriptionsWithSpreadOff`,
   `TestAMarkedPoolOffersWhatTheCascadeOffered`, `TestAnUnmarkedPoolStillObeysTheSwitch`,
-  `TestTheMarkerIsRefusedWhereNoCascadeServes`.
-- Command: `go test ./internal/config/ -run 'MarkedPool|TheMarkerIsRefused|Pools' -count=1 && go test ./internal/credsvc/ -run 'AMarkedPool|AnUnmarkedPool|Pool' -count=1`.
+  `TestTheMarkerIsRefusedWhereNoCascadeServes`. `TestTheCascadesPoolIsPublishedLegacyOpen`, `TestTheSharedNodeCarriesNoMarker`.
+- Command: `go test ./internal/config/ -run 'MarkedPool|TheMarkerIsRefused|Pools' -count=1 && go test ./internal/credsvc/ -run 'AMarkedPool|AnUnmarkedPool|Pool' -count=1 && go test ./internal/cli/ -run 'TheCascadesPoolIsPublished|TheSharedNodeCarriesNoMarker|PublishedCraftPools' -count=1`.
 - Red step: a marked pool's subscription member is skipped with the spread switch off.
 - Depends on: none.
 - Commit: `credsvc: the cascade's pool is served as the cascade (CM32, D3044)`.
 - Reviewer tier: opus, mandatory independent review, with a mutation check that an unmarked pool
   cannot be served a subscription with the switch off.
 
+### CM34: the account and craft commands write the project's access
+- Acceptance: the commands that wrote a retired account key write the access instead:
+  `fugaro accounts switch` (the default account), `accounts alias`, `accounts rm`,
+  `fugaro settings set` of `default_claude_account` or a stage's account, and the policy
+  publish; `fugaro accounts grade set` and `accounts craft set` write the project's config, for
+  one repository where `--repo` names it, and refuse to write an access into a repository's file
+  with the fix (D3042, F38); each of them, after it changes what any repository may be served
+  by, rewrites the access record of every enrolled repository it changes, from the project's
+  config alone (R4, F34), and says which in one line; a coding agent's session is refused these
+  writes as today.
+- Files: `internal/cli/accounts_switch.go`, `internal/cli/accounts_alias.go`,
+  `internal/cli/accounts_rm.go`, `internal/cli/accounts_craft.go`, `internal/cli/settings_set.go`,
+  `internal/cli/init_policy_publish.go`, `internal/cli/accounts_access_test.go` (new). It is past
+  five files because each command is a file.
+- Interfaces: consumes CM2's block and CM5's record store.
+- Tests: `TestAccountsSwitchWritesTheAccess`, `TestGradeSetWritesTheProjectNotTheFile`,
+  `TestAProjectChangeRewritesEveryRepositorysRecord`, `TestTheseWritesAreRefusedInAnAgentSession`.
+- Command: `go test ./internal/cli/ -run 'AccountsSwitchWrites|GradeSetWrites|AProjectChangeRewrites|TheseWritesAreRefused|AccountsCraft|SettingsSet' -count=1`.
+- Red step: `accounts grade set` writes an access into the repository's `fugaro.yaml`.
+- Depends on: CM2 and CM5 (kept: it writes the block and calls the store they add).
+- Commit: `accounts: the commands write the project's access and its records (CM34, R4)`.
+- Reviewer tier: opus, mandatory independent review.
+
 ### CM23: the help texts and the CLI reference
 - Acceptance: no command's help names `agent.auth` or a run by its auth (`budget preview`,
-  `runs stats`, `secrets ls`, `setup`, `run --token`); the generated reference page is
-  regenerated.
+  `runs stats`, `secrets ls`, `setup`, `run --token`, `models use`); it is the one task that
+  rewords a help string, and it regenerates the reference page once, in the same pull request,
+  as `TestCliReferenceIsCurrent` requires (F39).
 - Files: `internal/cli/budget_preview.go`, `internal/cli/runs_stats.go`,
-  `internal/cli/secrets.go`, `internal/cli/setup.go`, `website/content/cli-reference.md`
-  (generated by `go run ./ee/clidoc`).
+  `internal/cli/secrets.go`, `internal/cli/setup.go`, the help strings of `internal/cli/run.go`
+  and `internal/cli/models_use.go`, `website/content/cli-reference.md` (generated by
+  `go run ./ee/clidoc`), `internal/cli/help_access_test.go` (new). It is past five files because
+  help lives in each command's file.
 - Interfaces: none.
 - Tests: `TestNoHelpTextNamesARepositorysAuth` (new, in `internal/cli/help_access_test.go`), and
   the plugin's tests that read commands and flags.
-- Command: `go test ./internal/cli/ -run 'NoHelpTextNames|Docs' -count=1 && go test ./plugin/ -count=1`.
+- Command: `go test ./internal/cli/ -run 'NoHelpTextNames|Docs' -count=1 && go test ./ee/clidoc/ -run CliReferenceIsCurrent -count=1 && go test ./plugin/ -count=1`.
 - Red step: `fugaro run --help` says "whose agent.auth is oauth".
-- Depends on: CM14 and CM17 (kept: they change help strings in `run.go` and `models_use.go`,
-  and the reference is generated once, from all of them).
+- Depends on: CM14 and CM17 (kept: one file each, `run.go` and `models_use.go`).
 - Commit: `cli: no help text is phrased by a repository's auth (CM23)`.
 - Reviewer tier: standard.
 
@@ -602,7 +674,7 @@ documents:** CM24 to CM27.
 - Command: `go build ./... && go vet ./... && go test ./internal/config/ -run NoReaderOfTheRetiredAuth -count=1 && go test ./internal/cli/ -run 'AnInstallationAtThePreviousRelease|EveryServedRun|UpdateLeavesARunInFlightRunning' -count=1 && go test ./internal/e2e/ -run Update -count=1`.
 - Red step: the guard test finds a reader.
 - Depends on: CM1, CM2, CM4 to CM19, CM21 (the console's parser is held to the document the CLI now
-  prints, by the parity fixture) and CM32.
+  prints, by the parity fixture), CM32 and CM34.
 - Commit: `access: the stubs go and no reader of the auth mode is left (I1)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -652,7 +724,8 @@ documents:** CM24 to CM27.
   craft resolves to, the retired keys offered as a diff, the repositories whose subscription is
   not yet served); the website's summary line is added.
 - Files: `docs/project-claude-accounts.md`, `docs/design/mixed-credentials.md`,
-  `docs/design/agent-env.md`, `docs/project-layer.md`, `README.md`, the release's notes under
+  `docs/design/agent-env.md`, `docs/design/project-secrets.md`, `docs/design/v1.md`,
+  `docs/release.md`, `docs/project-layer.md`, `README.md`, the release's notes under
   `docs/releases/`, `website/data/release-summaries.yaml`, and the tests
   `docs_mixed_credentials_test.go`, `docs_usage_limit_switch_test.go`,
   `docs_project_named_oauth_tokens_test.go`, `docs_project_layer_test.go`. It is past five files
@@ -711,8 +784,8 @@ documents:** CM24 to CM27.
 - Reviewer tier: opus, mandatory independent review.
 
 ### CM29: release 2: the retired keys of a file and a layer are rejected
-- Acceptance: a repository's file that writes `agent.auth`, `agent.oauth_token` or a craft's
-  `access` is rejected with the fix, the removal `fugaro update` offers as a diff; a project
+- Acceptance: a repository's file that writes `agent.auth`, `agent.oauth_token`, a craft's `access`
+  or a grade's `access` is rejected with the fix, the removal `fugaro update` offers as a diff; a project
   layer that writes the key is rejected with the fix, `fugaro update`, which rewrites it (CM33);
   the rule that read an unmigrated repository from its file's keys is deleted with them (R3); the
   two schemas lose the keys and keep `version` 1 (D3052); CM28's image gate is what keeps an
@@ -728,6 +801,9 @@ documents:** CM24 to CM27.
 - Red step: a file that writes `agent.auth` validates.
 - Depends on: I1; CM28 (kept, behaviour: its gate must exist before a file may lose the key).
   **Not launched before release 1 is cut.**
+- Owner-run: before this task merges, the removal `fugaro update` offers for this repository's
+  own `fugaro.yaml`, which writes `auth: api-key`, is committed by the owner; the task's pull
+  request says so and no agent commits it.
 - Commit: `config: agent.auth is rejected, with the fix (CM29, D3043, D3052)`.
 - Reviewer tier: standard.
 
@@ -756,13 +832,15 @@ documents:** CM24 to CM27.
   old record that exists, and refuses it where none does; a new runner never sends the old
   header. The old header's parser stays for one more release (§10).
 - Files: `internal/cli/update_repoauth.go`, `internal/cli/update_repoaccess_test.go`,
-  `internal/gateway/service.go`, `internal/gateway/gateway.go`, `internal/credsvc/cascade.go`.
+  `internal/cli/update_in_flight.go`, `internal/gateway/service.go`,
+  `internal/gateway/gateway.go`, `internal/credsvc/cascade.go`.
 - Interfaces: none new.
 - Tests: `TestUpdateWritesOnlyTheAccessRecord`, `TestAnOldRecordIsKeptWhileARunIsInFlight`,
   `TestANewRunnerSendsNoAuthHeader`, `TestTheAccessRefusalWritesOneAuditLine`.
 - Command: `go test ./internal/cli/ -run 'UpdateWritesOnlyTheAccessRecord|AnOldRecordIsKept|RepoAuth' -count=1 && go test ./internal/gateway/ -run ANewRunnerSendsNoAuthHeader -count=1 && go test ./internal/credsvc/ -run 'Cascade|OneAuditLine' -count=1`.
 - Red step: `update` writes both records.
-- Depends on: I1. **Not launched before release 1 is cut.**
+- Depends on: I1; CM28 (kept: one file, `update_in_flight.go`, where its one line is counted).
+  **Not launched before release 1 is cut.**
 - Commit: `update: the auth record is no longer written (CM31, R4)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -794,26 +872,28 @@ its last column (R9, D3051).
 
 | Level | Tasks | Waits outside this plan |
 | --- | --- | --- |
-| 0 | C1, CM1, CM3, CM22, CM32 | For every task of this plan: always a budget's I1 and the keys plan's C1, KS1 to KS5, KS12 and KS19 have merged, and the keys plan's documents say KS6, KS9 and KS10 are withdrawn (O4). CM22: KS17 and AB14 |
-| 1 | CM2, CM5, CM6, CM7, CM9, CM10, CM11, CM12, CM13, CM16, CM21 | CM9: AB1b. CM13: AB15 |
-| 2 | CM4, CM8, CM14, CM15, CM17, CM20 | CM8: AB1b |
-| 3 | CM18, CM19, CM23 | none |
-| 4 | I1 | none |
-| 5 | CM24 | none |
-| 6 | CM25 | none |
-| 7 | CM26 | none |
-| 8 | CM27 | none |
-| 9 | CM28, CM31, CM33 | release 1 is cut; CM28 also the keys plan's KS13 |
-| 10 | CM29 | none |
-| 11 | CM30 | none |
+| 0 | CM35, CM1, CM3, CM22, CM32 | For every task of this plan: always a budget's I1 and the keys plan's C1, KS1 to KS5, KS12 and KS19 have merged (D3051). CM22: KS17 and AB14 |
+| 1 | C1 | none |
+| 2 | CM2, CM5, CM6, CM7, CM9, CM10, CM11, CM12, CM13, CM16, CM21 | CM9: AB1b. CM13: AB15 |
+| 3 | CM4, CM8, CM14, CM15, CM17, CM20, CM34 | CM8: AB1b |
+| 4 | CM18, CM19, CM23 | none |
+| 5 | I1 | none |
+| 6 | CM24 | none |
+| 7 | CM25 | none |
+| 8 | CM26 | none |
+| 9 | CM27 | none |
+| 10 | CM28, CM33 | release 1 is cut; CM28 also the keys plan's KS13, which by CM35 waits on this plan's I1 |
+| 11 | CM29, CM31 | none |
+| 12 | CM30 | none |
 
-**What must be sequential, and why.** C1 before every task that names something of it. CM1, CM2
-and CM32 before CM4 (the migration writes the function's answer into the block, with the
-marker). CM4 before CM19 (the notice prints the migration's answer). Everything before I1. The
-four documents tasks after I1 and one after another (a document must be true of the tree, and
-their tests read each other's documents). Release 2 after release 1 is cut (an image of release
-1 must exist before a path it replaces is removed), and inside it CM28's gate before CM29's
-rejection.
+**What must be sequential, and why.** CM35 before C1 (the keys plan must say what the contract
+replaces). C1 before every task that names something of it. CM1, CM2 and CM32 before CM4 (the
+migration writes the function's answer into the block, with the marker). CM4 before CM19 (the
+notice prints the migration's answer). Every code task I1 joins before I1; CM20 and CM23 are
+not joined by it and only have to merge before release 1 is cut. The four documents tasks after
+I1 and one after another (a document must be true of the tree, and their tests read each other's
+documents). Release 2 after release 1 is cut (an image of release 1 must exist before a path it
+replaces is removed), and inside it CM28's gate before CM29's rejection.
 
 **Edges broken by C1** (each dependent needs a name or a signature, not the other side's code):
 
@@ -830,9 +910,9 @@ rejection.
 | CM14 | CM8 | the fact's name and the header, not the runner |
 | CM21 | CM12 | the registry member's name |
 
-CM1 and CM3 need nothing of the contract: CM1 is a pure function over the config's own types and
-CM3 owns the retired list, so both start beside it. CM4, CM15 and CM17 reach the contract through
-a task they already wait on.
+CM1, CM3 and CM32 need nothing of the contract: CM1 is a pure function over the config's own
+types, CM3 owns the retired list and CM32 its own marker, so they start before it. CM4, CM15,
+CM17 and CM34 reach the contract through a task they already wait on.
 
 **Edges kept**, each with its reason, are on the tasks' "Depends on" lines. The ones a reader
 might expect broken: CM1 to CM4 (a stub's answer written into a config is a wrong config on
@@ -845,54 +925,59 @@ shared structs, which a contract cannot own without owning the file).
 | File | Writers, by level |
 | --- | --- |
 | `internal/config/craft.go`, `internal/credsvc/pool.go` | CM32 (0) only |
-| `internal/cli/init.go` | CM4 (2), CM19 (3), CM33 (9) |
-| `internal/cli/update_repoauth.go` | CM5 (1), CM31 (9) |
-| `internal/credsvc/cascade.go` | CM6 (1), CM31 (9) |
-| `internal/gateway/gateway.go`, `service.go` | CM7 (1), CM31 (9) |
-| `internal/runner/accountchoice.go` | CM11 (1), CM8 (2) |
-| `internal/agent/env.go`, `internal/runner/agentenv.go` | CM9 (1), CM28 (9) |
-| `internal/infra/spec.go` | CM13 (1), I1 (4) |
-| `internal/config/providers.go`, `stage_accounts.go` | CM16 (1), I1 (4) |
-| `internal/config/validate.go` | CM16 (1), CM29 (10) |
-| `internal/config/scope.go`, `retired.go` | CM3 (0), CM29 (10) |
-| `internal/localcfg/localcfg.go` | CM2 (1), CM15 (2), CM30 (11) |
-| `internal/cli/project_cmd.go` | CM2 (1), CM30 (11) |
-| `internal/cli/validate.go`, `models_use.go` | CM17 (2) only; CM18 and CM23 (3) read them |
-| `internal/cli/launch_budget.go`, `recipes_skew.go` | CM15 (2), CM28 (9) |
-| `internal/cli/init_access_migrate.go` | CM4 (2), CM30 (11) |
-| `internal/cli/update_in_flight.go` and its document | CM19 (3), CM28 (9) |
-| `internal/settings/registry.go`, the schemas, `schemas/schemas_test.go` | CM20 (2), CM29 (10), CM30 (11) |
-| `docs/gcp-live-checklist.md` | CM22 (0), CM25 (6) |
-| `SECURITY.md`, its page, `docs_security_test.go` | CM24 (5), CM28 (9) |
-| the documents tests under `internal/cli/docs_*_test.go` | CM24 (5), CM25 (6), CM26 (7), CM27 (8), one level each |
-| `internal/craft/legacy.go` | C1 (0), CM29 (10), which deletes it |
-| the two stub files | C1 (0), I1 (4) |
+| `internal/cli/project_cmd.go` | CM32 (0), CM2 (2), CM30 (12) |
+| `internal/config/scope.go`, `retired.go` | CM3 (0), CM29 (11) |
+| `docs/gcp-live-checklist.md` | CM22 (0), CM25 (7) |
+| `internal/craft/legacy.go` | C1 (1), CM29 (11), which deletes it |
+| the two stub files | C1 (1), I1 (5) |
+| `internal/localcfg/localcfg.go` | CM2 (2), CM15 (3), CM30 (12) |
+| `internal/cli/update_repoauth.go` | CM5 (2), CM31 (11) |
+| `internal/credsvc/cascade.go` | CM6 (2), CM31 (11) |
+| `internal/gateway/gateway.go`, `service.go` | CM7 (2), CM31 (11) |
+| `internal/runner/accountchoice.go` | CM11 (2), CM8 (3) |
+| `internal/agent/env.go`, `internal/runner/agentenv.go` | CM9 (2), CM28 (10) |
+| `internal/infra/spec.go` | CM13 (2), I1 (5) |
+| `internal/config/providers.go`, `stage_accounts.go` | CM16 (2), I1 (5) |
+| `internal/config/validate.go` | CM16 (2), CM29 (11) |
+| `internal/cli/init.go` | CM4 (3), CM19 (4), CM33 (10) |
+| `internal/cli/run.go` | CM14 (3), CM23 (4) |
+| `internal/cli/models_use.go` | CM17 (3), CM23 (4) |
+| `internal/cli/validate.go` | CM17 (3) only; CM18 (4) reads it |
+| `internal/cli/launch_budget.go`, `recipes_skew.go` | CM15 (3), CM28 (10) |
+| `internal/cli/init_access_migrate.go` | CM4 (3), CM30 (12) |
+| `internal/cli/settings_set.go`, the `accounts_*.go` files, `init_policy_publish.go` | CM34 (3) only |
+| `internal/settings/registry.go`, the schemas, `schemas/schemas_test.go` | CM20 (3), CM29 (11), CM30 (12) |
+| `internal/cli/update_in_flight.go` and its document | CM19 (4), CM28 (10), CM31 (11) |
+| `SECURITY.md`, its page, `docs_security_test.go` | CM24 (6), CM28 (10) |
+| the documents tests under `internal/cli/docs_*_test.go` | CM24 (6), CM25 (7), CM26 (8), CM27 (9), one level each |
+| `website/content/cli-reference.md` | CM23 (4) only |
+| `docs/keys-through-service/*` | CM35 (0) only |
 
 **The graph read.** `fugaro plan graph --plan docs/credentials-belong-to-models/implementation-plan.md`
 reports:
 
-`critical path (9 tasks): C1 -> CM16 -> CM17 -> CM18 -> I1 -> CM24 -> CM25 -> CM26 -> CM27`, with
-C1 the bottleneck, and `gain: 13 broken, 26 kept, 3 added; before 11 tasks, weight 22; after 9 tasks, weight 18; improves`.
-The graph's levels 0 to 8 are the table's. It cannot say "after release 1 is cut", so it places
-CM28, CM29, CM30, CM31 and CM33 from level 5 on; the table's levels 9 to 11 are the order to
+`critical path (10 tasks): CM35 -> C1 -> CM16 -> CM17 -> CM18 -> I1 -> CM24 -> CM25 -> CM26 -> CM27`,
+with CM35 the bottleneck, and `gain: 13 broken, 29 kept, 3 added; before 11 tasks, weight 22; after 10 tasks, weight 18.5; improves`.
+The graph's levels 0 to 9 are the table's. It cannot say "after release 1 is cut", so it places
+CM28, CM29, CM30, CM31 and CM33 from level 6 on; the table's levels 10 to 12 are the order to
 launch them in.
 
 ## 6. The estimate
 
 As the same command printed it:
 
-`ready in 450–1800 min, no history yet for 36 tasks (36 tasks; seeds for 36; from the seeds: no history is cached on this machine yet)`
+`ready in 455–1820 min, no history yet for 38 tasks (38 tasks; seeds for 38; from the seeds: no history is cached on this machine yet)`
 
 It is informational and reserves no budget: it is what the tasks' tiers and this machine's
 history predict, and it moves as runs finish. It does not count the waits on the two plans
-before this one, the release between levels 8 and 9, or the owner's runs of Checks 800 and 801.
-The graph counts one node more than this plan's 35 runs: the contract change of §7, which runs
+before this one, the release between levels 9 and 10, or the owner's runs of Checks 800 and 801.
+The graph counts one node more than this plan's 37 runs: the contract change of §7, which runs
 only if raised.
 
 ## 7. Contract changes anticipated
 
-- **R-pool-members** (C1, raised by CM4): if the migration shows the access record must name a
-  marked pool's members one by one for the service to narrow by it, the record gains them. Reaches CM5 and CM6; a launched one is reached by a follow-up run on its pull
+- **R-pool-members** (C1, raised by CM4): if the migration shows the access record must name the
+  cascade's pool's members one by one for the service to narrow by it, the record gains them. Reaches CM5 and CM6; a launched one is reached by a follow-up run on its pull
   request that names `internal/creds/repoaccess.go` by path.
 
 ## 8. Checks the plan takes
