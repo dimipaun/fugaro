@@ -226,9 +226,11 @@ func kindHolder(kind creds.Kind, provider, canonical, slug string, f routeFacts)
 		// The two forge kinds are the forge's own name, so a repository's
 		// provider kind IS the kind of credential its git traffic uses: the
 		// other forge's kind reaches no repository of this installation at all
-		// and is the project's by definition.
+		// — a run of a GitHub repository never takes a Bitbucket credential —
+		// so nothing may move it to the workspace, and the project's own copy
+		// (which is to say, no credential at all) is the honest answer.
 		if string(kind) != provider {
-			return false, true
+			return true, true
 		}
 		if kind == creds.KindBitbucket {
 			return f.bitbucket && f.bitbucketReaches(canonical), true
@@ -509,13 +511,22 @@ func (p *routePublication) rowFor(repo string, entry localcfg.Repo, facts routeF
 	return routeRow{repo: repo, path: creds.RoutePath(slug), slug: slug, route: route, body: body}, nil, nil
 }
 
-// routeWithKind is one kind moved or left where it is, by name: the record's
-// fields are three and there is no table of them anywhere else, so a kind
-// added to the vocabulary without a field is a kind this function does not
-// move — which is the fail-safe direction and not a silent one (the kind is
-// written out by RouteRecord's own list, and a kind left unnamed is the
-// project's).
+// routeWithKind is one kind moved, by name: the record's fields are three and
+// there is no table of them anywhere else, so a kind added to the vocabulary
+// without a field is a kind this function does not move — which is the
+// fail-safe direction and not a silent one (the kind is written out by
+// RouteRecord's own list, and a kind left unnamed is the project's).
+//
+// A kind the project serves writes NOTHING: the field is left as the zero value
+// and RouteRecord's encode omits it, which is the canonical form C2 publishes
+// (movedHolder). The distinction matters beyond tidiness — the plan's "nothing
+// to do" and Verify are one value comparison of a decoded record against this
+// one, and a struct that spelled HolderProject where the encode drops it would
+// differ from every record it had just written.
 func routeWithKind(r creds.Route, kind creds.Kind, h creds.Holder) creds.Route {
+	if h != creds.HolderWorkspace {
+		return r
+	}
 	switch kind {
 	case creds.KindModel:
 		r.Model = h
