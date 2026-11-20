@@ -15,15 +15,19 @@ removed, `observe` stays, and the removal is a spec of its own (D3009 to D3011, 
 D3002 and D3004). The owner's ruling D2975 reverses D1634 and D1670.
 
 **It ships in two releases** (A4): release A serves every model key through the service with the
-mounts still there (C1, KS1 to KS6, KS9, KS10, KS12, KS19, KS20, I1); release B drops the mounts
+mounts still there (C1, KS1 to KS5, KS12, KS19, KS20, I1); release B drops the mounts
 and deletes the old secrets (KS11, KS13 to KS16). KS13 is not launched before release A is cut.
 **Release A is not cut before the owner has run Check 50 and KS20 has applied its result**
 (D3013): a Claude model through a provider works on the mounted key today, and release A would
 otherwise stop it.
 
-**Two tasks wait on another plan** (R13): KS14 and KS15 are not launched before the plan that
-removes budget mode off has merged its removal. Until then a budget-off repository keeps its
-mounted keys. **KS7 and KS8 are dropped** with D3002 and D3004; their numbers are not reused.
+**Three tasks wait on another plan.** KS13 is not launched before
+[credentials belong to models](../credentials-belong-to-models/README.md)' release 1 is
+integrated: KS6, KS9 and KS10, which it waited on, are withdrawn and replaced by that plan's
+CM16 and CM15, CM6, and CM9 (F48, F49). KS14 and KS15 are not launched before the plan that
+removes budget mode off has merged its removal (R13). Until then a budget-off repository keeps its
+mounted keys. **KS6, KS9 and KS10 are withdrawn, and KS7 and KS8 are dropped** with D3002 and
+D3004 (F48); their numbers are not reused.
 
 ## 1. Conventions every task follows
 
@@ -57,13 +61,13 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 | A Claude model through a provider key is refused until Check 50; any other model is served | KS3 `TestAClaudeModelThroughAProviderWaitsForCheck50`, `TestANonClaudeProviderModelIsServed` |
 | A repository is never served another repository's Anthropic key | KS3 `TestARepositoryIsNeverServedAnotherRepositorysAnthropicKey` |
 | The provider's address is the bundle entry's, never the caller's | KS4 `TestTheUpstreamIsTheEntrysNotTheCallers` |
-| No stage token leaves the agent's environment before the deployed service can serve it | KS10 `TestTheStageTokenStaysWhereTheServiceCannotServeIt` |
+| No subscription token is in the agent's environment where the job carries the served fact (KS10 is withdrawn, F48) | CM9 `TestNoTokenInTheAgentsEnvironmentWhereServed`, `TestTheTokenStaysWhereNotServed` |
 | Every deletion of a secret leaves an audit line in the step's record | KS15 `TestEachDeletionIsRecorded` |
 | The fee, the price check and the provider-cost settle are the gateway's and are unchanged | KS5 `TestARoutedCallThroughTheServiceCostsWhatItCostBefore` |
 | Between the releases a run whose job does not carry the fact still uses its mount | KS5 `TestARunWithoutTheFactUsesItsMount` |
 | Release A turns the switch off for no repository | KS19 `TestTheSwitchOfASwitchedRepositoryIsUnchanged` |
 | No provider key is entered under a name the deployed service reads as an Anthropic key | C1 `TestAProviderEntryIsNeverAnAnthropicKeyName` |
-| A provider pin whose keys are not served is refused at launch with the fix | KS6 `TestAProviderPinWhoseKeysAreNotServedIsRefused` |
+| A craft whose credential is not served is refused at launch with the fix (KS6 is withdrawn, F48) | CM15 `TestACraftWhoseCredentialIsNotServedIsRefusedAtLaunch` |
 | A budget-off repository, and an installation with no database, keep their mounts and are told so | KS13 `TestABudgetOffRepositoryKeepsItsMounts`, `TestNoDatabaseKeepsItsMounts` |
 | The copy prints no value, runs only for a project owner, overwrites nothing silently, is idempotent and follows a rotation | KS12 `TestTheCopyPrintsNoValue`, `TestAnOperatorsUpdateSkipsTheCopy`, `TestTheCopyNeverOverwritesAnEntryItDidNotWrite`, `TestTheCopyTwiceChangesNothing`, `TestTheCopyFollowsANewerVersion` |
 | No named provider entry is written for a deployed service that cannot read it | KS2 `TestAnOlderServiceIsNotWrittenANamedEntry`; KS12 `TestTheCopyRunsAfterTheServiceIsDeployed` |
@@ -85,8 +89,10 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
   account name, as today (D3015). An entry the copy writes carries where it came from (the
   container and its version), so "an entry the copy did not write" is one with no such marker.
   The entry holds the provider's address, and the wire has no field for one. The contract also
-  names R12's two facts ("provider keys are served", "the stage account is served"): the job
-  entries a run reads them from, and the document says where they are recorded (U6).
+  names R12's fact ("provider keys are served"): the job entry a run reads it from, and the
+  document says where it is recorded (U6). **C1's second fact, "the stage account is served"
+  (F44), is not needed** (F50): one fact per repository, "its credentials are served", covers it,
+  which is credentials belong to models' C1.
   The names the gateway needs live in a gateway file, because the gateway cannot import the
   service (F26). A stub accessor answers "no such credential".
 - Files: `internal/gateway/providerwire.go` (new), `internal/gateway/providerwire_test.go` (new),
@@ -94,7 +100,7 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
   `internal/config/provider_served.go` (new, the fact's names),
   `docs/keys-through-service/contract-provider.md` (new).
 - Interfaces: produces the names, the refusal types, the entry's naming rule, the accessor's
-  signature and the fact's names; consumed by KS2, KS3, KS4, KS5, KS6, KS12, KS19. KS1 builds the
+  signature and the fact's names; consumed by KS2, KS3, KS4, KS5, KS12, KS19. KS1 builds the
   accessor's other side.
 - Tests: `TestStubAccessorHoldsNothing`, `TestAnEntryNameCarriesItsRepository`,
   `TestAProviderEntryIsNeverAnAnthropicKeyName`, `TestProviderWireNamesAreDistinct` (in the gateway).
@@ -107,10 +113,15 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 ## 4. Slices and tasks
 
 **Release A. Slice 1, the service serves a named provider key:** KS1 to KS4.
-**Slice 2, the run asks for it:** KS5, KS6, KS19. **Slice 3, the stage account:** KS9, KS10.
-**Slice 4, the keys move:** KS12. **Integration:** I1.
+**Slice 2, the run asks for it:** KS5, KS19. **Slice 3, the keys move:** KS12. **Integration:** I1.
 **Release B. Slice 5, the mounts and the old secrets go:** KS13, KS11, KS14 to KS16.
 **Checks and documents:** KS17, KS18.
+
+**KS6, KS9 and KS10 are withdrawn** (F48), and their sections are gone from this plan and their
+nodes from its graph. They planned a check by a repository's auth mode and a stage account served
+beside it, and the plan this one is amended by — credentials belong to models — retires the auth
+mode itself: **KS6 is replaced by that plan's CM16 and CM15**, **KS9 by its CM6**, **KS10 by its
+CM9**, and **KS13 waits on its I1 in their place** (F49).
 
 ### KS1: named provider entries in the bundle
 - Acceptance: the bundle decodes and serves one key per repository and named provider credential,
@@ -155,8 +166,10 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 - Reviewer tier: opus, mandatory independent review.
 
 ### KS3: the gate, narrowed
-- Acceptance: a coding caller is offered a named provider credential its policy admits, under
-  every auth the service serves and not only `api-key` (`narrowToRepoAuth`, F32); selection
+- Acceptance: a coding caller is offered a named provider credential its policy admits, wherever
+  the repository's access record names it — the clause F32 planned as "under every auth the
+  service serves and not only `api-key`" is credentials belong to models' CM6, which narrows every
+  call by that record (F51); selection
   refuses it for a Claude model with the refusal that names Check 50, and admits it for any other
   model; a repository with an Anthropic entry of its own is served that one, a repository with
   none the project's, and never another repository's (D3008); the single `provider-key` entry and
@@ -216,64 +229,6 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 - Commit: `gateway: a provider route is served through the credentials service (KS5, D1634 reversed, R1, R12)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### KS6: no auth mode ties a provider key to a repository
-- Acceptance: `config.CheckProviderAuth` admits a provider pin under every auth the service
-  serves, and `RoutingInertReason` no longer calls such a pin inert; a launch whose repository
-  pins a provider model under an auth other than `api-key` while its provider keys are not served
-  (R12's fact) is refused with the fix, because that job mounts no provider key;
-  `config.CheckProviderGateway` (a provider model needs `enforce`) is unchanged; Vertex is
-  unchanged.
-- Files: `internal/config/providers.go`, `internal/config/providers_auth_test.go` (new),
-  `internal/runner/routing.go`, `internal/cli/validate.go`, `internal/cli/models_use.go`,
-  `ee/ab/admit.go`, and the tests that pin `CheckProviderAuth` and `RoutingInertReason`, among
-  them `internal/cli/docs_credentials_auth_list_test.go` and `docs_mixed_credentials_test.go` with
-  the sentences of `docs/design/mixed-credentials.md` and `docs/design/agent-env.md` they read. It
-  is past five files because one check has that many callers.
-- Interfaces: consumes C1 (the fact's name).
-- Tests: `TestAProviderPinIsAdmittedUnderEveryServedAuth`, `TestAProviderModelStillNeedsEnforce`,
-  `TestAProviderPinWhoseKeysAreNotServedIsRefused`.
-- Command: `go test ./internal/config/ -run 'AProviderPinIsAdmitted|AProviderModelStillNeeds|Routing' -count=1 && go test ./internal/runner/ -run RoutingInert -count=1 && go test ./internal/cli/ -run 'AProviderPinWhoseKeys|RoutingInert|ModelsUse|Docs' -count=1 && go test ./ee/ab/ -run Admit -count=1`.
-- Red step: a provider pin under `oauth` is refused.
-- Depends on: KS4 and KS5 (kept, behaviour: the pin may be admitted only once the service can
-  serve it to a job that mounts no provider key); KS19 (kept, behaviour: the refusal reads the
-  record KS19 writes).
-- Commit: `config: a provider pin is admitted under every served auth (KS6, D3007)`.
-- Reviewer tier: opus, mandatory independent review.
-
-### KS9: the service serves a stage's account
-- Acceptance: for a repository whose record names a stage account beside its main credential, the
-  service admits that account for that stage's calls and no other, and keeps refusing an account
-  the record does not name.
-- Files: `internal/credsvc/cascade.go`, `internal/credsvc/cascade_stage_test.go` (new).
-- Interfaces: none new.
-- Tests: `TestAStageAccountIsServedForItsStage`, `TestAStageAccountIsRefusedForAnotherStage`,
-  `TestAnUndeclaredAccountIsStillRefused`.
-- Command: `go test ./internal/credsvc/ -run 'AStageAccount|AnUndeclaredAccount|Cascade' -count=1`.
-- Red step: `narrowToRepoAuth` refuses the stage account.
-- Depends on: KS3 (kept: both edit `cascade.go`).
-- Commit: `credsvc: a stage's account is served for its stage (KS9, R9, F23)`.
-- Reviewer tier: opus, mandatory independent review.
-
-### KS10: the runner holds no stage token
-- Acceptance: the gateway carries the stage's account per stage and asks the service for it; the
-  agent's environment holds no token for it where the job carries C1's second fact, which KS19
-  records only where the deployed service can serve a stage account; anywhere else the token stays
-  where it is today; `SECURITY.md`'s residual
-  on the mixed run is changed with its test.
-- Files: `internal/gateway/gateway.go`, `internal/agent/env.go`, `internal/runner/agentenv.go`,
-  `internal/cli/run.go`, `internal/runner/stage_account_test.go` (new), `SECURITY.md` with
-  `website/content/security.md` and the test that pins the sentence.
-- Interfaces: none new.
-- Tests: `TestTheStageAccountIsAskedOfTheService`, `TestTheAgentHoldsNoStageToken`,
-  `TestTheStageTokenStaysWhereTheServiceCannotServeIt`.
-- Command: `go test ./internal/runner/ -run 'TheStageAccountIsAsked|TheAgentHoldsNoStage|TheStageTokenStays' -count=1 && go test ./internal/cli/ -run 'MixedStage|SecurityMd' -count=1 && (cd website && npm run check)`.
-- Red step: the agent's environment still carries the stage account's token.
-- Depends on: KS9 (kept, behaviour: the service must admit the account first); KS19 (kept,
-  behaviour: it reads the record KS19 writes); KS4 (kept: both edit `SECURITY.md`); KS6 (kept:
-  both edit `docs_mixed_credentials_test.go`).
-- Commit: `runner: the stage account is served by the credentials service (KS10, R9)`.
-- Reviewer tier: opus, mandatory independent review.
-
 ### KS11: the serving path of a provider credential flips (release B)
 - Acceptance: `config.CredentialServingPath` answers the service for `openrouter`, and every
   reader follows: the accounts commands, the craft and pool code, the service's pool and bundle,
@@ -330,29 +285,28 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
   entry for every provider credential the repository's config names, whether the deployed service
   can read that entry kind, and whether the project publishes an allow-list (F32); it records the
   answer on the repository's entry in the local config, under a new field, and the job is planned
-  with C1's entry from that record; it does the same for C1's second fact, "the stage account is
-  served", true where the switch is on, the record names a stage account and the deployed service
-  is at or after the release that serves one; a run of another person, or a failed read, leaves the record
+  with C1's entry from that record; C1's second fact, "the stage account is served" (F44), is not
+  recorded, because it is not needed (F50); a run of another person, or a failed read, leaves the record
   as it was, as the switch does; today's `ready` and the switch of every repository are unchanged
   (F30); `doctor` reports the fact where it reports the switch.
 - Files: `internal/cli/init_credentials.go`, `internal/localcfg/localcfg.go`,
   `internal/infra/spec.go`, `internal/cli/doctor_brokering.go`,
   `internal/cli/init_provider_served_test.go` (new),
   `internal/infra/spec_provider_served_test.go` (new).
-- Interfaces: consumes C1 (the fact's names); builds the side KS5 and KS6 read.
+- Interfaces: consumes C1 (the fact's names); builds the side KS5 reads.
 - Tests: `TestTheFactIsRecordedWhenEveryProviderEntryIsThere`, `TestTheFactNeedsAnAllowList`,
   `TestAnOperatorsRunLeavesTheFactAsItWas`, `TestTheSwitchOfASwitchedRepositoryIsUnchanged`,
-  `TestTheJobCarriesTheFactFromTheRecord`, `TestTheStageFactNeedsAServiceThatServesOne`.
-- Command: `go test ./internal/cli/ -run 'TheFactIsRecorded|TheFactNeedsAnAllowList|AnOperatorsRunLeavesTheFact|TheSwitchOfASwitchedRepository|TheStageFactNeeds' -count=1 && go test ./internal/infra/ -run TheJobCarriesTheFact -count=1`.
+  `TestTheJobCarriesTheFactFromTheRecord`.
+- Command: `go test ./internal/cli/ -run 'TheFactIsRecorded|TheFactNeedsAnAllowList|AnOperatorsRunLeavesTheFact|TheSwitchOfASwitchedRepository' -count=1 && go test ./internal/infra/ -run TheJobCarriesTheFact -count=1`.
 - Red step: a repository whose bundle holds every provider entry has a job with no such entry.
 - Depends on: C1.
 - Commit: `update: record that a repository's provider keys are served (KS19, R12, F31)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### KS13: release B: no model mount where the bundle is ready
-- Acceptance: `credentialsBundleServes` comes to require R12's facts in full (every provider
-  entry, a service that reads them, a published allow-list, and the stage account's fact where the
-  record names one), so no mount goes where the gateway would still fall back to it (R10); for a
+- Acceptance: `credentialsBundleServes` comes to require R12's fact in full (every provider
+  entry, a service that reads them, a published allow-list), so no mount goes where the gateway
+  would still fall back to it (R10); for a
   repository that is ready, `SecretMounts` yields no model mount of any kind, the
   stage account's included; a repository that is not ready, a repository in budget mode off and an
   installation with no database keep their mounts and are told why in one line (R13); a launch on a job image older than release A is refused with the command
@@ -374,10 +328,12 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
   `TestSwitchedMixedRepositoryKeepsItsStageAccountToken` are reversed.
 - Command: `go test ./internal/infra/ -run 'AMountGoesOnlyWhen|ABudgetOffRepositoryKeeps|NoDatabaseKeeps|FilledServiceServedAuths|SwitchedMixedRepository' -count=1 && go test ./internal/cli/ -run 'ABundleMissingAProviderEntry|AnOlderImageIsRefused|UpdateConvergesTheMounts|UpdateInFlight|SecurityMd|DocsMultiModel|DocsCredentialsRunbook' -count=1 && (cd website && npm run check)`.
 - Red step: an `api-key` job still mounts its provider key.
-- Depends on: KS5, KS6, KS10 and KS12 (kept, behaviour: a mount may go only once every path
+- Depends on: KS5 and KS12 (kept, behaviour: a mount may go only once every path
   serves that credential and its value is in the bundle); KS19 (kept: both edit `infra/spec.go`
   and `init_credentials.go`); KS2 (kept: both edit `recipes_skew.go`). **Not launched before
-  release A is cut.**
+  release A is cut, and not before credentials belong to models' I1 has merged** (F49): KS6, KS9
+  and KS10 are withdrawn, replaced by that plan's CM16 and CM15, CM6, and CM9, and a mount may go
+  only once their work is in the tree.
 - Commit: `infra: no model key is mounted where the bundle is ready (KS13, R5, R10)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -386,7 +342,8 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
   no service accessor on one; `var.model_secrets_served` and its locals are gone from the module,
   from `modules/repo` and from the repository root that pass it down, with the Go constants and
   validation that mirror them, the Go that sets them and the tfvars and test fixtures that carry
-  them. R12's facts stay as C1 wrote them; retiring them is a later cleanup. Because a repository
+  them. R12's fact stays as C1 wrote it, and the second fact of F44 is not recorded (F50);
+  retiring it is a later cleanup. Because a repository
   would have no mount left to fall back to, an update stops before the Terraform step, changes
   nothing and says that a project owner must run `fugaro update` once (D3012) when, among the
   repositories this update applies, one has a deployed job that still mounts a model key and is
@@ -543,78 +500,73 @@ repository's mode is `startup`.
 
 | Level | Tasks |
 | --- | --- |
-| 0 | C1, KS17 |
-| 1 | KS1, KS2, KS3, KS5, KS19 |
-| 2 | KS4, KS9, KS12, KS20 (after the owner has run Check 50) |
-| 3 | KS6, I1 |
-| 4 | KS10 |
-| 5 | KS13 (after release A is cut) |
-| 6 | KS11, KS18 |
-| 7 | KS14 (after the plan that removes budget mode off) |
-| 8 | KS15 |
-| 9 | KS16 (after B5.7) |
+| 0 | C1, KS1, KS17, KS19 |
+| 1 | KS2, KS3, KS5 |
+| 2 | KS4, KS12, KS20 (after the owner has run Check 50) |
+| 3 | KS13 (after release A is cut and credentials belong to models' I1), I1 |
+| 4 | KS11, KS18 |
+| 5 | KS14 (after the plan that removes budget mode off) |
+| 6 | KS15 |
+| 7 | KS16 (after B5.7) |
 
-**Critical path.** The graph read reports `critical path (10 tasks): C1 -> KS3 -> KS4 -> KS6 -> KS10 -> KS13 -> KS11 -> KS14 -> KS15 -> KS16`,
-with C1 the bottleneck, and `gain: 6 broken, 28 kept, 3 added; before 11 tasks, weight 25; after 10 tasks, weight 20.5; improves`.
+**Critical path.** The graph read reports `critical path (8 tasks): C1 -> KS2 -> KS12 -> KS13 -> KS11 -> KS14 -> KS15 -> KS16`,
+with C1 the bottleneck, and `gain: 6 broken, 18 kept, 3 added; before 9 tasks, weight 22; after 8 tasks, weight 17.5; improves`.
 The last five are a true sequence: a mount, the path that computes it, its Terraform and its
 secret each go only after the one before.
 
 **Where the graph and this table differ.** The graph format records a contract's consumers only,
 so KS1 and KS19, which build C1's other sides, carry no edge to C1 in the graph and read there as
-ready at once. They are not: each starts after C1 merges. The graph also cannot hold the four
-outside waits: the owner's run of Check 50 before KS20, the release before KS13, the other plan
-before KS14, and B5.7 before KS16.
+ready at once. They are not: each starts after C1 merges. The graph also cannot hold the five
+outside waits: the owner's run of Check 50 before KS20, the release before KS13, credentials
+belong to models' I1 before KS13 (F49), the other plan before KS14, and B5.7 before KS16.
 
 **Edges broken by C1 and rejoined in I1.** KS2, KS3, KS4 and KS12 after KS1: each needs the entry's
 naming rule and the accessor's signature, not the bundle's code. KS5 after KS4: the gateway needs
 the wire, not the route's code. KS5 after KS19: the gateway needs the fact's name, not the code
 that records it.
 
-**Edges kept.** Each is stated in its task: behaviour (KS6 after KS4, KS5 and KS19; KS10 after KS9
-and KS19; KS11 after KS13; KS13 after KS5, KS6, KS10 and KS12; KS14 after KS13 and KS11; KS15
-after KS12 and KS14; KS16 after KS15; KS20 after KS17; I1 after KS20), a shared file (KS4, KS9 and
-KS20 after KS3; KS10 after KS4 and KS6; KS11 after KS1 and KS2; KS12 after KS2; KS13 after KS2 and
-KS19; KS16 after KS14), and something outside the plan (KS20 after the owner's run of Check 50;
-KS14 after the removal of budget mode off; KS16 after B5.7).
+**Edges kept.** Each is stated in its task: behaviour (KS11 after KS13; KS13 after KS5 and KS12;
+KS14 after KS13 and KS11; KS15 after KS12 and KS14; KS16 after KS15; KS20 after KS17; I1 after
+KS20), a shared file (KS4 and KS20 after KS3; KS11 after KS1 and KS2; KS12 after KS2; KS13 after
+KS2 and KS19; KS16 after KS14), and something outside the plan (KS20 after the owner's run of
+Check 50; KS13 after credentials belong to models' I1; KS14 after the removal of budget mode off;
+KS16 after B5.7).
 
 **Shared files.** No level holds two writers of one file.
 
 | File | Writers, by level |
 | --- | --- |
 | `internal/creds/select.go`, `select_provider_test.go` | KS3 (1), KS20 (2) |
-| `internal/credsvc/cascade.go` | KS3 (1), KS9 (2) |
+| `internal/credsvc/cascade.go` | KS3 (1) only |
 | `internal/credsvc/forward.go`, `request.go`, `server.go` | KS4 (2) |
-| `internal/credsvc/bundle.go` | KS1 (1), KS11 (6) |
-| `schemas/creds-bundle.schema.json` | KS1 (1) |
+| `internal/credsvc/bundle.go` | KS1 (0), KS11 (4) |
+| `schemas/creds-bundle.schema.json` | KS1 (0) |
 | `internal/credsvc/dynamicsecrets.go` | KS12 (2) |
-| `internal/credsvc/pool.go`, `internal/projectpolicy/migrate.go` | KS11 (6) |
+| `internal/credsvc/pool.go`, `internal/projectpolicy/migrate.go` | KS11 (4) |
 | `internal/gateway/route.go`, `forward.go`, `service.go`, `internal/runner/poolchoice.go` | KS5 (1) |
-| `internal/gateway/gateway.go`, `internal/agent/env.go`, `internal/runner/agentenv.go`, `internal/cli/run.go` | KS10 (4) |
-| `internal/runner/routing.go`, `internal/cli/validate.go`, `models_use.go`, `ee/ab/admit.go` | KS6 (3) |
-| `internal/cli/docs_mixed_credentials_test.go` | KS6 (3), KS10 (4) |
-| `internal/config/providers.go` | KS6 (3), KS14 (7) |
-| `internal/config/stage_accounts.go`, `craft.go`, `internal/craft/pathpool.go` | KS11 (6) |
-| `internal/cli/creds.go`, `accounts_add.go` | KS2 (1), KS11 (6) |
+| `internal/config/providers.go` | KS14 (5) |
+| `internal/config/stage_accounts.go`, `craft.go`, `internal/craft/pathpool.go` | KS11 (4) |
+| `internal/cli/creds.go`, `accounts_add.go` | KS2 (1), KS11 (4) |
 | `internal/cli/secrets.go`, `initsecrets.go` | KS2 (1) |
-| `internal/cli/accounts.go`, `accounts_add_converge.go`, `accounts_pool.go` | KS11 (6) |
-| `internal/cli/recipes_skew.go` | KS2 (1), KS13 (5), KS11 (6) |
+| `internal/cli/accounts.go`, `accounts_add_converge.go`, `accounts_pool.go` | KS11 (4) |
+| `internal/cli/recipes_skew.go` | KS2 (1), KS13 (3), KS11 (4) |
 | `internal/cli/init_stages.go`, `internal/initflow/stage.go`, `internal/apply/steps.go` | KS12 (2) |
-| `internal/cli/setup_refusals_test.go` | KS12 (2), KS14 (7) |
-| `internal/cli/init_credentials.go` | KS19 (1), KS13 (5) |
-| `internal/localcfg/localcfg.go`, `internal/cli/doctor_brokering.go` | KS19 (1) |
+| `internal/cli/setup_refusals_test.go` | KS12 (2), KS14 (5) |
+| `internal/cli/init_credentials.go` | KS19 (0), KS13 (3) |
+| `internal/localcfg/localcfg.go`, `internal/cli/doctor_brokering.go` | KS19 (0) |
 | `internal/cli/doctor.go` | KS20 (2) |
-| `internal/infra/spec.go` | KS19 (1), KS13 (5), KS11 (6), KS14 (7) |
-| `internal/infra/readiness.go` | KS13 (5), KS14 (7) |
-| `internal/infra/spec_test.go` | KS13 (5) |
-| `internal/infra/tfvars.go` | KS14 (7) |
-| `internal/infra/retire.go` | KS15 (8), KS16 (9) |
-| `internal/cli/update_converge_test.go`, `update_in_flight.go`, `docs/design/update-in-flight.md` | KS13 (5), KS15 (8) |
-| `deploy/terraform/terraform_test.go` | KS14 (7), KS16 (9) |
-| `SECURITY.md`, `website/content/security.md` and their tests | KS4 (2), KS10 (4), KS13 (5) |
-| `docs/multi-model.md`, `docs/credentials-service/runbook.md` and their tests | KS13 (5) |
+| `internal/infra/spec.go` | KS19 (0), KS13 (3), KS11 (4), KS14 (5) |
+| `internal/infra/readiness.go` | KS13 (3), KS14 (5) |
+| `internal/infra/spec_test.go` | KS13 (3) |
+| `internal/infra/tfvars.go` | KS14 (5) |
+| `internal/infra/retire.go` | KS15 (6), KS16 (7) |
+| `internal/cli/update_converge_test.go`, `update_in_flight.go`, `docs/design/update-in-flight.md` | KS13 (3), KS15 (6) |
+| `deploy/terraform/terraform_test.go` | KS14 (5), KS16 (7) |
+| `SECURITY.md`, `website/content/security.md` and their tests | KS4 (2), KS13 (3) |
+| `docs/multi-model.md`, `docs/credentials-service/runbook.md` and their tests | KS13 (3) |
 | `docs/gcp-live-checklist.md` | KS17 (0), KS20 (2) |
 | `website/content/cli-reference.md` | KS2 (1) |
-| the release notes files | KS18 (6), KS15 (8) |
+| the release notes files | KS18 (4), KS15 (6) |
 
 R8 lists the files other plans also write, and how the plans are kept apart.
 
@@ -622,12 +574,13 @@ R8 lists the files other plans also write, and how the plans are kept apart.
 
 As `fugaro plan graph --plan docs/keys-through-service/implementation-plan.md` printed it:
 
-`ready in 615–2460 min, no history yet for 21 tasks (21 tasks; seeds for 21; from the seeds: no history is cached on this machine yet)`
+`ready in 555–2220 min, no history yet for 18 tasks (18 tasks; seeds for 18; from the seeds: no history is cached on this machine yet)`
 
 It is informational and reserves no budget: it is what the tasks' tiers and this machine's history
-predict, and it moves as runs finish. It does not count the owner's run of Check 50, the release before KS13, the wait for the
+predict, and it moves as runs finish. It does not count the owner's run of Check 50, the release
+before KS13, the wait for credentials belong to models' I1, the wait for the
 plan that removes budget mode off, or the wait for B5.7. The graph counts one node more than this
-plan's 20 runs: the contract change of §7, which runs only if raised.
+plan's 17 runs: the contract change of §7, which runs only if raised.
 
 ## 7. Contract changes anticipated
 
@@ -690,7 +643,7 @@ KS18's release notes say what each update prints.
 - **One bundle entry per repository for an account's OAuth token** (D3015's other option).
 - **Narrowing the review path's provider entry** (`reviewOfferings`): it keeps the single
   `provider-key` entry, unchanged by this plan.
-- **Retiring R12's facts once every run takes the service**: a later cleanup, since they are the
+- **Retiring R12's fact once every run takes the service**: a later cleanup, since it is the
   contract's.
 - **Flipping the serving path in release A** (the first draft of KS11): it drops the mounts
   release A relies on (F29).
@@ -702,6 +655,9 @@ KS18's release notes say what each update prints.
 - **Dropping a repository's mounts when its own image is rebuilt** (the first draft of R5): that
   fact is read at launch, per workflow, and a catalog image is not rebuilt by `fugaro update`. Two
   releases and a launch gate, as the earlier flips did.
-- **Retiring `agent.auth` as a repository's setting** (D3007 read in full): its own spec if the
-  owner wants it (O4).
+- **Retiring `agent.auth` as a repository's setting** (D3007 read in full): it is its own spec,
+  [credentials belong to models](../credentials-belong-to-models/README.md), which carries out O4.
+- **A check by a repository's auth mode, and a stage account served beside it** (KS6, KS9 and
+  KS10): withdrawn once that plan retired the auth mode (F48); its CM16 and CM15, CM6, and CM9
+  replace them.
 - **Serving Vertex through the service**: there is no key to move (A2).
