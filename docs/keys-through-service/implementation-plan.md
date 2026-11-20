@@ -500,8 +500,8 @@ repository's mode is `startup`.
 
 | Level | Tasks |
 | --- | --- |
-| 0 | C1, KS1, KS17, KS19 |
-| 1 | KS2, KS3, KS5 |
+| 0 | C1, KS17 |
+| 1 | KS1, KS2, KS3, KS5, KS19 |
 | 2 | KS4, KS12, KS20 (after the owner has run Check 50) |
 | 3 | KS13 (after release A is cut and credentials belong to models' I1), I1 |
 | 4 | KS11, KS18 |
@@ -515,10 +515,11 @@ The last five are a true sequence: a mount, the path that computes it, its Terra
 secret each go only after the one before.
 
 **Where the graph and this table differ.** The graph format records a contract's consumers only,
-so KS1 and KS19, which build C1's other sides, carry no edge to C1 in the graph and read there as
-ready at once. They are not: each starts after C1 merges. The graph also cannot hold the five
-outside waits: the owner's run of Check 50 before KS20, the release before KS13, credentials
-belong to models' I1 before KS13 (F49), the other plan before KS14, and B5.7 before KS16.
+so KS1 and KS19, which build C1's other sides, carry no edge to C1 in the graph and the graph
+reads them as ready at once, in level 0 with C1. This table does not: each starts after C1 merges,
+so it puts them in level 1, beside KS2, KS3 and KS5, which wait only on C1. The graph also cannot
+hold the five outside waits: the owner's run of Check 50 before KS20, the release before KS13,
+credentials belong to models' I1 before KS13 (F49), the other plan before KS14, and B5.7 before KS16.
 
 **Edges broken by C1 and rejoined in I1.** KS2, KS3, KS4 and KS12 after KS1: each needs the entry's
 naming rule and the accessor's signature, not the bundle's code. KS5 after KS4: the gateway needs
@@ -539,8 +540,8 @@ KS16 after B5.7).
 | `internal/creds/select.go`, `select_provider_test.go` | KS3 (1), KS20 (2) |
 | `internal/credsvc/cascade.go` | KS3 (1) only |
 | `internal/credsvc/forward.go`, `request.go`, `server.go` | KS4 (2) |
-| `internal/credsvc/bundle.go` | KS1 (0), KS11 (4) |
-| `schemas/creds-bundle.schema.json` | KS1 (0) |
+| `internal/credsvc/bundle.go` | KS1 (1), KS11 (4) |
+| `schemas/creds-bundle.schema.json` | KS1 (1) |
 | `internal/credsvc/dynamicsecrets.go` | KS12 (2) |
 | `internal/credsvc/pool.go`, `internal/projectpolicy/migrate.go` | KS11 (4) |
 | `internal/gateway/route.go`, `forward.go`, `service.go`, `internal/runner/poolchoice.go` | KS5 (1) |
@@ -552,10 +553,10 @@ KS16 after B5.7).
 | `internal/cli/recipes_skew.go` | KS2 (1), KS13 (3), KS11 (4) |
 | `internal/cli/init_stages.go`, `internal/initflow/stage.go`, `internal/apply/steps.go` | KS12 (2) |
 | `internal/cli/setup_refusals_test.go` | KS12 (2), KS14 (5) |
-| `internal/cli/init_credentials.go` | KS19 (0), KS13 (3) |
-| `internal/localcfg/localcfg.go`, `internal/cli/doctor_brokering.go` | KS19 (0) |
+| `internal/cli/init_credentials.go` | KS19 (1), KS13 (3) |
+| `internal/localcfg/localcfg.go`, `internal/cli/doctor_brokering.go` | KS19 (1) |
 | `internal/cli/doctor.go` | KS20 (2) |
-| `internal/infra/spec.go` | KS19 (0), KS13 (3), KS11 (4), KS14 (5) |
+| `internal/infra/spec.go` | KS19 (1), KS13 (3), KS11 (4), KS14 (5) |
 | `internal/infra/readiness.go` | KS13 (3), KS14 (5) |
 | `internal/infra/spec_test.go` | KS13 (3) |
 | `internal/infra/tfvars.go` | KS14 (5) |
