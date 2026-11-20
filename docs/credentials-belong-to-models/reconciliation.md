@@ -644,8 +644,9 @@ No two answers pull against each other.
   a model grade's access (F38); and in release 2 a run of an older ref reads the rejected key as
   ignored (F46). D3064's amendment (F24) he had answered already.
 - **O11.** The keys plan is amended by CM35, a task of this plan and so not approved. Until it
-  merges, the keys plan's KS13 names tasks that will not run (F37). If KS6, KS9 or KS10 is
-  launched before then, "withdrawn" becomes "superseded and reverted".
+  merges, the keys plan's documents still list KS6, KS9 and KS10 as tasks, and its KS13 names two
+  of them (F37). **The owner stopped KS6, KS9 and KS10 on 2026-11-20**, so none of them runs
+  meanwhile; CM35 is what makes the keys plan itself say so.
 - **O12.** Round 3's fixes (F42 to F50) are the last commit and were not reviewed again; three
   rounds is the cap. They rewrote R4 and R15 (2) once more and added CM36, so the first reviewer
   of C1 and CM6 reads those against each other.
