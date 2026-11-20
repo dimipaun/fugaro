@@ -411,6 +411,26 @@ import (
 // not the document's first, a line of another run, and a read that fails. The
 // four UNVERIFIED items of the plan are one row each, and every case asserts on
 // that row's own sentence.
+// Check 830 is Batch's own VM-to-job link, the probe the plan blocks BR3 on: one
+// throwaway Batch job in `fugaro-dev` whose container reads the metadata server
+// itself (the instance it is on, its project, the instance's attributes and an
+// identity token in full format), a second job that tries to write the first
+// job's identity into every launcher-controlled field it has (its own labels,
+// the labels Batch puts on the VMs, and the task's variables), and one plain
+// Compute Engine VM for O8's avenue. Its fake `gcloud` is a small model of Batch
+// and Compute driven by files the case writes -- the jobs that exist, each job's
+// uid, state and object, the instance each job ran on, the instance objects, one
+// task-log answer per uid, the project-wide log answer, the CreateJob audit
+// record, and every job configuration the check submits, so a case can read the
+// body it sent, including the marker variable's stand-in value, which the test
+// asserts never reaches the block or the progress log. A `compute instances
+// create` builds the object Compute would report out of the labels and metadata
+// the call carried, so the plain VM's row measures what a launcher can write
+// rather than what the test chose. The tree is a fixture too: the case writes the
+// log filter into internal/backend/batch/logs.go, the managed label pair into
+// internal/backend/gcp/names.go and the wrapped variable's name into
+// docs/batch-run-identity/, and two cases bend those files to prove the check
+// reads them out of the tree rather than remembering them.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -493,6 +513,7 @@ var liveCheckScripts = []struct {
 	{"check610.sh", "check610_test.sh"},
 	{"check611.sh", "check611_test.sh"},
 	{"check640.sh", "check640_test.sh"},
+	{"check-830.sh", "check-830_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
@@ -557,8 +578,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 222 items on one runner (74 scripts, three shards each) and under
-// The suite is 219 items on one runner (73 scripts, three shards each) and under
+// The suite is 237 items on one runner (79 scripts, three shards each) and under
 // a minute each; a split that dropped one, ran one twice or fell back to
 // everything would show up as a green run that tested less, which is the failure
 // this pins.
