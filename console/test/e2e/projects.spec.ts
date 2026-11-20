@@ -220,6 +220,8 @@ function domFactory() {
         for (var i = 0; i < node.children.length; i++) out.push(wrap(node.children[i]));
         return out;
       },
+      addEventListener: function (type, listener) { node.addEventListener(type, listener); },
+      get value() { return node.value; },
     };
     wrappers.set(node, wrapper);
     return wrapper;
@@ -549,7 +551,11 @@ const MODELS: JSONDoc = {
  * that won, the state, the owner), so the pair last recorded in `660baae4`
  * draws `repo`/`set (project)`/`set (local)`/`default` and the sentence "Fugaro
  * Mailbox" where these rows draw `project`, `stale 3h`, `ok`, `local` and the
- * local config's compact JSON. Re-recording is the owner's, on macOS, with the
+ * local config's compact JSON. **The settings accordion is a second and larger
+ * reason** (the console-improvements plan's SU2a): the panel now draws a search
+ * box and the groups' headings with every group collapsed, and each row leads
+ * with its label, so the committed pair photographs a flat list that is no
+ * longer drawn at all. Re-recording is the owner's, on macOS, with the
  * command in this file's header; the frame is the same pixels on every run, so
  * that recording is the only thing that clears the comparison. The freshness
  * clock reads the theme directory and not the documents a spec mounts, so this
@@ -1192,6 +1198,26 @@ test.describe('the Projects view in the dashboard', () => {
     rmSync(scratch, { recursive: true, force: true })
   })
 
+  /** openSettingsGroup opens one accordion section of the settings panel: every
+   * group is collapsed when the panel paints (spec section 4), so a row is behind
+   * a click on its own heading -- and a click on a row's pencil needs the row on
+   * screen. A click on a `<summary>` is a toggle, though, and a group another
+   * case already opened stays open: the panel is redrawn by its own read and not
+   * by a settings write, so a second case in this file meets the Runs section as
+   * the first one left it, and a blind second click would put it away again --
+   * a row inside a closed `<details>` has no client rects, so Playwright calls it
+   * invisible and the pencil click behind it times out. The click happens only
+   * when the group is really closed. */
+  async function openSettingsGroup(name: string): Promise<void> {
+    const group = page
+      .locator(`${THE_PROJECTS} details.projects-settings-group`)
+      .filter({ hasText: name })
+    const opened = await group.evaluate((node) => (node as HTMLDetailsElement).open)
+    if (!opened) {
+      await group.locator('summary.projects-settings-group-title').click()
+    }
+  }
+
   test('answers the tab in the frame it was opened in, and reads one command', async () => {
     // Live, the view this console opens on, makes one `runs ls --json` of its own
     // -- the rigor join -- and that read is not this case's subject. Waiting for
@@ -1285,12 +1311,66 @@ test.describe('the Projects view in the dashboard', () => {
 
     const asked = readsOf(spawnLog).map((record) => record.argv.slice(1))
     expect(asked).toContainEqual(['settings', '--json', '--project', 'e2e'])
+    // And the accordion: every group of the read is a section, collapsed, in the
+    // contract's order -- `Runs` before `Credentials`, because the document's own
+    // order is the read's and the groups' order is the contract's (D2908).
+    await expect(page.locator(`${THE_PROJECTS} details.projects-settings-group summary`)).toHaveText([
+      'Runs',
+      'Credentials',
+    ])
+    for (const group of await page.locator(`${THE_PROJECTS} details.projects-settings-group`).all()) {
+      await expect(group).not.toHaveAttribute('open', '')
+    }
+  })
+
+  test('searches the settings already read, opening what matched and putting away what did not', async () => {
+    const group = (name: string) =>
+      page.locator(`${THE_PROJECTS} details.projects-settings-group`).filter({ hasText: name })
+    const search = page.locator(`${THE_PROJECTS} input.projects-settings-search`)
+    await expect(search).toBeVisible()
+    await expect(page.locator(`${THE_PROJECTS} .projects-settings-none`)).toBeHidden()
+    const reads = readsOf(spawnLog).length
+
+    // A description matched: "Let Fugaro pick which Claude account each run goes
+    // out on." is `claude_account_auto`'s, so its group is opened and the group
+    // that matched nothing is put away entirely.
+    await search.fill('which claude account')
+    await expect(group('Credentials')).toHaveAttribute('open', '')
+    await expect(group('Runs')).toBeHidden()
+
+    // The raw key, for a reader who knows the dotted name -- and the row beside
+    // the match in the same group is put away rather than drawn under it.
+    await search.fill('mailbox.keychain_item')
+    await expect(group('Credentials')).toBeVisible()
+    await expect(
+      page.locator(`${THE_PROJECTS} li.projects-settings-row`).filter({ hasText: SETTINGS_WIDENING_KEY }),
+    ).toBeHidden()
+
+    // A query that matches nothing draws the console's own sentence and no
+    // group at all, rather than an empty panel that reads like a document with
+    // no rows.
+    await search.fill('no-setting-is-called-this')
+    await expect(page.locator(`${THE_PROJECTS} .projects-settings-none`)).toBeVisible()
+    await expect(page.locator(`${THE_PROJECTS} details.projects-settings-group:visible`)).toHaveCount(0)
+
+    // **The filter is over the document this build read** (R7): no second
+    // command, and no `--grep`, which the console's argv allow-list forbids.
+    expect(readsOf(spawnLog).length).toBe(reads)
+    expect(readsOf(spawnLog).some((record) => record.argv.includes('--grep'))).toBe(false)
+
+    // Emptying the box puts the whole panel back the way it opens: every group
+    // drawn, every group closed.
+    await search.fill('')
+    await expect(group('Runs')).toBeVisible()
+    await expect(group('Runs')).not.toHaveAttribute('open', '')
+    await expect(page.locator(`${THE_PROJECTS} .projects-settings-none`)).toBeHidden()
   })
 
   test('writes the edit the dry run does not classify as a widening, and records the argv it showed', async () => {
     // The first edit this spec drives, so the stub's record holds this flow's two
     // phases and nothing else: the dry run's line and the write's.
     expect(stubWrites(cli)).toEqual([])
+    await openSettingsGroup('Runs')
     const row = page.locator(`${THE_PROJECTS} li.projects-settings-row`).filter({ hasText: SETTINGS_KEY })
     await row.locator('button.projects-settings-pencil').click()
     const editor = page.locator(`${THE_PROJECTS} .projects-settings-editor`)
@@ -1337,6 +1417,7 @@ test.describe('the Projects view in the dashboard', () => {
   })
 
   test('asks for the tick on a widening, and writes the argv the ticked window showed', async () => {
+    await openSettingsGroup('Credentials')
     const row = page.locator(`${THE_PROJECTS} li.projects-settings-row`).filter({ hasText: SETTINGS_WIDENING_KEY })
     await row.locator('button.projects-settings-pencil').click()
     const editor = page.locator(`${THE_PROJECTS} .projects-settings-editor`)
@@ -1373,6 +1454,7 @@ test.describe('the Projects view in the dashboard', () => {
   test('spawns no write when the window is cancelled', async () => {
     const writes = settingsWrites(spawnLog).length
     const before = stubWrites(cli).length
+    await openSettingsGroup('Runs')
     const row = page.locator(`${THE_PROJECTS} li.projects-settings-row`).filter({ hasText: SETTINGS_KEY })
     await row.locator('button.projects-settings-pencil').click()
     const editor = page.locator(`${THE_PROJECTS} .projects-settings-editor`)

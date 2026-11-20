@@ -16,6 +16,7 @@ made before this work, where its data already is, moving nothing. It carries out
 | [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A5, the census of every location fixed in code, what each Google product offers (read 2026-11-20), findings F1–F21, the mapping, decisions D3080–D3097 with the owner's answers, resolutions R1–R10, open items O1–O13, UNVERIFIED U1–U9. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks LP0 to LP15 (LP5 is LP5a, LP5b and LP5c: 18 runs); levels, critical path, shared files; Checks 820 and 821 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
+| [record.md](record.md) | The `locations` block of the project config: its four members and their spellings, that it is one machine's own, and that nothing reads it as an input (LP0) |
 
 **Numbers reserved:** decisions **D3080–D3099** (D3080–D3097 used), checks **820–829** (820 and
 821 used). Read on 2026-11-20: the highest decision on `main` was D3039 (reserved by

@@ -113,11 +113,7 @@ type GCS struct {
 type bucketMeta struct {
 	projectNumber uint64
 	labels        map[string]string
-	// location is where the bucket is, in GCS's own spelling: upper case for a
-	// region ("US-EAST5"), and "US" or "EU" for a multi-region. Empty for a
-	// bucket made without one.
-	location string
-	policy   []Binding
+	policy        []Binding
 	// policyGen counts the policy's changes; the etag derives from it.
 	policyGen int
 	// inserted is the body of the insert that made the bucket, nil for
@@ -125,6 +121,10 @@ type bucketMeta struct {
 	inserted map[string]any
 	// versioning is whether the bucket keeps noncurrent versions.
 	versioning bool
+	// location is the bucket's own location, as its get reports it: the
+	// one it was made with, empty for a bucket made without one (a real
+	// bucket always has one; SetBucketLocation gives it).
+	location string
 }
 
 func (m *bucketMeta) etag() string { return "etag-" + strconv.Itoa(m.policyGen) }
@@ -157,11 +157,26 @@ func NewGCS(t *testing.T) *GCS {
 }
 
 // AddBucket makes bucket name exist, in the project numbered
-// projectNumber, carrying labels.
+// projectNumber, carrying labels. Its get reports no location until
+// SetBucketLocation gives it one, as it always has.
 func (g *GCS) AddBucket(name string, projectNumber uint64, labels map[string]string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.meta[name] = &bucketMeta{projectNumber: projectNumber, labels: maps.Clone(labels), policyGen: 1}
+}
+
+// SetBucketLocation makes bucket name's get report location, the one the
+// bucket was made with. A bucket a test adds without one reports none, and
+// the field is then absent from the get: that is how a caller with no
+// location to compare a region against sees it.
+func (g *GCS) SetBucketLocation(name, location string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	m := g.meta[name]
+	if m == nil {
+		g.t.Fatalf("gcpfake: SetBucketLocation(%q): no such bucket", name)
+	}
+	m.location = location
 }
 
 // SetVersioning turns bucket name's object versioning on or off, as its
@@ -172,18 +187,6 @@ func (g *GCS) SetVersioning(name string, on bool) {
 	if m := g.meta[name]; m != nil {
 		m.versioning = on
 	}
-}
-
-// SetBucketLocation gives bucket name a location, as its get reports it: the
-// spelling GCS returns for a regional bucket is upper case.
-func (g *GCS) SetBucketLocation(name, location string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	m := g.meta[name]
-	if m == nil {
-		g.t.Fatalf("gcpfake: SetBucketLocation(%q): no such bucket", name)
-	}
-	m.location = location
 }
 
 // FailObjectDeletes makes the next n object deletes answer 503, deleting
@@ -544,11 +547,11 @@ func (g *GCS) bucketGet(w http.ResponseWriter, r *http.Request, bucket string, i
 	if len(m.labels) > 0 {
 		out["labels"] = maps.Clone(m.labels)
 	}
-	if m.location != "" {
-		out["location"] = m.location
-	}
 	if m.versioning {
 		out["versioning"] = map[string]any{"enabled": true}
+	}
+	if m.location != "" {
+		out["location"] = m.location
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -605,7 +608,7 @@ func (g *GCS) insertBucket(w http.ResponseWriter, project string, body []byte) {
 		versioning, _ = v["enabled"].(bool)
 	}
 	location, _ := req["location"].(string)
-	g.meta[name] = &bucketMeta{projectNumber: num, labels: labels, location: location, policy: ConvenienceBindings(project), policyGen: 1, inserted: req, versioning: versioning}
+	g.meta[name] = &bucketMeta{projectNumber: num, labels: labels, policy: ConvenienceBindings(project), policyGen: 1, inserted: req, versioning: versioning, location: location}
 	out := maps.Clone(req)
 	out["kind"], out["id"], out["projectNumber"] = "storage#bucket", name, strconv.FormatUint(num, 10)
 	writeJSON(w, http.StatusOK, out)

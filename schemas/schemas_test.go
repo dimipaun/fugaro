@@ -41,6 +41,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/tier"
 	"github.com/dimipaun/fugaro/internal/triage"
 	"github.com/dimipaun/fugaro/internal/verify"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // compile loads a schema file and compiles it under its $id.
@@ -7987,4 +7988,190 @@ func TestPRIndexSchemaRoundTrip(t *testing.T) {
 	if err := dec.Decode(new(runstore.PRIndexEntry)); err == nil {
 		t.Error("the reader's strict decode accepted an unknown member")
 	}
+}
+
+// TestRosterSchemasAgreeWithGo holds the two schema files C1 adds
+// (workspace-roster.schema.json, workspace-audit-event.schema.json) to the
+// types internal/workspace writes and reads: the enums and the version consts
+// are pinned to the Go lists the way this package pins every other contract,
+// and the documents themselves are written by the Go side and handed to the
+// compiled schema. It is half of one pair -- internal/workspace/roster_test.go
+// holds the same two files to the same types from the reader's side, where the
+// document is written by hand and read back -- and between them a key one side
+// knows and the other does not has nowhere to hide.
+func TestRosterSchemasAgreeWithGo(t *testing.T) {
+	rosterSchema := compile(t, "workspace-roster.schema.json")
+	auditSchema := compile(t, "workspace-audit-event.schema.json")
+
+	roster := &workspace.Roster{
+		Version:   workspace.RosterVersion,
+		Mechanism: workspace.MechanismFolder,
+		FolderID:  "folders/123456789012",
+		People: []workspace.Person{
+			{Address: "alice@example.com", Kind: workspace.KindHuman},
+			{Address: "bob@outside.test", Kind: workspace.KindHuman, External: true},
+			{
+				Address: "ci@acme-app.iam.gserviceaccount.com",
+				Kind:    workspace.KindSA,
+				Roles:   []workspace.ProjectRole{{Project: "acme-app", Role: workspace.RoleOperator}},
+			},
+		},
+		Admins:  []string{"alice@example.com"},
+		Domains: []string{"example.com"},
+		Grants:  []workspace.StoredGrant{{Project: "acme-app", User: "alice@example.com", Role: workspace.RoleViewer}},
+	}
+	raw, err := workspace.EncodeRoster(roster)
+	if err != nil {
+		t.Fatalf("EncodeRoster refuses the roster: %v", err)
+	}
+	if err := rosterSchema.Validate(yamlInstance(t, raw)); err != nil {
+		t.Errorf("workspace-roster.schema.json rejects the roster internal/workspace writes: %v\n%s", err, raw)
+	}
+	back, err := workspace.DecodeRoster(raw)
+	if err != nil {
+		t.Errorf("internal/workspace cannot read the roster it wrote: %v", err)
+	} else if !reflect.DeepEqual(roster, back) {
+		t.Errorf("the roster did not round trip:\n got %+v\nwant %+v", back, roster)
+	}
+
+	// The enums are the Go lists: a value added on one side alone is a
+	// document valid in one place and refused in the other.
+	if got := sameStrings(schemaEnum(t, "workspace-roster.schema.json", "$defs", "person", "properties", "kind", "enum"), names(workspace.Kinds())); !got {
+		t.Errorf("the kind enum and workspace.Kinds() disagree")
+	}
+	if got := sameStrings(schemaEnum(t, "workspace-roster.schema.json", "properties", "mechanism", "enum"), names(workspace.Mechanisms())); !got {
+		t.Errorf("the mechanism enum and workspace.Mechanisms() disagree")
+	}
+	if got := sameStrings(schemaEnum(t, "workspace-roster.schema.json", "$defs", "role", "enum"), names(workspace.Roles())); !got {
+		t.Errorf("the role enum and workspace.Roles() disagree")
+	}
+	if got := sameStrings(schemaEnum(t, "workspace-audit-event.schema.json", "properties", "action", "enum"), names(workspace.Actions())); !got {
+		t.Errorf("the action enum and workspace.Actions() disagree")
+	}
+	if got := fmt.Sprint(schemaAt(t, "workspace-roster.schema.json", "properties", "version", "const")); got != fmt.Sprint(workspace.RosterVersion) {
+		t.Errorf("the roster schema's version const is %v and workspace.RosterVersion is %d", got, workspace.RosterVersion)
+	}
+	if got := fmt.Sprint(schemaAt(t, "workspace-audit-event.schema.json", "properties", "version", "const")); got != fmt.Sprint(workspace.AuditEventVersion) {
+		t.Errorf("the audit event schema's version const is %v and workspace.AuditEventVersion is %d", got, workspace.AuditEventVersion)
+	}
+
+	// An audit event, and the same document refused by both sides when the
+	// action is one nobody decided.
+	event := workspace.AuditEvent{
+		Version: workspace.AuditEventVersion,
+		ID:      "20261120T175820Z-0f1e2d3c4b5a6978",
+		Time:    time.Date(2026, 11, 20, 17, 58, 20, 0, time.UTC),
+		Actor:   "alice@example.com",
+		Action:  workspace.ActionUserAdd,
+		Project: "acme-app",
+		Subject: "bob@outside.test",
+		Role:    workspace.RoleViewer,
+	}
+	eventRaw, err := workspace.EncodeAuditEvent(event)
+	if err != nil {
+		t.Fatalf("EncodeAuditEvent refuses the event: %v", err)
+	}
+	if err := auditSchema.Validate(yamlInstance(t, eventRaw)); err != nil {
+		t.Errorf("workspace-audit-event.schema.json rejects the event internal/workspace writes: %v\n%s", err, eventRaw)
+	}
+	if _, err := workspace.DecodeAuditEvent(eventRaw); err != nil {
+		t.Errorf("internal/workspace cannot read the event it wrote: %v", err)
+	}
+	var mutated map[string]any
+	if err := json.Unmarshal(eventRaw, &mutated); err != nil {
+		t.Fatal(err)
+	}
+	mutated["action"] = "something.else"
+	badRaw, err := json.Marshal(mutated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := auditSchema.Validate(yamlInstance(t, badRaw)); err == nil {
+		t.Errorf("workspace-audit-event.schema.json accepts the action %q", "something.else")
+	}
+	if _, err := workspace.DecodeAuditEvent(badRaw); err == nil {
+		t.Errorf("DecodeAuditEvent accepts the action %q", "something.else")
+	}
+
+	// The same, for the roster's version and one of its closed objects: the
+	// two sides read one document or neither.
+	var rosterDoc map[string]any
+	if err := json.Unmarshal(raw, &rosterDoc); err != nil {
+		t.Fatal(err)
+	}
+	rosterDoc["version"] = 2
+	badRoster, err := json.Marshal(rosterDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rosterSchema.Validate(yamlInstance(t, badRoster)); err == nil {
+		t.Error("workspace-roster.schema.json accepts version 2")
+	}
+	if _, err := workspace.DecodeRoster(badRoster); err == nil {
+		t.Error("DecodeRoster accepts version 2")
+	}
+	rosterDoc["version"] = workspace.RosterVersion
+	delete(rosterDoc, "mechanism")
+	badRoster, err = json.Marshal(rosterDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rosterSchema.Validate(yamlInstance(t, badRoster)); err == nil {
+		t.Error("workspace-roster.schema.json accepts a roster with no mechanism")
+	}
+	if _, err := workspace.DecodeRoster(badRoster); err == nil {
+		t.Error("DecodeRoster accepts a roster with no mechanism")
+	}
+}
+
+// schemaAt walks one of the schemas in this directory to the value at path.
+func schemaAt(t *testing.T, file string, path ...string) any {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var node any = doc
+	for _, key := range path {
+		m, ok := node.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: %v: not an object at %q", file, path, key)
+		}
+		node, ok = m[key]
+		if !ok {
+			t.Fatalf("%s: %v: missing %q", file, path, key)
+		}
+	}
+	return node
+}
+
+// schemaEnum is the string list at a path of one of the schemas.
+func schemaEnum(t *testing.T, file string, path ...string) []string {
+	t.Helper()
+	raw, ok := schemaAt(t, file, path...).([]any)
+	if !ok {
+		t.Fatalf("%s: %v: not a list", file, path)
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("%s: %v: entry %v is not a string", file, path, v)
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// names renders a list of the contract's named strings as strings.
+func names[T ~string](list []T) []string {
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		out = append(out, string(v))
+	}
+	return out
 }

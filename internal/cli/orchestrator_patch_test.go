@@ -183,7 +183,7 @@ func planApprove(t *testing.T, s orchestrator.State, node string, ids ...string)
 // carries, because a list is the whole of what it approves.
 func TestPatchCountsPlanApproveAsPersonOnly(t *testing.T) {
 	f := newOrchestratorFixture(t)
-	s := seedOrchestratorState(t, f, planItemUpsert("plan-a", "graph-import", "the plan's first task"))
+	s := seedPlanNode(t, f, "graph-import", planItemUpsert("plan-a", "graph-import", "the plan's first task"))
 	approve := planApprove(t, s, "graph-import", "plan-a")
 
 	if got := personOnlyOps(s, orchestrator.Patch{Ops: []orchestrator.Op{approve}}); got != 1 {
@@ -208,22 +208,21 @@ func TestPatchCountsPlanApproveAsPersonOnly(t *testing.T) {
 
 // TestAPlanApprovalIsPersonOnlyAndShowsItsItems is G2's fence at the CLI
 // (D1225, D2706, D2717). Approving a plan's imported items is an op only a
-// person may land, and one actor lands the whole document: a session that
-// rides a plan approval beside an op of its own — the goal, here — hands the
-// person a patch whose approval list is not on the screen, and the person
-// approves up to a hundred items they never read. So the op is marked as the
-// person's own word and every item of the list is shown with the spec the
-// digest on it binds, which is what the op's id list exists for (D2706).
+// person may land: the items are the ones its own list names, they are
+// approved as the person who typed their project's name over the write, and
+// every one of them is shown with the spec the digest on it binds, which is
+// what the op's id list exists for (D2706).
+//
+// The items are the plan node's, which is where the import writes them: the
+// approval names that node and lands there (patchShard), and the state node is
+// not a node its list could reach.
 func TestAPlanApprovalIsPersonOnlyAndShowsItsItems(t *testing.T) {
 	f := newOrchestratorFixture(t)
 	asPerson(t)
-	s := seedOrchestratorState(t, f,
+	s := seedPlanNode(t, f, "graph-import",
 		planItemUpsert("plan-a", "graph-import", "the plan's first task"),
 		planItemUpsert("plan-b", "graph-import", "the plan's second task"))
-	doc := patchDoc(t, s.Rev,
-		planApprove(t, s, "graph-import", "plan-a", "plan-b"),
-		orchestrator.Op{Op: orchestrator.OpGoalSet, Goal: &orchestrator.GoalOp{Goal: "carry the plan to merged pull requests"}})
-	path := patchFile(t, doc)
+	path := patchFile(t, patchDoc(t, s.Rev, planApprove(t, s, "graph-import", "plan-a", "plan-b")))
 
 	// No terminal: nothing lands, and neither item carries an approval.
 	out, _, err := runOrchestrator(t, "", "orchestrator", "patch", "-f", path)
@@ -234,7 +233,7 @@ func TestAPlanApprovalIsPersonOnlyAndShowsItsItems(t *testing.T) {
 		t.Errorf("the refusal does not say what it needs: %v", err)
 	}
 	for _, id := range []string{"plan-a", "plan-b"} {
-		if w, _ := storedOrchestratorState(t, f).Item(id); w.Approved != nil {
+		if w, _ := storedPlanState(t, f, "graph-import").Item(id); w.Approved != nil {
 			t.Fatalf("%s was approved by a run with no terminal", id)
 		}
 	}
@@ -258,10 +257,33 @@ func TestAPlanApprovalIsPersonOnlyAndShowsItsItems(t *testing.T) {
 		}
 	}
 	for _, id := range []string{"plan-a", "plan-b"} {
-		w, _ := storedOrchestratorState(t, f).Item(id)
+		w, _ := storedPlanState(t, f, "graph-import").Item(id)
 		if w.Approved == nil || w.Approved.By != orchestratorPerson {
 			t.Fatalf("%s carries %+v, and the confirmed patch approves it as the person", id, w.Approved)
 		}
+	}
+
+	// One document lands on one node. A session that rides a plan approval
+	// beside an op of its own — the goal, here — hands the person a document
+	// whose two halves belong to two nodes, and nothing says which of them
+	// landed: it is refused whole, naming the two, and the approval beside it
+	// does not land either.
+	mixed := patchFile(t, patchDoc(t, s.Rev,
+		planApprove(t, s, "graph-import", "plan-a"),
+		orchestrator.Op{Op: orchestrator.OpGoalSet, Goal: &orchestrator.GoalOp{Goal: "carry the plan to merged pull requests"}}))
+	before := storedPlanState(t, f, "graph-import")
+	out, _, err = runOrchestrator(t, orchestratorTestID+"\n", "orchestrator", "patch", "-f", mixed)
+	if err == nil {
+		t.Fatalf("a document naming two nodes was applied:\n%s", out)
+	}
+	for _, want := range []string{"one document lands on one node", "graph-import"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	after := storedPlanState(t, f, "graph-import")
+	if after.Rev != before.Rev {
+		t.Errorf("the refused document wrote the plan's node: rev %d, and it was at %d", after.Rev, before.Rev)
 	}
 }
 

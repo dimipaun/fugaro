@@ -512,6 +512,10 @@ func scopeLayers(in config.Scope) []string {
 const (
 	docSetup = "docs/gcp-setup.md"
 	docLayer = "docs/project-layer.md"
+	// docLocations is the record's own document (LP0 of
+	// docs/location-preference/, D3087): what the block is, that it is one
+	// machine's own, and that nothing reads it as an input (R5).
+	docLocations = "docs/location-preference/record.md"
 	// docGovernance is docLayer plus the one fact about a governance key the
 	// table has no column for (F12): the guardrails are enforced by a build with
 	// the `ee` tag, so an untagged build reads the block and holds no run to it
@@ -915,6 +919,19 @@ var localRows = []Row{
 	loc("backend", "cloud-run", "setup", "docs/backends.md"),
 	loc("log_view", "the project's default logs", "setup", docSetup),
 	loc("scheduler_region", "the region the jobs run in", "setup", docSetup),
+	// The locations record (LP0 of docs/location-preference/, D3087): where
+	// this installation's located things already are, as the converge read
+	// them from the cloud. One row per member, and each is local-only — the
+	// record is never published, because the shared config decodes strictly
+	// and a teammate's older CLI would refuse the key — and written by the
+	// two converge doors from what the cloud holds rather than by any
+	// editor: no flag states a location, because nothing that exists is
+	// given a place by a rule — what already is somewhere is read from the
+	// cloud (R5) — and an absent member means no converge has read it yet.
+	locLocal("locations.firestore", "not known yet: no converge has read where the project's Firestore database is", "setup", docLocations),
+	locLocal("locations.log_bucket", "not known yet: no converge has read where the installation's run log bucket is", "setup", docLocations),
+	locLocal("locations.rtdb", "not known yet: no converge has read where the project's Realtime Database is", "setup", docLocations),
+	locLocal("locations.secrets", "not known yet: no converge has read what the installation's own secret containers do", "setup", docLocations),
 	loc("user", "none", "setup", docSetup),
 	// The keys of the installation a repository's own settings file also holds
 	// say `settings set` where the allowlist carries them (D1178): commit_name,

@@ -64,7 +64,10 @@ var secretReaderExceptions = []struct {
 			"deploy/terraform/gcp/modules/installation/coordinator.tf google_cloud_run_v2_job.coordinator",
 		},
 	},
-	{id: "E5", keys: []string{"internal/backend/batch/run.go"}},
+	// The file that mounts them, and not the file that builds the job around
+	// them: the mount is `Environment.SecretVariables`, which the batch
+	// package's secrets.go writes (and whose names `checkSecrets` reads).
+	{id: "E5", keys: []string{"internal/backend/batch/secrets.go"}},
 	{id: "E6", keys: []string{"internal/backend/gcp/build.go", "internal/backend/gcp/catalog.go"}},
 	{
 		id: "E7",

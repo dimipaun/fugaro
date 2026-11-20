@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,11 +35,17 @@ import (
 // an installation: the fake is the only thing that reads it.
 const testProject = "aurora-dev"
 
-// fakeSecrets starts the Secret Manager fake and returns the adapter over it.
-func fakeSecrets(t *testing.T) (*gcpfake.Secrets, *SecretManager) {
+// testRegion is the installation's own region, as the deployment names it: the
+// one a container the intake creates is replicated in (D3082).
+const testRegion = "europe-west1"
+
+// fakeSecrets starts the Secret Manager fake and returns the adapter over it,
+// for a deployment that names region. An empty region is the deployment of a
+// service from before LP5a's variable existed (TestIntakeWithNoRegionIsAutomatic).
+func fakeSecrets(t *testing.T, region string) (*gcpfake.Secrets, *SecretManager) {
 	t.Helper()
 	f := gcpfake.NewSecrets(t)
-	store, err := NewSecretManager(context.Background(), testProject,
+	store, err := NewSecretManager(context.Background(), testProject, region,
 		option.WithoutAuthentication(), option.WithEndpoint(f.URL+"/"))
 	if err != nil {
 		t.Fatalf("connecting the intake's store to the fake: %v", err)
@@ -58,7 +65,7 @@ func ownerLabels(sub string) map[string]string {
 // which is what makes the write path refuse it instead of writing into it
 // (R12).
 func TestSecretManagerDescribesOnlyItsOwnContainers(t *testing.T) {
-	f, store := fakeSecrets(t)
+	f, store := fakeSecrets(t, testRegion)
 	id := secretname.UserPrefix + testOwnerSub + "_api-key"
 	other := secretname.UserPrefix + testOwnerSub + "_unlabelled"
 	f.Seed(id, ownerLabels(testOwnerSub), []byte(testValue))
@@ -104,7 +111,7 @@ func TestSecretManagerDescribesOnlyItsOwnContainers(t *testing.T) {
 // answered — the name is the truth about a container and the label is only
 // how it was found.
 func TestSecretManagerListsOneScope(t *testing.T) {
-	f, store := fakeSecrets(t)
+	f, store := fakeSecrets(t, testRegion)
 	mine := secretname.UserPrefix + testOwnerSub + "_api-key"
 	yours := secretname.UserPrefix + testOtherSub + "_api-key"
 	shared := secretname.ProjectPrefix + "model-key"
@@ -136,12 +143,13 @@ func TestSecretManagerListsOneScope(t *testing.T) {
 }
 
 // TestSecretManagerCreateSendsTheIntakeShape: the container is made with the
-// annotations and the labels the routes computed, with automatic replication
-// and with nothing else — no TTL, no expiry, no topic, no rotation — so a
-// container this store made is one the shape check accepts on the next call
-// (R12). A second create of the same name is ErrExists and not a failure.
+// annotations and the labels the routes computed, with the replication the
+// deployment's region asks for and with nothing else — no TTL, no expiry, no
+// topic, no rotation — so a container this store made is one the shape check
+// accepts on the next call (R12). A second create of the same name is
+// ErrExists and not a failure.
 func TestSecretManagerCreateSendsTheIntakeShape(t *testing.T) {
-	f, store := fakeSecrets(t)
+	f, store := fakeSecrets(t, testRegion)
 	id := secretname.UserPrefix + testOwnerSub + "_api-key"
 	wantAnnotations := map[string]string{
 		AnnotationOwnerSub:   testOwnerSub,
@@ -187,11 +195,57 @@ func TestSecretManagerCreateSendsTheIntakeShape(t *testing.T) {
 	}
 }
 
+// TestAnIntakeSecretIsInTheRegion: the container this process creates is
+// user-managed with one replica in the region its deployment names, and not
+// automatic — which Google documents as global, and which an EU installation
+// may not have (D3082). The policy is read back off the container the fake
+// stored, so it is what the create really carried and not what this file
+// believes it sent.
+func TestAnIntakeSecretIsInTheRegion(t *testing.T) {
+	f, store := fakeSecrets(t, testRegion)
+	id := secretname.UserPrefix + testOwnerSub + "_api-key"
+	ctx := context.Background()
+	if err := store.Create(ctx, id, map[string]string{AnnotationCreatedBy: testOwnerEmail}, ownerLabels(testOwnerSub)); err != nil {
+		t.Fatalf("creating the container: %v", err)
+	}
+	if got := f.Replication(id); !slices.Equal(got, []string{testRegion}) {
+		t.Fatalf("the container is replicated in %v, want only the deployment's region %q", got, testRegion)
+	}
+}
+
+// TestIntakeWithNoRegionIsAutomatic: a service deployed before LP5a's variable
+// existed names no region, and it creates the containers it always did —
+// automatic — rather than refusing to write or guessing a region for itself.
+// A container that already exists is untouched either way, which the second
+// half pins: the create is the only call that carries a policy.
+func TestIntakeWithNoRegionIsAutomatic(t *testing.T) {
+	f, store := fakeSecrets(t, "")
+	created := secretname.UserPrefix + testOwnerSub + "_api-key"
+	older := secretname.UserPrefix + testOwnerSub + "_older"
+	ctx := context.Background()
+	if err := store.Create(ctx, created, map[string]string{AnnotationCreatedBy: testOwnerEmail}, ownerLabels(testOwnerSub)); err != nil {
+		t.Fatalf("creating the container: %v", err)
+	}
+	if got := f.Replication(created); got != nil {
+		t.Fatalf("a deployment that names no region created a container replicated in %v, want automatic", got)
+	}
+	// The container such a deployment made before, in the shape it has always
+	// had: a second call finds it and adds a version without touching its
+	// replication.
+	f.Seed(older, ownerLabels(testOwnerSub), []byte(testValue))
+	if _, err := store.AddVersion(ctx, older, []byte(testValue)); err != nil {
+		t.Fatalf("adding a version to a container that is there: %v", err)
+	}
+	if got := f.Replication(older); got != nil {
+		t.Fatalf("an existing container's replication changed: %v", got)
+	}
+}
+
 // TestSecretManagerWritesAVersionAndDeletesTheContainer: the value goes in as
 // a version — the fake holds it, and no call of the intake's reads one back —
 // and a delete takes the container and its versions away.
 func TestSecretManagerWritesAVersionAndDeletesTheContainer(t *testing.T) {
-	f, store := fakeSecrets(t)
+	f, store := fakeSecrets(t, testRegion)
 	id := secretname.ProjectPrefix + "model-key"
 	ctx := context.Background()
 	if err := store.Create(ctx, id, map[string]string{AnnotationCreatedBy: testAdminEmail}, map[string]string{LabelScope: string(ScopeShared)}); err != nil {

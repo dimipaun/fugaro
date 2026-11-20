@@ -133,4 +133,16 @@ var (
 	// five, a pull request number that is not positive, or a label name the
 	// route's own namespaces do not admit.
 	ErrLabelIdentity = errors.New("creds: the orchestrator daemon has no identity to ask for a label call with")
+	// ErrLabelNoReadConsumer is the service refusing a Bitbucket read because
+	// the installation's bundle holds no read consumer: the pull request cannot
+	// be read until a person sets one, so a caller that waits for an answer
+	// records it rather than asking again on its next cadence (G3, D2736).
+	//
+	// It is a sentinel of its own rather than ErrLabel because the two are
+	// acted on differently and because the service tells them apart by one wire
+	// code, every other refusal of that read being an outage with the same
+	// status. It wraps ErrLabel as well: what it says about the call — that the
+	// service did not perform it — is unchanged, and a caller that only means
+	// "the service refused" goes on reading it that way.
+	ErrLabelNoReadConsumer = errors.New("creds: the credentials service holds no Bitbucket read consumer for this repository")
 )
