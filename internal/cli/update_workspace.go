@@ -941,8 +941,8 @@ func workspaceCredentialsAllMembersFence(rec *workspace.Record, decl, node *proj
 		return nil
 	}
 	slices.Sort(names)
-	return userErr("the workspace %s states no cap, and %s offered to every member of the workspace: an entry offered to every member is bounded by the workspace's ceiling alone, so a member that joins later would reach it with nothing bounding what it spends; nothing was written — state the ceiling again ('fugaro workspace cap set --workspace %s --monthly <dollars>'), or offer the entry to the members it is for ('fugaro workspace share <credential> --workspace %s --projects <member>' keeps the members it names and drops the rest), then run %s again",
-		rec.Name, quotedList(names), rec.Name, rec.Name, selfCommand()+" update")
+	return userErr("the workspace %s states no cap, and %s offered to every member of the workspace: an entry offered to every member is bounded by the workspace's ceiling alone, so a member that joins later would reach it with nothing bounding what it spends, and this write publishes the pool without that entry's key; nothing was written — state the ceiling again ('fugaro workspace cap set --workspace %s --monthly <dollars>'), then run %s again",
+		rec.Name, quotedList(names), rec.Name, selfCommand()+" update")
 }
 
 // nodeShared is a published node's pool, whatever is there.
