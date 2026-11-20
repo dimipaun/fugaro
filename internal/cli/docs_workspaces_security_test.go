@@ -133,6 +133,15 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"`firebasedatabase.instances.get`",
 		"**A compromised workspace service therefore reads a member's whole database**",
 		"**It cannot write any of it**",
+		// And the one write that is in reach, because the sentence above is
+		// weaker than it reads without it: the run's own Firebase token, which
+		// a run's call to the service carries (R18, F30), writes the run's own
+		// nodes in the member's database. F30 says so in as many words, and O4
+		// is the review this sentence is written for -- a service that verifies
+		// the run by that token holds it.
+		"**The one write this puts in reach is the run's own token.**",
+		"the run's own nodes in the member's database",
+		"**a write the service's own grant does not carry**",
 		"**cannot delete or disable a member's database**",
 		"**The runs bucket is not read at all**",
 		// The stop, in the workspace's own database, and its scope.
