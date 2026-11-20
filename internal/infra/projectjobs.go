@@ -1127,6 +1127,35 @@ func installationCredentialsService(lc *localcfg.Config) *CredentialsService {
 // repositories, never a repository's files, and the job set (one job per
 // profile, provider and account) does not move with the answer.
 func projectJobServesTheCredentialsService(lc *localcfg.Config, pr config.JobProfile) bool {
+	return CredentialsServiceServesProfile(lc, pr)
+}
+
+// CredentialsServiceServesProfile is that same answer for a reader outside the
+// deployer, and there is exactly one: the launcher, which judges a launch on a
+// shared project job with the answer its drop was taken on
+// (internal/cli's credentialsServiceLaunchEnv, B5.7). The drop is the
+// profile's — a shared job is ONE job for every repository a profile serves,
+// so one switched repository takes the model mounts off every repository's
+// runs on it — and the address each of those runs is handed has to be the
+// profile's for the same reason: judged per repository, a repository of a
+// served profile whose own record says off (or whose document the launching
+// machine cannot read at all) would be handed no address and would have no
+// mount to fall back on either, and its run would die at its first model call
+// (G17, D143). So this is the deployer's function, exported, and never a
+// second spelling of it: the two answers are one answer, and a profile the
+// switch holds off keeps every mount and every accessor on both sides (G9,
+// D147).
+//
+// The launcher asks it of the same two facts the deployer does — the config's
+// per-repository records and the profile's own definition — and of no third
+// one: a launch on a shared job is judged by the profile even where this
+// machine cannot read the repository's document at all, which is a state the
+// per-repository path does need a document for. What it does beside this answer
+// is not a second one: the installation's URL has to be there to hand anything
+// at all, and a run whose auth the service does not serve is told nothing
+// whatever the profile says, because it reads none of the service's credentials
+// and the address would move its git traffic onto a mint it does not need.
+func CredentialsServiceServesProfile(lc *localcfg.Config, pr config.JobProfile) bool {
 	if lc == nil || lc.CredentialsService == nil {
 		return false
 	}
