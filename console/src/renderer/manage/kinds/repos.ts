@@ -42,6 +42,7 @@
 import { buildCopyCommand, commandValue, commandWord } from '../command'
 import { boolAt, objectAt, objectsAt, stringsAt, textAt } from './read'
 import { defineManageKind } from '../types'
+import { sanitizeText } from '../../../shared/sanitize'
 import type { JsonObject } from './read'
 import type { ManageAction, ManageColumn, ManageKind, ManageRow } from '../types'
 
@@ -87,8 +88,8 @@ export const reposLeaves = [
  * ruling of 2026-11-17, and the reason neither is this command's to take away.
  * It is drawn because the sequence that does take them away is not a verb this
  * command has -- naming `--retire` here would send an operator to a command that
- * answers "Nothing to retire" over a repository whose `fugaro.yaml` still
- * declares every address. */
+ * answers "Nothing to retire" over a repository this machine's own config still
+ * declares in full. */
 export const reposKeeps = [
   "the repository's Terraform state",
   "and the repository root's own IAM members",
@@ -116,39 +117,121 @@ export const reposEnrolmentBuild =
   'the first image build is not part of this: it is billable and it waits for `fugaro image build <entry>`'
 
 /**
+ * matchSegment is `internal/config`'s `MatchSegment`, which is the matcher the
+ * whole answer is built on (`projectpolicy.MatchRepo` for a published policy's
+ * `allow_repos` and the CLI's own `admittedBy` both call it): a `*` matches any
+ * run of characters **within** one segment, so `github/acme/ap*` admits
+ * `github/acme/app`, and everything else is literal. Reading a `*` as a whole
+ * segment only would say "its runs are refused from now on" over a repository a
+ * remaining pattern still admits -- the misfire `matchseg.go` warns about -- so
+ * this is a port of the two-pointer match and not an approximation of it.
+ *
+ * The `*` case is tried **before** literal equality, exactly as it is there, and
+ * that order is load-bearing: the second argument is not always a concrete
+ * repository. A *pattern* being removed carries `*` characters of its own
+ * (`github/acme/*app` removed while `github/acme/*` remains), and they have to be
+ * read as ordinary characters -- testing equality first spends the pattern's
+ * star on that one character and loses it, so `*` would not admit `*app`.
+ */
+function matchSegment(pattern: string, subject: string): boolean {
+  let p = 0
+  let i = 0
+  let star = 0
+  let at = 0
+  let has = false
+  while (i < subject.length) {
+    if (p < pattern.length && pattern[p] === '*') {
+      star = p
+      at = i
+      has = true
+      p++
+    } else if (p < pattern.length && pattern[p] === subject[i]) {
+      p++
+      i++
+    } else if (has) {
+      // The last `*` takes one more character and the rest of the pattern is
+      // tried again from there.
+      at++
+      i = at
+      p = star + 1
+    } else {
+      return false
+    }
+  }
+  // Whatever is left of the pattern may only be trailing stars.
+  while (p < pattern.length && pattern[p] === '*') p++
+  return p === pattern.length
+}
+
+/** matchRepo is `projectpolicy.MatchRepo`: the wildcard entry admits every
+ * repository, a pattern of a different segment count admits none, and every
+ * remaining segment pair is `matchSegment`'s. Segment counts are compared
+ * before segments are, because a `*` never crosses a `/`. */
+function matchRepo(pattern: string, canonical: string): boolean {
+  if (pattern === '' || canonical === '') return false
+  if (pattern === '*') return true
+  const patternSegments = pattern.split('/')
+  const canonicalSegments = canonical.split('/')
+  if (patternSegments.length !== canonicalSegments.length) return false
+  return patternSegments.every((segment, index) => matchSegment(segment, canonicalSegments[index] ?? ''))
+}
+
+/**
  * admittedBy is `internal/cli`'s own answer to "does an entry of this list still
- * admit this repository", read here so the removal sentence is the CLI's: the
- * repository's own canonical name wins, a per-segment pattern admits what it
- * matches, and the wildcard admits everything. It is deliberately small -- the
- * console never decides admission anywhere else, and a second matcher that
- * disagreed with `projectpolicy.AdmitRepo` would draw a state the next run does
- * not have.
+ * admit this repository" (`project_enroll.go`): the first entry of the list a
+ * removal leaves -- the caller has already taken the removed entry's own
+ * occurrence out, as `entriesExcept` does -- that matches. Both callers of the
+ * matcher are the CLI's, so a second answer here would be a sentence about a
+ * state the next run does not have.
  */
 function admittedBy(entries: readonly string[], canonical: string): string {
   for (const entry of entries) {
-    if (entry === canonical) return entry
-  }
-  for (const entry of entries) {
-    if (entry === '*') return entry
-  }
-  const segments = canonical.split('/')
-  for (const entry of entries) {
-    const parts = entry.split('/')
-    if (parts.length !== segments.length) continue
-    if (parts.every((part, index) => part === '*' || part === segments[index])) return entry
+    if (matchRepo(entry, canonical)) return entry
   }
   return ''
+}
+
+/**
+ * repoTextOf is a document string the sentence below is about to name, read
+ * through the class the repository columns declare. A repository name and an
+ * allow-list entry are both `repoPattern`s -- the class admits the wildcard
+ * entry a "still admits it" clause names -- and a value the console will not
+ * draw as a cell is one it will not quote in a sentence either, which is
+ * `command.ts`'s own rule for the value it copies. An empty answer is a refusal.
+ *
+ * A refused value is not dropped from the sentence: every clause of both
+ * sentences is about the one repository, so a sentence with its name taken out
+ * states nothing, and a sentence that skipped the clause naming a pattern which
+ * still admits it would say runs are refused where they are not. The command is
+ * not drawn at all instead.
+ */
+function repoTextOf(raw: string, field: string): string {
+  const value = sanitizeText(raw, 'repoPattern', field)
+  return value.ok ? value.text : ''
 }
 
 /** reposRemovalConsequence is the sentence drawn beside `repos rm`: what the
  * removal stops (which depends on the rest of the allow-list, `removalWarning`'s
  * own rule), the four stores it takes away, the six things it leaves, and where
- * the two it keeps go. */
-export function reposRemovalConsequence(allow: readonly string[], canonical: string): string {
-  const still = admittedBy(allow.filter((entry) => entry !== canonical), canonical)
-  const stops = still
-    ? `removing ${canonical} from the allow-list, but ${still} still admits it: its runs are not refused, and a run in flight keeps the policy until it finishes`
-    : `removing ${canonical} from the allow-list: its runs are refused from now on, and a run in flight keeps the policy until it finishes`
+ * the two it keeps go. It answers `null` where the repository or the entry that
+ * still admits it is a value the console will not draw: a sentence that named
+ * one of them only by leaving it out would be about a different repository. */
+export function reposRemovalConsequence(
+  allow: readonly string[],
+  canonical: string,
+): string | null {
+  const name = repoTextOf(canonical, 'the repository')
+  if (name === '') return null
+  const match = admittedBy(
+    allow.filter((entry) => entry !== canonical),
+    canonical,
+  )
+  const by = match === '' ? '' : repoTextOf(match, 'the allow-list entry that still admits it')
+  if (match !== '' && by === '') return null
+  const stops =
+    by === ''
+      ? `removing ${name} from the allow-list: its runs are refused from now on, and a run in flight keeps the policy until it finishes`
+      : `removing ${name} from the allow-list, but ${by} still admits it: its runs are not refused, and a run in flight keeps the policy until it finishes`
   return [
     `${stops}.`,
     `It ${reposRemovalTakes}.`,
@@ -160,9 +243,12 @@ export function reposRemovalConsequence(allow: readonly string[], canonical: str
 
 /** reposEnrolmentConsequence is the sentence drawn beside `repos add`: the
  * writes the CLI's confirmation is about, and the one thing it leaves for a
- * later command. */
-export function reposEnrolmentConsequence(canonical: string): string {
-  return `enrolling ${canonical} in the project will ${reposEnrolmentWrites}, ${reposEnrolmentPublish}. And ${reposEnrolmentBuild}.`
+ * later command. It answers `null` for a repository the console will not draw,
+ * for `reposRemovalConsequence`'s reason. */
+export function reposEnrolmentConsequence(canonical: string): string | null {
+  const name = repoTextOf(canonical, 'the repository')
+  if (name === '') return null
+  return `enrolling ${name} in the project will ${reposEnrolmentWrites}, ${reposEnrolmentPublish}. And ${reposEnrolmentBuild}.`
 }
 
 /** reposImageCell is a row's image cell: what its job runs and which of the
@@ -212,17 +298,20 @@ function reposLocalCell(local: JsonObject | null): string {
 }
 
 /** reposRowActions is one repository's two Copy-commands, and each is dropped
- * when `buildCopyCommand` refuses it: a canonical name this console will not put
- * in a shell draws a row without a Copy rather than a command it repaired. Both
- * verbs are built from the row's own canonical name, which is why they are the
- * row's actions and not the kind's (`../types.ts`, `ManageRow.actions`). */
+ * when `buildCopyCommand` refuses it or when its consequence is `null`: a
+ * canonical name this console will not put in a shell, or will not draw in the
+ * sentence beside the Copy, leaves the row without that command rather than with
+ * one it repaired. Both verbs are built from the row's own canonical name, which
+ * is why they are the row's actions and not the kind's (`../types.ts`,
+ * `ManageRow.actions`). */
 function reposRowActions(canonical: string, allow: readonly string[]): readonly ManageAction[] {
-  const verbs: readonly (readonly [string, string])[] = [
+  const verbs: readonly (readonly [string, string | null])[] = [
     ['add', reposEnrolmentConsequence(canonical)],
     ['rm', reposRemovalConsequence(allow, canonical)],
   ]
   const actions: ManageAction[] = []
   for (const [verb, consequence] of verbs) {
+    if (consequence === null) continue
     const answer = buildCopyCommand(
       [
         commandWord('fugaro'),

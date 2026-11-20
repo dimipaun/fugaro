@@ -123,6 +123,15 @@ export type CopyCommandAnswer =
  * the two never mix. It is a parameter rather than a member the caller attaches
  * afterwards so that an action is still built in one place, and a refused action
  * takes its consequence with it: nothing is drawn for a command that was refused.
+ *
+ * A sentence is not held to the alphabets because it is not a word, and that is
+ * not an exemption for a *value* inside it: the one part of a consequence a
+ * document supplies -- the repository a removal is about, the allow-list entry
+ * that still admits it -- is read by the caller through the `TEXT_CLASSES` class
+ * its column declares before it is interpolated (`repos.ts`'s `repoTextOf`), and
+ * a caller that cannot read the value draws no action at all. So nothing here
+ * has to check what the caller wrote, and no document string reaches a screen on
+ * the strength of this parameter's name.
  */
 export function buildCopyCommand(
   parts: readonly CommandPart[],

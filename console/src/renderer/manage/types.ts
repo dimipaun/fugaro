@@ -104,9 +104,15 @@ export interface CopyCommandAction {
    * empty string for a command that destroys nothing (`secrets set`, an
    * enrolment).
    *
-   * It is the console's own words and never a document's: `buildCopyCommand`
-   * takes it as an argument, so a kind passes a constant it wrote. What it must
-   * state is the CLI's own account of what the command does -- spec section 8
+   * It is the console's own words and never a document's sentence:
+   * `buildCopyCommand` takes it as an argument, so the composition is text a
+   * kind's author wrote. The one part of it a document supplies is a value the
+   * sentence names -- the repository a removal is about, the allow-list entry
+   * that still admits it -- and a kind reads such a value through its
+   * `TEXT_CLASSES` class before it interpolates it (`manage/kinds/repos.ts`),
+   * because the copy alphabets are about a word a shell will run and this is a
+   * sentence a person reads. What it must state is the CLI's own account of what
+   * the command does -- spec section 8
    * asks a destructive action to state its consequences, and D2909 gives a
    * removal no confirmation window to state them in: the operator's next step
    * after the copy is the terminal, so the sentence travels with the command.

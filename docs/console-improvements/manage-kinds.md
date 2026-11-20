@@ -106,12 +106,15 @@ The refusal is an ordinary outcome and never a repair: `;`, `$(`, a backtick, a 
 **The action also carries a `consequence`, and it is the console's own sentence rather than a word of the command.**
 What a destructive command takes away is what the operator has to read before they paste, and D2909 gives a removal no
 confirmation window to say it in: the next step after the Copy is a terminal, so the sentence travels with the
-command. `buildCopyCommand` takes it as an argument, so it is never a document's string and is not held to the
-alphabets above: a sentence is not a word, and the two never mix. What the sentence must state is the CLI's own
-account of the command (spec section 8), which is why MO-C's two are composed of phrases copied verbatim out of
-`internal/cli/project_repos_rm.go` and `project_enroll_converge.go` and held back to those files by
-`manage-code.test.ts`, and it is the empty string for a command with nothing to state. A refused action takes its
-consequence with it: nothing is drawn for a command that was refused.
+command. `buildCopyCommand` takes it as an argument, so the composition is the console's own and the sentence is not held
+to the alphabets above: a sentence is not a word, and the two never mix. That is not an exemption for a **value** inside
+it: the one part of a consequence a document supplies -- the repository a removal is about, the allow-list entry that
+still admits it -- is read through the `TEXT_CLASSES` class its column declares before it is interpolated (`repos.ts`'s
+`repoTextOf`), and a value the class refuses draws no action at all rather than a sentence with the value left out. What
+the sentence must state is the CLI's own account of the command (spec section 8), which is why MO-C's two are composed of
+phrases copied verbatim out of `internal/cli/project_repos_rm.go` and `project_enroll_converge.go` and held back to those
+files by `manage-code.test.ts`, and it is the empty string for a command with nothing to state. A refused action takes
+its consequence with it: nothing is drawn for a command that was refused.
 
 ## What is not here
 

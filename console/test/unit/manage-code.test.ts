@@ -24,7 +24,11 @@
 //     `project_enroll_converge.go`, and the constants are held to that text
 //     verbatim: the point of the sentence beside a Copy is that it says what the
 //     command will do, and a paraphrase decided here would be the console's
-//     belief about a removal rather than the CLI's.
+//     belief about a removal rather than the CLI's. The one part of a sentence a
+//     document supplies -- the repository, and the entry that still admits it --
+//     is read through `repoPattern` first, and the two are the document's own
+//     answers: which entries a removal leaves is the CLI's matcher
+//     (`projectpolicy.MatchRepo`), read here through the same `*`.
 //   - **a Copy-command only copies.** The remove action is the one D2909 forbids
 //     a console to run, so the last describe copies every row's commands to a
 //     clipboard with a bridge full of spies and asserts that none of them was
@@ -593,6 +597,48 @@ describe('the consequences the two Copy-commands state', () => {
     const consequence = reposRemovalConsequence(REPOS_DOC.allow.entries, 'github/acme/app')
     expect(consequence).toContain('but github/acme/* still admits it: its runs are not refused')
     expect(consequence).not.toContain('refused from now on')
+  })
+
+  it('reads a `*` the way the CLI reads it: inside a segment, not only as a whole one', () => {
+    // `internal/config`'s `MatchSegment` lets a `*` stand for any run of
+    // characters **within** one segment, so `github/acme/ap*` admits
+    // `github/acme/app`. A matcher that read a `*` as a whole segment only would
+    // answer "its runs are refused from now on" over a repository the list still
+    // admits -- the misfire `matchseg.go` warns about -- so both directions are
+    // pinned here.
+    const inside = reposRemovalConsequence(['github/acme/app', 'github/acme/ap*'], 'github/acme/app')
+    expect(inside).toContain('but github/acme/ap* still admits it: its runs are not refused')
+    expect(inside).not.toContain('refused from now on')
+    // A `*` never crosses a `/`: `github/*` has two segments where the
+    // repository has three, so it admits nothing -- a matcher whose star could
+    // span a separator would read it as every repository of the provider.
+    expect(reposRemovalConsequence(['github/acme/app', 'github/*'], 'github/acme/app')).toContain(
+      'its runs are refused from now on',
+    )
+    // The second argument may be a pattern of its own, and its `*` characters are
+    // ordinary characters there -- which is why the pattern's star is tried
+    // *before* literal equality: `github/acme/*` removed while `github/acme/*app`
+    // remains is not a revocation, and a matcher that spent the star on the one
+    // character would say it was.
+    expect(reposRemovalConsequence(['github/acme/*app', 'github/acme/*'], 'github/acme/*app')).toContain(
+      'but github/acme/* still admits it',
+    )
+  })
+
+  it('draws no sentence, and so no Copy, for a value it will not name', () => {
+    // The two values a consequence interpolates are the document's, so they are
+    // read through the repository columns' own class (`repoPattern`) before they
+    // are drawn. A name the copy alphabets admit but that class refuses -- here a
+    // tag, which no repository entry carries -- is a value the console will not
+    // draw, and a sentence that had to leave the name out would be about another
+    // repository: the action is dropped instead.
+    expect(reposRemovalConsequence(['github/acme/app'], 'github/acme/app:latest')).toBeNull()
+    expect(reposEnrolmentConsequence('github/acme/app:latest')).toBeNull()
+    const doc = {
+      ...REPOS_DOC,
+      repos: [{ ...REPOS_DOC.repos[0], canonical: 'github/acme/app:latest' }],
+    }
+    expect(reposKind.decode(doc)[0]?.actions).toEqual([])
   })
 
   it('draws the CLI’s own account of an enrolment', () => {
