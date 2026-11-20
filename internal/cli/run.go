@@ -6656,14 +6656,13 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 	// to put on a job's environment either.
 	installed := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
 	if sharedProfile != "" {
-		// The profile's own answer, and it is the deployer's: the drop these
-		// mounts would have held was taken on
-		// infra.CredentialsServiceServesProfile, so a launch that judged the
-		// repository instead would withhold the address from a job the drop
-		// has already emptied (above). An undeclared profile is the same
-		// held-off answer the deployer reads (declared, internal/infra's
-		// RefreshProjectJobCredentialsService): no job of a profile the config
-		// does not define was composed for it in this config either.
+		// The profile's own answer, and it is the deployer's: this job's model
+		// mounts were dropped on infra.CredentialsServiceServesProfile, so a
+		// launch that judged the repository instead would withhold the address
+		// from a job the drop has already emptied (above). An undeclared
+		// profile is the same held-off answer the deployer reads (declared,
+		// internal/infra's RefreshProjectJobCredentialsService): no job of a
+		// profile this config does not define was composed from it either.
 		pr, declared := lc.Profiles[sharedProfile]
 		if !installed || !declared || !infra.CredentialsServiceServesProfile(lc, pr) {
 			return nil

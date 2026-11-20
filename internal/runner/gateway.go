@@ -418,10 +418,10 @@ func (r *run) servedAuth() string {
 //
 // A SHARED PROJECT JOB has the mode and nothing else, and the sentence says so:
 // its switch is its profile's (B5.7, internal/cli's credentialsServiceLaunchEnv
-// reads the same answer), so one repository cannot take it off — as long as any
-// repository the profile admits is on, its jobs are on, and a run of every
-// other repository of the profile is held off with it. A remedy naming
-// `fugaro update --repo` there would be one no checkout can carry out.
+// reads the same answer), so one repository cannot take it off — while any
+// repository the profile admits is on, every job of that profile is on, and so
+// is every other repository's run on it. A remedy naming `fugaro update --repo`
+// there would be one no checkout can carry out.
 func (r *run) serviceSwitchModeRefusal() error {
 	mode := r.spend.Mode
 	if mode == "" {
