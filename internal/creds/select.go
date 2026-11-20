@@ -793,12 +793,12 @@ func checkCandidates(cs []Credential, model string) ([]Credential, error) {
 		switch c.Tier {
 		case TierA, TierB:
 		case TierC:
-			if !providerServes(model) {
+			if !ProviderServes(model) {
 				refused = append(refused, c)
 				continue
 			}
 		default:
-			return nil, fmt.Errorf("creds: %q has tier %q, which is not a tier this Fugaro knows: it selects tier a (a shared subscription token) and tier b (the project's API key)", c.Name, c.Tier)
+			return nil, fmt.Errorf("creds: %q has tier %q, which is not a tier this Fugaro knows: it selects tier a (a shared subscription token), tier b (the project's API key) and tier c (a named provider's key, for a model that is not Claude's)", c.Name, c.Tier)
 		}
 		if seen[c.Name] {
 			return nil, fmt.Errorf("creds: %q is offered twice, and one credential offered twice would be counted twice", c.Name)
@@ -817,7 +817,7 @@ func checkCandidates(cs []Credential, model string) ([]Credential, error) {
 	return out, nil
 }
 
-// providerServes reports whether a call for this model may be served by a
+// ProviderServes reports whether a call for this model may be served by a
 // provider's own key: every model but a Claude one (D3000, R3). A caller that
 // named no model is not one of them — the fail-closed direction, and the one
 // every caller had before a selection could be told the model at all.
@@ -826,7 +826,15 @@ func checkCandidates(cs []Credential, model string) ([]Credential, error) {
 // models are Claude's is the pin ladder the config, the mount and the launch
 // already share (R3), and a second list here would be a second answer to a
 // question that has one.
-func providerServes(model string) bool {
+//
+// It is exported because the rule has a second reader outside this package: the
+// credentials service decides which candidates a probe may run on, and a probe
+// sends the call's OWN model through the credential it asks about — so a probe
+// on a provider key for a Claude model would be exactly the route Check 50
+// gates, made by the service rather than by the agent
+// (internal/credsvc's probeCandidates). A caller that restated the rule instead
+// would be a second answer to it.
+func ProviderServes(model string) bool {
 	return model != "" && !config.IsClaudeModel(model)
 }
 

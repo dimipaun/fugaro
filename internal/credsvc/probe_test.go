@@ -938,13 +938,51 @@ func TestProbeCandidatesFollowThePolicy(t *testing.T) {
 		{"no fallback written", creds.Settings{}, 1},
 		{"auto", creds.Settings{Fallback: creds.Auto}, 2},
 	} {
-		got := probeCandidates(cands, tc.set)
+		got := probeCandidates(cands, tc.set, testModel)
 		if len(got) != tc.want {
 			t.Errorf("%s: %d candidates are open to a probe, want %d", tc.name, len(got), tc.want)
 		}
 		for _, c := range got {
 			if c.Tier != creds.TierA && !tc.set.Fallback.Spends() {
 				t.Errorf("%s: %q of tier %s is open to a probe under a policy that does not spend", tc.name, c.Name, c.Tier)
+			}
+		}
+	}
+}
+
+// TestAProviderKeyIsNotProbedForAClaudeModel: a probe sends the call's OWN model
+// through the credential it asks about, so a tier-C candidate may be probed only
+// for a model a provider may serve (creds.ProviderServes, D3000). Without the
+// gate the service would make the very call Check 50 gates — a Claude model
+// through a third party — and would clear the mark on the way, handing the next
+// selection a usable provider key for a Claude call. The model decides it and
+// not the policy: a repository's own provider credential is offered under every
+// auth the service serves (F32), and a call that names no model reads as a
+// Claude one.
+func TestAProviderKeyIsNotProbedForAClaudeModel(t *testing.T) {
+	cands := []creds.Credential{
+		{Name: "default", Tier: creds.TierA},
+		{Name: "repo-credential--gh-acme-app-1a2b--openrouter", Tier: creds.TierC},
+	}
+	for _, tc := range []struct {
+		name  string
+		set   creds.Settings
+		model string
+		want  int
+	}{
+		{"a Claude model under a spending policy", creds.Settings{Fallback: creds.Auto}, testModel, 1},
+		{"no model named under a spending policy", creds.Settings{Fallback: creds.Auto}, "", 1},
+		{"another model under a spending policy", creds.Settings{Fallback: creds.Auto}, openRouterModel, 2},
+		{"a Claude model under oauth-only", creds.Settings{Fallback: creds.OAuthOnly}, testModel, 1},
+		{"another model under oauth-only", creds.Settings{Fallback: creds.OAuthOnly}, openRouterModel, 2},
+	} {
+		got := probeCandidates(cands, tc.set, tc.model)
+		if len(got) != tc.want {
+			t.Errorf("%s: %d candidates are open to a probe, want %d", tc.name, len(got), tc.want)
+		}
+		for _, c := range got {
+			if c.Tier == creds.TierC && !creds.ProviderServes(tc.model) {
+				t.Errorf("%s: the provider credential %q is open to a probe, and a probe would send %q through it", tc.name, c.Name, tc.model)
 			}
 		}
 	}

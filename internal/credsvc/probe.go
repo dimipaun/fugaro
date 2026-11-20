@@ -34,7 +34,11 @@ package credsvc
 //     (probeCandidates). A probe that did not would spend the project's money
 //     under `oauth-only` (D152) on a credential Select would never have chosen,
 //     and — worse — would clear its mark, handing the next selection a usable
-//     paid key under a policy that says never.
+//     paid key under a policy that says never. The model narrows it once more:
+//     a probe sends the call's own model through the credential it asks about,
+//     so a provider's key may be probed only for a model a provider may serve,
+//     which is the whole of D3000 (creds.ProviderServes) — the route Check 50
+//     gates is not one the service makes on its own.
 //   - One probe per credential at a time, and one per credential per call. The
 //     prober first takes a lease under creds/, conditionally, so two instances
 //     that notice the same backed-off credential at the same instant do not
@@ -367,7 +371,7 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 		// which it has already answered with) is what the run is told.
 		return false
 	}
-	c, ok := firstDue(probeCandidates(cands, sel.Settings), marks, now, probed)
+	c, ok := firstDue(probeCandidates(cands, sel.Settings, sel.Model), marks, now, probed)
 	if !ok {
 		// A selection said a probe is due and the marks say none is: the state
 		// moved between the two reads (another instance probed the credential,
@@ -401,7 +405,8 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 }
 
 // probeCandidates is the candidates a probe may run on, which is the candidates
-// the policy admits and not the ones the bundle holds.
+// the policy admits and this call's model may be served by, and not the ones the
+// bundle holds.
 //
 // The two lists are not the same, and that is the whole reason this exists: the
 // bundle's candidates are every credential the caller offered, and the tier
@@ -416,16 +421,28 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 //
 // The tier-A half is what is left when the policy does not spend, which is
 // reachableOnly's rule on the probe's side: a tier-B credential is a
-// possibility only under a written `fallback: auto`.
-func probeCandidates(cands []creds.Credential, set creds.Settings) []creds.Credential {
-	if set.Fallback.Spends() {
-		return cands
-	}
+// possibility only under a written `fallback: auto`. Tier C is where the model
+// enters, and it is the same rule the selection applies (creds.ProviderServes,
+// D3000): a provider's key is admitted whenever the policy admits it — which a
+// backed-off one needs as much as any other, because a backed-off credential
+// waits for a probe rather than for its clock (Mark.Free) and would otherwise
+// never be used again — but only for a model a provider may serve. A probe
+// sends this call's own model through the credential it asks about, so without
+// that gate the service would route a CLAUDE model to a third party, which is
+// the one thing D150's Check 50 gates; and a call that names no model reads as
+// a Claude one (Selector.Model), so the zero value probes exactly what this
+// gate probed before the model was read here.
+func probeCandidates(cands []creds.Credential, set creds.Settings, model string) []creds.Credential {
 	out := make([]creds.Credential, 0, len(cands))
 	for _, c := range cands {
-		if c.Tier == creds.TierA {
-			out = append(out, c)
+		switch {
+		case c.Tier == creds.TierA:
+		case c.Tier == creds.TierB && set.Fallback.Spends():
+		case c.Tier == creds.TierC && creds.ProviderServes(model):
+		default:
+			continue
 		}
+		out = append(out, c)
 	}
 	return out
 }

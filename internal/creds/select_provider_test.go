@@ -132,20 +132,20 @@ func TestAProviderCredentialInAClaudeCallsListIsNotTheCallsAnswer(t *testing.T) 
 // one.
 func TestWhichModelsAreClaudesIsThePinsOwnVocabulary(t *testing.T) {
 	for _, model := range []string{"claude-sonnet-5", "claude-opus-5-5", "anthropic/claude-opus-5-5"} {
-		if providerServes(model) {
+		if ProviderServes(model) {
 			t.Errorf("the model %q is admitted for a provider key: it is a Claude model in one of the two spellings a pin may carry (config.IsClaudeModel)", model)
 		}
 	}
 	for _, model := range []string{otherModel, "deepseek/*", "gpt-5"} {
-		if !providerServes(model) {
+		if !ProviderServes(model) {
 			t.Errorf("the model %q is refused a provider key: it is no Claude model, and D3000 gates a Claude model alone", model)
 		}
 	}
 	// The vocabulary is config's, so a model it reads one way and this package
 	// reads the other would be two answers to one question.
 	for _, model := range []string{"claude-sonnet-5", "anthropic/claude-opus-5-5", otherModel, "gpt-5"} {
-		if got, want := providerServes(model), model != "" && !config.IsClaudeModel(model); got != want {
-			t.Errorf("providerServes(%q) = %v, and config.IsClaudeModel says %v", model, got, want)
+		if got, want := ProviderServes(model), model != "" && !config.IsClaudeModel(model); got != want {
+			t.Errorf("ProviderServes(%q) = %v, and config.IsClaudeModel says %v", model, got, want)
 		}
 	}
 }

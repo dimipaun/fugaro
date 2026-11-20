@@ -2,11 +2,14 @@ package credsvc
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 )
 
 // This file is the OFFERING's half of KS3 (F32, D3008, F42): which credentials a
@@ -89,6 +92,20 @@ func familyName(t *testing.T, slug, credential string) string {
 // a model to, whose keys are the credential half of C1's family (R2, KS3's
 // offering reads this block and nothing else about a provider).
 func testPolicyDocProviders(names ...string) string {
+	return testPolicyDocProvidersWith(`"credentials": {"fallback": "auto"}`, names...)
+}
+
+// testPolicyDocProvidersProbeable is the same node with D142's window control
+// written off, which is the probe fixture's own setting (probeSvc): with the
+// control on, a backed-off credential's earliest usable time is the end of the
+// window its exhaustion opened, so a selection answers a wait long enough to
+// move the cascade on to the next tier instead of owing the probe the test is
+// about.
+func testPolicyDocProvidersProbeable(names ...string) string {
+	return testPolicyDocProvidersWith(`"credentials": {"fallback": "auto", "stop_after_exhaustion_per_window": false}`, names...)
+}
+
+func testPolicyDocProvidersWith(credentials string, names ...string) string {
 	entries := make([]string, 0, len(names))
 	for _, n := range names {
 		// One model pattern per provider, because the policy refuses two
@@ -106,7 +123,7 @@ func testPolicyDocProviders(names ...string) string {
 			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
 			"` + testAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]}
 		},
-		"credentials": {"fallback": "auto"},
+		` + credentials + `,
 		"providers": {` + strings.Join(entries, ", ") + `}
 	}`
 }
@@ -121,8 +138,15 @@ func testPolicyDocProviders(names ...string) string {
 // repository the service verified and never one a call named.
 func providerSvc(t *testing.T) (*svc, string) {
 	t.Helper()
+	return providerSvcWith(t, testPolicyDocProviders("openrouter", "deepseek"))
+}
+
+// providerSvcWith is providerSvc over a chosen shared node, for the case whose
+// policy differs in its credentials block alone.
+func providerSvcWith(t *testing.T, doc string) (*svc, string) {
+	t.Helper()
 	s := newSvcWith(t, func(s *svc, _ *Config) {
-		s.policy.shared = decodeTestPolicy(t, testPolicyDocProviders("openrouter", "deepseek"))
+		s.policy.shared = decodeTestPolicy(t, doc)
 	})
 	withProviderKeys(t, providerKey(s.slug, "openrouter"))
 	return s, familyName(t, s.slug, "openrouter")
@@ -328,4 +352,53 @@ func (s *svc) candidatesFromPool(t *testing.T, pool poolOfferingWithout, id Iden
 // repository's entry in the list has to say which repository the call IS.
 func (s *svc) identity(mode, account string) Identity {
 	return Identity{Slug: s.slug, JobClass: ClassRepository, AuthMode: mode, AuthAccount: account}
+}
+
+// TestTheOfferingsProviderCredentialIsNotWhatAProbeRunsOn is where the two
+// halves of KS3 meet: a repository whose published policy names a provider is
+// offered its own named entry (ownNamedEntries), and a probe is a call this
+// service makes on a credential the call was offered — carrying the call's OWN
+// model in its body (probeCall). So the credential a probe may run on is the one
+// that could serve the call, and no other (probeCandidates, creds.ProviderServes,
+// D3000).
+//
+// The case is a Claude-model call, which is every call today: no route fills
+// Selector.Model before KS4, and a call that named no model reads as a Claude
+// one. The shared token is backed off with its own wait passed, so the selection
+// owes a probe on it; the provider credential is planted as the more overdue of
+// the two, so a probe list that did not ask the model's question answers it —
+// and the probe built on the provider's entry carries a CLAUDE model to the
+// third party, which is the one route Check 50 exists to measure. What is
+// pinned here is that it is the shared token that is probed: the provider
+// credential's mark is exactly what the exhaustion left, and the run's own call
+// is served by the token the probe cleared.
+func TestTheOfferingsProviderCredentialIsNotWhatAProbeRunsOn(t *testing.T) {
+	s, provider := providerSvcWith(t, testPolicyDocProvidersProbeable("openrouter", "deepseek"))
+	planted := s.backedOffDue(provider, s.now.Add(-time.Hour), creds.DefaultBackoffInitial, s.now.Add(-2*time.Minute))
+	s.backedOffDue(config.DefaultClaudeAccount, s.now.Add(-time.Hour), creds.DefaultBackoffInitial, s.now.Add(-time.Minute))
+	// The fixture's second shared token is held for an hour: it is the one the
+	// call would otherwise be served by, and a mark whose own wait has not
+	// passed is no probe's business (the first rule above).
+	s.backedOffDue("alice", s.now.Add(-time.Hour), creds.DefaultBackoffInitial, s.now.Add(time.Hour))
+	s.up.Script = []anthropicfake.Reply{
+		anthropicfake.MessageOK(testModel, testUsage),
+		anthropicfake.MessageOK(testModel, testUsage),
+	}
+
+	resp, body := s.call(t, callBody("real-work"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call answered %d %s, want it served: the probe settles the shared token and the call goes out on it", resp.StatusCode, body)
+	}
+	if got := s.up.Count(); got != 2 {
+		t.Fatalf("the upstream saw %d requests, want the probe on the shared token and the call it settled", got)
+	}
+	if probe := s.up.Body(0); !strings.Contains(string(probe), `"max_tokens":1`) {
+		t.Errorf("the first call is %s, want the probe: nothing was asked of the shared token, and the credential a probe is due on is the one the model admits", probe)
+	}
+	if got, _ := s.state.mark(provider); got != planted {
+		t.Errorf("the provider credential's mark is %+v, want the one the exhaustion left (%+v): a probe ran on it, and the probe's body names this call's own model", got, planted)
+	}
+	if m, ok := s.state.mark(config.DefaultClaudeAccount); ok && !m.Available() {
+		t.Errorf("the shared token's mark is %+v, want it cleared: it is the credential the probe was owed on", m)
+	}
 }
