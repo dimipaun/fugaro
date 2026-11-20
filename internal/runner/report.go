@@ -11,7 +11,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/shellword"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -63,8 +66,49 @@ func FollowUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 
 // followUpReport is FollowUpReport with notes about the pull request itself
 // (reviewers that could not be requested, a host without drafts), each
-// shown as a line after the outcome.
+// shown as a line after the outcome, and without the Messages section: every
+// report site that can carry messages calls reportWithMessages instead, and
+// the artifact path comes through here, which never carries any (F24).
 func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection, notes []string) string {
+	return reportWithMessages(rec, location, tail, fu, notes, nil)
+}
+
+// ReportMessages is what the report's Messages section shows and the run's own
+// record cannot: the text of each message — the record carries none (F13) —
+// and the pull request an undelivered one would be sent on. The caller hands
+// it in from the run's memory, never from anything under runs/: that prefix is
+// the run's own write, which a hostile agent can rewrite, so a command built
+// from the record would be a command the run could forge (F19, F20).
+type ReportMessages struct {
+	// Texts is the text of each message, by number, as the runner holds it.
+	// A number with no entry is one whose text the run never had — a refused
+	// object it did not read, or a number that was never written — and it is
+	// shown in the summary alone.
+	Texts map[int]string
+	// Repo is the repository as owner/name, which the printed line names so
+	// that pasting it does not follow up a pull request of whatever checkout
+	// it is pasted in (F19).
+	Repo string
+	// PR is the number of the pull request this run opened, or 0 for a run
+	// that opened none: an undelivered message then gets no line, and its text
+	// is shown on its own, to send in a new run (F19).
+	PR int
+}
+
+// text is the text the runner holds for seq: "" for a message whose text it
+// never read, and for a report rendered with no memory at all.
+func (m *ReportMessages) text(seq int) string {
+	if m == nil {
+		return ""
+	}
+	return m.Texts[seq]
+}
+
+// reportWithMessages is followUpReport with the Messages section: mem supplies
+// the part of it that only the runner's memory holds. A nil mem renders the
+// record's own account of the messages without their text, which is what a
+// caller that has none — the artifact path — gets.
+func reportWithMessages(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection, notes []string, mem *ReportMessages) string {
 	var b strings.Builder
 	// The heading names the run by its short ID, the form spec.md §1 settles on
 	// (D1701); the marker that closes the report keeps the full ID, which is
@@ -124,6 +168,7 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 		fmt.Fprintf(&b, "**Cost:** $%.2f\n\n", rec.CostUSD)
 	}
 	b.WriteString(policyLine(rec.Policy))
+	b.WriteString(messagesSection(rec, mem))
 	if fu != nil {
 		b.WriteString(followUpSection(fu, rec.Reason))
 	}
@@ -662,7 +707,18 @@ func followupsLine(runID string) string {
 // it goes through tableCode: the pipe that would slide the columns is escaped
 // and the fence is longer than any backtick run in it.
 func toleratedCell(title string) string {
-	return tableCode(strings.Join(strings.Fields(title), " "))
+	return cellText(title)
+}
+
+// cellText is a value a record states of its own, rendered into one cell of a
+// table: its whitespace is flattened, so a newline in it cannot end the row
+// and have the line after it read as Markdown of the report's, and it goes
+// through tableCode, so a pipe cannot slide the columns and the value cannot
+// close the code span it sits in. The record's values are the untrusted ones —
+// it is a file the run's own agent can rewrite (F20) — and a report is posted
+// as a comment on a pull request.
+func cellText(s string) string {
+	return tableCode(strings.Join(strings.Fields(s), " "))
 }
 
 // testsLine is the report's account of the suite on the final commit: the run
@@ -735,6 +791,112 @@ func longestRun(s string, c rune) int {
 // cannot end the code block early.
 func fence(s string) string {
 	return strings.Repeat("`", max(3, longestRun(s, '`')+1))
+}
+
+// writeFenced writes s as a block of the report's own markdown, in a fence
+// longer than any run of backticks in it. That fence is what keeps s from
+// ending its own block: the text is a person's words, and a line of them after
+// a fence it closed would be read as the report's own (F19).
+func writeFenced(b *strings.Builder, s string) {
+	f := fence(s)
+	fmt.Fprintf(b, "%s\n%s\n%s\n\n", f, s, f)
+}
+
+// messagesSection is the report's Messages section: what became of every
+// message the run read — its number, its sender, the flags it asked for, its
+// fate and the stage it reached (F13, rule 5) — the text of each as mem holds
+// it, and, for one the run never delivered, the command that sends it in a new
+// run (F19, rule 5).
+//
+// "" for a run carrying no message, which is every run that received none and
+// every record written before the block existed: a report without messages is
+// byte for byte the report it always was.
+func messagesSection(rec *runstore.Record, mem *ReportMessages) string {
+	if rec.Messages == nil || len(rec.Messages.Messages) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("#### Messages\n\n")
+	b.WriteString("| # | Sender | Flags | Fate | Stage |\n|---|---|---|---|---|\n")
+	for _, d := range rec.Messages.Messages {
+		fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n",
+			d.Seq, senderCell(d.SentBy), flagsCell(d.Flags), stateCell(string(d.State)), stageCell(d.Stage))
+	}
+	b.WriteString("\n")
+	for _, d := range rec.Messages.Messages {
+		// The words the person typed, cleaned as every other text the run
+		// shows is: the report is posted on a pull request and stored in a
+		// file, and a control character or a bidi override in it is neither.
+		text := safetext.MultiLine(mem.text(d.Seq))
+		if text == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "**Message %d**:\n\n", d.Seq)
+		writeFenced(&b, text)
+		if d.State != runmsg.StateUndelivered {
+			continue
+		}
+		if mem == nil || mem.PR == 0 {
+			// No pull request was opened, so there is nothing to continue:
+			// the text above is the whole answer, to send in a new run (F19).
+			continue
+		}
+		b.WriteString("Send it in a new run:\n\n")
+		writeFenced(&b, undeliveredLine(mem.Repo, mem.PR, text))
+	}
+	return b.String()
+}
+
+// senderCell is a message's sender in the section's table. The name is what
+// the sender states about itself and is display only — the bucket's own IAM,
+// never this field, is what makes a message unforgeable (F1, D2940) — so it
+// goes through the report's inline escaping like any other text a record
+// carries into a table cell. "—" for a message that names none, which a
+// hand-written object can be.
+func senderCell(sender string) string {
+	if sender == "" {
+		return "—"
+	}
+	return tableCode(inlineText(sender))
+}
+
+// flagsCell is the flags a message asked for; "—" for a message that asked for
+// none. The set is closed at the message object (runmsg.check), and the record
+// beside it is not: the record is a file the run's own agent can rewrite
+// (F20), so what it states goes into the cell through cellText like the
+// reviewer text toleratedCell renders.
+func flagsCell(flags []string) string {
+	if len(flags) == 0 {
+		return "—"
+	}
+	return cellText(strings.Join(flags, ", "))
+}
+
+// stateCell is what became of a message, for the reason flagsCell is: the
+// record states it, and the record is the run's own write (F20).
+func stateCell(state string) string {
+	return cellText(state)
+}
+
+// stageCell is the coder stage a message reached; "—" for one the run never
+// delivered, which has no stage to name.
+func stageCell(stage string) string {
+	if stage == "" {
+		return "—"
+	}
+	return tableCode(inlineText(stage))
+}
+
+// undeliveredLine is the command that sends an undelivered message in a new
+// run (F19, rule 5). Every part of it is handed in by the caller from the
+// runner's memory, because a run can rewrite anything under its own prefix.
+// The repository is named so that pasting the line does not follow up a pull
+// request of whatever checkout it is pasted in, and the text goes after "--",
+// quoted with the quoter this program prints its own commands with, so a text
+// that begins with "-" is never read as a flag and a text carrying a space, a
+// quote or a "$" stays one argument that runs nothing of its own.
+func undeliveredLine(repo string, pr int, text string) string {
+	return fmt.Sprintf("fugaro run --pr %d --repo %s -- %s", pr, shellword.Quote(repo), shellword.Quote(text))
 }
 
 // followUpSection renders fu; reason is why the run ended a draft.

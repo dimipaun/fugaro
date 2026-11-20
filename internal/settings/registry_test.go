@@ -1,7 +1,10 @@
 package settings
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -156,10 +159,6 @@ func TestRegistryCoversEveryConfigField(t *testing.T) {
 }
 
 func TestRegistryFugaroYAMLKeysMatchConfigScopes(t *testing.T) {
-	scopes := map[string]bool{}
-	for _, s := range config.Scopes {
-		scopes[s.Key] = true
-	}
 	rows := map[string]Row{}
 	for _, r := range Rows() {
 		rows[r.Key] = r
@@ -182,16 +181,28 @@ func TestRegistryFugaroYAMLKeysMatchConfigScopes(t *testing.T) {
 	}
 	// The reverse direction: only a fugaro.yaml key may be set in the layers
 	// config.Scopes owns, so a row claiming one of them is a row whose key
-	// belongs in that table.
+	// belongs in that table. The table's own answer for a path inside a listed
+	// key is the listed key (config.ScopeOf): `governance.stage_timeout.
+	// implement` is a key of the block `governance.stage_timeout` is, which the
+	// table lists InProject|InRepo, and that is what makes W2's concrete rows
+	// members of the table rather than rows beside it. A key the table answers
+	// nothing for is the failure here, and so is a row claiming a layer the key
+	// it is inside is not set in — the block a repository may set is the whole
+	// of what its leaves may claim.
 	for _, r := range Rows() {
+		if strings.HasPrefix(r.Key, "layer.") {
+			continue
+		}
+		scope, listed := config.ScopeOf(r.Key)
 		for _, l := range r.Layers {
 			if l != LayerProject && l != LayerProfile && l != LayerRepo && l != LayerFlag {
 				continue
 			}
-			if !scopes[r.Key] && !strings.HasPrefix(r.Key, "layer.") {
-				t.Errorf("%s: claims the %s layer and is not a config.Scopes key", r.Key, l)
-				break
+			if listed && slices.Contains(scopeLayers(scope.In), l) {
+				continue
 			}
+			t.Errorf("%s: claims the %s layer, and config.Scopes lists neither the key nor a block it is a key of (layer %v)", r.Key, l, scopeLayers(scope.In))
+			break
 		}
 	}
 }
@@ -238,6 +249,13 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 		// that command rather than `fugaro project`, whose other keys this
 		// block is not.
 		"project binaries",
+		// A block of settings (W2 of docs/config-ownership, D2604): the key
+		// whose own spelling holds other rows and no value of its own, so the
+		// generic path refuses it (settingsRefuseRow) and its row names the
+		// command that writes the settings under it rather than the command
+		// itself — the default token would say `settings set` writes a key it
+		// will not write (D1178, F13).
+		"settings block",
 	}
 	for _, r := range Rows() {
 		ok := false
@@ -477,6 +495,67 @@ func TestRegistryCarriesTheOrchestratorSwitchAndIssueSync(t *testing.T) {
 		}
 		if r.Owner != "project" || r.Doc == "" {
 			t.Errorf("%s: Owner = %q and Doc = %q, want the `project` family and the plan that states the key: the publish door is what carries a node-only key onto the node", tc.key, r.Owner, r.Doc)
+		}
+	}
+}
+
+// TestSettingsSchemaNamesTheReportsCommitRows: the designated reports
+// repository's two rows (periodic-reviews R15, D2751) are the surface
+// `fugaro settings` publishes, and schemas/settings.schema.json is where a
+// consumer of the settings document reads what a key means before it is
+// written — its $defs.keyDefaults carries one entry per registry row with the
+// default the registry gives it, which schemas' TestSettingsSchema holds to the
+// whole table. The two rows are the `binaries.*` rows' shape: the owner's local
+// project config alone, reached by no generic write, so the schema states them
+// beside `binaries.allow` and `binaries.max_bytes` and each entry carries the
+// sentence the registry gives it. A key dropped from either side — or one whose
+// layer list widens past the local project config — fails here.
+func TestSettingsSchemaNamesTheReportsCommitRows(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "settings.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Defs struct {
+			KeyDefaults struct {
+				Properties map[string]struct {
+					Default string `json:"default"`
+				} `json:"properties"`
+			} `json:"keyDefaults"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	props := doc.Defs.KeyDefaults.Properties
+	if len(props) == 0 {
+		t.Fatal("settings.schema.json has no $defs.keyDefaults.properties")
+	}
+	// The block whose shape the two rows follow, so the comparison is one a
+	// reader can make in the document itself.
+	if _, ok := props["binaries.allow"]; !ok {
+		t.Fatal("settings.schema.json names no binaries.allow, and the reports_commit rows are that block's shape")
+	}
+	for _, key := range []string{"reports_commit.repo", "reports_commit.dir"} {
+		entry, ok := props[key]
+		if !ok {
+			t.Errorf("settings.schema.json names no %s: the designation is a registry key, and the schema is where a consumer reads what its absence means", key)
+			continue
+		}
+		r, ok := Lookup(key)
+		if !ok {
+			t.Errorf("%s: the schema entry has no registry row to answer for it", key)
+			continue
+		}
+		want := r.Default.Value
+		if want == "" {
+			want = r.Default.Unset
+		}
+		if entry.Default != want {
+			t.Errorf("%s: the schema's default is %q, and the registry says %q", key, entry.Default, want)
+		}
+		if !slices.Equal(r.Layers, []string{LayerLocal}) {
+			t.Errorf("%s: Layers = %v, want the owner's local project config alone: a launcher-writable layer that carried the designation would aim every report of the project", key, r.Layers)
 		}
 	}
 }

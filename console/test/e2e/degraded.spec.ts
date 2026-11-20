@@ -279,6 +279,7 @@ interface Drawn {
   readonly counted: string | null
   readonly segments: string | null
   readonly bars: readonly (string | null)[]
+  readonly heights: readonly (string | null)[]
   readonly gaps: number
   readonly anchors: number
   readonly buttons: number
@@ -330,6 +331,7 @@ function drawn(page: Page): Promise<Drawn> {
       counted: scope.querySelector('.live-counted')?.textContent ?? null,
       segments: scope.querySelector('.live-burn')?.getAttribute('data-segments') ?? null,
       bars: attributes('.live-burn-bar', 'data-state'),
+      heights: attributes('.live-burn-bar', 'data-height'),
       gaps: all('.live-burn-bar[data-state="gap"]').length,
       anchors: all('a').length,
       buttons: all('button').length,
@@ -518,12 +520,15 @@ test.describe('the console with nothing to read', () => {
     expect(screen.counted).toBe('$50.00')
     // And the graphs break rather than interpolate: the newest sample is a gap,
     // drawn as the console's own mark for one, with the samples that were
-    // measured still in front of it.
+    // measured still in front of it. The mark is the bar's **`data-height`** --
+    // a bar carries no text at all (D2901, the owner's report of 2026-11-18), so
+    // the em dash `formatReading` gives a gap is the attribute's value and is
+    // never a character in the mount's text.
     const bars = screen.bars
     expect(bars.length).toBeGreaterThan(2)
     expect(bars[bars.length - 1]).toBe('gap')
     expect(screen.gaps).toBeGreaterThan(0)
-    expect(screen.text).toContain('—')
+    expect(screen.heights[screen.heights.length - 1]).toBe('—')
   })
 
   test('draws no stale banner for a feed that has just spoken', async () => {

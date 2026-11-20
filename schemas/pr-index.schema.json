@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/pr-index.schema.json",
+  "title": "Fugaro pull-request index entry",
+  "description": "One run's entry in the runs bucket's pull-request index: a small object at `runs/<slug>/pr-index/<N>/<run-id>.json` naming the pull request the run opened or followed, so `runs ls --pr N` finds a pull request's runs without scanning the repository (D2961, D2962). The layout is one object per run and never one file per pull request, so no run can overwrite another run's entry as a unit, and it needs no IAM change: it sits under the job account's existing `runs/<slug>/` grant (F3, D2962). The object is written by the run's own job account, which is not trusted — a run's agent can write or delete any object under its slug (SECURITY.md, docs/design/bucket-iam.md §2.1) — so an entry is a hint and never a source of rows: a reader checks every run it names against that run's own records and shows it only if they agree (D2963), and it decodes this document strictly, so an object carrying a member this reader does not know is skipped rather than half-read. A member is only ever added within a version, and a member whose meaning has to change is a new member under a new name with `version` raised, because a reader outside this binary consumes this shape (CLAUDE.md). `additionalProperties` is left true for the same reason the other document schemas leave it true — a consumer that refused a member this schema does not know would refuse a newer writer's entry — while the binary that reads the index is strict, which is a rule of the codec and not of this contract.",
+  "type": "object",
+  "required": [
+    "version",
+    "run_id",
+    "slug",
+    "pr",
+    "kind",
+    "at"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "The entry's format version, written on every entry and the only one this reader reads. An entry of another version is skipped rather than read as this one, and a member whose meaning has to change raises this number instead of being reused.",
+      "$comment": "runstore.PRIndexVersion in internal/runstore/prindex.go."
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+      "description": "The run's own ID, which is also the object's name: `runs/<slug>/pr-index/<N>/<run-id>.json` (runstore.RunTime's shape, task.NewRunID). A reader skips an object whose `run_id` is not its own name, so an entry cannot speak for another run.",
+      "$comment": "runIDRE in internal/runstore/list.go."
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "The repository slug, which is also the directory the entry sits under. A reader skips an entry that names another slug, so one repository's run cannot index another repository's pull request.",
+      "$comment": "slugRE in internal/runstore/list.go."
+    },
+    "pr": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The pull-request number, which is also the directory the entry sits under. A reader skips an entry that names another number, so a forged entry is at worst a read of the wrong run's records, never a row on a pull request it does not belong to (D2963)."
+    },
+    "kind": {
+      "enum": [
+        "opened",
+        "followed",
+        "reviewed"
+      ],
+      "description": "How the run came to be on the pull request: `opened` for a run that opened it, `followed` for a follow-up run that started on one that already existed, `reviewed` for a review run, which opened and followed none and is on the pull request from the moment its artifact stage names the number it reviewed. A value is only ever added to this list; a kind is never renamed while it keeps its meaning.",
+      "$comment": "PRIndexOpened, PRIndexFollowed and PRIndexReviewed in internal/runstore/prindex.go."
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the entry was written, in UTC, from the writing run's own clock. It orders a listing and nothing else: it is not trusted for any decision, because the run that wrote it is not trusted."
+    }
+  }
+}

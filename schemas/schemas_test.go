@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/settings"
@@ -897,6 +898,21 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 				{Dimension: runstore.Time, From: 2700, To: 5400},
 			},
 		}},
+		// And the message channel's block (docs/run-messages, F13, F24, F25):
+		// whether the run reads messages, the format and flags its runner
+		// knows, and one entry per message it saw — every state, so a record
+		// with any of them is one the schema accepts.
+		Messages: &runmsg.Record{
+			Accepting: true, Format: runmsg.Format, Flags: []string{runmsg.FlagNow, runmsg.FlagWrapUp},
+			Messages: []runmsg.Delivery{
+				{Seq: 1, SentAt: &at, SentBy: "someone@example.com", Flags: []string{runmsg.FlagNow},
+					State: runmsg.StateDelivered, Stage: "implement", DeliveredAt: &finished},
+				{Seq: 2, SentAt: &at, SentBy: "someone@example.com", State: runmsg.StateUndelivered,
+					Reason: "the run reached finalize before a coder stage"},
+				{Seq: 3, State: runmsg.StateMissing},
+				{Seq: 4, State: runmsg.StateRefused, Reason: "the text is 5000 bytes and the cap is 4096"},
+			},
+		},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -1116,6 +1132,34 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			t.Errorf("schema accepts %s: %s", tc.name, repl)
 		}
 	}
+	// The message channel's block (docs/run-messages, F13, F24, F25) is closed
+	// the same way: whether the run accepts messages and the format it reads
+	// are what a sender decides from, the flags and the stage are sets the
+	// runner writes and a reader may render, and the block's own keys are the
+	// ones a sender and `diagnose` read — so a value outside one of those
+	// vocabularies, a number past the cap or a key the block does not carry is
+	// a record no reader should have to render.
+	for _, tc := range []struct{ name, old, new string }{
+		{"a state outside the vocabulary", `"state":"missing"`, `"state":"lost"`},
+		{"a stage rule 1 does not allow", `"stage":"implement"`, `"stage":"review"`},
+		{"a number past the cap", `"seq":3,"state":"missing"`, `"seq":30,"state":"missing"`},
+		{"a flag outside the set", `"flags":["now","wrap_up"]`, `"flags":["now","someday"]`},
+		{"the block with no accepting", `"accepting":true,`, ``},
+		{"the block with no format", `"accepting":true,"format":1,`, `"accepting":true,`},
+		{"a key the entry does not carry", `"reason":"the text is 5000 bytes and the cap is 4096"`, `"urgency":"high"`},
+	} {
+		old, repl := []byte(tc.old), []byte(tc.new)
+		if !bytes.Contains(data, old) {
+			t.Fatalf("fixture lacks the literal this test replaces (%s): %s", tc.name, data)
+		}
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, old, repl, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, repl)
+		}
+	}
 	without := rec
 	without.Backlog = nil
 	without.BacklogClosed = nil
@@ -1123,13 +1167,15 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	without.ReviewScope = nil
 	without.Triage = nil
 	without.Deferred = nil
+	without.Messages = nil
 	bare, err := json.Marshal(without)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(bare, []byte(`"backlog"`)) || bytes.Contains(bare, []byte(`"backlog_closed"`)) ||
 		bytes.Contains(bare, []byte(`"tolerated"`)) || bytes.Contains(bare, []byte(`"review_scope"`)) ||
-		bytes.Contains(bare, []byte(`"triage"`)) || bytes.Contains(bare, []byte(`"deferred"`)) {
+		bytes.Contains(bare, []byte(`"triage"`)) || bytes.Contains(bare, []byte(`"deferred"`)) ||
+		bytes.Contains(bare, []byte(`"messages"`)) {
 		t.Fatalf("a run that filed, closed and tolerated nothing still writes the fields: %s", bare)
 	}
 	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(bare))
@@ -7192,6 +7238,7 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 		HeadSHA:       strings.Repeat("a", 40),
 		Base:          "main",
 		Reviewer:      runner.ReviewReviewer{Account: "person-1", Model: "claude-opus-5-5", Effort: "high"},
+		Against:       &runstore.Against{Source: runstore.AgainstSourceRun, Run: "20261102-093000-abcd", SHA256: strings.Repeat("b", 64)},
 		Verdict:       "fix first",
 		Overview:      "the change does what the task asked",
 		Strengths:     []string{"the new reader is strict"},
@@ -7235,11 +7282,13 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 	}
 	want := slices.Sorted(maps.Keys(written))
 	// Every key the struct marshals is declared, and all of them are required
-	// but the one a run can honestly have nothing to say about: the reviewer's
+	// but the ones a run can honestly have nothing to write: the reviewer's
 	// effort is absent when the run's level named none (the model's own
 	// default), which is the meaning absence already has wherever a Fugaro
-	// setting spells one.
-	optional := []string{"effort"}
+	// setting spells one, and `against` is absent until a launcher fills it
+	// (R8) -- a review written before the shape had the field is a valid
+	// document and not a malformed one.
+	optional := []string{"effort", "against"}
 	props := nodeOf(t, doc, "properties")
 	if got := slices.Sorted(maps.Keys(props)); !slices.Equal(got, want) {
 		t.Errorf("review.schema.json declares %v, want %v (every key runner.ReviewArtifact marshals)", got, want)
@@ -7337,6 +7386,8 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 		{"a head that is not hex", `"head_sha":"` + head + `"`, `"head_sha":"` + strings.Repeat("g", 40) + `"`},
 		{"a branch name where a commit belongs", `"head_sha":"` + head + `"`, `"head_sha":"refs/heads/main"`},
 		{"a hostile review_run", `"review_run":"20261102-093000-abcd"`, `"review_run":"../../etc/passwd"`},
+		{"an against source nobody defined", `"source":"run"`, `"source":"sideways"`},
+		{"an against digest that is not hex", `"sha256":"` + strings.Repeat("b", 64) + `"`, `"sha256":"` + strings.Repeat("x", 64) + `"`},
 	} {
 		if !bytes.Contains(data, []byte(tc.from)) {
 			t.Fatalf("%s: fixture lacks the literal this test replaces: %s", tc.name, data)
@@ -7722,5 +7773,94 @@ func TestMergeJudgeSchemaMatchesTheDocument(t *testing.T) {
 				t.Errorf("the reader reads it = %v, want %v: %v", err == nil, tc.read, err)
 			}
 		})
+	}
+}
+
+// TestPRIndexSchemaRoundTrip: the entry runstore writes is the document
+// schemas/pr-index.schema.json describes, both ways. The Go type's own
+// encoding validates, the schema's kind enum is the three kinds the Go
+// constants spell (so a kind added to one and not the other fails here), and
+// the reader's strict decode gets the entry back unchanged. The index is
+// written by the untrusted job account, so the reader is deliberately
+// stricter than the contract: an unknown member the schema tolerates — which
+// a newer writer's entry needs — is refused by the strict decode, and the
+// entry is skipped rather than half-read (D2963, F8).
+func TestPRIndexSchemaRoundTrip(t *testing.T) {
+	sch := compile(t, "pr-index.schema.json")
+	at := time.Date(2026, 11, 19, 13, 0, 0, 0, time.UTC)
+	for _, kind := range []runstore.PRIndexKind{runstore.PRIndexOpened, runstore.PRIndexFollowed, runstore.PRIndexReviewed} {
+		e := runstore.PRIndexEntry{Version: runstore.PRIndexVersion, RunID: "20261119-130000-abcd", Slug: "acme-app", PR: 42, Kind: kind, At: at}
+		data, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err != nil {
+			t.Fatalf("the schema rejects the entry runstore writes (%s): %v\n%s", kind, err, data)
+		}
+		var back runstore.PRIndexEntry
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&back); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(e, back) {
+			t.Fatalf("round trip = %+v, want %+v", back, e)
+		}
+	}
+
+	// The schema's kind list is the Go vocabulary and nothing else.
+	raw, err := os.ReadFile("pr-index.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties struct {
+			Kind struct {
+				Enum []string `json:"enum"`
+			} `json:"kind"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{string(runstore.PRIndexOpened), string(runstore.PRIndexFollowed), string(runstore.PRIndexReviewed)}; !slices.Equal(doc.Properties.Kind.Enum, want) {
+		t.Errorf("pr-index.schema.json's kind enum = %v, want %v", doc.Properties.Kind.Enum, want)
+	}
+
+	// The schema refuses what the reader refuses: another version, another
+	// kind, a number below 1, a run ID that is not one, a missing time.
+	for _, bad := range []string{
+		`{"version":2,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":42,"kind":"opened","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":42,"kind":"other","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":0,"kind":"opened","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"nope","slug":"acme-app","pr":42,"kind":"opened","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"20261119-130000-abcd","slug":"Acme-App","pr":42,"kind":"opened","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":42,"kind":"opened"}`,
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(bad))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("the schema accepts %s", bad)
+		}
+	}
+
+	extra := []byte(`{"version":1,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":42,"kind":"opened","at":"2026-11-19T13:00:00Z","extra":1}`)
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(extra))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("the schema refuses a member it does not know, which a newer writer's entry needs: %v", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(extra))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(new(runstore.PRIndexEntry)); err == nil {
+		t.Error("the reader's strict decode accepted an unknown member")
 	}
 }
