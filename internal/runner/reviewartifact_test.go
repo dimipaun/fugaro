@@ -989,7 +989,7 @@ func TestVerifyWrapsAVerifierRefusalOnce(t *testing.T) {
 // shape it was asked for. The axes are the same for both, because they are
 // D1's anchored scale and the artifact carries them unchanged.
 func TestArtifactPromptNamesTheArtifactsOwnSeverity(t *testing.T) {
-	p := reviewArtifactPrompt("", "", "origin/main", DiffSize{}, false)
+	p := reviewArtifactPrompt("", "", "origin/main", DiffSize{}, false, "")
 	if !strings.Contains(p, artifactSeverity) {
 		t.Errorf("the artifact's brief does not ask for the artifact's severity vocabulary (%s):\n%s", artifactSeverity, p)
 	}
@@ -1021,8 +1021,8 @@ func TestArtifactPromptNamesTheArtifactsOwnSeverity(t *testing.T) {
 	// And the in-run prompts are untouched by that split: the same five labels,
 	// exactly as they always were.
 	for _, q := range []string{
-		ReviewPrompt("", "", "origin/main", DiffSize{}, false),
-		PickPrompt("", "", []int{9}, []string{"/review/9"}),
+		ReviewPrompt("", "", "origin/main", DiffSize{}, false, ""),
+		PickPrompt("", "", []int{9}, []string{"/review/9"}, ""),
 	} {
 		if !strings.Contains(q, inRunSeverity) {
 			t.Errorf("an in-run prompt does not carry the in-run severity vocabulary:\n%s", q)
