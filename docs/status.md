@@ -61,6 +61,7 @@ Merged since the last read (22 commits): run-messages RM3, RM5, RM6 and RM10; re
 
 | Spec | State |
 | --- | --- |
+| credentials-belong-to-models | plan only: 0/33 tasks merged, none approved (docs/credentials-belong-to-models); D3040–D3053 answered 2026-11-20, all as recommended (`agent.auth` is retired: a craft's access names the credential, an unset one is worked out by reach; D3045 retires the consent switch and D3052 sets the version rule aside for `fugaro.yaml`); two releases; it starts after always-a-budget's I1 and replaces keys-through-service KS6, KS9 and KS10; release 2 waits on release 1 and on keys-through-service KS13; owner-run Checks 800 and 801 |
 | keys-through-service | plan only: 0/20 tasks merged, none approved (docs/keys-through-service); D3000–D3015 answered 2026-11-19 and 2026-11-20 (D3005 and D3013 not the recommendation, D3007 and D3009 the owner's own; D3009 removes budget mode off under its own spec, not written yet); two releases; release A waits on the owner's run of Check 50 (D3013); KS14 and KS15 wait on that spec's plan, KS16 on secrets-brokering B5.7; owner-run Checks 50, 780 and 781 |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
 | voice-module, collateral, backlog, plans | no plan or not a spec |

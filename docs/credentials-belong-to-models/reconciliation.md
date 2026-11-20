@@ -371,6 +371,10 @@ No two answers pull against each other.
 - **O8.** The second release of this plan cannot be cut before keys release B's KS13, which
   itself waits on Check 50 (D3013) and release A.
 
+- **O9.** The graph cannot say that CM1 to CM5, CM15, CM17 and I1 wait for C1: it records a wait
+  on a contract only for an edge the pass moved there. A launcher follows the plan's levels
+  table.
+
 ## 7. UNVERIFIED
 
 - **U1.** That the provider's terms let a subscription token be attached by the service for every

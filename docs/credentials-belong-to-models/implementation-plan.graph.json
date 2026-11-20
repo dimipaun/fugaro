@@ -1,0 +1,1040 @@
+{
+  "schema_version": 3,
+  "plan": "docs/credentials-belong-to-models/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the access contract",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/craft/access.go",
+          "internal/craft/access_stub.go",
+          "internal/craft/access_test.go",
+          "internal/runner/access_stub.go",
+          "internal/creds/repoaccess.go",
+          "internal/credsvc/access_wire.go",
+          "internal/credsvc/access_wire_test.go",
+          "internal/gateway/accesswire.go",
+          "internal/config/access_names.go",
+          "docs/credentials-belong-to-models/contract-access.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/craft/access_stub.go",
+        "internal/runner/access_stub.go"
+      ]
+    },
+    {
+      "id": "CM1",
+      "title": "the resolver, by reach",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/craft/reach.go",
+          "internal/craft/reach_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM2",
+      "title": "the project's per-repository crafts",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/localcfg/localcfg.go",
+          "internal/projectpolicy/policy.go",
+          "internal/cli/project_cmd.go",
+          "internal/localcfg/repo_crafts_test.go",
+          "internal/projectpolicy/repo_crafts_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM3",
+      "title": "the retired keys are named",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/retired.go",
+          "internal/config/retired_test.go",
+          "internal/config/scope.go"
+        ]
+      }
+    },
+    {
+      "id": "CM4",
+      "title": "`fugaro update` migrates auth to access",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_craft_migrate.go",
+          "internal/cli/init_access_migrate.go",
+          "internal/cli/init_access_migrate_test.go",
+          "internal/cli/init.go",
+          "internal/cli/update_converge_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM5",
+      "title": "the access record is written beside the old one",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/repoaccess_store.go",
+          "internal/creds/repoaccess_store_test.go",
+          "internal/cli/update_repoauth.go",
+          "internal/cli/update_repoaccess_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM6",
+      "title": "the service narrows by access",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/cascade.go",
+          "internal/credsvc/wire.go",
+          "internal/credsvc/auth.go",
+          "internal/creds/state.go",
+          "internal/credsvc/scope.go",
+          "internal/credsvc/scope_stub.go",
+          "internal/credsvc/refusallog.go",
+          "internal/credsvc/cascade_access_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM7",
+      "title": "the gateway carries the access",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gateway/gateway.go",
+          "internal/gateway/service.go",
+          "internal/gateway/route.go",
+          "internal/gateway/access_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM8",
+      "title": "the run's model path follows its access",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/routing.go",
+          "internal/runner/gateway.go",
+          "internal/runner/runner.go",
+          "internal/runner/access_resolve.go",
+          "internal/runner/access_resolve_test.go",
+          "internal/runner/accountchoice.go"
+        ]
+      }
+    },
+    {
+      "id": "CM9",
+      "title": "the agent's environment, by credential type",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/agent/env.go",
+          "internal/agent/env_access_test.go",
+          "internal/runner/agentenv.go",
+          "internal/runner/agentenv_access_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM10",
+      "title": "the record and the cost, by what served",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/cost.go",
+          "internal/runner/stephook.go",
+          "internal/runner/triage_stage.go",
+          "internal/runstore/cost.go",
+          "internal/runstore/runstore.go"
+        ]
+      }
+    },
+    {
+      "id": "CM11",
+      "title": "the run's account rules, by credential",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/accountchoice.go",
+          "internal/runner/projectjob.go",
+          "internal/runner/directcall.go",
+          "internal/runner/poolchoice.go"
+        ]
+      }
+    },
+    {
+      "id": "CM12",
+      "title": "the registry entry and the views",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/budget/model.go",
+          "internal/runner/budget_session.go",
+          "internal/watch/build.go",
+          "internal/watch/json.go",
+          "internal/cli/budget.go",
+          "internal/budget/rules/rules.json.tmpl"
+        ]
+      }
+    },
+    {
+      "id": "CM13",
+      "title": "the cloud side is planned from the crafts",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/spec.go",
+          "internal/infra/access_spec.go",
+          "internal/infra/access_spec_test.go",
+          "internal/infra/spec_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM14",
+      "title": "the launch, by access",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/run.go",
+          "internal/cli/run_attach.go",
+          "internal/cli/run_access_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM15",
+      "title": "the gates and the bundle's readiness",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_credentials.go",
+          "internal/cli/launch_budget.go",
+          "internal/cli/project_job.go",
+          "internal/cli/recipes_skew.go",
+          "internal/cli/initsecrets.go",
+          "internal/cli/init_credentials_access_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM16",
+      "title": "the config's checks, by reach",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/access_checks.go",
+          "internal/config/access_checks_test.go",
+          "internal/config/providers.go",
+          "internal/config/stage_accounts.go",
+          "internal/config/validate.go"
+        ]
+      }
+    },
+    {
+      "id": "CM17",
+      "title": "validate, craft ls, models use and the enterprise code",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/validate.go",
+          "internal/cli/craft.go",
+          "internal/cli/models_use.go",
+          "ee/ab/admit.go",
+          "ee/ab/launch.go"
+        ]
+      }
+    },
+    {
+      "id": "CM18",
+      "title": "doctor",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor.go",
+          "internal/cli/doctor_brokering.go",
+          "internal/cli/project_status.go",
+          "internal/cli/doctor_access_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM19",
+      "title": "the update says what will change, first",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_access_notice.go",
+          "internal/cli/update_access_notice_test.go",
+          "internal/cli/init.go",
+          "internal/cli/init_fugaroyaml.go",
+          "internal/cli/upgrade_cloud.go",
+          "internal/cli/update_in_flight.go",
+          "docs/design/update-in-flight.md"
+        ]
+      }
+    },
+    {
+      "id": "CM20",
+      "title": "the settings registry and the schemas",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json",
+          "schemas/fugaro.schema.json",
+          "schemas/project-layer.schema.json",
+          "schemas/schemas_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM21",
+      "title": "the console reads the new member",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/shared/schema.ts",
+          "console/src/renderer/screens/live.ts",
+          "console/tools/scrub-fixture/scrub.ts",
+          "console/src/source/redact.ts"
+        ]
+      }
+    },
+    {
+      "id": "CM22",
+      "title": "the live checks, as scripts",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check800.sh",
+          "scripts/live-checks/check801.sh",
+          "scripts/live_checks_test.go",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "CM23",
+      "title": "the help texts and the CLI reference",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/budget_preview.go",
+          "internal/cli/runs_stats.go",
+          "internal/cli/secrets.go",
+          "internal/cli/setup.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "integration",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/craft/access_stub.go",
+          "internal/runner/access_stub.go",
+          "internal/config/retired_readers_guard_test.go",
+          "internal/cli/access_end_to_end_test.go",
+          "internal/e2e/update_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "CM24",
+      "title": "`SECURITY.md`, its page and the rules file",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "SECURITY.md",
+          "website/content/security.md",
+          ".claude/rules/credentials-service.md",
+          "CLAUDE.md",
+          "docs/go-to-market/security-check.md",
+          "internal/cli/docs_security_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM25",
+      "title": "the credentials documents and the checklist",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/multi-model.md",
+          "docs/credentials-service/default-on.md",
+          "docs/credentials-service/runbook.md",
+          "docs/gcp-live-checklist.md",
+          "internal/cli/docs_credentials_auth_list_test.go",
+          "internal/cli/docs_credentials_runbook_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM26",
+      "title": "the accounts documents, the README and the release notes",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/project-claude-accounts.md",
+          "docs/design/mixed-credentials.md",
+          "docs/design/agent-env.md",
+          "docs/project-layer.md",
+          "README.md",
+          "docs/releases/",
+          "website/data/release-summaries.yaml"
+        ]
+      }
+    },
+    {
+      "id": "CM27",
+      "title": "the plugin's skills",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/setup/SKILL.md",
+          "plugin/skills/setup/reference/decisions.md",
+          "plugin/skills/setup/reference/transitions.md",
+          "plugin/skills/working/reference/diagnose.md",
+          "plugin/skills/working/reference/periodic-reviews.md",
+          "plugin/skills/working/reference/status.md",
+          "plugin/setup_skill_test.go",
+          "internal/cli/docs_credentials_auth_list_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM28",
+      "title": "release 2: the token's old path goes",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/agent/env.go",
+          "internal/runner/agentenv.go",
+          "internal/cli/launch_budget.go",
+          "internal/cli/recipes_skew.go",
+          "SECURITY.md",
+          "website/content/security.md",
+          "internal/cli/docs_security_test.go",
+          "internal/cli/update_in_flight.go"
+        ]
+      }
+    },
+    {
+      "id": "CM29",
+      "title": "release 2: the retired keys of a file and a layer are rejected",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/config.go",
+          "internal/config/validate.go",
+          "internal/config/layer.go",
+          "internal/config/scope.go",
+          "internal/config/retired.go",
+          "schemas/fugaro.schema.json",
+          "schemas/project-layer.schema.json",
+          "schemas/schemas_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM30",
+      "title": "release 2: the installation's account keys and the node's members",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/localcfg/localcfg.go",
+          "internal/cli/init_access_migrate.go",
+          "internal/cli/project_cmd.go",
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json",
+          "schemas/schemas_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM31",
+      "title": "release 2: the old record stops being written",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_repoauth.go",
+          "internal/cli/update_repoaccess_test.go",
+          "internal/gateway/service.go",
+          "internal/gateway/gateway.go",
+          "internal/credsvc/cascade.go"
+        ]
+      }
+    },
+    {
+      "id": "R-pool-members",
+      "title": "amend the access contract: a pool's members in the record",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/repoaccess.go",
+          "docs/credentials-belong-to-models/contract-access.md"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "CM6",
+      "needs": "C1",
+      "reason": "the contract's names and interfaces"
+    },
+    {
+      "task": "CM7",
+      "needs": "C1",
+      "reason": "the contract's names and interfaces"
+    },
+    {
+      "task": "CM9",
+      "needs": "C1",
+      "reason": "the contract's names and interfaces"
+    },
+    {
+      "task": "CM10",
+      "needs": "C1",
+      "reason": "the contract's names and interfaces"
+    },
+    {
+      "task": "CM11",
+      "needs": "C1",
+      "reason": "the contract's names and interfaces"
+    },
+    {
+      "task": "CM12",
+      "needs": "C1",
+      "reason": "the contract's names and interfaces"
+    },
+    {
+      "task": "CM13",
+      "needs": "C1",
+      "reason": "the contract's names and interfaces"
+    },
+    {
+      "task": "CM16",
+      "needs": "C1",
+      "reason": "the contract's names and interfaces"
+    },
+    {
+      "task": "CM21",
+      "needs": "C1",
+      "reason": "the contract's names and interfaces"
+    },
+    {
+      "task": "CM8",
+      "needs": "C1",
+      "reason": "the contract's names and interfaces"
+    },
+    {
+      "task": "CM14",
+      "needs": "C1",
+      "reason": "the contract's names and interfaces"
+    },
+    {
+      "task": "CM4",
+      "needs": "CM1",
+      "reason": "behaviour: the migration writes the resolver's answer, and a stub's answer written into a config is a wrong config on disk"
+    },
+    {
+      "task": "CM4",
+      "needs": "CM2",
+      "reason": "it writes the member CM2 adds to a shared struct, which a contract cannot own"
+    },
+    {
+      "task": "CM8",
+      "needs": "CM7",
+      "reason": "it sets the upstream members CM7 adds to a shared struct"
+    },
+    {
+      "task": "CM8",
+      "needs": "CM9",
+      "reason": "it sets the environment member CM9 adds to a shared struct"
+    },
+    {
+      "task": "CM8",
+      "needs": "CM11",
+      "reason": "one file: internal/runner/accountchoice.go"
+    },
+    {
+      "task": "CM14",
+      "needs": "CM13",
+      "reason": "behaviour: it decides whether a job is told about the service, and a stub there would launch a job with no credential"
+    },
+    {
+      "task": "CM15",
+      "needs": "CM13",
+      "reason": "behaviour: readiness and the gate are judged by the function CM13 adds"
+    },
+    {
+      "task": "CM17",
+      "needs": "CM16",
+      "reason": "behaviour: a stub of a refusal would admit what must be refused"
+    },
+    {
+      "task": "CM17",
+      "needs": "CM3",
+      "reason": "it prints the list CM3 writes"
+    },
+    {
+      "task": "CM18",
+      "needs": "CM3",
+      "reason": "it prints the list CM3 writes"
+    },
+    {
+      "task": "CM18",
+      "needs": "CM13",
+      "reason": "it calls the function CM13 adds"
+    },
+    {
+      "task": "CM18",
+      "needs": "CM17",
+      "reason": "it calls helpers of validate.go whose signatures CM17 changes"
+    },
+    {
+      "task": "CM19",
+      "needs": "CM4",
+      "reason": "behaviour: it prints the migration's own answer, and both edit internal/cli/init.go"
+    },
+    {
+      "task": "CM19",
+      "needs": "CM3",
+      "reason": "it prints the list CM3 writes"
+    },
+    {
+      "task": "CM20",
+      "needs": "CM2",
+      "reason": "the registry's coverage test reads the struct CM2 changes"
+    },
+    {
+      "task": "CM20",
+      "needs": "CM3",
+      "reason": "the rows follow the retired list"
+    },
+    {
+      "task": "CM23",
+      "needs": "CM14",
+      "reason": "the reference is generated once, after run.go's help changes"
+    },
+    {
+      "task": "CM23",
+      "needs": "CM17",
+      "reason": "the reference is generated once, after models_use.go's help changes"
+    },
+    {
+      "task": "I1",
+      "needs": "CM1",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM4",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM5",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM6",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM7",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM8",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM9",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM10",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM11",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM12",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM13",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM14",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM15",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM16",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM17",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM18",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM19",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM21",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "CM24",
+      "needs": "I1",
+      "reason": "a document must be true of the tree it is merged into"
+    },
+    {
+      "task": "CM25",
+      "needs": "I1",
+      "reason": "a document must be true of the tree it is merged into"
+    },
+    {
+      "task": "CM26",
+      "needs": "I1",
+      "reason": "a document must be true of the tree it is merged into"
+    },
+    {
+      "task": "CM27",
+      "needs": "I1",
+      "reason": "a skill must be true of the tree it is merged into"
+    },
+    {
+      "task": "CM27",
+      "needs": "CM25",
+      "reason": "one test file: internal/cli/docs_credentials_auth_list_test.go"
+    },
+    {
+      "task": "CM28",
+      "needs": "I1",
+      "reason": "it removes a path release 1 kept; release 1 must be cut first"
+    },
+    {
+      "task": "CM28",
+      "needs": "CM24",
+      "reason": "one file: SECURITY.md"
+    },
+    {
+      "task": "CM29",
+      "needs": "I1",
+      "reason": "it rejects keys release 1 kept readable; release 1 must be cut first"
+    },
+    {
+      "task": "CM31",
+      "needs": "I1",
+      "reason": "it stops writing a record release 1 kept; release 1 must be cut first"
+    },
+    {
+      "task": "CM30",
+      "needs": "I1",
+      "reason": "it drops keys release 1 converted"
+    },
+    {
+      "task": "CM30",
+      "needs": "CM29",
+      "reason": "one file: schemas/schemas_test.go"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CM6",
+        "needs": "CM5"
+      },
+      "integration": "I1",
+      "reason": "the service needs the record's shape, not its writer"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CM7",
+        "needs": "CM6"
+      },
+      "integration": "I1",
+      "reason": "the gateway needs the header's name, not the service's narrowing"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CM8",
+        "needs": "CM1"
+      },
+      "integration": "I1",
+      "reason": "the runner needs the resolver's interface, not its rule"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CM10",
+        "needs": "CM8"
+      },
+      "integration": "I1",
+      "reason": "it needs the run's accessor, not the runner's wiring"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CM12",
+        "needs": "CM8"
+      },
+      "integration": "I1",
+      "reason": "it needs the run's accessor, not the runner's wiring"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CM13",
+        "needs": "CM1"
+      },
+      "integration": "I1",
+      "reason": "it needs the resolver's interface"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CM9",
+        "needs": "CM1"
+      },
+      "integration": "I1",
+      "reason": "it needs the resolved credential's type, not the resolver's rule"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CM11",
+        "needs": "CM1"
+      },
+      "integration": "I1",
+      "reason": "it needs the resolved credential's type, not the resolver's rule"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CM16",
+        "needs": "CM1"
+      },
+      "integration": "I1",
+      "reason": "it needs the resolver's interface"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CM14",
+        "needs": "CM8"
+      },
+      "integration": "I1",
+      "reason": "it needs the fact's name and the header, not the runner"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CM21",
+        "needs": "CM12"
+      },
+      "integration": "I1",
+      "reason": "the console needs the registry member's name"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-pool-members",
+      "contract": "C1",
+      "raised_by": "CM4",
+      "reason": "if the cascade's members for one repository cannot be said as a pool of named credentials",
+      "affects": [
+        "CM5",
+        "CM6"
+      ]
+    }
+  ]
+}
