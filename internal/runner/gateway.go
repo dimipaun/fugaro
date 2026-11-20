@@ -760,6 +760,16 @@ func (r *run) serviceIdentities(url, job string, runToken func() string) *gatewa
 // cycle. There is no second reading of the record in the gateway and none here
 // beyond this one: creds.Route.Holder decides, once, per kind.
 func (r *run) routeGateway(ctx context.Context, o *gateway.Options) error {
+	if r.d.Local {
+		// D149 for the workspace's service as it is for the member's own
+		// (serviceSwitched, cascadeLocalRefusal): `fugaro exec` runs on the
+		// developer's own credentials, has no run identity for a service to
+		// verify it by and no path to a private service, so it is not routed
+		// anywhere. The record is not even read — a local run that stopped on a
+		// record it could not read would be stopped by a document that says
+		// nothing about it.
+		return nil
+	}
 	route, err := r.readRoute(ctx)
 	if err != nil {
 		return err
@@ -841,7 +851,7 @@ func (r *run) readRoute(ctx context.Context) (creds.Route, error) {
 	}
 	route, _, err := creds.DecodeRoute(raw)
 	if err != nil {
-		return creds.Route{}, fmt.Errorf("the credential route at %s is not one this release reads: %s. Run 'fugaro update' in this repository's own terminal with an up-to-date fugaro: its route stage publishes the record, and this run does not start on one it cannot read — a record half-read is a credential sent to a service nobody chose", path, r.redact(err.Error()))
+		return creds.Route{}, fmt.Errorf("the credential route at %s is not one this release reads: %s. Run 'fugaro update' in this repository's own terminal: its route stage publishes that record and rebuilds this run's image, so the record and the run are one release. A run does not start on a record it cannot read, because a record half-read is a credential sent to a service nobody chose", path, r.redact(err.Error()))
 	}
 	return route, nil
 }
@@ -874,6 +884,8 @@ func (r *run) workspaceUpstream(address string) (*gateway.Workspace, error) {
 		return nil, errors.New(r.redact(err.Error()))
 	}
 	if job == "" {
+		// Belt and braces, as in serviceUpstream's own: jobName answers "" for
+		// a local run alone, and a local run is not routed at all.
 		return nil, errors.New("starting the gateway: a run routed to the workspace has no Cloud Run job name to report")
 	}
 	r.mu.Lock()
@@ -881,8 +893,12 @@ func (r *run) workspaceUpstream(address string) (*gateway.Workspace, error) {
 	r.mu.Unlock()
 	if sess == nil {
 		// The workspace's service verifies the run by the identity that
-		// admitted it (F30), so a run that holds none cannot be served there:
-		// there is no second identity to present and none to fall back to.
+		// admitted it (F30, O4), so a run that holds none cannot be served
+		// there: there is no second identity to present and none to fall back
+		// to. No launcher produces this — a local run is not routed at all, and
+		// a job run is admitted by the launcher's token before it starts — and
+		// a run that reported no identity to a service that verifies one would
+		// be a call refused one at a time instead of a run stopped once.
 		return nil, errors.New("starting the gateway: a run routed to the workspace has no run identity, and the workspace's service verifies the run by the identity that admitted it")
 	}
 	return &gateway.Workspace{
