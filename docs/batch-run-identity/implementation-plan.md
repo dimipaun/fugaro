@@ -1,7 +1,7 @@
 # A run on Cloud Batch gets its identity: implementation plan
 
-**Status: plan only. Nothing is implemented and no task is approved; each task needs the owner's
-explicit go by name.** It builds [spec.md](spec.md) as amended by
+**Status: plan only. Nothing is implemented. The owner approved C1, BRS, BR0 and BR6 by name on
+2026-11-20; none is launched, and every other task needs his explicit go by name.** It builds [spec.md](spec.md) as amended by
 [reconciliation.md](reconciliation.md), which wins where the two disagree.
 
 The answers that shaped it, all as recommended, all of 2026-11-20: the backend is finished, not

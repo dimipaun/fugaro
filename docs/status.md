@@ -64,7 +64,7 @@ Merged since the last read (43 commits, read from `b5f778175`): workspace-servic
 
 | Spec | State |
 | --- | --- |
-| batch-run-identity | plan only: 0/23 tasks merged, none approved (docs/batch-run-identity); D3060–D3070 answered 2026-11-20 (D3070 not the recommendation; D3064 supersedes D2075; D3062's second read is decided after Check 810); BR3, BR5 and BR12 wait on the owner's run of Check 810 and his answer on O1; BRS, BR1, BR7 and BR12 start after always-a-budget's AB9 if it has an open pull request; owner-run Checks 810 and 811 |
+| batch-run-identity | plan only: 0/23 tasks merged; C1, BRS, BR0 and BR6 approved 2026-11-20, none launched (docs/batch-run-identity); D3060–D3070 answered 2026-11-20 (D3070 not the recommendation; D3064 supersedes D2075; D3062's second read is decided after Check 810); BR3, BR5 and BR12 wait on the owner's run of Check 810 and his answer on O1; BRS, BR1, BR7 and BR12 start after always-a-budget's AB9 if it has an open pull request; owner-run Checks 810 and 811 |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 | workspace-credentials | an addendum with no plan (docs/workspace-credentials): D2960–D2979 all answered 2026-11-19 (D2978: one project-then-workspace cascade for every credential kind; D2975 the owner's own answer: every model key through the credentials service, none mounted, which needs its own spec; D150's gate stays until Check 50 passes); it waits on the workspace service being deployed under its own plan (D2968) |

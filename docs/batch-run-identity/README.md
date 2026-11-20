@@ -1,6 +1,7 @@
 # A run on Cloud Batch gets its identity
 
-**Status: plan only; nothing is implemented; no task approved.** See
+**Status: plan only; nothing is implemented; four tasks approved, none launched.** The owner
+approved C1, BRS, BR0 and BR6 by name on 2026-11-20; every other task still needs his go. See
 [docs/status.md](../status.md) for the current table. Spec owner: Dimi Paun (the owner). Date:
 2026-11-20. Checked against `origin/main` at `d57d71ddb`, rebased onto `0a8b4e221`.
 
@@ -66,7 +67,7 @@ gaps (F7 to F13); any carrier the run's service account opens can be replayed by
 launcher (F4); and the chosen design rests on one platform fact that only a live probe can settle
 (U1, Check 810).
 
-**What a reader should not take from here:** no task is approved; each needs the owner's go by
-name. Nothing is launched. Checks 810 and 811 are owner-run; BR3, BR5 and BR12 do not start before the
+**What a reader should not take from here:** only C1, BRS, BR0 and BR6 are approved; every other
+task needs the owner's go by name. Nothing is launched. Checks 810 and 811 are owner-run; BR3, BR5 and BR12 do not start before the
 owner has run Check 810 and answered O1. No CLI release is cut between the merge of BR1 or BR16
 and I1.
