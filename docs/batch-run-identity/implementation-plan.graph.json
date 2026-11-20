@@ -193,8 +193,7 @@
           "internal/cli/doctor_batch.go",
           "internal/cli/doctor_batch_test.go",
           "internal/cli/validate_batch.go",
-          "internal/cli/validate_batch_test.go",
-          "internal/cli/backends_use_test.go"
+          "internal/cli/validate_batch_test.go"
         ]
       }
     },
@@ -371,6 +370,22 @@
           "internal/credsvc/sealkey_register_test.go",
           "internal/credsvc/server.go",
           "internal/budget/rules/**"
+        ]
+      }
+    },
+    {
+      "id": "BR18",
+      "title": "selecting the backend does not wait for the key",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/backends.go",
+          "internal/cli/backends_use_test.go",
+          "docs/backends.md"
         ]
       }
     },
@@ -664,6 +679,21 @@
     {
       "task": "I1",
       "needs": "R-C1-link-permission",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "BR18",
+      "needs": "BR7",
+      "reason": "behaviour: it reads which failure BR7's check reports"
+    },
+    {
+      "task": "BR18",
+      "needs": "BR12",
+      "reason": "one file: docs/backends.md"
+    },
+    {
+      "task": "I1",
+      "needs": "BR18",
       "reason": "it wires the real sides and proves them together"
     }
   ],

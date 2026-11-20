@@ -12,9 +12,12 @@ on shared project job accounts where Batch is provisioned (D3065), and the reape
 run that queues past its token's life (D3066). D3061 was asked again with the fact that a
 launcher can already mint (F24), and stands. D3062 was amended after that review. Review round 2 added two more: D3064 supersedes the owner's earlier D2075
 (D3067), and the launcher registers the job so that a re-created job receives nothing (D3068).
-D3062's second read is decided after Check 810.
+D3062's second read is decided after Check 810. After the pull request was opened the owner
+answered the two questions round 3 left: the registration is for people on the launcher roster
+only (D3069), and `fugaro update` applies the compute root **only where Batch is selected**
+(D3070, not the recommendation).
 
-It is 22 runs: one contract, one contract change that always runs, 19 tasks and one integration. Every one is a security path.
+It is 23 runs: one contract, one contract change that always runs, 20 tasks and one integration. Every one is a security path.
 
 ## 1. Conventions every task follows
 
@@ -55,6 +58,9 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (BR2, 
 | The reaper's role gains nothing. Launchers gain `actAs` on shared project job accounts where Batch is provisioned (D3065) and nothing on the key | BR5, BR6 |
 | The credentials service account gains, only where Batch is provisioned: decrypt on one key, `batch.jobs.get` conditioned on the Fugaro job-name prefix, and the one read Check 810 names for the link (D3062 as amended, O1) | BR5 |
 | The block's key fact is written by `fugaro update` alone, and a machine whose fact differs from the published one fails doctor (R13) | BR6, BR7 |
+| `fugaro update` touches the compute root only where the machine's config selects `cloud-batch`; a block alone gets no key ring (D3070) | BR6 |
+| Selecting the backend is not refused for a missing key fact, and every launch is refused with `fugaro update` as the fix until the key exists (R14) | BR18, BR1 |
+| A caller outside the launcher class cannot register a job, and such a launch on Batch is refused with its reason before anything is created (D3069) | BR17, BR1 |
 | A sealed run does not wait in the queue past its token's life less the reaper's interval; one that still starts late stops at its session (D3066, F31) | BR14 |
 | No CLI release is cut from `main` between the merge of BR1 or BR16 and I1 | the launcher of the plan |
 | Nothing is created per run (F18) | I1 |
@@ -147,8 +153,8 @@ and I1.
   only trace of the key is the wrapped variable, bound to that job's name; where the block names
   no key the launch is refused before anything is created, with `fugaro update` as the fix; the
   plain marker is never a job variable; before the create it registers the blob's digest with the
-  service and after it the job's unique id, and a launch whose first call fails creates nothing
-  (D3068); the blob prints redacted and is in no run record (R7);
+  service and after it the job's unique id, and a launch whose first call fails, or whose caller
+  is not on the launcher roster, creates nothing and says why (D3068, D3069); the blob prints redacted and is in no run record (R7);
   the two design documents' pinned sentence and the test that holds it say what the new refusal
   says (F28).
 - Files: `internal/budget/token/wrap.go` (new), `internal/budget/token/wrap_test.go` (new),
@@ -248,24 +254,25 @@ and I1.
 - Reviewer tier: opus, mandatory independent review.
 
 ### BR6: update applies the compute root (`update-converge`)
-- Acceptance: `fugaro update` on an installation with a `batch:` block applies the compute root;
+- Acceptance: `fugaro update` on an installation whose config selects `cloud-batch` applies the
+  compute root, and one that carries a `batch:` block without selecting it is left alone (D3070);
   it asks nothing, is refused in an agent's session, and does not wait; an apply that changes
   only a key, a role or a grant starts no rebuild of the preload image, and one that changes the
   image's inputs says so in one line with the cost (R12); with a Batch run in flight it says so
-  in one line and changes nothing the run holds; an installation with no block is untouched; the
+  in one line and changes nothing the run holds; the
   release notes' `### For operators` says "run `fugaro update`".
 - Files: `internal/cli/init_stages.go`, `internal/cli/init_compute.go`, `internal/cli/update.go`,
   `internal/apply/steps.go`, `internal/cli/update_batch_test.go` (new), the next release's notes
   under `docs/releases/`.
 - Interfaces: none.
-- Tests: `TestUpdateAppliesTheComputeRootWhereThereIsABlock`,
-  `TestUpdateLeavesAnInstallationWithoutABlockAlone`, `TestTheUpdateSaysABatchRunKeepsRunning`,
+- Tests: `TestUpdateAppliesTheComputeRootWhereBatchIsSelected`,
+  `TestUpdateLeavesABlockThatIsNotSelectedAlone`, `TestTheUpdateSaysABatchRunKeepsRunning`,
   `TestTheComputeStageUnderUpdateAsksNothing`, `TestTheComputeStageUnderUpdateIsRefusedInAnAgentSession`,
   `TestAGrantOnlyApplyStartsNoPreloadRebuild`.
-- Command: `go test ./internal/cli/ -run 'UpdateAppliesTheComputeRoot|WithoutABlockAlone|ABatchRunKeepsRunning|ComputeStageUnderUpdate|GrantOnlyApplyStartsNoPreload|RefusalMatrix|Docs' -count=1 && go test ./internal/apply/ -run StepsMatches -count=1`.
-- Red step: an update with a block leaves the compute root unapplied.
+- Command: `go test ./internal/cli/ -run 'UpdateAppliesTheComputeRoot|BlockThatIsNotSelectedAlone|ABatchRunKeepsRunning|ComputeStageUnderUpdate|GrantOnlyApplyStartsNoPreload|RefusalMatrix|Docs' -count=1 && go test ./internal/apply/ -run StepsMatches -count=1`.
+- Red step: an update on a machine that selects the backend leaves the compute root unapplied.
 - Depends on: none.
-- Commit: `update: the compute root is applied by the one command (BR6, R2, R12)`.
+- Commit: `update: the compute root is applied by the one command, where Batch is selected (BR6, R2, R12, D3070)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### BR16: update writes the block (`update-converge`)
@@ -290,17 +297,15 @@ and I1.
 
 ### BR7: doctor and validate say where the carrier stands (`update-converge`)
 - Acceptance: on an installation that mints, the seal check passes where the block names the key
-  and fails with `fugaro update` as its fix where it does not; `validate` agrees offline;
-  `fugaro backends use cloud-batch`, which reads the same check, follows it; a machine whose key
-  fact differs from the published one fails (R13).
+  and fails with `fugaro update` as its fix where it does not; `validate` agrees offline; a
+  machine whose key fact differs from the published one fails (R13).
 - Files: `internal/cli/doctor_batch.go`, `internal/cli/doctor_batch_test.go`,
-  `internal/cli/validate_batch.go`, `internal/cli/validate_batch_test.go`,
-  `internal/cli/backends_use_test.go`.
+  `internal/cli/validate_batch.go`, `internal/cli/validate_batch_test.go`.
 - Interfaces: consumes C1 (the block's key fact).
 - Tests: `TestDoctorPassesAMintingBatchInstallationWithTheKey`,
   `TestDoctorNamesTheUpdateWhereTheKeyIsMissing`, `TestValidateAgreesWithDoctorOnTheSeal`,
-  `TestBackendsUseFollowsTheSealCheck`, `TestDoctorFailsAKeyFactThatDiffersFromThePublishedOne`.
-- Command: `go test ./internal/cli/ -run 'MintingBatchInstallationWithTheKey|NamesTheUpdateWhereTheKeyIsMissing|ValidateAgreesWithDoctorOnTheSeal|BackendsUseFollowsTheSealCheck|KeyFactThatDiffers' -count=1`.
+  `TestDoctorFailsAKeyFactThatDiffersFromThePublishedOne`.
+- Command: `go test ./internal/cli/ -run 'MintingBatchInstallationWithTheKey|NamesTheUpdateWhereTheKeyIsMissing|ValidateAgreesWithDoctorOnTheSeal|KeyFactThatDiffers' -count=1`.
 - Red step: doctor still fails a minting installation that has the key.
 - Depends on: C1. Both files are also AB9's: BR7 starts after AB9 merges if AB9 has an open pull
   request.
@@ -445,6 +450,23 @@ and I1.
 - Commit: `doctor, docs: a Batch run mounts nothing; D2075 is superseded (BR15, D3067)`.
 - Reviewer tier: opus, mandatory independent review.
 
+### BR18: selecting the backend does not wait for the key (`update-converge`)
+- Acceptance: `fugaro backends use cloud-batch` is refused for every failing Batch check except
+  a missing key fact; with only that one failing it selects, and prints one line saying that
+  `fugaro update` is the next step and that launches are refused until it has run; a key fact
+  that differs from the published one still refuses the selection; `docs/backends.md` says the
+  order (R14).
+- Files: `internal/cli/backends.go`, `internal/cli/backends_use_test.go`, `docs/backends.md`.
+- Interfaces: consumes BR7's check, which says which failure it is.
+- Tests: `TestBackendsUseSelectsWhenOnlyTheKeyIsMissing`,
+  `TestBackendsUseNamesTheUpdateAsTheNextStep`, `TestBackendsUseStillRefusesADifferingKeyFact`.
+- Command: `go test ./internal/cli/ -run 'BackendsUseSelectsWhenOnlyTheKey|BackendsUseNamesTheUpdate|BackendsUseStillRefusesADiffering|BackendsUse|Docs' -count=1`.
+- Red step: with every other check passing and no key fact, the selection is refused.
+- Depends on: BR7 (kept, behaviour: it reads which failure the check reports); BR12 (kept: one
+  file, `docs/backends.md`).
+- Commit: `backends: selecting Batch does not wait for the key (BR18, D3070, R14)`.
+- Reviewer tier: opus, mandatory independent review.
+
 ### BR17: the registration (`key-release`)
 - Acceptance: a launcher's verified identity registers a blob's digest and job name as one entry
   on the run's budget record, and later that entry's job id; entries are one per digest, written
@@ -485,7 +507,7 @@ and I1.
   `TestUpdateLeavesABatchRunInFlightRunning`, `TestNothingIsCreatedPerBatchRun`.
 - Command: `go build ./... && go vet ./... && ! git grep -n 'sealkey_stub' -- '*.go' && go test ./internal/cli/ -run 'BatchRunOpensItsSession|SecondJobCannotOpen|RecreatedJobCannotOpen|ConvergesABatchInstallation|LeavesABatchRunInFlight|NothingIsCreatedPerBatchRun' -count=1`.
 - Red step: the build fails on the deleted stub's last user.
-- Depends on: C1, `R-C1-link-permission` and every task: BRS, BR0 to BR17.
+- Depends on: C1, `R-C1-link-permission` and every task: BRS, BR0 to BR18.
 - Commit: `batch: a run on Cloud Batch gets its identity, end to end (I1, D3060)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -498,7 +520,7 @@ and I1.
 | 0 | C1, BRS, BR0, BR6 |
 | 1 | BR1, BR2, BR4, BR7, BR8, BR9, BR11, BR13, BR14, BR16; and `R-C1-link-permission` once the owner has run Check 810 and answered O1 |
 | 2 | BR10, BR17; and BR3, BR5, BR12 after `R-C1-link-permission` |
-| 3 | BR15 |
+| 3 | BR15, BR18 |
 | 4 | I1 |
 
 **Edges broken by C1**, each because the dependent needs a shape and not a behaviour:
@@ -526,11 +548,12 @@ and I1.
 | BR16 after BR6 | one file, `init_compute.go` |
 | BR17 after BR2 | one file, `server.go` |
 | BR15 after BR7 and BR12 | one file each, `doctor_batch.go` and `SECURITY.md` |
+| BR18 after BR7 and BR12 | behaviour: it reads which failure BR7's check reports; and one file, `docs/backends.md` |
 | BR10 after BR8 | behaviour: a project job's environment is what BR8 builds |
 | BR13 after BR0 | two files, the checklist and the scripts' list |
 | I1 after all | it wires the real sides and proves them together |
 
-**The gain**, as `fugaro plan graph` reports it: 10 edges broken, 11 kept, 4 added; the critical
+**The gain**, as `fugaro plan graph` reports it: 10 edges broken, 13 kept, 4 added; the critical
 path was 6 tasks of weight 14 and is 5 tasks of weight 8.5. **The critical path** is BR0,
 `R-C1-link-permission`, BR12, BR15, I1, and BR0 is the bottleneck: between it and the contract
 change stand the owner's run of Check 810 and his answer on the second read. Everything that does
@@ -564,7 +587,8 @@ not need that answer runs meanwhile.
 | `internal/settings/registry.go`, `schemas/settings.schema.json` | C1 (0) |
 | `internal/cli/doctor_batch.go`, `internal/cli/doctor_batch_test.go` | BR7 (1), BR15 (3) |
 | `internal/cli/doctor_secret_readers.go`, `docs/secrets-brokering/reconciliation.md` | BR15 (3) |
-| `internal/cli/backends_use_test.go`, `internal/cli/validate_batch.go` | BR7 (1) |
+| `internal/cli/validate_batch.go` | BR7 (1) |
+| `internal/cli/backends.go`, `internal/cli/backends_use_test.go` | BR18 (3) |
 | `internal/cli/run.go`, `internal/cli/cloud_openers_test.go` | BR11 (1) |
 | `internal/runner/budget_session.go`, `internal/gitops/gitops.go` | BR4 (1) |
 | `internal/runner/projectjob.go` | BR9 (1) |
@@ -577,7 +601,7 @@ not need that answer runs meanwhile.
 | `internal/backend/deployedjob.go` | BRS (0) |
 | `internal/credsvc/sealkey_wire.go`, the contract document | C1 (0), `R-C1-link-permission` (1) |
 | `docs/gcp-live-checklist.md` | BR0 (0), BR13 (1) |
-| `docs/backends.md` | BR12 (2) |
+| `docs/backends.md` | BR12 (2), BR18 (3) |
 | `SECURITY.md`, `website/content/security.md` | BR12 (2), BR15 (3) |
 
 **Files another plan also writes.** `internal/backend/batch/run.go`,
@@ -589,13 +613,13 @@ open pull request on each before starting BRS, BR1, BR2, BR7 and BR12.
 
 ## 6. The estimate
 
-22 runs. At the repository's own caps the worst case is 22 times one run's cap, plus 22
+23 runs. At the repository's own caps the worst case is 23 times one run's cap, plus 23
 independent reviews. No run is proposed for launch here: nothing starts until the owner approves
 tasks by name.
 
 ## 7. Contract changes anticipated
 
-- **`R-C1-link-permission`. It always runs**, and is counted in the 22. Once Check 810 has named
+- **`R-C1-link-permission`. It always runs**, and is counted in the 23. Once Check 810 has named
   the link's read and the owner has answered O1, it writes that read into the contract. BR3, BR5
   and BR12 wait on it. If the owner's answer is a release service of its own, it does not run:
   D3062 is reversed and this plan is re-sliced first.
@@ -619,7 +643,8 @@ and cost parts.
 ## 9. After-deploy steps
 
 One, written in BR6's own pull request under `### For operators`: run `fugaro update`. It applies
-the compute root where there is a `batch:` block, creates the key, and rewrites the block. It
+the compute root where the backend is selected, creates the key, and rewrites the block. An
+operator who wants Batch selects it first (`fugaro backends use cloud-batch`), then updates. It
 asks nothing. The key ring it creates cannot be deleted from a Google Cloud project, which the
 note says.
 
@@ -634,6 +659,9 @@ note says.
 - **Letting a queued run fail at start on a dead token**, and leaving it open (D3066).
 - **Reversing D3063 to avoid the `actAs` widening** (D3065).
 - **A grant on the key for launchers**: the public key reaches them through the block (R13).
+- **Applying the compute root wherever a `batch:` block exists** (the recommendation of D3070):
+  the owner chose selection first.
+- **Admitting service-account launchers, or dropping the registration** (D3069).
 - **Keeping D2075's mount for workflow secrets** (D3067), and **accepting the re-created job**
   (D3068).
 - **A record written at first release**: it names whichever job asks first (F30).

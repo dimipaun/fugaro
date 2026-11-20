@@ -37,9 +37,10 @@ The owner approved this map on 2026-11-20. Every finding, decision and task name
 - A4. "Nothing left behind per run" means no cloud resource a person must delete. The sealed token
   object already expires by the bucket's lifecycle rule and is not counted.
 - A5. "An installation on Batch" is one whose config carries a `batch:` block, whether or not it
-  selects the backend.
+  selects the backend. **Contradicted by D3070**: for `fugaro update`, it is one that selects the
+  backend.
 
-No finding contradicts A1 to A5. A2 is what D3061 turns on.
+No finding contradicts A1 to A4. A2 is what D3061 turns on.
 
 ## What the brief names, and what the repository has
 
@@ -275,9 +276,10 @@ Consequence: BR14's acceptance says so.
 
 ## Decisions
 
-All answered by the owner on 2026-11-20 with `AskUserQuestion`. None departs from the
-recommendation. D3061 and D3062 were each asked twice (D3062 was amended in between, after review round 1), D3065 and D3066 were added by review round 1, and D3067
-and D3068 by review round 2.
+All answered by the owner on 2026-11-20 with `AskUserQuestion`. **D3070 is not the
+recommendation**; no other answer departs from it. D3061 and D3062 were each asked twice (D3062 was amended in between, after review round 1), D3065 and D3066 were added by review round 1, and D3067
+and D3068 by review round 2. D3069 and D3070 answer the two questions review round 3 left open,
+asked after the pull request was opened.
 
 | # | Module | Question | Recommendation and why | Alternatives and their cost | Answer |
 | --- | --- | --- | --- | --- | --- |
@@ -290,8 +292,10 @@ and D3068 by review round 2.
 | **D3066** | `job-environment` | A sealed run queued longer than its token lives (F25)? | The reaper ends it at the token's lifetime, and it is launched again | Let it fail at start: a VM billed for a run that cannot work. Decide later | **The reaper ends it** (as recommended, 2026-11-20) |
 | **D3067** | `service-credentials` | D3064 and D3061 reverse D2075 (F29). Which stands? | D3064 supersedes D2075: its premise was the cost of a caller class, which D3061 now pays | Keep D2075 for workflow secrets: about 2 more tasks, and a mount Cloud Run is losing | **D3064 supersedes D2075** (as recommended, 2026-11-20) |
 | **D3068** | `key-release` | A second launcher can replace a queued job and receive its key (F30). Close it? | The launcher that wrapped the key registers the job with the service, which releases only to that job | Accept it, stated: zero tasks, the letter of requirement 1 lost to one attack. Switch to K1 | **The launcher registers the job** (as recommended, 2026-11-20) |
+| **D3069** | `key-release` | The service's launcher class admits people on its roster only, so a service account cannot register a job (O11). What should the plan do? | Build for the class as it is: a service-account launch on Batch is refused with its reason | Admit named service accounts: about 2 more tasks and a new kind of principal. Drop the registration: reverses D3068 | **People on the roster only** (as recommended, 2026-11-20) |
+| **D3070** | `update-converge` | Where does `fugaro update` apply the compute root and create the key (O13)? | Wherever a `batch:` block exists: selection then works straight after an update | Only where the backend is selected: about 1 more task, because selecting is gated on a doctor check that wants the key first | **Only where Batch is selected. Not the recommendation** (2026-11-20) |
 
-D3069 to D3079 are reserved and unused.
+D3071 to D3079 are reserved and unused.
 
 ## Resolutions
 
@@ -331,9 +335,18 @@ One defensible answer each; stated, not asked.
   calls are admitted for the launcher class alone (`VerifyLauncher`, `internal/credsvc/auth.go`);
   the job, review and every other class are refused. The run's own agent can read the entries
   and cannot write them.
-- **R2 (`update-converge`). `fugaro update` applies the compute root** for an installation that
-  already carries a `batch:` block, and records the key in the block. First provisioning stays
-  `fugaro setup --provision-batch`. This is the hard rule's own answer (F13).
+- **R2 (`update-converge`). `fugaro update` applies the compute root** for an installation whose
+  config selects `cloud-batch`, and records the key in the block; an installation that carries a
+  block and has not selected the backend is left alone (D3070, which amends this resolution as
+  first written). First provisioning stays `fugaro setup --provision-batch`. The path is: select
+  the backend, then run `fugaro update`. `backend:` is a per-machine key, so it is the selection
+  on the machine that runs the update that counts; other machines read the key fact from the
+  published block.
+- **R14 (`update-converge`). Selecting the backend does not wait for the key** (D3070). `fugaro
+  backends use cloud-batch` is refused while doctor's Batch checks fail, and the seal check
+  fails until the key exists, which only an update after selection creates. So a missing key
+  fact is not among the refusals of `backends use`: doctor still reports it, with `fugaro update`
+  as its fix, and every launch is refused with the same fix until that update has run.
 - **R3 (`update-converge`). "The carrier is in place" is a fact in the `batch:` block.** The
   backend wraps when the block names the key and refuses when it does not, and the refusal's fix
   is `fugaro update`. This is requirement 3. No launch reads the cloud to decide it.
@@ -389,14 +402,16 @@ his earlier D2075 (F29, D3067).
   the link (F26). If the check names `compute.instances.get`, it cannot be scoped to Fugaro's
   VMs, and the owner then chooses between that read and a release service of its own. The answer
   is written into the contract by `R-C1-link-permission`; BR3 and BR5 wait on it.
-- **O2.** AB9's text (always-a-budget, approved and launching) should be amended to say this plan lifts its
-  refusal. Not done here: that folder is another pull request's.
+- **O2. Closed.** The owner asked for AB9's text to be amended in this pull request (2026-11-20):
+  one sentence in always-a-budget's plan and its O4 now point here. A run of AB9 already going
+  does not read the change; R8 covers that.
 - **O3.** The wire of the new route and of the blob is settled in contract C1, reviewed at the
   strictest tier before either side is written. Its exact fields are not decided in this document.
 - **O4.** D3064 means provider keys reach a Batch run only after keys-through-service lands. Until
   then Check 811 runs on a repository whose credentials the service already serves.
-- **O6.** F24: minting stays with launchers. Taking `signJwt` off them is what would make K3 a
-  boundary against a launcher. It is a spec of its own and is not written here.
+- **O6. Recorded, no spec now** (the owner, 2026-11-20). F24: minting stays with launchers.
+  Taking `signJwt` off them is what would make K3 a boundary against a launcher. No backlog item
+  was filed: the backlog is written by `fugaro backlog add`, which this work did not run.
 - **O7.** R12 has `fugaro update` apply the compute root with no confirmation, where `setup`
   types one, and A5 means that includes an installation that carries a `batch:` block and never
   selected the backend: it gets a key ring that can never be deleted and a key with a small
@@ -405,17 +420,12 @@ his earlier D2075 (F29, D3067).
 - **O8.** The link must also refuse a plain Compute Engine VM that someone with
   `compute.instances.create` and `actAs` on a run account made by hand. Check 810 tries it; no
   Fugaro role holds that pair today.
-- **O11. To decide: a launcher that is a service account.** The service's launcher class admits
-  people only and is empty until the owner fills it, so under D3068 a CI or coordinator service
-  account could not launch on Batch, and a person not on that roster could not either. Whether
-  that is acceptable, or the class widens, is the owner's. BR17 builds for the class as it is.
+- **O11. Closed by D3069.**
 - **O12.** The launcher's identity token is a bearer token for an audience wider than this
   service, valid for an hour. The registration proves the caller is on the launcher roster, not
   that the caller minted this run. A launcher can mint anyway (F24); stated, not fixed.
-- **O13. To decide: O7 is a product decision nobody was asked.** The alternative to R2 as
-  written is to apply the compute root only where the backend is selected, which needs the
-  selection's own gate (doctor's seal check) to stop asking for the key first. Left as R2 until
-  the owner says.
+- **O13. Closed by D3070**, which also narrows O7: an installation that never selected the
+  backend gets no key ring.
 - **O14.** "No CLI release between the merge of BR1 or BR16 and I1" is a rule for whoever cuts
   releases. Nothing enforces it.
 - **O9.** BR2 and BR4 rest on U2 and are built before Check 810 runs. If the check fails U2, R4
