@@ -1283,6 +1283,18 @@
           "$comment": "localcfg.ConfigVersion",
           "default": "3"
         },
+        "locations.firestore": {
+          "default": "unset = not known yet: no converge has read where the project's Firestore database is"
+        },
+        "locations.log_bucket": {
+          "default": "unset = not known yet: no converge has read where the installation's run log bucket is"
+        },
+        "locations.rtdb": {
+          "default": "unset = not known yet: no converge has read where the project's Realtime Database is"
+        },
+        "locations.secrets": {
+          "default": "unset = not known yet: no converge has read what the installation's own secret containers do"
+        },
         "log_view": {
           "default": "unset = the project's default logs"
         },
