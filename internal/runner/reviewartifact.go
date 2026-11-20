@@ -1084,7 +1084,7 @@ func (r *run) writeReviewArtifact(ctx context.Context, res agent.Result) error {
 	// stands a moment before the row it stands for: an entry whose run never
 	// recorded the pull request buys a read and no row, which is what the
 	// index is allowed to cost.
-	r.indexReviewPR(ctx, head.Number)
+	r.writePRIndex(ctx, head.Number, runstore.PRIndexReviewed)
 	r.rec.Reviews = []runstore.ReviewSummary{{
 		Round: 1, Tier: runstore.TierIndependent,
 		Verdict:  r.recordVerdict(art.Verdict),
@@ -1263,30 +1263,5 @@ func (a ReviewArtifact) Markdown() []byte {
 func (r *run) finishReviewJob(ctx context.Context, res agent.Result) {
 	if err := r.writeReviewArtifact(ctx, res); err != nil {
 		r.endReviewInvalidVerdict(ctx, r.redact(err.Error()))
-	}
-}
-
-// indexReviewPR writes this run's entry in pull request pr's index, kind
-// `reviewed`: the object `runs ls --pr N` reads to find a finished review
-// without scanning the repository (D2962, D2964).
-//
-// A review neither opens nor follows a pull request, so this is the only place
-// that can name it: the number exists only once the artifact stage has written
-// it, and the index is written create-if-absent, so a retry or a second
-// artifact write leaves the entry the first one made (PutPRIndex).
-//
-// It never fails the run. The index is a hint and the run's own artifacts are
-// the deliverable: a bucket that refuses this one object leaves a review whose
-// row `runs ls --pr N` still reads when the index has nothing to say about the
-// pull request. A nil bucket is a run with no runs bucket at all (a local
-// `fugaro exec`), which is the same case with nothing to write to.
-func (r *run) indexReviewPR(ctx context.Context, pr int) {
-	if r.d.Bucket == nil || pr < 1 {
-		return
-	}
-	e := runstore.PRIndexEntry{Slug: r.d.Store.Slug(), RunID: r.d.Store.RunID(), PR: pr,
-		Kind: runstore.PRIndexReviewed, At: r.d.Now().UTC()}
-	if err := runstore.PutPRIndex(ctx, r.d.Bucket.Bucket, e); err != nil {
-		r.d.Log.Warn("writing the pull request's index entry failed", "err", err)
 	}
 }
