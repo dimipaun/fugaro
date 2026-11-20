@@ -6455,6 +6455,48 @@ func releaseGateSuite(t *testing.T, want []string, env []string) {
 		}
 	})
 
+	// Which runs a commit has decides where the three `ci` checks are read
+	// (R1, D3040): they come from the check suite of a full run of
+	// .github/workflows/ci.yml, and the commit's own check runs -- green here
+	// in every case below -- are never enough on their own.
+	t.Run("a full run of another workflow file does not vouch", func(t *testing.T) {
+		h := newGateHarness(t)
+		h.setTargetChecks(t, requiredChecks("", "", "", false))
+		h.setCIRuns(t, []string{h.sha + "\tci (full)\t" + h.sha + "\t.github/workflows/nightly.yml"})
+		ok, out := h.run(t, env...)
+		if ok {
+			t.Fatalf("the gate passed on a commit whose only `ci (full)` run belongs to another workflow file:\n%s", out)
+		}
+		if want := fmt.Sprintf("required check '%s' is missing on %s", required[0], h.sha); !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	})
+
+	t.Run("a selected run does not vouch and the gate says how to get a full one", func(t *testing.T) {
+		h := newGateHarness(t)
+		h.setTargetChecks(t, requiredChecks("", "", "", false))
+		h.setCIRuns(t, []string{h.sha + "\tci (selected)\t" + h.sha + "-selected"})
+		ok, out := h.run(t, env...)
+		if ok {
+			t.Fatalf("the gate passed on a commit whose only ci run is a selected one:\n%s", out)
+		}
+		if !strings.Contains(out, "no ci run on that commit is a full one") {
+			t.Errorf("the refusal does not say why the commit's runs do not count:\n%s", out)
+		}
+		if !strings.Contains(out, "gh workflow run ci --ref main -f full=true") {
+			t.Errorf("the refusal does not print the command that dispatches a full run:\n%s", out)
+		}
+	})
+
+	t.Run("a run titled exactly ci is a full one", func(t *testing.T) {
+		h := newGateHarness(t)
+		h.setTargetChecks(t, requiredChecks("", "", "", false))
+		h.setCIRuns(t, []string{h.sha + "\tci\t" + h.sha})
+		if ok, out := h.run(t, env...); !ok {
+			t.Fatalf("the gate refused a commit whose ci run carries the title a ci.yml without a run-name: gives it:\n%s", out)
+		}
+	})
+
 	type refusal struct {
 		name  string
 		leg   string
@@ -6607,13 +6649,16 @@ func gateCheckRun(name, app, state string) string {
 	return name + "\t" + app + "\t" + state
 }
 
-// gateFakeGH answers the three `gh api` calls scripts/release-gate.sh makes.
-// It is a shell script because the gate runs it through PATH, and it runs the
-// gate's **own** `--jq` expression through a real jq over check runs built from
-// the state file -- so the name match, the `github-actions` app filter and the
-// status/conclusion rules are all the script's, and a bug in the expression
-// shows up here rather than being papered over by a fake that already knew the
-// answer.
+// gateFakeGH answers the five `gh api` calls scripts/release-gate.sh makes: the
+// commits check-runs listing, the runs listing that says which of them are
+// `ci` runs and whether each was full, the check suite of a full run, the
+// commits (tree) lookup and the pulls listing. It is a shell script because the
+// gate runs it through PATH, and it runs the gate's **own** `--jq` expression
+// through a real jq over check runs and runs built from the state files -- so
+// the name match, the `github-actions` app filter, the status/conclusion rules
+// and the `.path` filter that keeps another workflow's run out are all the
+// script's, and a bug in an expression shows up here rather than being papered
+// over by a fake that already knew the answer.
 const gateFakeGH = `#!/usr/bin/env bash
 set -eu
 log=${FAKE_GH_LOG:?}
@@ -6645,7 +6690,50 @@ check_runs_json() {
     | {check_runs: .}' <"$1"
 }
 
+# runs_json SHA prints the runs API's own shape for SHA, one run per line of
+# the runs state file ("<sha><TAB><title><TAB><suite>" and an optional fourth
+# field, the workflow file the run belongs to). The fourth field is what lets a
+# test put a run titled like a full ci run in the listing under another
+# workflow file: only the gate's own .path filter keeps it out. Without the
+# file every commit has one full run of .github/workflows/ci.yml, whose check
+# suite is the commit itself.
+runs_json() {
+  tab=$(printf '\t')
+  {
+    if [ -s "${FAKE_GH_RUNS:-}" ]; then
+      while IFS="$tab" read -r rsha title suite file; do
+        [ -n "$rsha" ] || continue
+        [ "$rsha" = "$1" ] || continue
+        [ -n "$file" ] || file=.github/workflows/ci.yml
+        printf '%s\t%s\t%s\t%s\n' "$rsha" "$title" "$suite" "$file"
+      done <"$FAKE_GH_RUNS"
+    else
+      printf '%s\t%s\t%s\t%s\n' "$1" 'ci (full)' "$1" .github/workflows/ci.yml
+    fi
+  } | jq -Rn '
+    [inputs | select(length > 0) | split("\t")
+     | {head_sha: .[0], display_title: .[1], check_suite_id: .[2], path: .[3], id: 1}]
+    | {workflow_runs: .}'
+}
+
 case "$api" in
+  */check-suites/*)
+    # The check suite of the full ci run the gate found: only two suites are
+    # real here, the tagged commit's and the merged pull request head's, and a
+    # suite the gate should never have asked for is an error rather than a
+    # silent green.
+    suite=$(printf '%s' "$api" | sed -n 's|.*/check-suites/\([^/?]*\)/check-runs.*|\1|p')
+    head=""
+    if [ -s "${FAKE_GH_PR:-}" ]; then head=$(cut -f3 "${FAKE_GH_PR}"); fi
+    if [ "$suite" = "${FAKE_GH_TARGET_SHA:?}" ]; then
+      check_runs_json "${FAKE_GH_STATE:?}" | jq -r "$expr"
+    elif [ -n "$head" ] && [ "$suite" = "$head" ] && [ -n "${FAKE_GH_HEAD_STATE:-}" ]; then
+      check_runs_json "$FAKE_GH_HEAD_STATE" | jq -r "$expr"
+    else
+      echo "fake gh: the gate asked for the check suite $suite, which is neither the tagged commit's nor the pull request head's: $*" >&2
+      exit 3
+    fi
+    ;;
   */check-runs*)
     sha=$(printf '%s' "$api" | sed -n 's|.*/commits/\([^/]*\)/check-runs.*|\1|p')
     state=${FAKE_GH_STATE:?}
@@ -6653,6 +6741,10 @@ case "$api" in
       state=$FAKE_GH_HEAD_STATE
     fi
     check_runs_json "$state" | jq -r "$expr"
+    ;;
+  */actions/runs*)
+    sha=$(printf '%s' "$api" | sed -n 's|.*head_sha=\([^&]*\).*|\1|p')
+    runs_json "$sha" | jq -r "$expr"
     ;;
   */git/commits/*)
     sha=$(printf '%s' "$api" | sed -n 's|.*/git/commits/\([^/?]*\).*|\1|p')
@@ -6725,6 +6817,17 @@ func (h *gateHarness) setHeadChecks(t *testing.T, lines []string) {
 	h.write(t, "head.tsv", lines)
 }
 
+// setCIRuns is the runs API's listing of the `ci` runs on a commit: one
+// "<sha><TAB><title><TAB><suite>" line per run, plus an optional fourth field
+// for the workflow file the run belongs to (default .github/workflows/ci.yml,
+// the only file the gate reads runs of). Not calling it leaves every commit
+// with one full `ci` run, which is the ordinary state of a commit CI has
+// finished on.
+func (h *gateHarness) setCIRuns(t *testing.T, lines []string) {
+	t.Helper()
+	h.write(t, "runs.tsv", lines)
+}
+
 // setMergedPR is the checks API's listing of the pull request merged as the
 // target: the tsv the gate's own jq would have produced.
 func (h *gateHarness) setMergedPR(t *testing.T, mergeSHA, headSHA string) {
@@ -6768,17 +6871,20 @@ func (h *gateHarness) run(t *testing.T, extra ...string) (bool, string) {
 		"FAKE_GH_LOG="+filepath.Join(h.root, "gh.log"),
 		"FAKE_GH_ORIGIN="+h.origin,
 		"FAKE_GH_STATE="+filepath.Join(h.root, "target.tsv"),
+		// The tagged commit: the fake answers its check suite from target.tsv
+		// and refuses a suite that belongs to neither commit under test.
+		"FAKE_GH_TARGET_SHA="+h.sha,
 	)
-	for _, name := range []string{"head.tsv", "pulls.tsv"} {
+	for name, variable := range map[string]string{
+		"head.tsv":  "FAKE_GH_HEAD_STATE",
+		"pulls.tsv": "FAKE_GH_PR",
+		"runs.tsv":  "FAKE_GH_RUNS",
+	} {
 		path := filepath.Join(h.root, name)
 		if _, err := os.Stat(path); err != nil {
 			continue
 		}
-		if name == "head.tsv" {
-			cmd.Env = append(cmd.Env, "FAKE_GH_HEAD_STATE="+path)
-		} else {
-			cmd.Env = append(cmd.Env, "FAKE_GH_PR="+path)
-		}
+		cmd.Env = append(cmd.Env, variable+"="+path)
 	}
 	cmd.Env = append(cmd.Env, extra...)
 	var out bytes.Buffer
