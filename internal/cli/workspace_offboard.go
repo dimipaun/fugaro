@@ -88,7 +88,7 @@ import (
 // The delete goes to the MEMBER's own intake in its admin-only form (DS2.3,
 // DS2.4), and the address of that intake is the member's: a workspace admin's
 // own config carries the workspace's credentials service URL, whose service
-// label resolves the workspaces's own intake and never a member's
+// label resolves the workspace's own intake and never a member's
 // (offboardSweep, intakeURLOf). So reaching a member's intake is not something
 // this file can do with the local config, and the seam is what carries it: the
 // side that already reaches the member project provides it -- WU4's writer,
