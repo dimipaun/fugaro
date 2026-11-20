@@ -12,11 +12,12 @@ import (
 )
 
 // workspaceFullHome is the document's own fixture: the workspace's own config
-// declares aurora as a member and states a cap, aurora's own config names the
-// workspace and carries the pin, and a third project names a workspace whose
-// config this machine does not hold. Every branch of the document is therefore
-// live: an owner row with a member and a cap, and a member row with an unknown
-// member list.
+// declares aurora as a member, states a cap and offers two credentials, aurora's
+// own config names the workspace and carries the pin (address included), and a
+// third project names a workspace whose config this machine does not hold. Every
+// branch of the document is therefore live: an owner row with a member, a cap
+// and a shared list, a membership with an address, and a member row with an
+// unknown member list.
 func workspaceFullHome(t *testing.T) (home string) {
 	t.Helper()
 	home, aurora, owner := workspaceOwnerHome(t)
@@ -26,8 +27,22 @@ workspace_pin:
   issuer: https://securetoken.google.com/project-ws
   assertion_key: marker-assertion-key
   service_account: marker-workspace@project-ws.iam.gserviceaccount.com
+  service_address: https://workspace.example.com
 `)
-	workspaceAppend(t, owner, workspaceOwnerTable+"workspace_cap:\n  monthly: 50\n")
+	workspaceAppend(t, owner, workspaceOwnerTable+`workspace_cap:
+  monthly: 50
+workspace_shared:
+  anthropic-api-key:
+    kind: model
+    projects:
+      - aurora
+  bitbucket-token:
+    kind: bitbucket
+    projects:
+      - aurora
+    covers:
+      - marker-org/aurora
+`)
 	workspaceAppend(t, writeProject(t, "borealis", "borealis-gcp"), `workspace: workspace-beta
 workspace_pin:
   firebase_project: project-beta
@@ -227,8 +242,36 @@ func TestWorkspaceLsJSONMatchesSchema(t *testing.T) {
 	if members, _ := owner["members"].([]any); len(members) != 1 {
 		t.Errorf("row 0's members are %v, want one", owner["members"])
 	}
+	// The member row's two new halves: where its database lives and the
+	// repositories each of its job accounts is a job of.
+	member, _ := owner["members"].([]any)[0].(map[string]any)
+	if member["database_region"] != "europe-west1" {
+		t.Errorf("the member row's database_region is %v, want the region the table states", member["database_region"])
+	}
+	accounts, _ := member["job_service_accounts"].([]any)
+	if len(accounts) != 1 {
+		t.Fatalf("the member row's job_service_accounts are %v, want one", member["job_service_accounts"])
+	}
+	if acct, _ := accounts[0].(map[string]any); acct["account"] == nil || len(acct["repos"].([]any)) != 1 {
+		t.Errorf("the job account is %v, want the account with the repository it is a job of", accounts[0])
+	}
+	// And the owner's shared list, one entry per kind this machine can offer.
+	shared, _ := owner["shared"].([]any)
+	if len(shared) != 2 {
+		t.Fatalf("row 0's shared list is %v, want the two entries the config declares", owner["shared"])
+	}
+	kinds := map[any]bool{}
+	for _, s := range shared {
+		entry, _ := s.(map[string]any)
+		kinds[entry["kind"]] = true
+	}
+	if !kinds["model"] || !kinds["bitbucket"] {
+		t.Errorf("the shared kinds are %v, want the model and the bitbucket entry", kinds)
+	}
 	if memberships, _ := owner["memberships"].([]any); len(memberships) != 1 {
 		t.Errorf("row 0's memberships are %v, want one", owner["memberships"])
+	} else if m, _ := memberships[0].(map[string]any); m["service_address"] != "https://workspace.example.com" {
+		t.Errorf("the membership's service_address is %v, want the address the pin carries", m["service_address"])
 	}
 	named, _ := rows[1].(map[string]any)
 	if named["name"] != "workspace-beta" || named["owner"] != false {

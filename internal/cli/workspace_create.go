@@ -452,7 +452,9 @@ func workspaceMemberAccounts(lc *localcfg.Config) []string {
 	}
 	var out []string
 	for _, name := range slices.Sorted(maps.Keys(*lc.WorkspaceMembers)) {
-		out = append(out, (*lc.WorkspaceMembers)[name].JobServiceAccounts...)
+		for _, a := range (*lc.WorkspaceMembers)[name].JobAccounts {
+			out = append(out, a.Account)
+		}
 	}
 	return out
 }

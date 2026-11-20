@@ -65,7 +65,7 @@ On a pull request that was retargeted, check the base its runs recorded before l
 ## Monitor
 
 - **With the project's daemon live, the `orchestrator` skill governs launching**: queue the work as items and never launch, sweep or watch runs yourself; without one, the rest is yours.
-- `fugaro runs ls` lists runs (`--repo`, `--mine`, `--since`, `--batch`, `--pr`) and its `BY` column says who started each one; `--watch` redraws until every run settles, and `fugaro runs stats` aggregates the same records by who started them.
+- `fugaro runs ls` lists runs (`--repo`, `--mine`, `--since`, `--batch`, `--pr`) and its `BY` column says who started each one; `--state running` and `--pr N` are the fast queries; `--watch` redraws until every run settles, and `fugaro runs stats` aggregates those records by launcher.
 - `fugaro watch` is the live screen of spend, repositories and running agents — a terminal screen only the user can read; for one you can read, `fugaro watch --once`.
 - `fugaro logs <run>` prints its logs, `-f` follows them.
 - `fugaro diagnose <run>` explains one run: its stage, reason, tests, review findings, the agent's last word, cost and pull request.

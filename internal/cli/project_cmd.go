@@ -668,6 +668,14 @@ const rulesRegistrationGeneration = 6
 // SA5.0, D2648 as amended by D2650).
 const rulesSpendLeavesGeneration = 7
 
+// rulesOutcomeGeneration is the rules generation that added the paired device's
+// read of a run's outcome (mobile identity-pairing task J1, F30, D2797, O3). It
+// is the generation *below* this binary's, which is why the branch it gates in
+// rulesMarkerOlderText is the one that announces the credential route
+// (workspace-service task WS22, R3 and R4): a marker at 8 already has that read,
+// and what the deploy adds over it is generation 9's own grant.
+const rulesOutcomeGeneration = 8
+
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
 // refuses here — Read reads the policy the marker's rules carry and
@@ -689,8 +697,14 @@ const rulesSpendLeavesGeneration = 7
 // (spend-accuracy task SA5.0, D2648 as amended by D2650), and one at
 // rulesSpendLeavesGeneration already has those leaves and only the paired
 // device's read of a run's outcome is new to it (mobile identity-pairing task
-// J1, F30, D2797, O3).
+// J1, F30, D2797, O3), and one at rulesOutcomeGeneration already has that read
+// and only the credential route a run reads is new to it (workspace-service task
+// WS22, R3 and R4).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesOutcomeGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node, the registration kind's fields, the four day-counter leaves a run's stage report writes per model and the paired device's read of a run's outcome, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the credential route a run reads at bootstrap (config/policy/route/$slug, one node per repository, granted to that repository's own run token and to nothing else, workspace-service WS22, R3 and R4): a run under these rules reads no route and is served by the project's own credential, so a member that pinned a workspace keeps calling the project until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
+	}
 	if gen >= rulesSpendLeavesGeneration {
 		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node, the registration kind's fields and the four day-counter leaves a run's stage report writes per model, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the paired device's read of a run's outcome (outcomes/$day/$slug/$run, one node granted to the app's user claim and to nothing else, so the phone can name a run that is still going): a phone under these rules sees a running run's spend and not the run, so the app's jobs list shows the spend alone until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
