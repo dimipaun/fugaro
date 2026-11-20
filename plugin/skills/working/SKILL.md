@@ -65,7 +65,7 @@ On a pull request that was retargeted, check the base its runs recorded before l
 ## Monitor
 
 - **With the project's daemon live, the `orchestrator` skill governs launching**: queue the work as items and never launch, sweep or watch runs yourself; without one, the rest is yours.
-- `fugaro runs ls` lists runs (`--repo`, `--mine`, `--since`, `--batch`, `--pr`) and its `BY` column says who started each one; `--watch` redraws until every run settles, and `fugaro runs stats` aggregates the same records by who started them.
+- `fugaro runs ls` lists runs (`--repo`, `--mine`, `--since`, `--batch`, `--pr`) and its `BY` column says who started each one; `--state running` and `--pr N` are the fast queries; `--watch` redraws until every run settles, and `fugaro runs stats` aggregates those records by launcher.
 - `fugaro watch` is the live screen of spend, repositories and running agents — a terminal screen only the user can read; for one you can read, `fugaro watch --once`.
 - `fugaro logs <run>` prints its logs, `-f` follows them.
 - `fugaro diagnose <run>` explains one run: its stage, reason, tests, review findings, the agent's last word, cost and pull request.
@@ -89,7 +89,7 @@ On a pull request that was retargeted, check the base its runs recorded before l
 - **Draft or ready.** A run ends with a passing test run and a senior review verdict of `ship` for a ready pull request, and with a draft otherwise. A draft appears early, at the run's first checkpoint push (its first commit, within about a minute), with a status section in its description that the run keeps updating and that says "not verified" until a passing test covers the commit. Reviewers are requested only when it becomes ready.
 - **A failed or halted run is not always a bad one.** Its draft pull request holds the work: look at CI before deciding.
 - **Two review tiers.** A run may have a first-line review by a cheaper coder model before the senior review. Only the senior review decides readiness.
-- **Cost.** `fugaro diagnose` shows it, and its JSON has `row.cost.route_by`, which splits the spend by route (a provider model's route, for example), and `row.cost.reported_usd`, what a provider claimed — the figure a complete call on a provider route settles on. Subscription (`oauth`) spend is notional, never billed. What this run would have cost on another model is `fugaro estimate --run ID --model ID` (`--pr N --repo owner/name` names the run the way `runs ls --pr` does): it reprices the run's recorded tokens at that model's list rates, and the figure it prints is an estimate, not the run's bill.
+- **Cost.** `fugaro diagnose` shows it, and its JSON has `row.cost.route_by`, which splits the spend by route (a provider model's route, for example), and `row.cost.reported_usd`, what a provider claimed — the figure a complete call on a provider route settles on. What this run would have cost on another model is `fugaro estimate --run ID --model ID` (`--pr N --repo owner/name` names the run the way `runs ls --pr` does): it reprices the run's recorded tokens at that model's list rates, and the figure it prints is an estimate, not the run's bill.
 - **Statuses and halts** are in `reference/status.md` and `reference/diagnose.md`. A halt is a budget cap or a kill switch, or a review that stopped because what comes next is the owner's decision and not a code change (reason `owner_decision`): then say what is waiting on them and stop, and never launch the follow-up without their ruling (`--owner-ruled`).
 
 ## The findings a run left behind
