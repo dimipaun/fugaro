@@ -6545,10 +6545,15 @@ func servicesLaunchEnv(entry config.Entry) string {
 // is the change that replaced that rule with the profile's: the account is
 // admitted for the repositories its profile admits (F40, G21), and the module
 // grants it roles/run.invoker on the service
-// (deploy/terraform/gcp/modules/project/sa.tf). The job keeps every mount it
-// has (G17): the address arrives first and the model credential is dropped only
-// by B5.7's flip, so a run here reaches its git provider and its model through
-// the service while the container still holds what it held.
+// (deploy/terraform/gcp/modules/project/sa.tf). The address arrived one release
+// before the drop, which is G17's order, and the drop is B5.7's
+// (config.SharedJobServedClasses): a switched profile's job mounts no model
+// credential and its account keeps no secretAccessor on one, so a run this
+// function hands the address to makes every model call at the service — the
+// container holds nothing to make one with — and its git traffic is the
+// service's keyless mint for the reason above.
+// What the container still holds is the GitHub App key, which no path of such a
+// run reads: its own flip is config.ServiceHeldSecretNames' (#907, G22).
 //
 // The address is withheld from a shared job whose document could not be read,
 // which is the one place the two paths differ. A repository's own job is handed
@@ -6561,6 +6566,16 @@ func servicesLaunchEnv(entry config.Entry) string {
 // config.DefaultAgentAuth) would open its git provider keyless
 // (internal/gitprov/providers/providers.go) for a mint the service refuses,
 // breaking every GitHub run of that job.
+//
+// B5.7's drop is the PROFILE's and not the repository's
+// (projectJobServesTheCredentialsService: one repository of the profile on is
+// enough — the wider answer, whose inertness argument, "nothing hands an
+// unswitched repository's runs the address", is a fact about the grant and not
+// about the drop). So where the flip has taken a profile's model mounts away, a
+// launch this read hands no address to — another repository of that profile, or
+// one whose document could not be read — is a run with neither the mount nor
+// the address: the pair the switch is judged on belongs to the repository while
+// the drop belongs to the profile.
 //
 // A REVIEW LAUNCH IS NOT TOLD, and it is the variant's own deployment that
 // carries the address (internal/infra's reviewVariant): a review runs on the
