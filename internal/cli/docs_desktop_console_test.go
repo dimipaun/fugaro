@@ -6694,25 +6694,29 @@ check_runs_json() {
 # the runs state file ("<sha><TAB><title><TAB><suite>" and an optional fourth
 # field, the workflow file the run belongs to). The fourth field is what lets a
 # test put a run titled like a full ci run in the listing under another
-# workflow file: only the gate's own .path filter keeps it out. Without the
-# file every commit has one full run of .github/workflows/ci.yml, whose check
-# suite is the commit itself.
+# workflow file: only the gate's own .path filter keeps it out. Each run is
+# numbered by its line, which is the run_number the gate orders the runs by
+# (its newest full run is the one whose checks count). Without the file every
+# commit has one full run of .github/workflows/ci.yml, whose check suite is the
+# commit itself.
 runs_json() {
   tab=$(printf '\t')
+  number=0
   {
     if [ -s "${FAKE_GH_RUNS:-}" ]; then
       while IFS="$tab" read -r rsha title suite file; do
         [ -n "$rsha" ] || continue
+        number=$((number + 1))
         [ "$rsha" = "$1" ] || continue
         [ -n "$file" ] || file=.github/workflows/ci.yml
-        printf '%s\t%s\t%s\t%s\n' "$rsha" "$title" "$suite" "$file"
+        printf '%s\t%s\t%s\t%s\t%s\n' "$rsha" "$title" "$suite" "$file" "$number"
       done <"$FAKE_GH_RUNS"
     else
-      printf '%s\t%s\t%s\t%s\n' "$1" 'ci (full)' "$1" .github/workflows/ci.yml
+      printf '%s\t%s\t%s\t%s\t%s\n' "$1" 'ci (full)' "$1" .github/workflows/ci.yml 1
     fi
   } | jq -Rn '
     [inputs | select(length > 0) | split("\t")
-     | {head_sha: .[0], display_title: .[1], check_suite_id: .[2], path: .[3], id: 1}]
+     | {head_sha: .[0], display_title: .[1], check_suite_id: .[2], path: .[3], run_number: (.[4] | tonumber), id: 1}]
     | {workflow_runs: .}'
 }
 

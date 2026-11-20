@@ -2086,8 +2086,11 @@ func runGateEnv(t *testing.T, r *releaseRepo, g *ghState, sha, tag string, extra
 
 // ciRuns writes the fake's ci_runs state file: one "<sha><TAB><title><TAB>
 // <suite>" line per `ci` run on that commit, which is what the gate's read of
-// the commit's runs answers with. A commit the file does not name has no `ci`
-// run at all -- what a tag on a commit nobody dispatched CI on looks like.
+// the commit's runs answers with. An optional fourth field is the run's
+// run_number, which is what orders the runs when a commit has more than one --
+// the gate reads the newest full one -- and defaults to the line's position. A
+// commit the file does not name has no `ci` run at all -- what a tag on a commit
+// nobody dispatched CI on looks like.
 func ciRuns(t *testing.T, g *ghState, lines ...string) {
 	t.Helper()
 	body := ""
@@ -2171,6 +2174,34 @@ func TestGateAcceptsTheOldTitle(t *testing.T) {
 	if !strings.Contains(res.out, "no ci run on that commit is a full one") {
 		t.Errorf("the refusal does not say why the commit's runs do not count:\n%s", res.out)
 	}
+}
+
+// TestGateReadsTheNewestFullRun: only the newest full run's checks count, so a
+// re-dispatch that went green clears a red full run before it -- the reading
+// this replaces took the latest run per name, and a commit-level merge of every
+// full run's suite would block the tag for good. The rows come back in the order
+// the api listed them, which is why the fake writes the red run first: a gate
+// that took the first full row instead of the highest run number would refuse
+// here. The newest run being the red one is still the refusal.
+func TestGateReadsTheNewestFullRun(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks())
+
+	ciRuns(t, g,
+		sha+"\tci (full)\t"+sha+"-red\t7",
+		sha+"\tci (full)\t"+sha+"\t8")
+	runGate(t, r, g, sha, "v0.12.0").requireSuccess(t)
+
+	ciRuns(t, g,
+		sha+"\tci (full)\t"+sha+"\t8",
+		sha+"\tci (full)\t"+sha+"-red\t7")
+	runGate(t, r, g, sha, "v0.12.0").requireSuccess(t)
+
+	ciRuns(t, g,
+		sha+"\tci (full)\t"+sha+"\t7",
+		sha+"\tci (full)\t"+sha+"-red\t8")
+	runGate(t, r, g, sha, "v0.12.0").requireFailureContaining(t, "required check 'test' is failed")
 }
 
 // TestGateFallbackAppliesTheTitleRule: the identical-tree fallback reads the

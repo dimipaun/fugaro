@@ -47,14 +47,20 @@
 #                    connection does ("net/http: TLS handshake timeout"), and
 #                    do nothing else
 #   ci_runs          a state FILE (not an env var): one
-#                    "<sha><TAB><title><TAB><suite>" line per `ci` run, which
-#                    is what the gate's read of a commit's runs answers with.
-#                    Without the file every commit has one full run, whose
-#                    check suite is the commit itself. A suite id that is a
-#                    commit sha answers that commit's checks; one written as
-#                    "<sha>-selected" is a `ci (selected)` run's and answers
-#                    failed for every required name, so a gate that read it
-#                    instead of the full run's could not pass.
+#                    "<sha><TAB><title><TAB><suite>[<TAB><number>]" line per `ci`
+#                    run, which is what the gate's read of a commit's runs
+#                    answers with. The number is the run's run_number, the line's
+#                    own position when it is not written, and it is what orders
+#                    the runs: the gate counts the newest full one, so a re-
+#                    dispatch is a higher number than the run it replaced. The
+#                    lines come back in the order they are written, as the API
+#                    lists them. Without the file every commit has one full run,
+#                    whose check suite is the commit itself. A suite id that is
+#                    a commit sha answers that commit's checks; "<sha>-selected"
+#                    is a `ci (selected)` run's suite and "<sha>-red" a full
+#                    run's whose checks failed, both answering failed for every
+#                    required name, so a gate that read one of them where a
+#                    green run's suite was called for could not pass.
 #   FAKE_GH_RUN_RELEASE / FAKE_GH_RUN_IMAGES / FAKE_GH_RUN_WINDOWS
 #                    success (default) | failure | cancelled | pending |
 #                    missing: what the runs api reports for that workflow's
@@ -236,21 +242,25 @@ case "$1 ${2:-}" in
           *".display_title"*)
             # scripts/release-gate.sh's read of a commit's `ci` runs: one
             # tab-separated line per run, in the shape its --jq asks for
-            # ([check_suite_id, display_title] | @tsv). The runs come from
-            # $dir/ci_runs (see the header); the gate keeps the rows whose
-            # title says the run was full and reads those runs' check suites.
+            # ([run_number, check_suite_id, display_title] | @tsv), in the order
+            # the lines are written, exactly as the api lists runs -- the gate
+            # orders them itself, so this fake must not. The runs come from
+            # $dir/ci_runs (see the header); the gate keeps the newest row whose
+            # title says the run was full and reads that run's check suite.
             sha=$(printf '%s' "$2" | sed -n 's|.*head_sha=\([^&]*\).*|\1|p')
             if [ -f "$dir/ci_runs" ]; then
               # A real tab: this file runs under /bin/sh, where $'\t' is not an
               # escape but the four literal characters it is written with.
               tab=$(printf '\t')
-              while IFS="$tab" read -r rsha title suite; do
+              number=0
+              while IFS="$tab" read -r rsha title suite rnumber; do
                 [ -n "$rsha" ] || continue
+                number=$((number + 1))
                 [ "$rsha" = "$sha" ] || continue
-                printf '%s\t%s\n' "$suite" "$title"
+                printf '%s\t%s\t%s\n' "${rnumber:-$number}" "$suite" "$title"
               done <"$dir/ci_runs"
             else
-              printf '%s\t%s\n' "$sha" "ci (full)"
+              printf '1\t%s\t%s\n' "$sha" "ci (full)"
             fi
             exit 0
             ;;
@@ -323,12 +333,13 @@ case "$1 ${2:-}" in
     # The gate reads test, terraform and rules from the check suite of the full
     # `ci` run it found, never from a selected one's (R1). A suite id that is a
     # commit sha is that commit's own checks, read exactly as the commit arm
-    # below reads them; "<sha>-selected" is a selected run's suite, and it
-    # answers failed for every required name: it is red here on purpose, so a
-    # gate that let a selected run's checks count cannot pass.
+    # below reads them; "<sha>-selected" is a selected run's suite and
+    # "<sha>-red" a full run's whose checks failed, and both answer failed for
+    # every required name: they are red here on purpose, so a gate that let
+    # either count where a green full run's suite was called for cannot pass.
     if [ -n "$ssuite" ]; then
       case "$ssuite" in
-        *-selected)
+        *-selected | *-red)
           for name in test terraform rules; do
             case "$*" in
               *".name == \"$name\""*)
@@ -337,7 +348,7 @@ case "$1 ${2:-}" in
                 ;;
             esac
           done
-          echo "fake-gh.sh: the api asked a selected run's check suite about a required check name this fake has no arm for: $*" >&2
+          echo "fake-gh.sh: the api asked a red or selected run's check suite about a required check name this fake has no arm for: $*" >&2
           exit 1
           ;;
         *) sha=$ssuite ;;
