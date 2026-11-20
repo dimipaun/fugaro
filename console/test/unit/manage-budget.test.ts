@@ -162,9 +162,22 @@ describe('the Budget kind', () => {
       'repository',
       'daily',
       'perRun',
-      'spent',
+      'counted',
       'left',
       'kill',
+    ])
+    // The money column is the CLI's `counted_usd` and is headed with the CLI's
+    // own word for it: `counted` is what the caps and the headroom beside it are
+    // measured against, while `spent_usd` is the billed figure the caps panel
+    // draws as `billed` -- so a column headed "spent" carrying the counted
+    // figure would report every open lease as money charged.
+    expect(kind.columns.map((column) => column.title)).toEqual([
+      'Repository',
+      'Daily cap',
+      'Per-run cap',
+      'Counted today',
+      'Left today',
+      'Kill switch',
     ])
     expect(kind.columns.map((column) => column.class)).toEqual([
       'repository',
@@ -180,11 +193,15 @@ describe('the Budget kind', () => {
     const rows = budgetKindFor(SUPPORTED).decode(aBudget())
     expect(rows.map((row) => row.key)).toEqual(['acme/app', 'acme/website'])
 
+    // The first repository is the one where the two figures differ -- its
+    // `counted_usd` is $3.50 against a `spent_usd` of $1.25, the $2.25 being a
+    // lease no run has released -- so it is the row a case about which of the
+    // two the column carries reads.
     expect(rows[0]?.cells).toEqual({
       repository: 'acme/app',
       daily: '$20.00 (repo)',
       perRun: '$4.00 (repo)',
-      spent: '$3.50',
+      counted: '$3.50',
       left: '$16.50',
       kill: 'live',
     })
@@ -197,10 +214,22 @@ describe('the Budget kind', () => {
       repository: 'acme/website',
       daily: '$25.00 (default)',
       perRun: '$5.00 (global)',
-      spent: '$4.75',
+      counted: '$4.75',
       left: '$20.25',
       kill: 'KILLED by dana@example.invalid 2026-11-20T09:00:00Z the day’s spend reached the cap while a run was looping',
     })
+  })
+
+  it('draws the counted figure under the counted word, and not the billed one', () => {
+    // `counted_usd` is the money the caps and the headroom beside it are
+    // measured against, and `spent_usd` -- the billed figure, which the caps
+    // panel draws as `billed` -- is a smaller number whenever a lease is open.
+    // A column drawing the billed figure would leave a row whose money and
+    // headroom cells did not add up to its cap, and one headed "spent" drawing
+    // the counted figure would report every unreleased lease as money charged.
+    const cells = rowCells(SUPPORTED, 0)
+    expect(cells['counted']).toBe('$3.50')
+    expect(JSON.stringify(cells)).not.toContain('1.25')
   })
 
   it('says a scope word this console does not know as unknown, and never the word itself', () => {
@@ -268,13 +297,13 @@ describe('the Budget kind in the reduced mode', () => {
     expect(JSON.stringify(cells)).not.toContain('20.00')
     // The other two views are not this one's question: the money and the kill
     // state are drawn, because the views that cover them are not withheld.
-    expect(cells['spent']).toBe('$3.50')
+    expect(cells['counted']).toBe('$3.50')
     expect(cells['kill']).toBe('live')
   })
 
   it('withholds the money under the spend view, and the kill state under the kill view', () => {
     const money = rowCells(withHidden('spend'), 1)
-    expect(money['spent']).toBe(BUDGET_SPEND_HIDDEN_WORD)
+    expect(money['counted']).toBe(BUDGET_SPEND_HIDDEN_WORD)
     expect(money['left']).toBe(BUDGET_SPEND_HIDDEN_WORD)
     expect(money['daily']).toBe('$25.00 (default)')
     expect(money['kill']).toContain('KILLED')
@@ -282,7 +311,7 @@ describe('the Budget kind in the reduced mode', () => {
     const kill = rowCells(withHidden('kill'), 1)
     expect(kill['kill']).toBe(BUDGET_KILL_HIDDEN_WORD)
     expect(JSON.stringify(kill)).not.toContain('dana@example.invalid')
-    expect(kill['spent']).toBe('$4.75')
+    expect(kill['counted']).toBe('$4.75')
   })
 
   it('withholds every figure of a fully reduced console, and the repository name never', () => {
@@ -293,7 +322,7 @@ describe('the Budget kind in the reduced mode', () => {
       repository: 'acme/app',
       daily: BUDGET_CAPS_HIDDEN_WORD,
       perRun: BUDGET_CAPS_HIDDEN_WORD,
-      spent: BUDGET_SPEND_HIDDEN_WORD,
+      counted: BUDGET_SPEND_HIDDEN_WORD,
       left: BUDGET_SPEND_HIDDEN_WORD,
       kill: BUDGET_KILL_HIDDEN_WORD,
     })

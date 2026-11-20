@@ -138,8 +138,18 @@ const UNKNOWN_SCOPE_WORD = 'unknown'
 /** COLUMNS is the table: the repository, its two caps, the money against them
  * and the kill state. The two figures the caps are counted against
  * (`counted_usd` and `headroom_usd`, both on the same `repos[]` entry) are
- * columns of their own rather than one figure, because "spent" and "left" are
- * the two questions an operator asks a cap, and the document answers both.
+ * columns of their own rather than one figure, because the money counted
+ * against a cap and the room left under it are the two questions an operator
+ * asks one, and the document answers both.
+ *
+ * **`counted_usd` is the money column, under the CLI's own word for it**, and
+ * never `spent_usd`: the two are different figures (the CLI's own `show` help:
+ * "Counted is spent plus what runs have reserved and not released", carried as
+ * `leased_usd`), `counted_usd` is the one the caps and the headroom beside it
+ * are measured against, and `spent_usd` is the billed figure
+ * (`console/docs/json-contract.md`, and the caps panel draws the same two with
+ * `CAPS_COUNTED_WORD` and `CAPS_BILLED_WORD`). A column headed "spent" drawing
+ * the counted figure would report a lease as money charged.
  *
  * A cell's class is a fact about the column (the descriptor's own rule): a
  * repository name is a `repository`, a cap and a money figure are `label`
@@ -150,7 +160,7 @@ const COLUMNS: readonly ManageColumn[] = Object.freeze([
   { key: 'repository', title: 'Repository', class: 'repository' },
   { key: 'daily', title: 'Daily cap', class: 'label' },
   { key: 'perRun', title: 'Per-run cap', class: 'label' },
-  { key: 'spent', title: 'Spent today', class: 'label' },
+  { key: 'counted', title: 'Counted today', class: 'label' },
   { key: 'left', title: 'Left today', class: 'label' },
   { key: 'kill', title: 'Kill switch', class: 'sentence' },
 ])
@@ -214,7 +224,7 @@ function rowOf(row: SpendCapRow, hidden: Hidden): ManageRow {
       repository: row.repo === '' ? row.slug : row.repo,
       daily: hidden.caps ? BUDGET_CAPS_HIDDEN_WORD : capCell(row.dailyCap, row.dailyScope),
       perRun: hidden.caps ? BUDGET_CAPS_HIDDEN_WORD : capCell(row.perRunCap, row.perRunScope),
-      spent: hidden.spend ? BUDGET_SPEND_HIDDEN_WORD : formatReading(row.counted, 'usd'),
+      counted: hidden.spend ? BUDGET_SPEND_HIDDEN_WORD : formatReading(row.counted, 'usd'),
       left: hidden.spend ? BUDGET_SPEND_HIDDEN_WORD : formatReading(row.headroom, 'usd'),
       kill: hidden.kill ? BUDGET_KILL_HIDDEN_WORD : killCell(row.kill),
     },
