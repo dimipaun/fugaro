@@ -136,14 +136,13 @@ test('rule 1 and rule 2: nothing at all while a confirmation is pending, and it 
   // Everything else is in the turn's favour: the switch is on, the consent is
   // recorded, the project admits the provider, and the utterance is speech for
   // the agent. The pending action alone holds it, and it holds **both**
-  // directions -- the confirmation is not a phrase this module could recognise.
-  for (const direction of ['stt', 'tts']) {
-    const held = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state, now: AT, direction });
-    assert.equal(held.ok, true, direction);
-    assert.equal(held.send, false, direction);
-    assert.equal(held.engine, ENGINE.LOCAL, direction);
-    assert.equal(held.reason, EGRESS_CODE.PENDING, direction);
-  }
+  // directions -- one call per method, because each method owns its direction
+  // and there is none to pass.
+  const held = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state, now: AT });
+  assert.equal(held.ok, true);
+  assert.equal(held.send, false);
+  assert.equal(held.engine, ENGINE.LOCAL);
+  assert.equal(held.reason, EGRESS_CODE.PENDING);
   const spoken = await gate.speak({ text: SECRET_TEXT, project: PROJECT, route: agentText, state, now: AT });
   assert.equal(spoken.send, false);
   assert.equal(spoken.reason, EGRESS_CODE.PENDING);
@@ -190,7 +189,7 @@ test('rule 3: a destructive route is served entirely locally', async () => {
   assert.equal((await voice.read()).ok, true);
 
   for (const command of ['confirm', 'cancel-that']) {
-    const held = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: heard(command), now: AT });
+    const held = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: heard(command), state: null, now: AT });
     assert.equal(held.send, false, command);
     assert.equal(held.engine, ENGINE.LOCAL, command);
     assert.equal(held.reason, EGRESS_CODE.DESTRUCTIVE, command);
@@ -198,7 +197,7 @@ test('rule 3: a destructive route is served entirely locally', async () => {
   // A route the router refused is not acted on either, and neither is one the
   // app understands as its own command: both are the app's own business.
   for (const route of [refusedRoute, heard('list'), heard('where-am-i'), notUnderstood]) {
-    const held = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route, now: AT });
+    const held = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route, state: null, now: AT });
     assert.equal(held.send, false, JSON.stringify(route));
     assert.equal(held.engine, ENGINE.LOCAL, JSON.stringify(route));
   }
@@ -214,14 +213,14 @@ test('rule 3: the residual, and the one branch where a turn may go unclassified'
   // ("the first utterance ... was transcribed remotely before anything knew it
   // was destructive"). A module that answered `local` here would be claiming
   // remote STT can never be used at all.
-  const residual = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: null, now: AT, status: ADMITS });
+  const residual = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: null, state: null, now: AT, status: ADMITS });
   assert.equal(residual.send, true);
   assert.equal(residual.engine, ENGINE.REMOTE);
   assert.equal(hop.calls.length, 1);
 
   // The reply's text is the app's own, so there is always a route for it: a
   // `tts` turn with none is a defect, and it is served locally.
-  const reply = await gate.speak({ text: SECRET_TEXT, project: PROJECT, route: null, now: AT, direction: 'tts' });
+  const reply = await gate.speak({ text: SECRET_TEXT, project: PROJECT, route: null, state: null, now: AT });
   assert.equal(reply.send, false);
   assert.equal(reply.reason, EGRESS_CODE.ROUTE_UNREADABLE);
   assert.equal(hop.calls.length, 1);
@@ -239,7 +238,7 @@ test('rule 4: on the text path the redactor substitutes and never drops', async 
   const { hop, egress: gate } = egress({ voice: await switchedOn('tts') });
   const told = [];
 
-  const answer = await gate.speak({ text: SECRET_TEXT, project: PROJECT, route: agentText, now: AT, direction: 'tts', status: ADMITS });
+  const answer = await gate.speak({ text: SECRET_TEXT, project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS });
   assert.equal(answer.ok, true);
   assert.equal(answer.send, true, 'the message still goes: the rule masks, it does not block');
   assert.equal(answer.redacted, true);
@@ -254,7 +253,7 @@ test('rule 4: on the text path the redactor substitutes and never drops', async 
   // `redact`'s own refusal (the text it was handed is not text) rather than a
   // defect in the fixture: whatever makes the redactor refuse, the payload does
   // not leave.
-  const held = await gate.speak({ text: undefined, project: PROJECT, route: agentText, now: AT, direction: 'tts', status: ADMITS });
+  const held = await gate.speak({ text: undefined, project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS });
   assert.equal(held.send, false);
   assert.equal(held.reason, EGRESS_CODE.REDACTOR_FAILED);
   assert.equal(hop.calls.length, 1, 'and the unredacted text never left');
@@ -263,7 +262,7 @@ test('rule 4: on the text path the redactor substitutes and never drops', async 
 test('rule 4: the redactor is not claimed for the audio path, which is not a string', async () => {
   const { hop, egress: gate } = egress({ voice: await switchedOn('stt') });
   const audio = { captured: SECRET };
-  const answer = await gate.transcribe({ audio, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT, status: ADMITS });
+  const answer = await gate.transcribe({ audio, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS });
   assert.equal(answer.send, true);
   // The payload is handed through **identically**: no redaction is applied and
   // none is claimed (§3's table: "redaction is a function of a string, and audio
@@ -277,17 +276,17 @@ test('rule 5: nothing goes when no command is intended', async () => {
 
   // The wake word was heard and nothing after it was recognised: the utterance
   // does not leave the app (`shared/command`'s own branch).
-  const nothing = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: notUnderstood, now: AT });
+  const nothing = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: notUnderstood, state: null, now: AT });
   assert.equal(nothing.send, false);
   assert.equal(nothing.reason, EGRESS_CODE.NO_COMMAND);
 
   // The app's own command is the app's own business.
-  const listing = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: heard('list'), now: AT });
+  const listing = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: heard('list'), state: null, now: AT });
   assert.equal(listing.send, false);
   assert.equal(listing.reason, EGRESS_CODE.NO_COMMAND);
 
   // Speech for the agent is the one route that goes.
-  const speech = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT, status: ADMITS });
+  const speech = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS });
   assert.equal(speech.send, true);
   assert.equal(hop.calls.length, 1);
 });
@@ -307,11 +306,11 @@ test('rule 5: the capture is one turn, so there is no ambient path for speech to
 
 test('rule 6: only this account’s own project goes', async () => {
   const { hop, egress: gate } = egress({ voice: await switchedOn('stt'), projects: [PROJECT] });
-  const held = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: OTHER, route: agentText, now: AT });
+  const held = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: OTHER, route: agentText, state: null, now: AT });
   assert.equal(held.send, false);
   assert.equal(held.reason, EGRESS_CODE.FOREIGN_PROJECT);
 
-  const nameless = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: null, route: agentText, now: AT });
+  const nameless = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: null, route: agentText, state: null, now: AT });
   assert.equal(nameless.send, false);
   assert.equal(nameless.reason, EGRESS_CODE.FOREIGN_PROJECT);
   assert.equal(hop.calls.length, 0);
@@ -319,7 +318,7 @@ test('rule 6: only this account’s own project goes', async () => {
 
 test('rule 7: belong is never a target, whatever the list says', async () => {
   const { hop, egress: gate } = egress({ voice: await switchedOn('stt'), projects: [PROJECT, 'belong'] });
-  const held = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: 'belong', route: agentText, now: AT });
+  const held = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: 'belong', route: agentText, state: null, now: AT });
   assert.equal(held.send, false);
   assert.equal(held.reason, EGRESS_CODE.OTHER_INSTALLATION);
   assert.equal(hop.calls.length, 0);
@@ -337,8 +336,8 @@ test('rule 8: the hop is the only transport this module can send through', () =>
 
 test('rule 9: the turn hands the hop the payload and nothing else', async () => {
   const { hop, egress: gate } = egress({ voice: await switchedOn('stt', 'tts') });
-  await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT, status: ADMITS });
-  await gate.speak({ text: SECRET_TEXT, project: PROJECT, route: agentText, now: AT, direction: 'tts', status: ADMITS });
+  await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS });
+  await gate.speak({ text: SECRET_TEXT, project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS });
 
   // Exactly what the hop's own contract takes: the project, the engine's name
   // and the payload. A credential added here would be a credential in the
@@ -354,7 +353,7 @@ test('rule 9: the consent a call is made under is the record’s, never the call
   // The switch is off and nothing is consented: an admitting status answer is
   // not an agreement, and the turn is local with the device's own reason.
   const off = egress({ voice: untouched() });
-  const held = await off.egress.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT, status: ADMITS });
+  const held = await off.egress.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS });
   assert.equal(held.send, false);
   assert.equal(held.reason, REASON.SWITCH_LOCAL);
   assert.equal(off.hop.calls.length, 0);
@@ -363,10 +362,10 @@ test('rule 9: the consent a call is made under is the record’s, never the call
   // the badge says `local — checking`, and the turn waits for the hop's answer
   // rather than guessing in either direction (§4.2).
   const on = egress({ voice: await switchedOn('stt') });
-  const checking = await on.egress.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT });
+  const checking = await on.egress.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT });
   assert.equal(checking.send, false);
   assert.equal(checking.reason, REASON.NO_ANSWER);
-  const admitted = await on.egress.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT, status: ADMITS });
+  const admitted = await on.egress.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS });
   assert.equal(admitted.send, true);
   assert.equal(on.hop.calls.length, 1);
 });
@@ -387,7 +386,7 @@ test('a switch that answered what is not a badge is a local turn, and not a refu
       projects: [PROJECT],
       secrets: [SECRET],
     });
-    const turn = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT });
+    const turn = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT });
     assert.equal(turn.ok, true, String(answer));
     assert.equal(turn.send, false, String(answer));
     assert.equal(turn.engine, ENGINE.LOCAL, String(answer));
@@ -407,7 +406,7 @@ test('a switch that answered what is not a badge is a local turn, and not a refu
     projects: [PROJECT],
     secrets: [SECRET],
   });
-  const turn = await threw.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT, localFailed: true });
+  const turn = await threw.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT, localFailed: true });
   assert.equal(turn.reason, EGRESS_CODE.BADGE_UNREADABLE);
   assert.equal(turn.offer, EGRESS_OFFER.TEXT_ENTRY);
 });
@@ -417,7 +416,7 @@ test('rule 10: a failure is terminal, and nothing is queued, spooled or retried'
   const hop = fakeHop({ failure });
   const { egress: gate } = egress({ voice: await switchedOn('stt'), hop });
 
-  const first = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT, status: ADMITS });
+  const first = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS });
   assert.equal(first.ok, true);
   assert.equal(first.send, false);
   assert.equal(first.engine, ENGINE.LOCAL);
@@ -429,7 +428,7 @@ test('rule 10: a failure is terminal, and nothing is queued, spooled or retried'
   // The next turn is a new turn and makes its own call: nothing was remembered,
   // nothing was held for later, and the failure was not cached into a local-only
   // mode either.
-  await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT + 1, status: ADMITS });
+  await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT + 1, status: ADMITS });
   assert.equal(hop.calls.length, 2);
 });
 
@@ -450,7 +449,7 @@ test('every failure answers locally, and the indicator says so', async () => {
     const voice = await switchedOn('stt');
     const hop = fakeHop({ failure });
     const { egress: gate } = egress({ voice, hop });
-    const answer = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT, status: ADMITS });
+    const answer = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS });
 
     assert.equal(answer.engine, ENGINE.LOCAL, wanted);
     assert.equal(answer.reason, wanted, wanted);
@@ -468,19 +467,19 @@ test('every failure answers locally, and the indicator says so', async () => {
 
 test('a failed local engine offers text entry, and a successful one does not', async () => {
   const { egress: gate } = egress({ voice: untouched() });
-  const failed = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT, localFailed: true });
+  const failed = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT, localFailed: true });
   assert.equal(failed.send, false);
   assert.equal(failed.engine, ENGINE.LOCAL);
   assert.equal(failed.offer, EGRESS_OFFER.TEXT_ENTRY);
 
-  const fine = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT });
+  const fine = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT });
   assert.equal(fine.offer, null);
 
   // And a remote call that failed into the local engine, on a device whose local
   // engine is the one that just failed, owes the user text entry too.
   const hop = fakeHop({ failure: { ok: false, code: 'unreachable', field: 'hop' } });
   const { egress: other } = egress({ voice: await switchedOn('stt'), hop });
-  const both = await other.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT, status: ADMITS, localFailed: true });
+  const both = await other.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS, localFailed: true });
   assert.equal(both.send, false);
   assert.equal(both.offer, EGRESS_OFFER.TEXT_ENTRY);
 });
@@ -488,7 +487,7 @@ test('a failed local engine offers text entry, and a successful one does not', a
 test('a caller is told when a call starts and how it ended, so it can put the screen back', async () => {
   const seen = [];
   const { egress: gate } = egress({ voice: await switchedOn('stt'), onCall: (record) => seen.push({ ...record }) });
-  const answer = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT, status: ADMITS });
+  const answer = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS });
   assert.equal(answer.send, true);
   assert.deepEqual(seen, [
     { direction: 'stt', engine: ENGINE.REMOTE, provider: NAME, state: 'in-flight', reason: null },
@@ -504,7 +503,7 @@ test('a caller is told when a call starts and how it ended, so it can put the sc
   // this module never sees it.
   const quiet = [];
   const { egress: local } = egress({ voice: untouched(), onCall: (record) => quiet.push(record) });
-  await local.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT });
+  await local.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT });
   assert.deepEqual(quiet, []);
 });
 
@@ -525,6 +524,18 @@ test('decide is the gate without the send, and it is a pure function of the turn
   assert.equal(permit({ ...allow, direction: 'up' }).ok, false);
   assert.equal(permit({ ...allow, projects: 'all' }).ok, false);
   assert.equal(permit({ ...allow, badge: null }).ok, false);
+
+  // The sentinels are **written** and never implied. A caller that left the key
+  // out has told this module nothing, and the local turn is the answer it owes:
+  // an absent `state` is not "no history" and an absent `route` is not the
+  // residual for a device without a local engine. Reading either as its `null`
+  // would let a forgotten field -- rather than a decision -- send a turn, which
+  // is the one thing this file exists to make impossible.
+  const without = (key) => Object.fromEntries(Object.entries(allow).filter(([name]) => name !== key));
+  assert.equal(permit(without('state')).reason, EGRESS_CODE.STATE_UNREADABLE);
+  assert.equal(permit(without('state')).send, false);
+  assert.equal(permit(without('route')).reason, EGRESS_CODE.ROUTE_UNREADABLE);
+  assert.equal(permit(without('route')).send, false);
   // The switch's own fail-closed badge (a record it could not read) is still a
   // badge, and it says local: `send: false` with the refusal beside it.
   assert.equal(permit({ ...allow, badge: { send: false, provider: null, reason: REASON.NO_ANSWER } }).send, false);
@@ -534,4 +545,50 @@ test('decide is the gate without the send, and it is a pure function of the turn
   const once = permit(allow);
   assert.deepEqual(once, permit(allow));
   assert.deepEqual(Object.keys(allow).sort(), ['badge', 'direction', 'now', 'projects', 'project', 'route', 'state'].sort());
+});
+
+test('a switch turned on for the other direction cannot send a turn', async () => {
+  // The two methods have fixed transports -- `transcribe` is the hop's STT
+  // route, `speak` is its TTS route -- so the direction is the method's and the
+  // badge (P5.3.6's per-direction switch and the consent) must be that one.
+  // A `direction` in the input is not read: when it was, `stt` local with `tts`
+  // remote and consented let `transcribe({ direction: 'tts' })` send audio to the
+  // STT engine, which is the per-direction switch with a hole in it.
+  const ttsOnly = egress({ voice: await switchedOn('tts') });
+  const sent = await ttsOnly.egress.transcribe({
+    audio: AUDIO,
+    contentType: 'audio/wav',
+    project: PROJECT,
+    route: agentText,
+    state: null,
+    now: AT,
+    status: ADMITS,
+    direction: 'tts',
+  });
+  assert.equal(sent.ok, true);
+  assert.equal(sent.send, false, 'the stt switch is local, and this is an STT turn');
+  assert.equal(sent.engine, ENGINE.LOCAL);
+  assert.equal(sent.direction, 'stt', 'the turn is STT whatever the caller named');
+  assert.equal(sent.reason, REASON.SWITCH_LOCAL);
+  assert.equal(ttsOnly.hop.calls.length, 0);
+
+  // And the mirror: the reply is a TTS turn, so an `stt`-only switch is not the
+  // one it is judged by -- and the consent the two share is not a substitute for
+  // the direction's own switch.
+  const sttOnly = egress({ voice: await switchedOn('stt') });
+  const spoken = await sttOnly.egress.speak({
+    text: SECRET_TEXT,
+    project: PROJECT,
+    route: agentText,
+    state: null,
+    now: AT,
+    status: ADMITS,
+    direction: 'stt',
+  });
+  assert.equal(spoken.ok, true);
+  assert.equal(spoken.send, false);
+  assert.equal(spoken.engine, ENGINE.LOCAL);
+  assert.equal(spoken.direction, 'tts');
+  assert.equal(spoken.reason, REASON.SWITCH_LOCAL);
+  assert.equal(sttOnly.hop.calls.length, 0);
 });

@@ -229,9 +229,15 @@ function local(direction, reason, offer = null) {
  * @param {object|null} input.route the result of `routeUtterance` for this
  *   utterance, or a refusal from it, or `null` when **this device's local
  *   engine could not hear the user** and the audio is the only way to find out
- *   what was said (the residual, below)
+ *   what was said (the residual, below). **`undefined` is not `null` here**: a
+ *   caller that passed no route is a caller this module cannot answer for, and
+ *   it is served locally as `route-unreadable` -- "I forgot to route it" and
+ *   "there is no route" are different sentences, and reading the first as the
+ *   second is how a field a caller forgot becomes a turn that goes
  * @param {object|null} input.state the confirmation machine (`shared/confirm`),
- *   or `null` when the app has no action history at all
+ *   or `null` when the app has no action history at all. **`undefined` is not
+ *   `null` here** either, for the same reason: an unread state is the module's
+ *   own `state-unreadable` and the whole turn is local
  * @param {number} input.now the caller's clock, for `pending(state, now)`
  * @param {string|null} input.project the slug this turn would be sent for
  * @param {readonly string[]} input.projects the slugs this account may speak of
@@ -258,7 +264,14 @@ export function permit({ direction, route, state, now, project, projects, badge 
   // not a confirmation any more (which is exactly the 60 s bound of §6 point 3).
   // A state this app cannot read is not a state that says "nothing is pending":
   // the whole turn is local, and so is every turn after it until the state reads.
-  if (state !== null && state !== undefined) {
+  //
+  // `null` is the sentinel and `undefined` is not it: a caller that passed no
+  // state at all has not told this module that there is no action history, it
+  // has told it nothing, and "unknown is not nothing-is-pending" is the rule
+  // this branch exists for. Fail-closed means the *absent* field is the local
+  // turn too, or the rule is one a caller can switch off by forgetting a key.
+  if (state === undefined) return local(direction, EGRESS_CODE.STATE_UNREADABLE);
+  if (state !== null) {
     const live = pending(state, now);
     if (!live.ok) return local(direction, EGRESS_CODE.STATE_UNREADABLE);
     if (live.actions.length > 0) return local(direction, EGRESS_CODE.PENDING);
@@ -297,7 +310,14 @@ export function permit({ direction, route, state, now, project, projects, badge 
   // A `tts` turn is never in that position: the text is the app's own reply, so
   // there is always a route for it, and one that is missing is a defect rather
   // than a device without a local engine.
-  if (route === null || route === undefined) {
+  //
+  // As with `state` above, the residual is the **written** `null` and only that.
+  // A caller that passed no route has not said "there is no route"; it has left
+  // the question unanswered, and the local turn is the answer this module owes
+  // it -- otherwise the residual, which exists for one narrow device, becomes
+  // the way a forgotten field sends an unclassified turn.
+  if (route === undefined) return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);
+  if (route === null) {
     if (direction === DIRECTION.TTS) return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);
   } else if (!isPlainObject(route) || route.ok !== true) {
     return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);
@@ -535,9 +555,19 @@ export function createVoiceEgress({ hop, voiceSwitch, projects, secrets = [], on
      * device's first destructive utterance may already have been transcribed
      * remotely before anything knew it was destructive. `permit` documents that
      * branch, and what still holds on it.
+     *
+     * **The direction is this method's, not the caller's.** `transcribe` sends to
+     * the hop's STT route and `speak` to its TTS route, so the badge -- the
+     * switch and the consent -- consulted for the turn is the `stt` one and only
+     * that one. A `direction` in the input is not read: the method's own constant
+     * is applied last, so an utterance whose switch is `local` cannot be sent by
+     * naming the other direction, which is P5.3.6's per-direction switch with a
+     * hole in it. The one place a direction is genuinely the caller's is `decide`
+     * below, which sends nothing.
      */
-    async transcribe({ audio, contentType, direction = 'stt', ...turn } = {}) {
-      const decision = await decide({ direction, ...turn });
+    async transcribe({ audio, contentType, ...turn } = {}) {
+      const direction = DIRECTION.STT;
+      const decision = await decide({ ...turn, direction });
       if (!decision.ok) return decision;
       if (!decision.send) return decision;
       if (audio === undefined || audio === null) return refuse(REFUSAL.MISSING_FIELD, 'audio');
@@ -561,9 +591,14 @@ export function createVoiceEgress({ hop, voiceSwitch, projects, secrets = [], on
      * thing that goes. Nothing here redacts audio: rule 4's own words are that
      * the rule "reaches text, which is the TTS and summariser path only", and
      * `transcribe` above applies no redactor at all.
+     *
+     * The direction is this method's: `tts`, applied last, and never read from
+     * the input -- see `transcribe` above for why that is a rule and not a
+     * convenience.
      */
-    async speak({ text, direction = 'tts', ...turn } = {}) {
-      const decision = await decide({ direction, ...turn });
+    async speak({ text, ...turn } = {}) {
+      const direction = DIRECTION.TTS;
+      const decision = await decide({ ...turn, direction });
       if (!decision.ok) return decision;
       if (!decision.send) return decision;
       let outgoing;

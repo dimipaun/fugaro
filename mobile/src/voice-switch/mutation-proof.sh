@@ -431,6 +431,14 @@ run "a state that cannot be read is not a state with nothing pending" \
   "    if (!live.ok) return local(direction, EGRESS_CODE.STATE_UNREADABLE);" \
   "    if (false) return local(direction, EGRESS_CODE.STATE_UNREADABLE);" \
   "$EGRESS" "$EGRESS_SUITE"
+# The sentinels are written and never implied: `null` is "no action history" and
+# `undefined` is a caller that told this module nothing, which is the one reading
+# that would let a forgotten key send a turn.
+run "a state the caller did not pass is not a state with nothing pending" \
+  "  if (state === undefined) return local(direction, EGRESS_CODE.STATE_UNREADABLE);
+  if (state !== null) {" \
+  "  if (state !== null && state !== undefined) {" \
+  "$EGRESS" "$EGRESS_SUITE"
 run "a destructive route is served locally" \
   "      ACTION_COMMANDS.includes(route.command) ? EGRESS_CODE.DESTRUCTIVE : EGRESS_CODE.NO_COMMAND," \
   "      EGRESS_CODE.NO_COMMAND," \
@@ -444,6 +452,21 @@ run "an utterance the router did not understand is not a command" \
 run "a reply the app composed with no route is not a turn to send" \
   "    if (direction === DIRECTION.TTS) return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);" \
   "    if (false) return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "a route the caller did not pass is not a device without a local engine" \
+  "  if (route === undefined) return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);
+  if (route === null) {" \
+  "  if (route === null || route === undefined) {" \
+  "$EGRESS" "$EGRESS_SUITE"
+# Each method has one transport, so it has one direction and one badge: naming
+# the other one must not select the other switch.
+run "a transcribe turn is an stt turn, whatever the caller names" \
+  "      const direction = DIRECTION.STT;" \
+  "      const direction = turn.direction ?? DIRECTION.STT;" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "a speak turn is a tts turn, whatever the caller names" \
+  "      const direction = DIRECTION.TTS;" \
+  "      const direction = turn.direction ?? DIRECTION.TTS;" \
   "$EGRESS" "$EGRESS_SUITE"
 run "the app's own other installation is refused by name" \
   "  if (RESERVED_PROJECTS.includes(project)) return local(direction, EGRESS_CODE.OTHER_INSTALLATION);" \
