@@ -5,6 +5,12 @@ on:
   # `gh workflow run ci --ref <branch>`; nothing runs it
   # automatically (owner's ruling 2026-11-07: dispatch by hand, in batches); the release gate (scripts/release-gate.sh) requires it green on the tag's commit.
   workflow_dispatch:
+    inputs:
+      live_scripts:
+        description: "auto runs the live-script runners when what they read changed; always runs them (use it for a release's gate run)"
+        type: choice
+        options: [auto, always]
+        default: auto
 permissions:
   contents: read
 jobs:
@@ -18,8 +24,12 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
       docs_only: ${{ steps.diff.outputs.docs_only }}
+      live_scripts: ${{ steps.live.outputs.run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,6 +46,26 @@ jobs:
             fi
           fi
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+      # The live-script runners read scripts/, internal/infra, internal/procgroup
+      # and internal/testutil and nothing else, so a commit that touches none of
+      # them cannot change their result. Every doubt runs them.
+      - id: live
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.live_scripts }}
+        run: |
+          run=true
+          if [ "$MODE" != always ]; then
+            base=$(gh run list --workflow ci --branch main --status success --limit 1 --json headSha --jq '.[0].headSha' || true)
+            if [ -n "$base" ] && [ "$base" != "$GITHUB_SHA" ]; then
+              if files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$base...$GITHUB_SHA" --jq '.files[].filename'); then
+                if ! printf '%s\n' "$files" | grep -qE '^(scripts/|internal/infra/|internal/procgroup/|internal/testutil/|go\.(mod|sum)$|\.github/workflows/ci\.yml$)'; then
+                  run=false
+                fi
+              fi
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
   check:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
@@ -90,33 +120,33 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {name: cli-update, pkg: ./internal/cli, index: 0, of: 1, only: update}
-          - {name: cli-0, pkg: ./internal/cli, index: 0, of: 8, only: other}
-          - {name: cli-1, pkg: ./internal/cli, index: 1, of: 8, only: other}
-          - {name: cli-2, pkg: ./internal/cli, index: 2, of: 8, only: other}
-          - {name: cli-3, pkg: ./internal/cli, index: 3, of: 8, only: other}
-          - {name: cli-4, pkg: ./internal/cli, index: 4, of: 8, only: other}
-          - {name: cli-5, pkg: ./internal/cli, index: 5, of: 8, only: other}
-          - {name: cli-6, pkg: ./internal/cli, index: 6, of: 8, only: other}
-          - {name: cli-7, pkg: ./internal/cli, index: 7, of: 8, only: other}
           - {name: scripts-live-0, pkg: ./scripts, index: 0, of: 3, only: live}
           - {name: scripts-live-1, pkg: ./scripts, index: 1, of: 3, only: live}
           - {name: scripts-live-2, pkg: ./scripts, index: 2, of: 3, only: live}
-          - {name: scripts-0, pkg: ./scripts, index: 0, of: 2, only: nonlive}
-          - {name: scripts-1, pkg: ./scripts, index: 1, of: 2, only: nonlive}
-          - {name: runner-0, pkg: ./internal/runner, index: 0, of: 2}
+          - {name: cli-7, pkg: ./internal/cli, index: 7, of: 8, only: other}
+          - {name: cli-4, pkg: ./internal/cli, index: 4, of: 8, only: other}
+          - {name: cli-0, pkg: ./internal/cli, index: 0, of: 8, only: other}
           - {name: runner-1, pkg: ./internal/runner, index: 1, of: 2}
-          - {name: issues-0, pkg: ./internal/issues, index: 0, of: 2}
-          - {name: issues-1, pkg: ./internal/issues, index: 1, of: 2}
-          - {name: rest-0, pkg: rest, index: 0, of: 6}
-          - {name: rest-1, pkg: rest, index: 1, of: 6}
-          - {name: rest-2, pkg: rest, index: 2, of: 6}
-          - {name: rest-3, pkg: rest, index: 3, of: 6}
-          - {name: rest-4, pkg: rest, index: 4, of: 6}
-          - {name: rest-5, pkg: rest, index: 5, of: 6}
+          - {name: cli-2, pkg: ./internal/cli, index: 2, of: 8, only: other}
+          - {name: runner-0, pkg: ./internal/runner, index: 0, of: 2}
           - {name: rest-gcp, pkg: ./internal/backend/gcp, index: 0, of: 1}
-          - {name: rest-images, pkg: ./images, index: 0, of: 1}
+          - {name: issues-0, pkg: ./internal/issues, index: 0, of: 2}
+          - {name: cli-update, pkg: ./internal/cli, index: 0, of: 1, only: update}
+          - {name: cli-6, pkg: ./internal/cli, index: 6, of: 8, only: other}
+          - {name: cli-5, pkg: ./internal/cli, index: 5, of: 8, only: other}
+          - {name: cli-3, pkg: ./internal/cli, index: 3, of: 8, only: other}
+          - {name: scripts-0, pkg: ./scripts, index: 0, of: 2, only: nonlive}
+          - {name: cli-1, pkg: ./internal/cli, index: 1, of: 8, only: other}
+          - {name: rest-5, pkg: rest, index: 5, of: 6}
+          - {name: rest-3, pkg: rest, index: 3, of: 6}
+          - {name: rest-1, pkg: rest, index: 1, of: 6}
+          - {name: issues-1, pkg: ./internal/issues, index: 1, of: 2}
+          - {name: scripts-1, pkg: ./scripts, index: 1, of: 2, only: nonlive}
           - {name: rest-plugin, pkg: ./plugin, index: 0, of: 1}
+          - {name: rest-images, pkg: ./images, index: 0, of: 1}
+          - {name: rest-4, pkg: rest, index: 4, of: 6}
+          - {name: rest-0, pkg: rest, index: 0, of: 6}
+          - {name: rest-2, pkg: rest, index: 2, of: 6}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -130,6 +160,7 @@ jobs:
           INDEX: ${{ matrix.index }}
           OF: ${{ matrix.of }}
           ONLY: ${{ matrix.only }}
+          LIVE_SCRIPTS: ${{ needs.changes.outputs.live_scripts }}
         run: |
           set -euo pipefail
           if [ "$PKG" = rest ]; then
@@ -149,6 +180,10 @@ jobs:
             exit 0
           fi
           if [ "${ONLY:-}" = live ]; then
+            if [ "$LIVE_SCRIPTS" != true ]; then
+              echo "live-script runners skipped: nothing they read changed since the last green run"
+              exit 0
+            fi
             # TestLiveCheckScripts builds its items here and runs them through
             # a worker pool, so they are not subtests and no -run pattern can
             # choose between them: a top-level test whose name matches the

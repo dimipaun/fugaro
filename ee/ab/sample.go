@@ -106,14 +106,14 @@ type LaunchFlags struct {
 // is unprovable when the launch is decided, and unprovable fails closed, the
 // way the --attach path refuses the same input for the same reason. mode is
 // the rigor mode the launch resolved (rigor.Resolve), which is always one of
-// rigor.Modes.
+// rigor.Rigors.
 //
 // Both halves of the rule are read here: the flags and the resolved mode the
 // launcher knows, and the fields the task carries. The second half is not
 // redundant — a task is bucket data, and a replayed or hand-edited one is
 // judged by what it says about itself, the way the runner re-checks a
 // challenger at bootstrap rather than trusting the task (A2.1).
-func Eligible(spec task.Spec, recipeMode string, mode rigor.Mode, flags LaunchFlags) bool {
+func Eligible(spec task.Spec, recipeMode string, mode rigor.Rigor, flags LaunchFlags) bool {
 	if flags.ChosenRunID || flags.Retry || flags.Attempts > 1 {
 		return false
 	}

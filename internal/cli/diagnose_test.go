@@ -21,12 +21,16 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -197,7 +201,7 @@ func TestDiagnoseRedactsEveryStringOfAToleratedFinding(t *testing.T) {
 		Status: runstore.StatusSucceeded, Stage: "writeback",
 		Tolerated: &runstore.ToleratedFindings{
 			Findings: []runstore.ToleratedFinding{{
-				Title: secret, Mode: rigor.Mode(secret), Label: rigor.Label(secret), Class: rigor.Class(secret),
+				Title: secret, Mode: rigor.Rigor(secret), Label: rigor.Label(secret), Class: rigor.Class(secret),
 				Likelihood: 1, Impact: 1, FixCost: 1}},
 			Total: 1}}
 	if err := s.WriteRecord(ctx, rec); err != nil {
@@ -2496,6 +2500,430 @@ func TestDiagnoseShowsTheChainForAHaltedRun(t *testing.T) {
 	}
 	if strings.Contains(plain, "Chain:") {
 		t.Errorf("a run that did not halt prints a chain block:\n%s", plain)
+	}
+}
+
+// The run every message test here diagnoses: one run of acme/app, whose record
+// carries the block a test hands in and whose message objects are the ones a
+// test writes by hand — the launcher's own write is what puts a message under
+// tokens/, and the store is not asked, so a test can build the shapes a
+// hand-written object has.
+const diagnoseMsgRun = "20261119-054111-abcd"
+
+// diagnoseMsgSent is when every message here was written.
+var diagnoseMsgSent = time.Date(2026, 11, 19, 5, 41, 11, 0, time.UTC)
+
+// diagnoseMsgRig seeds that run with msgs as its record's messages block and
+// objects as the message objects under its prefix. The record's own pull
+// request is 99 and deliberately not whatever a test's code host answers: the
+// line a diagnosis prints must take its number from the host, never from
+// anything under runs/ (F19, F20).
+func diagnoseMsgRig(t *testing.T, msgs *runmsg.Record, objects ...runmsg.Message) string {
+	t.Helper()
+	f := newCloudFixture(t)
+	exec := seedRun(t, f, diagnoseMsgRun, "", "dana@example.com", true)
+	rec := prRecord(diagnoseMsgRun, exec, 99, 1.5)
+	rec.Messages = msgs
+	writeRecord(t, f, diagnoseMsgRun, rec)
+	if len(objects) == 0 {
+		return diagnoseMsgRun
+	}
+	ctx := context.Background()
+	b, err := blobx.Open(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	for _, m := range objects {
+		m.Version = runmsg.Format
+		if m.SentAt.IsZero() {
+			m.SentAt = diagnoseMsgSent
+		}
+		raw, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := b.Create(ctx, runmsg.Path(appSlug, diagnoseMsgRun, m.Seq), raw, "application/json"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return diagnoseMsgRun
+}
+
+// diagnoseMsgBlock is the message block of a diagnosis of id, failing the test
+// when the command carries none.
+func diagnoseMsgBlock(t *testing.T, id string) *MessagesDoc {
+	t.Helper()
+	out, errOut, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatalf("diagnose --json: %v (%s)", err, errOut)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if d.Messages == nil {
+		t.Fatalf("a diagnosis of a run with messages carries no block:\n%s", out)
+	}
+	return d.Messages
+}
+
+// diagnoseMsgFate is one message's entry of a decoded block.
+func diagnoseMsgFate(t *testing.T, doc *MessagesDoc, seq int) MessageFate {
+	t.Helper()
+	for _, f := range doc.Messages {
+		if f.Seq == seq {
+			return f
+		}
+	}
+	t.Fatalf("the block has no entry for message %d: %+v", seq, doc.Messages)
+	return MessageFate{}
+}
+
+// undeliveredBlock is the record's block for one message the run never carried:
+// the run ended before a coder stage could reach it (D2944, rule 5), so the
+// record names the fate and the object under tokens/ still holds the words.
+func undeliveredBlock() *runmsg.Record {
+	return &runmsg.Record{Accepting: true, Format: runmsg.Format, Flags: []string{runmsg.FlagNow},
+		Messages: []runmsg.Delivery{{Seq: 1, SentAt: &diagnoseMsgSent, SentBy: "dana@example.com",
+			State: runmsg.StateUndelivered, Reason: "the run ended before a coder stage carried it"}}}
+}
+
+// diagnoseHostStub installs the one code-host read a diagnosis makes (F19) over
+// one fake host holding prs: the provider kind is resolved from this machine's
+// config for real, and the read is the fake's, which is the network no test
+// has.
+func diagnoseHostStub(t *testing.T, prs ...fake.PRState) *fake.Provider {
+	t.Helper()
+	p := &fake.Provider{Repo: "acme/app", State: fake.State{PRs: prs}}
+	was := openDiagnoseProvider
+	openDiagnoseProvider = func([]string, func(string)) (string, gitprov.Opener, error) {
+		return "", gitprov.Static(p), nil
+	}
+	t.Cleanup(func() { openDiagnoseProvider = was })
+	return p
+}
+
+// diagnoseNoHost installs that read as one this machine cannot make at all: no
+// credential for the repository, which is the state the printed line has to
+// survive (F19).
+func diagnoseNoHost(t *testing.T) {
+	t.Helper()
+	was := openDiagnoseProvider
+	openDiagnoseProvider = func([]string, func(string)) (string, gitprov.Opener, error) {
+		return "", nil, errors.New("no credential on this machine for acme/app")
+	}
+	t.Cleanup(func() { openDiagnoseProvider = was })
+}
+
+// TestDiagnoseMessages: every fate the run's record holds is on the diagnosis,
+// in number order, under the line that says whose account it is — the record is
+// written by the run, whose agent can rewrite it, so it is read as what the run
+// recorded and not as proof (F20, F13) — and in the text and in --json alike. A
+// run with nothing to say about messages is unchanged: no section, and no
+// member in the document.
+func TestDiagnoseMessages(t *testing.T) {
+	delivered := diagnoseMsgSent.Add(2 * time.Minute)
+	diagnoseMsgRig(t, &runmsg.Record{Accepting: true, Format: runmsg.Format, Flags: []string{runmsg.FlagNow},
+		Messages: []runmsg.Delivery{
+			{Seq: 1, SentAt: &diagnoseMsgSent, SentBy: "dana@example.com", Flags: []string{runmsg.FlagNow},
+				State: runmsg.StateDelivered, Stage: "implement", DeliveredAt: &delivered},
+			{Seq: 2, SentAt: &diagnoseMsgSent, SentBy: "dana@example.com",
+				State: runmsg.StateRefused, Reason: "the object is not a message this build reads"},
+		}})
+
+	out, errOut, err := execute(t, "diagnose", diagnoseMsgRun)
+	if err != nil {
+		t.Fatalf("diagnose: %v (%s)", err, errOut)
+	}
+	for _, want := range []string{
+		"Messages (as the run recorded them)",
+		"#1 delivered in implement by dana@example.com (now)",
+		"#2 refused by dana@example.com: the object is not a message this build reads",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("diagnose lacks %q:\n%s", want, out)
+		}
+	}
+
+	doc := diagnoseMsgBlock(t, diagnoseMsgRun)
+	if !doc.Accepting || doc.Format != runmsg.Format || strings.Join(doc.Flags, ",") != runmsg.FlagNow {
+		t.Errorf("block = %+v, want the run accepting format %d with the flags it honours", doc, runmsg.Format)
+	}
+	one := diagnoseMsgFate(t, doc, 1)
+	if one.State != runmsg.StateDelivered || !one.Recorded || one.Stage != "implement" || one.SentBy != "dana@example.com" {
+		t.Errorf("message 1 = %+v, want the fate the record states", one)
+	}
+	if one.DeliveredAt == nil || !one.DeliveredAt.Equal(delivered) {
+		t.Errorf("message 1 = %+v, want it delivered at %s", one, delivered)
+	}
+	// The object is gone for both — neither was written under tokens/ — and the
+	// block says so rather than leaving the member out: this document looked.
+	if one.Object == nil || *one.Object {
+		t.Errorf("message 1's object = %v, want the bucket's own answer that it is not there", one.Object)
+	}
+	two := diagnoseMsgFate(t, doc, 2)
+	if two.State != runmsg.StateRefused || two.Reason == "" {
+		t.Errorf("message 2 = %+v, want the refusal and the record's reason", two)
+	}
+
+	t.Run("a run with no messages is unchanged", func(t *testing.T) {
+		f := newCloudFixture(t)
+		seedRun(t, f, diagnoseMsgRun, "", "dana@example.com", true)
+		writeRecord(t, f, diagnoseMsgRun, prRecord(diagnoseMsgRun, "", 99, 1.5))
+		text, _, err := execute(t, "diagnose", diagnoseMsgRun)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(text, "Messages") {
+			t.Errorf("a run whose record carries no messages block prints one:\n%s", text)
+		}
+		js, _, err := execute(t, "diagnose", "--json", diagnoseMsgRun)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(js, `"messages"`) {
+			t.Errorf("a run whose record carries no messages block carries one in its document:\n%s", js)
+		}
+	})
+
+	t.Run("a run that reads no messages says so", func(t *testing.T) {
+		diagnoseMsgRig(t, &runmsg.Record{Accepting: false, Format: runmsg.Format})
+		text, _, err := execute(t, "diagnose", diagnoseMsgRun)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(text, "this run reads no messages: accepting false in the run's record") {
+			t.Errorf("a run that reads no messages does not say so:\n%s", text)
+		}
+		// The channel is closed, so nothing reaching the run is a state to
+		// report: the closed channel is the whole of it.
+		if strings.Contains(text, "no message reached this run") {
+			t.Errorf("a run that reads no messages reads as one that was merely sent none:\n%s", text)
+		}
+	})
+
+	t.Run("a record with more entries than a run reads", func(t *testing.T) {
+		// No runner writes past the channel's cap, so this is a record someone
+		// wrote by hand; the list stops at the cap and says it is short rather
+		// than printing an unbounded one (F12).
+		full := &runmsg.Record{Accepting: true, Format: runmsg.Format}
+		for seq := 1; seq <= runmsg.MaxMessages+1; seq++ {
+			full.Messages = append(full.Messages, runmsg.Delivery{Seq: seq, State: runmsg.StateDelivered})
+		}
+		diagnoseMsgRig(t, full)
+		text, _, err := execute(t, "diagnose", diagnoseMsgRun)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(text, "more messages are there than are listed") {
+			t.Errorf("a list that stopped at the cap does not say it is short:\n%s", text)
+		}
+		doc := diagnoseMsgBlock(t, diagnoseMsgRun)
+		if !doc.Truncated || len(doc.Messages) != runmsg.MaxMessages {
+			t.Errorf("block holds %d messages (truncated %v), want the channel's %d and the note that it is short", len(doc.Messages), doc.Truncated, runmsg.MaxMessages)
+		}
+	})
+
+	t.Run("a run that reads messages and was sent none", func(t *testing.T) {
+		diagnoseMsgRig(t, &runmsg.Record{Accepting: true, Format: runmsg.Format})
+		text, _, err := execute(t, "diagnose", diagnoseMsgRun)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(text, "no message reached this run") {
+			t.Errorf("a run that reads messages and was sent none does not say so:\n%s", text)
+		}
+	})
+}
+
+// TestDiagnoseListsUnreadMessages: the run's own record is not the whole story.
+// A launcher can write a message object under the run's prefix at any moment —
+// the runner's last poll is at finalize (F18) — so a number the record never
+// mentions is one the run never read, and a number past the channel's cap is
+// one no run reads however it was written (F12). The diagnosis lists both, from
+// the prefix and from the objects themselves.
+func TestDiagnoseListsUnreadMessages(t *testing.T) {
+	diagnoseHostStub(t, followUpPR(12, "fugaro/"+diagnoseMsgRun, gitprov.PROpen))
+	diagnoseMsgRig(t, &runmsg.Record{Accepting: true, Format: runmsg.Format, Messages: []runmsg.Delivery{
+		{Seq: 1, SentAt: &diagnoseMsgSent, SentBy: "dana@example.com", State: runmsg.StateDelivered, Stage: "implement"},
+	}}, runmsg.Message{Seq: 3, Text: "the flaky test is known"}, runmsg.Message{Seq: 21, Text: "past the cap"})
+
+	out, errOut, err := execute(t, "diagnose", diagnoseMsgRun)
+	if err != nil {
+		t.Fatalf("diagnose: %v (%s)", err, errOut)
+	}
+	for _, want := range []string{
+		"#3 never read: the run's record does not mention it",
+		"#21 never read: over the cap",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("diagnose lacks %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "fugaro run --pr 12 --repo acme/app -- 'the flaky test is known'") {
+		t.Errorf("the message the run never read has no line to send it again:\n%s", out)
+	}
+
+	doc := diagnoseMsgBlock(t, diagnoseMsgRun)
+	unread := diagnoseMsgFate(t, doc, 3)
+	if unread.Recorded || unread.State != "" || unread.Object == nil || !*unread.Object || unread.OverCap {
+		t.Errorf("message 3 = %+v, want an object the record never mentions", unread)
+	}
+	if unread.Text != "the flaky test is known" || !strings.Contains(unread.Line, "--pr 12") {
+		t.Errorf("message 3 = %+v, want the object's own text and the host's number", unread)
+	}
+	// A number past the cap is never read, so its object is listed and its text
+	// is not: the diagnosis says the run cannot read it rather than quoting
+	// what it holds (F12).
+	over := diagnoseMsgFate(t, doc, 21)
+	if !over.OverCap || over.Recorded || over.Text != "" || over.Line != "" {
+		t.Errorf("message 21 = %+v, want it listed as past the cap with nothing read from it", over)
+	}
+	if len(doc.Messages) != 3 {
+		t.Errorf("the block holds %d messages, want the record's one and the two objects:\n%+v", len(doc.Messages), doc.Messages)
+	}
+	// Every entry is in number order, which is the order a listing sorts in and
+	// the order the runner numbers in.
+	for i, f := range doc.Messages {
+		if i > 0 && doc.Messages[i-1].Seq >= f.Seq {
+			t.Errorf("the block is not in number order: %+v", doc.Messages)
+			break
+		}
+	}
+}
+
+// TestDiagnoseLineFromObjectsAndHost: a message that never reached the agent is
+// the one a person wants back, and the line that sends it again is built from
+// the three places a run cannot write (F19): the text out of the message object
+// under tokens/, the repository this machine's config names, and the number of
+// the open pull request the code host reports for the run's branch. The record
+// here names pull request 99 and the host answers 12, so a line read off the
+// record at all — the failure F19 exists to prevent — reads differently.
+func TestDiagnoseLineFromObjectsAndHost(t *testing.T) {
+	t.Run("an open pull request of the run's branch", func(t *testing.T) {
+		diagnoseHostStub(t, followUpPR(12, "fugaro/"+diagnoseMsgRun, gitprov.PROpen))
+		diagnoseMsgRig(t, undeliveredBlock(), runmsg.Message{Seq: 1, Text: "use the helper in parser.go"})
+
+		out, errOut, err := execute(t, "diagnose", diagnoseMsgRun)
+		if err != nil {
+			t.Fatalf("diagnose: %v (%s)", err, errOut)
+		}
+		want := "fugaro run --pr 12 --repo acme/app -- 'use the helper in parser.go'"
+		if !strings.Contains(out, want) {
+			t.Errorf("diagnose lacks the line %q:\n%s", want, out)
+		}
+		if !strings.Contains(out, "text:\n      use the helper in parser.go") {
+			t.Errorf("the message's own text is not printed under its fate:\n%s", out)
+		}
+		if strings.Contains(out, "--pr 99") {
+			t.Errorf("the line names the record's pull request:\n%s", out)
+		}
+
+		doc := diagnoseMsgBlock(t, diagnoseMsgRun)
+		f := diagnoseMsgFate(t, doc, 1)
+		if f.State != runmsg.StateUndelivered || !f.Recorded {
+			t.Fatalf("message 1 = %+v, want the record's undelivered message", f)
+		}
+		if f.Text != "use the helper in parser.go" || f.Line != want || f.LineNote != "" {
+			t.Errorf("message 1 = %+v, want the object's text and the line %q", f, want)
+		}
+	})
+
+	// A merged or closed pull request is one PullRequestByBranch answers too,
+	// and a message sent again under it would follow up a pull request that is
+	// over: the line is printed without a number and the note says why.
+	t.Run("a merged pull request is not a number to name", func(t *testing.T) {
+		diagnoseHostStub(t, followUpPR(12, "fugaro/"+diagnoseMsgRun, gitprov.PRMerged))
+		diagnoseMsgRig(t, undeliveredBlock(), runmsg.Message{Seq: 1, Text: "use the helper in parser.go"})
+
+		out, _, err := execute(t, "diagnose", diagnoseMsgRun)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "fugaro run --repo acme/app -- 'use the helper in parser.go'"
+		if !strings.Contains(out, want) || strings.Contains(out, "fugaro run --pr") {
+			t.Errorf("a merged pull request is named as a number to follow up:\n%s", out)
+		}
+		if !strings.Contains(out, "no open pull request of acme/app is on branch fugaro/"+diagnoseMsgRun) {
+			t.Errorf("the line says nothing about why it has no number:\n%s", out)
+		}
+
+		f := diagnoseMsgFate(t, diagnoseMsgBlock(t, diagnoseMsgRun), 1)
+		if f.Line != want || f.LineNote == "" || f.Text != "use the helper in parser.go" {
+			t.Errorf("message 1 = %+v, want the line without a number and the reason", f)
+		}
+	})
+}
+
+// TestDiagnoseNoHostNoNumber: when this machine cannot ask the code host at all
+// — no credential for the repository — the diagnosis still prints the text and
+// the line, without a number, and says why (F19). Nothing about the run fails
+// for it: the line is one part of the diagnosis that could not be built.
+func TestDiagnoseNoHostNoNumber(t *testing.T) {
+	diagnoseNoHost(t)
+	diagnoseMsgRig(t, undeliveredBlock(), runmsg.Message{Seq: 1, Text: "use the helper in parser.go"})
+
+	out, errOut, err := execute(t, "diagnose", diagnoseMsgRun)
+	if err != nil {
+		t.Fatalf("diagnose: %v (%s)", err, errOut)
+	}
+	want := "fugaro run --repo acme/app -- 'use the helper in parser.go'"
+	if !strings.Contains(out, want) {
+		t.Errorf("diagnose lacks the line %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "fugaro run --pr") {
+		t.Errorf("a line with no host to ask carries a number:\n%s", out)
+	}
+	if !strings.Contains(out, "no --pr: the code host could not be asked") {
+		t.Errorf("the line does not say why it has no number:\n%s", out)
+	}
+
+	f := diagnoseMsgFate(t, diagnoseMsgBlock(t, diagnoseMsgRun), 1)
+	if f.Line != want || !strings.HasPrefix(f.LineNote, "the code host could not be asked") || f.Text != "use the helper in parser.go" {
+		t.Errorf("message 1 = %+v, want the line without a number and the reason", f)
+	}
+}
+
+// TestDiagnoseTextExpired: the bucket ages a message object out after its seven
+// days (F11), and what is left of an undelivered message then is the record's
+// fate. The diagnosis says the text expired rather than leaving the entry
+// looking like one whose words are still there, and there is no line: the text
+// a line would carry is exactly what is gone.
+func TestDiagnoseTextExpired(t *testing.T) {
+	diagnoseMsgRig(t, undeliveredBlock())
+
+	out, errOut, err := execute(t, "diagnose", diagnoseMsgRun)
+	if err != nil {
+		t.Fatalf("diagnose: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, "#1 undelivered by dana@example.com") {
+		t.Errorf("the record's fate is not printed:\n%s", out)
+	}
+	if !strings.Contains(out, "text expired") {
+		t.Errorf("a message whose object is gone does not say so:\n%s", out)
+	}
+	if strings.Contains(out, "fugaro run") {
+		t.Errorf("a message whose text is gone still prints a line:\n%s", out)
+	}
+
+	f := diagnoseMsgFate(t, diagnoseMsgBlock(t, diagnoseMsgRun), 1)
+	if !f.Expired || f.Text != "" || f.Line != "" {
+		t.Errorf("message 1 = %+v, want it expired with nothing left to send", f)
+	}
+	if f.Object == nil || *f.Object {
+		t.Errorf("message 1's object = %v, want the bucket's own answer that it is gone", f.Object)
+	}
+	// A message the run delivered has no text to lose, so the fate stands
+	// without the word: expiry is about what is left to send again.
+	diagnoseMsgRig(t, &runmsg.Record{Accepting: true, Format: runmsg.Format, Messages: []runmsg.Delivery{
+		{Seq: 1, SentAt: &diagnoseMsgSent, SentBy: "dana@example.com", State: runmsg.StateDelivered, Stage: "implement"}}})
+	delivered, _, err := execute(t, "diagnose", diagnoseMsgRun)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(delivered, "text expired") {
+		t.Errorf("a delivered message whose object is gone reads as one whose text expired:\n%s", delivered)
 	}
 }
 

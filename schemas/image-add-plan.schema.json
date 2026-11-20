@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/image-add-plan.schema.json",
+  "title": "Fugaro image add plan",
+  "description": "The document `fugaro image add <name> --dry-run` prints: the image catalog entry the add would write and the steps it owes, with nothing written — no catalog entry, no build and no step recorded for `fugaro apply` (docs/console-improvements, O4). Its reader is the console's confirmation window, which shows the CLI's own account of the change before the person says yes and then runs the same command without `--dry-run`, so every member here is one the CLI produced and the consumer computes nothing: the steps are named rather than re-derived from a catalog the consumer would have to read, and the entry is the one the command's own flag reader built and every gate passed. The document is printed only once every refusal the real command would give has been asked — the definition's own rules, a name the catalog already has, a definition no build could fetch, D1573's agent refusal and the installation's skew gate — so a caller that holds one may read it as \"this add would land\". A refusal is the CLI's own sentence with a non-zero exit and no document at all, which is what a consumer branches on. Members are only ever added within a version (D848), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D848 promises to keep readable under the same version.",
+  "type": "object",
+  "required": [
+    "version",
+    "command",
+    "project",
+    "entry",
+    "steps"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "The document's own version, which is not the config's and not the run record's: they are separate contracts and one may move without the others (D848). It is the version a consumer pins, and a document carrying another one is not this shape.",
+      "$comment": "imageAddPlanVersion in internal/cli/image_catalog.go."
+    },
+    "command": {
+      "const": "image add",
+      "description": "The command the plan is for, in the words the command has rather than in the shape its path takes. It is the door the run is filed and printed under (D1351), and it is here so a window that draws more than one add — the console draws the models and the images one — reads which of them it is holding from the document and not from the call it made.",
+      "$comment": "imageAddDoor in internal/cli/image_catalog.go."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The Fugaro project the entry would be written into: the name the project config the add read has (`name:` in $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml), never the GCP project ID and never a name a flag overrode. It is the installation the entry and the record would be filed under, and a consumer compares it with the project it believes it is acting on rather than assuming the two agree."
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "name",
+        "tags",
+        "description",
+        "default",
+        "source"
+      ],
+      "description": "The catalog entry the add would append, as `fugaro image ls` prints it. It is the entry itself and not a diff: an add appends, so there is no old value to carry, and a name the catalog already holds is a refusal with no document rather than a document saying so. Every string here has been through the characters this program drops from anything it prints (safetext.Field), because a name, a description and a source are as much the command line's and the config's as they are this program's.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The entry's name, as the positional argument spelled it (config.Entry's name rule: a lower-case name the catalog is addressed by). It is the name `fugaro image rm` and `fugaro image build` take and the one a workflow's `image_name` resolution matches."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "The tags the entry provides, as given: the words a repository's `needs:` is matched against (the CLI's closed list — node, postgres, redis, firebase-emulator, docker). It is always present and may be empty: an entry that provides no tag covers no repository's needs and is written all the same, so the member is an array rather than a member a document leaves out."
+        },
+        "description": {
+          "type": "string",
+          "description": "What the entry is for, as `fugaro image ls` prints it. Empty when the caller gave none, which is the same answer the listing gives an entry with no description — the member is written either way, because a consumer draws a description row whether or not there is one."
+        },
+        "default": {
+          "type": "boolean",
+          "description": "Whether the entry is the one a job whose repositories name no needs runs (D1146). A catalog marks one entry, or none, and the flag that sets it is refused in a coding agent's session (D1573), so this is true only for a person's own add."
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The entry's definition, in the one-line form `fugaro image ls` prints it: `dockerfile owner/name:path` with `@branch` when the entry names one, `inline`, or `image <ref>`. The definition's own members are not restated here, and an inline definition's Dockerfile text is deliberately not carried: the document names an entry, and neither a terminal nor a window needs a second copy of a file that is not this program's. A consumer shows this line as it stands rather than parsing it — the console admits only a `--dockerfile` definition, so the line it draws is always the repository and the path.",
+          "$comment": "catalogSourceLine in internal/cli/image_catalog.go."
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "description": "The steps the add owes, in the order they run, each saying whether it would be run or left saved. A dry run writes none of them: no record is queued, and the build is neither submitted nor priced — `saved` is what the same invocation without `--dry-run` would do, which is why a document that carries `false` for a step is an account of a build that has not happened and a run that has not started. The list is never empty: the catalog's change is the one resource type the step table declares with three rows, so an add that owed nothing would be a table gap rather than an add, and the command refuses that as a fault in fugaro instead of printing a document.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "saved"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A step's own name: one of internal/initflow's stage names, or `catalog-build`, the one step that is not a stage (the billable Cloud Build of a catalog image). A catalog entry owes the build that makes the image exist, the repository stage, whose redeploy pins the digest that build produced, and the policy stage, which publishes `image_catalog` into the node every run of the project is admitted by (D1561, D1574, D1577). It is deliberately not an enum: the vocabulary is initflow's, and a copy of it here would be the second registry of stages D1561 rules out — a stage renamed there would leave this schema refusing a step the binary can run. The order is the order they run in (the build first, because the digest it builds is what the redeploy pins), so a consumer that lists them lists them in that order rather than sorting them.",
+            "$comment": "apply.CatalogBuild and apply.Order in internal/apply/steps.go; initflow.Repository and initflow.Policy in internal/initflow/stage.go."
+          },
+          "saved": {
+            "type": "boolean",
+            "description": "Whether `--no-apply` left the step to `fugaro apply` rather than running it here. False is the ordinary add, which runs its steps as part of the command; true is what the console always passes, and it is on the step and not on the document because the two arms of a save and a run are one command's — a consumer drawing the follow-up reads this member and never the command line it built."
+          }
+        }
+      },
+      "$comment": "chainSteps in internal/cli/chain.go and catalogSteps in internal/apply/steps.go."
+    }
+  }
+}

@@ -1126,7 +1126,7 @@ type TriageLog interface {
 // no release does): every item is therefore judged under the default mode's
 // row. The critical-path factor is not applied here either — it scales the
 // review rounds a mode gets, not the age at which a long run is judged.
-func TriageAfter(mode rigor.Mode) time.Duration {
+func TriageAfter(mode rigor.Rigor) time.Duration {
 	row, ok := escalation.DefaultThresholds().Rows[mode]
 	if !ok || row.CeilingHours <= 0 {
 		return 0

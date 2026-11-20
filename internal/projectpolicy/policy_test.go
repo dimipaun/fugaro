@@ -938,7 +938,7 @@ func TestReviewFloorDecodeStrict(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("the correctly spelled floor was refused: %v", err)
 	}
-	want := map[rigor.Mode][]policy.Level{rigor.Pro: {policy.LevelL2}, rigor.Critical: {policy.LevelL2, policy.LevelL3}}
+	want := map[rigor.Rigor][]policy.Level{rigor.Pro: {policy.LevelL2}, rigor.Critical: {policy.LevelL2, policy.LevelL3}}
 	if !reflect.DeepEqual(p.ReviewFloor, want) {
 		t.Errorf("ReviewFloor = %v, want %v", p.ReviewFloor, want)
 	}
@@ -1892,6 +1892,92 @@ func TestPolicyWithoutNewKeysUnchanged(t *testing.T) {
 			if strings.Contains(string(b), member) {
 				t.Errorf("a policy that sets no %s marshals one: %s", member, b)
 			}
+		}
+	}
+}
+
+// TestProjectPolicyDecodesReviewAgainstTask is the published node's
+// review_against_task member (docs/review-against-task, D2935): the owner's
+// own switch for whether a review checks a pull request against its task. The
+// member is read strictly — a bool or nothing at all — because the value
+// decides whether every review stage of every run of the repository is shown
+// the task, and a `"false"` the reader dropped would leave the check on where
+// the owner said off; true and false are the two statements the merge tells
+// apart from silence (internal/policy's Merge, where on is the stricter value).
+func TestProjectPolicyDecodesReviewAgainstTask(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		body  string
+		want  *bool
+		found bool
+		why   string // a substring a refusal must carry
+	}{
+		{name: "off", body: `"review_against_task":false`, want: boolp(false), found: true},
+		{name: "on", body: `"review_against_task":true`, want: boolp(true), found: true},
+		{name: "null", body: `"review_against_task":null`},
+		{name: "absent", body: `"base_branch":"main"`},
+		{name: "a string", body: `"review_against_task":"false"`, why: "review_against_task"},
+		{name: "a number", body: `"review_against_task":0`, why: "review_against_task"},
+		{name: "an object", body: `"review_against_task":{"on":true}`, why: "review_against_task"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(`{"version": 9,` + tc.body + `}`)
+			p, found, err := Decode(raw)
+			if tc.why != "" {
+				if err == nil {
+					t.Fatalf("the node %s was read: %v", raw, p.ReviewAgainstTask)
+				}
+				if !strings.Contains(err.Error(), tc.why) {
+					t.Errorf("the refusal %q does not name %q", err, tc.why)
+				}
+				return
+			}
+			if err != nil || !found || p == nil {
+				t.Fatalf("Decode(%s) = (%v, %v, %v), want a policy", raw, p, found, err)
+			}
+			switch {
+			case tc.want == nil && p.ReviewAgainstTask != nil:
+				t.Errorf("ReviewAgainstTask = %v, want unset: an absent member and a written null are one answer", *p.ReviewAgainstTask)
+			case tc.want != nil && (p.ReviewAgainstTask == nil || *p.ReviewAgainstTask != *tc.want):
+				t.Errorf("ReviewAgainstTask = %v, want %v", p.ReviewAgainstTask, *tc.want)
+			}
+			if len(p.UnknownKeys) != 0 {
+				t.Errorf("UnknownKeys = %v, want none: review_against_task is a key this Fugaro reads", p.UnknownKeys)
+			}
+		})
+	}
+
+	// A node that misspells the member is read past rather than refused — the
+	// additive-member promise every optional key of this node keeps (P8) — and
+	// it answers no switch.
+	p, found, err := Decode([]byte(`{"version": 9,"review_against_tasks":true}`))
+	if err != nil || !found {
+		t.Fatalf("a node with a misspelt member was refused: (%v, %v, %v)", p, found, err)
+	}
+	if p.ReviewAgainstTask != nil {
+		t.Errorf("ReviewAgainstTask = %v, want unset: a member nobody writes is not the switch", *p.ReviewAgainstTask)
+	}
+	if want := []string{"review_against_tasks"}; !slices.Equal(p.UnknownKeys, want) {
+		t.Errorf("UnknownKeys = %v, want %v", p.UnknownKeys, want)
+	}
+
+	// A project that sets neither publishes no member, so its node stays byte
+	// for byte what it was before this key existed: an absence is what keeps the
+	// key's skew from being every project's.
+	for _, raw := range []string{`{"version": 9}`, `{"version": 9,"review_against_task":null}`} {
+		q, _, err := Decode([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if q.ReviewAgainstTask != nil {
+			t.Errorf("Decode(%s).ReviewAgainstTask = %v, want nil", raw, q.ReviewAgainstTask)
+		}
+		b, err := json.Marshal(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "review_against_task") {
+			t.Errorf("a policy that sets no review_against_task marshals one: %s", b)
 		}
 	}
 }

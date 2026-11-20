@@ -391,7 +391,13 @@ func TestPrintedCommandsHaveNoValues(t *testing.T) {
 				t.Errorf("not one plain command: %q", c)
 			}
 		}
-		if !strings.Contains(r.out.String(), "left for you (secrets, command): "+text+"\n    "+strings.Join(tc.want, "\n    ")+"\n") {
+		// The reason comes first, indented under the step and above the
+		// commands: it is the stage's own line (Left.Why), and the reader of a
+		// log or of --json has no other way to get it.
+		if res.Left[0].Why == "" {
+			t.Errorf("the step left for the user carries no reason: %+v", res.Left[0])
+		}
+		if !strings.Contains(r.out.String(), "left for you (secrets, command): "+text+"\n    "+res.Left[0].Why+"\n    "+strings.Join(tc.want, "\n    ")+"\n") {
 			t.Errorf("not printed once, whole: %q", r.out.String())
 		}
 	}

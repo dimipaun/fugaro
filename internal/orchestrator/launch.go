@@ -41,6 +41,20 @@ type Spec struct {
 	// D2727).
 	PlanTask string
 	External string
+	// BodySHA256 is the hash of the ticket's body as the item was approved over
+	// it (WorkItem.BodySHA256, D2720). An item that came from an issue carries
+	// the hash and never the body, so this is what a launcher reads the issue
+	// back against before it builds the run's brief from the text: a body that
+	// hashes to something else is not what the person approved, and nothing
+	// launches under that approval (internal/cli's briefFor, B9).
+	//
+	// It travels with the spec rather than being read by the launcher off the
+	// node for External's reason: the launcher is handed the spec a person
+	// approved and asks the state for nothing. It is a digest and not a
+	// credential, and SpecDigest already digests the item's own field of the
+	// same name, so an issue edited between the approval and the launch is a
+	// digest mismatch and never a spec the launcher silently launched.
+	BodySHA256 string
 }
 
 // SpecOf is the launch spec of a work item. It reads the item's own fields and
@@ -48,14 +62,15 @@ type Spec struct {
 // asked to start is the spec that was approved or nothing at all.
 func SpecOf(w WorkItem) Spec {
 	return Spec{
-		ItemID:    w.ID,
-		Title:     w.Title,
-		Repo:      w.Repo,
-		Recipe:    w.Recipe,
-		RigorTier: w.RigorTier,
-		Brief:     w.Brief,
-		PlanTask:  w.PlanTask,
-		External:  w.External,
+		ItemID:     w.ID,
+		Title:      w.Title,
+		Repo:       w.Repo,
+		Recipe:     w.Recipe,
+		RigorTier:  w.RigorTier,
+		Brief:      w.Brief,
+		PlanTask:   w.PlanTask,
+		External:   w.External,
+		BodySHA256: w.BodySHA256,
 	}
 }
 

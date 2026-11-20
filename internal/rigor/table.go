@@ -2,15 +2,15 @@ package rigor
 
 import "slices"
 
-// The threshold table (D2, D7a): what each mode does with the findings its
+// The threshold table (D2, D7a): what each level does with the findings its
 // reviewer scored, as data rather than as a condition inside the runner.
 //
-// A finding carries three anchored 1–5 axes and a class (D1, D3;
-// runner.VerdictSchema is the schema the reviewer is held to). The table reads
-// those four and never the free-form `severity` string beside them (D2): the
-// five words are a label derived from the score (label.go), so a word and a
-// score cannot disagree, and a mode's decision is answerable to a reader
-// rather than to the model's choice of adjective.
+// A finding carries three anchored 1–5 axes, a class and a scope (D1, D3,
+// D2930; runner.VerdictSchema is the schema the reviewer is held to). The
+// table reads those five and never the free-form `severity` string beside them
+// (D2): the five words are a label derived from the score (label.go), so a
+// word and a score cannot disagree, and a mode's decision is answerable to a
+// reader rather than to the model's choice of adjective.
 //
 // Nothing acts on this yet. T2.3 lands the table and its tests; Slice 3's T3.1
 // is the task that puts it inside runner.Decide, which is where readiness is
@@ -20,23 +20,23 @@ import "slices"
 // (D3), and the fourth input to the table beside the three axes. It is where
 // the spec's severity override attaches — "rare but catastrophic findings
 // (data loss, security) block even in Startup mode" — so the two classes the
-// spec names are the ones every mode blocks on whatever the axes say.
+// spec names are the ones every level blocks on whatever the axes say.
 type Class string
 
 // The classes, in runner.VerdictSchema's enum order. A class the schema gains
 // is added here in the same change: the schema is what constrains the model,
 // this list is what the table reads, and a class only one of them knows is a
-// finding the table cannot read at all — which blocks in every mode, loudly
+// finding the table cannot read at all — which blocks in every level, loudly
 // rather than silently, but for no reason the reviewer can see.
 const (
 	// Correctness is the code doing the wrong thing.
 	Correctness Class = "correctness"
 	// Performance is the code doing the right thing too slowly.
 	Performance Class = "performance"
-	// Security is an exploitable weakness. Catastrophic in every mode.
+	// Security is an exploitable weakness. Catastrophic in every level.
 	Security Class = "security"
 	// DataLoss is a write that loses or corrupts what was there. Catastrophic
-	// in every mode.
+	// in every level.
 	DataLoss Class = "data_loss"
 	// Maintainability is code that works and will be expensive to change.
 	Maintainability Class = "maintainability"
@@ -45,7 +45,7 @@ const (
 )
 
 // Classes is the whole vocabulary, in the schema's order. It is closed, the
-// way Modes is: a value outside it is refused where it is written, and a
+// way Rigors is: a value outside it is refused where it is written, and a
 // finding carrying one is unscored rather than judged by a word the table
 // does not know.
 var Classes = []Class{Correctness, Performance, Security, DataLoss, Maintainability, Cosmetic}
@@ -54,11 +54,41 @@ var Classes = []Class{Correctness, Performance, Security, DataLoss, Maintainabil
 // whose reviewer named none — is not.
 func KnownClass(c Class) bool { return slices.Contains(Classes, c) }
 
-// Score is the part of a finding the table reads (D2): the three axes and the
-// class. It is deliberately not runner.Finding — internal/rigor may not import
-// internal/runner, which reads this package — so the runner presents its own
-// finding as this at the call site and the table's inputs are stated once,
-// here, rather than as four field names a reader has to go and find.
+// Scope is a finding's scope: the one axis of a finding that is about the task
+// the pull request was written for rather than about the code (D2930, R6). The
+// three words are the reviewer's own:
+//
+//   - unmet — the task asks for something the diff does not do;
+//   - beyond — the diff does something the task did not ask for;
+//   - differs — the task asked for Y and the diff does X instead.
+//
+// runner.Finding.Scope carries the same three words (internal/runner/
+// issuescope.go), and it is deliberately not shared: internal/runner reads this
+// package, so the words are stated here rather than imported from there. The
+// reader that closes the vocabulary is the reviewer's schema and the artifact's
+// own check; a word this type does not know is read as a finding about the code
+// alone, the way a transcript written before the field existed reads.
+type Scope string
+
+const (
+	// ScopeUnmet is a finding that says the task asks for something the diff
+	// does not do. R6 blocks it in every mode but Hotfix.
+	ScopeUnmet Scope = "unmet"
+	// ScopeBeyond is a finding that says the diff does something the task did
+	// not ask for. It is scored by its own risk: it blocks only where the axes
+	// do.
+	ScopeBeyond Scope = "beyond"
+	// ScopeDiffers is a finding that says the task asked for Y and the diff does
+	// X instead. R6 blocks it in every mode but Hotfix.
+	ScopeDiffers Scope = "differs"
+)
+
+// Score is the part of a finding the table reads (D2): the three axes, the
+// class and the scope. It is deliberately not runner.Finding — internal/rigor
+// may not import internal/runner, which reads this package — so the runner
+// presents its own finding as this at the call site and the table's inputs are
+// stated once, here, rather than as five field names a reader has to go and
+// find.
 //
 // Zero is the unscored finding. The valid scale starts at 1 on every axis, so
 // nothing a reviewer scores can read as absent, and a verdict written before
@@ -70,10 +100,18 @@ type Score struct {
 	// Impact is how bad it is when it does: 1 cosmetic, 5 catastrophic.
 	Impact int
 	// FixCost is the effort to address it: 1 trivial, 5 rewrite. Only the
-	// modes whose spec sentence weighs it read it.
+	// levels whose spec sentence weighs it read it.
 	FixCost int
 	// Class is what kind of issue it is.
 	Class Class
+	// Scope is whether the finding is about the task the pull request was
+	// written for, which is the one axis here that is not about the code
+	// (D2930). An unmet or differing finding blocks in every mode but Hotfix
+	// whatever the axes say (R6); a beyond one is scored by them. It is absent
+	// on a finding about the code alone, which is every finding written before
+	// it existed, and a word outside the three is read as absent rather than as
+	// a finding the table cannot place.
+	Scope Scope
 }
 
 // Risk is likelihood × impact: the one number the table's floors are stated
@@ -101,50 +139,70 @@ func (s Score) Scored() bool {
 // names, which is what makes a rare finding block in Startup.
 //
 // It is the override stated once, and it is what the label derives from
-// (label.go) and what every mode's row applies whole but Hotfix's; a mode that
+// (label.go) and what every level's row applies whole but Hotfix's; a level that
 // reads the override differently does so in its own row (override below)
 // rather than by a second copy of this.
 func (s Score) catastrophic() bool {
 	return s.Class == Security || s.Class == DataLoss || s.Impact == 5
 }
 
-// override is one mode's reading of the spec's severity override — "rare but
-// catastrophic findings (data loss, security) block even in Startup mode" — as
-// the mode's own row rather than as a condition beside it: the table is data
-// and Blocks is its one reader (D2, D7).
+// unmetOrDiffers reports whether the finding says the change does not do what
+// its task asked: its scope is unmet or differs (D2930, R6). Such a finding
+// blocks in every mode but Hotfix, whatever its axes say, which is why both of
+// a row's gates read it beside the severity override rather than leaving it to
+// the threshold: whether the diff does what its task asked is not a matter of
+// likelihood and impact, and a finding the mode's floor does not hold is one
+// the triage judge is free to defer.
+//
+// A scope the three words do not name — the empty one a transcript written
+// before the field existed carries, and a word a reviewer invented — is not one
+// of the two, so it turns nothing down: the schema is what constrains the model,
+// and this reader must not let a word it cannot place decide a merge.
+func (s Score) unmetOrDiffers() bool {
+	return s.Scope == ScopeUnmet || s.Scope == ScopeDiffers
+}
+
+// override is one mode's reading of what blocks whatever the axes say — the
+// spec's severity override ("rare but catastrophic findings (data loss,
+// security) block even in Startup mode") and, in the same set, R6's two task
+// scopes (unmet, differs) — as the mode's own row rather than as a condition
+// beside it: the table is data and Blocks is its one reader (D2, D7).
 type override int
 
 const (
 	// overrideCatastrophic is the override as the spec states it: a Security or
-	// DataLoss class, or an impact of the top of the scale. It is the zero
-	// value, so a row that says nothing about the override keeps all of it — a
-	// mode can only give part of it up by naming the part it keeps, which is
-	// D4's fail-closed rule read at the table's own data.
+	// DataLoss class, or an impact of the top of the scale, and beside them
+	// R6's two task scopes (unmet, differs), which block in the same modes. It
+	// is the zero value, so a row that says nothing about the override keeps
+	// all of it — a mode can only give part of it up by naming the part it
+	// keeps, which is D4's fail-closed rule read at the table's own data.
 	overrideCatastrophic override = iota
 	// overrideSecurity is the security gate alone. Hotfix's row is the one that
 	// reads its own sentence — "only findings that make the fix wrong or unsafe
 	// block" — this way, by the owner's ruling of 2026-10-26: a finding of
 	// class security blocks there whatever its axes say, and a finding whose
-	// class is data_loss or whose impact is 5 is tolerated like any other.
+	// class is data_loss or whose impact is 5 is tolerated like any other. R6
+	// exempts Hotfix from the task scopes for the same reason, so an unmet or
+	// differing finding is tolerated there too.
 	overrideSecurity
 )
 
 // blocks reports whether this reading of the override blocks s whatever its
 // axes say. A value outside the two above is read as the whole override, the
-// way an unknown mode blocks everything: a value this code cannot place gets
+// way an unknown level blocks everything: a value this code cannot place gets
 // the strict answer and never the lenient one.
 func (o override) blocks(s Score) bool {
 	if o == overrideSecurity {
 		return s.Class == Security
 	}
-	return s.catastrophic()
+	return s.catastrophic() || s.unmetOrDiffers()
 }
 
-// stop is one mode's at-the-stop row (the owner's ruling of 2026-11-08): what
-// the mode does with the findings a run still has when it stops — the moment
+// stop is one level's at-the-stop row (the owner's ruling of 2026-11-08): what
+// the level does with the findings a run still has when it stops — the moment
 // its review rounds are spent or the run reaches the configured fraction of its
 // time budget (runner.Budget.PastStop), whichever comes first, without a ship
-// verdict. It is the second rule the mode holds, beside the threshold its
+// verdict. It is the second rule the level holds, beside the threshold its
 // rounds are spent under, and it is data here for the same reason that one is:
 // "merge as-is, follow up the rest" is Startup's own sentence read at the
 // moment it applies.
@@ -153,14 +211,15 @@ type stop int
 const (
 	// stopDraft keeps every finding a stopped round left blocking: the pull
 	// request stays a draft with the findings and the round named in its reason,
-	// which is what every mode did before this row existed. It is the zero
-	// value, so a mode that says nothing about the stop — and a mode the table
+	// which is what every level did before this row existed. It is the zero
+	// value, so a level that says nothing about the stop — and a level the table
 	// does not hold — keeps that behaviour rather than gaining an acceptance
 	// nobody wrote.
 	stopDraft stop = iota
 	// stopCatastrophic accepts at the stop every finding the spec's severity
-	// override does not cover: what still blocks is a Security or DataLoss class
-	// or an impact of 5 (catastrophic), whatever the axes say. Startup's row,
+	// override does not cover and R6's task scope does not hold: what still
+	// blocks is a Security or DataLoss class, an impact of 5, or a scope of
+	// unmet or differs, whatever the axes say. Startup's row,
 	// whose sentence is "fix common; log rare/expensive to backlog" and whose
 	// point is time to market, and POC's, whose own row already tolerates
 	// everything else.
@@ -169,53 +228,59 @@ const (
 	// weakness: Hotfix's reading of its sentence — "only findings that make the
 	// fix wrong or unsafe block" — applied at the stop exactly as its override
 	// applies it in a round. It names the reading rather than leaving it to the
-	// override so the mode's answer at the stop is stated here beside every other
-	// mode's, and not inferred from which half of the row is asked.
+	// override so the level's answer at the stop is stated here beside every other
+	// level's, and not inferred from which half of the row is asked.
 	stopSecurity
 )
 
 // blocks reports whether this reading of the stop rule still blocks s. A value
 // outside the three above is read as stopDraft — the strict answer — the way an
 // unknown mode blocks everything.
+//
+// It reads R6's task scope beside the override for the reason the override is
+// read here at all: a stop has to name what it does not take, and the two gates
+// of a mode's row are one rule written twice rather than two. stopSecurity
+// leaves both out at once, which is Hotfix's row: the mode the ruling of
+// 2026-10-26 gave the fewest gates has them at the stop too.
 func (o stop) blocks(s Score) bool {
 	switch o {
 	case stopCatastrophic:
-		return s.catastrophic()
+		return s.catastrophic() || s.unmetOrDiffers()
 	case stopSecurity:
 		return s.Class == Security
 	}
 	return true
 }
 
-// threshold is one mode's findings policy, as data: how it reads the severity
-// override, where on the risk axis the mode starts to block, the one escape
+// threshold is one level's findings policy, as data: how it reads the severity
+// override, where on the risk axis the level starts to block, the one escape
 // its spec sentence names, and what it does with the findings left at the stop.
 type threshold struct {
 	// Risk is the smallest likelihood × impact that blocks. Zero means the
-	// axes never block in this mode, so only the override and an unscored
+	// axes never block in this level, so only the override and an unscored
 	// finding reach it.
 	Risk int
 	// Rare and Expensive are the escape, and are set together: a finding whose
 	// likelihood is at most Rare and whose fix cost is at least Expensive is
-	// tolerated even at or above Risk. Rare 0 means the mode weighs no fix
+	// tolerated even at or above Risk. Rare 0 means the level weighs no fix
 	// cost.
 	Rare      int
 	Expensive int
-	// Override is how this mode reads the spec's severity override: the whole
+	// Override is how this level reads the spec's severity override: the whole
 	// of it unless the row names the narrower reading. It is beside Risk rather
 	// than inside a condition because it is the one part of the rule that two
-	// modes read differently (D2).
+	// levels read differently (D2).
 	Override override
-	// Stop is what the mode does with the findings a stopped run has left:
+	// Stop is what the level does with the findings a stopped run has left:
 	// stopDraft, the zero value, keeps the pull request a draft, and the other
 	// two accept everything the row names and file it (BlocksAtStop, D30). It
-	// sits beside Risk because it is the mode's own sentence at a second moment
+	// sits beside Risk because it is the level's own sentence at a second moment
 	// and not a second table: Pro's row says Pro's stop is a draft and POC's
 	// says POC's is an acceptance, and no code outside this file asks which.
 	Stop stop
 }
 
-// thresholds is the table, one row per mode, each row the mode's own sentence
+// thresholds is the table, one row per level, each row the level's own sentence
 // in spec.md read as a number. It is unexported and Blocks and BlocksAtStop are
 // the only readers: each rule has one statement, and a second caller reaching
 // for the numbers would be the second answer to "does this finding block" that
@@ -224,7 +289,7 @@ type threshold struct {
 // Pro's row is the behaviour of every repository that configures nothing
 // (D19), so it is the row a reviewer should read first and the one whose
 // numbers a change to this table is really about.
-var thresholds = map[Mode]threshold{
+var thresholds = map[Rigor]threshold{
 	// "POC — Ignore (except catastrophic)". The axes never block: what is left
 	// goes to the pull request body's one line and the run record, which is
 	// the whole account a POC run keeps (D30). Its stop row states the same
@@ -236,52 +301,52 @@ var thresholds = map[Mode]threshold{
 	// stops being a corner case, and no fix-cost escape belongs beside it — a
 	// rare finding is one the floor already tolerates, whatever its fix costs.
 	//
-	// The stop row is where the mode's other sentence lives — "merge as-is,
+	// The stop row is where the level's other sentence lives — "merge as-is,
 	// follow up the rest", the owner's ruling of 2026-11-08 — and it is wider
-	// than the floor on purpose: a documentation-drift finding the mode would
+	// than the floor on purpose: a documentation-drift finding the level would
 	// have spent a round on blocks nothing once the rounds are gone, and the
 	// override alone is what ends a Startup run a draft.
 	Startup: {Risk: 8, Stop: stopCatastrophic},
 	// "Pro — Weigh fix cost vs. likelihood × severity … extremely rare,
 	// high-effort issues may stay unfixed": the lowest floor of the four
-	// on-axis modes, which is what "aim for bug-free patches" costs, with the
+	// on-axis levels, which is what "aim for bug-free patches" costs, with the
 	// spec's own escape for the one case it names — likelihood 1, fix cost 4
 	// or more. It names no stop row: Pro's sentence is "aim for bug-free
 	// patches", so a run of it stops at the stop on the terms it reviewed
 	// under, which is the draft stopDraft is.
 	Pro: {Risk: 4, Rare: 1, Expensive: 4},
 	// "Critical — Every finding blocks": the whole scale is above the floor.
-	// D7's answer keeps this mode's outcome and reason byte-identical to the
-	// releases before it, apart from the mode line every run's body carries
+	// D7's answer keeps this level's outcome and reason byte-identical to the
+	// releases before it, apart from the level line every run's body carries
 	// (D18).
 	Critical: {Risk: 1},
 	// "Hotfix — Only findings that make the fix wrong or unsafe block", read
-	// against the owner's ruling of 2026-10-26: the fewest gates of any mode,
+	// against the owner's ruling of 2026-10-26: the fewest gates of any level,
 	// so out of the severity override the row keeps the security gate and
 	// nothing else — a data loss finding and an impact of 5 are tolerated and
-	// filed as advisory by the mode's own filing row (D30), which is where a
+	// filed as advisory by the level's own filing row (D30), which is where a
 	// hotfix's record of them belongs. What makes a hotfix's fix *wrong* is not
 	// a finding at all: D14's deterministic diff rule gates the run, and the
 	// agent's own confidence number is recorded and never trusted.
 	//
 	// Its stop row is that same security gate written again: at the stop a
 	// hotfix run accepts what it tolerates in a round, which is what keeps the
-	// mode's answer the same at both moments and the ruling of 2026-10-26
+	// level's answer the same at both moments and the ruling of 2026-10-26
 	// intact there.
 	Hotfix: {Override: overrideSecurity, Stop: stopSecurity},
 }
 
-// Blocks reports whether a finding blocks at mode m.
+// Blocks reports whether a finding blocks at level m.
 //
 // The order is the rule. An unscored finding blocks before any threshold is
-// read (D4); the override is asked next, as the mode's own reading of it, so
-// it holds in every mode including POC and — as the security gate alone, by the
-// owner's ruling of 2026-10-26 — Hotfix; the mode's own row is asked last. A
-// mode the table does not hold blocks on everything — the zero Mode a record
-// written before the mode existed carries, and a name that reached here without
+// read (D4); the override is asked next, as the level's own reading of it, so
+// it holds in every level including POC and — as the security gate alone, by the
+// owner's ruling of 2026-10-26 — Hotfix; the level's own row is asked last. A
+// level the table does not hold blocks on everything — the zero Rigor a record
+// written before the level existed carries, and a name that reached here without
 // having been parsed — because a value the table cannot place must never be the
 // lenient answer.
-func Blocks(m Mode, s Score) bool {
+func Blocks(m Rigor, s Score) bool {
 	row, known := thresholds[m]
 	if !known {
 		return true
@@ -298,7 +363,7 @@ func Blocks(m Mode, s Score) bool {
 	return true
 }
 
-// Split is a verdict's findings in two: the ones the mode blocks on and the
+// Split is a verdict's findings in two: the ones the level blocks on and the
 // ones it tolerates. Both groups keep the order they were given, because the
 // runner prints the tolerated ones in the reviewer's own order in the pull
 // request body and files one item per tolerated finding (D7, D30).
@@ -306,22 +371,22 @@ func Blocks(m Mode, s Score) bool {
 // It is Blocks asked once per finding and never a second rule: a caller that
 // wanted the count of tolerated findings, or the ones to file, must not be
 // able to disagree with the readiness rule about which they are.
-func Split(m Mode, findings []Score) (blocking, tolerated []Score) {
+func Split(m Rigor, findings []Score) (blocking, tolerated []Score) {
 	return splitWith(m, findings, Blocks)
 }
 
-// BlocksAtStop reports whether s still blocks at mode m's stop: the mode's own
-// stop row read over its ordinary one, so what a mode already tolerates in a
+// BlocksAtStop reports whether s still blocks at level m's stop: the level's own
+// stop row read over its ordinary one, so what a level already tolerates in a
 // round is tolerated at the stop too and the stop can only ever widen what a
-// run accepts. A mode whose row names no stop — Pro, Critical, the zero mode,
+// run accepts. A level whose row names no stop — Pro, Critical, the zero level,
 // and every name outside the vocabulary — answers exactly what Blocks does,
-// which is the fail-closed zero value: a mode that says nothing about the stop
+// which is the fail-closed zero value: a level that says nothing about the stop
 // keeps the draft.
 //
 // The order is Blocks first for the same reason Blocks asks the override before
-// its floor: a finding the mode never blocks on is not one its stop row has to
+// its floor: a finding the level never blocks on is not one its stop row has to
 // be consulted about, and an unscored finding blocks on both paths (D4).
-func BlocksAtStop(m Mode, s Score) bool {
+func BlocksAtStop(m Rigor, s Score) bool {
 	if !Blocks(m, s) {
 		return false
 	}
@@ -339,25 +404,25 @@ func BlocksAtStop(m Mode, s Score) bool {
 // SplitAtStop is Split at the stop (SplitAtStop's own rule): what the run still
 // blocks on when it stops without a ship verdict, and what it accepts and files
 // (D30). The two groups keep the order they were given, exactly as Split's do,
-// and a mode that names no stop row answers with every finding blocking — which
+// and a level that names no stop row answers with every finding blocking — which
 // is the split that keeps Decide's tolerance from applying at all.
-func SplitAtStop(m Mode, findings []Score) (blocking, accepted []Score) {
+func SplitAtStop(m Rigor, findings []Score) (blocking, accepted []Score) {
 	return splitWith(m, findings, BlocksAtStop)
 }
 
-// AcceptsAtStop reports whether the mode's row names a stop that accepts
+// AcceptsAtStop reports whether the level's row names a stop that accepts
 // findings at all — stopCatastrophic or stopSecurity rather than the zero
-// stopDraft — and so whether the stop rule is a rule this mode wrote. It is the
+// stopDraft — and so whether the stop rule is a rule this level wrote. It is the
 // row's own fact and the one thing a caller asks before reading a round through
-// the stop instead of through the mode's ordinary rule: a mode that says
+// the stop instead of through the level's ordinary rule: a level that says
 // nothing about the stop keeps the draft (stopDraft), and a name the table does
-// not hold is not a mode whose stop accepts anything.
+// not hold is not a level whose stop accepts anything.
 //
-// A mode whose row names a stop need not accept more than its rounds do:
+// A level whose row names a stop need not accept more than its rounds do:
 // Hotfix's stop row is the security gate its ordinary row already applies, so
 // its stop accepts exactly what its rounds do. What the row says is asked, not
 // whether it is wider.
-func AcceptsAtStop(m Mode) bool {
+func AcceptsAtStop(m Rigor) bool {
 	row, known := thresholds[m]
 	return known && row.Stop != stopDraft
 }
@@ -365,7 +430,7 @@ func AcceptsAtStop(m Mode) bool {
 // splitWith is Split and SplitAtStop's one loop: the group each finding falls in
 // is the predicate's answer, so neither reader can disagree with the rule it
 // names about which findings they are.
-func splitWith(m Mode, findings []Score, blocks func(Mode, Score) bool) (blocking, tolerated []Score) {
+func splitWith(m Rigor, findings []Score, blocks func(Rigor, Score) bool) (blocking, tolerated []Score) {
 	for _, s := range findings {
 		if blocks(m, s) {
 			blocking = append(blocking, s)

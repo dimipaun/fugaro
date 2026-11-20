@@ -316,6 +316,15 @@ func TestSettingsRefusedRowsNameNoGenericWriter(t *testing.T) {
 // on `config` instead, the token whose sentence names the file each of them is
 // stated in, so they keep the owner they had and this table has no entry for
 // them. The family's token arrives in M4's own commit, beside the command.
+//
+// W2 of docs/config-ownership moves four more, and they are the block rows of
+// the governance block (D2604): `governance.stage_budget`, `stage_timeout`,
+// `stage_tokens` and `tiers` stay rows of the read — the block a person reads
+// the leaves under, and a keyDefaults member the schema may not lose — while the
+// write refuses their own spelling, because a block is a shape with no value for
+// a scalar to land on. So they leave the default token for the block's own
+// (`settings block`), whose sentence says what is true of such a row:
+// `settings set` writes the settings the block holds, one at a time.
 var settingsOwnerChanges = []struct{ key, was, now string }{
 	{"base_branch", "config", "settings set"},
 	{"budget.max_run_tokens", "budget", "settings set"},
@@ -323,6 +332,10 @@ var settingsOwnerChanges = []struct{ key, was, now string }{
 	{"commit_email", "setup", "settings set"},
 	{"commit_name", "setup", "settings set"},
 	{"gcp_project", "settings set", "config init"},
+	{"governance.stage_budget", "settings set", "settings block"},
+	{"governance.stage_timeout", "settings set", "settings block"},
+	{"governance.stage_tokens", "settings set", "settings block"},
+	{"governance.tiers", "settings set", "settings block"},
 	{"issues.nudge_after_days", "config", "settings set"},
 	{"issues.nudge_recurrence", "config", "settings set"},
 	{"layer.gcp_project", "settings set", "config"},

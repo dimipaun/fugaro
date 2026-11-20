@@ -154,6 +154,31 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	}
 
 	file := FileLayer(cfg)
+	// The repository's own answer to the review-against-task switch is written
+	// onto the layer its base file was read from: the merge is the one place
+	// the two homes of the key meet, and under the owner's published true the
+	// merge drops this false and names it in result.json's policy.ignored
+	// (D2935) — which is the only reason the value is written here at all,
+	// since the gate itself reads the base file directly (reviewAgainstTaskOn,
+	// R7).
+	//
+	// def is that layer for a run whose base configuration is the default
+	// branch: a run with a project that is neither a follow-up nor a review,
+	// which is the read baseRigor makes of R7's base branch. Everywhere else —
+	// a follow-up and a review, whose configuration *is* the file read from
+	// origin/<ref> (readBaseConfig), and a run with no project, whose base is
+	// the branch it was cut from — the base is a ref's own file and file is
+	// the layer that holds it. What no layer is ever given is the branch under
+	// review's own value: that file is the artifact a run's agent writes, and a
+	// run that could turn off the review of its own work would be reviewing
+	// nothing (F27).
+	if r.baseCfg != nil && r.baseCfg.Agent.ReviewAgainstTask != nil {
+		if r.follow != nil || r.review || r.d.Project == "" {
+			file.ReviewAgainstTask = r.baseCfg.Agent.ReviewAgainstTask
+		} else {
+			def.ReviewAgainstTask = r.baseCfg.Agent.ReviewAgainstTask
+		}
+	}
 	// The chain's remaining is resolved against the three layers above it and
 	// merged after them: it is the run's own figure that arrives here (the
 	// launcher wrote it into the task, and a hand-written task carries
@@ -664,7 +689,7 @@ func chainDimensionWord(d runstore.Dimension) string {
 // still only tightens it. A run whose mode contributes no default — Critical,
 // which is today's behaviour, or one no resolution recorded — carries the
 // owner's cap exactly.
-func envCeiling(c Spend, mode rigor.Mode) policy.Layer {
+func envCeiling(c Spend, mode rigor.Rigor) policy.Layer {
 	l := policy.Layer{MaxRunTokens: c.MaxRunTokens, AllowedModels: c.AllowedModels}
 	if c.Mode != "" && c.Mode != policy.ModeOff {
 		l.Mode = c.Mode
@@ -753,6 +778,22 @@ func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend)
 	// would name the owner of the switch he did not flip.
 	if pp.Triage != nil {
 		ceiling.Triage, set[policy.KeyTriage] = pp.Triage, true
+	}
+	// The review-against-task switch rides the ceiling for the triage switch's
+	// reason, with the polarity the key itself has (D2935): it is the owner's
+	// word about whether a pull request is reviewed against the task it was
+	// written for, the node is the one object the launcher cannot write, and a
+	// published true is a check no repository can walk out of — a published
+	// false only the default a repository's own true overrides. The merge is
+	// where the two homes meet (policy.KeyReviewAgainstTask, which the
+	// repository writes as agent.review_against_task), and on is the stricter
+	// value there, so Effective.ReviewAgainstTaskForced is what a repository's
+	// false cannot outvote and Effective.ReviewAgainstTaskDefaultOff is what
+	// its silence inherits. It is named in `set`, as the triage switch is:
+	// result.json reports the source of a value the node wrote, and "ceiling"
+	// would name the owner of a switch he did not flip.
+	if pp.ReviewAgainstTask != nil {
+		ceiling.ReviewAgainstTask, set[policy.KeyReviewAgainstTask] = pp.ReviewAgainstTask, true
 	}
 	// The binary allow rule rides the ceiling layer for the floor's reason
 	// (D986): it is the owner's word about the paths a run may add a binary at,
@@ -1002,12 +1043,17 @@ func sourcesText(m map[string]string) string {
 // PolicyKeyPath is where a policy key lives in fugaro.yaml: the governance
 // keys under a governance: block of their own — a tier's own keys under
 // governance.tiers.<tier>, the block that carries them (policy.TierKey) — the
-// agent's own keys, its output limits, the triage switch and the crafts, under
-// agent:, and everything else — the budget's cost and model policy — under
-// budget:. The triage switch is the agent's key and not the budget's
-// (policy.KeyTriage is "triage" and the repository writes agent.triage,
-// config.Scopes), so a report that read it as a budget key would name a key no
-// file has.
+// agent's own keys, its output limits, the triage switch, the
+// review-against-task switch and the crafts, under agent:, and everything else
+// — the budget's cost and model policy — under budget:. The triage switch is
+// the agent's key and not the budget's (policy.KeyTriage is "triage" and the
+// repository writes agent.triage, config.Scopes), and the review-against-task
+// switch is the same case with its own key (policy.KeyReviewAgainstTask is
+// "review_against_task", which the repository writes as
+// agent.review_against_task): a report that read either as a budget key would
+// name a key no file has, and the operator it is meant to send to
+// agent.review_against_task — the ignored value of D2935 — would look in a
+// block that cannot carry it.
 //
 // A craft key is the agent.crafts block (policy.CraftAccessKey), which is the
 // block where a repository's file writes the one of the three it may write at
@@ -1018,7 +1064,8 @@ func sourcesText(m map[string]string) string {
 // budget:, where neither a craft nor a credential lives.
 func PolicyKeyPath(key string) string {
 	switch key {
-	case policy.KeyMaxRunTokens, policy.KeyMaxOutputCoder, policy.KeyMaxOutputReviewer, policy.KeyTriage:
+	case policy.KeyMaxRunTokens, policy.KeyMaxOutputCoder, policy.KeyMaxOutputReviewer,
+		policy.KeyTriage, policy.KeyReviewAgainstTask:
 		return "agent." + key
 	case policy.KeyReviewRatio, policy.KeyReviewFloorCalls, policy.KeyMaxSubagents,
 		policy.KeyStageBudgetImplement, policy.KeyStageBudgetReview, policy.KeyStageBudgetFix,

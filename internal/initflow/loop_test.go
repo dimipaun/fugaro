@@ -31,7 +31,12 @@ type fake struct {
 	onApply func()
 	// outLeft is the step Apply leaves for the user: a stage that applied
 	// what this session may do and left the rest (Outcome.Left).
-	outLeft     *Left
+	outLeft *Left
+	// outDetail is what Apply says about itself, "applied" (or "No changes")
+	// when it is unset: a success line, which is never taken as the reason of
+	// the step beside it (such a step carries a reason only where the stage
+	// set one itself).
+	outDetail   string
 	left        Left
 	missing     []string
 	planSummary string
@@ -66,10 +71,14 @@ func (f *fake) Apply(_ context.Context, env Env) (Outcome, error) {
 		return Outcome{}, f.applyErr
 	}
 	f.applied = true
-	if f.unchanged {
-		return Outcome{Detail: "No changes", Left: f.outLeft}, nil
+	detail := f.outDetail
+	if detail == "" {
+		detail = "applied"
+		if f.unchanged {
+			detail = "No changes"
+		}
 	}
-	return Outcome{Changed: true, Detail: "applied", Left: f.outLeft}, nil
+	return Outcome{Changed: !f.unchanged, Detail: detail, Left: f.outLeft}, nil
 }
 func (f *fake) Verify(context.Context) error { f.rec("verify"); return f.verifyErr }
 func (f *fake) Left() Left {
@@ -675,6 +684,106 @@ func TestLeftTextIsOneLine(t *testing.T) {
 	res, _ := Run(context.Background(), stages, yesOpts())
 	if strings.ContainsAny(res.Left[0].Text, "\n\\") {
 		t.Errorf("left text %q", res.Left[0].Text)
+	}
+}
+
+// TestALeftForYouStepAlwaysSaysWhy: a step left for the person by a stage that
+// stopped at its check prints the reason it was not done on the line under it,
+// and a stage that names only the command it leaves gets one from the check's
+// own detail (Left.Why, filled at the loop's single choke point).
+//
+// The catalog step is what made this a rule rather than a courtesy: the owner's
+// 0.26.0 update ended on "run fugaro image build go, then fugaro update again"
+// with the run's own refusal of that entry's definition nowhere in the step.
+// The stage's detail is what the reader acts on, and the line the stage printed
+// in flight is gone from the log and from --json — the two views a reader who
+// was not at the terminal has.
+//
+// The reason is not printed twice: a stage whose detail IS the step's own line
+// — the input phase's wizard answers a stop with its question as both
+// (wizardStage.Check) — leaves a step that carries none. The step a stage
+// leaves after applying work is the other half of the rule, and
+// TestAnAppliedStagesSuccessLineIsNotAStepsWhy is where it is pinned.
+func TestALeftForYouStepAlwaysSaysWhy(t *testing.T) {
+	const reason = "server: NOT rebuilt: the catalog entry server: line 31 of its Dockerfile asks for a secret; remove it"
+	for _, tc := range []struct {
+		name string
+		// left is the step the stage hands back, without a reason of its own in
+		// the first case and with one in the second.
+		left Left
+		// detail is the stage's own line: the reason in the first two cases, and
+		// the step's own sentence in the third.
+		detail string
+		// want is the reason the step carries, "" for the step that has none.
+		want string
+	}{
+		{"the stage's own detail", Left{Kind: LeftCommand, Text: "fugaro image build server"}, reason, reason},
+		{"the step's own reason", Left{Kind: LeftCommand, Text: "fugaro image build server", Why: "the lease had no room"}, reason, "the lease had no room"},
+		{"a detail that is the step's own line", Left{Kind: LeftCommand, Text: "pass --gcp-project"}, "pass --gcp-project", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var log []string
+			var out bytes.Buffer
+			f := &fake{name: Images, log: &log, status: Status{State: NeedsYou, Detail: tc.detail, Left: &tc.left}}
+			res, err := Run(context.Background(), []Stage{f}, Options{Out: &out, Yes: true})
+			if err != nil || res.ExitCode() != 1 || len(res.Left) != 1 {
+				t.Fatalf("err %v exit %d res %+v", err, res.ExitCode(), res)
+			}
+			if got := res.Left[0].Why; got != tc.want {
+				t.Errorf("the step's reason is %q, want %q", got, tc.want)
+			}
+			lines := strings.Split(out.String(), "\n")
+			i := slices.IndexFunc(lines, func(l string) bool {
+				return strings.HasPrefix(l, "left for you ("+Images+", "+string(LeftCommand)+"): ")
+			})
+			if i < 0 {
+				t.Fatalf("the run printed no step for the person:\n%s", out.String())
+			}
+			if tc.want == "" {
+				// Nothing to print under it, and above all not the step's own
+				// line a second time.
+				if dup := lines[i] + "\n    " + tc.left.Text; strings.Contains(out.String(), dup) {
+					t.Errorf("the step's own line is printed twice:\n%s", out.String())
+				}
+				return
+			}
+			if i+1 >= len(lines) || strings.TrimSpace(lines[i+1]) != tc.want {
+				t.Errorf("the reason is not the line under the step, want %q:\n%s", tc.want, out.String())
+			}
+		})
+	}
+}
+
+// TestAnAppliedStagesSuccessLineIsNotAStepsWhy: a stage that applied work and
+// also left a step for the person says a success line in its detail — "No
+// changes", "applied", the version it installed — and a success line is not
+// why the step was left.
+//
+// The checkout stage in a coding agent's session and the plugin stage's pin
+// step are the two that do this, and before this the run printed that line
+// under the step as its reason and --json carried it as `why`: a reader was
+// told the checkout stage's "No changes" was why a step about the plugin's
+// pin was theirs. Such a step carries a reason only where the stage sets one
+// itself, which is what the images stage's catalog half does
+// (TestUpdateNamesTheStaleCatalogImageOfAnotherCheckout).
+func TestAnAppliedStagesSuccessLineIsNotAStepsWhy(t *testing.T) {
+	for _, detail := range []string{"applied", "No changes", "installed v0.26.0 for this machine"} {
+		t.Run(detail, func(t *testing.T) {
+			var log []string
+			var out bytes.Buffer
+			left := Left{Kind: LeftCommand, Text: "fugaro image build server"}
+			f := &fake{name: Images, log: &log, outDetail: detail, outLeft: &left}
+			res, err := Run(context.Background(), []Stage{f}, Options{Out: &out, Yes: true})
+			if err != nil || res.ExitCode() != 1 || len(res.Left) != 1 {
+				t.Fatalf("err %v exit %d res %+v", err, res.ExitCode(), res)
+			}
+			if got := res.Left[0].Why; got != "" {
+				t.Errorf("the step's reason is %q, want none: %q is the stage's success line", got, detail)
+			}
+			if block := "left for you (" + Images + ", " + string(LeftCommand) + "): " + left.Text + "\n    " + detail; strings.Contains(out.String(), block) {
+				t.Errorf("the stage's success line is printed as the step's reason:\n%s", out.String())
+			}
+		})
 	}
 }
 

@@ -18,7 +18,7 @@ func TestDefaultThresholdsIsTheSpecTable(t *testing.T) {
 	if th.CostCeiling != 0 {
 		t.Errorf("CostCeiling = %v; want 0 (the key has no default)", th.CostCeiling)
 	}
-	want := map[rigor.Mode]Row{
+	want := map[rigor.Rigor]Row{
 		rigor.POC:      {RunsBeforeR2: 1, R2Hours: 3, Grade: Strong, CeilingHours: 5, AtCeiling: CeilingAutoMerge},
 		rigor.Startup:  {RunsBeforeR2: 2, R2Hours: 6, Grade: Strong, CeilingHours: 9, AtCeiling: CeilingAutoMerge},
 		rigor.Pro:      {RunsBeforeR2: 3, R2Hours: 9, Grade: Strong, CeilingHours: 12, AtCeiling: CeilingAutoMergeNotify},
@@ -45,7 +45,7 @@ func TestDefaultThresholdsIsTheSpecTable(t *testing.T) {
 // vocabulary has to be given one here in the same change.
 func TestDefaultThresholdsHasEveryMode(t *testing.T) {
 	th := DefaultThresholds()
-	for _, mode := range rigor.Modes {
+	for _, mode := range rigor.Rigors {
 		if _, ok := th.Rows[mode]; !ok {
 			t.Errorf("%s has no row", mode)
 		}

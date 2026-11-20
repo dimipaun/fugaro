@@ -178,7 +178,7 @@ type NodeProgress struct {
 // group for falls back to the tier's own sample, which the basis says.
 //
 // now is the caller's clock, stamped on the answer.
-func EstimatePlan(doc Document, table *estimate.Table, state map[string]NodeProgress, maxRunning int, mode rigor.Mode, now time.Time) (Estimate, error) {
+func EstimatePlan(doc Document, table *estimate.Table, state map[string]NodeProgress, maxRunning int, mode rigor.Rigor, now time.Time) (Estimate, error) {
 	normalized, err := Normalize("the graph", doc)
 	if err != nil {
 		return Estimate{}, err

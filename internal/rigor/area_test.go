@@ -6,15 +6,15 @@ import (
 )
 
 // TestAreaValidateAcceptsTheShapeD20Names pins the rule D20c describes: a
-// name, a doublestar glob and a mode, all three there and all three usable.
+// name, a doublestar glob and a level, all three there and all three usable.
 func TestAreaValidateAcceptsTheShapeD20Names(t *testing.T) {
 	for _, a := range []Area{
-		{Name: "payments", Match: "internal/payments/**", Mode: Critical},
-		{Name: "admin UI", Match: "web/admin/*.tsx", Mode: Startup},
-		{Name: "poc-spike", Match: "**/*.spike.go", Mode: POC},
-		{Name: "one", Match: "a", Mode: Pro},
-		{Name: "ledger", Match: "internal/ledger/**", Mode: Hotfix},
-		{Name: strings.Repeat("n", MaxAreaName), Match: strings.Repeat("a", MaxAreaPattern), Mode: Pro},
+		{Name: "payments", Match: "internal/payments/**", Level: Critical},
+		{Name: "admin UI", Match: "web/admin/*.tsx", Level: Startup},
+		{Name: "poc-spike", Match: "**/*.spike.go", Level: POC},
+		{Name: "one", Match: "a", Level: Pro},
+		{Name: "ledger", Match: "internal/ledger/**", Level: Hotfix},
+		{Name: strings.Repeat("n", MaxAreaName), Match: strings.Repeat("a", MaxAreaPattern), Level: Pro},
 	} {
 		if msg := a.Validate(); msg != "" {
 			t.Errorf("%+v: Validate() = %q; want ok", a, msg)
@@ -32,24 +32,24 @@ func TestAreaValidateRefuses(t *testing.T) {
 		area Area
 		part string // a word the message must hold
 	}{
-		{"no name", Area{Match: "internal/**", Mode: Pro}, "name"},
-		{"empty name", Area{Name: "", Match: "internal/**", Mode: Pro}, "name"},
-		{"name with a newline", Area{Name: "pay\nments", Match: "a", Mode: Pro}, "name"},
-		{"name with a control character", Area{Name: "pay\x1bments", Match: "a", Mode: Pro}, "name"},
-		{"name with a bidi override", Area{Name: "pay‮ments", Match: "a", Mode: Pro}, "name"},
-		{"name starting with a space", Area{Name: " payments", Match: "a", Mode: Pro}, "name"},
-		{"name with a slash", Area{Name: "payments/ledger", Match: "a", Mode: Pro}, "name"},
-		{"name too long", Area{Name: strings.Repeat("n", MaxAreaName+1), Match: "a", Mode: Pro}, "name"},
-		{"no match", Area{Name: "payments", Mode: Pro}, "match"},
-		{"match too long", Area{Name: "payments", Match: strings.Repeat("a", MaxAreaPattern+1), Mode: Pro}, "match"},
-		{"absolute match", Area{Name: "payments", Match: "/internal/**", Mode: Pro}, "relative"},
-		{"match with a ..", Area{Name: "payments", Match: "../elsewhere/**", Mode: Pro}, ".."},
-		{"match with a .. in the middle", Area{Name: "payments", Match: "internal/../../etc/**", Mode: Pro}, ".."},
-		{"match doublestar rejects", Area{Name: "payments", Match: "internal/[", Mode: Pro}, "glob"},
-		{"match with an unclosed brace", Area{Name: "payments", Match: "internal/{a,b", Mode: Pro}, "glob"},
-		{"no mode", Area{Name: "payments", Match: "internal/**"}, "mode"},
-		{"mode with the wrong case", Area{Name: "payments", Match: "internal/**", Mode: "Critical"}, "mode"},
-		{"mode outside the vocabulary", Area{Name: "payments", Match: "internal/**", Mode: "strict"}, "mode"},
+		{"no name", Area{Match: "internal/**", Level: Pro}, "name"},
+		{"empty name", Area{Name: "", Match: "internal/**", Level: Pro}, "name"},
+		{"name with a newline", Area{Name: "pay\nments", Match: "a", Level: Pro}, "name"},
+		{"name with a control character", Area{Name: "pay\x1bments", Match: "a", Level: Pro}, "name"},
+		{"name with a bidi override", Area{Name: "pay‮ments", Match: "a", Level: Pro}, "name"},
+		{"name starting with a space", Area{Name: " payments", Match: "a", Level: Pro}, "name"},
+		{"name with a slash", Area{Name: "payments/ledger", Match: "a", Level: Pro}, "name"},
+		{"name too long", Area{Name: strings.Repeat("n", MaxAreaName+1), Match: "a", Level: Pro}, "name"},
+		{"no match", Area{Name: "payments", Level: Pro}, "match"},
+		{"match too long", Area{Name: "payments", Match: strings.Repeat("a", MaxAreaPattern+1), Level: Pro}, "match"},
+		{"absolute match", Area{Name: "payments", Match: "/internal/**", Level: Pro}, "relative"},
+		{"match with a ..", Area{Name: "payments", Match: "../elsewhere/**", Level: Pro}, ".."},
+		{"match with a .. in the middle", Area{Name: "payments", Match: "internal/../../etc/**", Level: Pro}, ".."},
+		{"match doublestar rejects", Area{Name: "payments", Match: "internal/[", Level: Pro}, "glob"},
+		{"match with an unclosed brace", Area{Name: "payments", Match: "internal/{a,b", Level: Pro}, "glob"},
+		{"no level", Area{Name: "payments", Match: "internal/**"}, "level"},
+		{"level with the wrong case", Area{Name: "payments", Match: "internal/**", Level: "Critical"}, "level"},
+		{"level outside the vocabulary", Area{Name: "payments", Match: "internal/**", Level: "strict"}, "level"},
 	}
 	for _, c := range cases {
 		msg := c.area.Validate()
@@ -71,7 +71,7 @@ func TestAreaValidateRefuses(t *testing.T) {
 // value with no pattern in it is the same mistake as an empty one (D20c).
 func TestAreaValidateRefusesAWhitespaceOnlyMatch(t *testing.T) {
 	for _, match := range []string{" ", "   ", "\t", " \t "} {
-		msg := Area{Name: "payments", Match: match, Mode: Pro}.Validate()
+		msg := Area{Name: "payments", Match: match, Level: Pro}.Validate()
 		if !strings.HasPrefix(msg, "must have a match") {
 			t.Errorf("Area{Match: %q}.Validate() = %q; want the missing-match refusal, not the glob one", match, msg)
 		}
@@ -84,23 +84,23 @@ func TestAreaValidateRefusesAWhitespaceOnlyMatch(t *testing.T) {
 // the person reading the pull request it governed — and a rule that gets the
 // generic shape message instead has lost that explanation.
 func TestAreaValidateSaysWhyTheNameIsRequired(t *testing.T) {
-	msg := Area{Match: "internal/**", Mode: Pro}.Validate()
+	msg := Area{Match: "internal/**", Level: Pro}.Validate()
 	if !strings.HasPrefix(msg, "must have a name") {
 		t.Errorf("Validate() = %q; want the missing-name refusal, not the shape one", msg)
 	}
-	if !strings.Contains(msg, "decided the mode") {
+	if !strings.Contains(msg, "decided the level") {
 		t.Errorf("Validate() = %q; want it to say what the name is for", msg)
 	}
 }
 
-// TestAreaValidateNamesTheVocabulary pins that the refusal for a bad mode is
-// one a reader can act on: it lists every mode the resolver knows, so a
+// TestAreaValidateNamesTheVocabulary pins that the refusal for a bad level is
+// one a reader can act on: it lists every level the resolver knows, so a
 // misspelt one is answered with the set it should have been drawn from.
 func TestAreaValidateNamesTheVocabulary(t *testing.T) {
-	msg := Area{Name: "payments", Match: "internal/**", Mode: "Poc"}.Validate()
-	for _, m := range Modes {
+	msg := Area{Name: "payments", Match: "internal/**", Level: "Poc"}.Validate()
+	for _, m := range Rigors {
 		if !strings.Contains(msg, string(m)) {
-			t.Errorf("the mode refusal %q does not name %q", msg, m)
+			t.Errorf("the level refusal %q does not name %q", msg, m)
 		}
 	}
 }

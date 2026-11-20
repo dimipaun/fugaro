@@ -1,9 +1,12 @@
 package creds
 
 // The issue client (B4, D2718): the calls the installation's orchestrator
-// daemon makes when it reads the open issues of a repository and opens one of
-// its own. The SERVICE performs the act with a token it mints and never hands
-// over; this client only asks for it (D2439's pattern, B3's route).
+// daemon makes when it reads the open issues of a repository, opens one of its
+// own, and — B9, D2720 — reads one issue back by number, which is what the
+// brief of a run for a backlog item is built from and what says whether the
+// issue still carries the text the item was approved with. The SERVICE performs
+// the act with a token it mints and never hands over; this client only asks for
+// it (D2439's pattern, B3's route).
 //
 // It is here for the label client's reasons (labelclient.go): this package is
 // the library the daemon is built on, the route's shapes are here already
@@ -15,7 +18,15 @@ package creds
 // The Issues interface below is this package's own rather than
 // internal/issuesync's, because that package sits ABOVE this one: what the
 // daemon's wiring adapts this client to is B4's seam, and the adapter is where
-// the two shapes meet.
+// the two shapes meet. IssueReader is the read the launcher's brief holds (B9):
+// the two are separate interfaces because a caller that briefs a run needs one
+// issue's own text and has no business listing or opening one, and the daemon
+// wires both to the one client below.
+//
+// Nothing here puts a value in an error. The service's own answer is read for
+// its status and its error code alone, and the sentence beside that code is
+// written for the operator's log and not for this caller, so it is dropped
+// rather than relayed.
 
 import (
 	"bytes"
@@ -42,12 +53,24 @@ type Issues interface {
 	Open(ctx context.Context, title, body string) (Issue, error)
 }
 
+// IssueReader is the issue route's read as the daemon's own library holds it:
+// one issue of the repository this client was built for, by number. It is what
+// a caller that needs the ticket's text depends on (B9, D2720), and it is
+// separate from Issues because briefing a run is not a capability that lists or
+// opens anything.
+type IssueReader interface {
+	Issue(ctx context.Context, number int) (Issue, error)
+}
+
 // maxIssueAnswerBytes bounds the answer this client reads. It is far larger
 // than the label client's because a listing answers with every open issue of
 // the repository and EVERY issue's body, which GitHub allows to be 64 KiB:
 // like the label route's listing, the size is a repository's and not a
 // constant, and this is a bound on a runaway answer rather than a size
-// estimate.
+// estimate. The read of one issue is held to the same bound for the same
+// reason: a body GitHub holds may be far longer than the 8000 characters the
+// open act accepts (that bound is the service's rule for text it WRITES, and
+// not a bound on what it reads back).
 const maxIssueAnswerBytes = 16 << 20
 
 // ServiceIssues is the issue route reached over HTTP at the installation's
@@ -82,8 +105,10 @@ type ServiceIssues struct {
 	IDToken func(ctx context.Context) (string, error)
 }
 
-// ServiceIssues is an Issues, which is what the daemon's wiring consumes.
+// ServiceIssues is an Issues, which is what the daemon's wiring consumes, and
+// an IssueReader, which is what the launcher briefs a run from.
 var _ Issues = (*ServiceIssues)(nil)
+var _ IssueReader = (*ServiceIssues)(nil)
 
 // ListOpen implements Issues.
 func (s *ServiceIssues) ListOpen(ctx context.Context) ([]Issue, error) {
@@ -128,6 +153,36 @@ func (s *ServiceIssues) Open(ctx context.Context, title, body string) (Issue, er
 	return issue, nil
 }
 
+// Issue implements IssueReader: it asks the service for issue number of this
+// client's repository, through the route's read act.
+//
+// What comes back is the issue as the service read it, body included: the
+// caller hashes the body, builds the brief from the text and stores neither
+// (D2720). The read answers a closed issue too, and this client does not refuse
+// one — whether a closed issue's item still launches is the state's question
+// (D2720's archive rule is the ingest's, B4) and not this route's.
+//
+// The number is refused here rather than by the service: a read that names no
+// issue is one no answer could be read from, and the refusal is this client's
+// own (ErrIssueIdentity), as the acts' own bounds are.
+func (s *ServiceIssues) Issue(ctx context.Context, number int) (Issue, error) {
+	if number < 1 {
+		return Issue{}, fmt.Errorf("%w: the read names no issue number", ErrIssueIdentity)
+	}
+	ans, err := s.call(ctx, IssueRequest{Action: IssueActionGet, Number: number})
+	if err != nil {
+		return Issue{}, err
+	}
+	if len(ans.Issues) != 1 || ans.Issues[0].Number != number {
+		// A read is for one issue and the service answers the one it was asked
+		// for: an answer that is empty would be read by the launcher as text no
+		// ticket carries, and one that names another issue would brief a run
+		// with a ticket the item is not about.
+		return Issue{}, fmt.Errorf("%w: the service's answer is not one issue's", ErrIssue)
+	}
+	return ans.Issues[0], nil
+}
+
 // call makes one issue call and answers what the service answered: the
 // repository, the App ID and the daemon's own ID token are this client's and
 // are added here, and the rest of the request is the act's.
@@ -143,9 +198,9 @@ func (s *ServiceIssues) call(ctx context.Context, req IssueRequest) (IssueAnswer
 		return IssueAnswer{}, fmt.Errorf("%w: the call names no repository (owner/name)", ErrIssueIdentity)
 	}
 	req.Repository, req.AppID = s.Repository, s.AppID
-	if req.Action != IssueActionList && req.Action != IssueActionOpen {
-		return IssueAnswer{}, fmt.Errorf("%w: the call names no act this client makes: it reads the open issues (%s) and opens one (%s)",
-			ErrIssueIdentity, IssueActionList, IssueActionOpen)
+	if req.Action != IssueActionList && req.Action != IssueActionGet && req.Action != IssueActionOpen {
+		return IssueAnswer{}, fmt.Errorf("%w: the call names no act this client makes: it reads the open issues (%s), reads one (%s) and opens one (%s)",
+			ErrIssueIdentity, IssueActionList, IssueActionGet, IssueActionOpen)
 	}
 	if err := checkServiceURL(s.URL, ErrIssue); err != nil {
 		return IssueAnswer{}, err
@@ -181,6 +236,18 @@ func (s *ServiceIssues) call(ctx context.Context, req IssueRequest) (IssueAnswer
 		return IssueAnswer{}, fmt.Errorf("%w: the service's answer is larger than an issue call's", ErrIssue)
 	}
 	if resp.StatusCode != http.StatusOK {
+		// A read of an issue the repository does not hold is the one refusal here
+		// that asking again cannot clear, and the caller decides something
+		// different on it: the launcher blocks the item it was reading the ticket
+		// for rather than retrying the launch (B9, D2720). The status is the whole
+		// of the evidence — the route's own error code is written for an operator's
+		// log and a service that answered "unavailable" beside a 404 would be
+		// telling two things at once — and the `get` act is the one it is answered
+		// for: the listing and the creation name no one issue. Every other status,
+		// and every answer to the other two acts, stays the route's own refusal.
+		if req.Action == IssueActionGet && resp.StatusCode == IssueGoneStatus {
+			return IssueAnswer{}, fmt.Errorf("%w: the service answered %d%s", ErrIssueGone, resp.StatusCode, refusalCode(data))
+		}
 		return IssueAnswer{}, fmt.Errorf("%w: the service answered %d%s", ErrIssue, resp.StatusCode, refusalCode(data))
 	}
 	var ans IssueAnswer

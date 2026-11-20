@@ -803,6 +803,56 @@ func TestUpdatePublishesTheFirstPolicyNodeForTheTriageSwitch(t *testing.T) {
 	}
 }
 
+// TestUpdatePublishesTheFirstPolicyNodeForTheReviewAgainstTaskSwitch is the same
+// member class for the switch RA8b gives the local config (R7, D2935): the
+// answer a project's runs read is the node's — a published false is the
+// project-wide default a repository's own true turns back on, and a written true
+// forces the check on — so a project whose config writes the switch and which
+// never published a node had left the owner's own ceiling in a file no run
+// reads, with `fugaro project policy publish` as the second command the HARD
+// RULE forbids. The check is reached by the key's presence rather than by its
+// value, the triage switch's rule one key over: what a first publish must not
+// leave behind is a member the node does not carry while the file states it.
+func TestUpdatePublishesTheFirstPolicyNodeForTheReviewAgainstTaskSwitch(t *testing.T) {
+	f := newProjectFixture(t, "review_against_task: false\n")
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "no policy is published") {
+		t.Errorf("the check does not say the project has no node: %q", st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the review-against-task switch") || strings.Contains(st.Detail, "the triage switch") {
+		t.Errorf("the check names a switch this config does not state: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "review_against_task") {
+		t.Errorf("the diff the operator confirmed does not name the switch it creates the node with:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if p.ReviewAgainstTask == nil || *p.ReviewAgainstTask {
+		t.Fatalf("the published node carries review_against_task %v, want the false the config writes", p.ReviewAgainstTask)
+	}
+}
+
 // TestUpdatePublishesTheFirstPolicyNodeForTheSubscriptionSwitch is the same
 // member class once more for the pools' subscription switch (F22, D1622,
 // D1636): the switch is read off the published node and nowhere else, and

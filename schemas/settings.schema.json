@@ -357,6 +357,9 @@
         "agent.review": {
           "default": "unset = none"
         },
+        "agent.review_against_task": {
+          "default": "unset = on (config.Agent.ReviewAgainstTaskOn)"
+        },
         "agent.review_rounds": {
           "default": "unset = the run's rigor mode decides (rigor.DefaultRounds)"
         },
@@ -745,13 +748,76 @@
         "governance.stage_budget": {
           "default": "unset = Fugaro's own stage budgets"
         },
+        "governance.stage_budget.fix": {
+          "default": "unset = Fugaro's own stage budgets"
+        },
+        "governance.stage_budget.implement": {
+          "default": "unset = Fugaro's own stage budgets"
+        },
+        "governance.stage_budget.review": {
+          "default": "unset = Fugaro's own stage budgets"
+        },
         "governance.stage_timeout": {
+          "default": "unset = Fugaro's own stage timeouts"
+        },
+        "governance.stage_timeout.fix": {
+          "default": "unset = Fugaro's own stage timeouts"
+        },
+        "governance.stage_timeout.implement": {
+          "default": "unset = Fugaro's own stage timeouts"
+        },
+        "governance.stage_timeout.review": {
           "default": "unset = Fugaro's own stage timeouts"
         },
         "governance.stage_tokens": {
           "default": "unset = Fugaro's own stage token caps"
         },
+        "governance.stage_tokens.fix": {
+          "default": "unset = Fugaro's own stage token caps"
+        },
+        "governance.stage_tokens.implement": {
+          "default": "unset = Fugaro's own stage token caps"
+        },
+        "governance.stage_tokens.review": {
+          "default": "unset = Fugaro's own stage token caps"
+        },
         "governance.tiers": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.large.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.large.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.large.max_subagents": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.medium.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.medium.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.medium.max_subagents": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.small.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.small.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.small.max_subagents": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.trivial.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.trivial.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.trivial.max_subagents": {
           "default": "unset = Fugaro's own tiers"
         },
         "image_catalog.entries.*.default": {
@@ -991,14 +1057,14 @@
         "layer.defaults.rigor.areas.*.match": {
           "default": "unset = none"
         },
-        "layer.defaults.rigor.areas.*.mode": {
+        "layer.defaults.rigor.areas.*.level": {
           "default": "unset = none"
         },
         "layer.defaults.rigor.areas.*.name": {
           "default": "unset = none"
         },
         "layer.defaults.rigor.default": {
-          "default": "unset = the built-in mode (pro)"
+          "default": "unset = the built-in level (pro)"
         },
         "layer.gcp_project": {
           "default": "unset = the installation's GCP project"
@@ -1215,7 +1281,7 @@
         },
         "local.version": {
           "$comment": "localcfg.ConfigVersion",
-          "default": "2"
+          "default": "3"
         },
         "log_view": {
           "default": "unset = the project's default logs"
@@ -1429,6 +1495,9 @@
         },
         "repos.*.workflows": {
           "default": "unset = every workflow the repository defines"
+        },
+        "review_against_task": {
+          "default": "unset = on: every review stage is handed the task its pull request was written for, and a written false is the project-wide default a repository's own true turns back on"
         },
         "review_floor": {
           "default": "unset = none: no floor is added"
@@ -1672,6 +1741,9 @@
         "workspace_cap.monthly": {
           "default": "unset = the workspace states no cap"
         },
+        "workspace_members.*.database_region": {
+          "default": "unset = the member's database lives in its project's default region"
+        },
         "workspace_members.*.exchange_url": {
           "default": "unset = none"
         },
@@ -1681,8 +1753,11 @@
         "workspace_members.*.fp": {
           "default": "unset = none"
         },
-        "workspace_members.*.job_service_accounts": {
+        "workspace_members.*.job_service_accounts.*.account": {
           "default": "unset = no job service account is declared for the member"
+        },
+        "workspace_members.*.job_service_accounts.*.repos": {
+          "default": "unset = the account is a job of no repository"
         },
         "workspace_members.*.repos": {
           "default": "unset = the member contributes no repository"
@@ -1698,6 +1773,18 @@
         },
         "workspace_pin.service_account": {
           "default": "unset = no workspace is pinned"
+        },
+        "workspace_pin.service_address": {
+          "default": "unset = this project takes no workspace credential"
+        },
+        "workspace_shared.*.covers": {
+          "default": "unset = the credential covers no repository"
+        },
+        "workspace_shared.*.kind": {
+          "default": "unset = the workspace offers no credential"
+        },
+        "workspace_shared.*.projects": {
+          "default": "unset = the credential is offered to no member"
         }
       }
     }
