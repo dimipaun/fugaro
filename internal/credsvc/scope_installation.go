@@ -224,12 +224,23 @@ func (sc installationScope) AcceptsSlip() bool { return true }
 // deployment carries an EMPTY table keeps it: empty says this installation
 // serves no repository, which is a different answer from "none was given" and
 // one this accessor must not overrule.
-func (sc installationScope) Repos() map[string]string {
-	if sc.s.cfg.Repos != nil {
-		return sc.s.cfg.Repos
+func (sc installationScope) Repos() map[string]string { return installationRepos(sc.s) }
+
+// installationRepos is that table, derived where the deployer set none, and it
+// is a function rather than a method body because the scope answers it twice:
+// this accessor answers the call's slug through it and the forge reader answers
+// the coverage from it (installationForge.Covers), and the two have to be the
+// same table. A coverage read off the CONFIGURED field alone would refuse a
+// repository the same deployment had just resolved and admitted — an
+// installation whose configuration carries no table resolves its repositories
+// from its job rows, and a coverage that did not follow would refuse every call
+// of such a deployment (WS16's gate is the first thing that asks).
+func installationRepos(s *Server) map[string]string {
+	if s.cfg.Repos != nil {
+		return s.cfg.Repos
 	}
-	out := make(map[string]string, len(sc.s.cfg.JobAccounts))
-	for _, ja := range sc.s.cfg.JobAccounts {
+	out := make(map[string]string, len(s.cfg.JobAccounts))
+	for _, ja := range s.cfg.JobAccounts {
 		out[ja.Slug] = ja.Repo
 	}
 	return out
@@ -332,8 +343,15 @@ func (f installationForge) Bitbucket() bbtokens.Selector {
 // Covers reports whether this call's forge traffic may reach the canonical
 // repository at all: an installation covers every repository its table holds,
 // which is every repository it serves.
+//
+// It reads the table through installationRepos, which is the very table this
+// scope's Repos accessor answers and not the configuration field beside it: a
+// deployment that set no table resolves its repositories from the job rows it
+// did give, and a coverage that read the field alone would refuse every one of
+// them — including the call whose canonical repository the pairing had just
+// resolved out of that same table. The two answers agree by construction (WS16).
 func (f installationForge) Covers(_ context.Context, canonical string) (bool, error) {
-	for _, held := range f.s.cfg.Repos {
+	for _, held := range installationRepos(f.s) {
 		if held == canonical {
 			return true, nil
 		}
