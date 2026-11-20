@@ -169,18 +169,19 @@ var settingSteps = []struct {
 	// The project layer's keys are published by the layer stage, which is the
 	// only writer of that file's cloud copy (D830).
 	{"layer.", false, []string{initflow.Layer}},
-	// The workspace OWNER's half of a membership: the member table and the cap
-	// are the whole of what this installation declares about its workspace
-	// (D1292, and update_workspace.go's own comment: the record a run publishes
-	// is the one its own config declares, `workspace_members` and
-	// `workspace_cap`). Both stages read that declaration — the workspace's own
-	// project, whose stage is the one that creates its service account and
-	// grant, and the record's own publish — so a key written here owes both,
-	// in initflow's order. They are the keys of the project the workspace is
-	// named after, and both stages do nothing on a member's run, where they are
-	// absent.
+	// The workspace OWNER's half of a membership: the member table, the cap and
+	// the shared list are the whole of what this installation declares about its
+	// workspace (D1292, and update_workspace.go's own comment: the record a run
+	// publishes is the one its own config declares, `workspace_members`,
+	// `workspace_cap` and `workspace_shared`). Both stages read that
+	// declaration — the workspace's own project, whose stage is the one that
+	// creates its service account and grant, and the record's own publish — so a
+	// key written here owes both, in initflow's order. They are the keys of the
+	// project the workspace is named after, and both stages do nothing on a
+	// member's run, where they are absent.
 	{"workspace_members.", false, []string{initflow.WorkspaceProject, initflow.Workspace}},
 	{"workspace_cap.", false, []string{initflow.WorkspaceProject, initflow.Workspace}},
+	{"workspace_shared.", false, []string{initflow.WorkspaceProject, initflow.Workspace}},
 	// The workspace MEMBER's half — the pin, and the membership key naming the
 	// workspace it trusts — owes no step: nothing publishes either. The
 	// workspace stage is the owner's and skips on a member, no other stage

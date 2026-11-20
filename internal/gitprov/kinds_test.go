@@ -88,6 +88,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/infra/discover_github.go":        "the kind every repository the App answers with carries",
 	"internal/infra/projectjobs.go":            "githubProvider, bitbucketProvider and sharedJobProviders: the shared coding jobs only GitHub has, and the implicit review job each kind gets",
 	"internal/infra/spec.go":                   "GitSecret, the git user and the credential the spec mounts",
+	"internal/localcfg/localcfg.go":            "the owner's shared list's own kind: the two forge kinds spelled as the route record spells them (WorkspaceSharedBitbucket, WorkspaceSharedGitHub, R4), beside the model kind that is no forge at all",
 	"internal/localcfg/select.go":              "ProviderHosts, the host each kind is reached at",
 	"internal/pluginwire/remove.go":            "the plugin wire's removal, and the source kind it refuses to take a pin out of",
 	"internal/pluginwire/status.go":            "the plugin wire's GitHub-only status form",

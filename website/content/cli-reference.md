@@ -11186,7 +11186,9 @@ Subcommands:
 - `fugaro workspace ls` -- List the workspaces this machine's project configs name
 - `fugaro workspace member` -- Declare how the workspace reaches one of its members
 - `fugaro workspace rm` -- Leave a workspace: drop this project's membership key and its pin
+- `fugaro workspace share` -- Offer one of the workspace's credentials to some of its members
 - `fugaro workspace show` -- Show one workspace from this machine's own files
+- `fugaro workspace unshare` -- Stop offering one of the workspace's credentials to its members
 
 ## `fugaro workspace add`
 
@@ -11202,15 +11204,27 @@ workspace's record, which carries none of them: a record that could supply them
 would aim this project's exchange and this project's database grant at a party
 of its choosing.
 
+--service-address is the address of the workspace's own credentials service, and
+it is optional: a pin without one is valid, and means this project takes no
+workspace credential. With it, this project's runs call that service for a
+credential the workspace holds and the project does not. It is this project's own
+value and never the workspace's, so nothing the workspace publishes can move
+where this project's calls go; it is https, with no query and no fragment.
+
 The issuer must be exactly https://securetoken.google.com/<firebase-project>.
 The signature is verified against Google's one published set of Firebase signing
 keys, the same document for every project, so the aud/iss pair is the whole of
 what tells one project's tokens from another's; a mistyped half is refused here
 and refused again at the load.
 
+The values given are the whole statement: an address this invocation does not
+name is dropped from the pin, so re-pinning without one is how a project stops
+taking a workspace credential.
+
 Only the keys it writes are rewritten: every comment and every other key of the
-file is kept. The write is local, and it reaches the installation through
-fugaro update.
+file is kept. The write is local, and this project's own fugaro update is what
+carries it to the runs, which publish the membership and the address inside the
+policy-side record they read at bootstrap.
 
 Usage: `fugaro workspace add <name>`
 
@@ -11223,6 +11237,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--issuer` | string | "" | no | the issuer the exchange requires; must be https://securetoken.google.com/<firebase-project> |
 | `--service-account` | string | "" | no | the workspace service account this project's grant binds to |
+| `--service-address` | string | "" | no | the workspace's own credentials service, https with no query or fragment; omit it for a project that takes no workspace credential |
 
 Subcommands:
 
@@ -11388,8 +11403,25 @@ exchange URL (where the workspace's signer mints a member-bound assertion for).
 --repo names a repository the member contributes to the workspace, and is
 repeatable.
 
+Every job service account carries the repositories it is a job of, one
+--job-repos <account>=<owner/name> per repository, at least one per account: the
+workspace's service holds a run's verified repository to the calling account's
+own list, so an account whose jobs the table cannot state is a caller no run of
+it could be served for. One repository is the ordinary case — a repository's own
+job is a job of that repository — and a shared project job serving several
+repositories names all of them. A pattern is refused where a repository is
+asked for, because a pattern is a promise about what the account may be a job of
+rather than the jobs it is.
+
+--database-region is where the member's Realtime Database lives, and it is
+optional: a database in the project's default region needs none. It is never
+whose database it is — that is derived from the Firebase project the verified
+iss names, so an owner cannot pair one member's accounts with another's
+database — and this says only where in that project it lives.
+
 A member the table already declares is replaced whole: the entry ends up
-holding the four values given and the repositories named, and nothing else. A
+holding the four values given, the accounts with their repositories, the
+database region and the repositories named, and nothing else. A
 re-declaration is therefore how a retired or compromised job service account
 leaves the table, and it asks for the workspace's own project name because what
 it removes is what the workspace trusted. Use fugaro workspace member rm to drop
@@ -11406,10 +11438,12 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--database-region` | string | "" | no | the region of the member's Realtime Database; omit it for a database in the project's default region |
 | `--exchange-url` | string | "" | no | the member's exchange endpoint, where the workspace's signer mints a member-bound assertion for |
 | `--firebase-project` | string | "" | no | the member's Firebase project ID, which the caller's token is issued under |
 | `--fp` | string | "" | no | the member's Fugaro project name, which the token's fp claim must be |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--job-repos` | stringArray | `[]` | no | a repository a job service account is a job of, as <account>=<owner/name> (repeatable; every account needs at least one) |
 | `--job-service-account` | stringArray | `[]` | no | a job service account of the member, which the workspace's service resolves a caller by (repeatable) |
 | `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--repo` | stringArray | `[]` | no | a repository the member contributes to the workspace, as owner/name (repeatable) |
@@ -11472,6 +11506,50 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro workspace share`
+
+Offer one of the workspace's credentials to some of its members
+
+Write one entry into the workspace owner's own shared list.
+
+The credential is named as the workspace's bundle holds it — a model credential
+by its own name, the Bitbucket token as bitbucket-token, the GitHub App's key as
+github-app-key — and what it is for is derived from that name, so there is no
+kind to state and none to get wrong.
+
+--projects names the members this credential may be served to, as a comma
+separated list or repeated, and each must be a member the workspace's own table
+declares: a shared entry naming a project the table does not is an entry the
+workspace's own fugaro update refuses to publish. --covers names the
+repositories a forge credential reaches, as owner/name, and it is required for
+bitbucket and github and refused for a model credential, which a call names no
+repository for.
+
+An entry the list already holds is replaced whole, as a member entry is: the
+projects and the coverage it ends up with are the ones given, so re-sharing is
+how a project or a repository leaves the entry. Use fugaro workspace unshare to
+drop it altogether.
+
+Only the keys it writes are rewritten: every comment and every other key of the
+file is kept. The write is local; the owner's fugaro update publishes the list
+in the record the workspace's service reads.
+
+Usage: `fugaro workspace share <credential> --workspace <name> --projects a,b`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--covers` | stringArray | `[]` | no | a repository a forge credential reaches, as owner/name (repeatable; required for bitbucket and github) |
+| `-h`, `--help` | bool | `false` | no | help for share |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
+| `--projects` | stringSlice | `[]` | no | the member projects this credential may be served to, comma separated or repeated |
+| `--workspace` | string | "" | no | the workspace whose list this is (required: an entry belongs to one workspace) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro workspace show`
 
 Show one workspace from this machine's own files
@@ -11502,6 +11580,35 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for show |
 | `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace unshare`
+
+Stop offering one of the workspace's credentials to its members
+
+Remove one entry from the workspace owner's own shared list.
+
+The workspace's service stops offering the credential to every member, and a
+member's run that was served it from here is refused at the front door until the
+entry is written again. The member's own policy is not this command's to change,
+and neither is its config.
+
+Only the entry it removes is rewritten: every comment and every other key of the
+file is kept. The write is local; the owner's fugaro update publishes the list
+without it.
+
+Usage: `fugaro workspace unshare <credential> --workspace <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for unshare |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
+| `--workspace` | string | "" | no | the workspace whose list this is (required: an entry belongs to one workspace) |
 
 Subcommands:
 

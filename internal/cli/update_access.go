@@ -53,9 +53,9 @@ import (
 //     that read an older node (F29a, TestRevokeIsNotUndoneByAStaleDerive).
 //
 // The version-1 keys retire with the migration and are never written again:
-// they are the file's spelling of the two lists, the file is written as version
-// 2 after an apply (ConfigVersion), and the grants node is what the next run
-// reads. A member form no grant can hold — `group:`, `domain:`,
+// they are the file's spelling of the two lists, the file is written at the
+// current ConfigVersion after an apply, and the grants node is what the next
+// run reads. A member form no grant can hold — `group:`, `domain:`,
 // `serviceAccount:` — stays a LEGACY IAM-ONLY member (F25): the CLI cannot match
 // a caller's groups, so the node cannot rank it, and the member keeps the IAM
 // grant it had by being carried into every derived list.

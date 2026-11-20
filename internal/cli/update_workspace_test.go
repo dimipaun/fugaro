@@ -36,7 +36,9 @@ import (
 const wsOwnerTable = `workspace_members:
   member-b:
     job_service_accounts:
-      - job-account-b@member-b-gcp.iam.gserviceaccount.com
+      - account: job-account-b@member-b-gcp.iam.gserviceaccount.com
+        repos:
+          - owner/repo-b
     firebase_project: member-b-fb
     fp: member-b
     exchange_url: https://exchange.example.com/v1
@@ -53,7 +55,9 @@ const wsOwnerCap = "workspace_cap:\n  monthly: 25\n"
 // reserves for the owner's own session (D1555).
 const wsOwnerTwoMembers = wsOwnerTable + `  member-d:
     job_service_accounts:
-      - job-account-d@member-d-gcp.iam.gserviceaccount.com
+      - account: job-account-d@member-d-gcp.iam.gserviceaccount.com
+        repos:
+          - owner/repo-d
     firebase_project: member-d-fb
     fp: member-d
     exchange_url: https://exchange.example.com/v1

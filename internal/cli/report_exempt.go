@@ -309,6 +309,8 @@ var exemptAnswers = map[string]string{
 	"workspace cap set":          "records the workspace's own cap in the local config, and prints the row it wrote",
 	"workspace member add":       "declares one member and prints the entry it wrote into the workspace's table",
 	"workspace member rm":        "stops declaring one member and prints the entry it dropped from the table",
+	"workspace share":            "writes one credential into the workspace owner's shared list, and prints the entry it wrote",
+	"workspace unshare":          "drops one credential from the workspace owner's shared list, and prints the entry it dropped",
 	"workspace rm":               "leaves a workspace, and prints the membership key and pin it dropped",
 	"accounts craft":             "prints its own help: the work is in the set and rm subcommands beside it",
 	"accounts craft rm":          "drops one craft from this machine's project config, records the removal and prints what it dropped",

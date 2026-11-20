@@ -1471,25 +1471,33 @@ var localRows = []Row{
 	// read has to be able to name.
 	loc("repos.*.credentials_service_ready", "false: no update has applied this repository's root with the service on — its bundle holds no model credential, or its agent.auth is not the cascade", "project", docSetup),
 
-	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all eleven of
+	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all seventeen of
 	// them local-only: the pin is the member's own trust and the member table
-	// is the workspace owner's own declaration, and a launcher who could write
-	// either into the shared file could aim this project's exchange and this
-	// project's database grant (internal/cli/sharedcfg.go's sharedForbidden).
-	// Their owner is the `fugaro workspace` family, so the generic writer
-	// refuses them (D853) — a member entry and a pin are written whole by the
-	// commands that know what the four values have to agree about.
+	// and shared list are the workspace owner's own declaration, and a launcher
+	// who could write any of them into the shared file could aim this project's
+	// exchange, this project's database grant and this project's calls, or
+	// choose what the workspace's credentials service offers
+	// (internal/cli/sharedcfg.go's sharedForbidden). Their owner is the `fugaro
+	// workspace` family, so the generic writer refuses them (D853) — a member
+	// entry, a pin and a shared entry are written whole by the commands that
+	// know what the values have to agree about.
 	locLocal("workspace", "this project is a member of no workspace", "workspace", docWorkspace),
 	locLocal("workspace_pin.firebase_project", "no workspace is pinned", "workspace", docWorkspace),
 	locLocal("workspace_pin.issuer", "no workspace is pinned", "workspace", docWorkspace),
 	locLocal("workspace_pin.assertion_key", "no workspace is pinned", "workspace", docWorkspace),
 	locLocal("workspace_pin.service_account", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_pin.service_address", "this project takes no workspace credential", "workspace", docWorkspace),
 	locLocal("workspace_members.*.repos", "the member contributes no repository", "workspace", docWorkspace),
-	locLocal("workspace_members.*.job_service_accounts", "no job service account is declared for the member", "workspace", docWorkspace),
+	locLocal("workspace_members.*.job_service_accounts.*.account", "no job service account is declared for the member", "workspace", docWorkspace),
+	locLocal("workspace_members.*.job_service_accounts.*.repos", "the account is a job of no repository", "workspace", docWorkspace),
+	locLocal("workspace_members.*.database_region", "the member's database lives in its project's default region", "workspace", docWorkspace),
 	locLocal("workspace_members.*.firebase_project", "none", "workspace", docWorkspace),
 	locLocal("workspace_members.*.fp", "none", "workspace", docWorkspace),
 	locLocal("workspace_members.*.exchange_url", "none", "workspace", docWorkspace),
 	locLocal("workspace_cap.monthly", "the workspace states no cap", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.kind", "the workspace offers no credential", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.projects", "the credential is offered to no member", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.covers", "the credential covers no repository", "workspace", docWorkspace),
 
 	// The terminal Issues section's nudge thresholds (T-IS15). They are
 	// local-only rather than loc's two layers: the section is printed on the
@@ -1802,7 +1810,7 @@ var defaultValues = map[string]Default{
 	// release writes for a file that sets it nowhere (localcfg.Parse), which is
 	// localcfg.ConfigVersion, so the value is written here and read back out of
 	// a parsed config like the two above.
-	"local.version": value("2", "localcfg.ConfigVersion"),
+	"local.version": value("3", "localcfg.ConfigVersion"),
 	// The Issues section's nudge thresholds (T-IS15): the loader answers the
 	// constants for a file that sets neither, through the accessors rather
 	// than the fields, so "the file wrote nothing" and "the file wrote the
