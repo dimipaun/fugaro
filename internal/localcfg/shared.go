@@ -77,11 +77,12 @@ func (c *Config) Shared() *Config {
 	// The published document is version 1 whatever the file it was read from
 	// says, because the version is what a READER refuses by name and the
 	// published document is the one thing here a teammate's older Fugaro meets
-	// first: ConfigVersion 2 renamed the two lists in the terraform block, and
-	// this copy carries no terraform block at all (dropped on the next line),
-	// so nothing in it is version 2's. Publishing this machine's 2 would stop
-	// every teammate whose Fugaro is not upgraded yet with "version 2 is newer
-	// than the 1 this Fugaro writes ... then run fugaro update" — a sentence
+	// first: ConfigVersion 2 renamed the two lists in the terraform block and
+	// version 3 the member table's accounts, and this copy carries neither the
+	// terraform block nor the member table (both dropped below), so nothing in
+	// it is either version's. Publishing this machine's ConfigVersion would
+	// stop every teammate whose Fugaro is not upgraded yet with "version N is
+	// newer than the 1 this Fugaro writes ... then run fugaro update" — a sentence
 	// naming a command they cannot run until the shared config they are
 	// refused by is readable again.
 	s.Version = SharedVersion
