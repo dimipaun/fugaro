@@ -107,6 +107,16 @@ await egress.speak({ text, project, route, now, state, status, localFailed });
 await egress.decide({ direction, route, project, now, state, status });   // the gate, without the send
 ```
 
+**The direction is the method's.** `transcribe` sends to the hop's STT route and
+`speak` to its TTS route, so the badge each is judged by -- P5.3.6's switch and
+the recorded consent -- is that direction's and only that one; neither method
+reads a `direction` from its input, and one passed anyway changes nothing.
+`decide`, which sends nothing, is where a direction is genuinely the caller's.
+And a field a caller left out is not a sentinel: `state` and `route` are `null`
+when the app means "no action history" and "the local engine could not hear the
+user", and an **absent** one is served locally (`state-unreadable`,
+`route-unreadable`) rather than read as either.
+
 **No credential of its own, and no host of its own.** The request is
 `Authorization: Bearer <Firebase ID token>`, the audio or the text as the body,
 the project in `X-Fugaro-Project`, `credentials: 'omit'`, `redirect: 'error'` and
@@ -194,7 +204,7 @@ will stop it is here, and `switch.test.js` is where it is proved.
 ## The mutation proof
 
 ```sh
-mobile/src/voice-switch/mutation-proof.sh    # 57 guards, one planted bug each
+mobile/src/voice-switch/mutation-proof.sh    # 61 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
@@ -208,7 +218,8 @@ draw), `hop.js` with `hop.test.js` (the allow-list, the token, the ambient
 credential, the redirect, the bound, the engine name, an unknown reason, the
 status-failure table and the status answer's shape -- the badge's input and
 nothing beside it) and `egress.js` with `egress.test.js` (§5's rules, one
-mutation each), plus `src/voice/screen.js` with `screen.test.js` for the badge
+mutation each -- including the two sentinels that are `null` and never
+`undefined`, and the direction each method owns rather than takes), plus `src/voice/screen.js` with `screen.test.js` for the badge
 that is in the snapshot before the switch answers and the engine tag read when
 the utterance arrives. It finds a working node rather than assuming one (the base carries none,
 `docs/base-image.md`), proves the pristine suite green and a planted
