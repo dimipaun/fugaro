@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1642,5 +1643,219 @@ func TestReviewRefusesABitbucketRepositoryTheNodeDoesNotBroker(t *testing.T) {
 		"fugaro run --pr N --recipe "+reviewOnlyRecipe)
 	if !strings.Contains(err.Error(), bbRepo) {
 		t.Errorf("the refusal does not name the repository whose access is not brokered: %q", err.Error())
+	}
+}
+
+// writeSpecFile writes text to a file and returns its path: the FILE that
+// `fugaro review --spec FILE` (and `fugaro run --recipe … --spec FILE`) reads.
+func writeSpecFile(t *testing.T, text string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "spec.md")
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestReviewCodeOnlyAndSpecRefused is R11's first half (spec §5): the two flags
+// ask a review for different things — no task at all, and this file's text as
+// the task — so giving both is refused at launch, naming both, before anything
+// is read or started.
+func TestReviewCodeOnlyAndSpecRefused(t *testing.T) {
+	f := newCloudFixture(t)
+	spec := writeSpecFile(t, "rename the gadget")
+	wantReviewRefused(t, f, []string{"--pr", "7", "--code-only", "--spec", spec},
+		"--code-only and --spec", "Give one of the two")
+}
+
+// TestReviewSpecFlagOnNonReviewRecipeRefused is R11's second half: each flag
+// asks for a review, so on a launch that is not one — an ordinary recipe, or a
+// follow-up, which is a fix round — the flag is refused by name rather than
+// accepted and silently ignored.
+func TestReviewSpecFlagOnNonReviewRecipeRefused(t *testing.T) {
+	f := newCloudFixture(t)
+	spec := writeSpecFile(t, "rename the gadget")
+	for _, tc := range []struct {
+		name string
+		args []string
+		flag string
+	}{
+		{"--code-only on an ordinary recipe", []string{"run", "rename the gadget", "--repo", "acme/app", "--recipe", "default", "--code-only"}, "--code-only"},
+		{"--spec on an ordinary recipe", []string{"run", "rename the gadget", "--repo", "acme/app", "--recipe", "default", "--spec", spec}, "--spec"},
+		{"--code-only on a follow-up", []string{"run", "--repo", "acme/app", "--pr", "7", "--code-only"}, "--code-only"},
+		{"--spec on a follow-up", []string{"run", "--repo", "acme/app", "--pr", "7", "--spec", spec}, "--spec"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wantRefused(t, f, tc.flag, tc.args...)
+		})
+	}
+}
+
+// TestReviewSpecFileTooLarge is R4's other half for the one text a person hands
+// in: a stored task is clipped, but a file over the cap is refused with its
+// size, since a person can trim a file and the launcher can vouch for nothing
+// it did not write.
+func TestReviewSpecFileTooLarge(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+reviewSpecSince)
+	big := writeSpecFile(t, strings.Repeat("a line of the brief\n", 2000)) // 40000 bytes, over the 16 KiB cap
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "review-only", "--pr", "7",
+		"--run-id", "20261119-100000-abcd", "--spec", big)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("--spec over the cap: err = %v, want exit 1", err)
+	}
+	for _, want := range []string{strconv.Itoa(40000), strconv.Itoa(task.MaxReviewSpecBytes)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("--spec over the cap refused with %q, want it to name %s", err.Error(), want)
+		}
+	}
+}
+
+// TestReviewSpecFileRedacted is R13: a --spec FILE is text a launcher adds, so
+// it is redacted with redact.Text before it is written — no credential a file
+// happens to quote reaches the reviewer — and a file is no run, so the spec
+// carries no run id.
+func TestReviewSpecFileRedacted(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+reviewSpecSince)
+	token := "ghp_" + strings.Repeat("a1B", 12)
+	path := writeSpecFile(t, "the token is "+token+"\nrename the gadget")
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "review-only", "--pr", "7",
+		"--run-id", "20261119-100000-abcd", "--spec", path); err != nil {
+		t.Fatalf("a review against a --spec file: %v", err)
+	}
+	rs := readSpec(t, f, "20261119-100000-abcd").ReviewSpec
+	if rs == nil || rs.Source != task.ReviewSpecFile {
+		t.Fatalf("review spec = %+v, want the file's own text as the spec", rs)
+	}
+	if rs.Run != "" {
+		t.Errorf("review spec names the run %q, and a file a person supplied is not a run", rs.Run)
+	}
+	if strings.Contains(rs.Text, token) {
+		t.Error("the spec carries the token the file quotes")
+	}
+	if !strings.Contains(rs.Text, redactedMarker) {
+		t.Errorf("the spec carries no %s where the token was: %q", redactedMarker, rs.Text)
+	}
+}
+
+// TestReviewCodeOnlyLaunchesWithoutATask is spec §3 through the whole command:
+// --code-only writes a spec of no spec whose reason is the flag, so the review
+// job judges the code alone and records why.
+func TestReviewCodeOnlyLaunchesWithoutATask(t *testing.T) {
+	f := newReviewFixture(t)
+	// The fixture's own base image is as old as the policy node it has to read,
+	// and a review launched onto it has its spec dropped (reviewSpecSkew,
+	// D2933): this test is about the field the flag writes, so the installation
+	// is put on a release that carries it — the other test covers the drop.
+	setBaseImage(t, reviewSpecSince)
+	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+	if _, _, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal", "--code-only"); err != nil {
+		t.Fatalf("fugaro review --code-only: %v", err)
+	}
+	ref := storedRunRef(t, f.cloudFixture)
+	slug, id, err := parseRunRef(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs := reviewTaskSpec(t, f.cloudFixture, slug, id).ReviewSpec
+	if rs == nil || rs.Source != task.ReviewSpecNone || rs.Reason != launchSpecCodeOnly {
+		t.Fatalf("review spec = %+v, want source none with the reason %q", rs, launchSpecCodeOnly)
+	}
+}
+
+// TestReviewOldImageJSONCarriesReason is D2933 as amended: an older job image
+// gets none of the fields and the launcher says why in one line — and the
+// launch's --json document carries the same reason, so a caller that reads only
+// the document is told why the review judged the code alone.
+func TestReviewOldImageJSONCarriesReason(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, reviewSpecSince, -1))
+	seedLaunchRoot(t, f, rootID, "Rename the gadget", 7, time.Now().Add(-72*time.Hour))
+	out, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "review-only", "--pr", "7",
+		"--run-id", "20261119-100000-abcd", "--json")
+	if err != nil {
+		t.Fatalf("launching a review on an older image: %v", err)
+	}
+	var res launchResult
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("the launch's --json document: %v\n%s", err, out)
+	}
+	if res.ReviewSpecReason == "" {
+		t.Fatalf("the document carries no reason for the dropped spec:\n%s", out)
+	}
+	for _, want := range []string{reviewSpecSince, "judges the code alone"} {
+		if !strings.Contains(res.ReviewSpecReason, want) {
+			t.Fatalf("the document's reason is %q, want it to name %s", res.ReviewSpecReason, want)
+		}
+	}
+}
+
+// TestReviewShowAgainstLine is R8's reader: `fugaro review show` prints one
+// line saying what the review was checked against — the run whose task it was,
+// the digest of a hand-supplied file, or none with the reason — beside the
+// artifact it already printed, and never in --json, whose bytes are the ones
+// the service signed.
+func TestReviewShowAgainstLine(t *testing.T) {
+	f := newCloudFixture(t)
+	digest := strings.Repeat("ab", 32)
+	for _, tc := range []struct {
+		name    string
+		against string
+		want    string
+	}{
+		{"a run's task", `{"source":"run","run":"` + rootID + `","sha256":"` + digest + `"}`, "against: run " + rootID},
+		{"a hand-supplied file", `{"source":"file","sha256":"` + digest + `"}`, "against: file " + digest},
+		{"no task at all", `{"source":"none","reason":"` + launchSpecCodeOnly + `"}`, "against: none (" + launchSpecCodeOnly + ")"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := wallRunIDAt(0, "120000", "5eed")
+			artifact := `{"version":1,"pr":7,"verdict":"comment","against":` + tc.against + `}`
+			putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/"+runstore.ArtifactPrefix+runner.ReviewArtifactName, []byte(artifact))
+			putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/"+runstore.ArtifactPrefix+runner.ReviewMarkdownName, []byte("# Review\n"))
+			ref := appSlug + "/" + id
+
+			out, _, err := reviewCLI(t, "show", ref)
+			if err != nil {
+				t.Fatalf("review show %s: %v", ref, err)
+			}
+			lines := 0
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(line, "against:") {
+					lines++
+					if line != tc.want {
+						t.Errorf("review show printed %q, want %q", line, tc.want)
+					}
+				}
+			}
+			if lines != 1 {
+				t.Errorf("review show printed %d against: lines, want one:\n%s", lines, out)
+			}
+
+			asJSON, _, err := reviewCLI(t, "show", ref, "--json")
+			if err != nil {
+				t.Fatalf("review show --json %s: %v", ref, err)
+			}
+			if asJSON != artifact+"\n" {
+				t.Errorf("review show --json printed %q, want the artifact's own bytes alone (%q)", asJSON, artifact+"\n")
+			}
+		})
+	}
+}
+
+// TestReviewShowNoAgainstLineForAnOlderArtifact: an artifact written before the
+// against field existed carries none, and a review show of one prints no line
+// rather than inventing what it was checked against.
+func TestReviewShowNoAgainstLineForAnOlderArtifact(t *testing.T) {
+	f := newCloudFixture(t)
+	id := wallRunIDAt(0, "120000", "5eed")
+	putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/"+runstore.ArtifactPrefix+runner.ReviewArtifactName, []byte(`{"version":1,"pr":7,"verdict":"comment"}`))
+	putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/"+runstore.ArtifactPrefix+runner.ReviewMarkdownName, []byte("# Review\n"))
+	out, _, err := reviewCLI(t, "show", appSlug+"/"+id)
+	if err != nil {
+		t.Fatalf("review show: %v", err)
+	}
+	if strings.Contains(out, "against:") {
+		t.Errorf("review show printed an against: line for an artifact that carries none:\n%s", out)
 	}
 }

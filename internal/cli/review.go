@@ -77,7 +77,15 @@ type reviewOptions struct {
 	pr     int
 	token  string
 	mutate []string
-	asJSON bool
+	// codeOnly and specFile are the two flags this command shares with
+	// `fugaro run --recipe review-only` (R11, D2934): the per-launch switch to
+	// review the code alone, and the FILE whose text is the task the diff is
+	// judged against. Both are resolved into the launch's spec by
+	// resolveLaunchSpec, the one resolver both verbs go through, and refused
+	// together or on a recipe that is not mode: review.
+	codeOnly bool
+	specFile string
+	asJSON   bool
 }
 
 func newReviewCmd() *cobra.Command {
@@ -115,6 +123,8 @@ func newReviewCmd() *cobra.Command {
 	f.IntVar(&o.pr, "pr", 0, "the pull request to review (required)")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this review runs as; default: agent.oauth_token in fugaro.yaml at the run's ref, else the project's default_claude_account")
 	f.StringArrayVar(&o.mutate, "mutate", nil, "ask for one mutation check, as <file:test>: the Go source in the reviewed head to flip and the Go test name that must then fail; at most one")
+	f.BoolVar(&o.codeOnly, "code-only", false, "review the pull request's code alone: the reviewer is given no task and judges the diff on its own merits, which is the behaviour before reviews checked the task. Refused with --spec")
+	f.StringVar(&o.specFile, "spec", "", "review against the task in this FILE instead of the task of the run that opened the pull request: the way to review a pull request no run produced. Its text is redacted like any other a launcher adds, and a file over "+fmt.Sprint(task.MaxReviewSpecBytes)+" bytes is refused with its size. Refused with --code-only")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
 	cmd.AddCommand(newReviewShowCmd())
@@ -128,6 +138,13 @@ func runReviewLaunch(cmd *cobra.Command, o *reviewOptions) error {
 	}
 	mutate, err := parseMutate(o.mutate)
 	if err != nil {
+		return err
+	}
+	// The two flags this command shares with `fugaro run --recipe review-only`,
+	// refused before the cloud is opened: the recipe below is checked to be
+	// mode: review on a line of its own, so only R11's first half — both flags
+	// together — can meet a review here, and it costs no read to say so.
+	if err := reviewSpecFlagsRefusal(o.codeOnly, o.specFile, recipe.ModeReview); err != nil {
 		return err
 	}
 	env, err := openCloud(ctx, o.cloud)
@@ -146,7 +163,8 @@ func runReviewLaunch(cmd *cobra.Command, o *reviewOptions) error {
 	if rr.Recipe.Mode != recipe.ModeReview {
 		return userErr("the recipe %q this review resolves is not a mode: review recipe, so there is no review to launch: it reviews nothing and never pushes. A project, agent or repository recipe of that name shadows the catalog's; rename it, or review the pull request with fugaro run --pr %d --recipe %s", oneLineCLI(rr.Name), o.pr, reviewOnlyRecipe)
 	}
-	o2 := &runOptions{repo: repo, pr: []int{o.pr}, token: o.token, asJSON: o.asJSON}
+	o2 := &runOptions{repo: repo, pr: []int{o.pr}, token: o.token, asJSON: o.asJSON,
+		codeOnly: o.codeOnly, specFile: o.specFile}
 	slug, spec, err := reviewSpec(ctx, env, o2, rr, "", 0, cmd.ErrOrStderr())
 	if err != nil {
 		return err
@@ -550,10 +568,51 @@ func runReviewShow(cmd *cobra.Command, o *reviewShowOptions, run string) error {
 	if err != nil {
 		return reviewArtifactUnreadable(run, err)
 	}
+	if line := reviewAgainstLine(data); line != "" {
+		if _, err := fmt.Fprintln(out, line); err != nil {
+			return err
+		}
+	}
 	if err := writeObject(out, data); err != nil {
 		return err
 	}
 	return writeObject(out, md)
+}
+
+// reviewAgainstLine is the one line `fugaro review show` prints saying what the
+// review judged the pull request against (R8): the run whose stored task it
+// was, the digest of a hand-supplied file, or none with the reason the launcher
+// wrote. It is read from the artifact's own bytes — the bytes --json prints
+// unpolluted — and the record is taken only when it holds up (Against.Validate),
+// so an artifact whose against is not one this build knows prints no line
+// rather than a line naming a source nobody defined.
+//
+// An artifact written before the field existed carries none, and none is what
+// this prints for it: nothing is better than inventing what an older review was
+// checked against. The line never reaches --json, whose bytes are the ones the
+// installation's credentials service signed.
+func reviewAgainstLine(data []byte) string {
+	var doc struct {
+		Against *runstore.Against `json:"against"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil || doc.Against == nil {
+		return ""
+	}
+	a := *doc.Against
+	if err := a.Validate(); err != nil {
+		return ""
+	}
+	switch a.Source {
+	case runstore.AgainstSourceRun:
+		return "against: run " + oneLineCLI(a.Run)
+	case runstore.AgainstSourceFile:
+		if a.SHA256 == "" {
+			return "against: file"
+		}
+		return "against: file " + a.SHA256
+	default:
+		return "against: none (" + oneLineCLI(a.Reason) + ")"
+	}
 }
 
 // reviewArtifactUnreadable words a failed read of a review artifact. The one
