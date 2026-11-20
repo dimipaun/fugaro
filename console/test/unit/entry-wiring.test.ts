@@ -6888,13 +6888,22 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     const readForTheQueue = calls.filter((call) => call.name === 'listRuns').length
 
     // The press is the read, and it is one read: the control says it was pressed
-    // and the section says it is reading again.
+    // and the section says it is reading again. The read this console makes is
+    // `runs ls --json` -- RS2 asks `runs.stream` first and falls back to the
+    // whole document, and a bridge with no new-operation member answers nothing
+    // for the stream, so the fallback is what goes out. It goes out through a
+    // promise (`newOpsFrom`), so it is the read's first microtask and not the
+    // click's own turn: one turn of the entry's own, and one read either way.
     buttonLabelled(panelOf(document), COORDINATOR_QUEUE_JOBS_WORD).click()
-    expect(calls.filter((call) => call.name === 'listRuns').length - readForTheQueue).toBe(1)
     expect(
       buttonLabelled(panelOf(document), COORDINATOR_QUEUE_JOBS_WORD).attributes.get('aria-expanded'),
+      'the control did not answer the press in its own turn',
     ).toBe('true')
-    expect(busyLabels(document)).toContain(COORDINATOR_QUEUE_BUSY)
+    expect(busyLabels(document), 'the section did not say it is reading again').toContain(
+      COORDINATOR_QUEUE_BUSY,
+    )
+    await flush()
+    expect(calls.filter((call) => call.name === 'listRuns').length - readForTheQueue).toBe(1)
 
     runs.release({ ok: true, data: { document: { runs: [QUEUE_RUN] } } })
     await flush()

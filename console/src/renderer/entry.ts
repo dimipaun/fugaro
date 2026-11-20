@@ -78,6 +78,9 @@
 import { putReading, putText, startConsole } from './app'
 import { ONBOARDING_COPY } from './installations'
 import { newOpsFrom } from './new-bridge'
+import { readStream } from './stream'
+import type { StreamWhole } from './stream'
+import type { NewOps } from '../shared/new-ops'
 import { readGate } from './gating'
 import { disabledWrite } from './writes'
 import type { CompatibilityBridge, MountLike, ScreenGate } from './app'
@@ -166,6 +169,7 @@ import {
   fillCoordinatorTotals,
   queueRuns,
   renderCoordinatorFrame,
+  waitingRuns,
   repoDetail,
   COORDINATOR_JOB_DETAIL_CLASS,
   COORDINATOR_JOBS_BUSY,
@@ -2584,6 +2588,22 @@ export const LIVE_RIGOR_TTL_MS = 15_000
 export const RUNS_SINCE = '24h'
 
 /**
+ * RUNS_LIST_OPERATION and RUNS_STREAM_OPERATION are the two reads the
+ * Coordinator's jobs part can be making, named as the console's operations are
+ * named (`src/shared/new-ops.ts`, `src/main/ipc.ts`): the whole document
+ * (`runs ls --json`), and the opt-in line-delimited read of the same command
+ * (`runs ls --stream --json`) that main registers as `runs.stream`.
+ *
+ * **A refusal names its own command**, and these two are different commands with
+ * different flags: a part that drew `runs.list` over a read that was
+ * `runs.stream` would be pointing the operator at a command the console did not
+ * run. Which one the part wears is the last read's own `source`
+ * (`readStream`) and not a property of the screen.
+ */
+export const RUNS_LIST_OPERATION = 'runs.list'
+export const RUNS_STREAM_OPERATION = 'runs.stream'
+
+/**
  * COORDINATOR_SUMMARY_SINCE is the window the Coordinator's fleet strip reads
  * its runs for: seven days.
  *
@@ -2931,7 +2951,12 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
   // with a guess. With no answer -- a CLI below `WHOAMI_CLI_FLOOR`, which is
   // unset until a release carries `--me`, a refusal, a bridge that cannot ask --
   // the gate allows every action and every control is drawn as it always was.
-  const roles = await readGate(newOpsFrom(scope.fugaro), gate.compatibility.cliVersion)
+  // One door is built and both callers share it: the gate's own read here, and
+  // the screens that ask a new operation when a control is pressed (`entry
+  // .ts`'s `DashboardDeps.ops`). Building it twice would be two objects with one
+  // behaviour, and the door holds nothing.
+  const ops = newOpsFrom(scope.fugaro)
+  const roles = await readGate(ops, gate.compatibility.cliVersion)
   const bridge = readBridgeFrom(scope.fugaro)
   let installation: unknown
   try {
@@ -2997,6 +3022,7 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     gate,
     roles,
     bridge,
+    ops,
     rail,
     railBridge,
     launchBridge: launchBridgeFrom(scope.fugaro),
@@ -3095,6 +3121,12 @@ interface DashboardDeps {
    * write control this console draws is disabled for is `roles.can(action)`. */
   readonly roles: Gate
   readonly bridge: ReadBridge
+  /** ops is the C-OPS door to the nine new operations (`newOpsFrom`), built once
+   * at startup and handed down rather than rebuilt by each screen: the read is
+   * made when a control is pressed and not when the door is made, so a screen
+   * that has one has everything a press needs. The Coordinator's jobs read is
+   * the first caller (`runs.stream`, RS2). */
+  readonly ops: NewOps
   /** rail is the installation rail, drawn before the dashboard was mounted and
    * updated from here: the Live half owns its state word, the two views that
    * read the budget fill its spend, and the shortcut keys select its rows. */
@@ -3146,7 +3178,7 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, roles, bridge, rail, railBridge, launchBridge, settingsBridge, moveBridge, licenceBridge, linkBridge, wiring, navigator, header } =
+  const { document, surface, gate, roles, bridge, ops, rail, railBridge, launchBridge, settingsBridge, moveBridge, licenceBridge, linkBridge, wiring, navigator, header } =
     deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
@@ -7316,6 +7348,18 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let frame: DrawnCoordinatorFrame | null = null
     let view: CoordinatorStatusView | null = held === null ? null : held.value
     let runs: readonly CoordinatorRunRow[] | null = null
+    /** runsPartial is whether `runs` is a list still arriving (`runs.stream`, RS2)
+     * rather than one the read answered with whole. It is the jobs part's half of
+     * the head's own rule -- the count stands over what the console has read, and
+     * a queue whose jobs are still being drawn is not a queue that holds nothing
+     * -- and it is cleared the moment the feed's `end` line lands or the
+     * whole-document read answers. */
+    let runsPartial = false
+    /** runsOperation is the command the jobs part's last read *was*: the stream
+     * where the operation answered, the whole document where it could not be
+     * asked (`readStream`'s fallback). A refusal names its own command, and the
+     * two are different commands. */
+    let runsOperation = RUNS_LIST_OPERATION
     let plans: PlanStatusView | null = null
     let caps: SpendCaps | null = null
     /** The pane's own read (K5): the declarations the store holds, the sentence a
@@ -7461,10 +7505,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * document answered with. */
     const refusalOperation: Readonly<Record<CoordinatorQueueSource, string>> = {
       document: 'coordinator.status',
-      runs: 'runs.list',
+      runs: RUNS_LIST_OPERATION,
       plans: 'plan.status',
       budget: 'budget.show',
     }
+    /** The jobs part's own label, which is the read's and not the table's: the
+     * stream and the whole document are two commands (`RUNS_STREAM_OPERATION`
+     * above), and `runsOperation` is whichever the last read was. */
+    const operationOf = (source: CoordinatorQueueSource): string =>
+      source === 'runs' ? runsOperation : refusalOperation[source]
 
     const pending = (sources: readonly CoordinatorQueueSource[]): boolean =>
       sources.some((source) => out.has(source))
@@ -7475,6 +7524,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       buildCoordinatorModel({
         view,
         runs,
+        runsWhole: !runsPartial,
         plans,
         caps: capsHidden ? null : caps,
         checkout,
@@ -7833,7 +7883,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         surface.nodeOf(host).replaceChildren()
         const sentence = sentences[source]
         if (sentence !== undefined) {
-          refusedInto(host, refusedScreen(factory, refusalOperation[source], sentence, theme), () =>
+          refusedInto(host, refusedScreen(factory, operationOf(source), sentence, theme), () =>
             reReadSource(source),
           )
           continue
@@ -8438,26 +8488,70 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      *
      * **It is the one read `start` does not make** (rule 5 of §6.2's opening):
      * `askForJobs` is its only caller on entry, and the press is what makes it
-     * go out. */
+     * go out.
+     *
+     * **It is also the one read of this screen that arrives in parts** (RS2,
+     * D2906: `runs ls --stream --json`). `readStream` asks the operation, hands
+     * the rows over one paint at a time, and each chunk redraws the queue from
+     * the rows read so far -- so the part fills and the head's own count grows
+     * with it, while `runsPartial` keeps the console from calling a queue it is
+     * still reading whole. The stream is read only where the operation can be
+     * asked at all: with no handler behind it, or a CLI below the floor that
+     * carries `--stream`, `readStream` runs the whole-document read below, which
+     * is what this screen did before the stream existed.
+     *
+     * **The section's own token decides which answer stays**: the read takes the
+     * queue's token, asks the section between its chunks (`current`), and is
+     * dropped where a later change has taken the part -- the same rule the other
+     * three reads follow, with the difference that this one draws several times
+     * before it lands. */
     const loadRuns = async (attempt: number): Promise<void> => {
-      const answer = documentOf(await bridge.listRuns({ since: RUNS_SINCE }))
+      const token = queueToken
+      /** runsDocument is the fallback: `runs ls --json`, read and decoded by the
+       * queue's own reader, exactly as this read was made before there was a
+       * stream. The queue refuses a page **whole** when a row cannot be read, and
+       * that refusal is the part's sentence -- not a list of the rows that
+       * happened to parse. */
+      const runsDocument = async (): Promise<StreamWhole<CoordinatorRunRow>> => {
+        const answer = documentOf(await bridge.listRuns({ since: RUNS_SINCE }))
+        if (!answer.ok) return { ok: false, sentence: answer.sentence }
+        const decoded = queueRuns(answer.data)
+        if (!decoded.ok) return { ok: false, sentence: decoded.skew.because }
+        return { ok: true, rows: decoded.value }
+      }
+      const result = await readStream<CoordinatorRunRow>({
+        stream: async () => {
+          const reply = await ops.streamRuns({ since: RUNS_SINCE })
+          if (!reply.ok) return reply
+          return {
+            ok: true,
+            value: { ...reply.value, rows: waitingRuns(reply.value.rows) },
+          }
+        },
+        document: runsDocument,
+        onRows: (rows) => {
+          if (attempts.runs !== attempt || stale(mine)) return
+          runsOperation = RUNS_STREAM_OPERATION
+          runs = rows
+          runsPartial = true
+          paintQueue()
+        },
+        current: () => !stale(mine) && coordinatorQueueRead.current(token),
+      })
       if (attempts.runs !== attempt) return
       out.delete('runs')
-      if (stale(mine)) return
-      runs = null
-      if (!answer.ok) sentences.runs = answer.sentence
-      else {
-        // The queue's own reader refuses a page **whole** when a row cannot be
-        // read, and the refusal is the section's own sentence -- the same state
-        // a read that failed draws -- rather than a list of the rows that
-        // happened to parse.
-        const decoded = queueRuns(answer.data)
-        if (!decoded.ok) sentences.runs = decoded.skew.because
-        else {
-          delete sentences.runs
-          runs = decoded.value
-        }
-      }
+      if (stale(mine) || !coordinatorQueueRead.current(token)) return
+      if (result.status === 'dropped') return
+      runsPartial = false
+      runsOperation = result.source === 'stream' ? RUNS_STREAM_OPERATION : RUNS_LIST_OPERATION
+      // **A list no read finished is not drawn as the part.** An interrupted
+      // feed (a cap in main ended it, the child was killed) and a read that
+      // failed leave the part with the sentence R1 draws and a Retry beside it:
+      // the rows that had arrived are not a shorter queue, and the console never
+      // hands a partial list over as the list.
+      runs = result.status === 'complete' ? result.rows : null
+      if (result.status === 'complete') delete sentences.runs
+      else if (result.sentence !== null) sentences.runs = result.sentence
       draw('runs')
     }
 
