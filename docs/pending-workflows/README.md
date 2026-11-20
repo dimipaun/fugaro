@@ -3252,6 +3252,96 @@ The first line is the one step that needs nothing but the binary; it goes beside
 
 **The command is verified green**, on the run that wrote this (2026-11-09): `terraform fmt -check -recursive ee/keyservice/terraform` prints nothing, `terraform -chdir=ee/keyservice/terraform/{keyring,services} init -backend=false -lockfile=readonly -input=false` and `validate` both succeed with terraform 1.16.4 and no credentials, and `GOFLAGS=-p=2 go test -tags terraform ./ee/keyservice/... -count=1` passes. Until it is applied, the suite runs where the plan's command runs it — a contributor's own machine, with the tag — and nowhere else.
 
+### Shard order and a gate for the live-script runners (2026-11-20)
+
+**Written down here rather than staged as a copy of `ci.yml`, for the reason the sections above give: a staged copy reddens the three guards that read this directory.** Two edits to `.github/workflows/ci.yml`, both measured on `main`'s CI run 44738180473 (16 minutes of wall time, longest runner 11 minutes).
+
+**What the run showed.** GitHub started 17 runners at once and held the other ten, and the matrix starts its entries in the order it lists them, so the longest runners that sit late in the list wait behind short ones: `scripts-live-0` ran 10m45s but began 5 minutes in, and `cli-4` began 6 minutes in. The 27 runners add up to about 175 runner-minutes, so with 17 at a time the floor is about ten minutes, and a runner that starts late sets the end.
+
+**Change 1: list the longest runners first.** In the `shard` job's `matrix.include`, the order becomes the one below and nothing else about an entry changes (a runner's name, package, index and count stay, so the release gate's and the timing artifacts' names do not move):
+
+    - {name: scripts-live-0, pkg: ./scripts, index: 0, of: 3, only: live}
+    - {name: scripts-live-1, pkg: ./scripts, index: 1, of: 3, only: live}
+    - {name: scripts-live-2, pkg: ./scripts, index: 2, of: 3, only: live}
+    - {name: cli-7, pkg: ./internal/cli, index: 7, of: 8, only: other}
+    - {name: cli-4, pkg: ./internal/cli, index: 4, of: 8, only: other}
+    - {name: cli-0, pkg: ./internal/cli, index: 0, of: 8, only: other}
+    - {name: runner-1, pkg: ./internal/runner, index: 1, of: 2}
+    - {name: cli-2, pkg: ./internal/cli, index: 2, of: 8, only: other}
+    - {name: runner-0, pkg: ./internal/runner, index: 0, of: 2}
+    - {name: rest-gcp, pkg: ./internal/backend/gcp, index: 0, of: 1}
+    - {name: issues-0, pkg: ./internal/issues, index: 0, of: 2}
+    - {name: cli-update, pkg: ./internal/cli, index: 0, of: 1, only: update}
+    - {name: cli-6, pkg: ./internal/cli, index: 6, of: 8, only: other}
+    - {name: cli-5, pkg: ./internal/cli, index: 5, of: 8, only: other}
+    - {name: cli-3, pkg: ./internal/cli, index: 3, of: 8, only: other}
+    - {name: scripts-0, pkg: ./scripts, index: 0, of: 2, only: nonlive}
+    - {name: cli-1, pkg: ./internal/cli, index: 1, of: 8, only: other}
+    - {name: rest-5, pkg: rest, index: 5, of: 6}
+    - {name: rest-3, pkg: rest, index: 3, of: 6}
+    - {name: rest-1, pkg: rest, index: 1, of: 6}
+    - {name: issues-1, pkg: ./internal/issues, index: 1, of: 2}
+    - {name: scripts-1, pkg: ./scripts, index: 1, of: 2, only: nonlive}
+    - {name: rest-plugin, pkg: ./plugin, index: 0, of: 1}
+    - {name: rest-images, pkg: ./images, index: 0, of: 1}
+    - {name: rest-4, pkg: rest, index: 4, of: 6}
+    - {name: rest-0, pkg: rest, index: 0, of: 6}
+    - {name: rest-2, pkg: rest, index: 2, of: 6}
+
+**Change 2: the live-script runners run when what they read changed.** Three runners and about 30 runner-minutes go to `TestLiveCheckScripts`, which drives the owner-run checks' shell scripts against fake tools. It reads `scripts/`, `internal/infra`, `internal/procgroup` and `internal/testutil` and nothing else in the tree, so a commit that touches none of them cannot change its result. CI is dispatched by hand and there is no pull request to diff, so the gate compares the commit with the head of the last successful `ci` run on `main`, which is the last commit whose live scripts passed or were carried from one that did.
+
+At the top of the file, one dispatch input and one permission:
+
+    on:
+      workflow_dispatch:
+        inputs:
+          live_scripts:
+            description: "auto runs the live-script runners when what they read changed; always runs them (use it for a release's gate run)"
+            type: choice
+            options: [auto, always]
+            default: auto
+    permissions:
+      contents: read
+      actions: read
+
+In the `changes` job, an output and a step after `diff`:
+
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+      live_scripts: ${{ steps.live.outputs.run }}
+    ...
+      - id: live
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.live_scripts }}
+        run: |
+          run=true
+          if [ "$MODE" != always ]; then
+            base=$(gh run list --workflow ci --branch main --status success --limit 1 --json headSha --jq '.[0].headSha' || true)
+            if [ -n "$base" ] && [ "$base" != "$GITHUB_SHA" ]; then
+              if files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$base...$GITHUB_SHA" --jq '.files[].filename'); then
+                if ! printf '%s\n' "$files" | grep -qE '^(scripts/|internal/infra/|internal/procgroup/|internal/testutil/|go\.(mod|sum)$|\.github/workflows/ci\.yml$)'; then
+                  run=false
+                fi
+              fi
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+Every doubt resolves to running them: no earlier green run, the same commit, a compare that fails, a changed file in the list, and the input `always` all leave `run=true`. In the `shard` job, `LIVE_SCRIPTS: ${{ needs.changes.outputs.live_scripts }}` joins the `go test -race` step's `env`, and the `live` branch of that step begins with a skip, so the runner finishes in seconds and the timing and artifact steps (which already tolerate a missing `test.json`) pass:
+
+          if [ "${ONLY:-}" = live ]; then
+            if [ "$LIVE_SCRIPTS" != true ]; then
+              echo "live-script runners skipped: nothing they read changed since the last green run"
+              exit 0
+            fi
+
+(the existing `LIVE_CHECK_SHARD=... go test ...` and `exit 0` follow unchanged, inside that `if`).
+
+**Two things this changes, said plainly.** A green `main` run no longer proves the live scripts ran on that commit, only that they did on the last commit that could change them; a release's gate run is dispatched with `-f live_scripts=always` so the tag's commit has them. And the floor of ten minutes is the runners' count, so the saving is largest on a commit that touches none of the four trees, where the three runners and their 30 minutes drop away.
+
+**What the owner runs**: edit `.github/workflows/ci.yml` by hand as above (the two edits touch the `on:` block, the `changes` job, the `shard` matrix order and one step), then `gh workflow run ci --ref main` and read the run's wall time.
+
 ## `core-without-ee.yml`
 
 **Status: `core-without-ee.yml` is applied, not pending.** It is licensing plan task **L1.7**: the check that the core builds and passes its tests with `ee/` deleted, which is the claim `LICENSING.md`, `ee/README.md` and the boundary tests under `internal/eeboundary/` all rest on. `ee/` is reserved for future organisation features under their own licence, and the one thing no test in this repository can do is delete the directory and run the suite without it — that needs a runner. One job, `core-without-ee`, on `ubuntu-latest`, `contents: read`, **no environment and no secret at all**, `timeout-minutes: 90`, every action pinned by full commit SHA: `rm -rf ee` (the deletion is never committed — it is the checkout's own working tree, which is why the job needs no write scope), then `go build ./...` and `go vet ./...` **with the default build tags**, then the tests in two steps.
