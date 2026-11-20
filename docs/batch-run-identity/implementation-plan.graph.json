@@ -1,0 +1,624 @@
+{
+  "schema_version": 3,
+  "plan": "docs/batch-run-identity/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the key-release wire",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/budget/token/wrap_contract.go",
+          "internal/credsvc/sealkey_wire.go",
+          "internal/credsvc/sealkey_stub.go",
+          "internal/localcfg/localcfg.go",
+          "internal/localcfg/batch_sealkey.go",
+          "docs/batch-run-identity/contract-key-release.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/credsvc/sealkey_stub.go"
+      ]
+    },
+    {
+      "id": "BRS",
+      "title": "the job definition, split along its seams",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/batch/run.go",
+          "internal/backend/batch/batch.go",
+          "internal/backend/batch/env.go",
+          "internal/backend/batch/seal.go",
+          "internal/backend/batch/account.go",
+          "internal/backend/batch/secrets.go",
+          "internal/backend/deployedjob.go"
+        ]
+      }
+    },
+    {
+      "id": "BR0",
+      "title": "Check 810, the probe",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-810.sh",
+          "scripts/live-checks/check-810_test.sh",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "BR1",
+      "title": "the backend wraps, or refuses",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/budget/token/wrap.go",
+          "internal/budget/token/wrap_test.go",
+          "internal/backend/batch/seal.go",
+          "internal/backend/batch/seal_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR2",
+      "title": "the release route",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/sealkey.go",
+          "internal/credsvc/sealkey_test.go",
+          "internal/credsvc/kmsopen.go",
+          "internal/credsvc/server.go",
+          "internal/credsvc/audit.go",
+          "internal/gcpfake/kms.go"
+        ]
+      }
+    },
+    {
+      "id": "BR3",
+      "title": "the link from a VM to its job",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/joblink.go",
+          "internal/credsvc/joblink_test.go",
+          "internal/gcpfake/batch.go"
+        ]
+      }
+    },
+    {
+      "id": "BR4",
+      "title": "the runner fetches its key",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/budget_session.go",
+          "internal/runner/sealkey_fetch.go",
+          "internal/runner/sealkey_fetch_test.go",
+          "internal/gitops/gitops.go"
+        ]
+      }
+    },
+    {
+      "id": "BR5",
+      "title": "the key and its grants",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/compute/**",
+          "deploy/terraform/gcp/roots/compute/**",
+          "internal/infra/tf/cover.go",
+          "internal/infra/tf/testdata/golden/**"
+        ]
+      }
+    },
+    {
+      "id": "BR6",
+      "title": "update applies the compute root",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_stages.go",
+          "internal/cli/init_compute.go",
+          "internal/cli/update.go",
+          "internal/infra/compute.go",
+          "internal/apply/steps.go",
+          "internal/cli/update_batch_test.go",
+          "docs/releases/**"
+        ]
+      }
+    },
+    {
+      "id": "BR7",
+      "title": "doctor and validate say where the carrier stands",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor_batch.go",
+          "internal/cli/doctor_batch_test.go",
+          "internal/cli/validate_batch.go",
+          "internal/cli/validate_batch_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR8",
+      "title": "a Batch job carries what a deployed job carries",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/batch/env.go",
+          "internal/backend/batch/env_test.go",
+          "internal/backend/launchenv.go"
+        ]
+      }
+    },
+    {
+      "id": "BR9",
+      "title": "the runner places a Batch run",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/projectjob.go",
+          "internal/runner/projectjob_batch_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR10",
+      "title": "Batch runs a project job's workflow",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/batch/account.go",
+          "internal/backend/batch/account_test.go",
+          "internal/backend/batch/run.go"
+        ]
+      }
+    },
+    {
+      "id": "BR11",
+      "title": "nothing is mounted on a Batch job",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/batch/secrets.go",
+          "internal/cli/launch_batch.go",
+          "internal/cli/launch_batch_test.go",
+          "internal/cli/run.go",
+          "internal/cli/doctor_batch.go"
+        ]
+      }
+    },
+    {
+      "id": "BR12",
+      "title": "the documents",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "SECURITY.md",
+          "website/content/security.md",
+          "docs/backends.md",
+          "docs/design/budget-token-channel.md",
+          ".claude/rules/credentials-service.md"
+        ]
+      }
+    },
+    {
+      "id": "BR13",
+      "title": "Check 811, the proof",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-811.sh",
+          "scripts/live-checks/check-811_test.sh",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "integration",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/sealkey_stub.go",
+          "internal/credsvc/server.go",
+          "internal/cli/cloud.go",
+          "internal/cli/batch_identity_end_to_end_test.go",
+          "internal/cli/update_in_flight_batch_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "R-C1-link-permission",
+      "title": "amend the key-release wire: the link's permission",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/sealkey_wire.go",
+          "docs/batch-run-identity/contract-key-release.md"
+        ]
+      },
+      "kind": "contract_change"
+    },
+    {
+      "id": "R-C1-project-job-account",
+      "title": "amend the key-release wire: the project job's account",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/batch-run-identity/contract-key-release.md"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "BR1",
+      "needs": "C1",
+      "reason": "the envelope and the block's key fact"
+    },
+    {
+      "task": "BR1",
+      "needs": "BRS",
+      "reason": "one file: seal.go"
+    },
+    {
+      "task": "BR2",
+      "needs": "C1",
+      "reason": "the envelope, the route and the two interfaces"
+    },
+    {
+      "task": "BR3",
+      "needs": "C1",
+      "reason": "the JobLink interface"
+    },
+    {
+      "task": "BR3",
+      "needs": "BR0",
+      "reason": "data: the owner's result of Check 810 decides which fact is the link"
+    },
+    {
+      "task": "BR4",
+      "needs": "C1",
+      "reason": "the route's shapes and the marker's name"
+    },
+    {
+      "task": "BR5",
+      "needs": "C1",
+      "reason": "the root's output and input names"
+    },
+    {
+      "task": "BR6",
+      "needs": "C1",
+      "reason": "the block's key fact and the root's names"
+    },
+    {
+      "task": "BR7",
+      "needs": "C1",
+      "reason": "the block's key fact"
+    },
+    {
+      "task": "BR8",
+      "needs": "BRS",
+      "reason": "one file: env.go, and the deployed-job variable's name"
+    },
+    {
+      "task": "BR10",
+      "needs": "BRS",
+      "reason": "one file: account.go and run.go"
+    },
+    {
+      "task": "BR10",
+      "needs": "BR8",
+      "reason": "behaviour: a project job's environment is what BR8 builds"
+    },
+    {
+      "task": "BR11",
+      "needs": "BRS",
+      "reason": "one file: secrets.go"
+    },
+    {
+      "task": "BR11",
+      "needs": "BR7",
+      "reason": "one file: doctor_batch.go"
+    },
+    {
+      "task": "BR12",
+      "needs": "C1",
+      "reason": "the names the documents quote"
+    },
+    {
+      "task": "BR13",
+      "needs": "C1",
+      "reason": "the names the script reads"
+    },
+    {
+      "task": "BR13",
+      "needs": "BR0",
+      "reason": "one file: the checklist"
+    },
+    {
+      "task": "I1",
+      "needs": "C1",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BRS",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR0",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR1",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR2",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR3",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR4",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR5",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR6",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR7",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR8",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR9",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR10",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR11",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR12",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR13",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "BR9",
+      "needs": "BRS",
+      "reason": "the deployed-job variable's name, which BRS defines"
+    },
+    {
+      "task": "R-C1-link-permission",
+      "needs": "C1",
+      "reason": "amends a file C1 creates"
+    },
+    {
+      "task": "R-C1-project-job-account",
+      "needs": "C1",
+      "reason": "amends a file C1 creates"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR5",
+        "needs": "BR0"
+      },
+      "integration": "I1",
+      "reason": "the role is written against the permission the contract states; if Check 810 says otherwise the contract change amends it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR6",
+        "needs": "BR5"
+      },
+      "integration": "I1",
+      "reason": "the update needs the root's output and input names, not the resources"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR1",
+        "needs": "BR6"
+      },
+      "integration": "I1",
+      "reason": "the backend needs the block's key fact, not the update that writes it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR7",
+        "needs": "BR6"
+      },
+      "integration": "I1",
+      "reason": "doctor needs the block's key fact, not the update that writes it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR2",
+        "needs": "BR1"
+      },
+      "integration": "I1",
+      "reason": "the service needs the blob's layout, not the code that writes it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR3",
+        "needs": "BR2"
+      },
+      "integration": "I1",
+      "reason": "the link implements an interface the route calls; it does not need the route"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR4",
+        "needs": "BR2"
+      },
+      "integration": "I1",
+      "reason": "the runner needs the route's request and response, not the route"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR12",
+        "needs": "BR2"
+      },
+      "integration": "I1",
+      "reason": "the documents quote the route's and the marker's names, not their code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR13",
+        "needs": "BR4"
+      },
+      "integration": "I1",
+      "reason": "the script reads the marker's and the route's names, not the runner"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-C1-link-permission",
+      "contract": "C1",
+      "raised_by": "BR3",
+      "reason": "if Check 810 shows the link needs compute.instances.get as well, and the owner agrees (O1)",
+      "affects": [
+        "BR3",
+        "BR5"
+      ]
+    },
+    {
+      "change": "R-C1-project-job-account",
+      "contract": "C1",
+      "raised_by": "BR10",
+      "reason": "if LaunchSpec cannot name the project job's account",
+      "affects": [
+        "BR10"
+      ]
+    }
+  ]
+}

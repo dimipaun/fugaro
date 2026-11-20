@@ -159,8 +159,8 @@ key, role or grant in the compute root would therefore need `fugaro setup --prov
 again, which the hard rule on `fugaro update` forbids. Consequence: R2, BR6.
 
 **F14 — Open, answered: does anyone use the Batch backend?** No evidence that anyone does. No
-config in the repository selects `backend: cloud-batch`. The release notes say "no run can use the
-Batch backend yet" (v0.9.5) and "nothing turns it on" (v0.25.0). Checks 57b and 124 are NOT RUN.
+config in the repository selects `backend: cloud-batch`. The release notes that brought the provisioning say "no
+run can use the Batch backend yet", and those of v0.25.0 say "nothing turns it on". Checks 57b and 124 are NOT RUN.
 F8 to F12 mean no run could have completed on this code. The owner was asked with removal as an
 option and chose to finish it (D3060).
 
