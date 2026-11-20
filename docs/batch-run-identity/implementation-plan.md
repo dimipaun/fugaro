@@ -20,7 +20,7 @@ cannot work (F32); asked again, he chose a published opt-in fact, which keeps hi
 then asked for a way to opt out (D3111, not the recommendation), and confirmed BR6's approval
 as the task now reads.
 
-It is 26 runs: one contract, one contract change that always runs, 23 tasks and one integration. Every one is a security path.
+It is 27 runs: one contract, one contract change that always runs, 24 tasks and one integration. Every one is a security path.
 
 ## 1. Conventions every task follows
 
@@ -57,7 +57,7 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (BR2, 
 | A job carrying both the plain marker and the wrapped one stops the run (R5) | BR4 |
 | The service unreachable stops the run after a bounded retry; it never proceeds without a session (F23) | BR4 |
 | Where the block names no key, the launch is refused with `fugaro update` as its fix; no launch reads the cloud to decide (R3) | BR1, BR7 |
-| `fugaro update` on an installation at the previous version converges, with a Batch run in flight keeping everything it holds (R9) | BR6, I1 |
+| `fugaro update` on an installation at the previous version converges, with a Batch run in flight keeping everything it holds (R9, R16) | BR6, BR21, I1 |
 | The reaper's role gains nothing. Launchers gain `actAs` on shared project job accounts where Batch is provisioned (D3105) and nothing on the key | BR5, BR6 |
 | The credentials service account gains, only where Batch is provisioned: decrypt on one key, `batch.jobs.get` conditioned on the Fugaro job-name prefix, and the one read Check 830 names for the link (D3102 as amended, O1) | BR5 |
 | The block's key fact is written by `fugaro update` alone, and a machine whose fact differs from the published one fails doctor (R13) | BR6, BR7 |
@@ -112,7 +112,7 @@ No other task's Files names a file of C1. A task that finds the contract wrong r
 BR16 change what `fugaro update` applies, and BR1 with BR16 turns the refusal into a launch that
 cannot yet be released. So no CLI release is cut from `main` between the merge of BR1, BR6, BR16
 or BR18 and I1.
-**Slice 2:** BR10, BR15, BR18, BR19, BR20, BR21.
+**Slice 2:** BR10, BR15, BR18, BR19, BR20, BR21, BR22.
 **Slice 3:** I1. After it, an updated installation on Batch launches.
 
 ### BRS: the job definition, split along its seams (`job-environment`)
@@ -240,8 +240,13 @@ or BR18 and I1.
   decryption key that Terraform may not destroy; the credentials service account gets decrypt on
   that key and a custom role holding `batch.jobs.get`, conditioned on the Fugaro job-name prefix,
   and the one read Check 830 named for the link; launchers get nothing on the key; the reaper's
-  role is unchanged; one input turns the grants off and leaves the key and its ring planned as
-  they are (R16); `.claude/rules/credentials-service.md` states the account's grants as they
+  role is unchanged; one input turns the grants off and leaves the key, its ring and the custom
+  role planned as they are: with it off, the service's binding to the role, its decrypt on the
+  key and whatever the root was fed for the shared project job accounts are not planned, and the
+  per-repository accounts keep theirs (R16); `google_kms_crypto_key_iam_member` gets a removal
+  class in `cover.go` as a grant that holds no data, and the key and its ring are classed as
+  data-bearing, so the removal R16 needs is not refused and a destroy of the key is;
+  `.claude/rules/credentials-service.md` states the account's grants as they
   now are, in this same change.
 - Files: `deploy/terraform/gcp/modules/compute/kms.tf` (new), `.../compute/apis.tf`,
   `.../compute/iam.tf`, `.../compute/outputs.tf`, `.../compute/variables.tf`,
@@ -251,9 +256,10 @@ or BR18 and I1.
   custom-role snapshot pins the new role), `.claude/rules/credentials-service.md`. Past five; each root file is a pass-through line.
 - Interfaces: takes the output and input names from C1's contract document, and the link's
   permission from the recorded result of Check 830.
-- Tests: the root's `terraform test`; `TestTheComputeRootsNewTypesAreCovered`; the custom-role
-  snapshot test.
-- Command: `terraform fmt -check -recursive deploy/terraform && (cd deploy/terraform/gcp/roots/compute && TF_DATA_DIR=$(mktemp -d) terraform init -backend=false -lockfile=readonly && terraform validate && terraform test) && scripts/gen-golden-plans.sh && go test ./internal/infra/tf/ -run 'ComputeRootsNewTypes|Golden' -count=1 && go test -tags terraform ./internal/infra/... && go test ./deploy/terraform/ -run 'Role|Snapshot' -count=1 && tflint --chdir=deploy/terraform/gcp && sh deploy/terraform/scan.sh`.
+- Tests: the root's `terraform test`, with a run for the grants-off input that asserts the three
+  bindings are absent and the key, ring and role are present; `TestTheComputeRootsNewTypesAreCovered`;
+  `TestAKeyGrantsRemovalIsAllowedAndTheKeysIsNot`; the custom-role snapshot test.
+- Command: `terraform fmt -check -recursive deploy/terraform && (cd deploy/terraform/gcp/roots/compute && TF_DATA_DIR=$(mktemp -d) terraform init -backend=false -lockfile=readonly && terraform validate && terraform test) && scripts/gen-golden-plans.sh && go test ./internal/infra/tf/ -run 'ComputeRootsNewTypes|KeyGrantsRemoval|Golden' -count=1 && go test -tags terraform ./internal/infra/... && go test ./deploy/terraform/ -run 'Role|Snapshot' -count=1 && tflint --chdir=deploy/terraform/gcp && sh deploy/terraform/scan.sh`.
 - Red step: the tftest fails on a role holding a permission beyond the two named.
 - Depends on: `R-C1-link-permission` (kept, data: it carries the owner's result of Check 830 and
   his answer on the second read, and it comes after C1, whose names this task uses).
@@ -263,8 +269,10 @@ or BR18 and I1.
 ### BR6: update applies the compute root (`update-converge`)
 - Acceptance: `fugaro update` applies the compute root where the published block carries the
   opt-in fact, whatever the updating machine's own `backend:` says, and leaves alone an
-  installation nobody opted in; on a machine without operator rights it skips the stage with one
-  line (D3110 as amended, R2);
+  installation nobody opted in; on a machine without operator rights (the role `admin`,
+  reconciliation A2) it skips the stage with one line; where the block says "in" and the root
+  was never provisioned it skips with one line naming `fugaro setup --provision-batch`
+  (D3110 as amended, R2);
   it asks nothing, is refused in an agent's session, and does not wait; an apply that changes
   only a key, a role or a grant starts no rebuild of the preload image, and one that changes the
   image's inputs says so in one line with the cost (R12); with a Batch run in flight it says so
@@ -274,10 +282,10 @@ or BR18 and I1.
 - Interfaces: consumes C1 (the opt-in fact).
 - Tests: `TestUpdateAppliesTheComputeRootWhereTheInstallationOptedIn`,
   `TestUpdateLeavesAnInstallationNobodyOptedInAlone`, `TestTheUpdatingMachinesOwnBackendDoesNotDecide`,
-  `TestANonOperatorsUpdateSkipsTheStage`, `TestTheUpdateSaysABatchRunKeepsRunning`,
+  `TestANonOperatorsUpdateSkipsTheStage`, `TestAnOptedInInstallationNeverProvisionedIsSkipped`, `TestTheUpdateSaysABatchRunKeepsRunning`,
   `TestTheComputeStageUnderUpdateAsksNothing`, `TestTheComputeStageUnderUpdateIsRefusedInAnAgentSession`,
   `TestAGrantOnlyApplyStartsNoPreloadRebuild`.
-- Command: `go test ./internal/cli/ -run 'UpdateAppliesTheComputeRoot|NobodyOptedInAlone|OwnBackendDoesNotDecide|NonOperatorsUpdateSkips|ABatchRunKeepsRunning|ComputeStageUnderUpdate|GrantOnlyApplyStartsNoPreload|RefusalMatrix|Docs' -count=1 && go test ./internal/apply/ -run StepsMatches -count=1`.
+- Command: `go test ./internal/cli/ -run 'UpdateAppliesTheComputeRoot|NobodyOptedInAlone|OwnBackendDoesNotDecide|NonOperatorsUpdateSkips|NeverProvisionedIsSkipped|ABatchRunKeepsRunning|ComputeStageUnderUpdate|GrantOnlyApplyStartsNoPreload|RefusalMatrix|Docs' -count=1 && go test ./internal/apply/ -run StepsMatches -count=1`.
 - Red step: an update on an opted-in installation leaves the compute root unapplied.
 - Depends on: C1. This task was approved on 2026-11-20 as a task with no dependency that applied
   the root wherever a block exists; it changed (D3110), and the owner confirmed the approval for
@@ -485,15 +493,21 @@ or BR18 and I1.
 - Reviewer tier: opus, mandatory independent review.
 
 ### BR19: publishing never drops the key or the opt-in (`update-converge`)
-- Acceptance: when a machine publishes a `batch:` block that lacks the key fact or the opt-in
-  fact, the published copy's values for those two fields are kept; a withdrawn opt-in is a
-  value of its own and is kept the same way; every other field merges as it does today (R15).
-- Files: `internal/localcfg/shared.go`, `internal/localcfg/shared_test.go`.
+- Acceptance: when a machine publishes a `batch:` block, the published copy's values for the key
+  fact and the opt-in fact are kept, whether the machine's own block lacks them or holds other
+  values; a withdrawn opt-in is a value of its own and is kept the same way; the three writers
+  R15 names pass their new value explicitly; the publish rewrites the machine's own copy of the
+  two fields from the published one; every other field merges as it does today. Where the
+  published copy is refused or too large and is replaced, the machine's values are published
+  and the publish says so in its existing warning (O18).
+- Files: `internal/localcfg/shared.go`, `internal/localcfg/shared_test.go`,
+  `internal/cli/sharedcfg.go`, `internal/cli/sharedcfg_test.go`.
 - Interfaces: consumes C1 (the two fields).
 - Tests: `TestPublishingKeepsThePublishedKeyFact`, `TestPublishingKeepsTheOptIn`,
-  `TestPublishingKeepsAWithdrawal`,
+  `TestPublishingKeepsAWithdrawal`, `TestAStaleLocalOptInDoesNotOverwriteAWithdrawal`,
+  `TestPublishingRefreshesTheLocalCopyOfTheTwoFields`,
   `TestEveryOtherBatchFieldMergesAsBefore`.
-- Command: `go test ./internal/localcfg/ -run 'PublishingKeeps|EveryOtherBatchFieldMerges|Shared' -count=1`.
+- Command: `go test ./internal/localcfg/ -run 'PublishingKeeps|StaleLocalOptIn|EveryOtherBatchFieldMerges|Shared' -count=1 && go test ./internal/cli/ -run 'PublishingRefreshesTheLocalCopy|SharedConfig' -count=1`.
 - Red step: a machine with no key fact publishes and the published block loses it.
 - Depends on: C1.
 - Commit: `localcfg: publishing a batch block keeps the key and the opt-in (BR19, R15)`.
@@ -502,39 +516,72 @@ or BR18 and I1.
 ### BR20: an operator opts out (`update-converge`)
 - Acceptance: an explicit command withdraws the opt-in fact and publishes it; merely selecting
   `cloud-run` on a machine does not; it asks nothing; it is refused with the reason while a Batch
-  job of the installation is queued or running, and for a person who is not an operator; after
-  it, a launch on Batch is refused with opting in again as the fix; `docs/backends.md` and the
-  CLI reference say so (R16).
+  run of the installation is in flight, queued ones included, read as the update reads runs in
+  flight and with no Batch API call (R16, U9), and for a person who is not an operator; after
+  it, a launch on Batch from a machine whose block or published copy says withdrawn is refused
+  before anything is created, with opting in again as the fix; `docs/backends.md` and the CLI
+  reference say so, and say that a machine with a local config follows at its next
+  `fugaro update` (R16, O19).
 - Files: `internal/cli/backends.go`, `internal/cli/backends_optout_test.go` (new),
-  `docs/backends.md`, `website/content/cli-reference.md` (generated), the plugin skill that names
+  `internal/cli/launch_batch.go` (the launch's refusal), `docs/backends.md`, `website/content/cli-reference.md` (generated), the plugin skill that names
   the `backends` commands if the plugin's tests require it.
 - Interfaces: consumes C1 (the fact's three states).
 - Tests: `TestAnOperatorOptsOut`, `TestSelectingCloudRunDoesNotOptOut`,
-  `TestOptOutIsRefusedWhileABatchJobIsLive`, `TestANonOperatorCannotOptOut`,
+  `TestOptOutIsRefusedWhileABatchJobIsLive`, `TestOptOutCountsAQueuedBatchRun`, `TestANonOperatorCannotOptOut`,
   `TestALaunchAfterOptOutNamesOptingIn`.
-- Command: `go run ./internal/clidoc && go test ./internal/cli/ -run 'OperatorOptsOut|SelectingCloudRunDoesNotOptOut|OptOutIsRefusedWhile|NonOperatorCannotOptOut|LaunchAfterOptOut|CliReference|Docs' -count=1 && go test ./plugin/... -count=1`.
+- Command: `go run ./internal/clidoc && go test ./internal/cli/ -run 'OperatorOptsOut|SelectingCloudRunDoesNotOptOut|OptOutIsRefusedWhile|OptOutCountsAQueued|NonOperatorCannotOptOut|LaunchAfterOptOut|CliReference|Docs' -count=1 && go test ./plugin/... -count=1`.
 - Red step: selecting `cloud-run` withdraws the fact.
-- Depends on: BR18 (kept: two files, `backends.go` and `docs/backends.md`).
+- Depends on: BR18 (kept: two files, `backends.go` and `docs/backends.md`); BR11 (kept: one file,
+  `launch_batch.go`, two levels earlier).
 - Commit: `backends: an operator can opt the installation out of Batch (BR20, D3111, R16)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### BR21: update retires the grants after an opt-out (`update-converge`)
 - Acceptance: on an installation whose published fact is withdrawn, `fugaro update` applies the
-  compute root with the grants off, so the credentials service's role and decrypt and the
-  launchers' `actAs` on the shared project job accounts are gone, and the key, its ring and the
-  provisioning are untouched; it prints one line naming what it removes; opting in again
-  restores them at the next update under the same key; an installation at the previous version
-  that opted out converges (R16, R9).
+  compute root with the grants off, so the credentials service's binding to its role, its
+  decrypt on the key and what the root was fed for the shared project job accounts are gone,
+  and the key, its ring, the custom role and the provisioning are untouched; it prints one line
+  naming what it removes; with a Batch run in flight, queued ones included, it removes nothing,
+  says so in one line with the count, and a later update removes them; opting in again restores
+  the bindings at the next update under the same key, the same day included; an installation at
+  the previous version that opted out converges; `docs/design/update-in-flight.md` gains the
+  step's row (R16, R9).
 - Files: `internal/cli/init_compute.go`, `internal/cli/update_batch_optout_test.go` (new),
-  `internal/apply/steps.go`.
+  `internal/apply/steps.go`, `docs/design/update-in-flight.md`.
 - Interfaces: consumes C1 (the fact's states) and BR5's input that turns the grants off.
 - Tests: `TestUpdateRemovesTheGrantsAfterAnOptOut`, `TestTheKeySurvivesAnOptOut`,
-  `TestOptingInAgainRestoresTheGrantsUnderTheSameKey`, `TestTheUpdateNamesWhatAnOptOutRemoves`.
-- Command: `go test ./internal/cli/ -run 'RemovesTheGrantsAfterAnOptOut|KeySurvivesAnOptOut|OptingInAgainRestores|NamesWhatAnOptOutRemoves|RefusalMatrix|Docs' -count=1 && go test ./internal/apply/ -run StepsMatches -count=1`.
+  `TestOptingInAgainRestoresTheGrantsUnderTheSameKey`, `TestTheUpdateNamesWhatAnOptOutRemoves`,
+  `TestTheRetiringUpdateWaitsForABatchRunInFlight`, `TestTheRetiringUpdateCountsAQueuedBatchRun`.
+- Command: `go test ./internal/cli/ -run 'RemovesTheGrantsAfterAnOptOut|KeySurvivesAnOptOut|OptingInAgainRestores|NamesWhatAnOptOutRemoves|RetiringUpdate|RefusalMatrix|Docs' -count=1 && go test ./internal/apply/ -run StepsMatches -count=1`.
 - Red step: after an opt-out and an update the service still holds decrypt on the key.
 - Depends on: BR16 (kept: one file, `init_compute.go`); BR5 (kept, behaviour: it applies the
   root with the input BR5 adds).
 - Commit: `update: an opted-out installation loses the Batch grants and keeps its key (BR21, D3111, R16)`.
+- Reviewer tier: opus, mandatory independent review.
+
+### BR22: the service refuses a registration where Batch is off (`key-release`)
+- Acceptance: the credentials service takes one deploy input that says whether Batch is on;
+  `fugaro update` sets it from the published opt-in fact, on for "in" and off for absent or
+  withdrawn; where it is off the registration is refused before any job exists, with one audit
+  line and a reason the launch prints with its fix (an operator opts in and runs `fugaro
+  update`); the release route does not read the input, so a run in flight is served as before;
+  an installation at the previous version converges with the input off; the input's name is in
+  `.claude/rules/credentials-service.md` (R17, D3112).
+- Files: `internal/credsvc/sealkey_register.go`, `internal/credsvc/sealkey_register_off_test.go`
+  (new), `internal/cli/credentials_serve.go`, `internal/cli/init_credentials.go`,
+  `internal/infra/tfvars.go`, `deploy/terraform/gcp/modules/installation/credentials.tf` and its
+  variable, the golden plans (regenerated by `scripts/gen-golden-plans.sh`),
+  `.claude/rules/credentials-service.md`. Past five; the Terraform is one `env` block and one
+  variable field.
+- Interfaces: consumes C1 (the fact's three states, the registration's calls).
+- Tests: `TestARegistrationIsRefusedWhereBatchIsOff`, `TestTheReleaseRouteIgnoresTheSwitch`,
+  `TestTheUpdateSetsTheSwitchFromThePublishedFact`, `TestAWithdrawnFactDeploysTheSwitchOff`,
+  `TestTheOffRefusalWritesOneAuditLine`, `TestTheLaunchPrintsTheServicesReasonAndFix`.
+- Command: `go test ./internal/credsvc/ -run 'RefusedWhereBatchIsOff|ReleaseRouteIgnoresTheSwitch|OffRefusalWritesOne' -count=1 && go test ./internal/cli/ -run 'SetsTheSwitchFromThePublishedFact|WithdrawnFactDeploysTheSwitchOff|PrintsTheServicesReasonAndFix|Docs' -count=1 && scripts/gen-golden-plans.sh && go test ./internal/infra/tf/ -run Golden -count=1 && terraform fmt -check -recursive deploy/terraform`.
+- Red step: with the input off, a registration is accepted.
+- Depends on: BR17 (kept: one file, `sealkey_register.go`); BR5 (kept: one file,
+  `.claude/rules/credentials-service.md`, and the golden plans).
+- Commit: `credsvc: no registration where Batch is off (BR22, D3112, R17)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### BR17: the registration (`key-release`)
@@ -577,7 +624,7 @@ or BR18 and I1.
   `TestUpdateLeavesABatchRunInFlightRunning`, `TestNothingIsCreatedPerBatchRun`.
 - Command: `go build ./... && go vet ./... && ! git grep -n 'sealkey_stub' -- '*.go' && go test ./internal/cli/ -run 'BatchRunOpensItsSession|SecondJobCannotOpen|RecreatedJobCannotOpen|ConvergesABatchInstallation|LeavesABatchRunInFlight|NothingIsCreatedPerBatchRun' -count=1`.
 - Red step: the build fails on the deleted stub's last user.
-- Depends on: C1, `R-C1-link-permission` and every task: BRS, BR0 to BR21.
+- Depends on: C1, `R-C1-link-permission` and every task: BRS, BR0 to BR22.
 - Commit: `batch: a run on Cloud Batch gets its identity, end to end (I1, D3100)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -590,7 +637,7 @@ or BR18 and I1.
 | 0 | C1, BRS, BR0 |
 | 1 | BR1, BR2, BR4, BR6, BR7, BR8, BR9, BR11, BR13, BR14, BR19; and `R-C1-link-permission` once the owner has run Check 830 and answered O1 |
 | 2 | BR10, BR16, BR17; and BR3, BR5, BR12 after `R-C1-link-permission` |
-| 3 | BR15, BR18, BR21 |
+| 3 | BR15, BR18, BR21, BR22 |
 | 4 | BR20 |
 | 5 | I1 |
 
@@ -620,7 +667,8 @@ or BR18 and I1.
 | `R-C1-link-permission` after BR0; BR3, BR5 and BR12 after it | data: the owner's measurement and his answer decide which fact is the link and which permission reads it (R4, O1) |
 | BR16 after BR6 | one file, `init_compute.go` |
 | BR21 after BR16 and BR5 | one file, `init_compute.go`; and behaviour: it applies the root with the input BR5 adds |
-| BR20 after BR18 | two files, `backends.go` and `docs/backends.md` |
+| BR22 after BR17 and BR5 | one file each: `sealkey_register.go`; `.claude/rules/credentials-service.md` and the golden plans |
+| BR20 after BR18 and BR11 | two files, `backends.go` and `docs/backends.md`; and one file, `launch_batch.go` |
 | BR17 after BR2 | one file, `server.go` |
 | BR15 after BR7 and BR12 | one file each, `doctor_batch.go` and `SECURITY.md` |
 | BR18 after BR7 and BR12 | behaviour: it reads which failure BR7's check reports; and one file, `docs/backends.md` |
@@ -628,8 +676,8 @@ or BR18 and I1.
 | BR13 after BR0 | two files, the checklist and the scripts' list |
 | I1 after all | it wires the real sides and proves them together |
 
-**The gain**, as `fugaro plan graph` reports it: 12 edges broken, 16 kept, 4 added; the critical
-path was 8 tasks of weight 17 and is 6 tasks of weight 9.5. **The critical path** is BR0,
+**The gain**, as `fugaro plan graph` reports it: 12 edges broken, 19 kept, 4 added; the critical
+path was 8 tasks of weight 17 and is 6 tasks of weight 10. **The critical path** is BR0,
 `R-C1-link-permission`, BR12, BR18, BR20, I1, and BR0 is the bottleneck: between it and the
 contract change stand the owner's run of Check 830 and his answer on the second read. Everything
 that does not need that answer runs meanwhile.
@@ -656,7 +704,9 @@ that does not need that answer runs meanwhile.
 | `internal/cli/docs_security_test.go` | BR12 (2), BR15 (3) |
 | `deploy/terraform/terraform_test.go` | BR5 (2) |
 | `docs/design/budget-token-channel.md`, `docs/design/compute-backend.md` | BR1 (1) |
-| `.claude/rules/credentials-service.md` | BR5 (2) |
+| `.claude/rules/credentials-service.md` | BR5 (2), BR22 (3) |
+| `internal/credsvc/sealkey_register.go` | BR17 (2), BR22 (3) |
+| `internal/cli/credentials_serve.go`, `internal/cli/init_credentials.go`, `internal/infra/tfvars.go`, the installation module's `credentials.tf` | BR22 (3) |
 | `internal/infra/spec.go`, `internal/backend/launchenv.go` | BR8 (1) |
 | `scripts/live_checks_test.go` | BR0 (0), BR13 (1) |
 | `internal/settings/registry.go`, `schemas/settings.schema.json` | C1 (0) |
@@ -673,11 +723,13 @@ that does not need that answer runs meanwhile.
 | `internal/apply/steps.go` | BR6 (1), BR21 (3) |
 | `internal/cli/init_stages.go`, `internal/cli/update.go` | BR6 (1) |
 | `internal/infra/compute.go`, the release notes | BR16 (2) |
-| `internal/localcfg/shared.go`, `internal/localcfg/shared_test.go` | BR19 (1) |
+| `internal/localcfg/shared.go`, `internal/localcfg/shared_test.go`, `internal/cli/sharedcfg.go` | BR19 (1) |
+| `internal/cli/launch_batch.go` | BR11 (1), BR20 (4) |
+| `docs/design/update-in-flight.md` | BR21 (3) |
 | `internal/infra/tf/cover.go`, the compute module and root | BR5 (2) |
 | `internal/localcfg/localcfg.go` | C1 (0) |
 | `internal/backend/deployedjob.go` | BRS (0) |
-| `internal/credsvc/sealkey_wire.go`, the contract document | C1 (0), `R-C1-link-permission` (1) |
+| `internal/credsvc/sealkey_wire.go`, the contract document | C1 (0), `R-C1-link-permission` (1); `R-C1-project-job-account`, if BR10 raises it, after `R-C1-link-permission` has merged |
 | `docs/gcp-live-checklist.md` | BR0 (0), BR13 (1) |
 | `docs/backends.md` | BR12 (2), BR18 (3), BR20 (4) |
 | `SECURITY.md`, `website/content/security.md` | BR12 (2), BR15 (3) |
@@ -691,7 +743,7 @@ open pull request on each before starting BRS, BR1, BR2, BR7 and BR12.
 
 ## 6. The estimate
 
-26 runs. At the repository's own caps the worst case is 26 times one run's cap, plus 26
+27 runs. At the repository's own caps the worst case is 27 times one run's cap, plus 27
 independent reviews. No run is proposed for launch here: nothing starts until the owner approves
 tasks by name.
 
@@ -702,7 +754,8 @@ tasks by name.
   and BR12 wait on it. If the owner's answer is a release service of its own, it does not run:
   D3102 is reversed and this plan is re-sliced first.
 - **`R-C1-project-job-account`.** If `LaunchSpec` cannot name the project job's account (BR10), it
-  records the field in the contract document. It reaches BR10.
+  records the field in the contract document. It reaches BR10. It writes the same document as
+  `R-C1-link-permission` and starts only after that one has merged.
 
 The second runs only if raised and is not counted.
 
@@ -740,12 +793,19 @@ note says.
 - **A grant on the key for launchers**: the public key reaches them through the block (R13).
 - **An opt-in that is never withdrawn** (the recommendation of D3111): the owner chose an
   opt-out.
+- **Accepting a stale launch after an opt-out, and a launch that reads the cloud** (D3112's
+  other options).
+- **Deleting the custom role on an opt-out**: its id stays taken for seven days, so opting in
+  again would fail; its binding is removed instead (R16).
+- **Listing Batch jobs to find a run in flight**: the operator's Batch grant is conditioned on a
+  job-name prefix, which a list may not satisfy; the run records answer without a new grant.
 - **Destroying the key on an opt-out**: Fugaro never destroys a key version (R9), and a ring
   cannot be deleted.
 - **Triggering the apply by the updating machine's own `backend:` key** (D3110 as first
   answered): it is never published (F32).
 - **Applying the compute root wherever a `batch:` block exists** (the recommendation of D3110):
-  the owner chose selection first.
+  the owner chose that nothing is applied until an operator opts the installation in (D3110 as
+  amended).
 - **Admitting service-account launchers, or dropping the registration** (D3109).
 - **Keeping D2075's mount for workflow secrets** (D3107), and **accepting the re-created job**
   (D3108).

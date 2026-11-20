@@ -31,6 +31,12 @@ The owner approved this map on 2026-11-20. Every finding, decision and task name
   carry is the 32-byte seal key, not the token.
 - A2. "Launcher" is a person or account holding the installation's launcher grants, not the
   operator or the project owner. An owner can grant themselves anything, on either backend.
+  **The two words are this document's, not the role names.** "Launcher" here is the role
+  `operator` (the local config's `terraform.operators`, Terraform's `var.launchers`): a person who
+  starts runs. "Operator" here is the role `admin` (`terraform.admins`, Terraform's
+  `var.operators`): a person who applies Terraform and holds `objectAdmin` on the runs bucket
+  (`google_storage_bucket_iam_member.runs`, `deploy/terraform/gcp/modules/installation/iam.tf`).
+  A test named `NonOperator` in the plan means a person without the role `admin`.
 - A3. "The run" includes the run's own agent. The agent shares the container with the runner and
   can read the key there on Cloud Run today (`docs/design/budget-token-channel.md` §7.1). Nothing
   here changes that.
@@ -283,10 +289,38 @@ pass only after the apply the selection was meant to trigger. And `MergeShared` 
 own `batch:` block whole, so a machine that never applied would publish a block with no key fact
 over one that has it. Consequence: D3110 amended; R2, R14; BR18, BR19.
 
+**F33 — Found in the fifth review (the owner's second extra one); part of it does not hold.**
+The review said any launcher can write the published block, so the opt-in, the withdrawal and
+the key fact could be forged. Checked against the grants: a launcher holds `objectViewer` on the
+runs bucket and `objectUser` under a condition naming `runs/`, `tokens/` and `issues/`
+(`google_storage_bucket_iam_member.runs_launcher`, same file); only an operator (role `admin`)
+holds `objectAdmin`, and the shared file is under `fugaro/`. `docs/design/shared-config.md` §3
+says the same: "only an operator can overwrite the marker or the shared file". The comments in
+`internal/localcfg/shared.go` that call the file "writable by any launcher" describe an
+installation whose launcher condition was never applied; the reader keeps refusing keys as
+defence in depth. So the three facts are as trustworthy as the shared file, and whoever can
+write it can apply the compute root anyway. What the review found that does hold:
+- The publish replaces the published copy with the machine's own view when the published one is
+  refused or over its size bound (`MergeShared(nil, src)`, `internal/cli/sharedcfg.go`), and
+  `MergeShared` keeps a machine's own `batch:` block whole. A stale operator's machine can
+  therefore publish "in" over a withdrawal. R15 amended; O18.
+- A launch reads the published copy only when the machine has no local config (`sharedOK`,
+  `internal/cli/cloud.go`). A launcher with a local config does not see a withdrawal until
+  their own copy is refreshed, so "launches are refused from the withdrawal on" was wrong. R16
+  amended; O19.
+- A deleted custom role keeps its id for seven days (the comment at the top of
+  `deploy/terraform/gcp/modules/compute/iam.tf`), so removing the role and opting in again
+  within a week could fail the apply. R16 amended: the role stays, its binding goes.
+- `google_kms_crypto_key_iam_member` has no removal class in `internal/infra/tf/cover.go`, and
+  an unclassified type's deletion is refused (D1551). BR5 gains it.
+- Nothing said what the retiring update does with a Batch run in flight. R16 amended.
+Consequence: R2, R9, R14, R15, R16 amended; R17 and D3112 added; BR5, BR6, BR19, BR20, BR21
+amended; BR22 added; O18 to O20; U9.
+
 ## Decisions
 
 All answered by the owner on 2026-11-20 with `AskUserQuestion`. **D3110 and D3111 are not the
-recommendation**; no other answer departs from it. D3101 and D3102 were each asked twice (D3102 was amended in between, after review round 1), D3105 and D3106 were added by review round 1, and D3107
+recommendation**; no other answer departs from it. D3112 was asked after the fifth review. D3101 and D3102 were each asked twice (D3102 was amended in between, after review round 1), D3105 and D3106 were added by review round 1, and D3107
 and D3108 by review round 2. D3109 and D3110 answer the two questions review round 3 left open,
 asked after the pull request was opened.
 
@@ -303,7 +337,8 @@ asked after the pull request was opened.
 | **D3108** | `key-release` | A second launcher can replace a queued job and receive its key (F30). Close it? | The launcher that wrapped the key registers the job with the service, which releases only to that job | Accept it, stated: zero tasks, the letter of requirement 1 lost to one attack. Switch to K1 | **The launcher registers the job** (as recommended, 2026-11-20) |
 | **D3109** | `key-release` | The service's launcher class admits people on its roster only, so a service account cannot register a job (O11). What should the plan do? | Build for the class as it is: a service-account launch on Batch is refused with its reason | Admit named service accounts: about 2 more tasks and a new kind of principal. Drop the registration: reverses D3108 | **People on the roster only** (as recommended, 2026-11-20) |
 | **D3110** | `update-converge` | Where does `fugaro update` apply the compute root and create the key (O13)? | Wherever a `batch:` block exists: selection then works straight after an update | Only where the backend is selected: about 1 more task, because selecting is gated on a doctor check that wants the key first | **Only where Batch is selected. Not the recommendation** (2026-11-20). **Amended after review:** as answered, the trigger was the updating machine's own `backend:` key, which is never published (F32). Asked again, the owner chose a published opt-in fact (as recommended, 2026-11-20): his intent, no key ring until someone chooses Batch, is kept; the trigger is the installation's, not a machine's |
-| **D3111** | `update-converge` | The opt-in fact is never withdrawn, so an installation that stops using Batch keeps the grants and the key (O16). Is that wanted? | Yes: once in, always applied, so a later tightening reaches every installation that ever opted in | Add a way to opt out: about 2 more tasks, and `update` gains a removal of grants | **Add a way to opt out. Not the recommendation** (2026-11-20) |
+| **D3111** | `update-converge` | The opt-in fact is never withdrawn, so an installation that stops using Batch keeps the grants and the key (O16). Is that wanted? | Yes: once in, always applied, so a later tightening reaches every installation that ever opted in | Add a way to opt out: about 2 more tasks, and `update` gains a removal of grants | **Add a way to opt out. Not the recommendation** (2026-11-20). The owner was told the cost as two more tasks, a removal of grants in `update`, and care with runs in flight; R16 carries each |
+| **D3112** | `key-release` | After an opt-out, a launcher whose local config still says "in" is not refused by the CLI, and once the grants are gone the run fails only after its VM has started (O19). How is that closed? | The service refuses first: the update tells the credentials service Batch is off and the registration is refused before a job exists; about 1 more task and one more deploy input | Accept it, stated: a billed VM minute per stale launch. Or every Batch launch reads the published block: about 1 more task, a bucket read per launch, and R3 reversed for this fact | **The service refuses first** (2026-11-20, as recommended) |
 
 D3112 to D3119 are reserved and unused.
 
@@ -350,8 +385,11 @@ One defensible answer each; stated, not asked.
   operator's `fugaro backends use cloud-batch` writes it and publishes it; from then on any
   operator's `fugaro update` applies the root and records the key, whatever that operator's own
   machine selects, and an installation nobody opted in is left alone, block or no block. The
-  fact is never withdrawn by a machine that selects `cloud-run` again: once in, the root keeps
-  being applied, so a later tightening reaches every opted-in installation. A person who is not
+  fact is not withdrawn by a machine that selects `cloud-run` again; only R16's command
+  withdraws it. Until then the root keeps being applied, so a later tightening reaches every
+  opted-in installation. An installation whose block says "in" and whose compute root was never
+  provisioned is skipped with one line naming `fugaro setup --provision-batch`: the update does
+  not do the first provisioning. A person who is not
   an operator can select the backend locally and cannot opt the installation in; `update` on
   their machine skips the stage with one line, and their launches are refused until an operator
   has opted in and updated. First provisioning stays `fugaro setup --provision-batch`.
@@ -359,24 +397,57 @@ One defensible answer each; stated, not asked.
   creates** (F32). Every Batch check whose fix is the compute root applied by `fugaro update`
   (the key fact when missing, and the run accounts' roles and `actAs` for accounts the root has
   not yet been fed) is marked as such by doctor and is not among the refusals of `backends use`.
+  By id (`internal/cli/doctor_batch.go`): `batch-run-accounts`, `batch-run-account-roles` and
+  `batch-run-account-actas`, and `batch-budget-seal` when its failure is the missing key fact.
   Doctor still reports each, with `fugaro update` as its fix, and every launch is refused with
   that fix until the update has run. A key fact that differs from the published one is a
   different failure with its own id and still refuses the selection.
 - **R15 (`update-converge`). Publishing never drops the key fact or the opt-in fact.** The
-  block's merge takes those two fields from the published copy when the publishing machine's
-  own block lacks them. The opt-in fact has three states (absent, in, withdrawn), so a withdrawal
-  is a written value and not an absence a stale machine could produce.
+  block's merge takes those two fields from the published copy, whatever the publishing
+  machine's own block says: a machine's copy of them is never the authority. Three writers
+  change them and no other: opting in (R2), opting out (R16), and the update's write of the key
+  fact (R13). Every publish rewrites the machine's own copy of the two fields from the published
+  one. The opt-in fact has three states (absent, in, withdrawn), so a withdrawal is a written
+  value and not an absence. **One case is left** (F33, O18): when the published copy is refused
+  or over its size bound, the publish replaces it with the machine's view, and that machine's
+  values are what is published. Only an operator can publish.
 - **R16 (`update-converge`). Opting out (D3111).** An operator withdraws the fact with an explicit
   command of its own, never by merely selecting `cloud-run` on one machine; its name is settled
-  in its task. It asks nothing. It is refused, with the reason, while a Batch job of the
-  installation is queued or running, because the next update would take away what that run needs
-  to open its session. After it, `fugaro update` applies the compute root with the grants off:
-  the credentials service's custom role and its decrypt on the key, and the launchers' `actAs` on
-  the shared project job accounts, are removed. The key and its ring stay (R9: never destroyed,
-  and a ring cannot be deleted), as does everything `fugaro setup --provision-batch` made. The
-  update says in one line what it removes. Launches on Batch are refused from the withdrawal on,
-  with opting in again as the fix; opting in again restores the grants at the next update and
-  uses the same key.
+  in its task. It asks nothing. It is refused, with the reason, while a Batch run of the
+  installation is in flight, because the next update would take away what that run needs to
+  open its session. **Amended after the fifth review (F33).**
+  - *What the update removes.* After the withdrawal `fugaro update` applies the compute root
+    with the grants off. Three bindings go: the credentials service's binding to its custom
+    role, its decrypt on the key, and everything the root was fed for the shared project job
+    accounts (the launchers' `actAs` on them and those accounts' Batch roles, which BR16 added).
+    The custom role itself stays, because a deleted role keeps its id for seven days and opting
+    in again inside that week would fail; a role bound to nobody grants nothing. The key and its
+    ring stay (R9), as does everything `fugaro setup --provision-batch` made, including the
+    per-repository run accounts and the launchers' `actAs` on them. The update says in one line
+    what it removes.
+  - *A run in flight.* The update is safe with runs in flight, always. If a Batch run is in
+    flight when it reaches this step (one launched between the opt-out and the update), it
+    removes nothing, says so in one line with the count, and the next update removes the grants.
+    Both this and the command's own refusal read the runs in flight the way the update already
+    does (`announceRunsInFlight`, `internal/cli/update_in_flight.go`), narrowed to the runs
+    whose launch record names this backend. No Batch API call is made, so no new permission is
+    needed (U9).
+  - *Launches.* A launch reads the opt-in fact where it reads the key fact: the machine's own
+    block, or the published copy when the machine has no local config. A machine with no local
+    config is refused from the withdrawal on, with opting in again as the fix. A machine with a
+    local config is refused once its copy has followed the published one, which its next
+    `fugaro update` does. Until then the CLI does not refuse it (O19).
+  - *Opting in again* restores the three bindings at the next update and uses the same key.
+- **R17 (`key-release`). The credentials service refuses a registration where Batch is off
+  (D3112).** `fugaro update` deploys the service with one input that says whether Batch is on,
+  taken from the published opt-in fact: on where it says "in", off where it is absent or
+  withdrawn. Where it is off the registration of D3108 is refused, and since a launch registers
+  before it creates the job, no job and no VM exist yet. The launch prints the service's reason
+  and the fix: an operator opts in and runs `fugaro update`. The release route does not read the
+  input, so a run in flight keeps what it holds (R9, R16). The service is the authority here and
+  the CLI's own refusal (R16) is the faster message; a stale local copy can no longer start a VM.
+  What is left is the time between an opt-out and the next update, when the service still says
+  on: a run launched then works, and is the run the retiring update waits for.
 - **R3 (`update-converge`). "The carrier is in place" is a fact in the `batch:` block.** The
   backend wraps when the block names the key and refuses when it does not, and the refusal's fix
   is `fugaro update`. This is requirement 3. No launch reads the cloud to decide it.
@@ -398,7 +469,8 @@ One defensible answer each; stated, not asked.
   does.
 - **R9 (`update-converge`). The key is never rotated or destroyed by Fugaro.** A run in flight
   holds a blob wrapped to the key version in the block; `update` adds grants and never replaces
-  the version, so an update with Batch runs in flight changes nothing they hold. A KMS key ring
+  the version, so an update with Batch runs in flight changes nothing they hold. The one removal
+  of grants is R16's, after an opt-out, and it waits while a Batch run is in flight. A KMS key ring
   cannot be deleted at all, which the release notes say.
 - **R10 (`service-credentials`). The `batch.secrets` key leaves the block inside `fugaro update`**,
   which rewrites the local file in place and republishes; a block that still carries it is read,
@@ -461,7 +533,19 @@ his earlier D2075 (F29, D3107).
 - **O16. Closed by D3111** (not the recommendation): an operator can opt out, and the update then
   removes the grants and keeps the key (R16).
 - **O17.** After an opt-out the key still costs its small monthly amount and the ring stays for
-  good. Nothing Fugaro may do removes either.
+  good. Nothing Fugaro may do removes either. The custom role stays too, bound to nobody (R16).
+- **O18.** A stale operator's machine can publish "in" over a withdrawal, or the reverse, when
+  the published copy is refused or too large and is replaced by that machine's view (F33, R15).
+  Only an operator can publish, and an operator can opt in or out outright; the risk is a
+  mistake, not an attack. Doctor reports the published state. Not closed.
+- **O19.** After an opt-out, a launcher whose local config still says "in" is not refused by the
+  CLI until their next `fugaro update` (F33, R16). Before the update that removes the grants
+  such a run works and is the run that update waits for. After it, the credentials service
+  refuses the release and the run ends at its door with its VM already started. The same holds
+  after opting in again and before the update. **Closed by D3112** (as recommended): the
+  service refuses the registration first (R17).
+- **O20.** Every update on an opted-out installation that removes a binding writes the "warned"
+  audit record a deletion writes, which `fugaro doctor` then prints. Stated.
 - **O14.** "No CLI release between the merge of BR1, BR6, BR16 or BR18 and I1" is a rule for whoever cuts
   releases. Nothing enforces it.
 - **O9.** BR2 and BR4 rest on U2 and are built before Check 830 runs. If the check fails U2, R4
@@ -484,6 +568,10 @@ his earlier D2075 (F29, D3107).
   `CreateJob` audit record (F3). Check 830 reads all three for the wrapped value.
 - **U8.** How soon Batch lets a deleted job's name be used again. Check 830 measures it; the
   registration of D3108 does not depend on the answer.
+- **U9.** That the update's reading of runs in flight counts a Batch run that is queued and has
+  no VM yet. The launch record is written at launch and names its backend
+  (`internal/runstore/launch.go`); how `announceRunsInFlight` decides a run is still in flight
+  was not read. BR20 and BR21 pin it with a test each.
 - **U4.** Who decrypts `encryptedVariables` (F2). Not needed by K3; not pursued.
 - **U5.** Secret Manager's price per version and the 60-day deletion of finished Batch jobs: read
   from search summaries only. Neither is relied on.

@@ -16,11 +16,11 @@ adds; that plan was read on branch `docs/always-a-budget` at `8bf13231f` and has
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's rulings; no typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: the module map, assumptions A1–A5, findings F1–F32, the threat model of each carrier, decisions D3100–D3111 with the owner's answers, resolutions R1–R16, open items O1–O17, UNVERIFIED U1–U8. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Contract C1, tasks BRS and BR0 to BR21, the contract change that carries the owner's answer after Check 830, integration I1 (26 runs), and one contract change that runs only if raised; levels, critical path, shared files; Checks 830 and 831 |
+| [reconciliation.md](reconciliation.md) | The amended spec: the module map, assumptions A1–A5, findings F1–F33, the threat model of each carrier, decisions D3100–D3112 with the owner's answers, resolutions R1–R17, open items O1–O20, UNVERIFIED U1–U9. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Contract C1, tasks BRS and BR0 to BR22, the contract change that carries the owner's answer after Check 830, integration I1 (27 runs), and one contract change that runs only if raised; levels, critical path, shared files; Checks 830 and 831 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
-**Numbers reserved:** decisions **D3100–D3119** (D3100–D3111 used), checks **830–839** (830 and
+**Numbers reserved:** decisions **D3100–D3119** (D3100–D3112 used), checks **830–839** (830 and
 831 used). **Renumbered on 2026-11-20.** This spec first took D3060–D3079 and checks 810–819,
 which were free on `main` and in every open pull request when it started; pull request #3315
 (credentials-belong-to-models) took the same block and was opened first, so this one moved. The
@@ -63,7 +63,8 @@ Batch (as recommended). **D3110 is not the recommendation**: `fugaro update` app
 root only where Batch is selected, where applying it wherever a `batch:` block exists was
 recommended; BR18 was added so that selecting the backend does not wait for a key only the
 update creates. He also had AB9's text in always-a-budget amended here to name this plan, and
-chose to record the minting question (O6) without a spec. 
+chose to record the minting question (O6) without a spec.
+
 **A fourth review, at the owner's request,** read those changes and found that D3110 as answered
 could not work: the trigger was a per-machine setting that is never published, and selecting
 the backend deadlocked against the apply it was meant to cause (F32). **D3110 is amended after
@@ -77,6 +78,16 @@ operator can opt the installation out, where an opt-in that is never withdrawn w
 The update then removes the Batch grants and keeps the key (R16); BR20 and BR21 were added. He
 asked for one more independent review of everything since the fourth, and chose that nothing is
 launched from this session.
+
+**That fifth review** reported a hold. Its main claim, that any launcher can write the published
+block and so forge the opt-in, was checked against the grants and does not hold: only an
+operator (the role `admin`) can write the shared file (F33). Five smaller findings did hold and
+are fixed: the merge now lets no machine's copy override the published fact (R15), the retiring
+update keeps the custom role and waits for a Batch run in flight (R16), the key's grant gets a
+removal class (BR5), and the claim that launches are refused "from the withdrawal on" was wrong
+for a machine with a local config. That last one went to the owner as D3112, answered as
+recommended: the credentials service refuses the registration where Batch is off (R17, BR22).
+These fixes were not reviewed again. O18 and O20 are left open.
 
 **What the reconciliation found that the brief did not know:** the token's carrier is one of seven
 gaps (F7 to F13); any carrier the run's service account opens can be replayed by a second

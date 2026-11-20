@@ -373,6 +373,26 @@
       }
     },
     {
+      "id": "BR22",
+      "title": "the service refuses a registration where Batch is off",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/sealkey_register.go",
+          "internal/credsvc/sealkey_register_off_test.go",
+          "internal/cli/credentials_serve.go",
+          "internal/cli/init_credentials.go",
+          "internal/infra/tfvars.go",
+          "deploy/terraform/gcp/modules/installation/credentials.tf",
+          ".claude/rules/credentials-service.md"
+        ]
+      }
+    },
+    {
       "id": "BR18",
       "title": "selecting the backend does not wait for the key",
       "run": null,
@@ -399,7 +419,9 @@
         "prediction": true,
         "paths": [
           "internal/localcfg/shared.go",
-          "internal/localcfg/shared_test.go"
+          "internal/localcfg/shared_test.go",
+          "internal/cli/sharedcfg.go",
+          "internal/cli/sharedcfg_test.go"
         ]
       }
     },
@@ -415,6 +437,7 @@
         "paths": [
           "internal/cli/backends.go",
           "internal/cli/backends_optout_test.go",
+          "internal/cli/launch_batch.go",
           "docs/backends.md",
           "website/content/cli-reference.md",
           "plugin/skills/**"
@@ -433,6 +456,7 @@
         "paths": [
           "internal/cli/init_compute.go",
           "internal/cli/update_batch_optout_test.go",
+          "docs/design/update-in-flight.md",
           "internal/apply/steps.go"
         ]
       }
@@ -765,6 +789,11 @@
       "reason": "two files: backends.go and docs/backends.md"
     },
     {
+      "task": "BR20",
+      "needs": "BR11",
+      "reason": "one file: launch_batch.go"
+    },
+    {
       "task": "BR21",
       "needs": "BR16",
       "reason": "one file: init_compute.go"
@@ -782,6 +811,21 @@
     {
       "task": "I1",
       "needs": "BR21",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "BR22",
+      "needs": "BR17",
+      "reason": "one file: sealkey_register.go"
+    },
+    {
+      "task": "BR22",
+      "needs": "BR5",
+      "reason": "one file: .claude/rules/credentials-service.md, and the golden plans"
+    },
+    {
+      "task": "I1",
+      "needs": "BR22",
       "reason": "it wires the real sides and proves them together"
     }
   ],
