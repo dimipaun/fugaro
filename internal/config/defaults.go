@@ -164,7 +164,7 @@ const RigorBudgetStageFloorUSD = 0.25
 //
 // The order is the owner's (D16): POC < Startup < Pro < Critical, with Hotfix
 // tightest of all, because a hotfix is the run with the least room to spend.
-var RigorBudgetFractions = map[rigor.Mode]float64{
+var RigorBudgetFractions = map[rigor.Rigor]float64{
 	rigor.Hotfix:  0.4,
 	rigor.POC:     0.55,
 	rigor.Startup: 0.7,
@@ -232,7 +232,7 @@ func smokeStages() int {
 // caller that resolved none, a name outside the vocabulary — contributes none
 // and so gets the whole cap: nothing here may tighten a run on the strength
 // of a value it could not place.
-func RigorBudgetFraction(m rigor.Mode) float64 {
+func RigorBudgetFraction(m rigor.Rigor) float64 {
 	if f, ok := RigorBudgetFractions[m]; ok {
 		return f
 	}
@@ -251,7 +251,7 @@ func RigorBudgetFraction(m rigor.Mode) float64 {
 //
 // It never answers with a cap that rounds to nothing, which reads as no cap at
 // all (the trap SpendFromEnv guards against at the other end).
-func RigorBudgetCap(m rigor.Mode, deployed pricing.Micros) pricing.Micros {
+func RigorBudgetCap(m rigor.Rigor, deployed pricing.Micros) pricing.Micros {
 	if deployed <= 0 {
 		return deployed
 	}

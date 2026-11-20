@@ -163,7 +163,7 @@ func TestDocsRigorModesProductIsAProductDocument(t *testing.T) {
 // Both directions are the point. A mode added to `internal/rigor` without a row
 // here is a mode the document does not promise; a row here for a mode the code
 // never had is a promise nothing keeps — and the vocabulary is read out of
-// `internal/rigor.Modes` rather than restated, so neither can drift from the
+// `internal/rigor.Rigors` rather than restated, so neither can drift from the
 // other silently. The figures are read the same way: the rounds column is the
 // mode's own default pair (`rigor.DefaultRounds`) and the last column is the
 // share of the per-run cap the mode carries (`config.RigorBudgetFraction`),
@@ -173,16 +173,16 @@ func TestDocsRigorModesProductTableMatchesTheCode(t *testing.T) {
 	doc := readDoc(t, rigorModesProductDoc)
 	rows := rigorModesProductTable(t, doc)
 
-	if len(rows) != len(rigor.Modes) {
-		t.Errorf("%s's mode table has %d rows and internal/rigor has %d modes: a mode the code has without a row is a mode the document does not promise, and a row for a mode the code lost is a promise nothing keeps", rigorModesProductDoc, len(rows), len(rigor.Modes))
+	if len(rows) != len(rigor.Rigors) {
+		t.Errorf("%s's mode table has %d rows and internal/rigor has %d modes: a mode the code has without a row is a mode the document does not promise, and a row for a mode the code lost is a promise nothing keeps", rigorModesProductDoc, len(rows), len(rigor.Rigors))
 	}
-	for i, mode := range rigor.Modes {
+	for i, mode := range rigor.Rigors {
 		if i >= len(rows) {
-			t.Errorf("%s's mode table has no row for %q, which internal/rigor.Modes holds", rigorModesProductDoc, mode)
+			t.Errorf("%s's mode table has no row for %q, which internal/rigor.Rigors holds", rigorModesProductDoc, mode)
 			continue
 		}
 		if got := strings.TrimSpace(rows[i][0]); got != "`"+string(mode)+"`" {
-			t.Errorf("%s's mode table row %d names %s and internal/rigor.Modes holds %q there: the table and the vocabulary are read in the same order", rigorModesProductDoc, i+1, got, mode)
+			t.Errorf("%s's mode table row %d names %s and internal/rigor.Rigors holds %q there: the table and the vocabulary are read in the same order", rigorModesProductDoc, i+1, got, mode)
 			continue
 		}
 		rounds := rigor.DefaultRounds(mode)
@@ -328,11 +328,11 @@ func TestDocsRigorModesProductStatesTheHotfixDoor(t *testing.T) {
 			t.Errorf("%s lacks %q: the flag is the door to hotfix, it needs no opt-in anywhere, and a session may use it", rigorModesProductDoc, want)
 		}
 	}
-	if got := rigor.Resolve(rigor.Config{Repo: rigor.Pro}, rigor.Request{Mode: rigor.Hotfix}); got.Mode != rigor.Hotfix || got.From != rigor.FromRequest {
-		t.Errorf("a request for hotfix resolved (%s, %s), and %s reads the flag as the door: the request and the resolver have to move together", got.Mode, got.From, rigorModesProductDoc)
+	if got := rigor.Resolve(rigor.Config{Repo: rigor.Pro}, rigor.Request{Level: rigor.Hotfix}); got.Level != rigor.Hotfix || got.From != rigor.FromRequest {
+		t.Errorf("a request for hotfix resolved (%s, %s), and %s reads the flag as the door: the request and the resolver have to move together", got.Level, got.From, rigorModesProductDoc)
 	}
-	if got := rigor.Resolve(rigor.Config{Repo: rigor.Hotfix}, rigor.Request{}); got.Mode != rigor.Hotfix {
-		t.Errorf("a rigor block naming hotfix resolved %s, and %s reads a hand-written layer as a way in too", got.Mode, rigorModesProductDoc)
+	if got := rigor.Resolve(rigor.Config{Repo: rigor.Hotfix}, rigor.Request{}); got.Level != rigor.Hotfix {
+		t.Errorf("a rigor block naming hotfix resolved %s, and %s reads a hand-written layer as a way in too", got.Level, rigorModesProductDoc)
 	}
 }
 
@@ -366,7 +366,7 @@ func rigorModesProductArgument(w string) bool {
 	if w != strings.ToLower(w) && w == strings.ToUpper(w) {
 		return true
 	}
-	return rigor.Known(rigor.Mode(w)) || rigorModesProductLevelsRE.MatchString(w)
+	return rigor.Known(rigor.Rigor(w)) || rigorModesProductLevelsRE.MatchString(w)
 }
 
 // rigorModesProductLevelsRE is the shape `fugaro rigor floor set` takes its

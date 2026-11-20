@@ -199,9 +199,9 @@ func TestValidateRefusesDuplicateAreaGlob(t *testing.T) {
 rigor:
   default: pro
   areas:
-    - { name: payments, match: "payments/**", mode: hotfix }
-    - { name: payments-api, match: "payments/api/**", mode: pro }
-    - { name: payments-again, match: "payments/**", mode: poc }
+    - { name: payments, match: "payments/**", level: hotfix }
+    - { name: payments-api, match: "payments/api/**", level: pro }
+    - { name: payments-again, match: "payments/**", level: poc }
 workflows:
   app: { commands: { build: sh build.sh, test: sh test.sh } }
 `
@@ -226,9 +226,9 @@ gcp_project: acme-fugaro
 defaults:
   rigor:
     areas:
-      - { name: payments, match: "payments/**", mode: hotfix }
+      - { name: payments, match: "payments/**", level: hotfix }
 `
-	same := strings.Replace(repo, "    - { name: payments-again, match: \"payments/**\", mode: poc }\n", "", 1)
+	same := strings.Replace(repo, "    - { name: payments-again, match: \"payments/**\", level: poc }\n", "", 1)
 	if c, _, ps := Resolve([]byte(same), mustLayer(t, layer)); c == nil || len(ps) > 0 {
 		t.Fatalf("the same glob in the two layers was refused: %s", problemsText(ps))
 	}

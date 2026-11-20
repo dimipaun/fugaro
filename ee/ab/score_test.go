@@ -31,7 +31,7 @@ func pairArm(runID, pairID string, arm task.ABArm) runstore.Record {
 		StartSHA: pairStartSHA,
 		HeadSHA:  pairHeadSHA,
 		AB:       &task.AB{PairID: pairID, Arm: arm},
-		Rigor:    &runstore.RigorRecord{Mode: rigor.Pro},
+		Rigor:    &runstore.RigorRecord{Level: rigor.Pro},
 		Tier:     &runstore.TierRecord{Tier: tier.Small},
 		Recipe:   &runstore.RecipeRecord{Name: pairRecipe, SHA256: strings.Repeat("ab", 32)},
 		Verify:   []verify.Record{{Kind: verify.KindTest, HeadSHA: pairHeadSHA, CleanTree: true, Passed: true}},
@@ -47,7 +47,7 @@ func pairArm(runID, pairID string, arm task.ABArm) runstore.Record {
 // (D561), so a test that wants the signals read hands over a verdict — a tie,
 // which is a judgement like any other and never a signal (TestCriticalNeedsVerdict
 // and TestVerdictShownBesideSignals are the two that move the verdict itself).
-func onePair(t *testing.T, mode rigor.Mode, champion, challenger runstore.Record) Result {
+func onePair(t *testing.T, mode rigor.Rigor, champion, challenger runstore.Record) Result {
 	t.Helper()
 	return onePairJudged(t, mode, judgedVerdict(WinTie), champion, challenger)
 }
@@ -61,7 +61,7 @@ func judgedVerdict(w Winner) Verdict {
 
 // onePairJudged is onePair with the judge's own answer, the zero Verdict for a
 // pair no judge has decided.
-func onePairJudged(t *testing.T, mode rigor.Mode, v Verdict, champion, challenger runstore.Record) Result {
+func onePairJudged(t *testing.T, mode rigor.Rigor, v Verdict, champion, challenger runstore.Record) Result {
 	t.Helper()
 	pairs := Pairs([]runstore.Record{champion, challenger})
 	if len(pairs) != 1 {
@@ -106,7 +106,7 @@ func TestHaltIsLoss(t *testing.T) {
 		challenger := pairArm("run-challenger", "pair-1", task.ABArmChallenger)
 		challenger.Halt = &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run"}
 
-		for _, mode := range []rigor.Mode{rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical} {
+		for _, mode := range []rigor.Rigor{rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical} {
 			if got := onePair(t, mode, champion, challenger).Winner; got != WinChampion {
 				t.Errorf("%s: winner = %q, want %q", mode, got, WinChampion)
 			}
@@ -264,7 +264,7 @@ func TestTieOnAllSignals(t *testing.T) {
 	champion := pairArm("run-champion", "pair-1", task.ABArmChampion)
 	challenger := pairArm("run-challenger", "pair-1", task.ABArmChallenger)
 
-	for _, mode := range []rigor.Mode{rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical} {
+	for _, mode := range []rigor.Rigor{rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical} {
 		if got := onePair(t, mode, champion, challenger).Winner; got != WinTie {
 			t.Errorf("%s: winner = %q, want %q", mode, got, WinTie)
 		}
@@ -325,7 +325,7 @@ func TestPairInvalidWhenStartSHADiffers(t *testing.T) {
 func TestPairInvalidWhenModeDiffers(t *testing.T) {
 	differing := map[string]func(runstore.Record) runstore.Record{
 		"mode": func(r runstore.Record) runstore.Record {
-			r.Rigor = &runstore.RigorRecord{Mode: rigor.POC}
+			r.Rigor = &runstore.RigorRecord{Level: rigor.POC}
 			return r
 		},
 		"tier": func(r runstore.Record) runstore.Record {
@@ -528,7 +528,7 @@ func TestPairReadinessFollowsTheLevelThatDecided(t *testing.T) {
 			Round: 2, Tier: runstore.TierAdversarial, Verdict: verdictShip,
 		})
 
-		res := onePair(t, rigor.Mode("paranoid"), champion, challenger)
+		res := onePair(t, rigor.Rigor("paranoid"), champion, challenger)
 		if res.Champion.ReviewReady {
 			t.Error("champion ready = true, want false: level 3 left no round")
 		}
@@ -710,7 +710,7 @@ func TestCriticalNeedsVerdict(t *testing.T) {
 	})
 
 	t.Run("a mode outside the vocabulary does not ask for one", func(t *testing.T) {
-		res := onePairJudged(t, rigor.Mode("paranoid"), Verdict{}, champion, challenger)
+		res := onePairJudged(t, rigor.Rigor("paranoid"), Verdict{}, champion, challenger)
 		if !res.Counted {
 			t.Error("a pair at a mode the vocabulary does not hold does not count: the requirement is Critical's own (D561), and no other mode's reading asks a judge")
 		}
@@ -761,7 +761,7 @@ func TestVerdictShownBesideSignals(t *testing.T) {
 
 	t.Run("a verdict that disagrees is carried as the judge wrote it", func(t *testing.T) {
 		v := Verdict{Winner: WinChallenger, Reason: "clarity", JudgeModel: "judge-model"}
-		for _, mode := range []rigor.Mode{rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical} {
+		for _, mode := range []rigor.Rigor{rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical} {
 			res := onePairJudged(t, mode, v, champion, challenger)
 			if res.Winner != WinChampion {
 				t.Errorf("%s: winner = %q, want %q: the halted arm loses on the signals whatever a judge answered", mode, res.Winner, WinChampion)

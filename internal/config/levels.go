@@ -82,7 +82,7 @@ type LevelInputs struct {
 	// it. Required.
 	Config *Config
 	// Mode is the run's rigor mode, and the first layer of the precedence.
-	Mode rigor.Mode
+	Mode rigor.Rigor
 	// Floor is the owner's floor for the run's mode: the levels a run of
 	// that mode must run whatever a lower layer asks for. nil is no floor.
 	// It is the answer policy.Effective.ReviewFloorFor gives — the row of

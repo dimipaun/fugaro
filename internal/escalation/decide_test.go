@@ -13,7 +13,7 @@ import (
 // second time, on purpose: the table test holds the numbers the ladder ships
 // with independently of the code that ships them, so a row that drifts from
 // the spec fails here rather than in the daemon.
-var specTable = map[rigor.Mode]struct {
+var specTable = map[rigor.Rigor]struct {
 	runs    int
 	hours   float64
 	grade   Grade
@@ -33,18 +33,18 @@ func atHours(h float64) time.Duration { return time.Duration(h * float64(time.Ho
 // under judgement: a case sets the clock, the counts and the rest. The churn
 // kind is the comparator's answer and a case names it too, because the zero
 // Kind is a caller that never asked and refuses the decision.
-func settled(m rigor.Mode) Facts {
+func settled(m rigor.Rigor) Facts {
 	return Facts{Mode: m, Churn: KindNone, HeadSHA: "head-1", RebasedHeads: []string{"head-1"}}
 }
 
 // young is a stalled item the cheap step has not run for yet, at a head of its
 // own.
-func young(m rigor.Mode) Facts {
+func young(m rigor.Rigor) Facts {
 	return Facts{Mode: m, Churn: KindNone, HeadSHA: "head-2", RebasedHeads: []string{"head-1"}}
 }
 
 // on returns settled's facts with one field changed.
-func on(m rigor.Mode, edit func(*Facts)) Facts {
+func on(m rigor.Rigor, edit func(*Facts)) Facts {
 	f := settled(m)
 	edit(&f)
 	return f
@@ -63,7 +63,7 @@ func clockReason(criticalPath bool) Reason {
 // the critical-path factor, at the points its own row names.
 func TestDecideTable(t *testing.T) {
 	th := DefaultThresholds()
-	for _, mode := range rigor.Modes {
+	for _, mode := range rigor.Rigors {
 		row := specTable[mode]
 		hotfix := mode == rigor.Hotfix
 		for _, cp := range []bool{false, true} {
@@ -349,7 +349,7 @@ func TestDecideUnknownModeRefuses(t *testing.T) {
 		f(&out)
 		return out
 	}
-	editRow := func(m rigor.Mode, f func(*Row)) Thresholds {
+	editRow := func(m rigor.Rigor, f func(*Row)) Thresholds {
 		out := DefaultThresholds()
 		row := out.Rows[m]
 		f(&row)
@@ -411,7 +411,7 @@ func TestDecideUnknownModeRefuses(t *testing.T) {
 // already spent (G4, D1246).
 func TestDecideNeverLoops(t *testing.T) {
 	th := DefaultThresholds()
-	for _, mode := range rigor.Modes {
+	for _, mode := range rigor.Rigors {
 		// The walk is what a ticking daemon does: it enters a rung, the run
 		// that rung launched ends (a new head, a spent attempt, an hour
 		// later), and the ladder is asked again.

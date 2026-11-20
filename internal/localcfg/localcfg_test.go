@@ -1846,7 +1846,7 @@ func TestReviewFloorDecodeStrict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := map[rigor.Mode][]policy.Level{rigor.Pro: {policy.LevelL2}, rigor.Critical: {policy.LevelL2, policy.LevelL3}}; !reflect.DeepEqual(floor, want) {
+	if want := map[rigor.Rigor][]policy.Level{rigor.Pro: {policy.LevelL2}, rigor.Critical: {policy.LevelL2, policy.LevelL3}}; !reflect.DeepEqual(floor, want) {
 		t.Errorf("ReviewFloorPolicy = %v, want %v", floor, want)
 	}
 	if none, err := Parse([]byte(sample)); err != nil {

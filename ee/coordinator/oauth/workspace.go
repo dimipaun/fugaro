@@ -230,8 +230,8 @@ func TokenHash(value string) string {
 // level, and the conversion between this type and that one is the wiring's: one
 // struct literal, in the task that wires the two.
 type Limits struct {
-	MinRigor rigor.Mode
-	MaxRigor rigor.Mode
+	MinRigor rigor.Rigor
+	MaxRigor rigor.Rigor
 	Hotfix   bool
 	SpendUSD float64
 	Scopes   []string

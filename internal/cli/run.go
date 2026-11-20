@@ -507,7 +507,7 @@ func newRunCmd() *cobra.Command {
 			"overriding its fugaro.yaml. There is no --compression flag: turning compression\n" +
 			"on is a reviewed fugaro.yaml change. A follow-up (--pr) keeps its run's choice,\n" +
 			"and --retry takes none (the stored task keeps its own).\n\n" +
-			"--mode MODE asks for a rigor mode for this run: " + rigor.ModeList() + ".\n" +
+			"--mode MODE asks for a rigor mode for this run: " + rigor.RigorList() + ".\n" +
 			"It may raise the mode the run resolves from its own configuration\n" +
 			"(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)\n" +
 			"and never lower it, so a launch that asks for less cannot outvote a repository\n" +
@@ -546,7 +546,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
-	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
+	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.RigorList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
 	f.StringArrayVar(&o.contextRepos, "context", nil, "a repository this run reads and never writes, as owner/name: repeatable, at most "+fmt.Sprint(task.MaxContextRepos)+", each admitted by the project's allow_repos. The list goes into the task and into the run's own identity, and the run clones each one read-only, outside its working tree, as reference the prompt points it at: nothing in one is committed or pushed, and the read-only token a context repository is cloned with is the installation's credentials service's, which needs the GitHub App installed on it. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository")
 	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
@@ -2052,6 +2052,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneRigorImage(ctx, env, spec, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The spelling gate on that same file, judged the same way: the
+		// key above passes on any image newer than 0.11.0, and an area
+		// rule's `level:` or the scalar shorthand still dies at bootstrap
+		// on one older than this release: see checkRigorSpellingImage.
+		if err := checkCloneRigorSpellingImage(ctx, env, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The governance: gate, judged the same way and for the same
 		// reason: see checkGovernanceImage.
 		if err := checkCloneGovernanceImage(ctx, env, spec, warn); err != nil {
@@ -2280,6 +2287,10 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// than on a task field: see checkRigorImage. Unconditional, since
 		// the repository's file alone can carry the key.
 		if err := checkRigorImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The spelling gate on that same file: see checkRigorSpellingImage.
+		if err := checkRigorSpellingImage(ctx, env, slug, spec, kind, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The governance: gate, the same shape as the clone branch's
@@ -2834,7 +2845,7 @@ func planTaskFlag(cmd *cobra.Command, o *runOptions) error {
 
 // rigorFlags is the run's own rigor request, validated once for every launch
 // shape that accepts it (a first run, a best-of-N batch, a review, a
-// follow-up): the mode against the closed vocabulary (rigor.Modes, D20), and
+// follow-up): the mode against the closed vocabulary (rigor.Rigors, D20), and
 // the declared paths against the two bounds a task spec carries
 // (task.MaxDeclaredPaths, task.MaxDeclaredPathBytes).
 //
@@ -2845,8 +2856,8 @@ func planTaskFlag(cmd *cobra.Command, o *runOptions) error {
 // same rules are applied again by task.Spec.Validate to whatever a task
 // carries, so a hand-written task.json cannot smuggle one past a launcher.
 func rigorFlags(o *runOptions) error {
-	if o.rigor != "" && !rigor.Known(rigor.Mode(o.rigor)) {
-		return userErr("--mode %q: use %s, or leave it off to resolve the mode from the run's own configuration", o.rigor, rigor.ModeList())
+	if o.rigor != "" && !rigor.Known(rigor.Rigor(o.rigor)) {
+		return userErr("--mode %q: use %s, or leave it off to resolve the mode from the run's own configuration", o.rigor, rigor.RigorList())
 	}
 	if len(o.paths) > task.MaxDeclaredPaths {
 		return userErr("--path: at most %d paths may be declared, got %d", task.MaxDeclaredPaths, len(o.paths))
@@ -2956,7 +2967,7 @@ var changeSetExcludes = []struct{ name, why string }{
 // the layers already meet: the request may raise and never lower (D6), so such
 // a request is recorded as asked and changes nothing, and a launcher that typed
 // it would otherwise believe it took effect. Hotfix is not one of those cases:
-// it is the mode a request takes whole (rigor.Mode.PerRun), so a resolution
+// it is the mode a request takes whole (rigor.Rigor.PerRun), so a resolution
 // that names the request as the layer that decided it — which is what this
 // reads — is the request that did take effect. It reads the checkout's
 // fugaro.yaml with the project layer, the closest thing to the base branch the
@@ -2971,10 +2982,10 @@ func noteRigorRequest(ctx context.Context, o *runOptions, repo string, warn io.W
 		return
 	}
 	cfg := c.RigorConfig()
-	if rigor.Resolve(cfg, rigor.Request{Mode: rigor.Mode(o.rigor), Paths: o.paths}).From == rigor.FromRequest {
+	if rigor.Resolve(cfg, rigor.Request{Level: rigor.Rigor(o.rigor), Paths: o.paths}).From == rigor.FromRequest {
 		return
 	}
-	resolved := rigor.Resolve(cfg, rigor.Request{Paths: o.paths}).Mode
+	resolved := rigor.Resolve(cfg, rigor.Request{Paths: o.paths}).Level
 	fmt.Fprintf(warn, "--mode %s is not higher than the repository's resolved mode %s: it has no effect\n", o.rigor, resolved)
 }
 
@@ -3125,7 +3136,7 @@ func buildAttemptSpec(plan *attemptPlan, o *runOptions, text string) (string, *t
 	}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, BaseBranch: plan.base, Workflow: plan.workflow, Task: text, Title: o.title,
 		PlanTask: o.planTask, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode,
-		Rigor: rigor.Mode(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier), DigestRuns: plan.digestRuns}
+		Rigor: rigor.Rigor(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier), DigestRuns: plan.digestRuns}
 	if plan.totalOverride != "" {
 		spec.Overrides.TotalTimeout = plan.totalOverride
 	}
@@ -3595,7 +3606,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	printRecipeNote(warn, rr, true)
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, BaseBranch: base, Workflow: workflow, Task: text, Title: o.title, PlanTask: o.planTask,
 		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...),
-		Rigor: rigor.Mode(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier)}
+		Rigor: rigor.Rigor(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier)}
 	// The task the pull request was written for, resolved here rather than by
 	// the job: the launcher is the only side that reads the runs bucket, and
 	// the review job is handed the answer (R1, D2934). A review of a pull

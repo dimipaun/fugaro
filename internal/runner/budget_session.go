@@ -585,7 +585,7 @@ func (r *run) registryEntry() budget.AgentEntry {
 	// record's own, and recordRigor keeps this pair in step with a later
 	// moment that raises it.
 	if rr := r.rec.Rigor; rr != nil {
-		e.Mode, e.From = string(rr.Mode), string(rr.From)
+		e.Mode, e.From = string(rr.LevelOf()), string(rr.From)
 	}
 	return e
 }

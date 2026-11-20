@@ -1057,14 +1057,14 @@
         "layer.defaults.rigor.areas.*.match": {
           "default": "unset = none"
         },
-        "layer.defaults.rigor.areas.*.mode": {
+        "layer.defaults.rigor.areas.*.level": {
           "default": "unset = none"
         },
         "layer.defaults.rigor.areas.*.name": {
           "default": "unset = none"
         },
         "layer.defaults.rigor.default": {
-          "default": "unset = the built-in mode (pro)"
+          "default": "unset = the built-in level (pro)"
         },
         "layer.gcp_project": {
           "default": "unset = the installation's GCP project"
