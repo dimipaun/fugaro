@@ -194,7 +194,14 @@ const A_RUN_ROW: JSONObject = {
   created: '2026-10-31T10:15:02Z',
 }
 
-/** ReadCase is one read: the argv it is spawned with and what the child prints. */
+/** ReadCase is one read: the argv it is spawned with and what the child prints.
+ *
+ * **A feed's lines are the CLI's own line shape**, `{"type":"row","row":{...}}`
+ * (`streamRowLine`, `internal/cli/runs_stream.go`; the bytes
+ * `internal/cli/testdata/runs_stream.golden.ndjson` pins). A row written as the
+ * line itself would be a shape no CLI writes, and a reader that accepted it
+ * would answer rows whose members are `type` and `row` -- the mistake this
+ * shape is here to catch. */
 interface ReadCase {
   readonly name: NewReadName
   readonly argv: readonly string[]
@@ -208,7 +215,7 @@ const CASES: readonly ReadCase[] = [
     name: 'runs.stream',
     argv: ['runs', 'ls', '--stream', '--json', '--since', '24h'],
     lines: [
-      { type: 'row', ...A_RUN_ROW },
+      { type: 'row', row: A_RUN_ROW },
       { type: 'end', version: 1, count: 1 },
     ],
   },
@@ -216,7 +223,7 @@ const CASES: readonly ReadCase[] = [
     name: 'spend.stream',
     argv: ['report', '--stream', '--json'],
     lines: [
-      { type: 'row', day: '2026-10-31', spent_usd: 1.5 },
+      { type: 'row', row: { key: '2026-10-31', spent_usd: 1.5 } },
       { type: 'end', count: 1 },
     ],
   },
@@ -224,7 +231,7 @@ const CASES: readonly ReadCase[] = [
     name: 'budget.stream',
     argv: ['budget', 'show', '--stream', '--json'],
     lines: [
-      { type: 'row', repo: 'owner/repo-a', mode: 'enforce' },
+      { type: 'row', row: { slug: 'owner/repo-a', repo: 'owner/repo-a', mode: 'enforce' } },
       { type: 'end', count: 1 },
     ],
   },
@@ -325,9 +332,10 @@ function linesOf(lines: readonly unknown[]): string {
   return `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`
 }
 
-/** aRowLine is one row line of a feed, with `pad` text to size it. */
+/** aRowLine is one row line of a feed, in the line shape the CLI writes, with
+ * `pad` text to size it. */
 function aRowLine(n: number, pad = ''): JSONObject {
-  return { type: 'row', n, pad }
+  return { type: 'row', row: { n, pad } }
 }
 
 /** feedOver is one feed read from one stub child, with the bounds a test names. */
@@ -496,25 +504,30 @@ describe('the floor a read is offered at', () => {
 describe('the fields the contract names', () => {
   it('puts a named field through its class wherever it appears', () => {
     // `title` is a sentence and `name` a label, at any depth: the table is keyed
-    // by the field's own wire name.
+    // by the field's own wire name, and a feed's row is one level further down
+    // than the document around it.
     const document: JSONObject = {
       type: 'row',
-      title: 'a​title',
-      entries: [{ name: 'a​name', other: 'a​other' }],
-      tags: ['a​tag'],
+      row: {
+        title: 'a​title',
+        entries: [{ name: 'a​name', other: 'a​other' }],
+        tags: ['a​tag'],
+      },
     }
     expect(throughClasses(document)).toEqual({
       type: 'row',
-      title: 'atitle',
-      entries: [{ name: 'aname', other: 'a​other' }],
-      tags: ['atag'],
+      row: {
+        title: 'atitle',
+        entries: [{ name: 'aname', other: 'a​other' }],
+        tags: ['atag'],
+      },
     })
   })
 
   it('draws a value its class refuses as the placeholder, never as the value', () => {
     const tooLong = 'x'.repeat(MAX_TEXT_INPUT_LENGTH + 1)
-    const drawn = throughClasses({ type: 'row', title: tooLong })
-    expect(drawn['title']).toBe(LITERAL_PLACEHOLDER)
+    const drawn = throughClasses({ type: 'row', row: { title: tooLong } })
+    expect((drawn['row'] as JSONObject)['title']).toBe(LITERAL_PLACEHOLDER)
     expect(JSON.stringify(drawn)).not.toContain(tooLong)
   })
 
@@ -527,14 +540,14 @@ describe('the fields the contract names', () => {
   })
 
   it('answers the sanitized document through a handler, not the raw one', async () => {
-    const raw = { type: 'row', title: 'a​title' }
+    const raw = { type: 'row', row: { title: 'a​title' } }
     const handlers = newReadHandlers({
       source: aCountingSource({ lines: [raw] }),
       cliVersion: '0.30.0',
       floors: floorsAt('0.30.0'),
     })
     const answer = await handlers['runs.stream']({})
-    expect(answer.document).toEqual({ lines: [{ type: 'row', title: 'atitle' }] })
+    expect(answer.document).toEqual({ lines: [{ type: 'row', row: { title: 'atitle' } }] })
   })
 
   it('rebuilds the document rather than sharing it', () => {
@@ -564,14 +577,16 @@ const FIXTURE_CLI = '0.30.0'
 const FIXTURE_DOCUMENTS: Readonly<Record<NewReadName, JSONObject>> = Object.freeze({
   'runs.stream': {
     lines: [
-      { type: 'row', ...A_RUN_ROW, title: 'the fixture runs stream' },
+      { type: 'row', row: { ...A_RUN_ROW, title: 'the fixture runs stream' } },
       { type: 'end', version: 1, count: 1 },
     ],
   },
-  'spend.stream': { lines: [{ type: 'row', day: '2026-10-31' }, { type: 'end' }] },
+  'spend.stream': {
+    lines: [{ type: 'row', row: { key: '2026-10-31' } }, { type: 'end' }],
+  },
   'budget.stream': {
     lines: [
-      { type: 'row', repo: 'owner/repo-a', mode: 'enforce' },
+      { type: 'row', row: { slug: 'owner/repo-a', repo: 'owner/repo-a', mode: 'enforce' } },
       { type: 'end', count: 1 },
     ],
   },
