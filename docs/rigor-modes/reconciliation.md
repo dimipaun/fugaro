@@ -1871,8 +1871,8 @@ self-consistent, and `fugaro diagnose` printing the mode of the run it read.
 
 **What follows from the answer, and is the plan's problem rather than this
 decision's:** every claim in this folder and in the plan that the first cut
-leaves a run unchanged is **narrower than it reads**, and the owner's answer of
-2026-10-22 restated them all
+leaves a run unchanged is **true of less than it says**, and the owner's answer
+of 2026-10-22 restated them all
 ([levels-reconciliation.md](levels-reconciliation.md) §3b item 1): *Critical's
 finding thresholds are unchanged; its prompts, its PR body's hand-back sections
 and two presence checks are new* — true of a run whose resolved mode is Critical,

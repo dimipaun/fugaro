@@ -56,8 +56,8 @@ The security-sensitive tier is **not a mode floor in this tree**: T1.5's built-i
 sensitive-path floors are unbuilt, and what the runner guarantees a
 security-sensitive diff today is review level 3, forced on a matching path
 whatever mode the run resolved — the escalation raises a level and never the mode.
-Every claim that a cut leaves a run unchanged is therefore narrower than this
-folder first wrote it: the owner's answer of 2026-10-22 restated them all as
+Every claim in this folder that a cut leaves a run unchanged is therefore true
+of less than it says, and the owner's answer of 2026-10-22 restated them all as
 **Critical's finding thresholds are unchanged; its prompts, its PR body's
 hand-back sections and two presence checks are new**
 ([levels-reconciliation.md](levels-reconciliation.md) §3b item 1).

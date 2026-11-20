@@ -827,10 +827,11 @@ var rigorModesWithdrawnClaims = []string{
 	"behaves exactly as it does today",
 }
 
-// rigorModesScopeWindow is how far from such a claim the word "Critical" may sit
-// and still count as scoping it. It is generous because markdown wraps: the
-// claim and its scope are one sentence, and a sentence here runs to a few
-// hundred characters.
+// rigorModesScopeWindow is how close two facts in these documents have to sit to
+// count as the same sentence: a fact and the sentence that qualifies it are one
+// unit here, and a fact a reader meets twenty lines away from its qualification
+// is the shape this catches. It is generous because markdown wraps, and a
+// sentence in this folder runs to a few hundred characters.
 const rigorModesScopeWindow = 600
 
 // rigorModesMarksReadyAbsences are the phrasings the folder must not carry: a
