@@ -780,8 +780,12 @@ func TestFakeClaudeRunSavesSession(t *testing.T) {
 	if !strings.Contains(string(data), "Add a feature") || !strings.Contains(string(data), "Address each one") {
 		t.Fatalf("the work session is not the fix's resumed conversation: %q", data)
 	}
+	// The review's own file holds the review's turn alone, and the fix's line is
+	// what says it is not the work chain's: the task text no longer separates
+	// them, because every review prompt carries the brief it is judged against
+	// (RA2) and "Add a feature" is now in both.
 	rm, rdata := reviewSessionObjects(t, h)
-	if rm.ID != reviewID || !strings.Contains(string(rdata), "You are reviewing a pull request") || strings.Contains(string(rdata), "Add a feature") {
+	if rm.ID != reviewID || !strings.Contains(string(rdata), "You are reviewing a pull request") || strings.Contains(string(rdata), "Address each one") {
 		t.Fatalf("review session = %+v, %q; want the last review's %s", rm, rdata, reviewID)
 	}
 }

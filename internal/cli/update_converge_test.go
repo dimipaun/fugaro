@@ -1416,6 +1416,82 @@ func TestUpdateConvergesTheSpendLeavesFromThePreviousGeneration(t *testing.T) {
 	run.laterWrites(t, r)
 }
 
+// TestRulesConvergeFromThePreviousVersion: an installation at the generation
+// behind reaches this one's credential route with `fugaro update` alone, with a
+// run in flight across the update (workspace-service task WS22, R3 and R4).
+//
+// The rule is a READ grant to a run's own token — a run reads its repository's
+// route record at bootstrap, before its first call, and mints an identity token
+// for the address it names — so the generation moves for the reason generations
+// 4 and 8 did: a run under the document behind is refused a read its routing
+// depends on. The migration is the rules stage `fugaro update` already runs, so
+// nothing here is a second command and the owner has no other step (CLAUDE.md's
+// HARD RULE); the fixture is the release behind — the marker one generation old
+// over a document with no `config` node, so no route can be read under it.
+//
+// The run is in flight because the acceptance is about it: the update asks no
+// run to finish first, rewrites nothing the run holds and reaches none of its
+// writes, so the run that bootstrapped under the release behind finishes under
+// this one (TestUpdateLeavesARunInFlightRunning is the general pin; this test
+// reads the same state under the generation this task moves).
+func TestRulesConvergeFromThePreviousVersion(t *testing.T) {
+	r := newConvergeRig(t, currentNode())
+	currentRelease(t)
+	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion-1) {
+		t.Fatalf("the fixture carries %s = %v, want the previous generation %d: it is not an installation whose rules predate the credential route",
+			projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion-1)
+	}
+	if infra.SameJSON(r.db.Rules(), generatedRules(t)) {
+		t.Fatal("the fixture's deployed rules are already the document this binary generates, so nothing has to converge")
+	}
+
+	run := startRunInFlight(t, r)
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	// One run, and the marker records this binary's generation over the document
+	// the marker names.
+	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion) {
+		t.Errorf("after one fugaro update, %s = %v, want %d", projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion)
+	}
+	if !infra.SameJSON(r.db.Rules(), generatedRules(t)) {
+		t.Errorf("the update did not leave this binary's document deployed, so no run of this installation reads its route:\n%s", r.db.Rules())
+	}
+	route := deployedNodeOf(t, deployedRulesOf(t, r.db.Rules()), "config", "policy", "route")
+	// The parent carries no grant of its own, which is the whole reason the
+	// record is a leaf per repository: an RTDB grant cascades down, so a read
+	// here would hand every repository's route — its address, and the holder of
+	// each kind — to every run of the installation. It is also the path the
+	// member's own update walks to remove the records of the repositories it no
+	// longer publishes.
+	if _, has := route[".read"]; has {
+		t.Errorf("the deployed config/policy/route carries a `.read` of its own: a grant here cascades to every repository's record")
+	}
+	if _, has := route[".write"]; has {
+		t.Errorf("the deployed config/policy/route carries a `.write` of its own, want none")
+	}
+	slug := deployedNodeOf(t, route, "$slug")
+	read, _ := slug[".read"].(string)
+	// The grant is the template's, rendered: `TOKEN` expands to the run token's
+	// own claims and the leaf is bound to the token's slug claim, which is the
+	// escape the path is keyed with — so one repository's run reads its own
+	// record and no other's, and a signed-in reader is refused the subtree.
+	if !strings.Contains(read, "auth.token.fp") {
+		t.Errorf("the deployed config/policy/route/$slug .read = %q, want the run token's own predicate (TOKEN)", read)
+	}
+	if !strings.Contains(read, "auth.token.fs == $slug") {
+		t.Errorf("the deployed config/policy/route/$slug .read = %q, want the run token's predicate bound to this repository (`TOKEN && auth.token.fs == $slug`)", read)
+	}
+	if strings.Contains(read, "auth.token.mu") || strings.Contains(read, "auth.token.mc") {
+		t.Errorf("the deployed config/policy/route/$slug .read = %q and carries a user or consumer claim: the record is the run token's alone", read)
+	}
+	if v, has := slug[".write"]; !has || v != false {
+		t.Errorf("the deployed config/policy/route/$slug carries .write = %v, want false: no token but the member's admins' writes the route (the member's own update, over IAM)", slug[".write"])
+	}
+
+	run.laterWrites(t, r)
+}
+
 // previousGenerationRulesDocument is the document the release before this one
 // deployed: the frozen copy of the golden this generation's leaves were added
 // to (internal/budget/rules/testdata/rules.generation6.json). It is read from

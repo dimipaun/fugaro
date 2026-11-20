@@ -76,6 +76,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/credsvc/bitbucketproxy.go":       "the proxied Bitbucket request's provider",
 	"internal/credsvc/build.go":                "the provider the build-credentials route issues its git credential from: the App key's mint on GitHub, the bundle's own token and host on Bitbucket",
 	"internal/credsvc/buildtoken.go":           "the provider a build's credential is minted at, and which of the build route's two answers the call is served",
+	"internal/credsvc/bundle_workspace.go":     "the pool's forge entries: the kind a shared entry is read as, and the accessor of the bundle that holds that kind's credential (WS15)",
 	"internal/credsvc/github.go":               "the credentials service's admission of a GitHub provider",
 	"internal/credsvc/githubread.go":           "the credentials service's GitHub read mint",
 	"internal/gitprov/gitprov.go":              "KindForHost and KindForURL's host table",

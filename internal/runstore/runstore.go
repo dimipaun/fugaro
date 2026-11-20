@@ -246,6 +246,20 @@ type ReviewSummary struct {
 	// for the cheap loop after the first one, and so on. Always 0 on a
 	// senior (tier "" or "senior") review.
 	Bounce int `json:"bounce,omitempty"`
+	// Against is what this round was checked against: the task the pull
+	// request was written for, or the spec a launcher wrote (spec §2, R8).
+	// It is the same record the independent review job's artifact carries
+	// (Against, review.json's against), so a reader that wants to know
+	// whether a verdict judged the change against a brief reads one object
+	// in both — and, as there, it is a CLAIM and never evidence (R16).
+	//
+	// Every round carries one: a round with no brief to check against
+	// records source none with the reason, so a code-only review says so in
+	// its own record rather than leaving a reader to guess. Absent on a
+	// round written before the field existed, which is every record an
+	// older release wrote; the field is additive, so such a record stays
+	// valid and version stays 1.
+	Against *Against `json:"against,omitempty"`
 }
 
 // Review tiers (ReviewSummary.Tier).
