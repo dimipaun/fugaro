@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"net/url"
 	"os"
 	"slices"
@@ -578,10 +579,13 @@ asked for, because a pattern is a promise about what the account may be a job of
 rather than the jobs it is.
 
 --database-region is where the member's Realtime Database lives, and it is
-optional: a database in the project's default region needs none. It is never
-whose database it is — that is derived from the Firebase project the verified
-iss names, so an owner cannot pair one member's accounts with another's
-database — and this says only where in that project it lives.
+optional: left out, it is read from the member's own budget.rtdb_url, which that
+installation's fugaro update writes, so a member in europe-west1 is linked at
+its own host with no flag — and it wins when it is given. It is never whose
+database it is — that is derived from the Firebase project the verified iss
+names, so an owner cannot pair one member's accounts with another's database —
+and this says only where in that project it lives. A database in the project's
+default region records no region either way.
 
 A member the table already declares is replaced whole: the entry ends up
 holding the four values given, the accounts with their repositories, the
@@ -616,7 +620,7 @@ builds.`,
 	f := cmd.Flags()
 	f.StringArrayVar(&o.jobServiceAccounts, "job-service-account", nil, "a job service account of the member, which the workspace's service resolves a caller by (repeatable)")
 	f.StringArrayVar(&o.jobRepos, "job-repos", nil, "a repository a job service account is a job of, as <account>=<owner/name> (repeatable; every account needs at least one)")
-	f.StringVar(&o.databaseRegion, "database-region", "", "the region of the member's Realtime Database; omit it for a database in the project's default region")
+	f.StringVar(&o.databaseRegion, "database-region", "", "the region of the member's Realtime Database; omit it to read it from the member's own budget.rtdb_url (a database in the project's default region has none)")
 	f.StringVar(&o.firebaseProject, "firebase-project", "", "the member's Firebase project ID, which the caller's token is issued under")
 	f.StringVar(&o.fp, "fp", "", "the member's Fugaro project name, which the token's fp claim must be")
 	f.StringVar(&o.exchangeURL, "exchange-url", "", "the member's exchange endpoint, where the workspace's signer mints a member-bound assertion for")
@@ -637,6 +641,12 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 	}
 	lc, path, err := workspaceOwnerConfig(workspace)
 	if err != nil {
+		return err
+	}
+	// The region is the flag's when it is given, and the member's own database's
+	// otherwise: what everything downstream states — the write, the sentence and
+	// the command line — is the value the entry ends up carrying.
+	if o.databaseRegion, err = workspaceMemberRegion(project, o.databaseRegion); err != nil {
 		return err
 	}
 	old, err := settingsReadDocument(settingsTarget{kind: settingsDocLocal, path: path})
@@ -684,7 +694,7 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 			return err
 		}
 	}
-	// The region is optional and it is written only when it is named: an entry
+	// The region is optional and it is written only when there is one: an entry
 	// with no database_region is a member whose database is in its project's
 	// default region, which is what an unwritten key says, where a written empty
 	// scalar would be a value the loader holds to the region rule to learn the
@@ -777,6 +787,85 @@ func workspaceJobAccountsPhrase(o *workspaceMemberAddOptions) string {
 	}
 	return strings.Join(parts, ", ")
 }
+
+// workspaceMemberRegion is the region an entry records for a member: the flag's
+// when it is given, and otherwise the region of the member's own Realtime
+// Database, read out of its own config's budget.rtdb_url (F14, D3084).
+//
+// A member's installation is never read from the cloud here and never changed:
+// what this reads is the URL the installation already has, so a member that
+// chose EU is linked at its own host with no flag and its database stays where it
+// is. A member whose config this machine does not hold, or one that has no
+// database yet, records no region — an absent database_region is already the
+// project's default database, which is what today's entries carry — and the flag
+// is there for the owner who knows where the member's database is.
+func workspaceMemberRegion(member, flag string) (string, error) {
+	if flag != "" {
+		return flag, nil
+	}
+	lc, _, err := localcfg.LoadProject(os.Getenv, member)
+	if errors.Is(err, localcfg.ErrMissing) {
+		return "", nil
+	}
+	if err != nil {
+		return "", userErr("member %s's own config could not be read, so where its database is cannot be told from it: %v; pass --database-region to record the region without reading that file", member, err)
+	}
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		return "", nil
+	}
+	return workspaceDatabaseRegion(member, lc.Budget.RTDBURL)
+}
+
+// workspaceDatabaseRegion is the region a Realtime Database URL names, "" when
+// the URL names none.
+//
+// The region is the host's and never the project's, and the host is the only
+// place it is written: a database in a region is named there by the region alone
+// (`<database>.<region>.firebasedatabase.app`), while the legacy
+// `<database>.firebaseio.com` host names no region at all — neither does a
+// loopback address, which is an emulator and not a place.
+//
+// A regional host in a place the Realtime Database does not exist in is refused
+// rather than recorded: recording it would hand the workspace's service a host
+// that is no database, and the owner is the one who can say which of the
+// locations the member's database is in.
+func workspaceDatabaseRegion(member, raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", nil
+	}
+	host := strings.ToLower(u.Hostname())
+	if ip := net.ParseIP(host); (ip != nil && ip.IsLoopback()) || host == "localhost" {
+		return "", nil
+	}
+	rest, ok := strings.CutSuffix(host, ".firebasedatabase.app")
+	if !ok {
+		return "", nil
+	}
+	_, region, ok := strings.Cut(rest, ".")
+	if !ok {
+		return "", nil
+	}
+	if region == workspaceDatabaseDefaultRegion {
+		return "", nil
+	}
+	if !slices.Contains(workspaceDatabaseLocations, region) {
+		return "", userErr("member %s's budget.rtdb_url names the region %s, which is not a Realtime Database location: a database exists in %s and nowhere else, so recording %s would point the workspace's service at a host that is not the member's database; pass --database-region with the region that database is in (fugaro workspace member add --help)",
+			member, region, strings.Join(workspaceDatabaseLocations, ", "), region)
+	}
+	return region, nil
+}
+
+var (
+	// workspaceDatabaseLocations are the places a Realtime Database exists, read
+	// 2026-11-20 (firebase.google.com/docs/database/locations).
+	workspaceDatabaseLocations = []string{"us-central1", "europe-west1", "asia-southeast1"}
+	// workspaceDatabaseDefaultRegion is the one of them that has no regional
+	// host, so a database there is named by the legacy host and a URL naming it
+	// derives no region at all: credsvc's workspaceDatabase builds a regional
+	// host out of any non-empty region, and for this one there is none to build.
+	workspaceDatabaseDefaultRegion = workspaceDatabaseLocations[0]
+)
 
 // workspaceMemberFlags holds the values a member entry is built from: all four
 // the service resolves a caller by, because an entry with one missing is a
