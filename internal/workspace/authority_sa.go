@@ -72,9 +72,9 @@ var ErrSAOwnerInvite = errors.New("Google refuses an owner grant made by API out
 type SAProjects interface {
 	// GrantOwner gives member roles/owner on project.
 	GrantOwner(ctx context.Context, project, member string) error
-	// RemoveOwner drops member's roles/owner binding on project. A member who
-	// holds the role through a binding this call does not write — a conditional
-	// one, or a group — is refused rather than reported as removed, as the
+	// RemoveOwner drops member's roles/owner binding on project. A member the
+	// role also reaches through a binding this call does not write — a
+	// conditional one — is refused rather than reported as removed, as the
 	// folder side's RemoveOwner is.
 	RemoveOwner(ctx context.Context, project, member string) error
 	// Owns reports whether member holds roles/owner on project now. It is the
