@@ -17,11 +17,18 @@ shape and no operation changes because of it. The spec's section 5 is the groupi
 | `source` | The console operation whose answer the kind decodes (`members.list`, `budget.show`) |
 | `columns` | The table's columns: a `key`, the `title` drawn above it, and the `TEXT_CLASSES` class every cell of it passes under |
 | `decode(doc)` | The only place the kind's document is known: `unknown` in, the `ManageRow[]` the table draws out |
-| `actions` | What the kind offers beside a row: `copy-command {argv}` or `open-view {view}` |
+| `actions` | What the kind offers beside **every** row it decodes: `copy-command {argv, consequence}` or `open-view {view}` |
 
 A `ManageRow` is a `key` (the row's identity among the rows of one read) and `cells`, one string per column, keyed by
 the column's `key`. There is no separate status member: "status" in the spec's list view is a column like any other,
 so a kind that has one names it in `columns`.
+
+**A row may carry `actions` of its own** (`ManageRow.actions`, added by MO-C), and it is `optional` for the reason the
+kind's own list is not: the command D2903 puts on the clipboard names the row it came from -- `fugaro project repos rm
+github/acme/app` is one repository's -- and that value is a value of that row's document, which only the kind holds. A
+command declared on the kind alone could only be one that names no repository, person or key at all, so a kind whose
+rows each need their own declares them on the row, and a row that leaves the member out draws the kind's own
+`actions` and nothing else.
 
 **It is a descriptor, not a contract.** The console's contract is `console/docs/json-contract.md`, which is about
 what the CLI sends and the console reads back; a descriptor is neither, and no reader outside this binary consumes
@@ -54,7 +61,9 @@ at the point the kind is defined rather than a section missing from the Project 
 A kind is defined under `console/src/renderer/manage/kinds/` and nowhere else -- never in the shell, never in
 `types.ts` and never in `entry.ts`. That directory is the kinds' own; the plan's slices assign the files
 (`people.ts`, `models.ts`, `keys.ts`, `budget.ts`, `repos.ts`, `images.ts`, `recipes.ts`), and where a slice gives
-one file to several kinds of one subject, that file holds them: People & access's three rows are `people.ts`'s.
+one file to several kinds of one subject, that file holds them: People & access's three rows are `people.ts`'s, and
+Code's repositories are `repos.ts`'s two -- the spec's subject answers it with two reads (`repos.ls` for what each
+repository is made of, `repos.status` for the doctor of one repository's enrolment), and a kind names one `source`.
 `manage/kinds/index.ts` (task I-MG) lists the files as the kinds in `MANAGE_GROUPS`' order, which is the list the
 Project tab mounts.
 
@@ -93,6 +102,16 @@ The action carries the argv, and the text on the clipboard is that argv joined w
 unambiguous exactly because no admitted word can hold a space, a tab or a newline, so no caller quotes anything.
 The refusal is an ordinary outcome and never a repair: `;`, `$(`, a backtick, a newline, a space, a leading `-`,
 `=` `@` or `~`, and a `..` segment are each a value the console will not copy.
+
+**The action also carries a `consequence`, and it is the console's own sentence rather than a word of the command.**
+What a destructive command takes away is what the operator has to read before they paste, and D2909 gives a removal no
+confirmation window to say it in: the next step after the Copy is a terminal, so the sentence travels with the
+command. `buildCopyCommand` takes it as an argument, so it is never a document's string and is not held to the
+alphabets above: a sentence is not a word, and the two never mix. What the sentence must state is the CLI's own
+account of the command (spec section 8), which is why MO-C's two are composed of phrases copied verbatim out of
+`internal/cli/project_repos_rm.go` and `project_enroll_converge.go` and held back to those files by
+`manage-code.test.ts`, and it is the empty string for a command with nothing to state. A refused action takes its
+consequence with it: nothing is drawn for a command that was refused.
 
 ## What is not here
 

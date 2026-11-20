@@ -115,8 +115,19 @@ export type CopyCommandAnswer =
  * The reason never quotes the value. It is drawn beside the row, and the row's
  * value may be anything a document holds -- a value the console will not put in a
  * shell is a value it will not put in a sentence either.
+ *
+ * **`consequence` is the console's own sentence, and it is never a word of the
+ * command.** It is drawn beside the Copy rather than run -- what a removal takes
+ * away, in the CLI's own account of it (spec section 8) -- so it is not held to
+ * the alphabets above and never reaches a shell: a sentence is not a word, and
+ * the two never mix. It is a parameter rather than a member the caller attaches
+ * afterwards so that an action is still built in one place, and a refused action
+ * takes its consequence with it: nothing is drawn for a command that was refused.
  */
-export function buildCopyCommand(parts: readonly CommandPart[]): CopyCommandAnswer {
+export function buildCopyCommand(
+  parts: readonly CommandPart[],
+  consequence = '',
+): CopyCommandAnswer {
   if (parts.length === 0) {
     return { ok: false, reason: 'this command has no words at all, so there is nothing to copy' }
   }
@@ -141,7 +152,7 @@ export function buildCopyCommand(parts: readonly CommandPart[]): CopyCommandAnsw
     }
     argv.push(part.text)
   }
-  return { ok: true, action: { kind: 'copy-command', argv } }
+  return { ok: true, action: { kind: 'copy-command', argv, consequence } }
 }
 
 /**
