@@ -110,6 +110,8 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		}
 		repo.RepoRigor = repo.Rigor
 		repo.RepoRigorSet = setsRigor(tree)
+		repo.RepoRigorLevelSet = setsRigorLevel(tree)
+		repo.RepoRigorScalarSet = setsRigorScalar(tree)
 		repo.RepoGovernanceSet = setsGovernance(tree)
 		repo.RepoGitAuthorSet = setsGitAuthor(tree)
 		repo.RepoSecuritySet = setsSecurity(tree)
@@ -166,6 +168,8 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	// a mode needs both (Config.RigorConfig).
 	c.RepoRigor = repo.Rigor
 	c.RepoRigorSet = setsRigor(tree)
+	c.RepoRigorLevelSet = setsRigorLevel(tree)
+	c.RepoRigorScalarSet = setsRigorScalar(tree)
 	c.RepoGovernanceSet = setsGovernance(tree)
 	c.RepoGitAuthorSet = setsGitAuthor(tree)
 	c.RepoSecuritySet = setsSecurity(tree)
@@ -450,6 +454,56 @@ func markLeaves(v any, path, source string, sources map[string]string) {
 func setsRigor(tree map[string]any) bool {
 	_, ok := tree["rigor"]
 	return ok
+}
+
+// setsRigorLevel is setsRigor for the `level:` key of a rigor area rule:
+// whether the text writes one, at any value. It reads the tree for that
+// method's reason and one more of its own — rigor.Area.UnmarshalYAML folds
+// `level:` and `mode:` into the rule's level, so the parsed rules cannot say
+// which spelling was written — and a runner older than rigorSpellingSince
+// refuses `level:` as a field it does not know, in a file it decodes with
+// KnownFields. Its answer becomes Config.RepoRigorLevelSet.
+func setsRigorLevel(tree map[string]any) bool {
+	return rigorAreaLevelWritten(tree["rigor"])
+}
+
+// setsRigorScalar is setsRigor for the rigor: key written as a scalar — the
+// shorthand `rigor: critical`, which Rigor.UnmarshalYAML reads as a block
+// carrying only default. The two forms decode to the same block, so the parsed
+// value cannot tell them apart, and a runner older than rigorSpellingSince
+// refuses the scalar outright ("cannot unmarshal !!str into config.Rigor")
+// where it reads the block. Its answer becomes Config.RepoRigorScalarSet.
+func setsRigorScalar(tree map[string]any) bool {
+	n, ok := tree["rigor"].(*yaml.Node)
+	return ok && n.ShortTag() == "!!str"
+}
+
+// rigorAreaLevelWritten is whether a decoded rigor: value writes the `level:`
+// key of one of its area rules: the shared walk behind setsRigorLevel and
+// ProjectLayer.SetsRigorLevel, which read it out of a repository's tree and a
+// layer's respectively. The rules are a mapping's value in this tree only when
+// the whole rigor: block is one, so the list arrives as the node Resolve keeps
+// it as (nodeTree's answer for a sequence) and is walked as nodes.
+func rigorAreaLevelWritten(node any) bool {
+	m, ok := node.(map[string]any)
+	if !ok {
+		return false
+	}
+	areas, ok := m["areas"].(*yaml.Node)
+	if !ok || areas.Kind != yaml.SequenceNode {
+		return false
+	}
+	for _, rule := range areas.Content {
+		if rule.Kind != yaml.MappingNode {
+			continue
+		}
+		for i := 0; i+1 < len(rule.Content); i += 2 {
+			if rule.Content[i].Value == "level" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // setsGovernance is ProjectLayer.SetsGovernance for a repository file's own

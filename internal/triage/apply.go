@@ -99,7 +99,7 @@ type Outcome struct {
 // it names rather than deferring it. Each of those blocks records source
 // fail_safe: the answer could not be read as an answer, so the strict direction
 // was taken, exactly as for a call that failed.
-func Apply(m rigor.Mode, in []Input, v Verdict, ok bool) Outcome {
+func Apply(m rigor.Rigor, in []Input, v Verdict, ok bool) Outcome {
 	var out Outcome
 
 	named := make([]*Entry, len(in))

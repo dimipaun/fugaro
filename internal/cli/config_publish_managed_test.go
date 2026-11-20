@@ -525,6 +525,111 @@ func TestConfigPublishManagedRefusesAKeyTheRegistryDoesNotKnow(t *testing.T) {
 	}
 }
 
+// areaRuleLayer is a layer whose rigor block carries one area rule, written
+// under key — `mode`, the spelling v0.11.0 shipped, or `level`, the one this
+// release writes — plus, when agent is not empty, the round count a coding
+// agent's session may move (D1027's allowlist).
+func areaRuleLayer(key, agent string) string {
+	out := minimalAnchored + "defaults:\n  rigor:\n    areas:\n      - { name: db, match: \"db/*\", " + key + ": pro }\n"
+	if agent != "" {
+		out += "  agent: { review_rounds: " + agent + " }\n"
+	}
+	return out
+}
+
+// An area rule's level was written `mode:` until LD2 renamed the axis, and that
+// key is released: v0.11.0 shipped rigor.areas with it, and its `fugaro rigor
+// set --area` wrote it into the project layer of a managed project. The loader
+// reads it (internal/rigor's Area.UnmarshalYAML), so the gate judges a document
+// this program loads and runs — a session publishing that layer, with only the
+// round count D1027 admits moved, is admitted and the record says which rule
+// admitted it. `level:` is the same document with this release's spelling.
+//
+// Mutation (drop the alias from layerRegistryExact): the registry rule fires on
+// `defaults.rigor.areas.*.mode`, and a coding agent's session is refused the
+// layer of a project whose configuration this build reads — with no command that
+// fixes it, the owner's own `fugaro update` writing a layer nobody published.
+func TestConfigPublishManagedAdmitsTheReleasedAreaModeKey(t *testing.T) {
+	for _, tc := range []struct{ name, key string }{
+		{"the released key", "mode"},
+		{"this release's key", "level"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newManagedPublishRig(t)
+			agentSession(t)
+			publishedLayer(t, r.cloudFixture, areaRuleLayer(tc.key, ""))
+			want := areaRuleLayer(tc.key, "5")
+			out, errOut, err := execute(t, "config", "publish", layerFile(t, want))
+			if err != nil {
+				t.Fatalf("a layer carrying an area rule's %s was refused in a coding agent's session: %v\n%s", tc.key, err, errOut)
+			}
+			if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
+				t.Errorf("the session does not read that the step proceeded: %q", out)
+			}
+			if got := bucketText(t, r.cloudFixture, config.LayerKey); got != want {
+				t.Fatalf("the bucket holds %q, want the published layer", got)
+			}
+			rec := r.audits(t)
+			if len(rec) != 1 || rec[0].Verdict != managedmode.AuditAdmitted {
+				t.Fatalf("the admission left %v, want one admitted record", rec)
+			}
+			if rules := strings.Join(rec[0].Rules, " "); !strings.Contains(rules, "rigor area rule") {
+				t.Errorf("the record's key rule does not say which keys it admitted: %q", rules)
+			}
+		})
+	}
+}
+
+// The other side of the same rule: an area rule's own keys are the whole of what
+// the gate takes beside the registry. A key the loader does not read, one
+// segment deeper or off the rule's own path, is still a key no run reads — the
+// alias admits `mode:` and nothing else.
+func TestConfigPublishManagedRefusesAnUnknownKeyBesideAnAreaRule(t *testing.T) {
+	const layer = minimalAnchored + "defaults:\n  rigor:\n    areas:\n      - { name: db, match: \"db/*\", mode: pro, severity: high }\n"
+	r := newManagedPublishRig(t)
+	agentSession(t)
+	publishedLayer(t, r.cloudFixture, layer)
+	_, _, err := execute(t, "config", "publish", layerFile(t, layer))
+	if err == nil {
+		t.Fatal("a layer naming an area rule key no run reads was published in a coding agent's session")
+	}
+	if !strings.Contains(err.Error(), "registry") || !strings.Contains(err.Error(), "layer.defaults.rigor.areas.*.severity") {
+		t.Errorf("the refusal does not name the key and the registry as what refused: %v", err)
+	}
+	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != layer {
+		t.Fatalf("the refused write moved the published layer: %q", got)
+	}
+}
+
+// layerAreaKey answers for an area rule's own keys and for nothing else: the
+// path is the registry's spelling of such a rule, exactly one segment deep, and
+// the keys are the loader's own list (rigor.AreaKeys). Every other path is the
+// registry's question, which the two rules above keep asking.
+func TestLayerAreaKeyAdmitsOnlyAnAreaRulesOwnKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path []string
+		want bool
+	}{
+		{"the released level key", []string{"defaults", "rigor", "areas", "*", "mode"}, true},
+		{"the level key", []string{"defaults", "rigor", "areas", "*", "level"}, true},
+		{"the name", []string{"defaults", "rigor", "areas", "*", "name"}, true},
+		{"the match", []string{"defaults", "rigor", "areas", "*", "match"}, true},
+		{"a key the loader does not read", []string{"defaults", "rigor", "areas", "*", "severity"}, false},
+		{"one segment deeper", []string{"defaults", "rigor", "areas", "*", "mode", "extra"}, false},
+		{"no list index", []string{"defaults", "rigor", "areas", "mode"}, false},
+		{"not an area rule", []string{"defaults", "rigor", "mode"}, false},
+		{"another block's key", []string{"defaults", "agent", "review_rounds"}, false},
+		{"a top-level key", []string{"mode"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := layerAreaKey(tc.path); got != tc.want {
+				t.Errorf("layerAreaKey(%v) = %v, want %v", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
 // A cap against the published layer: a layer that raises what a run may spend
 // is the widening rule 4.1.6 refuses, and the same key written lower is the
 // narrowing the gate admits — the rule compares the two layers and not the
@@ -607,7 +712,7 @@ func TestConfigPublishManagedRefusesALoweredRigorFloor(t *testing.T) {
 		out := minimalAnchored + "defaults:\n  rigor: { default: " + defaultMode + " }\n"
 		if areaMode != "" {
 			out = minimalAnchored + "defaults:\n  rigor:\n    default: " + defaultMode +
-				"\n    areas:\n      - { name: db, match: \"db/*\", mode: " + areaMode + " }\n"
+				"\n    areas:\n      - { name: db, match: \"db/*\", level: " + areaMode + " }\n"
 		}
 		return out
 	}
@@ -652,7 +757,7 @@ func TestConfigPublishManagedRefusesALoweredRigorFloor(t *testing.T) {
 		r := newManagedPublishRig(t)
 		agentSession(t)
 		publishedLayer(t, r.cloudFixture, rigorBlock("pro", "startup"))
-		raised := minimalAnchored + "defaults:\n  rigor:\n    default: critical\n    areas:\n      - { name: db, match: \"db/*\", mode: critical }\n      - { name: web, match: \"web/*\", mode: pro }\n"
+		raised := minimalAnchored + "defaults:\n  rigor:\n    default: critical\n    areas:\n      - { name: db, match: \"db/*\", level: critical }\n      - { name: web, match: \"web/*\", level: pro }\n"
 		_, _, err := execute(t, "config", "publish", layerFile(t, raised))
 		if err == nil {
 			t.Fatal("a layer raising the project's rigor floors was published in a coding agent's session")

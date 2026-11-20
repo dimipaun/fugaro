@@ -40,7 +40,7 @@ func planLevels(l1, l2, l3 bool) config.Levels {
 func TestPlanRoundsFollowTheMode(t *testing.T) {
 	knobs := parseRecipe(t, "version: 1\nname: knobs\nsteps:\n  - first_line: {}\n  - review: {}\n")
 	for _, tc := range []struct {
-		mode       rigor.Mode
+		mode       rigor.Rigor
 		in, senior int
 	}{
 		{rigor.POC, 1, 1},
@@ -77,7 +77,7 @@ func TestPlanRoundsPrecedence(t *testing.T) {
 		rcp      *recipe.Recipe
 		a        config.Agent
 		override *int
-		mode     rigor.Mode
+		mode     rigor.Rigor
 		wantIn   int
 		wantSen  int
 	}{
@@ -130,12 +130,12 @@ func TestPlanRoundsClampToTheRecipeBounds(t *testing.T) {
 // number a layer set does not move: the mode supplies it only where nothing
 // else did.
 func TestPlanReviewRoundsFollowTheReachedMode(t *testing.T) {
-	r := &run{rec: &runstore.Record{Rigor: &runstore.RigorRecord{Mode: rigor.POC}}}
+	r := &run{rec: &runstore.Record{Rigor: &runstore.RigorRecord{Level: rigor.POC}}}
 	unset := planStep{Kind: recipe.StepReview, Rounds: 1, Precedence: 0}
 	if got := r.reviewRounds(unset); got != 1 {
 		t.Fatalf("rounds = %d at POC; want the mode's one", got)
 	}
-	r.rec.Rigor.Mode = rigor.Critical
+	r.rec.Rigor.Level = rigor.Critical
 	if got := r.reviewRounds(unset); got != 5 {
 		t.Fatalf("rounds = %d after the mode rose to critical; want the five that remain", got)
 	}

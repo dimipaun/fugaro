@@ -231,7 +231,7 @@ func TestPersonasAreEmbedded(t *testing.T) {
 	if got := strings.Join(names, ","); got != want {
 		t.Fatalf("the embedded personas are %s, want %s", got, want)
 	}
-	texts := map[rigor.Mode]string{}
+	texts := map[rigor.Rigor]string{}
 	for mode, file := range personaFiles {
 		data, err := personaFS.ReadFile(file)
 		if err != nil {

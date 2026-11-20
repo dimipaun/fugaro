@@ -316,7 +316,7 @@ func (e *Effective) tightenBinaryList(l []string, src string, first bool) {
 //
 // Every slice the result holds is built here, so neither the layers' maps nor
 // their slices are aliased or written to.
-func (e *Effective) unionReviewFloor(l map[rigor.Mode][]Level) {
+func (e *Effective) unionReviewFloor(l map[rigor.Rigor][]Level) {
 	for mode, added := range l {
 		running := e.Layer.ReviewFloor[mode]
 		var out []Level
@@ -329,7 +329,7 @@ func (e *Effective) unionReviewFloor(l map[rigor.Mode][]Level) {
 			continue
 		}
 		if e.Layer.ReviewFloor == nil {
-			e.Layer.ReviewFloor = make(map[rigor.Mode][]Level, len(l))
+			e.Layer.ReviewFloor = make(map[rigor.Rigor][]Level, len(l))
 		}
 		e.Layer.ReviewFloor[mode] = out
 	}

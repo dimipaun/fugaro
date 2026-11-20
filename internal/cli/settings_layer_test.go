@@ -185,7 +185,7 @@ func TestSettingsSetLayerAgentEntryRemovalIsACeilingRemoval(t *testing.T) {
 // settingsLayerRigorFloor is a layer file holding the mode its runs start
 // from: the floor D20c puts in the layer, with the block's other member beside
 // it, which is what keeps `defaults.rigor` a mapping once the mode leaves.
-const settingsLayerRigorFloor = "defaults:\n  rigor:\n    default: pro\n    areas:\n      - name: security\n        match: internal/creds/**\n        mode: critical\n"
+const settingsLayerRigorFloor = "defaults:\n  rigor:\n    default: pro\n    areas:\n      - name: security\n        match: internal/creds/**\n        level: critical\n"
 
 // TestSettingsSetLayerRigorEntryLoweringTheFloorIsAWidening: the layer's
 // `defaults.rigor.default` is a floor, and its widening direction is the

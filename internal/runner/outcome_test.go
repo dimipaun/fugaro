@@ -68,7 +68,7 @@ func TestDecideByMode(t *testing.T) {
 	cases := []struct {
 		name     string
 		records  []verify.Record
-		mode     rigor.Mode
+		mode     rigor.Rigor
 		round    int
 		verdict  string
 		findings []rigor.Score
@@ -108,7 +108,7 @@ func TestDecideByMode(t *testing.T) {
 		// A mode the table does not hold blocks on everything: the zero Mode
 		// a record written before the mode existed carries, and a name that
 		// arrived unparsed (F3).
-		{"a mode the table does not know blocks on everything", []verify.Record{pass}, rigor.Mode("wild"), 2, "changes", []rigor.Score{tiny}, false, "review round 2 still has 1 finding"},
+		{"a mode the table does not know blocks on everything", []verify.Record{pass}, rigor.Rigor("wild"), 2, "changes", []rigor.Score{tiny}, false, "review round 2 still has 1 finding"},
 
 		// The gates Decide already had outrank the mode: a tolerated round
 		// is still a draft when the run did not verify it.
@@ -155,7 +155,7 @@ func TestDecideAtTheStop(t *testing.T) {
 		name     string
 		records  []verify.Record
 		cfg      rigor.Config
-		mode     rigor.Mode
+		mode     rigor.Rigor
 		findings []rigor.Score
 		at       string
 		owner    *runstore.OwnerDecisions
@@ -191,7 +191,7 @@ func TestDecideAtTheStop(t *testing.T) {
 		// answer: they stop and finalize, and the reason is the count's own.
 		{"pro keeps its draft at the stop", []verify.Record{pass}, optedIn, rigor.Pro, []rigor.Score{small}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
 		{"critical keeps its draft at the stop", []verify.Record{pass}, optedIn, rigor.Critical, []rigor.Score{small}, runstore.StopTimeThreshold, nil, false, "review round 2 still has 1 finding"},
-		{"a mode the table does not know keeps its draft", []verify.Record{pass}, optedIn, rigor.Mode("wild"), []rigor.Score{tiny}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
+		{"a mode the table does not know keeps its draft", []verify.Record{pass}, optedIn, rigor.Rigor("wild"), []rigor.Score{tiny}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
 
 		// The gates above the verdict outrank the stop, exactly as they outrank
 		// the mode's ordinary tolerance: a run that stopped is not a run that
@@ -217,7 +217,7 @@ func TestDecideAtTheStop(t *testing.T) {
 func TestDecideUnscoredFindingBlocksEveryMode(t *testing.T) {
 	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
 	last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 2}
-	for _, mode := range rigor.Modes {
+	for _, mode := range rigor.Rigors {
 		dec := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, mode, 2, []rigor.Score{unscored, small}, ""), nil)
 		ready, reason := dec.Ready, dec.Reason
 		if ready || reason != "review round 2 still has 2 findings" {
@@ -281,7 +281,7 @@ func TestDecideToleratesOnlyWhatTheRunCanFile(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		cfg       rigor.Config
-		mode      rigor.Mode
+		mode      rigor.Rigor
 		tolerated bool
 	}{
 		{"a repository that configured a mode", optedIn, rigor.Startup, true},
@@ -372,7 +372,7 @@ func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		cfg  rigor.Config
-		mode rigor.Mode
+		mode rigor.Rigor
 	}{
 		{"critical tolerates nothing", optedIn, rigor.Critical},
 		{"poc files nothing so it tolerates nothing", optedIn, rigor.POC},
@@ -508,7 +508,7 @@ func decideOf(t *testing.T, r *run) (bool, string) {
 // can go and look at the rule rather than guess.
 func TestRaisedModeByAreaKeepsDraft(t *testing.T) {
 	r := raisedRun(t, raisedCase{
-		block:    "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: critical }\n",
+		block:    "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", level: critical }\n",
 		findings: []Finding{riskFour},
 		moments:  []string{runstore.RigorAtRound},
 	})
@@ -535,7 +535,7 @@ func TestRaisedModeByAreaKeepsDraft(t *testing.T) {
 // review round was held at is a raise that round answered, so a round the
 // raised mode tolerates still becomes ready.
 func TestModeRaisedAtFinalizeLeavesDraft(t *testing.T) {
-	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: startup }\n"
+	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", level: startup }\n"
 	late := raisedRun(t, raisedCase{block: block, findings: []Finding{riskFour}, moments: []string{runstore.RigorAtFinalize}})
 	if got := late.reachedRigor(); got != rigor.Startup {
 		t.Fatalf("the run resolved %q; want startup, or the case proves nothing", got)
@@ -568,7 +568,7 @@ func TestModeRaisedAtFinalizeLeavesDraft(t *testing.T) {
 // was held at the raised mode and its deferral is an answer the run publishes
 // under.
 func TestTriageDeferralsVoidedByFinalizeRaise(t *testing.T) {
-	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: startup }\n"
+	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", level: startup }\n"
 	late := raisedRun(t, raisedCase{
 		block: block, findings: []Finding{riskNine}, deferred: []rigor.Score{scoreOf(riskNine)},
 		moments: []string{runstore.RigorAtFinalize},
@@ -708,7 +708,7 @@ func TestAStopDoesNotCountADeferralTwice(t *testing.T) {
 // own rule blocks on) and the case reads acceptsAtStop rather than passing it
 // for want of a stop.
 func TestStopAcceptanceIsWithdrawnByARaiseAtFinalize(t *testing.T) {
-	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: startup }\n"
+	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", level: startup }\n"
 	r := raisedRun(t, raisedCase{block: block, findings: []Finding{riskNine}, moments: []string{runstore.RigorAtFinalize}})
 	r.stopAt = runstore.StopRoundsSpent
 	if got := r.reachedRigor(); got != rigor.Startup {
@@ -749,7 +749,7 @@ func TestStopAcceptanceIsWithdrawnByARaiseAtFinalize(t *testing.T) {
 // record itself contradicts.
 func TestRaisedModeByLayerAfterARoundStaysReady(t *testing.T) {
 	base := raisedCase{
-		block:    "rigor:\n  default: pro\n  areas:\n    - { name: docs, match: \"docs/**\", mode: poc }\n",
+		block:    "rigor:\n  default: pro\n  areas:\n    - { name: docs, match: \"docs/**\", level: poc }\n",
 		declared: []string{"docs/readme.md"},
 		paths:    []string{"internal/foo.go"},
 		moments:  []string{runstore.RigorAtRound, runstore.RigorAtFinalize},
@@ -992,7 +992,7 @@ func TestFindingsBlocksStayFailed(t *testing.T) {
 	// The severity override is the one finding every mode refuses (D2): the
 	// rows of TestDecideByMode above are the modes' tolerances, and this is the
 	// finding none of them holds.
-	for _, mode := range rigor.Modes {
+	for _, mode := range rigor.Rigors {
 		dec := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, mode, 2, []rigor.Score{catastrophic}, ""), nil)
 		if dec.Kind != KindBlocked || dec.Ready {
 			t.Errorf("%s: Decide = %+v, want the refusal `failed` names", mode, dec)
@@ -1051,7 +1051,7 @@ func capRun(t *testing.T, block string, findings []Finding) *run {
 //     picks up, and this one is a decision only the owner makes (OD1).
 func TestCapDeferralsAreTheStopsOwn(t *testing.T) {
 	cases := []struct {
-		mode rigor.Mode
+		mode rigor.Rigor
 		want []string
 	}{
 		{rigor.POC, []string{"the doc comment drifts", "the retry loop never stops", "the index is rebuilt on every call"}},
@@ -1107,7 +1107,7 @@ func TestCapDeferralsNeverNameAFloorFinding(t *testing.T) {
 	for _, f := range round {
 		byKey[findingKey(f)] = f
 	}
-	for _, mode := range rigor.Modes {
+	for _, mode := range rigor.Rigors {
 		r := capRun(t, "rigor:\n  default: "+string(mode)+"\n", round)
 		got := r.capDeferrals()
 		if mode == rigor.Critical {

@@ -126,7 +126,7 @@ type Step struct {
 type Facts struct {
 	// Mode is the item's rigor mode, already resolved by the layers that may
 	// set it (rigor.Resolve). A mode with no threshold row refuses.
-	Mode rigor.Mode
+	Mode rigor.Rigor
 	// Elapsed is the item's wall clock: the chain's elapsed time where it has
 	// one, else the time since its first run record (D2038, F7, F18).
 	Elapsed time.Duration
