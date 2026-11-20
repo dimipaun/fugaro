@@ -222,6 +222,10 @@ func TestPolicyKeyPathGovernance(t *testing.T) {
 		// operator it is meant to send to agent.triage would look in a block
 		// that cannot carry it.
 		{policy.KeyTriage, "agent.triage"},
+		// The review-against-task switch (D2935) is the same case with the
+		// other polarity: it is the repository's agent.review_against_task,
+		// and the ignored false a published true drops is reported under it.
+		{policy.KeyReviewAgainstTask, "agent.review_against_task"},
 	} {
 		if got := PolicyKeyPath(c.key); got != c.want {
 			t.Errorf("PolicyKeyPath(%q) = %q, want %q", c.key, got, c.want)
