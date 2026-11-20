@@ -598,11 +598,31 @@ var rootHelperNames = map[string]bool{
 // filepath.Join("..", "..", "docs", x) is seen as a repository path even when x
 // is not one.
 type fileScanner struct {
-	scan   *scanner
-	dir    string
-	test   bool
-	out    *fileScan
+	scan *scanner
+	dir  string
+	test bool
+	out  *fileScan
+	// values are the file's own bindings: what its top-level declarations hold,
+	// which every function of the file can see.
 	values map[string]value
+	// locals are the scopes of the functions being read, innermost last. A
+	// declared function starts with an empty one — another function's `root` is
+	// not this function's `root` — and a function literal inherits the bindings
+	// its enclosing function holds, which is what a closure closes over.
+	locals []*scope
+}
+
+// scope is what one function knows: the values it bound, and the names it
+// declares itself — its receiver, its parameters, its results — which hold
+// nothing the scan can read and shadow anything of the same name outside the
+// function, a caller's argument not being the file's variable.
+type scope struct {
+	values  map[string]value
+	unknown map[string]bool
+}
+
+func newScope() *scope {
+	return &scope{values: map[string]value{}, unknown: map[string]bool{}}
 }
 
 // file walks one parsed file: its declarations first, then every function body.
@@ -612,9 +632,93 @@ func (f *fileScanner) file(file *ast.File) {
 		case *ast.GenDecl:
 			f.genDecl(d)
 		case *ast.FuncDecl:
-			f.body(d.Body)
+			f.decl(d)
 		}
 	}
+}
+
+// decl reads one declared function: a scope of its own, then the names the
+// function declares, then its body. The scope is what keeps a name from meaning
+// whatever the last function to touch it meant: a `root := t.TempDir()` in one
+// test function must not turn a `walkAll(t, root string)` beside it into a walk
+// of a scratch directory, which is a walker recorded as reading nothing at all.
+func (f *fileScanner) decl(d *ast.FuncDecl) {
+	f.push()
+	defer f.pop()
+	f.declares(d.Recv)
+	f.declares(d.Type.Params)
+	f.declares(d.Type.Results)
+	f.body(d.Body)
+}
+
+// funcLit reads one function literal. It inherits the bindings around it, since
+// that is what a closure closes over, and the names it declares itself are its
+// own.
+func (f *fileScanner) funcLit(lit *ast.FuncLit) {
+	f.push()
+	defer f.pop()
+	f.declares(lit.Type.Params)
+	f.declares(lit.Type.Results)
+	f.body(lit.Body)
+}
+
+// declares marks the names a signature declares as holding nothing the scan can
+// read. Marked, and not bound to a value: the scan cannot read what a caller
+// passes — a walk of a parameter is read by `walk` as possibly the repository,
+// which is `any`, and reading it as scratch because another function once bound
+// the same name to a `t.TempDir()` left the walker neither `any` nor listed
+// (R4) — but an assignment to one is the value the function gives it, and
+// merging that with the unknown a caller passed would lose the read:
+// `func wsAccess(t *testing.T) (path, src string) { path =
+// filepath.Join(dir, "workspace_access.tf") }` names that file. A name the
+// function declares itself is not rooted either: a rooted value is evidence of
+// a repository path for every read, so rooting parameters marks every package
+// of the map — 147 of them, against 135 without — `any`, which saves nothing.
+func (f *fileScanner) declares(fields *ast.FieldList) {
+	sc := f.scope()
+	if sc == nil || fields == nil {
+		return
+	}
+	for _, field := range fields.List {
+		for _, name := range field.Names {
+			if name.Name == "_" {
+				continue
+			}
+			sc.unknown[name.Name] = true
+		}
+	}
+}
+
+func (f *fileScanner) push() { f.locals = append(f.locals, newScope()) }
+
+func (f *fileScanner) pop() {
+	if len(f.locals) > 0 {
+		f.locals = f.locals[:len(f.locals)-1]
+	}
+}
+
+// scope is the innermost function's scope, which is where a name a function
+// binds lands, or nil between functions, where only the file's own bindings
+// are written.
+func (f *fileScanner) scope() *scope {
+	if len(f.locals) == 0 {
+		return nil
+	}
+	return f.locals[len(f.locals)-1]
+}
+
+// lookup is what a name holds: the innermost function's binding or declared
+// name, then an enclosing function's, then the file's own.
+func (f *fileScanner) lookup(name string) value {
+	for i := len(f.locals) - 1; i >= 0; i-- {
+		if v, ok := f.locals[i].values[name]; ok {
+			return v
+		}
+		if f.locals[i].unknown[name] {
+			return value{}
+		}
+	}
+	return f.values[name]
 }
 
 func (f *fileScanner) genDecl(d *ast.GenDecl) {
@@ -724,18 +828,28 @@ func (f *fileScanner) stmt(st ast.Stmt) {
 	}
 }
 
-// bind records what an identifier holds. Two assignments that disagree leave the
-// value unknown, but keep the rootedness of either: a name that ever holds a
-// repository path is never read as a plain one.
+// bind records what an identifier holds, in the scope the scan is reading. Two
+// assignments that disagree leave the value unknown, but keep the rootedness of
+// either: a name that holds a repository path at one assignment and a scratch
+// directory at another is a name that may be the repository, and reading the
+// last assignment alone would leave the walker neither `any` nor listed — the
+// false negative R4 forbids.
 func (f *fileScanner) bind(name string, v value) {
-	if old, ok := f.values[name]; ok {
+	bindings := f.values
+	if sc := f.scope(); sc != nil {
+		bindings = sc.values
+	}
+	if old, ok := bindings[name]; ok {
 		if !old.known || !v.known || old.text != v.text {
 			v.known = false
 		}
 		v.rooted = v.rooted || old.rooted
+		if old.rooted || v.rooted {
+			v.notRepo = false
+		}
 		v.alts = mergeAlts(old.alts, v.alts)
 	}
-	f.values[name] = v
+	bindings[name] = v
 }
 
 // mergeAlts is the alternatives of a name assigned twice: a name that is one of
@@ -801,7 +915,7 @@ func (f *fileScanner) inspect(e ast.Expr) {
 		case *ast.CallExpr:
 			f.call(n)
 		case *ast.FuncLit:
-			f.body(n.Body)
+			f.funcLit(n)
 			return false
 		}
 		return true
@@ -822,7 +936,7 @@ func (f *fileScanner) eval(e ast.Expr) value {
 	case *ast.ParenExpr:
 		return f.eval(e.X)
 	case *ast.Ident:
-		return f.values[e.Name]
+		return f.lookup(e.Name)
 	case *ast.BinaryExpr:
 		if e.Op != token.ADD {
 			return value{}

@@ -5023,6 +5023,10 @@
       "any": true
     },
     {
+      "package": "./internal/blobx",
+      "any": true
+    },
+    {
       "package": "./internal/budget",
       "reads": [
         "cmd/fugaro/**",
@@ -9808,6 +9812,10 @@
         "schemas/fugaro.schema.json",
         "testdata/fixture-repo/**"
       ],
+      "ignores": [
+        "_",
+        "testdata"
+      ],
       "any": true
     },
     {
@@ -11518,6 +11526,7 @@
         "internal/claudeplugin/**",
         "internal/cli/**",
         "internal/cli/history.go",
+        "internal/cli/testdata/prevent_destroy_wrapped.txt",
         "internal/cmdlog/**",
         "internal/config/**",
         "internal/coordpath/**",

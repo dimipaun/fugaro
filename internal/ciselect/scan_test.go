@@ -237,6 +237,106 @@ func TestWalkFixture(t *testing.T) {
 	wantReads(t, w4, "internal/w4/testdata/**")
 }
 
+func TestScanScopesABindingToItsFunction(t *testing.T) {
+	// A name means what the function reading it holds, not what the last
+	// function in the file to use the name held: the scratch directory of one
+	// test function must not make the walker beside it read as a walk of a
+	// scratch directory, which is a walker neither `any` nor listed (R4).
+	m := scanTree(t, map[string]string{
+		"go.mod": goMod,
+		"internal/s1/s1_test.go": `package s1
+
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestScratch(t *testing.T) {
+	root := t.TempDir()
+	_, _ = os.ReadDir(root)
+}
+
+func walkAll(t *testing.T, root string) {
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error { return nil })
+}
+
+func TestWalksTheRepository(t *testing.T) { walkAll(t, repoRoot()) }
+
+func repoRoot() string { return "../.." }
+`,
+	})
+
+	if p := entry(t, m, "./internal/s1"); !p.Any {
+		t.Errorf("./internal/s1 is not any, want a walk of the root it cannot read: %v", p.Reads)
+	}
+}
+
+func TestScanBindsAFunctionsParameters(t *testing.T) {
+	// A parameter shadows the file's own name of the same kind: `walkAll`'s root
+	// is what its caller passes, and while the scan cannot read that, a caller
+	// passing `repoRoot()` makes the walk a walk of the repository (R4). The
+	// package-level scratch path of the same name says nothing about it.
+	m := scanTree(t, map[string]string{
+		"go.mod": goMod,
+		"internal/s2/s2_test.go": `package s2
+
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+var root = os.TempDir()
+
+func walkAll(t *testing.T, root string) {
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error { return nil })
+}
+
+func TestWalksTheRepository(t *testing.T) { walkAll(t, repoRoot()) }
+
+func repoRoot() string { return "../.." }
+`,
+	})
+
+	if p := entry(t, m, "./internal/s2"); !p.Any {
+		t.Errorf("./internal/s2 is not any, want a walk of the root it cannot read: %v", p.Reads)
+	}
+}
+
+func TestScanKeepsRootednessThroughAScratchAssignment(t *testing.T) {
+	// A name that holds the repository root at one assignment and a scratch
+	// directory at the next may still be the root: letting the last assignment
+	// decide leaves the walker neither `any` nor listed, the false negative R4
+	// forbids, so the rooted reading wins.
+	m := scanTree(t, map[string]string{
+		"go.mod": goMod,
+		"internal/s3/s3_test.go": `package s3
+
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestWalksAfterAScratchAssignment(t *testing.T) {
+	root := repoRoot()
+	root = os.TempDir()
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error { return nil })
+}
+
+func repoRoot() string { return "../.." }
+`,
+	})
+
+	if p := entry(t, m, "./internal/s3"); !p.Any {
+		t.Errorf("./internal/s3 is not any, want a walk of the root it cannot read: %v", p.Reads)
+	}
+}
+
 func TestScanFollowsABuildByImportPath(t *testing.T) {
 	// The built package sorts after the package that builds it, so a closure
 	// taken while the tree is still being read would miss the dependency: the
