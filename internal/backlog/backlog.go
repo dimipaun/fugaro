@@ -238,11 +238,12 @@ func parseFrontMatter(path, doc string) (Item, string, error) {
 	if closed < 0 {
 		return Item{}, "", fmt.Errorf("%s: the front matter is never closed with a `---` fence (D27)", path)
 	}
-	// A folder filed by a release up to v0.26.0 carries `mode` for the level and
-	// no `kind` at all, and it is read as what it was: its level is the one
-	// `mode` states, and what it left open it left as a deferral (LD5). `level`
-	// decides where an item carries both, so the released key is a fallback and
-	// never an override; a `kind` the item does state is always the item's own.
+	// A folder filed by a released version — through v0.27.0 — carries `mode`
+	// for the level and no `kind` at all, and it is read as what it was: its
+	// level is the one `mode` states, and what it left open it left as a
+	// deferral (LD5). `level` decides where an item carries both, so the
+	// released key is a fallback and never an override; a `kind` the item does
+	// state is always the item's own.
 	if released, ok := values[releasedLevelField]; ok {
 		if _, ok := values["level"]; !ok {
 			values["level"] = released
