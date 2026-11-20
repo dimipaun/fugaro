@@ -290,14 +290,16 @@ func sortedJobNames(jobs map[string]ProjectJob) []string { return slices.Sorted(
 // service serves".
 const projectJobRepoReadyLC = "  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: \"123456789\", credentials_service_ready: true }\n"
 
-// TestProjectJobKeepsItsMountsBeforeTheFlip is G17 for S5, on the deployer's
-// side: what the switch adds to a shared job is the credentials service and
-// nothing else. The job's account gets roles/run.invoker on it
+// TestEmptySharedJobListChangesNothing is the S5 flip's inert state, and G17
+// for S5 read on the deployer's side (B5.7, D505, D2078): with no class served
+// — the list empty, which is what every release before the flip ships — what
+// the switch adds to a shared job is the credentials service and nothing else:
+// the job's account gets roles/run.invoker on it
 // (deploy/terraform/gcp/modules/project/sa.tf) and the launcher hands its
 // executions the address (internal/cli's credentialsServiceLaunchEnv), while
-// every mount the job has stays exactly where it was — the drop is B5.7's flip,
-// behind the owner's check, and a job that lost a mount here would run with no
-// model credential and no address to fetch one from.
+// every mount the job has stays exactly where it was — a job that lost a mount
+// here would run with no model credential and no address to fetch one from
+// (G17, D143).
 //
 // The equality is the whole of it: the switched job, with its one new field
 // cleared, must be the job the same config builds with the service off. That
@@ -305,11 +307,20 @@ const projectJobRepoReadyLC = "  acme/webapp: { provider: github, base_branch: m
 // service account, the conditions and the two booleans in one assertion, so a
 // later change that quietly drops something while adding the field fails here.
 //
-// Mutation (run, restore): have the switch clear jobSecrets (or set
+// The class list is cleared here and restored afterwards rather than assumed
+// empty, so this is the same test in the flip's first commit and its second:
+// it is the counterfactual TestFilledSharedJobListDropsTheModelMounts is read
+// against (the shape TestEmptyBuildListChangesNothing has for S4).
+//
+// Mutation (run, restore): have the switch clear the mounts (or set
 // SecretEnv = nil) for a switched profile — the equality fails on the mount,
 // and the URL-less block stays the same job as before, which is the state that
 // must not move either.
-func TestProjectJobKeepsItsMountsBeforeTheFlip(t *testing.T) {
+func TestEmptySharedJobListChangesNothing(t *testing.T) {
+	saved := config.SharedJobServedClasses
+	config.SharedJobServedClasses = nil
+	t.Cleanup(func() { config.SharedJobServedClasses = saved })
+
 	// The repository line is the first key of the config's repos block, so it
 	// goes between m4LocalConfig and the additions that follow it (the same
 	// shape projectJobSpec builds).
@@ -370,7 +381,7 @@ func TestProjectJobKeepsItsMountsBeforeTheFlip(t *testing.T) {
 // (projectJobRepoReadyLC), which is exactly what `recordCredentialsServiceReady`
 // writes, and every job of the profile that admits that repository has to gain
 // the service — and nothing else about it (the equality is
-// TestProjectJobKeepsItsMountsBeforeTheFlip's own).
+// TestEmptySharedJobListChangesNothing's own).
 //
 // Mutations (run, restore): have RefreshProjectJobCredentialsService return its
 // input and the staleness answer is false and the jobs stay off; have it clear
@@ -403,10 +414,19 @@ func TestTheProjectJobsSwitchFollowsTheRecordsOfTheRun(t *testing.T) {
 			t.Errorf("after the record moved, the job %s carries %v, want %+v: its profile admits the repository whose record says the service is ready", name, job.CredentialsService, *want)
 			continue
 		}
-		was := jobs[name]
-		was.CredentialsService, job.CredentialsService = nil, nil
-		if !reflect.DeepEqual(job, was) {
-			t.Errorf("the re-derivation changed the job %s to %+v, want the job it was, %+v, with the service cleared: it re-reads one field and touches nothing else (G17)", name, job, was)
+	}
+	// And the re-derivation is the derivation, whole: the refreshed set is what
+	// the config as it stands composes from scratch, mounts and redaction list
+	// included. The switch is the condition the class list's drop is read behind
+	// (projectJobMounts), so a set where the switch moved and the mounts did not
+	// is a job carrying neither the model credential an On record had taken away
+	// nor an address to fetch one from — every run of it would die at its first
+	// model call (G17, D143).
+	if fresh := projectJobsFor(t, on); !reflect.DeepEqual(refreshed, fresh) {
+		for name, job := range refreshed {
+			if !reflect.DeepEqual(job, fresh[name]) {
+				t.Errorf("the re-derived job %s = %+v, want the job the same config composes from scratch, %+v: the switch and the mounts it decides move together (G17)", name, job, fresh[name])
+			}
 		}
 	}
 	// A job whose profile the config no longer declares is answered off: there
@@ -1631,7 +1651,7 @@ profiles:
 			if c.drop != "" {
 				delete(lc.ProjectSecrets, c.drop)
 			}
-			err := projectAccountMount(lc, "standard", lc.Profiles["standard"], c.account, map[string]string{}, map[string]string{})
+			err := projectAccountMount(lc, "standard", lc.Profiles["standard"], c.account, map[string]string{}, map[string]string{}, false)
 			if err == nil {
 				t.Fatalf("the account %q was mounted with no project-wide copy to mount", c.account)
 			}
@@ -1843,7 +1863,7 @@ func TestProviderKeyJobMountsNothing(t *testing.T) {
 		t.Fatalf("ProjectJobTokenAccount(standard, %s) = (%q, %v), want (\"\", false): the value names the credentials service's credential, not an account whose token a job holds", config.ProviderKeyAccount, got, serves)
 	}
 	secretEnv, env := map[string]string{}, map[string]string{}
-	if err := projectAccountMount(lc, "standard", pr, config.ProviderKeyAccount, secretEnv, env); err != nil {
+	if err := projectAccountMount(lc, "standard", pr, config.ProviderKeyAccount, secretEnv, env, false); err != nil {
 		t.Fatalf("the provider key's job was refused a mount: %v — the credential is the service's, so there is no project-wide copy of the value's own to demand", err)
 	}
 	if len(secretEnv) != 0 || len(env) != 0 {
@@ -2294,7 +2314,7 @@ func TestProjectAccountMountRefusesAnOccupiedVariable(t *testing.T) {
 	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountAxisLC)
 	v := config.ReservedSecrets[config.ClaudeOAuthToken]
 	secretEnv := map[string]string{v: "github-app-key"}
-	err := projectAccountMount(lc, "standard", lc.Profiles["standard"], "acme-personal", secretEnv, map[string]string{})
+	err := projectAccountMount(lc, "standard", lc.Profiles["standard"], "acme-personal", secretEnv, map[string]string{}, false)
 	if err == nil {
 		t.Fatalf("the mount replaced an existing %s entry: secret_env = %v", v, secretEnv)
 	}

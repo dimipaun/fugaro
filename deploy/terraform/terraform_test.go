@@ -4789,9 +4789,10 @@ func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
 // job account's roles/run.invoker on the installation's credentials service,
 // one member, no condition, and the resource behind the job's own switch
 // (var.job.credentials_service, null for a profile the service does not serve).
-// Nothing else about the job moves — the mounts the run still holds are pinned
-// by the tftest's own two runs and by internal/infra's
-// TestProjectJobKeepsItsMountsBeforeTheFlip (G17).
+// The grant alone moves nothing else about the job: the mounts every run holds
+// are pinned by the tftest's own two runs and by internal/infra's
+// TestEmptySharedJobListChangesNothing, and the model mounts a profile the
+// service serves gives up are B5.7's own flip (G17).
 //
 // The switch reaches this module through ONE object attribute, so the two
 // documents that carry the object — the module's variable and both maps of the
@@ -7317,6 +7318,113 @@ func TestBuildServedClassesMatchTheModule(t *testing.T) {
 	}
 	if !strings.Contains(stripComments(string(check)), "for_each = local.check_mount_served ? {} : var.repo.check.secret_env") {
 		t.Errorf("gcp/modules/repo/check.tf: the check job's secret_key_ref mounts do not read local.check_mount_served: a repository the service serves would keep a mount whose credential nothing reads, and the accessor it goes with is the build account's own (B4.9, C2.3)")
+	}
+}
+
+// TestSharedJobServedClassesMatchTheModule pins the S5 flip's class list to the
+// module that has to spell it out — config.SharedJobServedClasses and
+// modules/project/sa.tf's shared_job_served_secret_classes — and the clauses it
+// drives to the halves they are made of (B5.7, D505, D2078).
+//
+// It is TestBuildServedClassesMatchTheModule for a third flip, and the drift it
+// refuses is the same in both directions: a class filled in Go and not in the
+// module leaves a shared job mounting a model credential whose accessor its
+// account still holds (and a mount the runner no longer reads), and a class the
+// module names and Go does not is a job whose account loses the accessor of a
+// mount the tfvars still declares — a job Cloud Run refuses to create (C2.3),
+// and one the deployer would have written.
+//
+// The empty list is a state of its own and it is asserted as one: with it empty
+// local.is_shared_job_served_model is false for every mount, so the two clauses
+// read exactly what they read before this module knew about a served class —
+// that is the inertness the release before the flip plans, and the reason this
+// module may be applied before the flip's second commit (D147).
+func TestSharedJobServedClassesMatchTheModule(t *testing.T) {
+	const path = "gcp/modules/project/sa.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+
+	m := regexp.MustCompile(`shared_job_served_secret_classes\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(code)
+	if m == nil {
+		t.Fatalf("%s declares no shared_job_served_secret_classes list: the classes the credentials service serves to a switched profile's shared job are Go's config.SharedJobServedClasses, and this is the module's only account of them", path)
+	}
+	var got []string
+	for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+		got = append(got, q[1])
+	}
+	want := slices.Clone(config.SharedJobServedClasses)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s: shared_job_served_secret_classes = %v, config.SharedJobServedClasses = %v: the two are filled in one commit, and a list on one side an empty one on the other plans a drop the other does not produce", path, got, config.SharedJobServedClasses)
+	}
+
+	// The model credentials, identified by the variable each is mounted as and
+	// not by a logical name — a provider's key has no fixed name — so these two
+	// literals are the module's copy of Go's own answer
+	// (config.ModelSecretEnvs and config.ProviderKeyEnvPrefix). A name that
+	// drifted here would move a mount Go's predicate says stays, or keep one it
+	// says goes, and the accessor with it.
+	if m := regexp.MustCompile(`model_secret_env_names\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(code); m == nil {
+		t.Errorf("%s declares no model_secret_env_names list", path)
+	} else {
+		var names []string
+		for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+			names = append(names, q[1])
+		}
+		want := slices.Clone(config.ModelSecretEnvs)
+		slices.Sort(names)
+		slices.Sort(want)
+		if !slices.Equal(names, want) {
+			t.Errorf("%s: model_secret_env_names = %v, config.ModelSecretEnvs = %v: the module and the deployer must call the same variables model credentials, or one drops a mount the other keeps", path, names, config.ModelSecretEnvs)
+		}
+	}
+	if m := regexp.MustCompile(`model_secret_env_prefix\s*=\s*"([^"]*)"`).FindStringSubmatch(code); m == nil {
+		t.Errorf("%s declares no model_secret_env_prefix", path)
+	} else if m[1] != config.ProviderKeyEnvPrefix {
+		t.Errorf("%s: model_secret_env_prefix = %q, config.ProviderKeyEnvPrefix = %q: a provider key is identified by its variable and by nothing else", path, m[1], config.ProviderKeyEnvPrefix)
+	}
+
+	// The per-mount local both clauses read, and the two halves of its
+	// condition: the class list's own member, and the profile's switch (the
+	// same var.job.credentials_service the invoker grant is behind, B5.2). A
+	// clause read off var.job.secret_env instead would keep the mount of a
+	// credential Go has already dropped from the spec; one read without the
+	// switch would take the mount from a profile the service does not serve.
+	local := func(name string) string {
+		t.Helper()
+		re := regexp.MustCompile(`(?s)\b` + name + `\s*=\s*(?:toset\(\[)?\{?\s*for env, logical in var\.job\.secret_env\s*:\s*(?:env => )?(logical if [^\n]+|[^\n]+)`)
+		found := re.FindStringSubmatch(code)
+		if found == nil {
+			t.Fatalf("%s declares no %s of the per-mount shape", path, name)
+		}
+		return strings.TrimPrefix(squash(found[1]), "env => ")
+	}
+	if got := local("is_shared_job_served_model"); !strings.Contains(got, `var.job.credentials_service != null && contains(local.shared_job_served_secret_classes, "model")`) ||
+		!strings.Contains(got, "contains(local.model_secret_env_names, env)") || !strings.Contains(got, "startswith(env, local.model_secret_env_prefix)") {
+		t.Errorf("%s: is_shared_job_served_model = %s: a mount is served exactly when the class list carries \"model\", the profile's own switch is on (B5.2) and the mount's variable is one of the model credentials", path, got)
+	}
+	for _, name := range []string{"job_secret_names", "job_mounts"} {
+		if got := local(name); got != "logical if !local.is_shared_job_served_model[env]" {
+			t.Errorf("%s: %s = %s, want the served model mounts read off the one local: the accessor and the mount go together (C2.3), and one expression is what keeps them from drifting apart", path, name, got)
+		}
+	}
+
+	// Both clauses, each reading one of those locals: the accessor resource
+	// grants the set that stays, and the job's own secret mounts are the same
+	// set.
+	if !strings.Contains(code, "for_each = local.job_secret_names") {
+		t.Errorf("%s: google_secret_manager_secret_iam_member.job does not read local.job_secret_names: a switched profile's account keeps an accessor on every model credential its job no longer mounts (B5.7, C2.3):\n%s", path, code)
+	}
+	jb, err := fs.ReadFile(FS, "gcp/modules/project/job.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stripComments(string(jb)), "for_each = local.job_mounts") {
+		t.Error("gcp/modules/project/job.tf: the job's secret mounts do not read local.job_mounts: a switched profile's job would mount a model credential its account keeps no accessor on, and Cloud Run refuses to create such a job (B5.7, C2.3)")
 	}
 }
 

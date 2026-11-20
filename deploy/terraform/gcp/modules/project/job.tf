@@ -59,9 +59,12 @@ resource "google_cloud_run_v2_job" "this" {
         }
 
         # The secret's ID, the same-project short form the live jobs hold,
-        # never its projects/… path, which would plan an update.
+        # never its projects/… path, which would plan an update. The mounts are
+        # local.job_mounts and not the job's own secret_env, so a model
+        # credential a profile the service serves gives up goes with the
+        # accessor sa.tf takes away in the same plan (B5.7, C2.3).
         dynamic "env" {
-          for_each = var.job.secret_env
+          for_each = local.job_mounts
           content {
             name = env.key
             value_source {
