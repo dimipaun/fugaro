@@ -1365,16 +1365,19 @@ export interface ScreenFactory {
  * the two members the accordion and its search box need, and they are here for
  * one reason each.
  *
- * **`addEventListener` is how the section owns its own interaction.** The
- * convention in this tree is that a screen draws and the entry wires, because
- * the entry is the only place with a document; the settings section is not a
- * screen but a section of one, exactly as the Manage section is
- * (`renderer/manage/shell.ts`, which widens its own surface the same way for its
- * three), and the accordion's search is the section's own: it
+ * **`addEventListener` is how the section owns its own interaction**, as the
+ * Manage shell owns its own (`renderer/manage/shell.ts`, whose `addEventListener`
+ * is the same widening for its clicks and its disclosure). The convention is
+ * that a screen draws and the entry wires, because the entry is the only place
+ * with a document; of those two surfaces this is the one the entry itself
+ * mounts, which is why `entry.ts`'s header names it (console-styling section
+ * 1.1). The search is narrow enough to be worth the exception -- its listener
+ * takes no argument, the section reads no event object, and the whole of what it
+ * does is a class and the `hidden` attribute on rows the section drew itself: it
  * filters a document this build has already read, so it opens no read, names no
- * command and writes nothing -- the one thing the entry's seam is for. The
- * groups themselves need no listener at all: they are `<details>`, which the
- * browser opens and closes on its own.
+ * command, writes nothing and reaches no command at all. The groups themselves
+ * need no listener at all: they are `<details>`, which the browser opens and
+ * closes on its own.
  *
  * **`value` is the search box's text.** An `<input>`'s value is not its
  * `textContent`, so the query a keystroke leaves is read here and nowhere else.

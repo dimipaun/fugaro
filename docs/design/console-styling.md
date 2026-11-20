@@ -54,7 +54,15 @@ files say so in their own words — `console/src/renderer/screens/live.ts`: "no 
 and no colour"; `console/src/renderer/app.ts`'s `ElementLike` is deliberately narrower than
 `HTMLElement` with "no style and no event handler", and `entry.ts`'s header repeats it:
 "the element it wraps exposes a text slot and attributes — no markup parsing, no
-navigating attribute, no style and no event handler". Nothing anywhere under
+navigating attribute and no style". **That narrowness has two exceptions, and `entry.ts`'s
+header names both** rather than leaving them for a reader to find in the wrapper:
+`domSurface`'s `nodeOf`, which the entry uses to attach a click listener to a row it drew;
+and — added for the console-improvements plan's SU2a — the settings panel's search box, for
+which the wrapper also carries `addEventListener`, whose listener takes no argument, and a
+`value` getter, asked for by `screens/projects.ts`'s `SettingsElement` and by no other
+interface in the tree. The search is not the event-handling screen the narrow interface
+exists to keep out: it filters a document this build has already read, so it opens no read,
+names no command, writes nothing and reads no event object. Nothing anywhere under
 `console/src/renderer/` sets a `style` attribute, because the CSP admits no inline style
 anyway (below).
 

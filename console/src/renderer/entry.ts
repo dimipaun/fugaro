@@ -49,14 +49,27 @@
 //   - **The DOM is reached through the same narrow interface the screens get.**
 //     `domSurface` hands `startConsole` a `SkewFactory` and a `MountLike`, and
 //     the element it wraps exposes a text slot and attributes -- no markup
-//     parsing, no navigating attribute, no style and no event handler -- which
-//     is `src/renderer/app.ts`'s `ElementLike`, widened only by the `tag` and
-//     `append` that `SkewElement` declares. That is design section 5.1 rule 7
-//     reaching all the way to the one place a real document exists. The one
-//     exception is `domSurface`'s `nodeOf`, which this file uses to attach a
-//     click listener to a drawn row: a listener is not a *write*, a screen never
-//     sees a node, and the alternative -- a screen that handled its own events --
-//     is the interface widening the plan's rule exists to prevent.
+//     parsing, no navigating attribute and no style. That is
+//     `src/renderer/app.ts`'s `ElementLike`, widened only by the `tag` and
+//     `append` that `SkewElement` declares, and it is design section 5.1 rule
+//     7 reaching all the way to the one place a real document exists. Two
+//     exceptions exist, and both are named here rather than left for a reader to
+//     find in the wrapper:
+//     - `domSurface`'s `nodeOf`, which this file uses to attach a click listener
+//       to a drawn row: a listener is not a *write*, a screen never sees a node,
+//       and the alternative -- a screen that handled its own events -- is the
+//       interface widening the plan's rule exists to prevent.
+//     - **the settings panel's search, and nothing else** (console-styling
+//       section 1.1, the console-improvements plan's SU2a): the wrapped element
+//       also carries `addEventListener`, whose listener takes no argument, and a
+//       `value` getter, and `screens/projects.ts`'s `SettingsElement` is the one
+//       interface in the tree that asks for either. That section filters the
+//       document this build has already read: a keystroke opens no read, names
+//       no command and writes nothing, it reads no event object, and the class
+//       and the `hidden` attribute it moves are inside the drawing surface a
+//       screen already has -- so it is not the event-handling screen the
+//       exception above is about. A screen that wants a *command* run still goes
+//       through the bridge, as every one of them does.
 //
 // **This file is bundled, not imported.** `tsc` compiles it to
 // `dist/renderer/entry.js`, and `tools/bundle-renderer/index.ts` walks that
