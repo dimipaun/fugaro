@@ -110,9 +110,11 @@ Do not wait for the daily look. Whoever launched a run watches the COST column o
 
 ## Review your runs
 
-`fugaro runs digest --period day` (or `week`, `month`, `year`) writes one closed period's report of this repository into the checkout's `docs/fugaro-reviews/` (`--dir` names the folder), for a person or an agent to commit through an ordinary pull request: committing one is a separate opt-in step, never the command. It is in every build. Without `--date` it is the most recent closed period; a period holding today is still receiving runs, so it is refused. `fugaro runs digest --due` says whether the cadence has lapsed: it reads that report folder, offline, and names the closed periods with no report beside the age of the newest it found. Fugaro schedules nothing: the cadence is the user's own cron job, CI workflow or agent routine, or a run launched to write the report.
+`fugaro runs digest --period day, week, month or year` writes one closed period's report of this repository into the checkout's `docs/fugaro-reviews/`, to commit through an ordinary pull request: committing one is a separate opt-in step, never the command. It is in every build. The stored reports are committed by their own run, `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"`, from a checkout of the designated repository; the launcher reads the store with your own account and hands the run every report it holds, to commit into your mirror folder (`reference/periodic-reviews.md`, section 8).
 
-The **daily report is the outlier sweep**: read its flagged runs and the dearest of the rest the way `reference/periodic-reviews.md` says, and write each lesson where the next run reads it. That file has the four periods, the due signal, how to schedule them, how to read a report's patterns, the relaunch note, and the submission step, which is the person's.
+`fugaro runs digest --due` says whether the cadence has lapsed, offline: the closed periods with no report, and the age of the newest it found. Without `--date` it is the most recent closed period; one holding today is refused. Fugaro schedules nothing (section 2 of that file).
+
+The **daily report is the outlier sweep**: read its flagged runs and the dearest of the rest, and write each lesson where the next run reads it. That file has the four periods and the submission step, which is the person's.
 
 ## A usage limit on the Claude account
 

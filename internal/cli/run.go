@@ -271,7 +271,16 @@ type runOptions struct {
 	// that already holds a task, refused unless the launch resolves to an
 	// artifact recipe, and refused over any of the workflow's three
 	// inputs caps before the first byte is uploaded.
-	attach        []string
+	attach []string
+	// commitReports is --commit-reports: hand the project's stored reports to
+	// the run this launch starts (R16, D2754). It is refused on a run id that
+	// already holds a task, refused together with --attach (a report object is
+	// never a recipe input), refused unless the run's recipe carries the
+	// commit_reports step, and refused on a job image whose runner does not
+	// read the reports a task hands in — all before the first byte, which is
+	// read from the store with this launcher's own credential and uploaded
+	// under the run's own prefix.
+	commitReports bool
 	asJSON        bool
 	noBudgetCheck bool
 	recipe        string
@@ -546,6 +555,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
+	f.BoolVar(&o.commitReports, "commit-reports", false, "hand the project's stored reports (reports/ of the runs bucket) to the run this launch starts: reads them with your own account, uploads every one the checkout's mirror folder does not already hold byte for byte into the run's own reports/, and names them in the task for the commit_reports step to commit. Needs --recipe commit-reports (the step is what reads them), is refused together with --attach, and is refused on a run ID that already has a task")
 	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.RigorList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
 	f.StringArrayVar(&o.contextRepos, "context", nil, "a repository this run reads and never writes, as owner/name: repeatable, at most "+fmt.Sprint(task.MaxContextRepos)+", each admitted by the project's allow_repos. The list goes into the task and into the run's own identity, and the run clones each one read-only, outside its working tree, as reference the prompt points it at: nothing in one is committed or pushed, and the read-only token a context repository is cloned with is the installation's credentials service's, which needs the GitHub App installed on it. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository")
@@ -567,7 +577,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "change-set", "ref", "workflow", "run-id", "batch", "title", "plan-task", "allow-duplicate", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "context", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
+var taskFlags = []string{"repo", "change-set", "ref", "workflow", "run-id", "batch", "title", "plan-task", "allow-duplicate", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "commit-reports", "mode", "path", "context", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -1208,6 +1218,15 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			return launchResult{}, err
 		}
 	}
+	// The same check for --commit-reports, and for the same reason: the
+	// reports a launch hands in are create-only writes under the run's own
+	// prefix, so a run id that already holds a task is refused here rather
+	// than after a report of a finished run was written over.
+	if o.commitReports {
+		if err := commitReportsRefusesStoredRun(ctx, s, spec.RunID); err != nil {
+			return launchResult{}, err
+		}
+	}
 	prior, err := existingLaunch(ctx, env, s, spec)
 	if err != nil {
 		return launchResult{}, err
@@ -1223,6 +1242,14 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// went: it started with the task it started with.
 	if prior != nil && len(o.attach) > 0 {
 		return launchResult{}, userErr("run ID %s has already launched; --attach uploads a run's files before it starts, so it never adds attachments to a run that already went — use a new run ID", spec.RunID)
+	}
+	// And the other half for the reports: every --commit-reports step lives
+	// inside the prior == nil block below — the recipe refusal, the image
+	// gate, the upload — so a launch that found a prior would write a task
+	// naming no reports while the reports the person asked for went nowhere.
+	// A run commits the reports it started with.
+	if prior != nil && o.commitReports {
+		return launchResult{}, userErr("run ID %s has already launched; --commit-reports hands the stored reports in before the run starts, so it never adds them to a run that already went — use a new run ID", spec.RunID)
 	}
 	// The check is the pull request link's, and IsFollowUp is the stored task's
 	// own branch: a reused --retry or a reused --pr follow-up carries one, while
@@ -1295,6 +1322,16 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// exactly the bytes that are in the bucket.
 		if err := attachUpload(ctx, env, spec, s.Prefix(), o.attach, caps); err != nil {
 			return launchResult{}, err
+		}
+		// The stored reports, by the same rule and in the same place: read
+		// from reports/ with this launcher's own credential, uploaded one
+		// object each under the run's own prefix, and named in the task
+		// createTask writes next. A launch without --commit-reports does
+		// nothing here — not even a listing of the store.
+		if o.commitReports {
+			if err := commitReportsUpload(ctx, env, spec, s.Prefix(), warn); err != nil {
+				return launchResult{}, err
+			}
 		}
 		// The manifest a mode: evaluate launch leaves for its own recipe's step
 		// (A5.2), by the same rule as the attachments above: after every
@@ -1462,6 +1499,18 @@ func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string,
 	// be, and a task file that names inputs has the same shape.
 	if len(o.attach) > 0 || len(spec.Inputs) > 0 {
 		why := "the launch attaches files, and a challenger would read them under its own run id, where they are not"
+		pairSkip(warn, why)
+		return nil, why
+	}
+	// A launch that hands stored reports in samples nothing either, and for
+	// the reason the attachments above give: the objects are under THIS run's
+	// prefix, and the challenger is a run id of its own (launchChallenger
+	// clones the champion's task after the upload filled in spec.Reports), so
+	// its task would name report objects that are not in its bucket and the
+	// commit step would refuse at bootstrap. The two arms cannot be the one
+	// run a pair needs them to be.
+	if o.commitReports || len(spec.Reports) > 0 {
+		why := "the launch hands the stored reports in, and a challenger would read them under its own run id, where they are not"
 		pairSkip(warn, why)
 		return nil, why
 	}
@@ -1911,6 +1960,16 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	agentRecipe := ""
 	if co != nil {
 		agentRecipe = co.Agent.Recipe
+	}
+	// --commit-reports, ahead of --attach: its pair refusal is the one that
+	// must fire when both flags are given, and it is the sentence that names
+	// both of them (commitReportsLaunch). It uploads nothing here either —
+	// commitReportsUpload does that below, with attachUpload, after the last
+	// gate that can still refuse this launch.
+	if o.commitReports {
+		if err := commitReportsLaunch(ctx, env, slug, spec, kind, clone, len(o.attach) > 0, warn); err != nil {
+			return config.Inputs{}, err
+		}
 	}
 	// --attach, before the gates below: its recipe refusal, its caps,
 	// D9's line and its image gate (design §4, plan P7/P9). It uploads
