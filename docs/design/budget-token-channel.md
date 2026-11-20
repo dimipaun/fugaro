@@ -660,6 +660,17 @@ the second half of the recommendation moves the object:
   delete — is not available, since the delete is exactly the write the job's grant does not have
   (this section's second bullet, and D16).
 
+**`tokens/` is not all ciphertext.** The run-messages channel writes its objects here too — a message is
+`tokens/<slug>/<run>/messages/NNNN.msg.json`, a person's own words stored as typed, where no job account may
+write ([docs/run-messages](../run-messages/spec.md), D2941) — so what the seal closes is the *token's* own
+exposure and not the prefix's: a per-repository job account's read-only reach is over its own
+`tokens/<slug>/`, and a project job account's is over the whole prefix, which is now text and not only bytes
+the reader cannot use. On a shared project job that is every repository's messages, the same reach that
+account already has over `runs/` (SECURITY.md; [docs/run-messages](../run-messages/reconciliation.md) F2).
+`deploy/terraform/gcp/modules/project/sa.tf`'s comment over `gcp.ProjectTokenBucketCondition`, and
+`token.PutObject`'s, are written this way, and §7.4's table says the one plaintext object this channel refuses
+is the token's own.
+
 ### 7.3 What this does not change
 
 - D13's paragraph in SECURITY.md stays, narrowed to what it still describes: the *other* objects a
@@ -689,7 +700,7 @@ the second half of the recommendation moves the object:
 | the object is sealed and the tag does not verify | refuse: an unsealed or tampered object is never read as a token, not even during a mixed deployment |
 | the object is sealed and no key is presented to this execution (the marker is absent or empty, or the run is not the one the object was sealed for) | refuse, and **never** fall back to reading the bytes as a token: a sealed object with no usable key is not "a plaintext token in a mixed deployment", it is the theft case, and treating it as readable would hand the peer's stolen copy straight back. It is the row that keeps a mixed deployment from becoming an unsealing one |
 | the object was sealed for another name (the AAD is the key it was stored under, §7.1) | refuse: a sealed object copied onto another run's key does not unseal. **The key, not the AAD, is what makes this refuse** — the copy is sealed under a different per-launch key — so this row's property is the per-launch key's; the AAD's own property (a blob sealed for one name cannot be opened under another) is held by the unit test §7.1 names, not by this row |
-| the object is plaintext and the seal is expected | refuse, for the same reason: a fallback to plaintext is the whole exposure coming back quietly |
+| the object is plaintext and the seal is expected | refuse, for the same reason: a fallback to plaintext is the whole exposure coming back quietly. The row is about the token's own object at the run's key: `tokens/` also holds the run-messages channel's plaintext objects (§7.2), which no job account may write and which are read as messages and never as a token |
 | the key is wrong because the execution is not the one the launcher minted for | the unseal fails and the run refuses; the take's `checkNames` still refuses a token whose own claims are not this run's |
 
 One concrete requirement falls out of the second row, and the round-3 review was right that this
