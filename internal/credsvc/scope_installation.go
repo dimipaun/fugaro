@@ -338,8 +338,10 @@ func (f installationForge) Bitbucket() bbtokens.Selector {
 // — because the two readers have to agree: the canonical name a route's pairing
 // resolved out of the table is a name this reader must hold, or the
 // installation would refuse a forge call for the very repository it admitted
-// the caller through. (WS17 is where the second reader appears: the mint asks
-// this one, and a fixture that leaves Repos nil would otherwise mint for
+// the caller through. The scope value it is read through carries no caller, and
+// that is what Repos reads none to answer this: the table is the deployment's
+// and not the caller's. (WS17 is where a second route asks this reader — the
+// run's mint — and a fixture that leaves Repos nil would otherwise mint for
 // nothing.)
 func (f installationForge) Covers(_ context.Context, canonical string) (bool, error) {
 	for _, held := range (installationScope{s: f.s}).Repos() {
