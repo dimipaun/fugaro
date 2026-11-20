@@ -246,12 +246,14 @@ func TestRosterWriteLeavesRecordETag(t *testing.T) {
 
 // TestRosterWriteRefusesNodeDeletingDocument: a document that prunes away is not
 // a roster but a delete of the node, so the write is refused before it is sent.
-// The database stores values and prunes a null and an empty object, so a PUT of
-// `{}` or of an all-null object removes the node and Read afterwards answers
-// found=false — the roster gone with no record of it, the workspace looking like
-// one whose first write never happened, and the next create landing under the
-// null ETag with nothing to judge it against. A shape that is not an object at
-// all goes the same way. Each refusal is a guard's and not a stale ETag's (the
+// The database stores values and prunes a null, an empty object and an empty
+// list — it has no list type at all, so `[]` is an empty object — which makes a
+// PUT of `{}`, of an all-null object or of a roster whose every member is an
+// empty list a removal of the node, with Read afterwards answering found=false:
+// the roster gone with no record of it, the workspace looking like one whose
+// first write never happened, and the next create landing under the null ETag
+// with nothing to judge it against. A shape that is not an object at all goes the
+// same way. Each refusal is a guard's and not a stale ETag's (the
 // finding's own trap: a guard that a retry loop mistook for rtdb.ErrPrecondition
 // would never terminate), and each is asked for under the node's CURRENT ETag,
 // so the write it refuses is one that would otherwise have landed.
@@ -274,6 +276,8 @@ func TestRosterWriteRefusesNodeDeletingDocument(t *testing.T) {
 		{"an empty object", []byte(`{}`)},
 		{"an all-null object", []byte(`{"version":null,"admins":null}`)},
 		{"an object whose every member prunes away", []byte(`{"version":{"members":null},"admins":{}}`)},
+		{"an object whose only member is an empty list", []byte(`{"admins":[]}`)},
+		{"an object whose only member is a list nothing survives in", []byte(`{"admins":[null,{}]}`)},
 		{"a scalar", []byte(`7`)},
 		{"an array", []byte(`[{"admins":["admin-1@example.com"]}]`)},
 	} {
@@ -298,6 +302,21 @@ func TestRosterWriteRefusesNodeDeletingDocument(t *testing.T) {
 		if got, want := wu1Canon(t, after.Raw), wu1Canon(t, kept.Raw); got != want {
 			t.Errorf("writing %s rewrote the roster:\n got %s\nwant %s", bad.what, got, want)
 		}
+	}
+
+	// The guard is about the containers the database prunes and not about lists:
+	// a list is a value the moment something in it is, so a roster whose only
+	// member is a list with an admin in it is a roster and lands. Without this
+	// side the test would pass on a guard that refused every list, and that
+	// over-refusal would stop a real write.
+	listOnly := []byte(`{"admins":["admin-1@example.com"]}`)
+	node, found := wu1Read(t, s)
+	if !found {
+		t.Fatalf("the roster is gone before the list-only write")
+	}
+	wu1Write(t, s, node, listOnly)
+	if got, want := wu1Value(t, db, s.Path()), wu1Canon(t, listOnly); got != want {
+		t.Errorf("the write of a roster whose only member is a list with an admin in it:\n got %s\nwant %s", got, want)
 	}
 }
 

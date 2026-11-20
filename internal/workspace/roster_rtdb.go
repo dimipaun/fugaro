@@ -129,14 +129,16 @@ func (s *RosterStore) Read(ctx context.Context) (RosterNode, bool, error) {
 // document, and a scalar or an array under it is a shape C1's reader would
 // refuse at the next read, after the write had already replaced a roster.
 //
-// It must also carry a value. The database prunes a null and an empty object on
-// the way in, so a document that prunes away entirely is not an empty roster but
-// a DELETE of the node, in the real database and in the fake alike
-// (`internal/gcpfake/rtdb.go`, normalise). A `{}` or an all-null roster would
-// therefore remove every admin, member and grant at once and leave Read
-// answering found=false — a workspace that looks like one whose first write
-// never happened, and whose next create then lands under the null ETag with no
-// roster left to judge it against. The refusal is the answer: a caller with no
+// It must also carry a value. The database prunes a null, an empty object and an
+// empty list on the way in, so a document that prunes away entirely is not an
+// empty roster but a DELETE of the node (`internal/gcpfake/rtdb.go`, normalise,
+// for the first two; a list is the third because the database has no list type at
+// all — a list is an object with numeric keys, so an empty one is an empty object
+// and goes with it). A `{}`, an all-null roster or one whose every member is an
+// empty list would therefore remove every admin, member and grant at once and
+// leave Read answering found=false — a workspace that looks like one whose first
+// write never happened, and whose next create then lands under the null ETag with
+// no roster left to judge it against. The refusal is the answer: a caller with no
 // roster to write has a decision to make (which member, which grant), not a
 // document to send.
 func (s *RosterStore) Write(ctx context.Context, node RosterNode, raw []byte) error {
@@ -154,11 +156,13 @@ func (s *RosterStore) Write(ctx context.Context, node RosterNode, raw []byte) er
 }
 
 // rosterCarriesValue reports whether anything in doc survives the database's own
-// pruning — a null and an empty object go, as they do in the real database
-// (`internal/gcpfake/rtdb.go`, normalise) — and so whether the PUT writes
-// anything at all. It walks the document the way the pruning does, which is why
-// the check is deeper than the top level: {"version":{"members":null}} prunes to
-// {} and deletes the node exactly as {} does.
+// pruning — a null, an empty object and an empty list go, as they do in the real
+// database (`internal/gcpfake/rtdb.go`, normalise) — and so whether the PUT
+// writes anything at all. It walks the document the way the pruning does, which
+// is why the check is deeper than the top level: {"version":{"members":null}}
+// prunes to {} and deletes the node exactly as {} does, and so does a member that
+// is a list nothing survives in, the fake's own gap about empty lists
+// notwithstanding.
 //
 // doc must be a JSON object already validated by Write.
 func rosterCarriesValue(doc []byte) bool {
@@ -176,6 +180,13 @@ func carriesValue(v any) bool {
 	case nil:
 		return false
 	case map[string]any:
+		for _, c := range x {
+			if carriesValue(c) {
+				return true
+			}
+		}
+		return false
+	case []any:
 		for _, c := range x {
 			if carriesValue(c) {
 				return true
