@@ -442,6 +442,21 @@
      "internal/credsvc/identity_scope_test.go"
     ]
    }
+  },
+  {
+   "id": "LM24",
+   "title": "the issuer judges the committer of an orchestrated attempt",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/credsvc/identity_orchestrated.go",
+     "internal/credsvc/identity_orchestrated_test.go"
+    ]
+   }
   }
  ],
  "edges": [
@@ -624,6 +639,16 @@
    "task": "LM21",
    "needs": "I1",
    "reason": "the lever ships with what it levers"
+  },
+  {
+   "task": "LM24",
+   "needs": "C1",
+   "reason": "built against the identity wire"
+  },
+  {
+   "task": "I1",
+   "needs": "LM24",
+   "reason": "the integration runs every side together"
   }
  ],
  "decoupling": [
@@ -698,6 +723,15 @@
    },
    "integration": "I1",
    "reason": "fugaro pair needs the pairing routes' shape"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "LM24",
+    "needs": "LM23"
+   },
+   "integration": "I1",
+   "reason": "the committer's check needs the scope check's interface, not LM23's resolver"
   }
  ],
  "contract_changes": []

@@ -16,7 +16,8 @@ shaped it:
   `update` names them first.
 - **D3124**: one release; the grant goes only after the issuer answers, and the policy version
   moves so an older CLI is told to upgrade.
-- **D3125**: the resident orchestrator asks the issuer, for any repository's run.
+- **D3125** (amended by D3136): the resident orchestrator asks the issuer, and gets a ticket for
+  an attempt only where the person who committed it may launch that repository.
 - **D3126**: the issuer mints pairing and device tokens.
 - **D3127**: operators lose the standing grant; the documents state what they can still reach.
 - **D3128**: tasks start after always-a-budget's I1 and keys-through-service's release A. Only
@@ -26,10 +27,14 @@ shaped it:
   BR11 go. LM19 may start as soon as this plan's C1 merges.
 - **D3131** (added by review round 2): the policy bump's halt of executions queued and not
   started is accepted, and the update says the count at its door.
+- **D3132 to D3136** (asked after the pull request opened): the orchestrator's launch path was
+  traced (F34) and its asks are judged on the committer (D3136); a fourth review round was run
+  (D3133); D3126 stands with H1 narrowed (D3134); LM14's first step settles whether an
+  installation can launch with no published policy (D3135).
 - **D3130** (amended after review, answered again): the issuer enforces the roles-and-scopes
   launch check on the verified caller, and still checks that the repository is the installation's.
 
-Tasks are **C1**, **LM0** to **LM23** without LM9, and **I1**: 25 runs. LM9 was folded into LM6
+Tasks are **C1**, **LM0** to **LM24** without LM9, and **I1**: 26 runs. LM9 was folded into LM6
 after review round 1 and its number is not reused. LM18 ships one release after the rest.
 
 ## Conventions every part follows
@@ -70,6 +75,7 @@ after review round 1 and its number is not reused. LM18 ships one release after 
 | The issuance record is unwritable and unreadable with any signed-in identity | LM5 |
 | A claim retried after a lost response is not a second claim | C1, LM2, LM7 |
 | A caller with no launch scope on the repository gets no ticket | LM23 |
+| An orchestrated attempt gets a ticket only where its committer has the launch scope | LM24, LM6 |
 | The deletes the update makes are on its own allow-list, for an ordinary and a managed project | LM20 |
 | The people's row and the orchestrator's go only after the issuer answers; a failed probe leaves them and says why | LM14 |
 | An installation at the previous release converges with one `fugaro update` and nothing else | LM14 |
@@ -93,7 +99,8 @@ check. LM18 is the removal one release later.
 
 - Acceptance: one package declares the four routes' paths, request and response bodies, refusal
   codes (among them "not served", a code of its own and not the existing `refuseNotServed`), the
-  claim's nonce and what a repeated nonce gets (R2), the probe `update` makes, whose answer says
+  claim's nonce and what a repeated nonce gets (R2), the reference to an attempt that an
+  orchestrator's ask carries (D3136), the probe `update` makes, whose answer says
   the service signed a fixed payload as the runs' signer (F33), what of the slip's mechanism the
   routes reuse (F1), the ticket's execution variable name, and the issuance record's shape, with the nonce's
   digest, and its place under `creds` (R3); the service mounts the four
@@ -108,7 +115,7 @@ check. LM18 is the removal one release later.
   stub), `internal/credsvc/server.go` and `internal/credsvc/scope_installation.go` (the mount, in
   `servedRoute` and `aheadOfTheSharedParse`), `docs/launcher-does-not-mint/contract.md` (new).
   Past five; the two mount files are a line or two each.
-- Interfaces: produces everything LM1–LM7, LM10, LM19, LM23 and I1 build against. Consumes
+- Interfaces: produces everything LM1–LM7, LM10, LM19, LM23, LM24 and I1 build against. Consumes
   nothing.
 - Tests: `TestIdentityWireDecodesStrictly`, `TestIdentityWireHasNoCallerChosenIdentity`,
   `TestIdentityRoutesAnswerNotServed`, `TestUnknownPathAnswerIsPinned`.
@@ -235,7 +242,7 @@ check. LM18 is the removal one release later.
   anything that names the run id is written where another launcher reads (R5).
   A launch that holds a ticket calls LM8's gate. Every way in asks before it writes, the
   troubleshoot launch included. `residentLauncher.Launch` presents its own account's identity
-  token and takes the same path.
+  token, names the attempt it re-issues in its ask (D3136) and takes the same path.
   The launch signs locally as before (R7) only where the service answers "not served", answers
   as a release-behind service does (C1's pinned answer), or no service is configured. Where the
   service is unreachable or refuses, the launch fails with the reason and the fix after a
@@ -378,7 +385,8 @@ check. LM18 is the removal one release later.
   answers "not served" on all four, so an installation whose roots carry no issuer row yet stays
   on the bridge; one test runs
   a launch through the service to a session: ticket, claim, exchange. In the same test a second
-  person's ask for that run is refused, a caller without the launch scope is refused, a copied
+  person's ask for that run is refused, a caller without the launch scope is refused, an
+  orchestrated attempt whose committer lacks the scope is refused, a copied
   ticket's second claim is refused and the losing run halts, a retried claim with its nonce
   succeeds, a pairing completes, and no token of one kind is accepted on another kind's route.
 - Files: `internal/credsvc/identity_stub.go` (deleted), `internal/credsvc/identity_mount.go` (new:
@@ -391,7 +399,8 @@ check. LM18 is the removal one release later.
   `TestLaunchToSessionThroughTheIssuer`, `TestNoSignerConfiguredIsNotServed`.
 - Command: `go test ./internal/credsvc/ ./internal/cli/ -run 'IdentityEndToEnd|IdentityCrossClass|LaunchToSessionThroughTheIssuer|NoSignerConfiguredIsNotServed' -count=1`
 - Red step: `TestIdentityEndToEnd` fails with "not served" while the stubs are mounted.
-- Depends on: LM1, LM2, LM3, LM4, LM5, LM6, LM7, LM10 and LM23 (it runs all of them together),
+- Depends on: LM1, LM2, LM3, LM4, LM5, LM6, LM7, LM10, LM23 and LM24 (it runs all of them
+  together),
   and LM8 (once this merges a launch holds a real ticket, and an image that cannot claim must be
   refused at launch, not found at the run's start).
 - Commit: `identity: the issuer is wired in (I1)`
@@ -399,7 +408,10 @@ check. LM18 is the removal one release later.
 
 ### LM14: `update` moves the grant
 
-- Acceptance: at its door, with the note about runs in flight and before the policy stage, the
+- Acceptance: first step, before any code: read whether an installation that can launch after
+  always-a-budget can have no published policy (U5, D3135); if it can, stop and say so, because
+  the question returns to the owner. Then: at its door, with the note about runs in flight and
+  before the policy stage, the
   update prints R10's lines (the `group:` entries by name with the fix, older CLIs, pairing, and
   the count of executions queued and not started, which will halt: D3131). The Firebase root's guard is given
   LM20's list where that root is applied (F32). A probe that answers without a signature made as
@@ -585,20 +597,42 @@ check. LM18 is the removal one release later.
   with no roles to judge by is allowed as the gate allows it; each context repository is judged
   for the view action and the policy's allow-list before the list is signed (F31); records that
   do not decode refuse; records that cannot be reached refuse, the one deliberate difference.
-  A caller without the scope gets no ticket and one audit line; the orchestrator's class is not
-  scope-checked (D3125, D3130 as amended).
+  A caller without the scope gets no ticket and one audit line; the orchestrator's class is
+  judged by LM24 (D3130 as amended, D3136).
 - Files: `internal/credsvc/identity_scope.go` (new), `internal/credsvc/identity_scope_test.go`
   (new).
 - Interfaces: consumes C1 (the scope check's interface) and `internal/access`. First step: U10.
 - Tests: `TestIssuerRefusesACallerWithoutTheLaunchScope`,
   `TestIssuerAgreesWithTheCLIGate` (a table run through both, with a row for each arm of R16 and the outage row marked as the
   difference), `TestIssuerRefusesAContextRepositoryWithoutTheViewScope`,
-  `TestOrchestratorClassIsNotScopeChecked`.
-- Command: `go test ./internal/credsvc/ -run 'IssuerRefusesA|IssuerAgreesWithTheCLIGate|OrchestratorClassIsNotScopeChecked' -count=1`
+  `TestOrchestratorClassIsLeftToItsOwnCheck`.
+- Command: `go test ./internal/credsvc/ -run 'IssuerRefusesA|IssuerAgreesWithTheCLIGate|OrchestratorClassIsLeftToItsOwnCheck' -count=1`
 - Red step: `TestIssuerRefusesACallerWithoutTheLaunchScope` fails against the stub check, which
   admits everyone.
 - Depends on: C1.
 - Commit: `credsvc: no launch scope, no ticket (LM23)`
+- Reviewer tier: opus, independent review.
+
+### LM24: the issuer judges the committer of an orchestrated attempt
+
+- Acceptance: first step: U11, whether the orchestrator's record names the person whose patch
+  committed an attempt in a form that person could not have written for another; if not, stop
+  and raise a contract change, because the record needs a field and the patch command must write
+  it. Then: for an ask in the orchestrator's class the issuer reads the attempt the ask names
+  from the orchestrator's own record, takes its committer, and runs LM23's scope check on that
+  person for the repository; no committer, an attempt that does not match the ask, or no scope
+  each refuse with one audit line (D3136).
+- Files: `internal/credsvc/identity_orchestrated.go` (new),
+  `internal/credsvc/identity_orchestrated_test.go` (new).
+- Interfaces: consumes C1 (the attempt reference and the scope check's interface) and the
+  orchestrator's record as `internal/orchestrator` stores it.
+- Tests: `TestOrchestratedAskIsJudgedOnItsCommitter`, `TestOrchestratedAskWithoutACommitterIsRefused`,
+  `TestOrchestratedAskForAnotherAttemptIsRefused`.
+- Command: `go test ./internal/credsvc/ -run 'OrchestratedAsk' -count=1`
+- Red step: `TestOrchestratedAskIsJudgedOnItsCommitter` fails against the stub check, which
+  admits the orchestrator's class whole.
+- Depends on: C1.
+- Commit: `credsvc: an orchestrated attempt is judged on its committer (LM24)`
 - Reviewer tier: opus, independent review.
 
 ## Parallel execution
@@ -606,7 +640,7 @@ check. LM18 is the removal one release later.
 | Level | Tasks |
 | --- | --- |
 | 0 | C1, LM0, LM8, LM11, LM22 |
-| 1 | LM1, LM2, LM3, LM4, LM5, LM6, LM7, LM10, LM12, LM19, LM23 |
+| 1 | LM1, LM2, LM3, LM4, LM5, LM6, LM7, LM10, LM12, LM19, LM23, LM24 |
 | 2 | I1, LM13, LM20 |
 | 3 | LM15, LM21 |
 | 4 | LM14 |
@@ -667,13 +701,14 @@ file is named by I1 alone, which deletes it.
 
 The pass is on for this repository (`planning.decoupling` is `true`, the default).
 
-**Broken, all by C1, all rejoined by I1** (eight; "A → B" reads "A waited for B"):
+**Broken, all by C1, all rejoined by I1** (nine; "A → B" reads "A waited for B"):
 
 - LM2 → LM1: the claim needs the record's shape and the store's interface, not LM1's store.
 - LM3 → LM1: the classes return the caller the record names; they need its type, not the route.
 - LM5 → LM1: the test needs the record's path.
 - LM6 → LM1: the launcher needs the ticket route's shape, not a running route.
 - LM23 → LM1: the scope check needs the ticket route's hook, an interface, not the route.
+- LM24 → LM23: the committer's check needs the scope check's interface, not LM23's resolver.
 - LM7 → LM2: the runner needs the claim's shape.
 - LM4 → LM2: the pairing routes need a signer's interface, not LM2's signer.
 - LM10 → LM4: `fugaro pair` needs the pairing routes' shape.
@@ -694,7 +729,7 @@ The pass is on for this repository (`planning.decoupling` is `true`, the default
 - LM16 → I1, LM14 and LM21; LM17 → LM14 and LM21: they state and prove what is true after them.
 - LM18 → LM14: a released version must sit between them.
 
-**The gain**, as the read printed it: `gain: 8 broken, 15 kept, 2 added; before 7 tasks, weight
+**The gain**, as the read printed it: `gain: 9 broken, 15 kept, 2 added; before 7 tasks, weight
 11; after 6 tasks, weight 10; improves`. The counts are the tool's own: it counts the edges of the
 graph as it was before the pass, so its "kept" is not the number of lines in the list above. The
 critical path goes from seven tasks to six.
@@ -711,7 +746,7 @@ critical path goes from seven tasks to six.
 `fugaro plan graph --plan docs/launcher-does-not-mint/implementation-plan.md` printed:
 
 ```
-ready in 210–840 min, no history yet for 25 tasks (25 tasks; seeds for 25; from the seeds: no history is cached on this machine yet)
+ready in 210–840 min, no history yet for 26 tasks (26 tasks; seeds for 26; from the seeds: no history is cached on this machine yet)
 ```
 
 The estimate is informational and reserves no budget. It is what the tasks' tiers and this
@@ -719,9 +754,9 @@ machine's history predict; it moves as runs finish and as the graph changes.
 
 ## Runs proposed
 
-25 task runs (C1, LM0–LM23 without LM9, I1), plus one independent review of C1 before slice B and
+26 task runs (C1, LM0–LM24 without LM9, I1), plus one independent review of C1 before slice B and
 C start, and the independent review each security-sensitive task takes. None is launched by this
-plan. Each run is capped by the repository's own budget in its configuration; the worst case is 25 runs
+plan. Each run is capped by the repository's own budget in its configuration; the worst case is 26 runs
 at that cap, and the graph read prints no dollar figure yet (O9).
 
 ## Checks the plan takes
@@ -760,4 +795,6 @@ the service.
 - **A lever other than the policy version** for older CLIs: none exists today (F14); O12 carries
   the cost of the one chosen.
 - **A verified-launcher claim**: out of scope; the record and the audit line carry it (R11).
-- **Chain-bound issuing for the orchestrator** (D3125's alternative).
+- **An unscoped orchestrator class** (D3125's first answer): replaced by D3136 after the trace
+  (F34). Chain-bound issuing, D3125's other alternative, stays declined: D3136 judges the
+  committer, not the chain.
