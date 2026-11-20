@@ -480,6 +480,23 @@ run "a badge that did not say send sends nothing" \
   "  if (badge.send !== true) return local(direction, badge.reason ?? REASON.NO_ANSWER);" \
   "  if (false) return local(direction, badge.reason ?? REASON.NO_ANSWER);" \
   "$EGRESS" "$EGRESS_SUITE"
+# The one thing this module holds between turns is which direction has a call
+# going: the badge reads it as `lastCallInDirection`, and it is fed the call in
+# flight and never a finished one. Unset, two turns go into one call; left set,
+# a direction is held by a call that is over; and a held turn that is not told
+# "in flight" is told `no-answer`, which is another sentence entirely.
+run "a call already in flight is not a second call" \
+  "  if (badge.inFlight === true) return local(direction, EGRESS_CODE.IN_FLIGHT);" \
+  "  if (false) return local(direction, EGRESS_CODE.IN_FLIGHT);" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "the direction knows a call is going while it goes" \
+  "    inFlight[direction] = started;" \
+  "    inFlight[direction] = null;" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "and lets go of it the moment the call is over" \
+  "      inFlight[direction] = null;" \
+  "      void inFlight[direction];" \
+  "$EGRESS" "$EGRESS_SUITE"
 run "a remote route with no provider name is not a route" \
   "  if (typeof badge.provider !== 'string' || badge.provider.length === 0) {" \
   "  if (false) {" \

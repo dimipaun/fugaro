@@ -24,7 +24,7 @@ import { MemorySettingsStore, SettingsStore } from '../accounts/index.js';
 import { ROUTE } from '../../../shared/command/index.js';
 import { initialState, pending, readBack, step } from '../../../shared/confirm/index.js';
 import { REDACTED } from '../../../shared/digest/index.js';
-import { CALL_FAILURE, ENGINE, REASON, STATE } from '../../../shared/voice-switch/index.js';
+import { CALL_FAILURE, CALL_STATE, ENGINE, REASON, STATE } from '../../../shared/voice-switch/index.js';
 import { EGRESS_CODE, EGRESS_OFFER, EGRESS_RULES, createVoiceEgress, permit, readBackFor } from './egress.js';
 import { createVoiceSwitch } from './switch.js';
 
@@ -430,6 +430,94 @@ test('rule 10: a failure is terminal, and nothing is queued, spooled or retried'
   // mode either.
   await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT + 1, status: ADMITS });
   assert.equal(hop.calls.length, 2);
+});
+
+test('a failed call answers its own turn, and does not latch the direction to local', async () => {
+  // The badge's last call is the record this module is holding -- the call going
+  // out now -- and never a `done` or `failed` one. A failed record handed to the
+  // badge would make it answer `local` with that failure (§4.5), which is right
+  // for the turn it belongs to and wrong for every turn after it: the direction
+  // would be stuck on the local engine by a call that is already over, and no
+  // later remote call could clear it.
+  const calls = [];
+  let fail = true;
+  const answer = { ok: true, engine: NAME, contentType: 'application/json', body: new Uint8Array([1]) };
+  const hop = {
+    async transcribe(input) {
+      calls.push(input);
+      if (fail) return { ok: false, code: 'unreachable', field: 'hop' };
+      return answer;
+    },
+    async speak(input) {
+      calls.push(input);
+      return answer;
+    },
+  };
+  const { egress: gate } = egress({ voice: await switchedOn('stt'), hop });
+  const turn = { audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS };
+
+  const failed = await gate.transcribe(turn);
+  assert.equal(failed.send, false);
+  assert.equal(failed.engine, ENGINE.LOCAL);
+  assert.equal(failed.reason, CALL_FAILURE.UNREACHABLE);
+  assert.equal(failed.call.state, CALL_STATE.FAILED);
+
+  fail = false;
+  const next = await gate.transcribe({ ...turn, now: AT + 1 });
+  assert.equal(next.send, true, 'one failure is not a direction turned off');
+  assert.equal(next.engine, ENGINE.REMOTE);
+  assert.equal(next.provider, NAME);
+  assert.equal(calls.length, 2);
+});
+
+test('two turns at once are one call, and the turn that waits is told why it waited', async () => {
+  // The one-at-a-time guard is the badge's `send`, and the badge can only know
+  // about a call from the record this module holds: with no flag, both turns
+  // reach the hop (§4.2's "in flight" would mean nothing), and the held turn
+  // would be told `no-answer` -- the sentence for a project whose status nobody
+  // has answered yet -- rather than that a call is going.
+  const calls = [];
+  const answer = { ok: true, engine: NAME, contentType: 'application/json', body: new Uint8Array([1]) };
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  let began;
+  const started = new Promise((resolve) => { began = resolve; });
+  const hop = {
+    // Only the first call is held open. A second one reaching the hop is the
+    // guard failing, and letting it answer rather than parking it keeps that
+    // failure an assertion instead of a test run that never ends.
+    async transcribe(input) {
+      calls.push(input);
+      if (calls.length === 1) {
+        began();
+        await held;
+      }
+      return answer;
+    },
+    async speak(input) {
+      calls.push(input);
+      return answer;
+    },
+  };
+  const { egress: gate } = egress({ voice: await switchedOn('stt'), hop });
+  const turn = { audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, state: null, now: AT, status: ADMITS };
+
+  const first = gate.transcribe(turn);
+  await started;
+  const second = await gate.transcribe({ ...turn, now: AT + 1 });
+  release();
+  const done = await first;
+
+  assert.equal(second.send, false, 'a call is going, so this turn is not a second one');
+  assert.equal(second.engine, ENGINE.LOCAL);
+  assert.equal(second.reason, EGRESS_CODE.IN_FLIGHT);
+  assert.equal(done.send, true);
+  assert.equal(calls.length, 1, 'the second turn never reached the hop');
+
+  // And the flag is gone with the call: the next turn is a turn of its own.
+  const third = await gate.transcribe({ ...turn, now: AT + 2 });
+  assert.equal(third.send, true);
+  assert.equal(calls.length, 2);
 });
 
 test('every failure answers locally, and the indicator says so', async () => {

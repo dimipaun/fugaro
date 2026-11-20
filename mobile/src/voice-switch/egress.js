@@ -151,6 +151,15 @@ export const EGRESS_CODE = Object.freeze({
   REDACTOR_FAILED: 'redactor-failed',
   /** No recorded consent for any provider the project admits (the badge's own reason). */
   NO_PROVIDER: 'no-provider',
+  /**
+   * A call is already in flight in this direction (§4.2: "while a call is in
+   * flight it shows that"), so this turn is not the one that goes. It is a
+   * **badge's** fact, and the module that starts the calls is the one that holds
+   * it: it is not `no-answer` (the app has an answer, and the answer is "not a
+   * second call"), and it is not the first call's outcome either, which is a fact
+   * about the past and must not decide anything.
+   */
+  IN_FLIGHT: 'in-flight',
 });
 
 /** What the app owes the user when the local engine is the one that failed. */
@@ -346,6 +355,14 @@ export function permit({ direction, route, state, now, project, projects, badge 
   // output on the text path, the request is the hop's and no other, and its only
   // credential is the ID token. What is left to the badge is the switch, the
   // consent and the project's own answer.
+  // A call already going in this direction is the one thing that holds a turn
+  // the badge otherwise admits, and the badge says so itself (`inFlight`, §4.2's
+  // "while a call is in flight it shows that"). This module holds the flag that
+  // produces it -- `permit` is pure and reads it off the badge like every other
+  // device fact -- and it is named for what it is rather than left to fall into
+  // `no-answer`, which is the sentence for a project whose status has not been
+  // answered yet.
+  if (badge.inFlight === true) return local(direction, EGRESS_CODE.IN_FLIGHT);
   if (badge.send !== true) return local(direction, badge.reason ?? REASON.NO_ANSWER);
   if (typeof badge.provider !== 'string' || badge.provider.length === 0) {
     // A remote route with no provider name is not a route: the hop's forwarding
@@ -443,6 +460,16 @@ export function createVoiceEgress({ hop, voiceSwitch, projects, secrets = [], on
   if (onCall !== undefined && typeof onCall !== 'function') throw new TypeError('onCall is a function');
   const tell = onCall ?? (() => {});
 
+  // The one thing this module holds between turns: which of the two directions
+  // has a call going out **right now**. It is per direction, because the guard
+  // the badge reads is per direction (a call in flight for `stt` says nothing
+  // about `tts`), and it is the module's own rather than the caller's, because
+  // this module is what starts the calls and therefore the only thing that knows.
+  // `send` writes it before the hop is called and clears it when the call is
+  // over, however it ended; a flag left set blocks every later turn in that
+  // direction, and one that was never set lets two turns into one call.
+  const inFlight = { [DIRECTION.STT]: null, [DIRECTION.TTS]: null };
+
   /**
    * One turn's decision, without sending anything.
    *
@@ -455,11 +482,23 @@ export function createVoiceEgress({ hop, voiceSwitch, projects, secrets = [], on
    * caller's word. A switch that threw, or answered something this module cannot
    * read, is a turn served locally: an answer the app could not get is not an
    * answer that says "send".
+   *
+   * The **last call** is the app's too, and it is read from this module's own
+   * flag rather than taken from the caller: the single field the badge is fed is
+   * the call going out now, and a `done` or `failed` record is never handed over.
+   * A finished call is a fact about the past that `overlay` turns into `local`,
+   * so feeding it would latch a direction to the local engine for good after one
+   * failure; and a caller that simply passed none would leave the one-at-a-time
+   * guard with nothing behind it, since the caller has no call to report.
    */
-  async function decide({ direction, route, state, now, project, status, lastCallInDirection, localFailed = false } = {}) {
+  async function decide({ direction, route, state, now, project, status, localFailed = false } = {}) {
     let badge;
     try {
-      badge = await voiceSwitch.indicator({ direction, status, lastCallInDirection });
+      badge = await voiceSwitch.indicator({
+        direction,
+        status,
+        lastCallInDirection: inFlight[direction] ?? null,
+      });
     } catch {
       return local(direction, EGRESS_CODE.BADGE_UNREADABLE, localFailed ? EGRESS_OFFER.TEXT_ENTRY : null);
     }
@@ -489,15 +528,25 @@ export function createVoiceEgress({ hop, voiceSwitch, projects, secrets = [], on
    * on the first can change back on the second.
    */
   async function send({ direction, decision, project, call, localFailed = false }) {
-    const inFlight = callRecord({
+    const started = callRecord({
       direction,
       engine: ENGINE.REMOTE,
       provider: decision.provider,
       state: CALL_STATE.IN_FLIGHT,
       reason: null,
     });
-    tell(inFlight);
-    const answer = await call();
+    // The flag is what the next turn's badge reads, so it is set before the hop
+    // is called and cleared in a `finally`: a call that threw is a call that is
+    // over, and a flag that outlived it would hold every later turn in this
+    // direction (`.claude/rules/mobile.md`: cleanup resets in-flight flags).
+    inFlight[direction] = started;
+    tell(started);
+    let answer;
+    try {
+      answer = await call();
+    } finally {
+      inFlight[direction] = null;
+    }
     if (answer.ok) {
       const done = callRecord({
         direction,

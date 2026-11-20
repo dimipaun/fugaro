@@ -117,6 +117,14 @@ when the app means "no action history" and "the local engine could not hear the
 user", and an **absent** one is served locally (`state-unreadable`,
 `route-unreadable`) rather than read as either.
 
+**A call is one at a time, and the module is what knows it.** `send` sets a flag
+for that direction before the hop is called and clears it when the call is over,
+however it ended, and the badge `decide` reads is fed **that** record — the call
+going out now — and never a `done` or `failed` one. A finished call is a fact
+about the past: feeding it would latch the direction to the local engine after a
+single failure, and leaving it out would let two turns into one call. The turn
+that waits is told `in-flight`, not `no-answer`.
+
 **No credential of its own, and no host of its own.** The request is
 `Authorization: Bearer <Firebase ID token>`, the audio or the text as the body,
 the project in `X-Fugaro-Project`, `credentials: 'omit'`, `redirect: 'error'` and
@@ -204,7 +212,7 @@ will stop it is here, and `switch.test.js` is where it is proved.
 ## The mutation proof
 
 ```sh
-mobile/src/voice-switch/mutation-proof.sh    # 61 guards, one planted bug each
+mobile/src/voice-switch/mutation-proof.sh    # 64 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
@@ -219,7 +227,8 @@ credential, the redirect, the bound, the engine name, an unknown reason, the
 status-failure table and the status answer's shape -- the badge's input and
 nothing beside it) and `egress.js` with `egress.test.js` (§5's rules, one
 mutation each -- including the two sentinels that are `null` and never
-`undefined`, and the direction each method owns rather than takes), plus `src/voice/screen.js` with `screen.test.js` for the badge
+`undefined`, the direction each method owns rather than takes, and the one call
+in flight this module holds), plus `src/voice/screen.js` with `screen.test.js` for the badge
 that is in the snapshot before the switch answers and the engine tag read when
 the utterance arrives. It finds a working node rather than assuming one (the base carries none,
 `docs/base-image.md`), proves the pristine suite green and a planted
