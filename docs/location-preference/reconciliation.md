@@ -4,7 +4,7 @@ Checked against `origin/main` at `252329076` on 2026-11-20. **Where this file di
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
 **D3080–D3091**, all answered by the owner on 2026-11-20, every one as recommended. **D3087 was
 amended after review round 1 and D3088 after round 3** (below); the owner confirmed both
-amended texts the same day, and answered **D3092–D3096** on the items the reviews left open. It carries out
+amended texts the same day, and answered **D3092–D3097** on the items the reviews left open (D3097 is not the recommendation). It carries out
 **D3029** of [always a budget](../always-a-budget/reconciliation.md) (in that plan's open follow-up,
 pull request #3305, merged on 2026-11-20), it replaces **D4** of `docs/design/m9-budget-and-dashboard.md` for a new
 installation, and it reverses the ruling **D12 of 2026-10-20** for the Firestore location (D3090).
@@ -264,7 +264,8 @@ country: setup says that too.
 
 ## Decisions
 
-All answered by the owner on 2026-11-20. None departs from the recommendation.
+All answered by the owner on 2026-11-20. Of D3080–D3091 none departs from the recommendation;
+D3097, in the second table, does.
 
 | # | Question | Answer | Why |
 | --- | --- | --- | --- |
@@ -313,8 +314,8 @@ whose update cannot read the cloud is told by doctor to run `fugaro update` unti
 installation's region. It is also a per-invocation override on every cloud command, and read
 commands use it so, with tests (F4). Refusing it everywhere would break those; the answer's
 intent, that a region which is not the installation's never reaches a plan, is kept by refusing it
-in `setup` and `update`. Whether the override should go from the read commands too is the owner's
-(O12).
+in `setup` and `update`, with `--repo` and `--plan-only` included. The owner confirmed that read
+commands keep the override (O12).
 
 **What D3082 does not promise.** The documents list each of these by name: prompts and code sent
 to a model provider (D3083); the git host; Google's global control plane (IAM, service accounts,
@@ -418,7 +419,9 @@ None. No two answers pull against each other.
   the owner's step, and the one step in this plan that `fugaro update` does not carry, because it
   is not an installation's. It is a line in `docs/release.md`; nothing else gates the release on
   it.
-- **O11.** *Answered by D3097: a fourth review round, which the README reports. U9 stays open.*
+- **O11.** *Answered by D3097: a fourth review round ran and the README reports it. It found no
+  path on which an existing installation plans a replacement. Its own fixes are the last commit
+  and are unreviewed. U9 stays open.*
 - **O11 (as written).** Review round 3's fixes are the last commit and were not reviewed again; three rounds
   is the cap. They are: LP2's ignored region for a managed instance, LP8's scope, LP6's listing of
   every location and its added files, LP10's added files, LP7 after LP5b, LP12's silence with no
@@ -430,6 +433,8 @@ None. No two answers pull against each other.
 - **O12 (as written).** D3088 was amended after review round 3: the refusal is in `setup` and `update` only.
   The owner is asked to confirm, and to say whether `--region` should stay an override on the
   read commands.
+- **O13.** Always-a-budget's row in `docs/status.md` still says this spec is "not written yet".
+  It is that plan's row, and whoever next moves it corrects it.
 - **O10.** Pull requests #3315 and #3323 both use D3060–D3079 and checks 810–819. Neither
   touches this plan's block; it is noted for whoever lands them.
 

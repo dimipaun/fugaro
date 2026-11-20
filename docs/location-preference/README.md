@@ -13,7 +13,7 @@ made before this work, where its data already is, moving nothing. It carries out
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's ruling; no typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A5, the census of every location fixed in code, what each Google product offers (read 2026-11-20), findings F1–F21, the mapping, decisions D3080–D3097 with the owner's answers, resolutions R1–R10, open items O1–O12, UNVERIFIED U1–U9. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A5, the census of every location fixed in code, what each Google product offers (read 2026-11-20), findings F1–F21, the mapping, decisions D3080–D3097 with the owner's answers, resolutions R1–R10, open items O1–O13, UNVERIFIED U1–U9. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks LP0 to LP15 (LP5 is LP5a, LP5b and LP5c: 18 runs); levels, critical path, shared files; Checks 820 and 821 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
@@ -49,8 +49,8 @@ each machine's own, is not published in the shared config (which decodes strictl
 an older CLI), and is never an input to a plan; what exists is read from the cloud each time. It
 added LP5c (the intake service's secrets) and LP15 (the vendor's key service reads a regional
 database), ordered LP2 and LP3 after LP8, and listed the two cases in which run output is not in
-the run log bucket. The amended D3087, the grown list of exceptions and R10 wait for the owner's
-confirmation (O6 to O8).
+the run log bucket. The amended D3087, the grown list of exceptions and R10 were then put to the
+owner, who answered them the same day (below).
 
 **Review round 2** changed no answer. It replaced the rule for secrets with a simpler one: a
 secret that exists is left alone (Terraform ignores its replication), and every secret created
@@ -60,13 +60,21 @@ file and ordered them, completed LP10's and LP6's file lists, corrected three te
 matched nothing, and added the key service's redeploy as the owner's step (O9). What it sharpened
 in D3082 is listed for the owner (O8).
 
-**Review round 3** was the last. **D3088 is amended after review**: `--region` is a tested
+**Review round 3** was the last of the three the skill allows. **D3088 is amended after review**: `--region` is a tested
 per-invocation override on read commands, so the refusal is in `setup` and `update`, the
 commands that plan (O12). It also found that discovery never reads a Realtime Database already in
 Terraform's state, so LP2 has Terraform ignore a managed instance's region, or a European
 installation's existing database would have planned a replacement. It added files to LP6 and
-LP10, moved LP7 after LP5b, and moved the key service's step to `docs/release.md`. **Its fixes
-were not reviewed again** (O11).
+LP10, moved LP7 after LP5b, and moved the key service's step to `docs/release.md`. Its fixes were read by round 4.
+
+**Review round 4** ran because the owner asked for it (D3097). It found no path on which an
+existing installation's `fugaro update` plans a replacement. It found that LP8's refusal would
+turn one existing test of `update` red and missed `--repo`, that LP5a must add its variable to
+`intakeServiceEnv` in `internal/infra/tf/cover.go`, that two fakes lack what LP8 and LP6 need,
+and, by running it, that a "no replacement" assertion under the mock provider passes with or
+without `ignore_changes`, so LP2 and LP5a assert the planned value. LP5b lost its dependency on
+LP1 and LP7 moved to level 1. **Round 4's fixes were not reviewed.** What the real provider does
+(U9) is still measured only by Check 821.
 
 **The contract-first pass** broke no edge: the one break tried (the record as a contract) read as
 no gain and was undone. The plan says why.
