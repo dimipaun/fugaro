@@ -49,14 +49,27 @@
 //   - **The DOM is reached through the same narrow interface the screens get.**
 //     `domSurface` hands `startConsole` a `SkewFactory` and a `MountLike`, and
 //     the element it wraps exposes a text slot and attributes -- no markup
-//     parsing, no navigating attribute, no style and no event handler -- which
-//     is `src/renderer/app.ts`'s `ElementLike`, widened only by the `tag` and
-//     `append` that `SkewElement` declares. That is design section 5.1 rule 7
-//     reaching all the way to the one place a real document exists. The one
-//     exception is `domSurface`'s `nodeOf`, which this file uses to attach a
-//     click listener to a drawn row: a listener is not a *write*, a screen never
-//     sees a node, and the alternative -- a screen that handled its own events --
-//     is the interface widening the plan's rule exists to prevent.
+//     parsing, no navigating attribute and no style. That is
+//     `src/renderer/app.ts`'s `ElementLike`, widened only by the `tag` and
+//     `append` that `SkewElement` declares, and it is design section 5.1 rule
+//     7 reaching all the way to the one place a real document exists. Two
+//     exceptions exist, and both are named here rather than left for a reader to
+//     find in the wrapper:
+//     - `domSurface`'s `nodeOf`, which this file uses to attach a click listener
+//       to a drawn row: a listener is not a *write*, a screen never sees a node,
+//       and the alternative -- a screen that handled its own events -- is the
+//       interface widening the plan's rule exists to prevent.
+//     - **the settings panel's search, and nothing else** (console-styling
+//       section 1.1, the console-improvements plan's SU2a): the wrapped element
+//       also carries `addEventListener`, whose listener takes no argument, and a
+//       `value` getter, and `screens/projects.ts`'s `SettingsElement` is the one
+//       interface in the tree that asks for either. That section filters the
+//       document this build has already read: a keystroke opens no read, names
+//       no command and writes nothing, it reads no event object, and the class
+//       and the `hidden` attribute it moves are inside the drawing surface a
+//       screen already has -- so it is not the event-handling screen the
+//       exception above is about. A screen that wants a *command* run still goes
+//       through the bridge, as every one of them does.
 //
 // **This file is bundled, not imported.** `tsc` compiles it to
 // `dist/renderer/entry.js`, and `tools/bundle-renderer/index.ts` walks that
@@ -363,6 +376,18 @@ export interface DomElement extends SkewElement {
    * would be a tablist whose ring never follows the arrows. `ElementLike` -- the
    * interface the screens are drawn against -- is untouched by it. */
   focus(): void
+  /** addEventListener and `value` are what a **section** needs to own its own
+   * interaction, and the settings panel is the one that does (the
+   * console-improvements plan's SU2a, `projects.ts`'s `SettingsElement`): its
+   * search filters a document this build already read, so the section binds it
+   * itself rather than handing a read or a command to this file's seam. `value`
+   * is the box's own text, which is not its `textContent`, and it is a getter
+   * for that reason -- a keystroke changes the node, not the wrapper.
+   *
+   * A screen never reached either of them through `SkewElement`, which is
+   * untouched by both. */
+  addEventListener(type: string, listener: () => void): void
+  readonly value: string
 }
 
 /** DomScreenFactory is a `SkewFactory` whose elements are wrapped nodes. It is
@@ -434,6 +459,15 @@ export function domSurface(document: Document): DomSurface {
         node.appendChild(nodeOf(child))
       },
       childNodes: () => [...node.children].map((child) => wrap(child)),
+      addEventListener: (type: string, listener: () => void) => {
+        node.addEventListener(type, listener)
+      },
+      get value(): string {
+        // Only a form control has one, and the one caller is the settings
+        // panel's search box: `Element` does not declare the member, and a
+        // wrapper for anything else throws only where a reader asked for it.
+        return (node as Element & { value: string }).value
+      },
       focus: (): void => {
         // Both elements this factory makes -- `createElement`'s and
         // `createElementNS`'s -- implement `focus` (`HTMLElement` and
