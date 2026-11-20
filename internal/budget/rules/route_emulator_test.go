@@ -46,14 +46,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
-// routeSubtree is the policy subtree the per-repository route records sit under,
-// as the template spells it. The records' own paths are creds.RoutePath's, and
-// the segment under this subtree is budget.Key of the raw slug — the spelling
-// the rule below compares a token's `fs` claim with, so a path keyed another way
-// is a node no run asks for and no rule admits.
-const routeSubtree = "config/policy/route"
-
 // routePath is one repository's record, keyed as the rule and the token agree.
+// The subtree above it is routeSubtree, declared beside isNewRoutePath in
+// rules_test.go so that the path this file drives and the path the shape test
+// names are one spelling.
 func routePath(slug string) string { return routeSubtree + "/" + budget.Key(slug) }
 
 // aRoute is a record of C2's shape: the service's address and the holder of the
