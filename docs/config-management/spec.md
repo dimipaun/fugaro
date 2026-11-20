@@ -327,6 +327,9 @@ gives it a command — with the converge flag that changes it when the two doors
 | `batch.image` | — |
 | `batch.machine_type` | — |
 | `batch.network` | — |
+| `batch.opt_in` | — |
+| `batch.seal_key.public_key` | — |
+| `batch.seal_key.version` | — |
 | `batch.service_account` | — |
 | `batch.socket_gid` | — |
 | `batch.subnetwork` | — |

@@ -317,8 +317,17 @@ const (
 // three `mobile_allow.*` leaf rows and no row for the block, so the block is
 // admitted by its own name and the row an entry write is about is built from its
 // leaves rather than counted here.
+//
+// C1 of docs/batch-run-identity/ is the last mover, by three rows and by none:
+// the `batch:` block gains its two identity facts — the opt-in fact
+// (`batch.opt_in`) and the key fact, which is one fact in two fields
+// (`batch.seal_key.version`, `batch.seal_key.public_key`, R13) — each owned by
+// `fugaro update` and by no settings command, because they are the
+// installation's facts and not a machine's preference. No name in the allowlist
+// and no prefix of it reaches the three, so the rows without a generic writer
+// move by the three.
 const (
-	cfmRegistryRows   = 513
+	cfmRegistryRows   = 516
 	cfmAllowlistNamed = 121
 )
 
