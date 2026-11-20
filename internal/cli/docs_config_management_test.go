@@ -317,8 +317,16 @@ const (
 // three `mobile_allow.*` leaf rows and no row for the block, so the block is
 // admitted by its own name and the row an entry write is about is built from its
 // leaves rather than counted here.
+//
+// KS19 of docs/keys-through-service/ is the last mover, by two rows and by
+// none: the record `fugaro update` writes on a repository's entry gains R12's
+// two facts beside the switch it already carries
+// (`repos.*.provider_keys_served`, `repos.*.stage_account_served`), and they
+// are the same family as that switch — the `project` one, whose writer is
+// `fugaro update` and never the generic path — so the allowlist reaches
+// neither of them and the rows without a generic writer move by the two.
 const (
-	cfmRegistryRows   = 513
+	cfmRegistryRows   = 515
 	cfmAllowlistNamed = 121
 )
 
