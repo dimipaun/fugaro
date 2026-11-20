@@ -111,30 +111,30 @@
    "title": "the rules keep the record the service's",
    "run": null,
    "version": null,
-   "tier": "small",
-   "size": 1,
+   "tier": "trivial",
+   "size": 0.5,
    "footprint": {
     "prediction": true,
     "paths": [
-     "internal/budget/rules/rules.go",
-     "internal/budget/rules/rules_test.go",
-     "internal/budget/rules/testdata/**"
+     "internal/budget/rules/rules_test.go"
     ]
    }
   },
   {
    "id": "LM6",
-   "title": "the launcher asks the issuer",
+   "title": "the launcher asks the issuer, the resident launcher included",
    "run": null,
    "version": null,
    "tier": "medium",
-   "size": 2,
+   "size": 2.5,
    "footprint": {
     "prediction": true,
     "paths": [
      "internal/cli/launch_identity.go",
      "internal/cli/launch_budget.go",
      "internal/cli/run.go",
+     "internal/cli/orchestrator_launcher.go",
+     "internal/cli/orchestrator_serve.go",
      "internal/cli/launch_identity_test.go"
     ]
    }
@@ -168,22 +168,6 @@
     "paths": [
      "internal/cli/recipes_skew.go",
      "internal/cli/recipes_skew_test.go"
-    ]
-   }
-  },
-  {
-   "id": "LM9",
-   "title": "the resident orchestrator asks the issuer",
-   "run": null,
-   "version": null,
-   "tier": "small",
-   "size": 1,
-   "footprint": {
-    "prediction": true,
-    "paths": [
-     "internal/cli/orchestrator_launcher.go",
-     "internal/cli/orchestrator_serve.go",
-     "internal/cli/orchestrator_launcher_test.go"
     ]
    }
   },
@@ -238,13 +222,14 @@
      "deploy/terraform/gcp/modules/installation/iam.tf",
      "deploy/terraform/gcp/modules/installation/variables.tf",
      "deploy/terraform/gcp/roots/installation/variables.tf",
+     "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl",
      "deploy/terraform/gcp/modules/installation/orchestrator_test.go"
     ]
    }
   },
   {
    "id": "LM13",
-   "title": "update writes the issuer's row and configures the service",
+   "title": "update writes the issuer's row",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -253,11 +238,11 @@
     "prediction": true,
     "paths": [
      "internal/infra/firebase.go",
+     "internal/infra/tfvars.go",
      "internal/infra/launchers.go",
      "internal/infra/tf/cover.go",
      "internal/infra/tf/cover_grants_test.go",
-     "internal/cli/credentials_serve.go",
-     "internal/infra/tf/testdata/**"
+     "internal/infra/tf/testdata/golden/**"
     ]
    }
   },
@@ -274,6 +259,7 @@
     "paths": [
      "internal/credsvc/identity_stub.go",
      "internal/credsvc/identity_mount.go",
+     "internal/cli/credentials_serve.go",
      "internal/credsvc/identity_e2e_test.go",
      "internal/cli/launch_identity_e2e_test.go"
     ]
@@ -284,8 +270,8 @@
    "title": "update moves the grant",
    "run": null,
    "version": null,
-   "tier": "large",
-   "size": 3,
+   "tier": "medium",
+   "size": 2,
    "footprint": {
     "prediction": true,
     "paths": [
@@ -293,10 +279,7 @@
      "internal/cli/init_identity_test.go",
      "internal/cli/init_stages.go",
      "internal/cli/update_in_flight.go",
-     "internal/cli/update_in_flight_test.go",
-     "internal/projectpolicy/version.go",
-     "internal/projectpolicy/migrate.go",
-     "internal/projectpolicy/migrate_test.go"
+     "internal/cli/update_in_flight_test.go"
     ]
    }
   },
@@ -384,6 +367,70 @@
      "docs/batch-run-identity/**"
     ]
    }
+  },
+  {
+   "id": "LM20",
+   "title": "the update's own deletes are listed",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/infra/identity_allow_delete.go",
+     "internal/infra/identity_allow_delete_test.go",
+     "internal/cli/init.go",
+     "internal/managed/plan_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM21",
+   "title": "the policy version moves",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/projectpolicy/version.go",
+     "internal/projectpolicy/migrate.go",
+     "internal/projectpolicy/migrate_test.go",
+     "internal/cli/launch_budget_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM22",
+   "title": "the cover knows the service's new environment names",
+   "run": null,
+   "version": null,
+   "tier": "trivial",
+   "size": 0.5,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/infra/tf/cover.go",
+     "internal/infra/tf/cover_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM23",
+   "title": "the issuer enforces the launch scope",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/credsvc/identity_scope.go",
+     "internal/credsvc/identity_scope_test.go"
+    ]
+   }
   }
  ],
  "edges": [
@@ -423,14 +470,14 @@
    "reason": "built against the identity wire"
   },
   {
-   "task": "LM13",
+   "task": "LM23",
    "needs": "C1",
-   "reason": "fills the configuration the contract declares"
+   "reason": "built against the identity wire"
   },
   {
-   "task": "LM9",
-   "needs": "LM6",
-   "reason": "calls the client LM6 writes and launchRun's new path"
+   "task": "LM12",
+   "needs": "LM22",
+   "reason": "the cover's rule: a name is on its list before a module renders it"
   },
   {
    "task": "LM13",
@@ -441,6 +488,16 @@
    "task": "LM13",
    "needs": "LM12",
    "reason": "the golden plans are generated from its variables"
+  },
+  {
+   "task": "LM20",
+   "needs": "LM11",
+   "reason": "it names the addresses of the rows the switch removes"
+  },
+  {
+   "task": "LM20",
+   "needs": "LM12",
+   "reason": "it names the addresses of the rows the switch removes"
   },
   {
    "task": "LM14",
@@ -454,13 +511,13 @@
   },
   {
    "task": "LM14",
-   "needs": "LM9",
-   "reason": "the orchestrator's row goes with the people's"
+   "needs": "LM20",
+   "reason": "without the list the guard refuses the delete"
   },
   {
-   "task": "LM14",
-   "needs": "LM8",
-   "reason": "a launch after the move must refuse an image that cannot claim"
+   "task": "LM21",
+   "needs": "I1",
+   "reason": "the lever ships with what it levers"
   },
   {
    "task": "LM15",
@@ -478,14 +535,29 @@
    "reason": "it states what is true after it"
   },
   {
+   "task": "LM16",
+   "needs": "LM21",
+   "reason": "it states what is true after it"
+  },
+  {
    "task": "LM17",
    "needs": "LM14",
    "reason": "it proves the move on a live installation"
   },
   {
+   "task": "LM17",
+   "needs": "LM21",
+   "reason": "it proves the older CLI's refusal on a live installation"
+  },
+  {
    "task": "LM18",
    "needs": "LM14",
    "reason": "a released version must sit between them"
+  },
+  {
+   "task": "I1",
+   "needs": "LM8",
+   "reason": "once it merges a launch holds a real ticket, and an image that cannot claim must be refused at launch"
   },
   {
    "task": "I1",
@@ -529,8 +601,8 @@
   },
   {
    "task": "I1",
-   "needs": "LM13",
-   "reason": "the integration runs the configured service"
+   "needs": "LM23",
+   "reason": "the integration runs every side together"
   }
  ],
  "decoupling": [
@@ -559,7 +631,7 @@
     "needs": "LM1"
    },
    "integration": "I1",
-   "reason": "the rules need the record's path"
+   "reason": "the test needs the record's path"
   },
   {
    "contract": "C1",
@@ -569,6 +641,15 @@
    },
    "integration": "I1",
    "reason": "the launcher needs the ticket route's shape, not a running route"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "LM23",
+    "needs": "LM1"
+   },
+   "integration": "I1",
+   "reason": "the scope check needs the ticket route's hook, an interface, not the route"
   },
   {
    "contract": "C1",
@@ -587,15 +668,6 @@
    },
    "integration": "I1",
    "reason": "the pairing routes need a signer's interface, not LM2's signer"
-  },
-  {
-   "contract": "C1",
-   "was": {
-    "task": "LM13",
-    "needs": "LM2"
-   },
-   "integration": "I1",
-   "reason": "update fills the configuration's fields, not the code that reads them"
   },
   {
    "contract": "C1",
