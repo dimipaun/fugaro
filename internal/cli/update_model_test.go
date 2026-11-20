@@ -129,8 +129,12 @@ func TestUpdateConvergesTheModelFlipOnAProjectThatIsNotManaged(t *testing.T) {
 //
 // Two rows, because two things must stay refused:
 //
-//   - the job account's accessor on a name this spec still mounts, an ordinary
-//     workflow secret: the allowance is not a licence for any accessor delete.
+//   - the job account's accessor on a name this spec still declares and mounts,
+//     the checkout's own git credential: the allowance is not a licence for
+//     every accessor this root declares — a rule that admitted any declared
+//     name would pass the rows above and fail here. The node above does not
+//     proxy this repository, so the token's own flip (G22) takes nothing away
+//     and the guard must weigh this delete as it always has.
 //   - the job account's accessor on the same Claude credential of a repository
 //     the switch holds OFF — the node's mode is `off`, so Readiness plans
 //     `model_secrets_served = none` and the drop this allowance exists for is
@@ -140,7 +144,7 @@ func TestUpdateConvergesTheModelFlipOnAProjectThatIsNotManaged(t *testing.T) {
 //     still the way past.
 func TestUpdateRefusesADeleteTheModelFlipDoesNotMake(t *testing.T) {
 	t.Run("an accessor this spec still produces is refused", func(t *testing.T) {
-		other := modelAccessorAddr("some-other-secret")
+		other := modelAccessorAddr(config.BitbucketSecret)
 		r := modelFlipRig(t, config.AuthAPIKey, config.AnthropicSecret, config.BudgetEnforce, other)
 		out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build")
 		text := out + errOut + ErrorText(err)
