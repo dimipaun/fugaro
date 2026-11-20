@@ -3264,6 +3264,86 @@ func TestRecipeSchemaCorpus(t *testing.T) {
 		}
 	}
 }
+
+// TestRecipeSchemaByLevelMatchesGo: the by_level: block — the recipe's one
+// conditional, the roles mapping a level runs with (LD9) — against
+// recipe.Parse, construct by construct. Both directions are failures: a
+// schema narrower than the parser refuses a recipe file the CLI would run,
+// and one that is looser accepts a file the CLI refuses.
+//
+// The level names are pinned here too, and this is the only place they can
+// be: three readers write them — the vocabulary itself (rigor.Rigors), the
+// recipe format's own copy (recipe.LevelNames, which cannot import
+// internal/rigor: rigor's tests import recipe) and this schema's enum — and
+// a level the three disagree about is a recipe that parses at one place and
+// not another.
+func TestRecipeSchemaByLevelMatchesGo(t *testing.T) {
+	sch := compile(t, "recipe.schema.json")
+	const head = "version: 1\nname: a\n"
+	const tail = "steps:\n  - first_line: {}\n  - review: {}\n"
+	for _, tc := range []struct {
+		name  string
+		block string
+		ok    bool
+	}{
+		{"the block", "by_level:\n  poc: { roles: { coder: reviewer } }\n  critical: { roles: {} }\n", true},
+		{"no block", "", true},
+		{"every level", "by_level:\n" +
+			"  poc: { roles: { coder: reviewer } }\n  startup: { roles: { reviewer: coder } }\n" +
+			"  pro: { roles: {} }\n  critical: { roles: { reviewer: coder } }\n  hotfix: { roles: {} }\n", true},
+		{"a level that is not one", "by_level:\n  fast: { roles: { reviewer: coder } }\n", false},
+		{"a level in another spelling", "by_level:\n  POC: { roles: { reviewer: coder } }\n", false},
+		{"an entry with no roles", "by_level:\n  pro: {}\n", false},
+		{"an entry that is not a mapping", "by_level:\n  pro: reviewer\n", false},
+		{"the block that is not a mapping", "by_level: [pro]\n", false},
+		{"a budget in an entry", "by_level:\n  pro: { roles: { reviewer: coder }, budget: 5 }\n", false},
+		{"a round count in an entry", "by_level:\n  pro: { roles: { reviewer: coder }, max_rounds: 2 }\n", false},
+		{"both roles in one entry", "by_level:\n  pro: { roles: { reviewer: coder, coder: reviewer } }\n", false},
+		{"a role mapped to a model", "by_level:\n  pro: { roles: { reviewer: claude-opus-5-5 } }\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := head + tc.block + tail
+			_, ps := recipe.Parse([]byte(text))
+			if got := len(ps) == 0; got != tc.ok {
+				t.Fatalf("recipe.Parse accepted = %v, want %v (problems: %v)", got, tc.ok, ps)
+			}
+			if got := sch.Validate(yamlInstance(t, []byte(text))) == nil; got != tc.ok {
+				t.Errorf("the schema accepted = %v, want %v: the schema and the parser disagree", got, tc.ok)
+			}
+		})
+	}
+	want := levelNames()
+	if !slices.Equal(recipe.LevelNames, want) {
+		t.Errorf("recipe.LevelNames = %v, want rigor.Rigors = %v: the recipe format's copy of the vocabulary has drifted", recipe.LevelNames, want)
+	}
+	data, err := os.ReadFile("recipe.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		Properties map[string]struct {
+			PropertyNames struct {
+				Enum []string `json:"enum"`
+			} `json:"propertyNames"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if got := raw.Properties["by_level"].PropertyNames.Enum; !slices.Equal(got, want) {
+		t.Errorf("the schema's by_level enum = %v, want %v: an enum narrower than the vocabulary refuses a recipe the parser runs, and a wider one accepts a level it refuses", got, want)
+	}
+}
+
+// levelNames is the vocabulary as the level names are written in a file.
+func levelNames() []string {
+	out := make([]string, 0, len(rigor.Rigors))
+	for _, r := range rigor.Rigors {
+		out = append(out, string(r))
+	}
+	return out
+}
+
 func TestResultSchemaRecipe(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	at := time.Date(2026, 10, 7, 10, 0, 0, 0, time.UTC)
