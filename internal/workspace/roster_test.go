@@ -730,6 +730,54 @@ func TestRosterAuditEventRoundTripsThroughTheSchema(t *testing.T) {
 	}
 }
 
+// TestRosterAuditEventSubjectIsBounded: the subject is what a change was made
+// to, and it names things of several grammars -- an address, a domain, a project
+// name -- so both halves of the contract bound it rather than pattern it. The
+// schema publishes the bound (maxLength 512) and AuditEvent.Validate refuses a
+// longer one before the write, which is the only place it can be caught: the
+// trail is create-only (D2811), so an entry the schema refuses is one no later
+// writer can correct, and the schema is published to readers outside this
+// binary.
+func TestRosterAuditEventSubjectIsBounded(t *testing.T) {
+	sch := c1Schema(t, c1AuditSchemaFile)
+	doc := c1SchemaDocument(t, c1AuditSchemaFile)
+	if workspace.MaxAuditSubjectBytes != 512 {
+		t.Fatalf("MaxAuditSubjectBytes is %d and schemas/%s publishes another bound: the reader and the schema have to refuse one document", workspace.MaxAuditSubjectBytes, c1AuditSchemaFile)
+	}
+	if got := fmt.Sprint(c1Node(t, doc, "properties", "subject", "minLength")); got != "1" {
+		t.Errorf("schemas/%s puts minLength %s on a subject, and a subject is the name of something -- an address, a domain, a project -- so it is never empty", c1AuditSchemaFile, got)
+	}
+	if got := fmt.Sprint(c1Node(t, doc, "properties", "subject", "maxLength")); got != fmt.Sprint(workspace.MaxAuditSubjectBytes) {
+		t.Errorf("schemas/%s puts maxLength %s on a subject and MaxAuditSubjectBytes is %d: the schema is published to readers outside this binary, so the two have to be one bound", c1AuditSchemaFile, got, workspace.MaxAuditSubjectBytes)
+	}
+
+	event := c1AuditFixture()
+	event.Subject = strings.Repeat("a", workspace.MaxAuditSubjectBytes)
+	raw, err := workspace.EncodeAuditEvent(event)
+	if err != nil {
+		t.Fatalf("EncodeAuditEvent refuses a subject of exactly %d bytes, which is the bound: %v", workspace.MaxAuditSubjectBytes, err)
+	}
+	if err := c1Validate(t, sch, raw); err != nil {
+		t.Errorf("schemas/%s refuses the event at the bound: %v\n%s", c1AuditSchemaFile, err, raw)
+	}
+
+	// One byte past it: the writer refuses, so the document the schema has to
+	// refuse is the one at the bound with a longer subject written into it.
+	event.Subject = strings.Repeat("a", workspace.MaxAuditSubjectBytes+1)
+	if _, err := workspace.EncodeAuditEvent(event); err == nil {
+		t.Fatal("EncodeAuditEvent writes an event whose subject is past the bound the schema publishes")
+	} else if !strings.Contains(err.Error(), "MaxAuditSubjectBytes") {
+		t.Errorf("EncodeAuditEvent refuses a subject past the bound with %q, and the refusal names the bound a caller has to meet", err)
+	}
+	long := c1Patched(t, raw, strings.Repeat("a", workspace.MaxAuditSubjectBytes), strings.Repeat("a", workspace.MaxAuditSubjectBytes+1))
+	if err := c1Validate(t, sch, long); err == nil {
+		t.Errorf("schemas/%s accepts a subject of %d bytes, and the reader refuses it\n%s", c1AuditSchemaFile, workspace.MaxAuditSubjectBytes+1, long)
+	}
+	if _, err := workspace.DecodeAuditEvent(long); err == nil {
+		t.Errorf("DecodeAuditEvent accepts a subject of %d bytes, and the bound is the reader's half of a schema a reader outside this binary holds:\n%s", workspace.MaxAuditSubjectBytes+1, long)
+	}
+}
+
 // TestRosterAuditEventIDIsAKeyAndAnInstant: the id is minted here and read
 // everywhere -- it is the Firestore document id in the workspace's own
 // collection (internal/workspace.AuditCollection) and the child key in a

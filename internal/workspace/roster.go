@@ -739,7 +739,7 @@ type AuditEvent struct {
 
 // Validate holds an event to the rules its shape cannot carry: the version, the
 // id both stores accept, the instant, the actor, the action of the closed set,
-// and the project and role when they are there.
+// and the project, the subject and the role when they are there.
 func (e AuditEvent) Validate() error {
 	var errs []error
 	if e.Version != AuditEventVersion {
@@ -759,6 +759,14 @@ func (e AuditEvent) Validate() error {
 	}
 	if e.Project != "" && !config.ProjectNameRE.MatchString(e.Project) {
 		errs = append(errs, fmt.Errorf("project: %q is not a project name", e.Project))
+	}
+	// A subject of no bytes is the absence of one and not a value to refuse: the
+	// key is the schema's optional one, and EncodeAuditEvent leaves it out
+	// (omitempty), so the empty spelling never reaches a node -- an event about
+	// a project names no subject. What is refused is a subject past the bound
+	// the schema publishes, because the entry is created once and never updated.
+	if len(e.Subject) > MaxAuditSubjectBytes {
+		errs = append(errs, fmt.Errorf("subject: %d bytes, and a subject is at most %d (workspace.MaxAuditSubjectBytes): the schema refuses a longer one, and an entry the trail has already created cannot be corrected", len(e.Subject), MaxAuditSubjectBytes))
 	}
 	if e.Role != "" && !slices.Contains(Roles(), e.Role) {
 		errs = append(errs, fmt.Errorf("role: %q is not one of %v", e.Role, Roles()))
@@ -850,6 +858,16 @@ var auditIDRE = regexp.MustCompile(`^[\x21-\x22\x25-\x2d\x30-\x5a\x5c\x5e-\x7e]{
 // first is the smaller of the two and the id this package mints is 34 bytes, so
 // the bound is generous for a minted id and a fence for a written one.
 const MaxAuditIDBytes = 200
+
+// MaxAuditSubjectBytes is the length an event's subject is held to. The subject
+// is what a change was made to -- an address added, a domain edited, a project
+// named -- and it names things of several grammars, so it is free text and
+// bounded rather than patterned. The bound is not tidiness: the trail is
+// create-only (D2811), so an event the published schema refuses is one no later
+// writer can correct, and the reader refusing it before the write is the only
+// place it can be caught. schemas/workspace-audit-event.schema.json states the
+// same bound (minLength 1, maxLength 512), which is this constant's other half.
+const MaxAuditSubjectBytes = 512
 
 // validateAuditEventID holds an id to the grammar above and to Firestore's
 // reserved prefix.

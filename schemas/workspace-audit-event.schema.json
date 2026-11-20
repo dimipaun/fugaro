@@ -71,6 +71,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 512,
+      "$comment": "workspace.AuditEvent.Validate, and workspace.MaxAuditSubjectBytes is the 512.",
       "description": "What the change was made to: an address added or removed, a domain edited, a project named. It is free text and bounded, because it names things of several grammars, and an entry with no subject leaves the key out. The reader reads a subject written empty as the absence it means -- nothing writes an event back, because the trail is create-only, so this program never produces the empty spelling, and this pattern is what refuses it where an editor would be the one writing."
     },
     "role": {
