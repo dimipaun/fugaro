@@ -7667,6 +7667,17 @@ run_hours, runs, calls, tokens}], totals, warnings}; *_usd are exact decimal
 strings and null means n/a or not recorded for that breakdown (an unreadable
 row carries null money).
 
+--stream, with --json, prints that document as newline-delimited JSON
+instead of whole: a line per row, each carrying one element of --json's rows
+array unchanged under `row`, then a line saying how many rows the feed
+carried and carrying the document's `totals` (`end`). A consumer draws a row
+as its line arrives rather than holding the whole document, and a feed with
+no end line is a read that was interrupted. A feed that stopped after its
+first row writes an `error` line with the sentence the command would have
+printed, and exits non-zero. The document's own header, notice and warnings
+are not part of the feed; --by, --since, --until and --repo mean here what
+they mean without it.
+
 A project without Firestore history says so and shows run-record totals instead
 (from the runs bucket, not budget history).
 
@@ -7686,6 +7697,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name) |
 | `--since` | string | `30d` | no | first day: YYYY-MM-DD (UTC) or Nd, the last N days |
+| `--stream` | bool | `false` | no | with --json: one line per row, then the line that ends the feed |
 | `--until` | string | "" | no | last day, YYYY-MM-DD (UTC; default today) |
 
 Subcommands:

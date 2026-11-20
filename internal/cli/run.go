@@ -2249,6 +2249,14 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneTriageImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The review-against-task switch, on the same configuration read
+		// and for the same reason: a runner older than reviewSpecSince
+		// refuses agent.review_against_task at bootstrap, whatever it
+		// says, and runs no such review whatever the file asks
+		// (checkCloneReviewAgainstTaskImage).
+		if err := checkCloneReviewAgainstTaskImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The vision slot, on the same configuration read: a runner
 		// older than visionSince refuses agent.models.vision at
 		// bootstrap, whatever it holds (checkCloneVisionImage).
@@ -2442,6 +2450,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The same gate as the clone branch's above, and for the same
 		// reason: see checkTriageImage.
 		if err := checkTriageImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see checkReviewAgainstTaskImage.
+		if err := checkReviewAgainstTaskImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The same gate as the clone branch's above, and for the same

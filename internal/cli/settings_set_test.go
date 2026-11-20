@@ -598,6 +598,30 @@ func TestTheThreeEditorsPreserveBytesTheSameWay(t *testing.T) {
 	}
 }
 
+// settingsGetRowLine is the one row `settings get` prints for key: the line
+// whose first field is the key, under the table's columns header. The two
+// tests below read it by its key rather than by its line number, because `get`
+// prints the setting's own label and description above the table as soon as
+// the metadata table has an entry for the key (SM-E, D2908) and neither key
+// here has one yet: the two lines SM4 adds for max_parallel and commit_name
+// move the row down without changing it.
+func settingsGetRowLine(t *testing.T, out, key string) string {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	for i, line := range lines {
+		fields := strings.Fields(line)
+		if i == 0 || len(fields) == 0 || fields[0] != key {
+			continue
+		}
+		if got := strings.Join(strings.Fields(lines[i-1]), " "); got != "KEY SCOPE VALUE WINS DEFAULT STATE" {
+			continue
+		}
+		return line
+	}
+	t.Fatalf("settings get %s prints no row for it under the table's columns header, got:\n%s", key, out)
+	return ""
+}
+
 // TestSettingsGetOnAKeySetNowhereIsTheDefaultRowAndExitZero: `get` is this
 // task's subcommand, and a key set nowhere prints its default row and exits 0
 // rather than failing an idempotent script (spec §4.1, D852).
@@ -607,13 +631,10 @@ func TestSettingsGetOnAKeySetNowhereIsTheDefaultRowAndExitZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("settings get on a key set nowhere = %v, want exit 0", err)
 	}
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("one key prints its header and its row, got:\n%s", out)
-	}
-	fields := strings.Fields(lines[1])
-	if len(fields) < 5 || fields[0] != "max_parallel" {
-		t.Fatalf("row = %q, want max_parallel and its columns", lines[1])
+	row := settingsGetRowLine(t, out, "max_parallel")
+	fields := strings.Fields(row)
+	if len(fields) < 5 {
+		t.Fatalf("row = %q, want max_parallel and its columns", row)
 	}
 	if fields[3] != "default" {
 		t.Errorf("WINS = %q, want default", fields[3])
@@ -635,13 +656,10 @@ func TestSettingsGetShowsTheRowOfAKeyALayerSets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("one key prints its header and its row, got:\n%s", out)
-	}
-	fields := strings.Fields(lines[1])
-	if len(fields) < 5 || fields[0] != "commit_name" {
-		t.Fatalf("row = %q, want commit_name and its columns", lines[1])
+	row := settingsGetRowLine(t, out, "commit_name")
+	fields := strings.Fields(row)
+	if len(fields) < 5 {
+		t.Fatalf("row = %q, want commit_name and its columns", row)
 	}
 	if fields[2] != "person-1" {
 		t.Errorf("VALUE = %q, want the value the layer holds", fields[2])
