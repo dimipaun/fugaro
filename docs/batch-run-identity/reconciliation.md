@@ -285,7 +285,7 @@ over one that has it. Consequence: D3110 amended; R2, R14; BR18, BR19.
 
 ## Decisions
 
-All answered by the owner on 2026-11-20 with `AskUserQuestion`. **D3110 is not the
+All answered by the owner on 2026-11-20 with `AskUserQuestion`. **D3110 and D3111 are not the
 recommendation**; no other answer departs from it. D3101 and D3102 were each asked twice (D3102 was amended in between, after review round 1), D3105 and D3106 were added by review round 1, and D3107
 and D3108 by review round 2. D3109 and D3110 answer the two questions review round 3 left open,
 asked after the pull request was opened.
@@ -303,8 +303,9 @@ asked after the pull request was opened.
 | **D3108** | `key-release` | A second launcher can replace a queued job and receive its key (F30). Close it? | The launcher that wrapped the key registers the job with the service, which releases only to that job | Accept it, stated: zero tasks, the letter of requirement 1 lost to one attack. Switch to K1 | **The launcher registers the job** (as recommended, 2026-11-20) |
 | **D3109** | `key-release` | The service's launcher class admits people on its roster only, so a service account cannot register a job (O11). What should the plan do? | Build for the class as it is: a service-account launch on Batch is refused with its reason | Admit named service accounts: about 2 more tasks and a new kind of principal. Drop the registration: reverses D3108 | **People on the roster only** (as recommended, 2026-11-20) |
 | **D3110** | `update-converge` | Where does `fugaro update` apply the compute root and create the key (O13)? | Wherever a `batch:` block exists: selection then works straight after an update | Only where the backend is selected: about 1 more task, because selecting is gated on a doctor check that wants the key first | **Only where Batch is selected. Not the recommendation** (2026-11-20). **Amended after review:** as answered, the trigger was the updating machine's own `backend:` key, which is never published (F32). Asked again, the owner chose a published opt-in fact (as recommended, 2026-11-20): his intent, no key ring until someone chooses Batch, is kept; the trigger is the installation's, not a machine's |
+| **D3111** | `update-converge` | The opt-in fact is never withdrawn, so an installation that stops using Batch keeps the grants and the key (O16). Is that wanted? | Yes: once in, always applied, so a later tightening reaches every installation that ever opted in | Add a way to opt out: about 2 more tasks, and `update` gains a removal of grants | **Add a way to opt out. Not the recommendation** (2026-11-20) |
 
-D3111 to D3119 are reserved and unused.
+D3112 to D3119 are reserved and unused.
 
 ## Resolutions
 
@@ -363,7 +364,19 @@ One defensible answer each; stated, not asked.
   different failure with its own id and still refuses the selection.
 - **R15 (`update-converge`). Publishing never drops the key fact or the opt-in fact.** The
   block's merge takes those two fields from the published copy when the publishing machine's
-  own block lacks them.
+  own block lacks them. The opt-in fact has three states (absent, in, withdrawn), so a withdrawal
+  is a written value and not an absence a stale machine could produce.
+- **R16 (`update-converge`). Opting out (D3111).** An operator withdraws the fact with an explicit
+  command of its own, never by merely selecting `cloud-run` on one machine; its name is settled
+  in its task. It asks nothing. It is refused, with the reason, while a Batch job of the
+  installation is queued or running, because the next update would take away what that run needs
+  to open its session. After it, `fugaro update` applies the compute root with the grants off:
+  the credentials service's custom role and its decrypt on the key, and the launchers' `actAs` on
+  the shared project job accounts, are removed. The key and its ring stay (R9: never destroyed,
+  and a ring cannot be deleted), as does everything `fugaro setup --provision-batch` made. The
+  update says in one line what it removes. Launches on Batch are refused from the withdrawal on,
+  with opting in again as the fix; opting in again restores the grants at the next update and
+  uses the same key.
 - **R3 (`update-converge`). "The carrier is in place" is a fact in the `batch:` block.** The
   backend wraps when the block names the key and refuses when it does not, and the refusal's fix
   is `fugaro update`. This is requirement 3. No launch reads the cloud to decide it.
@@ -445,8 +458,10 @@ his earlier D2075 (F29, D3107).
   message cannot say which reason applied. It names the roster as the likely one and how a person
   joins it (the launcher grant, then `fugaro update`). The roster is read only by a machine with
   a local config; a service account with none already runs on Cloud Run.
-- **O16.** The opt-in fact is never withdrawn, so nothing retires the key or the grants of an
-  installation that stops using Batch. Stated, not planned.
+- **O16. Closed by D3111** (not the recommendation): an operator can opt out, and the update then
+  removes the grants and keeps the key (R16).
+- **O17.** After an opt-out the key still costs its small monthly amount and the ring stays for
+  good. Nothing Fugaro may do removes either.
 - **O14.** "No CLI release between the merge of BR1, BR6, BR16 or BR18 and I1" is a rule for whoever cuts
   releases. Nothing enforces it.
 - **O9.** BR2 and BR4 rest on U2 and are built before Check 830 runs. If the check fails U2, R4

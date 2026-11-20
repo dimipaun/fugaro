@@ -404,6 +404,40 @@
       }
     },
     {
+      "id": "BR20",
+      "title": "an operator opts out",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/backends.go",
+          "internal/cli/backends_optout_test.go",
+          "docs/backends.md",
+          "website/content/cli-reference.md",
+          "plugin/skills/**"
+        ]
+      }
+    },
+    {
+      "id": "BR21",
+      "title": "update retires the grants after an opt-out",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_compute.go",
+          "internal/cli/update_batch_optout_test.go",
+          "internal/apply/steps.go"
+        ]
+      }
+    },
+    {
       "id": "I1",
       "title": "integration",
       "run": null,
@@ -723,6 +757,31 @@
     {
       "task": "I1",
       "needs": "BR19",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "BR20",
+      "needs": "BR18",
+      "reason": "two files: backends.go and docs/backends.md"
+    },
+    {
+      "task": "BR21",
+      "needs": "BR16",
+      "reason": "one file: init_compute.go"
+    },
+    {
+      "task": "BR21",
+      "needs": "BR5",
+      "reason": "behaviour: it applies the root with the input BR5 adds"
+    },
+    {
+      "task": "I1",
+      "needs": "BR20",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR21",
       "reason": "it wires the real sides and proves them together"
     }
   ],

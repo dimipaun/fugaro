@@ -2,7 +2,7 @@
 
 **Status: plan only; nothing is implemented; four tasks approved, none launched.** The owner
 approved C1, BRS, BR0 and BR6 by name on 2026-11-20; every other task still needs his go. BR6
-changed after its approval (D3110) and should be confirmed against its present text. See
+changed after its approval (D3110), and he confirmed the approval for its present text. See
 [docs/status.md](../status.md) for the current table. Spec owner: Dimi Paun (the owner). Date:
 2026-11-20. Checked against `origin/main` at `d57d71ddb`, rebased onto `0a8b4e221`.
 
@@ -16,11 +16,11 @@ adds; that plan was read on branch `docs/always-a-budget` at `8bf13231f` and has
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's rulings; no typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: the module map, assumptions A1–A5, findings F1–F32, the threat model of each carrier, decisions D3100–D3110 with the owner's answers, resolutions R1–R15, open items O1–O16, UNVERIFIED U1–U8. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Contract C1, tasks BRS and BR0 to BR19, the contract change that carries the owner's answer after Check 830, integration I1 (24 runs), and one contract change that runs only if raised; levels, critical path, shared files; Checks 830 and 831 |
+| [reconciliation.md](reconciliation.md) | The amended spec: the module map, assumptions A1–A5, findings F1–F32, the threat model of each carrier, decisions D3100–D3111 with the owner's answers, resolutions R1–R16, open items O1–O17, UNVERIFIED U1–U8. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Contract C1, tasks BRS and BR0 to BR21, the contract change that carries the owner's answer after Check 830, integration I1 (26 runs), and one contract change that runs only if raised; levels, critical path, shared files; Checks 830 and 831 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
-**Numbers reserved:** decisions **D3100–D3119** (D3100–D3110 used), checks **830–839** (830 and
+**Numbers reserved:** decisions **D3100–D3119** (D3100–D3111 used), checks **830–839** (830 and
 831 used). **Renumbered on 2026-11-20.** This spec first took D3060–D3079 and checks 810–819,
 which were free on `main` and in every open pull request when it started; pull request #3315
 (credentials-belong-to-models) took the same block and was opened first, so this one moved. The
@@ -70,7 +70,13 @@ the backend deadlocked against the apply it was meant to cause (F32). **D3110 is
 review**: asked again, the owner chose a published opt-in fact (as recommended), which keeps his
 intent that an installation gets no key ring until someone chooses Batch. BR19 was added, BR6
 now depends on C1 and moved to level 1, and the spec was renumbered (see Numbers reserved). The
-fixes for that review were not reviewed again.
+fixes for that review were not reviewed again at that point.
+
+**After it** the owner confirmed BR6 and answered O16. **D3111 is not the recommendation**: an
+operator can opt the installation out, where an opt-in that is never withdrawn was recommended.
+The update then removes the Batch grants and keeps the key (R16); BR20 and BR21 were added. He
+asked for one more independent review of everything since the fourth, and chose that nothing is
+launched from this session.
 
 **What the reconciliation found that the brief did not know:** the token's carrier is one of seven
 gaps (F7 to F13); any carrier the run's service account opens can be replayed by a second
