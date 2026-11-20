@@ -14,7 +14,8 @@ import (
 // the selection needs to know about the call: its model. A Claude model through
 // a provider key waits for Check 50 — the call whose only credential is a
 // provider's is refused with that sentence — and every other model is served by
-// that credential.
+// that credential, and by no Anthropic one: which class of credential can run a
+// call at all is the model's question in both directions (D3000, D3007).
 //
 // It is a file of its own because select_test.go's cases are all about the
 // cascade's own tiers, and its candidate lists are the two the cascade was
@@ -92,6 +93,72 @@ func TestANonClaudeProviderModelIsServed(t *testing.T) {
 		}
 		if c.Name != openrouter.Name || c.Tier != TierC || wait != 0 {
 			t.Fatalf("a provider's own model = %q (tier %s), wait %s; want %q (tier C) at once", c.Name, c.Tier, wait, openrouter.Name)
+		}
+	}
+}
+
+// TestANonClaudeModelIsServedByNothingButTheProvider is the same rule read the
+// other way, and the list is what makes it a defect rather than a preference:
+// the offering puts a repository's provider credential beside the credentials
+// its Claude calls use (F32), so a call whose model is a provider's reaches the
+// provider's key only if the two Anthropic tiers are out of its way — the
+// cascade walks tier A first, and a shared subscription token cannot run a
+// model that is not Claude's, nor can the project's own Anthropic key
+// (checkCandidates, D3000, D3007). Before this, a DeepSeek call of such a
+// repository would have gone to Anthropic on donated quota.
+func TestANonClaudeModelIsServedByNothingButTheProvider(t *testing.T) {
+	for _, set := range []Settings{noWindow(), {Fallback: Auto}} {
+		s := selector(newFakeStore(), set)
+		s.Model = otherModel
+		c, wait, err := s.Select(ctx, run, []Credential{a1, b1, openrouter})
+		if err != nil {
+			t.Fatalf("a provider's own model offered %+v = %v; want its provider key: the Anthropic tiers cannot run it (D3000, D3007)", set, err)
+		}
+		if c.Name != openrouter.Name || c.Tier != TierC || wait != 0 {
+			t.Fatalf("a provider's own model offered a shared token and the project's key beside its provider key = %q (tier %s), wait %s; want %q (tier C) at once", c.Name, c.Tier, wait, openrouter.Name)
+		}
+	}
+}
+
+// A run already placed on one of them is moved off it, and this is the path
+// that made the rule urgent: D154's stickiness answers first, so without the
+// model there every call after the first would keep going to the token.
+func TestANonClaudeModelIsMovedOffASharedToken(t *testing.T) {
+	st := newFakeStore()
+	st.setPlacement(run, a1.Name, Lease{Credential: a1.Name, Until: now.Add(DefaultLeaseTTL)})
+	s := selector(st, noWindow())
+	s.Model = otherModel
+	c, _, err := s.Select(ctx, run, []Credential{a1, openrouter})
+	if err != nil {
+		t.Fatalf("a provider's own model whose run sits on a shared token = %v; want its provider key", err)
+	}
+	if c.Name != openrouter.Name {
+		t.Fatalf("a provider's own model whose run sits on a shared token was served %q; want %q: stickiness keeps a call on the credential it IS served by, and this call's model cannot be run there", c.Name, openrouter.Name)
+	}
+}
+
+// And the fail-closed direction, which is what dropping the Anthropic tiers
+// costs: a provider's model whose call offers no provider credential at all is
+// refused, never run on a token or on the project's key. That list is what a
+// repository whose policy names a provider the bundle holds no entry for
+// produces, and it is a caller's mistake — the refusal names the credential it
+// left and the rule that left it, rather than sending the operator to the
+// bundle or to a policy.
+func TestANonClaudeModelWithNoProviderKeyIsRefused(t *testing.T) {
+	for _, set := range []Settings{noWindow(), {Fallback: Auto}} {
+		s := selector(newFakeStore(), set)
+		s.Model = otherModel
+		c, _, err := s.Select(ctx, run, []Credential{a1, b1})
+		if err == nil {
+			t.Fatalf("a provider's own model offered no provider credential under %+v was served %q (tier %s); want a refusal (D3000, D3007)", set, c.Name, c.Tier)
+		}
+		if errors.Is(err, ErrNoCredential) || errors.Is(err, ErrNoCandidates) {
+			t.Fatalf("a provider's own model offered no provider credential = %v; want the refusal that names the model's own rule and not a sentence about accounts or the bundle", err)
+		}
+		for _, want := range []string{"tier a", "shared-1", "D3000", "D3007"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("the refusal of a provider's own model says %q, and does not say %q: an operator reading it must learn which credential was left and why", err, want)
+			}
 		}
 	}
 }

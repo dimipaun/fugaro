@@ -25,7 +25,10 @@ const (
 	// It is selected only for a model that is not a Claude one, and that is the
 	// whole of D3000: a CLAUDE model through a provider key waits for Check 50,
 	// which measures Claude's prompt-cache markers through that route (D150,
-	// C3.6, R3), while a non-Claude provider model is served without waiting.
+	// C3.6, R3), while a non-Claude provider model is served without waiting —
+	// and, the same fact read backwards, by this tier alone: a model that is not
+	// Claude's cannot be run by a subscription token or the project's key, so
+	// those candidates are dropped for it (checkCandidates, D3007).
 	// Which models are Claude's is config.IsClaudeModel — the pin vocabulary
 	// every reader already shares (R3), never a list of this package's.
 	//
@@ -108,7 +111,10 @@ type Selector struct {
 	// Model is the model this call is for, as the request names it, and it is
 	// what tells a Claude model from any other: a tier-C candidate — a named
 	// provider key — is served for any model that is not a Claude one, and a
-	// Claude model through one waits for Check 50 (D3000, R3, TierC).
+	// Claude model through one waits for Check 50 (D3000, R3, TierC). It is the
+	// same fact read the other way for the tiers below it: a model that is not
+	// Claude's is served by a provider's key alone, and the Anthropic tiers a
+	// provider's model cannot run are dropped from the list (D3007).
 	//
 	// It is the CALLER's answer and not this package's: a selection knows no
 	// model ids and reads no request, so the side that parsed the call hands
@@ -149,6 +155,12 @@ type Selector struct {
 //     sentence that says which check and which decision: the caller named a
 //     provider credential and this release does not select that route for a
 //     Claude model yet.
+//   - ("", 0, the model's own refusal) — every candidate left is of a tier this
+//     call's model cannot be run on, the other way round: the two Anthropic
+//     tiers offered for a model that is not Claude's (D3000, D3007). A refusal,
+//     because the alternative is a provider's model sent to Anthropic on quota
+//     that route cannot spend, and because a list of the wrong class is a
+//     caller's mistake rather than an account's exhausted state.
 //   - another error — the state could not be read or written. Fail closed: an
 //     unreadable state is not an empty one.
 //
@@ -167,7 +179,10 @@ type Selector struct {
 // skipped, and so is a list left with nothing but tier-C candidates this call's
 // model may not be served by; a tier-C candidate that is merely one of several
 // is dropped from the list instead, because the call would never have been
-// served by it (checkCandidates, D3000). A tier B candidate offered under
+// served by it (checkCandidates, D3000). The tiers below it are dropped the
+// other way round for a call whose model is not Claude's: a shared token or the
+// project's key cannot run such a model either, and a list left with nothing
+// but those is the model's own refusal (D3007). A tier B candidate offered under
 // `oauth-only` is not refused — it carries no mistake — but it is never
 // selected, and a call that nothing else can serve is answered with
 // ErrFallbackForbidden when that candidate could actually serve it (see the
@@ -755,7 +770,12 @@ func groupOf(cs []Credential, tier Tier) []Credential {
 //     in a tie, which is a worse round robin for a reason nobody could see;
 //   - a tier C candidate — a named provider key — is refused unless this call's
 //     model is one it may be served by, and a list that leaves nothing but such
-//     candidates is refused with the sentence naming Check 50 (D3000, D150).
+//     candidates is refused with the sentence naming Check 50 (D3000, D150);
+//   - a tier A or tier B candidate is refused when this call's model is NOT a
+//     Claude one, which is the same rule read the other way (D3000, D3007): a
+//     provider's key runs a model that is not Claude's, and a shared
+//     subscription token or the project's key cannot. A list that leaves
+//     nothing but those is refused rather than run on one.
 //
 // # Which tier-C candidates this call may be served by, and why the list is the
 // # answer (D3000, R3, F5)
@@ -766,6 +786,16 @@ func groupOf(cs []Credential, tier Tier) []Credential {
 // and nothing about another model (D150, D3000). So the model decides, and the
 // model is the caller's (Selector.Model) — an empty one reads as a Claude model
 // and keeps this gate exactly as wide as it was before the model arrived.
+//
+// The rule cuts the other way for the tiers below it, and by the same fact: a
+// call whose model is not Claude's is a call neither a subscription token nor
+// the project's own Anthropic key can run, so those candidates are dropped too
+// (D3007). Without that, the offering would be worse than useless: the cascade
+// walks tier A first, so a provider's model would be served by whatever shared
+// token happened to be in the list — the wrong route entirely, on donated quota
+// — and the provider key the caller offered for it would never be reached. This
+// is the one place the two directions are decided, so a caller cannot be served
+// a credential its model's route cannot use.
 //
 // A refused candidate is DROPPED from the list, and the rest of the call is not
 // its business. That is the difference a bundle of named entries makes (KS1
@@ -783,6 +813,14 @@ func checkCandidates(cs []Credential, model string) ([]Credential, error) {
 	if len(cs) == 0 {
 		return nil, ErrNoCandidates
 	}
+	// Which classes of credential can run this call at all is the model's
+	// question, and it is asked before the policy's (D3000, D3007). A provider's
+	// key runs every model but a Claude one, and the two Anthropic tiers run a
+	// Claude one alone: the same fact in both directions, so a candidate of the
+	// wrong class is dropped here rather than offered to the cascade — a model a
+	// provider runs sent to Anthropic is a call that route cannot serve, made on
+	// quota somebody donated for a Claude model.
+	provider := ProviderServes(model)
 	out := make([]Credential, 0, len(cs))
 	seen := make(map[string]bool, len(cs))
 	var refused []Credential
@@ -792,8 +830,12 @@ func checkCandidates(cs []Credential, model string) ([]Credential, error) {
 		}
 		switch c.Tier {
 		case TierA, TierB:
+			if provider {
+				refused = append(refused, c)
+				continue
+			}
 		case TierC:
-			if !ProviderServes(model) {
+			if !provider {
 				refused = append(refused, c)
 				continue
 			}
@@ -807,6 +849,14 @@ func checkCandidates(cs []Credential, model string) ([]Credential, error) {
 		out = append(out, c)
 	}
 	if len(out) == 0 {
+		if provider {
+			// Nothing is left but the tiers a Claude call runs on, and this
+			// call's model is not Claude's. As above, the answer is not "no
+			// credential is offered" — the caller offered some, and the mistake
+			// is which — and it is not the Check 50 sentence, which is about the
+			// other direction.
+			return nil, fmt.Errorf("creds: %q is tier %s, and a call whose model is not Claude's is served by a provider's own key: neither a shared subscription token nor the project's key can run it (D3000, D3007)", refused[0].Name, refused[0].Tier)
+		}
 		// Nothing is left but provider keys this call's model may not be served
 		// by, and that is the refusal D150's gate is: the answer is not "no
 		// credential is offered" (which would send the caller to the bundle for
@@ -821,6 +871,11 @@ func checkCandidates(cs []Credential, model string) ([]Credential, error) {
 // provider's own key: every model but a Claude one (D3000, R3). A caller that
 // named no model is not one of them — the fail-closed direction, and the one
 // every caller had before a selection could be told the model at all.
+//
+// It is the whole of the class question, which is why it answers both
+// directions of it: a call it answers true for is a call the Anthropic tiers
+// cannot run, so checkCandidates drops them, and a call it answers false for is
+// one a provider's key cannot (D3007).
 //
 // The vocabulary is config's own (IsClaudeModel over ClaudePatterns): which
 // models are Claude's is the pin ladder the config, the mount and the launch

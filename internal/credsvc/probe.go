@@ -37,8 +37,9 @@ package credsvc
 //     paid key under a policy that says never. The model narrows it once more:
 //     a probe sends the call's own model through the credential it asks about,
 //     so a provider's key may be probed only for a model a provider may serve,
-//     which is the whole of D3000 (creds.ProviderServes) — the route Check 50
-//     gates is not one the service makes on its own.
+//     and the Anthropic tiers only for one it may not — the whole of D3000 read
+//     both ways (creds.ProviderServes). Neither the route Check 50 gates nor a
+//     route that cannot run the call is one the service makes on its own.
 //   - One probe per credential at a time, and one per credential per call. The
 //     prober first takes a lease under creds/, conditionally, so two instances
 //     that notice the same backed-off credential at the same instant do not
@@ -421,18 +422,22 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 //
 // The tier-A half is what is left when the policy does not spend, which is
 // reachableOnly's rule on the probe's side: a tier-B credential is a
-// possibility only under a written `fallback: auto`. Tier C is where the model
-// enters, and it is the same rule the selection applies (creds.ProviderServes,
-// D3000): a provider's key is admitted whenever the policy admits it — which a
-// backed-off one needs as much as any other, because a backed-off credential
-// waits for a probe rather than for its clock (creds.free, a mark that is not
-// Available) and would otherwise never be used again — but only for a model a
-// provider may serve. A probe
-// sends this call's own model through the credential it asks about, so without
-// that gate the service would route a CLAUDE model to a third party, which is
-// the one thing D150's Check 50 gates; and a call that names no model reads as
-// a Claude one (Selector.Model), so the zero value probes exactly what this
-// gate probed before the model was read here.
+// possibility only under a written `fallback: auto`. The model is the other
+// half, and it is the same rule the selection applies (creds.ProviderServes,
+// D3000, D3007), read in both directions: a provider's key is admitted only for
+// a model a provider may serve, and the Anthropic tiers only for a model it may
+// not. A probe sends this call's own model through the credential it asks
+// about, so a tier-C candidate probed for a CLAUDE model would make the very
+// call Check 50 gates, and a shared token or the project's key probed for a
+// provider's model would ask about a route that cannot run it — and would clear
+// the mark that hands the next selection exactly that credential.
+//
+// Tier C is admitted whenever the policy admits it, which a backed-off one
+// needs as much as any other: a backed-off credential waits for a probe rather
+// than for its clock (creds.free, a mark that is not Available) and would
+// otherwise never be used again. A call that names no model reads as a Claude
+// one (Selector.Model), so the zero value probes exactly what this gate probed
+// before the model was read here.
 //
 // A candidate of a tier this release does not know is dropped whichever the
 // policy says. Nothing selects one — a selection refuses such a tier outright
@@ -440,12 +445,13 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 // direction is the one to answer a list this service cannot read the way it
 // answers every other one.
 func probeCandidates(cands []creds.Credential, set creds.Settings, model string) []creds.Credential {
+	provider := creds.ProviderServes(model)
 	out := make([]creds.Credential, 0, len(cands))
 	for _, c := range cands {
 		switch {
-		case c.Tier == creds.TierA:
-		case c.Tier == creds.TierB && set.Fallback.Spends():
-		case c.Tier == creds.TierC && creds.ProviderServes(model):
+		case provider && c.Tier == creds.TierC:
+		case !provider && c.Tier == creds.TierA:
+		case !provider && c.Tier == creds.TierB && set.Fallback.Spends():
 		default:
 			continue
 		}
