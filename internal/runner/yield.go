@@ -327,9 +327,10 @@ func (r *run) deliverReason(seq int, stage, reason string, at time.Time) {
 // a stop whose resume then failed (rule 2's fallback): they reached the stage
 // after all, in a fresh session, and the record says so.
 //
-// The entries are rebuilt rather than edited in place: publishMessages hands
-// out a shallow copy of the block, and an entry edited under a reader's feet
-// would change a record somebody already holds.
+// Each entry is rebuilt as a fresh value, the way deliver and deliverReason
+// write one: publishMessages hands out a shallow copy of the block, so a field
+// set on an entry a reader already holds would change a record under it, and a
+// value built whole is the same shape every other write of an entry has.
 func (r *run) retagYield(msgs []runmsg.Message, reason string) {
 	r.msgs.mu.Lock()
 	defer r.msgs.mu.Unlock()
@@ -337,9 +338,12 @@ func (r *run) retagYield(msgs []runmsg.Message, reason string) {
 	copy(next, r.msgs.dels)
 	for _, m := range msgs {
 		for i := range next {
-			if next[i].Seq == m.Seq {
-				next[i].Reason = reason
+			d := next[i]
+			if d.Seq != m.Seq {
+				continue
 			}
+			next[i] = runmsg.Delivery{Seq: d.Seq, SentAt: d.SentAt, SentBy: d.SentBy, Flags: d.Flags,
+				State: d.State, Stage: d.Stage, DeliveredAt: d.DeliveredAt, Reason: reason}
 		}
 	}
 	r.msgs.dels = next
