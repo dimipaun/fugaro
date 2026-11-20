@@ -36,8 +36,12 @@ import (
 // found, pick of different tasks, own-step recipe, R2); these are the ones no
 // launcher decided.
 const (
-	// specReasonSettingOff is a repository that turned the check off in its own
-	// fugaro.yaml (R7).
+	// specReasonSettingOff is the review-against-task switch being off: a
+	// repository that turned the check off in its own fugaro.yaml, or the
+	// owner's published false that a repository saying nothing about the key
+	// takes (R7, D2935). The two are one reason because they are one state —
+	// the run has no brief to check the pull request against, and which home
+	// closed the check does not change what the review judges.
 	specReasonSettingOff = "agent.review_against_task is off"
 	// specReasonOwnStep is a recipe whose first step is the runner's own
 	// (digest, commit_reports): its task text is a launcher label rather than a
@@ -221,19 +225,36 @@ func (r *run) resolveReviewSpec(ctx context.Context) reviewSpecFound {
 	}
 }
 
-// reviewAgainstTaskOn is whether this repository's reviews are checked against
-// the task (R7).
+// reviewAgainstTaskOn is whether this run's reviews are checked against the
+// task (R7). Two homes carry the switch and the order they are read in is the
+// owner's (D2935):
 //
-// It reads the repository's setting from the base configuration — the file the
-// repository's own base branch carries, never the branch under review, so a
-// run's own agent cannot switch off the review of its own work — and a base
-// file that could not be read counts as on, the strict direction. The owner's
-// published policy is a separate gate over this answer (RA8a).
+//   - The owner's published node, read as a gate *before* the repository's own
+//     answer: a published true forces the check on for every repository of an
+//     installation, whatever its file says (policy.Effective.
+//     ReviewAgainstTaskForced, which is the merge's own answer for the one
+//     value nothing under it could turn off).
+//   - The repository's own agent.review_against_task, from the base
+//     configuration — the file the repository's own base branch carries, never
+//     the branch under review, so a run's own agent cannot switch off the
+//     review of its own work (R7, F27) — where the file sets it at all. A
+//     repository's true under a published false is what makes the published
+//     false a default rather than a ceiling, and the merge reaches the same
+//     value for the same reason.
+//   - A published false where the file says nothing: off, and the run records
+//     it as the setting being off (specReasonSettingOff), because what a
+//     review is judged against is nothing either way.
+//   - Otherwise on: neither home writes the key, which is the state of every
+//     installation that has published no node for it. A base file that could
+//     not be read counts as on too, the strict direction.
 func (r *run) reviewAgainstTaskOn() bool {
-	if r.baseCfg == nil {
+	if r.policy.ReviewAgainstTaskForced() {
 		return true
 	}
-	return r.baseCfg.Agent.ReviewAgainstTaskOn()
+	if r.baseCfg != nil && r.baseCfg.Agent.ReviewAgainstTask != nil {
+		return r.baseCfg.Agent.ReviewAgainstTaskOn()
+	}
+	return !r.policy.ReviewAgainstTaskDefaultOff()
 }
 
 // ownStepRecipe reports whether the run's recipe begins with the runner's own
