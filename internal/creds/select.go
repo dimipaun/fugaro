@@ -47,6 +47,18 @@ const (
 type Credential struct {
 	Name string
 	Tier Tier
+	// Provider is the provider whose key this credential is, for a tier-C one,
+	// named as the published policy's providers block names it (R2) — one
+	// provider's key is the key of ONE provider, and a caller's list can hold
+	// several of them (the offering offers one per provider the policy names).
+	// It is what ties a key to the models it may serve beside the class rule
+	// (Selector.Provider, checkCandidates): a key handed to another provider's
+	// model is a bearer token sent to an endpoint it was not issued for.
+	//
+	// The tiers below carry nothing here: a shared subscription token and the
+	// project's own Anthropic key belong to no provider and run a Claude model
+	// alone.
+	Provider string
 }
 
 // Run is the run a selection is made for: the repository slug and the run id
@@ -124,6 +136,26 @@ type Selector struct {
 	// always had. A caller that never sets it therefore selects exactly what it
 	// selected before this field existed.
 	Model string
+	// Provider is the provider that runs this call's model — the name the
+	// published policy's providers block gives it (R2) — and it is what a
+	// tier-C candidate is tied to: a caller's list can hold several providers'
+	// keys (one per provider the policy names), so the key of a provider this
+	// call did not name is dropped (checkCandidates), because one provider's
+	// key served for another's model is a bearer token sent to an endpoint it
+	// was not issued for, on a route that cannot run the model at all.
+	//
+	// Which provider runs a model is a fact of the project's published policy
+	// (config.ModelProvider.Matches over its `models` patterns), and this
+	// package cannot read it: the side that resolved the call hands the answer
+	// in, exactly as it hands in the model (the credentials service's provider
+	// route, KS4 — a provider is named there, and the name IS the provider).
+	//
+	// "" means a caller that named none, and then NO tier-C candidate is served
+	// at all. That is the fail-closed direction, and it is not the same as the
+	// class rule: a list holding one provider's key is no evidence that that
+	// provider runs this call's model — a model whose provider's key the bundle
+	// does not hold would otherwise be sent to whichever one was left.
+	Provider string
 }
 
 // Select answers the credential the run's next call goes to, or the wait until
@@ -161,6 +193,11 @@ type Selector struct {
 //     because the alternative is a provider's model sent to Anthropic on quota
 //     that route cannot spend, and because a list of the wrong class is a
 //     caller's mistake rather than an account's exhausted state.
+//   - ("", 0, the provider's own refusal) — every candidate left is a named
+//     provider's key and none of them belongs to the provider this call named
+//     as the one that runs its model (or the call named none at all): one
+//     provider's key never serves another's model, and the sentence names the
+//     two providers it holds apart (D3000).
 //   - another error — the state could not be read or written. Fail closed: an
 //     unreadable state is not an empty one.
 //
@@ -217,7 +254,7 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 	if err := run.valid(); err != nil {
 		return Credential{}, 0, err
 	}
-	cs, err := checkCandidates(candidates, s.Model)
+	cs, err := checkCandidates(candidates, s.Model, s.Provider)
 	if err != nil {
 		return Credential{}, 0, err
 	}
@@ -775,7 +812,13 @@ func groupOf(cs []Credential, tier Tier) []Credential {
 //     Claude one, which is the same rule read the other way (D3000, D3007): a
 //     provider's key runs a model that is not Claude's, and a shared
 //     subscription token or the project's key cannot. A list that leaves
-//     nothing but those is refused rather than run on one.
+//     nothing but those is refused rather than run on one;
+//   - a tier C candidate is refused unless it is the key of the provider this
+//     call named as the one that runs its model (D3000, R2): a list can hold
+//     several providers' keys, and one provider's key handed to another's model
+//     is a bearer token sent to an endpoint it was not issued for. A list left
+//     with nothing but such keys is refused with a sentence naming the caller's
+//     provider and the candidate's, or the call's own silence about it.
 //
 // # Which tier-C candidates this call may be served by, and why the list is the
 // # answer (D3000, R3, F5)
@@ -797,6 +840,18 @@ func groupOf(cs []Credential, tier Tier) []Credential {
 // is the one place the two directions are decided, so a caller cannot be served
 // a credential its model's route cannot use.
 //
+// The class is not the whole of the tier-C question, and the second half is the
+// tie the same sentence asks for: WHICH provider. A list of a project's named
+// entries holds one key per provider the published policy names, so several of
+// them are ordinary and not a mistake, and the model's own name does not tell
+// them apart (the patterns of the policy's `models` are what do, and OpenRouter
+// runs models other vendors made). The caller therefore names the provider that
+// runs this model (Selector.Provider) and a key of any other is dropped; a
+// call that names none gets no tier-C credential at all, since a key of one
+// provider is no evidence that the model is its own. Without the tie the list's
+// first provider key would be handed the model — at best a route that cannot
+// run it, at worst one provider's bearer token at another's endpoint.
+//
 // A refused candidate is DROPPED from the list, and the rest of the call is not
 // its business. That is the difference a bundle of named entries makes (KS1
 // offers a coding caller the provider entries of its own repository), and
@@ -809,7 +864,7 @@ func groupOf(cs []Credential, tier Tier) []Credential {
 // gateway pins and what the service's provider route builds a list of one for.
 // Such a call reads the sentence, and it is the sentence that names the check,
 // the reason and the decision.
-func checkCandidates(cs []Credential, model string) ([]Credential, error) {
+func checkCandidates(cs []Credential, model, provider string) ([]Credential, error) {
 	if len(cs) == 0 {
 		return nil, ErrNoCandidates
 	}
@@ -820,23 +875,33 @@ func checkCandidates(cs []Credential, model string) ([]Credential, error) {
 	// wrong class is dropped here rather than offered to the cascade — a model a
 	// provider runs sent to Anthropic is a call that route cannot serve, made on
 	// quota somebody donated for a Claude model.
-	provider := ProviderServes(model)
+	byProvider := ProviderServes(model)
 	out := make([]Credential, 0, len(cs))
 	seen := make(map[string]bool, len(cs))
-	var refused []Credential
+	var refused, wrongProvider []Credential
 	for _, c := range cs {
 		if c.Name == "" {
 			return nil, fmt.Errorf("creds: a candidate of tier %q has no name", c.Tier)
 		}
 		switch c.Tier {
 		case TierA, TierB:
-			if provider {
+			if byProvider {
 				refused = append(refused, c)
 				continue
 			}
 		case TierC:
-			if !provider {
+			if !byProvider {
 				refused = append(refused, c)
+				continue
+			}
+			// The second half of the tier-C question, and the one the model
+			// cannot answer on its own: which provider's key this is against
+			// which provider runs this call's model (Selector.Provider). A
+			// candidate with no provider of its own is never served either:
+			// an unnamed key is no more evidence that it is this call's than
+			// an unnamed call is evidence that it is the key's.
+			if provider == "" || c.Provider != provider {
+				wrongProvider = append(wrongProvider, c)
 				continue
 			}
 		default:
@@ -849,7 +914,24 @@ func checkCandidates(cs []Credential, model string) ([]Credential, error) {
 		out = append(out, c)
 	}
 	if len(out) == 0 {
-		if provider {
+		if len(wrongProvider) > 0 {
+			// Every candidate left is a provider's key and none of them is the
+			// provider's this call is for — the other half of the tier-C
+			// question, and a refusal of its own because its fix is not the
+			// policy's or the account's but the CALLER's: the provider that
+			// runs the model it named, or that provider's key in the list. The
+			// alternative is the harm the tie exists for — one provider's
+			// bearer token sent to another's endpoint.
+			switch p := wrongProvider[0]; {
+			case provider == "":
+				return nil, fmt.Errorf("creds: %q is a provider's key, and this call names no provider: a credential of tier C is served only to a call that says which provider runs its model (D3000)", p.Name)
+			case p.Provider == "":
+				return nil, fmt.Errorf("creds: %q is offered with no provider, and this call's model is run by %q: a provider's key is served only for the provider it belongs to (D3000)", p.Name, provider)
+			default:
+				return nil, fmt.Errorf("creds: %q is the key of the provider %q, and this call's model is run by %q: one provider's key never serves another provider's model (D3000)", p.Name, p.Provider, provider)
+			}
+		}
+		if byProvider {
 			// Nothing is left but the tiers a Claude call runs on, and this
 			// call's model is not Claude's. As above, the answer is not "no
 			// credential is offered" — the caller offered some, and the mistake
@@ -875,7 +957,9 @@ func checkCandidates(cs []Credential, model string) ([]Credential, error) {
 // It is the whole of the class question, which is why it answers both
 // directions of it: a call it answers true for is a call the Anthropic tiers
 // cannot run, so checkCandidates drops them, and a call it answers false for is
-// one a provider's key cannot (D3007).
+// one a provider's key cannot (D3007). It says nothing about WHICH provider's
+// key: a call may be served by a provider's and still not by the one offered,
+// which is the tie Selector.Provider decides beside this one (checkCandidates).
 //
 // The vocabulary is config's own (IsClaudeModel over ClaudePatterns): which
 // models are Claude's is the pin ladder the config, the mount and the launch

@@ -100,12 +100,6 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		out, skipped := reviewCandidates(reviewOfferings(b), ra.Account)
 		return out, creds.StrategyFailover, skipped, nil
 	}
-	// This repository's own named entries join the pool before anything narrows
-	// it (ownNamedEntries, KS3): the providers the call's own published policy
-	// names and the repository's own Anthropic key where the bundle holds one.
-	// A review caller above is served by its own list and never by the pool, so
-	// the accessor is read only for a caller that is served from a pool at all.
-	pool = ownNamedEntries(pool, shared, b, id.Slug)
 	// The project's crafts narrow the pool one step further (poolOffering, MC6),
 	// which is where a pool's members enter this list and where a credential no
 	// craft names leaves it. A node that publishes no crafts block narrows
@@ -141,6 +135,18 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 				"the crafts go out on " + credentialNames(crafted) + ", and the pool this call belongs to holds " + credentialNames(pool)}
 		}
 	}
+	// This repository's own named entries join the list the crafts left
+	// (ownNamedEntries, KS3): the providers the call's own published policy
+	// names and the repository's own Anthropic key where the bundle holds one.
+	// AFTER the narrowing, because a craft's access names a credential of the
+	// bundle's old vocabulary and every one of them is a tier A or B name
+	// (craftOffering): an entry joined before the intersection would leave it
+	// again here, reported as one more name the crafts and the pool disagreed
+	// on, and the repository would be offered neither its provider key (F32) nor
+	// its own Anthropic one (D3008) on exactly the projects that publish crafts.
+	// A review caller above is served by its own list and never by this one, so
+	// the accessor is read only for a caller that is served from a pool at all.
+	cands = ownNamedEntries(cands, shared, b, id.Slug)
 	hasA := false
 	for _, c := range cands {
 		if c.Tier == creds.TierA {
@@ -199,9 +205,9 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 	return out, strategy, append(skipped, dropped...), nil
 }
 
-// ownNamedEntries adds this repository's own named entries to the pool a call
-// belongs to: the offerings KS3 builds, read out of the bundle through C1's
-// accessor (contract-provider.md, ReadProviderKey).
+// ownNamedEntries adds this repository's own named entries to the list the
+// crafts left (candidates): the offerings KS3 builds, read out of the bundle
+// through C1's accessor (contract-provider.md, ReadProviderKey).
 //
 // They are two facts of the same family (R2, D3008), and both are derived from
 // the identity the service verified and never from anything the call says:
@@ -209,9 +215,12 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 //   - one entry per provider the call's own published policy names — the
 //     project's `providers` block, whose keys are the providers a run may route
 //     a model to (config.ModelProvider) and whose names are the credential half
-//     of the family's key. It is offered at tier C: a provider's own key is the
-//     third-party route, and which models it may serve is the selection's
-//     (creds' D3000 gate), not this function's.
+//     of the family's key. It is offered at tier C, and it carries the provider
+//     it is the key OF (creds.Credential.Provider): one provider's key serves
+//     one provider's models, and the tie is the only thing that keeps a list of
+//     several providers' keys from being served the wrong one — which models a
+//     key may serve at all is the selection's (creds' D3000 gate), not this
+//     function's.
 //   - the repository's OWN Anthropic key, where the bundle holds one, at tier B
 //     (D3008). A repository with such an entry is served that key and not the
 //     project's — which narrowToRepoAuth is what enforces, because the two are
@@ -226,14 +235,14 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 // The names are offered in a settled order (the providers sorted by name, the
 // Anthropic key after them) because the offered order is what breaks a tie
 // within a tier (F7), and a map's iteration order would make a tie a matter of
-// the Go runtime's choice. A name the pool already holds is not offered twice:
+// the Go runtime's choice. A name the list already holds is not offered twice:
 // the scope's offering may hold the same entry once KS1's bundle answers the
 // family (a candidate offered twice is refused by checkCandidates, which is a
 // refusal and not a duplicate).
 //
 // The list is a copy and never the scope's own slice: what a reader answered is
 // the reader's, and this function only ever adds to it.
-func ownNamedEntries(pool []creds.Credential, shared *projectpolicy.Policy, b *Bundle, slug string) []creds.Credential {
+func ownNamedEntries(cands []creds.Credential, shared *projectpolicy.Policy, b *Bundle, slug string) []creds.Credential {
 	var providers []string
 	if shared != nil {
 		providers = make([]string, 0, len(shared.Providers))
@@ -244,20 +253,26 @@ func ownNamedEntries(pool []creds.Credential, shared *projectpolicy.Policy, b *B
 	}
 	extra := make([]creds.Credential, 0, len(providers)+1)
 	for _, name := range providers {
-		if c, ok := ownNamedEntry(b, slug, name, creds.TierC); ok {
-			extra = append(extra, c)
+		c, ok := ownNamedEntry(b, slug, name, creds.TierC)
+		if !ok {
+			continue
 		}
+		// The provider this key is the key OF, which is the loop's own name:
+		// the policy's providers block is what named this credential, and the
+		// family's key carries it as the credential half.
+		c.Provider = name
+		extra = append(extra, c)
 	}
 	if c, ok := ownNamedEntry(b, slug, config.AnthropicKeyAccount, creds.TierB); ok {
 		extra = append(extra, c)
 	}
 	if len(extra) == 0 {
-		return pool
+		return cands
 	}
-	out := make([]creds.Credential, 0, len(pool)+len(extra))
-	out = append(out, pool...)
+	out := make([]creds.Credential, 0, len(cands)+len(extra))
+	out = append(out, cands...)
 	for _, c := range extra {
-		if _, held := lookupCredential(pool, c.Name); held {
+		if _, held := lookupCredential(cands, c.Name); held {
 			continue
 		}
 		out = append(out, c)

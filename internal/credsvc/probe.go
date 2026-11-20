@@ -372,7 +372,7 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 		// which it has already answered with) is what the run is told.
 		return false
 	}
-	c, ok := firstDue(probeCandidates(cands, sel.Settings, sel.Model), marks, now, probed)
+	c, ok := firstDue(probeCandidates(cands, sel.Settings, sel.Model, sel.Provider), marks, now, probed)
 	if !ok {
 		// A selection said a probe is due and the marks say none is: the state
 		// moved between the two reads (another instance probed the credential,
@@ -439,19 +439,26 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 // one (Selector.Model), so the zero value probes exactly what this gate probed
 // before the model was read here.
 //
+// The tier-C candidate is the call's OWN provider's key or none at all: a probe
+// is made on the credential the call would be served by, the selection narrows
+// a list of several providers' keys to the provider the call named
+// (Selector.Provider), and a probe that did not narrow it the same way would
+// ask a provider about a model it does not run — and clear a mark that hands
+// the next selection exactly that credential.
+//
 // A candidate of a tier this release does not know is dropped whichever the
 // policy says. Nothing selects one — a selection refuses such a tier outright
 // (creds.checkCandidates) — so no mark can be due on it, and the fail-closed
 // direction is the one to answer a list this service cannot read the way it
 // answers every other one.
-func probeCandidates(cands []creds.Credential, set creds.Settings, model string) []creds.Credential {
-	provider := creds.ProviderServes(model)
+func probeCandidates(cands []creds.Credential, set creds.Settings, model, provider string) []creds.Credential {
+	byProvider := creds.ProviderServes(model)
 	out := make([]creds.Credential, 0, len(cands))
 	for _, c := range cands {
 		switch {
-		case provider && c.Tier == creds.TierC:
-		case !provider && c.Tier == creds.TierA:
-		case !provider && c.Tier == creds.TierB && set.Fallback.Spends():
+		case byProvider && c.Tier == creds.TierC && provider != "" && c.Provider == provider:
+		case !byProvider && c.Tier == creds.TierA:
+		case !byProvider && c.Tier == creds.TierB && set.Fallback.Spends():
 		default:
 			continue
 		}

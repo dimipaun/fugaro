@@ -36,8 +36,15 @@ var (
 	// openrouter is one named provider credential of C1's family, spelled as
 	// the credentials service offers it: the name it is entered under in the
 	// bundle (provider_wire.RepoCredentialKey), which is what an operator reads
-	// in a refusal and what the selector only ever carries.
-	openrouter = Credential{Name: "repo-credential--gh-acme-app-1a2b--openrouter", Tier: TierC}
+	// in a refusal and what the selector only ever carries. It carries the
+	// provider it is the key OF as well (Credential.Provider): the policy's
+	// `providers` block is what named it, and a key serves its own provider's
+	// models alone.
+	openrouter = Credential{Name: "repo-credential--gh-acme-app-1a2b--openrouter", Tier: TierC, Provider: "openrouter"}
+	// deepseek is a second one of the same family: a project may name several
+	// providers, so one caller's list holds several keys and the tie is the
+	// only thing that tells them apart (checkCandidates).
+	deepseek = Credential{Name: "repo-credential--gh-acme-app-1a2b--deepseek", Tier: TierC, Provider: "deepseek"}
 )
 
 // TestAClaudeModelThroughAProviderWaitsForCheck50 is D3000's first half, and
@@ -87,6 +94,7 @@ func TestANonClaudeProviderModelIsServed(t *testing.T) {
 	for _, set := range []Settings{noWindow(), {}, {Fallback: Auto}} {
 		s := selector(newFakeStore(), set)
 		s.Model = otherModel
+		s.Provider = openrouter.Provider
 		c, wait, err := s.Select(ctx, run, []Credential{openrouter})
 		if err != nil {
 			t.Fatalf("a provider's own model under %+v = %v; want the provider key it was offered: a non-Claude provider model is served without waiting (D3000)", set, err)
@@ -110,6 +118,7 @@ func TestANonClaudeModelIsServedByNothingButTheProvider(t *testing.T) {
 	for _, set := range []Settings{noWindow(), {Fallback: Auto}} {
 		s := selector(newFakeStore(), set)
 		s.Model = otherModel
+		s.Provider = openrouter.Provider
 		c, wait, err := s.Select(ctx, run, []Credential{a1, b1, openrouter})
 		if err != nil {
 			t.Fatalf("a provider's own model offered %+v = %v; want its provider key: the Anthropic tiers cannot run it (D3000, D3007)", set, err)
@@ -128,6 +137,7 @@ func TestANonClaudeModelIsMovedOffASharedToken(t *testing.T) {
 	st.setPlacement(run, a1.Name, Lease{Credential: a1.Name, Until: now.Add(DefaultLeaseTTL)})
 	s := selector(st, noWindow())
 	s.Model = otherModel
+	s.Provider = openrouter.Provider
 	c, _, err := s.Select(ctx, run, []Credential{a1, openrouter})
 	if err != nil {
 		t.Fatalf("a provider's own model whose run sits on a shared token = %v; want its provider key", err)
@@ -148,6 +158,7 @@ func TestANonClaudeModelWithNoProviderKeyIsRefused(t *testing.T) {
 	for _, set := range []Settings{noWindow(), {Fallback: Auto}} {
 		s := selector(newFakeStore(), set)
 		s.Model = otherModel
+		s.Provider = openrouter.Provider
 		c, _, err := s.Select(ctx, run, []Credential{a1, b1})
 		if err == nil {
 			t.Fatalf("a provider's own model offered no provider credential under %+v was served %q (tier %s); want a refusal (D3000, D3007)", set, c.Name, c.Tier)
@@ -159,6 +170,67 @@ func TestANonClaudeModelWithNoProviderKeyIsRefused(t *testing.T) {
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("the refusal of a provider's own model says %q, and does not say %q: an operator reading it must learn which credential was left and why", err, want)
 			}
+		}
+	}
+}
+
+// TestOnlyTheProvidersKeyTheCallNamesIsServed is the other half of the tier-C
+// question, and the one the model cannot answer on its own (D3000, R2). A
+// project's `providers` block may name several providers, so the offering puts
+// several keys in one list — and a provider's key is the key of ONE provider:
+// serving one for another's model sends a bearer token to an endpoint it was
+// not issued for, or a model to a route that cannot run it, and the selection's
+// own order would decide which one that was.
+//
+// So the caller names the provider that runs this call's model
+// (Selector.Provider), and the list narrows to that provider's key alone. The
+// two fail-closed directions are here as well, and they are the reason the tie
+// is a tie and not a preference: a call that named no provider gets no tier-C
+// credential at all — a list holding one provider's key is no evidence that
+// that provider runs the model, and a model whose provider's key the bundle
+// does not hold would otherwise be sent to whichever key was left — and a call
+// whose named provider's key is not in the list is refused rather than served
+// another's.
+func TestOnlyTheProvidersKeyTheCallNamesIsServed(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		provider string
+		list     []Credential
+		want     string
+		wantSays []string
+	}{
+		{"the first provider named", "openrouter", []Credential{openrouter, deepseek}, openrouter.Name, nil},
+		{"the second provider named", "deepseek", []Credential{openrouter, deepseek}, deepseek.Name, nil},
+		{"the named provider's key beside a shared token and the project's key", "deepseek", []Credential{a1, b1, openrouter, deepseek}, deepseek.Name, nil},
+		{"no provider named", "", []Credential{openrouter, deepseek}, "", []string{"tier C", "names no provider", "D3000"}},
+		{"a provider the list holds no key of", "mistral", []Credential{openrouter, deepseek}, "", []string{"openrouter", "mistral", "D3000"}},
+	} {
+		s := selector(newFakeStore(), noWindow())
+		s.Model = otherModel
+		s.Provider = tc.provider
+		c, wait, err := s.Select(ctx, run, tc.list)
+		if tc.want == "" {
+			if err == nil {
+				t.Errorf("%s: the call was served %q (tier %s), and no key in its list belongs to the provider the call named", tc.name, c.Name, c.Tier)
+				continue
+			}
+			if errors.Is(err, ErrNoCredential) || errors.Is(err, ErrNoCandidates) {
+				t.Errorf("%s: %v; want the refusal that names the tie and not a sentence about accounts or the bundle", tc.name, err)
+				continue
+			}
+			for _, want := range tc.wantSays {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%s: the refusal %q does not say %q: it must name the tie and the providers it held apart", tc.name, err, want)
+				}
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v; want %q, the key of the provider the call named", tc.name, err, tc.want)
+			continue
+		}
+		if c.Name != tc.want || c.Tier != TierC || wait != 0 {
+			t.Errorf("%s: the call was served %q (tier %s), wait %s; want %q (tier C) at once", tc.name, c.Name, c.Tier, wait, tc.want)
 		}
 	}
 }

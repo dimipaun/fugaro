@@ -938,7 +938,7 @@ func TestProbeCandidatesFollowThePolicy(t *testing.T) {
 		{"no fallback written", creds.Settings{}, 1},
 		{"auto", creds.Settings{Fallback: creds.Auto}, 2},
 	} {
-		got := probeCandidates(cands, tc.set, testModel)
+		got := probeCandidates(cands, tc.set, testModel, "")
 		if len(got) != tc.want {
 			t.Errorf("%s: %d candidates are open to a probe, want %d", tc.name, len(got), tc.want)
 		}
@@ -963,30 +963,43 @@ func TestProbeCandidatesFollowThePolicy(t *testing.T) {
 // The model decides it and not the policy: a repository's own provider
 // credential is offered under every auth the service serves (F32), and a call
 // that names no model reads as a Claude one.
+//
+// Which provider's key the probe may take is the tying half of the same
+// question (creds.Selector.Provider, D3000): the list holds one key per
+// provider the policy names, and the probe is made on the credential the call
+// would be served by, so it is the named provider's key or none.
 func TestAProbeAsksOnlyTheCredentialsTheModelAdmits(t *testing.T) {
 	cands := []creds.Credential{
 		{Name: "default", Tier: creds.TierA},
-		{Name: "repo-credential--gh-acme-app-1a2b--openrouter", Tier: creds.TierC},
+		{Name: "repo-credential--gh-acme-app-1a2b--openrouter", Tier: creds.TierC, Provider: "openrouter"},
+		{Name: "repo-credential--gh-acme-app-1a2b--deepseek", Tier: creds.TierC, Provider: "deepseek"},
 	}
 	for _, tc := range []struct {
-		name  string
-		set   creds.Settings
-		model string
-		want  int
+		name     string
+		set      creds.Settings
+		model    string
+		provider string
+		want     string
 	}{
-		{"a Claude model under a spending policy", creds.Settings{Fallback: creds.Auto}, testModel, 1},
-		{"no model named under a spending policy", creds.Settings{Fallback: creds.Auto}, "", 1},
-		{"another model under a spending policy", creds.Settings{Fallback: creds.Auto}, openRouterModel, 1},
-		{"a Claude model under oauth-only", creds.Settings{Fallback: creds.OAuthOnly}, testModel, 1},
-		{"another model under oauth-only", creds.Settings{Fallback: creds.OAuthOnly}, openRouterModel, 1},
+		{"a Claude model under a spending policy", creds.Settings{Fallback: creds.Auto}, testModel, "", "default"},
+		{"no model named under a spending policy", creds.Settings{Fallback: creds.Auto}, "", "", "default"},
+		{"another model under a spending policy, its provider named", creds.Settings{Fallback: creds.Auto}, openRouterModel, "openrouter", "repo-credential--gh-acme-app-1a2b--openrouter"},
+		{"another model under a spending policy, the other provider named", creds.Settings{Fallback: creds.Auto}, openRouterModel, "deepseek", "repo-credential--gh-acme-app-1a2b--deepseek"},
+		{"another model under a spending policy, no provider named", creds.Settings{Fallback: creds.Auto}, openRouterModel, "", ""},
+		{"a Claude model under oauth-only", creds.Settings{Fallback: creds.OAuthOnly}, testModel, "", "default"},
+		{"another model under oauth-only, its provider named", creds.Settings{Fallback: creds.OAuthOnly}, openRouterModel, "openrouter", "repo-credential--gh-acme-app-1a2b--openrouter"},
 	} {
-		got := probeCandidates(cands, tc.set, tc.model)
-		if len(got) != tc.want {
-			t.Errorf("%s: %d candidates are open to a probe, want %d", tc.name, len(got), tc.want)
+		got := probeCandidates(cands, tc.set, tc.model, tc.provider)
+		var names []string
+		for _, c := range got {
+			names = append(names, c.Name)
+		}
+		if strings.Join(names, ", ") != tc.want {
+			t.Errorf("%s: the candidates open to a probe are [%s], want [%s]", tc.name, strings.Join(names, ", "), tc.want)
 		}
 		for _, c := range got {
-			if c.Tier == creds.TierC && !creds.ProviderServes(tc.model) {
-				t.Errorf("%s: the provider credential %q is open to a probe, and a probe would send %q through it", tc.name, c.Name, tc.model)
+			if c.Tier == creds.TierC && (!creds.ProviderServes(tc.model) || c.Provider != tc.provider) {
+				t.Errorf("%s: the provider credential %q is open to a probe, and a probe would send %q through it (the call named %q)", tc.name, c.Name, tc.model, tc.provider)
 			}
 			if c.Tier != creds.TierC && creds.ProviderServes(tc.model) {
 				t.Errorf("%s: %q of tier %s is open to a probe, and a probe would send %q, which it cannot run", tc.name, c.Name, c.Tier, tc.model)

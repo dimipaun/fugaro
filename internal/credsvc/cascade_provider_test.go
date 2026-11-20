@@ -105,6 +105,19 @@ func testPolicyDocProvidersProbeable(names ...string) string {
 	return testPolicyDocProvidersWith(`"credentials": {"fallback": "auto", "stop_after_exhaustion_per_window": false}`, names...)
 }
 
+// testPolicyDocProvidersCraft is the same node with a crafts block: the coder
+// craft goes out on the project's own Anthropic key, which is the only kind of
+// name a craft CAN go out on — craftOffering builds a candidate for a pool's
+// members and for a credential the bundle holds at tier A or B, and a tier-C
+// name is refused there (an access that named a provider's key would refuse the
+// caller's whole call) — so the crafts always narrow a call to names of the old
+// vocabulary and never to a named entry of C1's family.
+func testPolicyDocProvidersCraft(names ...string) string {
+	return testPolicyDocProvidersWith(`"credentials": {"fallback": "auto"},
+		"craft_credentials": [{"name": "`+config.AnthropicSecret+`", "type": "anthropic"}],
+		"crafts": {"coder": {"access": "`+config.AnthropicSecret+`"}}`, names...)
+}
+
 func testPolicyDocProvidersWith(credentials string, names ...string) string {
 	entries := make([]string, 0, len(names))
 	for _, n := range names {
@@ -175,18 +188,28 @@ func TestAnOAuthRepositoryIsOfferedItsProviderCredential(t *testing.T) {
 		// key, which is what tells "offered beside the cascade's own" apart from
 		// "offered instead of it".
 		kept []string
+		// crafts is the same call in a project that publishes a crafts block,
+		// which narrows the pool to the names the crafts go out on and so to
+		// none of C1's family: the named entries join the list after that
+		// narrowing or not at all (the offering's own rule).
+		crafts bool
 	}{
-		{"an oauth repository", "oauth", []string{testAccount}, "oauth", testAccount, []string{testAccount}},
-		{"an api-key repository", "api-key", nil, "api-key", "", []string{config.AnthropicSecret}},
-		{"a cascade repository", config.AuthCascade, nil, "", "", []string{config.DefaultClaudeAccount}},
-		{"a repository no update has recorded", "", nil, "", "", []string{config.DefaultClaudeAccount}},
+		{"an oauth repository", "oauth", []string{testAccount}, "oauth", testAccount, []string{testAccount}, false},
+		{"an api-key repository", "api-key", nil, "api-key", "", []string{config.AnthropicSecret}, false},
+		{"a cascade repository", config.AuthCascade, nil, "", "", []string{config.DefaultClaudeAccount}, false},
+		{"a repository no update has recorded", "", nil, "", "", []string{config.DefaultClaudeAccount}, false},
+		{"a crafts project's api-key repository", "api-key", nil, "api-key", "", []string{config.AnthropicSecret}, true},
+		{"a crafts project's cascade repository", config.AuthCascade, nil, "", "", []string{config.AnthropicSecret}, true},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			s, want := providerSvc(t)
+			if tc.crafts {
+				s, want = providerSvcWith(t, testPolicyDocProvidersCraft("openrouter", "deepseek"))
+			}
 			if tc.auth != "" {
 				s.authRecord(t, tc.auth, tc.accounts...)
 			}
-			cands, _, err := s.candidatesFor(t, tc.mode, tc.account)
+			cands, skipped, err := s.candidatesFor(t, tc.mode, tc.account)
 			if err != nil {
 				t.Fatalf("candidates: %v; want the call admitted: the provider key is neither a subscription nor the project's own key, and no auth this service serves takes it away (F32, D3007)", err)
 			}
@@ -196,6 +219,12 @@ func TestAnOAuthRepositoryIsOfferedItsProviderCredential(t *testing.T) {
 			}
 			if c.Tier != creds.TierC {
 				t.Errorf("the provider credential %q is offered at tier %s, want tier C: a provider's key is the third-party route and never the project's paid key or a subscription", want, c.Tier)
+			}
+			if c.Provider != "openrouter" {
+				t.Errorf("the provider credential %q is offered with provider %q, want %q: the tie is what keeps a list of several providers' keys from serving the wrong one (creds.Credential.Provider)", want, c.Provider, "openrouter")
+			}
+			if got, ok := reportedNotAdmitted(t, skipped)[want]; ok {
+				t.Errorf("the provider credential %q is reported as %q: the crafts go out on other names and this one is offered beside them, so nothing left it out (the entries join the list after the crafts narrow it, KS3)", want, got.Reason)
 			}
 			for _, name := range tc.kept {
 				if _, ok := lookupCredential(cands, name); !ok {
@@ -311,6 +340,39 @@ func TestARepositoryWithItsOwnAnthropicEntryIsServedThatOne(t *testing.T) {
 		}
 		if got, ok := reportedNotAdmitted(t, skipped)[config.AnthropicSecret]; !ok || got.Reason != ReasonNotAdmitted {
 			t.Errorf("the project's key is not reported as left out (%+v): the list and what was left out of it are the two things the halt message reads", got)
+		}
+	})
+
+	// And the same repository in a project that publishes a crafts block. The
+	// crafts go out on the project's key and can go out on nothing of C1's
+	// family (craftOffering refuses a tier-C access), so a list built by
+	// narrowing the pool to them holds neither this repository's own Anthropic
+	// entry nor its provider's key — while the repository's runs are owed both:
+	// its own key instead of the project's (D3008) and its provider's key
+	// beside them under every auth (F32).
+	t.Run("an entry of its own, in a project that publishes crafts", func(t *testing.T) {
+		s := newSvcWith(t, func(s *svc, _ *Config) {
+			s.policy.shared = decodeTestPolicy(t, testPolicyDocProvidersCraft("openrouter"))
+		})
+		withProviderKeys(t, providerKey(s.slug, config.AnthropicKeyAccount), providerKey(s.slug, "openrouter"))
+		s.authRecord(t, "api-key")
+		own := familyName(t, s.slug, config.AnthropicKeyAccount)
+		provider := familyName(t, s.slug, "openrouter")
+		cands, skipped, err := s.candidatesFor(t, "api-key", "")
+		if err != nil {
+			t.Fatalf("candidates: %v", err)
+		}
+		if _, ok := lookupCredential(cands, own); !ok {
+			t.Fatalf("the call is offered %v, and this repository's own entry %q is not among them: a crafts project narrows its pool to the names its crafts go out on, and the repository's own entries join the list after that (D3008, F32)", credentialNames(cands), own)
+		}
+		if _, ok := lookupCredential(cands, config.AnthropicSecret); ok {
+			t.Errorf("the call is offered %q beside this repository's own entry %q: one repository, one entry for its Anthropic key, crafts or no crafts (D3008)", config.AnthropicSecret, own)
+		}
+		if _, ok := lookupCredential(cands, provider); !ok {
+			t.Errorf("the call is offered %v, and the repository's provider credential %q is not among them: the crafts narrow the pool and never the repository's own named entries, which join it after the narrowing (F32)", credentialNames(cands), provider)
+		}
+		if got, ok := reportedNotAdmitted(t, skipped)[provider]; ok {
+			t.Errorf("the provider credential %q is reported as %q: the crafts go out on other names and this entry is offered beside them, so nothing left it out", provider, got.Reason)
 		}
 	})
 
