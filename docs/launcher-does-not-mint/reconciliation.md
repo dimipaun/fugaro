@@ -2,8 +2,8 @@
 
 This is the spec as amended against the code. **Where it disagrees with [spec.md](spec.md), this
 document wins.** First checked against `origin/main` at `7987acb99` on 2026-11-20. Main then
-moved: `c16781dc8` was merged into this branch during review round 1, and every symbol cited
-here was checked again on the merged tree. Two plans this one touches merged in between and are
+moved: `c16781dc8` was merged into this branch during review round 1 and `588750891` before the
+push, and the symbols cited here were checked again on the merged tree each time. Two plans this one touches merged in between and are
 read on main: batch-run-identity (#3323, merged as `b03f9147a`, its branch tip `69f76967d`) and
 credentials-belong-to-models (#3315, merged as `7abc5eb2f`). Owner: Dimi Paun. Every decision
 below was asked with its options and costs on 2026-11-20, and the owner's answer is in its cell;

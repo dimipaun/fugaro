@@ -5,7 +5,8 @@ explicit go. An answer in [reconciliation.md](reconciliation.md) settles a quest
 no task.
 
 This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md), checked
-against `origin/main` at `7987acb99` and again after `c16781dc8` was merged in. The answers that
+against `origin/main` at `7987acb99` and again after `c16781dc8` and then `588750891` were merged
+in. The answers that
 shaped it:
 
 - **D3121**: the credentials service issues. Its account gains the minter role on the runs'
@@ -618,7 +619,8 @@ later". **The table above is the order to launch in, and this graph is not to be
 automatic launching while C1 is unmerged.** D3128 holds LM1 behind two other plans, so in
 practice C1 has merged long before it; LM19 is launched by hand once C1 has merged (D3129).
 
-**Critical path**, as the read printed it: `CRITICAL_PATH`. LM14 is
+**Critical path**, as the read printed it: `C1 -> LM10 -> I1 -> LM21 -> LM14 -> LM16`,
+six tasks; every path through slice B or C to I1 is as long. LM14 is
 sequential behind I1 because it removes the grant, and nothing may remove it before a launch has
 gone through the issuer in a test. LM18 waits a release by design.
 
@@ -692,10 +694,10 @@ The pass is on for this repository (`planning.decoupling` is `true`, the default
 - LM16 → I1, LM14 and LM21; LM17 → LM14 and LM21: they state and prove what is true after them.
 - LM18 → LM14: a released version must sit between them.
 
-**The gain**, as the read printed it: `gain: 8 broken, 15 kept, 2 added; before 6 tasks, weight
-10; after 5 tasks, weight 9; improves`. The counts are the tool's own: it counts the edges of the
+**The gain**, as the read printed it: `gain: 8 broken, 15 kept, 2 added; before 7 tasks, weight
+11; after 6 tasks, weight 10; improves`. The counts are the tool's own: it counts the edges of the
 graph as it was before the pass, so its "kept" is not the number of lines in the list above. The
-critical path goes from six tasks to five.
+critical path goes from seven tasks to six.
 
 **Contract changes anticipated:**
 
@@ -709,7 +711,7 @@ critical path goes from six tasks to five.
 `fugaro plan graph --plan docs/launcher-does-not-mint/implementation-plan.md` printed:
 
 ```
-ready in 195–780 min, no history yet for 25 tasks (25 tasks; seeds for 25; from the seeds: no history is cached on this machine yet)
+ready in 210–840 min, no history yet for 25 tasks (25 tasks; seeds for 25; from the seeds: no history is cached on this machine yet)
 ```
 
 The estimate is informational and reserves no budget. It is what the tasks' tiers and this

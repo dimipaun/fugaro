@@ -2,8 +2,9 @@
 
 **Status: plan only; nothing is implemented; no task approved.** See
 [docs/status.md](../status.md) for the current table. Spec owner: Dimi Paun (the owner). Date:
-2026-11-20. Checked against `origin/main` at `7987acb99`, and again after `c16781dc8` was merged in
-during review (the cited symbols were re-read on the merged tree).
+2026-11-20. Checked against `origin/main` at `7987acb99`; main moved twice during the work, and
+`c16781dc8` (during review) and `588750891` (before the push) were merged in, with the cited
+symbols re-read on the merged tree each time.
 
 Today every launcher, every operator and the resident orchestrator can sign a token for any
 identity in the Firebase project, so one launcher can spend as a run another launched. This spec
@@ -14,7 +15,7 @@ answers. It is the spec batch-run-identity's F24 and O6 said was not written.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's ruling; its ruling section is a placeholder the owner has not filled (D3120 confirms the reading). No typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A6, the census (who signs, who holds a signing grant, where a launch starts, who verifies), findings F1–F30, what each option does to the trust boundary, decisions D3120–D3131 with the owner's answers, resolutions R1–R16, open items O1–O16, UNVERIFIED U1–U10. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A6, the census (who signs, who holds a signing grant, where a launch starts, who verifies), findings F1–F33, what each option does to the trust boundary, decisions D3120–D3131 with the owner's answers, resolutions R1–R16, open items O1–O18, UNVERIFIED U1–U10. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks C1, LM0 to LM23 without LM9, and I1 (25 runs); levels, critical path, shared files; Checks 840 and 841 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
@@ -30,7 +31,11 @@ of each of the 61 open pull requests: the highest decision on `main` was D3099 (
 D3080–D3099); the highest anywhere was D3119, reserved by the open pull request #3323
 (batch-run-identity, D3100–D3119, checks 830–839); #3315 holds D3060–D3079 and checks 810–819.
 The highest check on `main` was 821. No open pull request took a number in D3120–D3139 or
-840–849. SECOND_READING
+840–849. Second reading, 2026-11-20 21:05 UTC, immediately before the push, against `main` at
+`588750891` and the diff of each of the 38 pull requests then open: #3323 and #3315 had merged,
+so the highest decision on `main` was D3119's block (D3112 used) and the highest check 831; no
+number in D3120–D3139 or 840–849 was in use on `main` or in any open pull request. The block did
+not move between the owner's answers and the push.
 
 **Owner answers of 2026-11-20:** D3120 to D3131, **every one as recommended**; none is marked
 "not the recommendation" and none was "your call". **Two are marked amended after review, D3129
@@ -43,4 +48,14 @@ credentials service account's only grant is its database role, and **D3129 holds
 batch-run-identity that touches its key or its C1 until this plan's LM19, **which puts on hold
 the go the owner gave that plan's C1 and BR6**.
 
-REVIEW_ROUNDS
+**Review rounds (three, the cap), each by a fresh independent reviewer given the owner's actual
+answers.** Round 1: a per-repository launch check already existed (D3130 asked again); BR6
+depends on batch-run-identity's C1 (D3129 asked again); the policy stage runs before the
+credentials stage; the update's deletes needed listing; the record could not sit under a run's
+node; the bridge's trigger was not pinned. Round 2: that C1 also publishes the key fact (D3129
+asked a third time); the bump halts queued executions (D3131 asked); the module would have
+turned a test red before its reader existed; the issuer could not give the CLI gate's answer
+without the implicit admins; a managed project's guard warns and does not refuse. Round 3: the
+gate also judges context repositories; the Firebase root's guard lives in its own file; the
+probe proved no signature; the version bump sat too early. **Round 3's fixes were not reviewed
+again** (O18), and O17 is open for the owner.
