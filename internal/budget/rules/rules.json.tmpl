@@ -23,6 +23,9 @@
         "voice": {
           "shared": { ".read": "TOKEN", ".write": false },
           "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug", ".write": false } }
+        },
+        "route": {
+          "$slug": { ".read": "TOKEN && auth.token.fs == $slug", ".write": false }
         }
       },
       "limits": { ".read": "TOKEN" },

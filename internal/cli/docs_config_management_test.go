@@ -290,9 +290,16 @@ const (
 // scope key of `fugaro.yaml`, read from the base branch, and the `agent.` prefix
 // reaches it — the shape `agent.triage` beside it has — so the allowlist carries
 // one key more and the rows without a generic writer do not move.
+//
+// RA8b of the same work moved both by one again: the switch's local carrier,
+// the top-level `review_against_task` the owner's own file states and the
+// publish copies into the policy node (R7, D2935), is a row `settings set`
+// writes — the file is the machine's own, the shape the `triage` row above it
+// has — so the named list carries one key more rather than reaching it by
+// prefix.
 const (
-	cfmRegistryRows   = 506
-	cfmAllowlistNamed = 118
+	cfmRegistryRows   = 507
+	cfmAllowlistNamed = 119
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

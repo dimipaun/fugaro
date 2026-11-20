@@ -854,7 +854,13 @@ func fixFindingField(s string, neutralize func(string) string) string {
 // item says the change did instead, is doing the task's own work, and the one
 // thing it must not do with a `beyond` item is undo it for being beyond the
 // brief (D2931).
-func FixPrompt(findings []Finding) string {
+//
+// messages is the block of run messages this fix carries, or "" (messages.go,
+// rule 1): a fix is one of the three stages a message reaches, and a message
+// may ask for more than the round's findings do (D2943) — so the closing
+// sentence is rule 4's when a block rides here, and the brief's own "touch
+// nothing else" only when none does.
+func FixPrompt(findings []Finding, messages string) string {
 	var b strings.Builder
 	b.WriteString("A code review of your changes asked for these fixes:\n\n")
 	fixable := fixableFindings(findings)
@@ -884,7 +890,18 @@ func FixPrompt(findings []Finding) string {
 	// task asked for — or replaces what the change did instead of it — is doing
 	// exactly what the task wanted, and a sentence that forbade all of that
 	// would forbid the round an `unmet` finding asks for.
-	b.WriteString("\nAddress each one, commit, and run `fugaro verify test` again. Touch nothing else: make only the changes these findings ask for, and add no functionality beyond the task's brief.")
+	if messages == "" {
+		b.WriteString("\nAddress each one, commit, and run `fugaro verify test` again. Touch nothing else: make only the changes these findings ask for, and add no functionality beyond the task's brief.")
+		return b.String()
+	}
+	// Rule 4: the message may ask for more than the findings do, so "touch
+	// nothing else" would contradict the block above it. What it does not do
+	// is widen the round past the run's own rules — the message block's
+	// posture says so, and this sentence repeats the boundary where a coder
+	// reads it beside the leave it grants.
+	b.WriteString("\nAddress each one, commit, and run `fugaro verify test` again. A message below may ask for more than " +
+		"the findings do: make those changes too, within this run's rules and this repository's, and nothing else.")
+	b.WriteString("\n\n" + messages)
 	return b.String()
 }
 

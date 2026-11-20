@@ -95,7 +95,7 @@ func liveRuns(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) (li
 	}
 	for _, e := range list {
 		r, ok := executionRun(e)
-		if !ok || !want[r.slug] || !inLiveWindow(r, f.since) {
+		if !ok || !want[r.slug] || !inWindow(r, f.since) {
 			continue
 		}
 		if id, ok := backend.ParseExecution(e.Name); ok {
@@ -117,7 +117,7 @@ func liveRuns(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) (li
 			// run ID older than the claim window is not listed at all, which
 			// is the one run the two states can miss -- a relaunch under it
 			// (liveRuns' comment).
-			if seen[r] || !inLiveWindow(r, f.since) {
+			if seen[r] || !inWindow(r, f.since) {
 				continue
 			}
 			claim, err := absent(runstore.Open(env.bucket.Bucket, slug, id).ReadClaim(ctx))
@@ -148,13 +148,14 @@ func executionRun(e backend.Execution) (lsRef, bool) {
 	return lsRef{slug, id}, true
 }
 
-// inLiveWindow reports whether a run is one a listing bounded by since means
+// inWindow reports whether a run is one a listing bounded by since means
 // to read. The bound is the run ID's own mint time, the same one
 // runstore.ListRunIDs windows the scan's own references by: an execution (or a
 // claim) is made after its run ID, never before, so a live run of a window is
 // one of the window's runs even when the window is a day old and the launch a
-// minute old.
-func inLiveWindow(r lsRef, since time.Time) bool {
+// minute old. A path that names runs some other way -- a pull request's index
+// -- windows them by the same rule (prRefs).
+func inWindow(r lsRef, since time.Time) bool {
 	if since.IsZero() {
 		return true
 	}

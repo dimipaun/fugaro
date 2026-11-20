@@ -72,6 +72,7 @@ Subcommands:
 - `fugaro settings` -- Show every setting, what decides it, and its default
 - `fugaro setup` -- Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform
 - `fugaro stats` -- Aggregate one installation's run records into figures a page can publish
+- `fugaro tell` -- Send a message to a run that is already going
 - `fugaro troubleshoot` -- Explain a Fugaro command that failed on this machine, locally
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
 - `fugaro update-skills` -- Install or update the Fugaro plugin in your own Claude Code
@@ -7790,6 +7791,16 @@ reaches the pull request is the owner's and the coordinator's to decide.
 The account is picked as everywhere else: --token, else agent.oauth_token in
 fugaro.yaml at the run's ref, else the project's default_claude_account.
 
+A review judges the pull request against the task the run that opened it was
+given, found through the runs bucket alone, and says what it judged against
+in its artifact and in the against line of fugaro review show RUN. Two flags
+ask for something else: --code-only asks for the code alone, with no task at
+all, and --spec FILE asks for FILE's own text as the task — the way a pull
+request no run produced is reviewed against something, redacted like every
+other text a launcher adds and refused over 16384 bytes with its size. The
+two are refused together. Both are on fugaro run --recipe review-only --pr N
+as well, with the same default.
+
 --mutate FILE:TEST asks for one mutation check: the reviewer flips a boolean
 literal in FILE, which must be Go source in the head under review, and TEST —
 a Go test name — must then fail. The artifact carries what was observed; it is
@@ -7809,6 +7820,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--code-only` | bool | `false` | no | review the pull request's code alone: the reviewer is given no task and judges the diff on its own merits, which is the behaviour before reviews checked the task. Refused with --spec |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for review |
@@ -7817,6 +7829,7 @@ Flags:
 | `--pr` | int | `0` | no | the pull request to review (required) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--spec` | string | "" | no | review against the task in this FILE instead of the task of the run that opened the pull request: the way to review a pull request no run produced. Its text is redacted like any other a launcher adds, and a file over 16384 bytes is refused with its size. Refused with --code-only |
 | `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this review runs as; default: agent.oauth_token in fugaro.yaml at the run's ref, else the project's default_claude_account |
 
 Subcommands:
@@ -8283,6 +8296,7 @@ Flags:
 | `--attempts` | int | `0` | no | launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe |
 | `--batch` | string | "" | no | batch label, to group runs in fugaro runs ls |
 | `--change-set` | bool | `false` | no | launch one run per repository named by --repo (2 to 5) as members of one change set: every member's task carries the set's ID and the whole member list, and the members' pull requests are linked as siblings, each left in draft for the settle step to make ready once every member is verified. Part of Fugaro Subscription Edition |
+| `--code-only` | bool | `false` | no | review the pull request's code alone: the reviewer is given no task and judges the diff on its own merits (the per-launch switch beside the repository's agent.review_against_task and the project's published key). Needs a mode: review recipe and --pr, and refused with --spec |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--context` | stringArray | `[]` | no | a repository this run reads and never writes, as owner/name: repeatable, at most 5, each admitted by the project's allow_repos. The list goes into the task and into the run's own identity, and the run clones each one read-only, outside its working tree, as reference the prompt points it at: nothing in one is committed or pushed, and the read-only token a context repository is cloned with is the installation's credentials service's, which needs the GitHub App installed on it. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository |
 | `--continues` | string | "" | no | continue the chain of RUN (a run ID, or <repo-slug>/<run-id>): this launch inherits the chain's remaining limits, for a chain with no pull request — the run you name opened nothing to follow up. The chain's limit is read from the run that began it, and what it has spent from the chain's runs' budget ledgers; this launch's own --max-* may only tighten the remaining. Refused with --pr, --retry and --attempts, which name a chain's previous run themselves |
@@ -8309,6 +8323,7 @@ Flags:
 | `--review-levels` | string | "" | no | read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
 | `--security` | bool | `false` | no | ask for the strongest review this run can get: it turns review level 3 on for the run whatever paths it changed, over the repository's own security: rows and the project layer's always_level_3. It only ever turns the level on — there is no way to ask for less — as --mode raises a mode and never lowers one, and a run that says nothing resolves its levels from its configuration alone |
+| `--spec` | string | "" | no | review against the task in this FILE instead of the task of the run that opened the pull request: the way to review a pull request no run produced. Its text is redacted like any other a launcher adds, and a file over 16384 bytes is refused with its size. Needs a mode: review recipe and --pr, and refused with --code-only |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
 | `--tier` | string | "" | no | the expectation tier to dispatch this run at: trivial, small, medium, large. It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all |
 | `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given, and with no title and no task of its own it takes the pull request's title instead |
@@ -10299,6 +10314,50 @@ Flags:
 | `--project` | string | "" | yes | the installation whose run records are read (required: this command never guesses one, and the sandbox is named like any other) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--since` | string | `90d` | no | the window: Nd days back from today, or a Go duration (90d) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro tell`
+
+Send a message to a run that is already going
+
+Tell RUN (a full run ID, or <repo-slug>/<run-id>) something.
+
+The message is written into the run's own prefix of the runs bucket
+(tokens/<repo-slug>/<run-id>/messages/NNNN.msg.json, where no job account
+may write) and read by its runner at the next coder stage: a first run's
+implement, a follow-up's implement, or a fix. A review round never sees one.
+tell prints the number the message took and returns at once; it never waits
+for delivery, and what became of the message is in the run's record.
+
+Given an ending (the last four or more characters of a run ID), tell sends
+nothing: as cancel does, it looks the ending up among the active runs and
+refuses with the full run IDs it names, so an ending never steers a run
+nobody named in full.
+
+A run that is past finalize, whose runner does not read messages, or whose
+recipe has no coder stage is refused, with the reason; so is a text over
+4 KiB and a 21st message. --now asks for the message at the agent's next
+quiet point, inside the coder stage that is running; --wrap-up asks the run
+to finish: commit what it has and stop. Either flag is refused for a run
+whose runner does not honour it.
+
+Usage: `fugaro tell RUN "text"`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for tell |
+| `--json` | bool | `false` | no | print the result as JSON |
+| `--now` | bool | `false` | no | ask for the message at the agent's next quiet point, inside the coder stage that is running |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--wrap-up` | bool | `false` | no | ask the run to commit what it has and stop |
 
 Subcommands:
 

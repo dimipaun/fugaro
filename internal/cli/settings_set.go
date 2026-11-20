@@ -292,8 +292,9 @@ var settingsGenericKeys = map[string]bool{
 	// TestSettingsOwnerStringsAreAClosedVocabulary is what fails on it.
 	//
 	// The orchestrator block and the two nudge thresholds are the machine's own
-	// config, `triage`, `verifier_accounts` and the two schedules are local and
-	// project keys this path already writes the file of, and
+	// config, `triage`, `review_against_task`, `verifier_accounts` and the two
+	// schedules are local and project keys this path already writes the file
+	// of, and
 	// `planning.decoupling` is the fifth of the four file-carrier rows G12 left
 	// with the layer file's token while its repository half was never in that
 	// file. Every one of them is named rather than reached by a prefix: a
@@ -308,6 +309,7 @@ var settingsGenericKeys = map[string]bool{
 	"issues.nudge_after_days":               true,
 	"issues.nudge_recurrence":               true,
 	"triage":                                true,
+	"review_against_task":                   true,
 	"verifier_accounts":                     true,
 	"layer.jobs.reports.paused":             true,
 	"layer.jobs.catalog_check.paused":       true,
