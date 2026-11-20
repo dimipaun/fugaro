@@ -212,6 +212,29 @@ func TestRotationRefusesAnUnusableSet(t *testing.T) {
 	}
 }
 
+// TestRotationRefusesTwoKeysAtOneInstant: with two keys that started signing at
+// the same instant, the order between them is the store's and not the set's, so
+// Current — and with it the key an assertion is signed by — would be whichever
+// of the two the store happened to hand back first, and the same set would sign
+// differently from one read to the next. A rotation puts one key after another
+// in time, so a tie is refused where the set is built, in either order, and the
+// refusal names both keys that collided.
+func TestRotationRefusesTwoKeysAtOneInstant(t *testing.T) {
+	first, _ := signingKeyAt(t, "k1", rotationStart)
+	tied, _ := signingKeyAt(t, "k2", rotationStart)
+	for _, keys := range [][]SigningKey{{first, tied}, {tied, first}} {
+		_, err := NewRotation(keys)
+		if err == nil {
+			t.Fatalf("a rotation was built over %v, and two keys at one instant have no order the set itself states", kids(keys))
+		}
+		for _, kid := range []string{"k1", "k2"} {
+			if !strings.Contains(err.Error(), kid) {
+				t.Errorf("the refusal says %q, and it must name both keys that collided: %s is missing", err, kid)
+			}
+		}
+	}
+}
+
 // TestJWKSPublishesTheCurrentKeys: what a reader of the plain set gets is the
 // keys of the moment, in RFC 7517's OKP form, with the key id a verifier looks
 // a token's header up by.
@@ -411,9 +434,44 @@ func TestJWKSRefusesAnUnreadableSet(t *testing.T) {
 	}
 }
 
+// TestKeySetExpiryReadsC1sVector holds keySetExpiry to the envelope C1 fixed:
+// the vector file is the contract's data half, the app's tests read the same
+// bytes, and the one member this half reads out of a set is the payload's
+// `exp`. Feeding the vector's own compact serialization through the reader is
+// what keeps the figure A3's alert fires on the one the other side signed,
+// rather than a shape this half invented.
+func TestKeySetExpiryReadsC1sVector(t *testing.T) {
+	data, err := os.ReadFile(filepath.Clean("../../shared/mobile-session/vectors.json"))
+	if err != nil {
+		t.Fatalf("reading the contract's vectors: %v", err)
+	}
+	var vectors struct {
+		KeySet struct {
+			Compact string `json:"compact"`
+			Payload struct {
+				Exp int64 `json:"exp"`
+			} `json:"payload"`
+		} `json:"key_set"`
+	}
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatalf("decoding the contract's vectors: %v", err)
+	}
+	if vectors.KeySet.Compact == "" || vectors.KeySet.Payload.Exp == 0 {
+		t.Fatal("the vectors carry no signed key set with an expiry, and the form this half reads is the one they fix")
+	}
+	expiry, err := keySetExpiry([]byte(vectors.KeySet.Compact))
+	if err != nil {
+		t.Fatalf("reading the expiry of the vector's signed key set: %v", err)
+	}
+	if want := time.Unix(vectors.KeySet.Payload.Exp, 0).UTC(); !expiry.Equal(want) {
+		t.Errorf("the vector's key set expires at %s, and keySetExpiry read %s", want, expiry)
+	}
+}
+
 // TestJWKSRefusesWhatItCannotServe: a set built with nothing to publish, and a
-// document source that answers nothing, are both refused rather than served as
-// an empty answer a verifier would read as a real one.
+// document source that answers nothing — no file, or a file holding no bytes —
+// are both refused rather than served as an empty answer a verifier would read
+// as a real one.
 func TestJWKSRefusesWhatItCannotServe(t *testing.T) {
 	key, _ := signingKeyAt(t, "k1", rotationStart)
 	rotation, err := NewRotation([]SigningKey{key})
@@ -434,19 +492,42 @@ func TestJWKSRefusesWhatItCannotServe(t *testing.T) {
 		t.Error("a file source was built over an empty path")
 	}
 
-	// The document is not there, which is the state a service is in before the
-	// owner's first signing command: both readings fail rather than answer.
-	ks, err := NewKeySet(rotation, source, WithKeySetClock(func() time.Time { return rotationStart.Add(time.Hour) }))
+	// The document is not there — the state a service is in before the owner's
+	// first signing command — and then it is there and holds nothing, which is
+	// what a write that was cut short leaves behind. Neither is a key set, and
+	// serving either would answer a verifier with a document no root key
+	// signed: both readings fail rather than answer, and the pinned URL tells
+	// the verifier to come back.
+	empty := filepath.Join(t.TempDir(), "keyset.jws")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatalf("writing an empty signed key set: %v", err)
+	}
+	emptySource, err := NewFileKeySet(empty)
 	if err != nil {
-		t.Fatalf("building the key set: %v", err)
+		t.Fatalf("building the file source over %s: %v", empty, err)
 	}
-	if _, err := ks.DaysLeft(context.Background()); err == nil {
-		t.Error("the days left were read from a document that is not there")
-	}
-	mux := http.NewServeMux()
-	ks.Mount(mux)
-	if got := get(t, mux, RouteKeySet); got.code != http.StatusServiceUnavailable {
-		t.Errorf("the pinned URL answers %d with no document published, and a verifier is told to come back rather than given an empty document", got.code)
+
+	for _, tc := range []struct {
+		name   string
+		source SignedKeySet
+	}{
+		{"no document published", source},
+		{"an empty document", emptySource},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ks, err := NewKeySet(rotation, tc.source, WithKeySetClock(func() time.Time { return rotationStart.Add(time.Hour) }))
+			if err != nil {
+				t.Fatalf("building the key set: %v", err)
+			}
+			if _, err := ks.DaysLeft(context.Background()); err == nil {
+				t.Error("the days left were read out of a document that carries no expiry")
+			}
+			mux := http.NewServeMux()
+			ks.Mount(mux)
+			if got := get(t, mux, RouteKeySet); got.code != http.StatusServiceUnavailable {
+				t.Errorf("the pinned URL answers %d when there is %s, and a verifier is told to come back rather than handed a document no root key signed", got.code, tc.name)
+			}
+		})
 	}
 }
 
