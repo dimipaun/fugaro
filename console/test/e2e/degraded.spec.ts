@@ -84,6 +84,9 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/schema.js',
   'renderer/app.js',
   'renderer/writes.js',
+  'renderer/screens/reading.js',
+  'renderer/skeleton.js',
+  'renderer/section.js',
   'renderer/screens/live.js',
   'renderer/screens/degraded.js',
 ])
