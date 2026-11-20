@@ -45,6 +45,7 @@ type CRM struct {
 
 	folders        map[string]gcpFolder // folder ID (the number) -> what the folder is
 	folderPolicies map[string][]Binding
+	folderAudits   map[string][]AuditConfig
 	orgs           []string          // the organizations organizations.search answers
 	parents        map[string]string // a project's parent, once the fake knows one
 	moves          []ProjectMove
@@ -80,6 +81,21 @@ type CreatedProject struct {
 // gcpFolder is one folder: its display name and its parent (organizations/N,
 // folders/N or "").
 type gcpFolder struct{ DisplayName, Parent string }
+
+// AuditConfig is one service's audit-logging configuration in a policy: the
+// service it covers and the log types it sets. It is what a folder policy
+// serves under "auditConfigs", and the shape a write carries back.
+type AuditConfig struct {
+	Service         string           `json:"service"`
+	AuditLogConfigs []AuditLogConfig `json:"auditLogConfigs,omitempty"`
+}
+
+// AuditLogConfig is one log type an audit configuration sets, with the members
+// exempted from it.
+type AuditLogConfig struct {
+	LogType         string   `json:"logType"`
+	ExemptedMembers []string `json:"exemptedMembers,omitempty"`
+}
 
 // ProjectMove is a move the fake accepted, in the order the moves completed.
 type ProjectMove struct{ Project, Parent string }
@@ -133,7 +149,7 @@ func NewCRM(t *testing.T) *CRM {
 	f := &CRM{projects: map[string]int64{}, labels: map[string]map[string]string{}, names: map[string]string{}, named: map[string]bool{},
 		policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
 		noPolicy: map[string]bool{}, noUpdate: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{},
-		folders: map[string]gcpFolder{}, folderPolicies: map[string][]Binding{}, parents: map[string]string{},
+		folders: map[string]gcpFolder{}, folderPolicies: map[string][]Binding{}, folderAudits: map[string][]AuditConfig{}, parents: map[string]string{},
 		nextProj: FirstCreatedProjectNumber - 1, nextFolder: FirstCreatedFolderNumber - 1}
 	f.Server = newServer(t, f.handle)
 	return f
@@ -153,12 +169,29 @@ func (f *CRM) SetFolderPolicy(id string, bindings ...Binding) {
 	f.folderPolicies[id] = bindings
 }
 
-// FolderPolicy is folder's IAM policy as the fake holds it now, so a test can
-// read what a write left behind.
+// FolderPolicy is folder's IAM policy bindings as the fake holds them now, so a
+// test can read what a write left behind.
 func (f *CRM) FolderPolicy(id string) []Binding {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]Binding(nil), f.folderPolicies[id]...)
+}
+
+// SetFolderAuditConfigs sets the audit-logging configuration of folder's IAM
+// policy, which a policy write carries back whole alongside its bindings.
+func (f *CRM) SetFolderAuditConfigs(id string, configs ...AuditConfig) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.folderAudits[id] = configs
+}
+
+// FolderAuditConfigs is folder's audit-logging configuration as the fake holds
+// it now: empty when a write did not carry back what the read answered, which
+// is what a policy rebuilt from its bindings alone looks like.
+func (f *CRM) FolderAuditConfigs(id string) []AuditConfig {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]AuditConfig(nil), f.folderAudits[id]...)
 }
 
 // AddOrganization makes organizations.search answer id.
@@ -551,7 +584,8 @@ func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool
 		if verb == "set" {
 			var in struct {
 				Policy struct {
-					Bindings []Binding `json:"bindings"`
+					Bindings     []Binding     `json:"bindings"`
+					AuditConfigs []AuditConfig `json:"auditConfigs"`
 				} `json:"policy"`
 			}
 			if err := json.Unmarshal(body, &in); err != nil {
@@ -559,12 +593,17 @@ func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool
 				return true
 			}
 			f.folderPolicies[id] = in.Policy.Bindings
+			f.folderAudits[id] = in.Policy.AuditConfigs
 		}
 		bs := f.folderPolicies[id]
 		if bs == nil {
 			bs = []Binding{}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"version": 3, "etag": "BwFolder", "bindings": bs})
+		ac := f.folderAudits[id]
+		if ac == nil {
+			ac = []AuditConfig{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"version": 3, "etag": "BwFolder", "bindings": bs, "auditConfigs": ac})
 		return true
 	case crmV3FolderRE.MatchString(r.URL.Path) && r.Method == http.MethodGet:
 		id := crmV3FolderRE.FindStringSubmatch(r.URL.Path)[1]

@@ -10,6 +10,7 @@ package infra
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -131,6 +132,46 @@ func TestFoldersOwnersAddedAndRemoved(t *testing.T) {
 	// A folder the caller cannot read is refused with the API's own words.
 	if _, err := fs.Owners(ctx, "folders/nope"); err == nil {
 		t.Error("Owners of a folder that does not exist = nil, want the API's refusal")
+	}
+}
+
+// TestFoldersOwnerWriteKeepsWhatItDoesNotChange: SetIamPolicy replaces the
+// policy whole, so an owner write carries back everything the read answered.
+// The folder's audit-logging configuration is not an owner and does not belong
+// to a change of who the owners are; a roles/owner binding carrying a condition
+// — another writer's, since nothing here writes one — keeps its condition
+// rather than being flattened into an unconditional grant it never meant, and
+// keeps its members rather than being dropped.
+func TestFoldersOwnerWriteKeepsWhatItDoesNotChange(t *testing.T) {
+	ctx := context.Background()
+	f, fs := wu2FolderFake(t)
+	condition := &gcpfake.IAMCondition{Title: "on call", Expression: "request.time < timestamp('2026-12-01T00:00:00Z')"}
+	audit := gcpfake.AuditConfig{Service: "storage.googleapis.com",
+		AuditLogConfigs: []gcpfake.AuditLogConfig{{LogType: "DATA_READ", ExemptedMembers: []string{"user:auditor@example.com"}}}}
+	f.AddFolder("9", "fugaro-workspace-aurora", "organizations/123")
+	f.SetFolderPolicy("9",
+		gcpfake.Binding{Role: "roles/viewer", Members: []string{"user:viewer@example.com"}},
+		gcpfake.Binding{Role: FolderOwnerRole, Members: []string{"user:founder@example.com"}},
+		gcpfake.Binding{Role: FolderOwnerRole, Members: []string{"user:oncall@example.com"}, Condition: condition})
+	f.SetFolderAuditConfigs("9", audit)
+
+	if err := fs.AddOwner(ctx, "folders/9", "user:ada@example.com"); err != nil {
+		t.Fatalf("AddOwner: %v", err)
+	}
+	if err := fs.RemoveOwner(ctx, "folders/9", "user:founder@example.com"); err != nil {
+		t.Fatalf("RemoveOwner: %v", err)
+	}
+
+	want := []gcpfake.Binding{
+		{Role: "roles/viewer", Members: []string{"user:viewer@example.com"}},
+		{Role: FolderOwnerRole, Members: []string{"user:oncall@example.com"}, Condition: condition},
+		{Role: FolderOwnerRole, Members: []string{"user:ada@example.com"}},
+	}
+	if got := f.FolderPolicy("9"); !reflect.DeepEqual(got, want) {
+		t.Errorf("the folder's policy is %+v, want %+v", got, want)
+	}
+	if got := f.FolderAuditConfigs("9"); !reflect.DeepEqual(got, []gcpfake.AuditConfig{audit}) {
+		t.Errorf("the folder's audit-logging configuration is %+v after the owner writes, want %+v kept", got, audit)
 	}
 }
 

@@ -509,8 +509,19 @@ func (a *FolderAuthority) checkFolder() error {
 // workspaceFolderAbove walks up from parent and returns the first folder that
 // is a workspace's, or "" when none of them is. A parent that is not a folder
 // (an organization, or nothing at all) ends the walk.
+//
+// A parent still inside a folder when the bound is reached is refused rather
+// than walked past: a workspace's folder may sit further up, and answering ""
+// there reads as "no workspace's folder above" — which is what both callers
+// take as leave to move the project. Unlink promises that the worst a rewritten
+// record achieves is a refusal (SECURITY.md, the threat model), so a chain too
+// deep to read is refused, never followed.
 func (a *FolderAuthority) workspaceFolderAbove(ctx context.Context, parent string) (string, error) {
-	for i := 0; i < folderWalkMax && strings.HasPrefix(parent, "folders/"); i++ {
+	from := parent
+	for i := 0; i < folderWalkMax; i++ {
+		if !strings.HasPrefix(parent, "folders/") {
+			return "", nil
+		}
 		displayName, up, err := a.CRM.Get(ctx, parent)
 		if err != nil {
 			return "", err
@@ -519,6 +530,9 @@ func (a *FolderAuthority) workspaceFolderAbove(ctx context.Context, parent strin
 			return parent, nil
 		}
 		parent = up
+	}
+	if strings.HasPrefix(parent, "folders/") {
+		return "", fmt.Errorf("the parents of %s are nested deeper than %d folders, so whether a workspace's folder is above it cannot be read: a parent this deep is refused rather than followed", from, folderWalkMax)
 	}
 	return "", nil
 }

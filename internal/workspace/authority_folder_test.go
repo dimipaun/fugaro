@@ -514,6 +514,73 @@ func TestFolderUnlinkRefusesATamperedParent(t *testing.T) {
 	}
 }
 
+// TestFolderRefusesADeepChainOfParents: the walk up a parent's own parents is
+// bounded, and a chain longer than the bound is refused rather than walked
+// past. A workspace's folder may sit above the bound, so answering "none above"
+// there would read as leave to move the project — for Link into the workspace's
+// folder on a project that is in fact under another workspace's, for Unlink out
+// of it into a folder inside the chain. Both are refused, and nothing moves.
+func TestFolderRefusesADeepChainOfParents(t *testing.T) {
+	// folders/101 .. folders/111, eleven deep — one more than the bound — and
+	// the top of the chain is another workspace's folder, out of reach.
+	chain := func() (*wu2Folders, string) {
+		cloud := wu2Cloud()
+		cloud.folder("folders/9", WorkspaceFolderName("aurora"), "organizations/123")
+		cloud.folder("folders/8", WorkspaceFolderName("borealis"), "organizations/123")
+		parent := "folders/8"
+		for i := folderWalkMax + 1; i >= 1; i-- {
+			id := fmt.Sprintf("folders/%d", 100+i)
+			cloud.folder(id, fmt.Sprintf("team-%d", i), parent)
+			parent = id
+		}
+		return cloud, parent
+	}
+	const deeperThan = "deeper than"
+
+	t.Run("link", func(t *testing.T) {
+		cloud, parent := chain()
+		db := wu2DB(t)
+		cloud.project("member-a", parent)
+		a := &FolderAuthority{Workspace: "aurora", Folder: "folders/9", CRM: cloud, DB: db}
+
+		err := a.Link(t.Context(), FolderMember{Project: "member-a"})
+		if err == nil {
+			t.Fatal("Link followed a chain of parents it cannot read to its end")
+		}
+		if !strings.Contains(err.Error(), deeperThan) {
+			t.Errorf("the refusal %q does not name the chain it refused", err)
+		}
+		if len(cloud.moves) != 0 {
+			t.Errorf("the refused link made the move(s) %v", cloud.moves)
+		}
+		if _, found := wu2RawRecord(t, db); found {
+			t.Error("the refused link left a record behind")
+		}
+	})
+
+	t.Run("unlink", func(t *testing.T) {
+		cloud, parent := chain()
+		db := wu2DB(t)
+		cloud.project("member-a", "folders/9")
+		a := &FolderAuthority{Workspace: "aurora", Folder: "folders/9", CRM: cloud, DB: db}
+		wu2WriteRecord(t, db, FolderLinkRecord{Project: "member-a", Parent: parent})
+
+		err := a.Unlink(t.Context(), FolderMember{Project: "member-a"})
+		if err == nil {
+			t.Fatal("Unlink followed a record naming a chain of parents it cannot read to its end")
+		}
+		if !strings.Contains(err.Error(), deeperThan) {
+			t.Errorf("the refusal %q does not name the chain it refused", err)
+		}
+		if len(cloud.moves) != 0 {
+			t.Errorf("the refused unlink made the move(s) %v", cloud.moves)
+		}
+		if _, found := wu2RawRecord(t, db); !found {
+			t.Error("the refused unlink dropped the record a person has to correct")
+		}
+	})
+}
+
 // TestFolderAdminBindingAddedAndRemoved: D2804, D2818 — a workspace admin is
 // bound to roles/owner on the workspace's folder, adding one twice adds it
 // once, removing it drops it, and the list is what the workspace's roster is

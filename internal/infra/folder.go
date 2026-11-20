@@ -171,9 +171,15 @@ func (f *Folders) RemoveOwner(ctx context.Context, folder, member string) error 
 	})
 }
 
-// changeOwners rewrites the folder's roles/owner binding through change and
-// writes the policy back, leaving every other binding and the policy's other
-// fields as they were read.
+// changeOwners rewrites the folder's unconditional roles/owner binding through
+// change and writes the policy back, leaving the policy's other bindings, its
+// audit-logging configuration and its remaining fields as they were read.
+//
+// Only a binding with no condition is the authority's own: Fugaro never writes
+// a conditional owner binding, so one belongs to another writer — flattening
+// it into the unconditional binding would widen a grant that was meant to hold
+// only under its condition, and dropping it, as a policy rebuilt from the
+// owners alone does, would delete it outright.
 func (f *Folders) changeOwners(ctx context.Context, folder string, change func([]string) []string) error {
 	pol, err := f.iamPolicy(ctx, folder)
 	if err != nil {
@@ -185,7 +191,7 @@ func (f *Folders) changeOwners(ctx context.Context, folder string, change func([
 		replaced bool
 	)
 	for _, b := range pol.Bindings {
-		if b.Role != FolderOwnerRole {
+		if b.Role != FolderOwnerRole || b.Condition != nil {
 			rest = append(rest, b)
 			continue
 		}
@@ -204,8 +210,12 @@ func (f *Folders) changeOwners(ctx context.Context, folder string, change func([
 	} else if !replaced {
 		return nil
 	}
+	// SetIamPolicy replaces the policy whole, so everything the read answered
+	// and this call did not change goes back with it: the audit-logging
+	// configuration of the folder is not an owner and has no business being
+	// dropped by a change to who the owners are.
 	_, err = f.crm.Folders.SetIamPolicy(folder, &crm3.SetIamPolicyRequest{
-		Policy: &crm3.Policy{Etag: pol.Etag, Version: 3, Bindings: out},
+		Policy: &crm3.Policy{Etag: pol.Etag, Version: 3, Bindings: out, AuditConfigs: pol.AuditConfigs},
 	}).Context(ctx).Do()
 	if err != nil {
 		return classify(err, "changing the owners of folder "+folder)
