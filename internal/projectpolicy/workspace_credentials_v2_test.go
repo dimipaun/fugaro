@@ -1,9 +1,14 @@
 package projectpolicy
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 // v2NodeDoc is a node as a reader in the database meets it: the writer's own
@@ -438,5 +443,141 @@ func TestVersionOneStillDecodes(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "kind") {
 		t.Errorf("the refusal %q does not name kind: the operator needs to be told which key a version-1 pool entry does not carry", err)
+	}
+}
+
+// v2Schema compiles schemas/workspace-credentials.schema.json under its own $id.
+func v2Schema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "workspace-credentials.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := doc.(map[string]any)["$id"].(string)
+	if id == "" {
+		t.Fatal("schemas/workspace-credentials.schema.json has no $id")
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource(id, doc); err != nil {
+		t.Fatal(err)
+	}
+	sch, err := c.Compile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sch
+}
+
+// v2Validate validates a node's bytes against the compiled schema.
+func v2Validate(t *testing.T, sch *jsonschema.Schema, raw []byte) error {
+	t.Helper()
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	return sch.Validate(inst)
+}
+
+// TestNodeVersionTwoSchema: schemas/workspace-credentials.schema.json describes
+// the node the reader reads. C3's acceptance is that the schema is published,
+// and a schema is published for the two readers who complete a document from it
+// rather than decode it: an editor's completion and a reviewer's eye. A key one
+// side knows and the other does not is a document that reads as valid in one
+// place and is refused in the other, so the node this Fugaro writes is held to
+// the schema here, and the schema's own closure is held to the reader's.
+func TestNodeVersionTwoSchema(t *testing.T) {
+	sch := v2Schema(t)
+
+	// Both states of a pool entry, and a forge entry with its coverage: the
+	// documents the writer produces are documents the schema admits.
+	entryStates := []*WorkspaceCredentials{credentialsFixture(), credentialsFixture()}
+	entryStates[0].Shared[0] = WorkspaceShared{Name: "claude-oauth-token-team", Kind: SharedKindModel, AllMembers: true}
+	entryStates[1].Shared[0] = WorkspaceShared{
+		Name: "bitbucket-token-team", Kind: "bitbucket", Projects: []string{"project-a"},
+		Covers: []string{"bitbucket/acme/app"},
+	}
+	for i, w := range entryStates {
+		raw, err := WorkspaceCredentialsNode(w)
+		if err != nil {
+			t.Fatalf("WorkspaceCredentialsNode: %v", err)
+		}
+		if err := v2Validate(t, sch, raw); err != nil {
+			t.Errorf("schemas/workspace-credentials.schema.json refuses the node the writer produces (%d): %v\n%s", i, err, raw)
+		}
+	}
+
+	// An entry that carries both is not the shape, in the schema as in the
+	// reader: the two keys are exclusive (R7).
+	doc := v2NodeDoc(t, credentialsFixture())
+	v2Shared(doc, 0)["all_members"] = true
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := v2Validate(t, sch, raw); err == nil {
+		t.Error("schemas/workspace-credentials.schema.json admits all_members beside projects: the reader refuses the pair (R7), and a schema that admitted it would complete exactly the node that is refused")
+	}
+	// An entry that carries neither is not the shape either: a written shared
+	// credential is offered to the members it names or to every member.
+	doc = v2NodeDoc(t, credentialsFixture())
+	delete(v2Shared(doc, 0), "projects")
+	raw, err = json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := v2Validate(t, sch, raw); err == nil {
+		t.Error("schemas/workspace-credentials.schema.json admits a shared entry that names no project and no all_members: the reader refuses the half-written declaration")
+	}
+	// And a pattern is not a repository, in the schema as in the reader (F42).
+	doc = v2NodeDoc(t, credentialsFixture())
+	row := v2Row(doc, 0)
+	row["job_account_repos"] = []any{map[string]any{"account": row["job_accounts"].([]any)[0], "repos": []any{"github/owner/*"}}}
+	raw, err = json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := v2Validate(t, sch, raw); err == nil {
+		t.Error("schemas/workspace-credentials.schema.json admits a pattern where a concrete repository is written: the reader refuses it (F42)")
+	}
+
+	// The schema's closure is the reader's: every object below the top level is
+	// closed, because a key inside a row is a field this Fugaro does not write
+	// and the decoder refuses it, and the top level is NOT closed, because a
+	// node a newer Fugaro wrote is tolerated there (P8).
+	var schemaDoc map[string]any
+	schemaRaw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "workspace-credentials.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(schemaRaw, &schemaDoc); err != nil {
+		t.Fatal(err)
+	}
+	if open, ok := schemaDoc["additionalProperties"].(bool); ok && !open {
+		t.Error("schemas/workspace-credentials.schema.json closes the top level, and the reader tolerates an unknown key there (UnknownKeys, P8)")
+	}
+	for _, at := range [][]string{
+		{"$defs", "member"},
+		{"$defs", "shared"},
+		{"$defs", "job_account"},
+	} {
+		var cur any = schemaDoc
+		for _, k := range at {
+			m, ok := cur.(map[string]any)
+			if !ok {
+				t.Fatalf("schemas/workspace-credentials.schema.json has no %s", strings.Join(at, "."))
+			}
+			cur = m[k]
+		}
+		def, ok := cur.(map[string]any)
+		if !ok {
+			t.Fatalf("schemas/workspace-credentials.schema.json has no %s", strings.Join(at, "."))
+		}
+		if v, ok := def["additionalProperties"].(bool); !ok || v {
+			t.Errorf("schemas/workspace-credentials.schema.json's %s.additionalProperties is %v, and the reader refuses an unknown key inside a row", strings.Join(at, "."), def["additionalProperties"])
+		}
 	}
 }
