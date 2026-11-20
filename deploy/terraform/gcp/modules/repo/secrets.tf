@@ -12,14 +12,18 @@ resource "google_secret_manager_secret" "this" {
     fugaro_secret = each.key
   }
 
-  # The adopted secrets are replicated automatically; any other replication
-  # would replace them, which deletes every version first.
+  # A container the CLI created is replicated in the installation's region, and
+  # replication is creation-time only: a differing value here would plan a
+  # replacement, which prevent_destroy refuses and which deletes every version
+  # first. So the field is ignored below, and this block decides only a
+  # container Terraform itself creates.
   replication {
     auto {}
   }
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [replication]
   }
 }
 
