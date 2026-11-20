@@ -244,6 +244,63 @@ func TestRosterWriteLeavesRecordETag(t *testing.T) {
 	}
 }
 
+// TestRosterWriteRefusesNodeDeletingDocument: a document that prunes away is not
+// a roster but a delete of the node, so the write is refused before it is sent.
+// The database stores values and prunes a null and an empty object, so a PUT of
+// `{}` or of an all-null object removes the node and Read afterwards answers
+// found=false — the roster gone with no record of it, the workspace looking like
+// one whose first write never happened, and the next create landing under the
+// null ETag with nothing to judge it against. A shape that is not an object at
+// all goes the same way. Each refusal is a guard's and not a stale ETag's (the
+// finding's own trap: a guard that a retry loop mistook for rtdb.ErrPrecondition
+// would never terminate), and each is asked for under the node's CURRENT ETag,
+// so the write it refuses is one that would otherwise have landed.
+func TestRosterWriteRefusesNodeDeletingDocument(t *testing.T) {
+	db, _, s := wu1Store(t)
+	ctx := context.Background()
+
+	roster := wu1Roster("admin-1@example.com")
+	absent, _ := wu1Read(t, s)
+	wu1Write(t, s, absent, roster)
+	kept, found := wu1Read(t, s)
+	if !found {
+		t.Fatalf("the roster did not land at %s", s.Path())
+	}
+
+	for _, bad := range []struct {
+		what string
+		raw  []byte
+	}{
+		{"an empty object", []byte(`{}`)},
+		{"an all-null object", []byte(`{"version":null,"admins":null}`)},
+		{"an object whose every member prunes away", []byte(`{"version":{"members":null},"admins":{}}`)},
+		{"a scalar", []byte(`7`)},
+		{"an array", []byte(`[{"admins":["admin-1@example.com"]}]`)},
+	} {
+		node, found := wu1Read(t, s)
+		if !found {
+			t.Fatalf("%s: the roster was already gone before the write", bad.what)
+		}
+		err := s.Write(ctx, node, bad.raw)
+		if err == nil {
+			t.Fatalf("writing %s = nil, want a refusal: the PUT would delete the node", bad.what)
+		}
+		if errors.Is(err, rtdb.ErrPrecondition) {
+			t.Errorf("writing %s = %v, want a refusal of the document and not a stale ETag: a caller re-reads and retries on that one", bad.what, err)
+		}
+		if got, want := wu1Value(t, db, s.Path()), wu1Canon(t, roster); got != want {
+			t.Fatalf("writing %s changed the node:\n got %s\nwant %s", bad.what, got, want)
+		}
+		after, found := wu1Read(t, s)
+		if !found {
+			t.Fatalf("writing %s deleted the node: Read answers found=false and the roster is gone", bad.what)
+		}
+		if got, want := wu1Canon(t, after.Raw), wu1Canon(t, kept.Raw); got != want {
+			t.Errorf("writing %s rewrote the roster:\n got %s\nwant %s", bad.what, got, want)
+		}
+	}
+}
+
 // wu1Audit is the workspace's audit writer over a fake Firestore.
 func wu1Audit(t *testing.T) (*gcpfake.Firestore, *firestore.Client, *workspace.AuditWriter) {
 	t.Helper()

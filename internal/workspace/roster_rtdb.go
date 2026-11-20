@@ -128,13 +128,61 @@ func (s *RosterStore) Read(ctx context.Context) (RosterNode, bool, error) {
 // raw is the roster document and must be a JSON object: the node holds a
 // document, and a scalar or an array under it is a shape C1's reader would
 // refuse at the next read, after the write had already replaced a roster.
+//
+// It must also carry a value. The database prunes a null and an empty object on
+// the way in, so a document that prunes away entirely is not an empty roster but
+// a DELETE of the node, in the real database and in the fake alike
+// (`internal/gcpfake/rtdb.go`, normalise). A `{}` or an all-null roster would
+// therefore remove every admin, member and grant at once and leave Read
+// answering found=false — a workspace that looks like one whose first write
+// never happened, and whose next create then lands under the null ETag with no
+// roster left to judge it against. The refusal is the answer: a caller with no
+// roster to write has a decision to make (which member, which grant), not a
+// document to send.
 func (s *RosterStore) Write(ctx context.Context, node RosterNode, raw []byte) error {
 	doc := bytes.TrimSpace(raw)
 	if len(doc) == 0 || doc[0] != '{' || !json.Valid(doc) {
 		return fmt.Errorf("writing %s: the roster is not a JSON object", s.Path())
 	}
+	if !rosterCarriesValue(doc) {
+		return fmt.Errorf("writing %s: the roster carries no value, so the write would delete the node", s.Path())
+	}
 	if err := s.db.PutIfMatch(ctx, s.Path(), node.ETag, json.RawMessage(doc)); err != nil {
 		return fmt.Errorf("writing %s: %w", s.Path(), err)
 	}
 	return nil
+}
+
+// rosterCarriesValue reports whether anything in doc survives the database's own
+// pruning — a null and an empty object go, as they do in the real database
+// (`internal/gcpfake/rtdb.go`, normalise) — and so whether the PUT writes
+// anything at all. It walks the document the way the pruning does, which is why
+// the check is deeper than the top level: {"version":{"members":null}} prunes to
+// {} and deletes the node exactly as {} does.
+//
+// doc must be a JSON object already validated by Write.
+func rosterCarriesValue(doc []byte) bool {
+	var v any
+	dec := json.NewDecoder(bytes.NewReader(doc))
+	dec.UseNumber()
+	if err := dec.Decode(&v); err != nil {
+		return false
+	}
+	return carriesValue(v)
+}
+
+func carriesValue(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return false
+	case map[string]any:
+		for _, c := range x {
+			if carriesValue(c) {
+				return true
+			}
+		}
+		return false
+	default:
+		return true
+	}
 }
