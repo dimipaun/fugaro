@@ -126,6 +126,16 @@ func (d *wsDB) Get(_ context.Context, path string, out any) (bool, error) {
 	}
 	if r, ok := out.(*json.RawMessage); ok {
 		*r = raw
+		return true, nil
+	}
+	// The document readers that hand the raw bytes on (RTDBPolicy, RTDBOutcomes)
+	// take the RawMessage above; the ones that decode straight into their own
+	// value — budget.ReadKills' killNode, creds' per-repository record — take
+	// this. Both are the same node and neither may be answered "found" with
+	// nothing written into `out`, which is a call that would read an absent
+	// switch as an off one.
+	if err := json.Unmarshal(raw, out); err != nil {
+		return false, err
 	}
 	return true, nil
 }
