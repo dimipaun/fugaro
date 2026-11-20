@@ -206,21 +206,22 @@ func routeOn(t *testing.T, f *projectFixture, provider, repo string) creds.Route
 	return r
 }
 
-// TestUpdatePublishesTheRoute is WS9's red step: a member whose bundle is empty
-// and whose policy admits its own paid key publishes the record — the address
+// TestUpdatePublishesTheRoute is WS9's red step: a member whose bundle holds no
+// credential the route can use publishes the record all the same — the address
 // from its pin, and per kind either its own copy or the workspace's service.
 //
-// The bundle holds the project's paid key and nothing else, and the policies'
-// accounts block admits it for the GitHub repository alone:
+// The bundle holds one entry and it is not one of the three kinds a route
+// decides (config.ReviewSigningKeySecret, which no run's call goes out on), so
+// every kind either repository can use is the workspace's:
 //
 //   - acme/app is GitHub, so its forge kind is the GitHub App key, which the
 //     bundle does not hold: the workspace's service serves it. Its Bitbucket
 //     kind is the other forge's, which reaches no repository of this
 //     installation: the project's own copy (which is to say, nothing at all).
-//   - its model kind is the paid key's, admitted for it: the project's own.
+//   - its model kind is no account's either: the workspace's service.
 func TestUpdatePublishesTheRoute(t *testing.T) {
 	r := newRouteRig(t, "")
-	routeSeedBundle(t, r.sm, config.AnthropicSecret+": "+credsValue(t, "paid"))
+	routeSeedBundle(t, r.sm, config.ReviewSigningKeySecret("alice")+": "+credsValue(t, "review"))
 	routeSeedPolicy(t, r.f, map[string][]string{config.AnthropicKeyAccount: {"github/acme/app"}},
 		[]string{"bitbucket/acme/other", "github/acme/app"}, nil)
 
@@ -239,8 +240,8 @@ func TestUpdatePublishesTheRoute(t *testing.T) {
 	if app.Address != routeAddress {
 		t.Errorf("the record's address = %q, want the pin's own %q (R3)", app.Address, routeAddress)
 	}
-	if got := app.Holder(creds.KindModel); got != creds.HolderProject {
-		t.Errorf("app's model kind is served by %s, want the project's own copy: its paid key is admitted for the repository", got)
+	if got := app.Holder(creds.KindModel); got != creds.HolderWorkspace {
+		t.Errorf("app's model kind is served by %s, want the workspace's service: the bundle holds no model credential the policy admits for it", got)
 	}
 	if got := app.Holder(creds.KindGitHub); got != creds.HolderWorkspace {
 		t.Errorf("app's github kind is served by %s, want the workspace's service: the bundle holds no App key", got)
@@ -249,8 +250,9 @@ func TestUpdatePublishesTheRoute(t *testing.T) {
 		t.Errorf("app's bitbucket kind is served by %s, want the project's own copy: the other forge's kind reaches no repository of this installation", got)
 	}
 
-	// The other repository has no credential of its own at all: every kind it
-	// can use is the workspace's, and its Bitbucket kind is its own forge's.
+	// The other repository has no credential of its own either, and its
+	// Bitbucket kind is its own forge's — so the two records differ in exactly
+	// that one kind, which is what makes the record per repository.
 	other := routeOn(t, r.f, "bitbucket", "acme/other")
 	if got := other.Holder(creds.KindModel); got != creds.HolderWorkspace {
 		t.Errorf("other's model kind is served by %s, want the workspace's service: no account the project holds admits it", got)
@@ -311,14 +313,27 @@ func TestTheRouteIsPerRepository(t *testing.T) {
 // project.
 func TestTheProjectsCopyWins(t *testing.T) {
 	r := newRouteRig(t, "")
+	// The provider key is the one model credential no caller lists under an
+	// account of its own: it is reached under config.ProviderKeyAccount, which
+	// is the name the accounts block holds it by — so the GitHub repository
+	// below is served by the project's own copy of a credential the bundle
+	// carries under a name the credential list does not.
 	routeSeedBundle(t, r.sm,
 		config.AnthropicSecret+": "+credsValue(t, "paid"),
-		config.BitbucketSecret+": "+credsValue(t, "bb"))
-	routeSeedPolicy(t, r.f, map[string][]string{config.AnthropicKeyAccount: {"bitbucket/acme/other"}},
-		[]string{"bitbucket/acme/other"},
+		config.BitbucketSecret+": "+credsValue(t, "bb"),
+		config.ProviderKeySecret+":\n  key: "+credsValue(t, "provider")+"\n  base_url: https://provider.example/api\n  auth: bearer")
+	routeSeedPolicy(t, r.f, map[string][]string{
+		config.AnthropicKeyAccount: {"bitbucket/acme/other"},
+		config.ProviderKeyAccount:  {"github/acme/app"},
+	}, []string{"bitbucket/acme/other", "github/acme/app"},
 		map[string]any{"bitbucket_token": map[string]any{"allow_repos": []string{"bitbucket/acme/other"}}})
 
 	r.apply(t)
+
+	app := routeOn(t, r.f, "github", "acme/app")
+	if got := app.Holder(creds.KindModel); got != creds.HolderProject {
+		t.Errorf("app's model kind is served by %s, want the project's own copy: its calls ride the provider key, which the policy admits for this repository", got)
+	}
 
 	other := routeOn(t, r.f, "bitbucket", "acme/other")
 	for _, kind := range creds.Kinds {
