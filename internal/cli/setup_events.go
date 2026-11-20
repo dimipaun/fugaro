@@ -15,8 +15,10 @@ import (
 // `setup --plan-only --answers-file - --events --json` and renders the lines as
 // they arrive).
 //
-// The five kinds are the console's own closed set (SETUP_EVENT_TYPES,
-// console/src/shared/new-ops.ts), and the feed is the --json document split
+// The five kinds are the console's own closed set (SETUP_EVENT_TYPES in the
+// console's copy of this contract, on the other side of the boundary this
+// module keeps: no Go file here names a path under the console), and the feed
+// is the --json document split
 // into lines: `step` is the run reaching a stage, `stage` is a stage it
 // settled, `left_for_you` is one thing only the user can do — with the step's
 // own line to run, because a surface reading this has no terminal to hand it
@@ -88,10 +90,10 @@ type setupStageEvent struct {
 // consumer reads it without a case for "absent".
 //
 // It carries the members the console's copy of this contract declares and no
-// more (SetupLeftForYouEvent, console/src/shared/new-ops.ts): the reason the
-// step was left is the `stage` line's own detail where the stage's check is
-// what left it, and a member whose text class nobody chose is a value the
-// display layer would have to guess about (NEW_OPERATION_TEXT_CLASSES).
+// more (SetupLeftForYouEvent): the reason the step was left is the `stage`
+// line's own detail where the stage's check is what left it, and a member the
+// console has no text class for is a value its display layer would have to
+// guess about (NEW_OPERATION_TEXT_CLASSES).
 type setupLeftForYouEvent struct {
 	Type     string   `json:"type"`
 	Stage    string   `json:"stage"`
