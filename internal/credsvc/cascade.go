@@ -523,12 +523,13 @@ func reviewOfferings(b *Bundle) []creds.Credential {
 //     provider key, which the bundle holds at tier C under its own logical name
 //     (config.ProviderKeySecret, AK6b). The entry is offered the same way — by
 //     name and tier together — and the offer is where the CALL is refused:
-//     creds.Select does not select a tier-C credential in this release, and its
-//     refusal names Check 50 (checkCandidates, D150). So a review run paired
-//     with this value is answered a typed refusal and reaches no provider
-//     until that check has run, which is what this half is for: the bundle can
-//     hold the key and the service can forward with it, and nothing routes a
-//     Claude model to a third party yet.
+//     creds.Select serves a tier-C credential to every model but a Claude one
+//     (D3000), and nothing fills Selector.Model yet, which reads as a Claude
+//     one: so the run paired with this value reads the refusal that names Check
+//     50 (checkCandidates, D150) and reaches no provider until that check has
+//     run. That is what this half is for: the bundle can hold the key and the
+//     service can forward with it, and nothing routes a Claude model to a third
+//     party yet.
 //
 // Every credential it did not offer is reported as not admitted, which is what
 // that reason means for a caller: this call may not be served by it. A new
