@@ -39,9 +39,14 @@ import (
 // init is what wires this file into C1's seam, and it is an init function
 // rather than an initialiser at the var itself: a var initialiser is read
 // before every init of the package, so a file whose init assigns the seam
-// would silently overwrite it — which is what C1's stub did. The stub is gone
-// (I1 deleted it) and one assignment is left, in write_publish.go's init, which
-// is what TestNoStubSurvives reads.
+// silently overwrites it, and the seam's value would be decided by the order
+// the files are compiled in. That is exactly what C1's stub was, and the plan
+// itself says which way it fell: this file sorts after `after_write_stub.go`, so
+// the real hook won from the moment N3 landed and the stub's no-op was the
+// dead half. It is gone now (I1 deleted it) and one assignment is left, in this
+// file's init, which is what TestNoStubSurvives reads: the seam is one variable
+// every semantic command reaches through, so a second assignment anywhere in
+// the package takes the hook away from all of them at once.
 func init() { runAfterWrite = publishAfterWrite }
 
 // publishAfterWrite is the hook: the stages the change owes, in process, and
