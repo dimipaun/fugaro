@@ -14,6 +14,7 @@
         "prediction": true,
         "paths": [
           "internal/craft/access.go",
+          "internal/craft/legacy.go",
           "internal/craft/access_stub.go",
           "internal/craft/access_test.go",
           "internal/runner/access_stub.go",
@@ -235,11 +236,12 @@
         "prediction": true,
         "paths": [
           "internal/budget/model.go",
+          "internal/budget/registry.go",
+          "internal/budget/rules/rules.json.tmpl",
           "internal/runner/budget_session.go",
           "internal/watch/build.go",
           "internal/watch/json.go",
-          "internal/cli/budget.go",
-          "internal/budget/rules/rules.json.tmpl"
+          "internal/cli/budget.go"
         ]
       }
     },
@@ -291,6 +293,7 @@
           "internal/cli/project_job.go",
           "internal/cli/recipes_skew.go",
           "internal/cli/initsecrets.go",
+          "internal/localcfg/localcfg.go",
           "internal/cli/init_credentials_access_test.go"
         ]
       }
@@ -616,6 +619,40 @@
       }
     },
     {
+      "id": "CM32",
+      "title": "the cascade's pool is served as the cascade",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/craft.go",
+          "internal/config/craft_cascade_pool_test.go",
+          "internal/credsvc/pool.go",
+          "internal/credsvc/pool_cascade_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CM33",
+      "title": "release 2: `fugaro update` rewrites the published layer",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/config_publish.go",
+          "internal/cli/update_layer_auth.go",
+          "internal/cli/update_layer_auth_test.go",
+          "internal/cli/init.go"
+        ]
+      }
+    },
+    {
       "id": "R-pool-members",
       "title": "amend the access contract: a pool's members in the record",
       "run": null,
@@ -633,6 +670,16 @@
     }
   ],
   "edges": [
+    {
+      "task": "CM2",
+      "needs": "C1",
+      "reason": "the contract's names and interfaces"
+    },
+    {
+      "task": "CM5",
+      "needs": "C1",
+      "reason": "the contract's names and interfaces"
+    },
     {
       "task": "CM6",
       "needs": "C1",
@@ -697,6 +744,51 @@
       "task": "CM4",
       "needs": "CM2",
       "reason": "it writes the member CM2 adds to a shared struct, which a contract cannot own"
+    },
+    {
+      "task": "CM4",
+      "needs": "CM32",
+      "reason": "it writes the marker CM32 adds to a shared struct"
+    },
+    {
+      "task": "CM11",
+      "needs": "CM32",
+      "reason": "it reads the marker CM32 adds to a shared struct"
+    },
+    {
+      "task": "I1",
+      "needs": "CM2",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM32",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "CM25",
+      "needs": "CM24",
+      "reason": "its tests also read SECURITY.md"
+    },
+    {
+      "task": "CM26",
+      "needs": "CM25",
+      "reason": "its tests pin documents CM25 changes"
+    },
+    {
+      "task": "CM27",
+      "needs": "CM26",
+      "reason": "the documents tasks share test files and run one after another"
+    },
+    {
+      "task": "CM29",
+      "needs": "CM28",
+      "reason": "behaviour: the image gate must exist before a file may lose the key"
+    },
+    {
+      "task": "CM33",
+      "needs": "I1",
+      "reason": "it rewrites the layer release 1 kept readable; release 1 must be cut first"
     },
     {
       "task": "CM8",
@@ -889,11 +981,6 @@
       "reason": "a skill must be true of the tree it is merged into"
     },
     {
-      "task": "CM27",
-      "needs": "CM25",
-      "reason": "one test file: internal/cli/docs_credentials_auth_list_test.go"
-    },
-    {
       "task": "CM28",
       "needs": "I1",
       "reason": "it removes a path release 1 kept; release 1 must be cut first"
@@ -1014,6 +1101,24 @@
       },
       "integration": "I1",
       "reason": "it needs the fact's name and the header, not the runner"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CM2",
+        "needs": "CM1"
+      },
+      "integration": "I1",
+      "reason": "the block is a layer the resolver reads: it needs the layer's shape, not the function"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CM5",
+        "needs": "CM1"
+      },
+      "integration": "I1",
+      "reason": "the record names what the crafts resolve to: it needs the answer's shape, not the function"
     },
     {
       "contract": "C1",
