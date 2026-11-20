@@ -146,6 +146,11 @@ func TestNoOtherTokenWritesTheRoute(t *testing.T) {
 	h.mustRead(device, budget.PathCapsGlobal)
 	minted := h.minter("svc-minter-1")
 	h.mustRead(minted, budget.PathCapsGlobal)
+	// The strongest case of the minted ones: a launcher can mint a token that
+	// carries a run's own claims for this repository, and it READS the record as
+	// that run does — which is why the refusal the table below asserts is the
+	// leaf's `.write` and not a shape check that happens to reject the claims.
+	h.mustRead(h.run("aurora", "r9"), mine)
 	h.mustAllow(h.consumer(mbAlice), "alice's heartbeat", put(beat(mbAlice), aHeartbeat()))
 	h.mustAllow(h.pairing(pairUid), "its own pairing request", put(request(pairUid), aRequest()))
 
