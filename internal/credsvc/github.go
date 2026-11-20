@@ -333,14 +333,14 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 		return
 	}
 	// The repository is the scope's answer and not this handler's to read off
-	// the job row: a workspace's table holds the repositories the owner declared
-	// for the calling job account and no other, so reading the row here would be
-	// a second answer to a question the scope has already narrowed. The two
-	// fences the scope contributes are asked in order and before the bundle:
-	// the PAIRING, which is where a slug no table holds is refused, and the
-	// COVERAGE, which is where a repository the owner's declaration does not
-	// name is refused — so an unserved repository costs this service no read of
-	// the App key at all.
+	// the job row: a workspace's table holds the repositories the CALLING job
+	// account's own declaration reaches and no other member's, so reading the
+	// row here would be a second answer to a question the scope has already
+	// narrowed. The scope's two fences are asked in that one call and before
+	// the bundle is read — the PAIRING, which refuses a slug no table holds,
+	// and the COVERAGE, which refuses a repository the workspace owner's
+	// declaration does not name — so a repository this caller may not be served
+	// costs this service no read of the App key at all.
 	canonical, ok := s.admitMintRepository(ctx, w, id)
 	if !ok {
 		return
@@ -406,9 +406,9 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 // **The pairing is read here and no longer passed in.** It is the same read
 // ServeHTTP made — the slug a run identity carries resolved through the
 // deployment's table (Scope.Repos, review finding N1) — and it is made again
-// because the table is the scope's and not the server's: a workspace's holds the
-// repositories the workspace owner declared for the CALLING job account, and
-// what this endpoint mints must be scoped to one of those. Reading the row the
+// because the table is the scope's and not the server's: a workspace's holds
+// the repositories of the CALLING job account and no other member's, and what
+// this endpoint mints must be scoped to one of those. Reading the row the
 // dispatcher resolved would be reading the server's table, which is the answer
 // this task put behind the scope.
 func (s *Server) admitMintRepository(ctx context.Context, w http.ResponseWriter, id Identity) (string, bool) {
@@ -455,7 +455,7 @@ const mintCoverageUnreadable = "the repositories this call's forge credentials r
 // operator reading this line has nothing to change on their own side, and a
 // sentence that left the fix out would send them looking for one.
 func mintNotCovered(canonical string) string {
-	return "the coverage this call's forge credentials reach does not name " + canonical + ", and the repositories a shared GitHub credential is spent on are the workspace owner's own declaration, which the workspace owner's `fugaro update` publishes"
+	return "the coverage this call's forge credentials reach does not name " + canonical + ": a workspace's shared GitHub credential is spent on the repositories its owner declares, and the owner's `fugaro update` is what publishes them"
 }
 
 // answerMint builds the mint's answer, audits the issuance and writes it.
