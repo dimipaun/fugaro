@@ -1245,7 +1245,7 @@ export const FINISHED_KEYS = [
  * (D23) -- the moment of the block and the revision the configuration was read
  * from (`runstore.RigorRecord`, docs/rigor-modes D24, D25). **The level is
  * carried under two keys since LD2**: `level` is the axis's name now -- in
- * `fugaro.yaml`, in the project layer and in everything a person reads -- and
+ * the repository config, in the project layer and in everything a person reads -- and
  * `mode` stays beside it with the same value, because this block is a wire shape
  * a reader outside the CLI's binary consumes and a field never changes meaning
  * (CLAUDE.md); the record's `version` stays 1, the key was added and not
