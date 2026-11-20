@@ -1244,8 +1244,21 @@ type websiteHostHit struct {
 // names it and no page renders it, so a built page carrying it is either a
 // build of a tree that named it in a page -- which is exactly what that rule
 // exists for -- or of a revision that did, and both are worth failing on.
+//
+// **The needle is the host as a name, not the host as letters.** A host ends
+// where a name does, so a longer name that merely begins with the same letters
+// is not a hit: `fugaro.device-key.` is the app's secure-store key prefix
+// (mobile-identity-pairing C1) and only begins with the canonical host's
+// letters, and a bare substring match reported it until this boundary was added.
+// The privacy test's own scan ends a host where a name ends for the same reason
+// (`website/test/privacy.mjs`'s `reachFailures`, `(?![A-Za-z0-9-])`), and the two
+// are one rule rather than two; Go's regexp has no lookahead, so the boundary
+// here is a consumed character or the end of the line instead of an assertion.
+// A hit is still every spelling of the host itself: a URL, a bare host, a host
+// with a trailing dot, a host inside a quote or alone on the line.
 func websiteHostHits(t *testing.T, root, host string, skipBuild bool) []websiteHostHit {
 	t.Helper()
+	named := regexp.MustCompile(regexp.QuoteMeta(host) + `([^A-Za-z0-9-]|$)`)
 	var hits []websiteHostHit
 	for _, rel := range websiteBoundaryFiles(t, root) {
 		if skipBuild && (rel == websiteBuildDir || strings.HasPrefix(rel, websiteBuildDir+"/")) {
@@ -1256,7 +1269,7 @@ func websiteHostHits(t *testing.T, root, host string, skipBuild bool) []websiteH
 			t.Fatal(err)
 		}
 		for i, line := range strings.Split(string(data), "\n") {
-			if strings.Contains(line, host) {
+			if named.MatchString(line) {
 				hits = append(hits, websiteHostHit{file: rel, line: i + 1, text: strings.TrimSpace(line)})
 			}
 		}
@@ -1311,11 +1324,21 @@ func TestWebsiteCanonicalHostAppearsOnlyInSiteYaml(t *testing.T) {
 	}
 }
 
+// websiteHostNearMissPath is the file the scan's control plants a **near miss**
+// in: a source that names a longer name beginning with the canonical host's
+// letters and not the host itself -- `fugaro.device-key.`, the app's
+// secure-store key prefix (mobile-identity-pairing C1) -- which is the line the
+// boundary in websiteHostHits exists for. A path under the pages' own sources
+// rather than a page: that is where such a constant would live.
+const websiteHostNearMissPath = "website/src/lib/storage.ts"
+
 // TestWebsiteHostScanSeesAPlantedCopy is that scan's positive control: it plants
 // a host in a page, in the facts file and in a built page of a temp tree, and
 // proves the scan reports the first two and steps over the third, so the rule
 // above cannot pass by looking at nothing and cannot be tightened into a rule
-// about the build by a later change to the walk.
+// about the build by a later change to the walk. It plants a near miss as well,
+// and holds the scan to the second answer: a longer name is not a copy of the
+// host, which is the mutation the boundary in websiteHostHits exists for.
 func TestWebsiteHostScanSeesAPlantedCopy(t *testing.T) {
 	const canonical = "fugaro.dev"
 	root := t.TempDir()
@@ -1325,6 +1348,12 @@ func TestWebsiteHostScanSeesAPlantedCopy(t *testing.T) {
 		"website/src/pages/index.astro":       "<a href=\"https://" + canonical + "/docs\">Docs</a>\n",
 		"website/src/components/Footer.astro": "<span>fugaro</span>\n",
 		websiteBuildDir + "/index.html":       "<link rel=\"canonical\" href=\"https://" + canonical + "/\">\n",
+		// A longer name that only begins with the host's letters, which the
+		// boundary above keeps out of the scan's answer: `fugaro.device-key.` is
+		// the app's secure-store key prefix (mobile-identity-pairing C1), and the
+		// mutation this entry catches is the bare substring match the boundary
+		// replaced.
+		websiteHostNearMissPath: "export const SECURE_STORE_PREFIX = \"" + canonical + "ice-key.\"\n",
 	}
 	for rel, body := range planted {
 		p := filepath.Join(root, filepath.FromSlash(rel))
@@ -1345,9 +1374,14 @@ func TestWebsiteHostScanSeesAPlantedCopy(t *testing.T) {
 			t.Errorf("the scan for %q did not see the planted host in %s: a rule that finds nothing passes for the wrong reason", canonical, want)
 		}
 	}
-	for _, dontWant := range []string{"website/src/components/Footer.astro", websiteBuildDir + "/index.html"} {
+	// Three the scan may not report, and each for its own reason: a file that
+	// names no host at all, a built page the build rendered the origin into
+	// (which the skip steps over, and which the walk still reads), and a longer
+	// name that only begins with the host's letters -- a host ends where a name
+	// does.
+	for _, dontWant := range []string{"website/src/components/Footer.astro", websiteBuildDir + "/index.html", websiteHostNearMissPath} {
 		if seen[dontWant] {
-			t.Errorf("the scan for %q reported %s: a file that does not name the host, or a built page the build rendered the origin into, is not a second source of the fact", canonical, dontWant)
+			t.Errorf("the scan for %q reported %s: a file that does not name the host, a built page the build rendered the origin into, or a longer name that only begins with the host's letters is not a second source of the fact", canonical, dontWant)
 		}
 	}
 }
