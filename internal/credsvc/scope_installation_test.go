@@ -8,12 +8,15 @@ package credsvc
 // readers from the scope, there was no installation resolver to resolve at all.
 // The second is the front door: a route the scope does not serve reaches no
 // handler, and the refusal it gets is written with or without a caller
-// according to what the resolver verified (R14).
+// according to what the resolver verified (R14). The rest are the front door's
+// other two guards — a scope that brings no caller, and a scope that accepts no
+// slip (R18) — each refused before any handler is dispatched.
 
 import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -235,12 +238,85 @@ func TestARouteTheScopeDoesNotServeIsRefused(t *testing.T) {
 	})
 }
 
-// resolverWithout is an installation's resolver whose scope does not serve one
-// path: the smallest deployment that exercises the front door's refusal of a
-// route a scope does not serve.
+// TestAScopeThatBringsNoCallerIsRefused pins the front door's own guard (R1,
+// C1): a scope that serves a route of the shared parse and answers no caller is
+// a resolver disagreeing with the front door, and the call is refused rather
+// than dispatched with nobody's identity. It is the fence that keeps a scope
+// which verified nobody from being served the project's own paid key — which is
+// why it is a test and not a comment.
+func TestAScopeThatBringsNoCallerIsRefused(t *testing.T) {
+	s := newSvc(t)
+	s.server.resolver = resolverWithout{inner: installationResolver{s: s.server}, noCaller: true}
+	resp, body := s.call(t, callBody("ws1-no-caller"))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("a call a scope served with no caller is answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+	}
+	if len(s.up.Seen()) != 0 {
+		t.Errorf("the upstream saw %d calls, want none: a call with no caller reaches no handler", len(s.up.Seen()))
+	}
+	// The line is what tells this guard from the tail the same call reaches
+	// without it: an empty identity would still end in `state_unavailable` at
+	// the selector (nothing is left to select), so the status alone does not
+	// say which refusal this is — and the guard answers through `refuse`, the
+	// wire writer alone, where a refusal with a caller in hand is audited.
+	if lines := s.auditLines(t); len(lines) != 0 {
+		t.Errorf("a refusal of a call with no caller wrote %d audit lines: %v", len(lines), lines)
+	}
+}
+
+// TestAScopeThatAcceptsNoSlipRefusesOne is R18's fence: a call that PRESENTS a
+// slip to a scope that accepts none is refused, and never served slip-less —
+// which is what "a member's call carries the job's identity and the run's token
+// and nothing else of the member's" means for the one secret a call could
+// carry. The caller was verified, so the refusal is audited like every other.
+func TestAScopeThatAcceptsNoSlipRefusesOne(t *testing.T) {
+	s := newSvc(t)
+	s.server.resolver = resolverWithout{inner: installationResolver{s: s.server}, noSlip: true}
+	resp, body := s.call(t, callBody("ws1-no-slip"), func(r *http.Request) {
+		r.Header.Set(HeaderSlip, "a-slip-this-scope-does-not-accept")
+	})
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("a call presenting a slip to a scope that accepts none is answered %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q", e.Error, ErrorUnverifiedRunIdentity)
+	} else if !strings.Contains(e.Message, "carries no slip") {
+		t.Errorf("the refusal's sentence is %q, want the one that says a call to this service carries no slip: the refusal of a slip the service cannot read is the same status and the same type, so the sentence is what says which of the two this is", e.Message)
+	}
+	if len(s.up.Seen()) != 0 {
+		t.Errorf("the upstream saw %d calls, want none: the call was refused before any handler", len(s.up.Seen()))
+	}
+	ev := s.auditLines(t)
+	if len(ev) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want the one a refusal with a verified caller writes: %v", len(ev), ev)
+	}
+	if got := ev[0]["status"]; got != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal's line is recorded as %v, want %q", got, ErrorUnverifiedRunIdentity)
+	}
+	if got := ev[0]["caller"]; got != testJobSA {
+		t.Errorf("the refusal's line names the caller %v, want %s: the caller was verified", got, testJobSA)
+	}
+	// The fence is on the slip a call presents and not on the scope's callers: a
+	// call that presents none is served exactly as it was.
+	resp2, body2 := s.call(t, callBody("ws1-no-slip-absent"))
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("a slip-less call is answered %d: %s", resp2.StatusCode, body2)
+	}
+}
+
+// resolverWithout is an installation's resolver answering its scope with one of
+// three answers changed: the path the scope does not serve, the caller it does
+// not report, or the slip it does not accept. Each is a deployment whose scope
+// and whose front door disagree, which is exactly what the front door's own
+// guards are for, and the three are the three guards.
 type resolverWithout struct {
-	inner ScopeResolver
-	path  string
+	inner    ScopeResolver
+	path     string
+	noCaller bool
+	noSlip   bool
 }
 
 func (r resolverWithout) Resolve(w http.ResponseWriter, req *http.Request) (Scope, bool) {
@@ -248,12 +324,27 @@ func (r resolverWithout) Resolve(w http.ResponseWriter, req *http.Request) (Scop
 	if !ok {
 		return nil, false
 	}
-	return scopeWithout{Scope: sc, path: r.path}, true
+	return scopeWithout{Scope: sc, path: r.path, noCaller: r.noCaller, noSlip: r.noSlip}, true
 }
 
 type scopeWithout struct {
 	Scope
 	path string
+	// noCaller answers Caller with no caller at all: the shape a resolver that
+	// served a route of the shared parse without verifying anybody answers.
+	noCaller bool
+	// noSlip refuses the slip (R18): a workspace's scope, whose callers present
+	// none.
+	noSlip bool
 }
 
 func (s scopeWithout) Serves(path string) bool { return path != s.path }
+
+func (s scopeWithout) Caller() (Caller, bool) {
+	if s.noCaller {
+		return Caller{}, false
+	}
+	return s.Scope.Caller()
+}
+
+func (s scopeWithout) AcceptsSlip() bool { return !s.noSlip && s.Scope.AcceptsSlip() }

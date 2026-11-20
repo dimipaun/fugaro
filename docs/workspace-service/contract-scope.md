@@ -38,7 +38,7 @@ to the handler through the request's context, so no handler signature changes.
 | caller | the deployment's own verifier and pairing | `Workspace.Verify` over the owner's member table |
 | routes | every route of the service | the model routes, a run's forge routes and the keep-warm route (R14) |
 | policy | the installation's published node | the member's own node, read from the member's database |
-| state | the installation's state store | the member's database, and no write on it (R8) |
+| state | the installation's state store | the workspace's own database, and no write on a member's (R8) |
 | offering | the bundle | the workspace's shared entries, intersected with the member's policy (`Workspace.Shared`, D1298, D2980) |
 | slips | accepted (DS1) | refused (R18) |
 | meter | none | the workspace's own cap (R15) |
