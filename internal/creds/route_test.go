@@ -163,14 +163,17 @@ func TestRouteRecordDecodesStrictly(t *testing.T) {
 // schema an editor validates against are one shape. A kind the route does not
 // move is left out rather than written as the project's, so the bytes of one
 // route are one record — WS9's publish is conditional on them — and the decoder
-// answers the project for every kind they do not name.
+// answers the project for every kind they do not name. These routes are the
+// canonical ones — a kind the project serves is absent and not spelled out — so
+// the round trip is byte for byte; the other spelling is asserted below, where
+// it has to come back as these same bytes.
 func TestRouteRecordRoundTripsAndMatchesItsSchema(t *testing.T) {
 	const addr = "https://workspace.example.com"
 	sch := routeSchema(t)
 	for _, r := range []Route{
 		{Version: RouteVersion, Address: addr},
 		{Version: RouteVersion, Address: addr, Model: HolderWorkspace},
-		{Version: RouteVersion, Address: addr, Model: HolderWorkspace, Bitbucket: HolderProject, GitHub: HolderWorkspace},
+		{Version: RouteVersion, Address: addr, Model: HolderWorkspace, GitHub: HolderWorkspace},
 	} {
 		raw, err := RouteRecord(r)
 		if err != nil {
@@ -197,6 +200,31 @@ func TestRouteRecordRoundTripsAndMatchesItsSchema(t *testing.T) {
 			if got := back.Holder(kind); got != want {
 				t.Errorf("Holder(%s) = %q, want %q", kind, got, want)
 			}
+		}
+	}
+
+	// Holder answers HolderProject for a kind the route spells `project` and for
+	// one it leaves zero, so those two are one route and have to be one record:
+	// WS9's publish is conditional on the bytes, and a writer that spelled the
+	// project's holder out would rewrite the node it published forever.
+	spelled, err := RouteRecord(Route{Version: RouteVersion, Address: addr, Model: HolderProject, Bitbucket: HolderProject, GitHub: HolderProject})
+	if err != nil {
+		t.Fatalf("RouteRecord of a route that spells the project's holders: %v", err)
+	}
+	blank, err := RouteRecord(Route{Version: RouteVersion, Address: addr})
+	if err != nil {
+		t.Fatalf("RouteRecord of a route with no holder named: %v", err)
+	}
+	if !bytes.Equal(spelled, blank) {
+		t.Errorf("a route that spells the project's holders writes %s and one that names none writes %s: Holder answers %q for every kind of both, so they are one route and must be one record", spelled, blank, HolderProject)
+	}
+	read, found, err := DecodeRoute(spelled)
+	if err != nil || !found {
+		t.Fatalf("DecodeRoute(%s) = %+v, %v, %v", spelled, read, found, err)
+	}
+	for _, kind := range Kinds {
+		if got := read.Holder(kind); got != HolderProject {
+			t.Errorf("Holder(%s) of a record that spells the project's holder = %q, want %q", kind, got, HolderProject)
 		}
 	}
 

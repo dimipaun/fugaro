@@ -226,10 +226,14 @@ type RouteReader interface {
 var ErrRouteRecord = errors.New("creds: the credential-route record is not one a run may be served from")
 
 // routeWire is the record as the node carries it, and the one spelling its
-// encoder writes: a kind the route does not move is left out rather than
-// written as the project's, so two encodings of one route are one record — the
-// publish is conditional on the bytes (WS9) and a writer that spelled the
-// default two ways would rewrite the node forever.
+// encoder writes: a kind the route does not move to the workspace is left out
+// rather than written as the project's, so two encodings of one route are one
+// record — the publish is conditional on the bytes (WS9) and a writer that
+// spelled the default two ways would rewrite the node forever.
+//
+// The omission is movedHolder's and not omitempty's: HolderProject is the string
+// "project" and not the zero Holder, so a tag alone writes it out, and the same
+// route spelled with it and without it would be two records.
 type routeWire struct {
 	Version   int    `json:"version"`
 	Address   string `json:"address"`
@@ -240,6 +244,11 @@ type routeWire struct {
 
 // RouteRecord encodes r as the record a run reads: the bytes WS9 publishes at
 // RoutePath(slug).
+//
+// A kind the route does not move to the workspace is left out of the bytes,
+// whether r spells HolderProject for it or names no holder at all: the two are
+// one answer to Holder, so they are one record, and a writer that published both
+// would rewrite the node on every update.
 //
 // A route this code will not read back is refused here rather than published: a
 // version outside RouteVersion, a holder outside the vocabulary, and an address
@@ -264,9 +273,9 @@ func RouteRecord(r Route) ([]byte, error) {
 	out, err := json.Marshal(routeWire{
 		Version:   r.Version,
 		Address:   r.Address,
-		Model:     r.Model,
-		Bitbucket: r.Bitbucket,
-		GitHub:    r.GitHub,
+		Model:     movedHolder(r.Model),
+		Bitbucket: movedHolder(r.Bitbucket),
+		GitHub:    movedHolder(r.GitHub),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: it could not be encoded: %v", ErrRouteRecord, err)
@@ -317,6 +326,18 @@ func DecodeRoute(raw []byte) (Route, bool, error) {
 		Bitbucket: w.Bitbucket,
 		GitHub:    w.GitHub,
 	}, true, nil
+}
+
+// movedHolder is the holder the record writes for one kind: HolderWorkspace when
+// the route moves it there, and nothing at all otherwise. HolderProject and a
+// kind the route says nothing about are one answer to Holder, so the two have to
+// be one record: writing the default out would give a route two spellings, and
+// WS9's conditional publish would rewrite the node on every update.
+func movedHolder(h Holder) Holder {
+	if h == HolderWorkspace {
+		return HolderWorkspace
+	}
+	return ""
 }
 
 // checkHolder refuses a holder outside the vocabulary, naming the spellings it

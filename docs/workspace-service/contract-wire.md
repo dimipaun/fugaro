@@ -64,7 +64,7 @@ One repository's record is one JSON object:
 
 ```json
 {"version": 1, "address": "https://fugaro-workspace-credentials-abc123-uc.a.run.app",
- "model": "workspace", "bitbucket": "project", "github": "workspace"}
+ "model": "workspace", "github": "workspace"}
 ```
 
 - **`version`** is `RouteVersion`, and it is `1`. A reader reads it first and refuses a version it does not know
@@ -76,14 +76,19 @@ One repository's record is one JSON object:
   shared with the merge mint and the label client, because a credential rule respelled per caller is a rule that
   drifts.
 - **`model`, `bitbucket`, `github`** are each kind's `Holder`. A record names a kind it moves to the workspace, and
-  leaving a kind out is the same answer as spelling it `project`.
+  leaving a kind out is the same answer as spelling it `project`: `Holder` answers `HolderProject` for both, which is
+  why a reader accepts `project` and a writer never writes it (below).
 - **The record is closed, and `DecodeRoute` decodes it strictly**: a key this code does not model is a refusal, not a
   key decoded past. The version is read first, so a record a later release wrote is refused as a version this code
   does not know rather than as one unknown field.
 - **A node that is not there at all is not a refusal**: `DecodeRoute(null)` answers `found == false` and no error.
-- **One route has one spelling.** `RouteRecord` leaves out a kind the route does not move rather than writing the
-  default, so two encodings of one route are equal bytes — the publish is conditional on the bytes, and a writer that
-  spelled the default two ways would rewrite the node forever. `RouteRecord` refuses a route it could not read back
+- **One route has one spelling.** `RouteRecord` writes a kind only when the route moves it to the workspace, so a
+  route that spells `project` for a kind and one that leaves the kind out are the same bytes: `HolderProject` is the
+  string `project` and not the zero `Holder`, so the omission is the encoder's and not `omitempty`'s, and the two
+  spellings a caller could hand it are one record — the publish is conditional on the bytes, and a writer that spelled
+  the default two ways would rewrite the node forever. A record an earlier release or a hand wrote with `project`
+  spelled out reads the same and is rewritten once into these bytes, after which the publish is a no-op. `RouteRecord`
+  refuses a route it could not read back
   (a version outside `RouteVersion`, a holder outside the vocabulary, an address a run may not be sent to), so a
   member's own `fugaro update` cannot publish a node every run of it then refuses.
 
@@ -141,9 +146,11 @@ published before.
 
 **The member's publisher (WS9).** It may rely on `RouteRecord` for the bytes and on `ErrRouteRecord` for what a run
 will refuse, so a record it publishes is one WS11 reads. It derives the holder per repository and kind from the
-member's own bundle and policy (the contract carries no such rule), keeps `HolderProject` for a kind the project's own
-copy serves (D2973), and reports that a workspace credential of that kind is not used. It publishes one record per
-repository, at `RoutePath(slug)`, and it cannot name the workspace's entries — a member cannot read them (F38).
+member's own bundle and policy (the contract carries no such rule), answers `HolderProject` for a kind the project's
+own copy serves (D2973) — which `RouteRecord` leaves out of the bytes, so the field may hold the constant and the
+record is the same as one that named no kind at all — and reports that a workspace credential of that kind is not
+used. It publishes one record per repository, at `RoutePath(slug)`, and it cannot name the workspace's entries — a
+member cannot read them (F38).
 
 **The workspace's deployer (WS6, WS7).** `WorkspaceServiceName` is the workspace's own credentials service — the
 second Cloud Run service in the workspace's project, the same image as the installation's, running as the existing
