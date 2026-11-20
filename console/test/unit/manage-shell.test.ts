@@ -45,6 +45,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
+import { TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import {
   BUSY_CLASS,
   BUSY_LABEL_CLASS,
@@ -104,6 +105,8 @@ import type {
   ManageKind,
   ManageRow,
 } from '../../src/renderer/manage/types'
+
+import { githubToken } from '../support/fakeSecrets'
 
 // ---------------------------------------------------------------------------
 // The harness: a fake element that refuses what a section may not do, and that
@@ -641,11 +644,42 @@ describe('the Manage section’s shell', () => {
     expect(one(refused, RETRY_CLASS).getAttribute(MANAGE_OPERATION_ATTRIBUTE)).toBe('accounts.inventory')
   })
 
+  it('draws the CLI’s sentence when the read refuses in the shape the entry throws', async () => {
+    const { root, handles } = mounted([MEMBERS])
+    open(root, 'People & access')
+    // The shape a refused read really arrives in: the caller's read is
+    // `entry.ts`'s bridge, whose readers throw the CLI's reply as a plain
+    // `{ sentence }` and not as an `Error` (`readSpend`'s `refusalSentence`
+    // reads the same member). A shell that only read `Error.message` would drop
+    // the remedy and draw its own sentence instead.
+    handles.refuse(0, { sentence: REFUSAL })
+    await settle()
+
+    expect(texts(kindSection(root, 'members'), MANAGE_REFUSAL_CLASS)).toEqual([REFUSAL])
+  })
+
+  it('redacts a credential a child echoed into its refusal', async () => {
+    const { root, handles } = mounted([MEMBERS])
+    open(root, 'People & access')
+    // The refusal is the one line of this section the CLI writes, so it goes
+    // through `sanitizeRefusal` like every sibling screen's: a sentence is not a
+    // document, but it is also not the console's own text, and a child that
+    // prints the token it failed with must not put it on a screen. The role name
+    // `REFUSAL` carries is kept in the same pass (the case above).
+    const token = githubToken()
+    handles.refuse(0, { sentence: `permission denied for ${token}` })
+    await settle()
+
+    const drawn = texts(kindSection(root, 'members'), MANAGE_REFUSAL_CLASS)
+    expect(drawn).toEqual([`permission denied for ${TOKEN_PLACEHOLDER}`])
+    expect(drawn.join('')).not.toContain(token)
+  })
+
   it('says the console’s own sentence naming the read when the refusal carried nothing readable', async () => {
     const { root, handles } = mounted([MEMBERS])
     open(root, 'People & access')
-    // Not an `Error`, so there is no sentence in it: `String(it)` would draw
-    // whatever a hostile object's `toString` returned.
+    // Not an `Error` and no `sentence`, so there is no sentence in it:
+    // `String(it)` would draw whatever a hostile object's `toString` returned.
     handles.refuse(0, { not: 'an error' })
     await settle()
 

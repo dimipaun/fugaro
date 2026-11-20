@@ -318,10 +318,18 @@ function skeletonFor(kind: ManageKind): SkeletonShape {
 }
 
 /** becauseOf is the CLI's own sentence out of a failed read, or null when the
- * refusal carried nothing this console can read. A thrown non-Error is not a
- * sentence, and `String(it)` would draw whatever a hostile object's `toString`
- * returned. */
+ * refusal carried nothing this console can read.
+ *
+ * The sentence is read **structurally** (`sentence`) because that is the shape a
+ * refused read really arrives in: the caller's read is the console's operation
+ * surface, and the entry throws the CLI's reply as a plain `{ sentence }` rather
+ * than as an `Error` (`entry.ts`'s readers, and `readSpend`'s `refusalSentence`,
+ * which reads the same member for the same reason). An `Error` is read too, for
+ * a failure that really is one. A thrown value with neither is not a sentence,
+ * and `String(it)` would draw whatever a hostile object's `toString` returned. */
 function becauseOf(error: unknown): string | null {
+  const raw = (error as { readonly sentence?: unknown } | null | undefined)?.sentence
+  if (typeof raw === 'string' && raw.trim() !== '') return raw
   return error instanceof Error && error.message.trim() !== '' ? error.message : null
 }
 
