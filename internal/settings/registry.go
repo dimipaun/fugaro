@@ -572,6 +572,13 @@ const (
 	// of the stage's own would take the row over.
 	docTriage    = "docs/post-review-triage/implementation-plan.md"
 	docCloneURLs = "docs/project-claude-accounts.md"
+	// docReviewAgainstTask is the document that states the check every review
+	// stage makes of the task a pull request was written for, and the local key
+	// the publish carries the switch from (R7 of docs/review-against-task/). It
+	// is the work's plan, docTriage's reason: the key, its default and D2935's
+	// two directions are stated there and nowhere else yet, and a document of
+	// the check's own would take the row over.
+	docReviewAgainstTask = "docs/review-against-task/implementation-plan.md"
 	// docABJobmax is the document that states the A/B reviewer arm's key (O12).
 	// It is the work's plan rather than a spec, for docOrchestrator's reason:
 	// the ask is named there and in the reconciliation that records the ruling,
@@ -1207,6 +1214,17 @@ var localRows = []Row{
 	// a pull request back (D1854), and the publish is what carries the value to
 	// the node every run of the project reads it from.
 	loc("triage", "true: a review round's findings are judged by the triage stage in the modes that triage at all, and a written false turns the stage off for the project", "settings set", docTriage),
+	// The review-against-task switch is that policy key's shape one over (R7 of
+	// docs/review-against-task/, D2935): a local key the node is published from,
+	// whose owner is `settings set` for the triage row's reason — a boolean in
+	// the machine's own config is the generic path's. It is the owner's answer
+	// for the whole project, and the publish is what carries it to the node
+	// every run of the project reads it from. The absent key reads as on rather
+	// than as "none", because a reader would take "none" for the check itself
+	// being off; a written false is the project-wide default a repository's own
+	// `true` overrides, and a written true is the check no repository may walk
+	// out of.
+	loc("review_against_task", "on: every review stage is handed the task its pull request was written for, and a written false is the project-wide default a repository's own true turns back on", "settings set", docReviewAgainstTask),
 	// The clone URLs the project's repositories clone from (settings spec
 	// §5.6, SD5, D842). The block moved out of the policy node and into the
 	// owner's local config, and `fugaro project clone-url` is the family that

@@ -4090,6 +4090,43 @@ func TestPublishKeepsTheReviewAgainstTaskNoConfigCanState(t *testing.T) {
 	}
 }
 
+// TestPublishCarriesReviewAgainstTask: the local config is the switch's own
+// home from this release on (R7 of docs/review-against-task/, D2935), and the
+// publish is the only door from that file to the policy node every run of the
+// project reads it from — `fugaro update` runs this stage, which is the one
+// command the HARD RULE allows, so a config that states the switch and a node
+// that says the other answer is exactly the drift this stage exists to close.
+// The written value replaces the node's rather than merging with it: the merge
+// that decides a repository's answer against the project's is the runner's
+// (policy.Merge, RA8a), and the file read here is the owner's own, so his
+// written true turns the check back on under a published false the same way a
+// written false states the project-wide default.
+func TestPublishCarriesReviewAgainstTask(t *testing.T) {
+	f := newProjectFixture(t, "review_against_task: false\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.ReviewAgainstTask == nil || *p.ReviewAgainstTask {
+		t.Fatalf("ReviewAgainstTask = %v, want the written false the config states", p.ReviewAgainstTask)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"review_against_task":false`) {
+		t.Errorf("the node does not carry the switch:\n%s", raw)
+	}
+
+	// The other direction, over the node that now says false: a written true is
+	// the owner's own answer too, and the publish carries it as it stands.
+	rewriteProjectConfig(t, f, "review_against_task: true\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.ReviewAgainstTask == nil || !*p.ReviewAgainstTask {
+		t.Errorf("ReviewAgainstTask = %v, want the written true the config states", p.ReviewAgainstTask)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"review_against_task":true`) {
+		t.Errorf("the second publish did not carry the written true:\n%s", raw)
+	}
+}
+
 // TestPublishDropsReviewFloorOnPurpose: `review_floor: {}` is how the owner
 // takes a published floor away. Silence about the key keeps the node's floor
 // (the test above), so the written empty object is the spelling that has to

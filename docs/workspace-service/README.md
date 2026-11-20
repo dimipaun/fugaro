@@ -16,6 +16,7 @@ the workspace when the project holds none of its own. It is the prerequisite
 | [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A6, findings F1–F42, decisions D2980–D2992 with the owner's answers, resolutions R1–R19 (R13–R15 came with review round 1, R16 and R17 with round 2, R18 and R19 with round 4), open items O1–O7, UNVERIFIED U1–U6. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Contracts C1–C3, tasks WS1–WS22 (WS10 dropped, its number not reused), integration I1 (25 runs, and three contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 770–773 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
+| [contract-wire.md](contract-wire.md) | C2's prose half: the credential-route record, the names the sides spell, what each side may rely on and what changing it costs. The Go half is `internal/creds/route.go` |
 
 **Numbers reserved:** decisions **D2980–D2999** (D2980–D2992 used), checks **770–779** (770–773
 used). Read on 2026-11-19: the highest decision on `main` and in the open pull requests was D2979,

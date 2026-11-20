@@ -706,6 +706,15 @@ var jsonCases = map[string]jsonCase{
 			return []string{"stats", "runs", "--project", "aurora"}
 		},
 	},
+	"tell": {
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			id := "20260927-100000-abcd"
+			seedRun(t, f, id, "", "someone@example.com", true)
+			writeRecord(t, f, id, tellRecord(id, tellAccepting()))
+			return []string{"tell", id, "check the flaky test before the fix"}
+		},
+	},
 	"troubleshoot": {
 		run: func(t *testing.T) []string {
 			// The command's own rig (troubleshoot_test.go): a failed

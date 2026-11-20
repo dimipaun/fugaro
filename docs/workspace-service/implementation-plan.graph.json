@@ -248,6 +248,7 @@
           "internal/gateway/service.go",
           "internal/runner/gateway.go",
           "internal/gateway/workspace_route_test.go",
+          "internal/creds/boundary_test.go",
           "SECURITY.md",
           "website/content/security.md",
           "internal/cli/docs_workspaces_security_test.go"
