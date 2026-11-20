@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,7 +21,11 @@ import (
 // The two commands that plan are the loader pair's callers — loadInitConfig for
 // `setup` and `update`, loadRepoConfig for `update --repo` — so both are run
 // here, and `--plan-only` with them, because a run that applies nothing still
-// plans in the region it was handed.
+// plans in the region it was handed. loadRepoConfig is shared with the commands
+// that read a checkout's config without planning (`update --check` through
+// resolveCloudRepo, and `image refresh`), so the refusal there is the planning
+// run's own (initOptions.planning, set by repoEngine) and those keep --region as
+// the override it is: TestUpdateCheckKeepsTheRegionOverride.
 //
 // The installation's own region is the rig's: us-east5 (initConfig). The region
 // every row below types instead is us-west1.
@@ -245,7 +250,7 @@ func TestAnUnreadableBucketIsSaidNotRefused(t *testing.T) {
 // D3088's amendment): doctor is one, and the region of the project it reads is
 // the one it was handed. `runs ls` and `update --check` are the other two, each
 // pinned by its own test (TestLsInAnotherRegionNamesTheRunsRegion, and
-// update_check_test.go's row).
+// TestUpdateCheckKeepsTheRegionOverride below).
 func TestReadCommandsKeepTheRegionOverride(t *testing.T) {
 	newDoctorRig(t)
 	noProjectLayerBucket(t)
@@ -257,5 +262,33 @@ func TestReadCommandsKeepTheRegionOverride(t *testing.T) {
 	}
 	if o.Project == nil || o.Project.Region != "europe-west1" {
 		t.Fatalf("doctor did not read the project in the typed region: %+v", o.Project)
+	}
+}
+
+// `fugaro update --check` is the other read-only command that reaches a
+// loader: its cloud step resolves the checkout's local config to read what the
+// repository's job carries, and it reads --region the way every other read
+// command does (update_check.go's own flag list, and update_check_test.go pins
+// that the mode accepts it). It plans nothing — no bucket, no registry, no
+// Terraform — so a typed region is the per-invocation override there, not the
+// refusal the two planning doors make (LP8, D3088 as amended).
+func TestUpdateCheckKeepsTheRegionOverride(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	r := newAnchorModeRig(t, refreshYAML, true)
+	noRecordReads(t)
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(t.TempDir(), "none.json"))
+
+	co := cloudOptions{region: "europe-west1"}
+	v := cloudCheck(t.Context(), r.root, co, "")
+	if v.state == cloudFailed {
+		t.Fatalf("the cloud step failed on a region override: %+v", v)
+	}
+	_, lc, _, _, _, failed := resolveCloudRepo(t.Context(), r.root, co)
+	if failed != nil {
+		t.Fatalf("the cloud step resolved to %+v", failed)
+	}
+	if lc.Region != co.region {
+		t.Errorf("the cloud step read the config in %q, not the region it was handed (%q)", lc.Region, co.region)
 	}
 }

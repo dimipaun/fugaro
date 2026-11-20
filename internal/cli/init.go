@@ -103,6 +103,16 @@ type initOptions struct {
 	// `fugaro upgrade` that was not a converge at all.
 	checkOnly bool
 
+	// planning is whether this run plans an installation, which is what makes a
+	// --region that is not the installation's own a refusal (LP8, D3088 as
+	// amended). Only the runs that plan set it: repoEngine, which is
+	// `fugaro update --repo` and the converge's repository stage both. The
+	// loaders are shared with commands that read a checkout's config without
+	// planning anything — `update --check` (through resolveCloudRepo) and
+	// `image refresh` — and those keep --region as the per-invocation override
+	// it is.
+	planning bool
+
 	publishConfig       bool // --publish-config: publish the shared config to the runs bucket and stop
 	anchor              bool // --anchor: write the checkout's gcp_project line, after its checks, and stop
 	forget, yes, asJSON bool
@@ -4619,6 +4629,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err != nil {
 		return err
 	}
+	// This run plans the repository's resources, so the loader below refuses a
+	// --region that is not the installation's own (LP8, D3088 as amended): the
+	// commands that read a checkout's config without planning do not set this
+	// and keep the flag as the per-invocation override it is.
+	o.planning = true
 	lc, path, old, err := loadRepoConfig(ctx, o, dir)
 	if err != nil {
 		return err
@@ -5498,14 +5513,18 @@ func loadRepoConfig(ctx context.Context, o *initOptions, dir string) (lc *localc
 		return nil, "", nil, err
 	}
 	// The installation's own region, read before the announcement applies the
-	// typed one: --repo converges a repository of an installation that exists,
-	// so the config's region is the one a typed region is refused against.
+	// typed one: a run that plans converges a repository of an installation
+	// that exists, so the config's region is what the typed one is refused
+	// against (o.planning); a run that only reads the config keeps --region as
+	// the per-invocation override it is (LP8, D3088 as amended).
 	own := lc.Region
 	if err := announce(o.cloud, sel, lc); err != nil {
 		return nil, "", nil, err
 	}
-	if err := refuseAnotherRegion(o, own); err != nil {
-		return nil, "", nil, err
+	if o.planning {
+		if err := refuseAnotherRegion(o, own); err != nil {
+			return nil, "", nil, err
+		}
 	}
 	if o.name != "" && o.name != lc.Name {
 		return nil, "", nil, userErr("--name %s is not the selected project %s", o.name, lc.Name)
