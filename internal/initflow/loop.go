@@ -375,14 +375,22 @@ func (l *loop) stepUp(stage string) {
 }
 
 // emitStage hands a settled stage to the caller's OnStage. It is called where
-// the run's own result is built — the execution pass (record), and the preview
-// of a plan-only run, which is that run's whole account — so what a caller
-// rendering the run sees is the run, and never the review screen an applying
-// run throws away.
+// the run's own result is built — the execution pass (record, which a failure
+// enters through fail), and the preview of a plan-only run, which is that
+// run's whole account — so what a caller rendering the run sees is the run,
+// and never the review screen an applying run throws away.
+//
+// The guard is the one emitLeft carries and it is load-bearing: an applying
+// run's preview records the stage a failed check stopped at (fail), and the
+// execution pass behind it resets that result and records the stage again, so
+// without it a caller is handed the same stage twice — a `stage ... failed`
+// line from the throwaway pass, ahead of the step line of the run's own pass,
+// and then that stage again where converge records it.
 func (l *loop) emitStage(r StageResult) {
-	if l.o.OnStage != nil {
-		l.o.OnStage(r)
+	if l.o.OnStage == nil || !(l.executing || l.o.PlanOnly) {
+		return
 	}
+	l.o.OnStage(r)
 }
 
 // emitLeft hands a step only the user can do to the caller's OnLeft, and it is
