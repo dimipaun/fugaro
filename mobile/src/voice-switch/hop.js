@@ -38,11 +38,16 @@
 // provider's answer into a shape of its own -- the hop streams the provider's
 // own answer through (`internal/voicesvc/forward.go`), so what an engine's
 // answer *says* is that engine's business and the app's engine table is where
-// it would be read; this client hands back the bytes and the content type.
+// it would be read; this client hands back the bytes and the content type. What
+// it *does* read is the hop's own `StatusAnswer`, which is this contract and not
+// a provider's, and it reads it into the badge's own input (§4.2) so that the
+// wire's vocabulary is translated in one place rather than wherever a screen
+// happens to render it.
 // And it logs nothing: the app has no logger at all (the boundary scan's rule),
 // and a request line carrying a project slug or a transcript is exactly what
 // must not appear in one.
 
+import { POLICY_REASON, STATUS_FAILURE } from '../../../shared/voice-switch/index.js';
 import { DEFAULT_HOST_ALLOW_LIST, validateExternalUrl } from '../../../shared/url/index.js';
 
 /**
@@ -350,15 +355,24 @@ export function createVoiceHop({ baseUrl, hosts = DEFAULT_HOST_ALLOW_LIST, fetch
     /**
      * Ask what the project's policy is for this device (§4.4 point 7).
      *
-     * The answer is the hop's own `StatusAnswer`, read strictly enough that the
-     * app cannot mistake a body it does not understand for an admission: the
-     * fields this app uses are checked, the project is required to be the one
-     * that was asked about (a cached answer read against another project is the
-     * one thing that answer must never be), and anything else is `bad-answer`,
-     * which the caller treats exactly as it treats no answer at all.
+     * What comes back is **the badge's own input**, not the hop's `StatusAnswer`
+     * field for field: `shared/voice-switch`'s `indicator` takes
+     * `{ ok: true, providers, direction, reason }` with the reason in its own
+     * kebab vocabulary, or `{ ok: false, code }` with one of its four status
+     * failures, and that is what a caller here gets, ready to hand over. The
+     * translation is one table (below) and it lives here because the hop's wire
+     * vocabulary is this client's business and nobody else's.
+     *
+     * The body is read strictly enough that the app cannot mistake one it does
+     * not understand for an admission: `project` must be the slug that was asked
+     * about (a cached answer read against another project is the one thing that
+     * answer must never be -- `wire.go` echoes it for exactly this reason), the
+     * members this app reads must have their types, and anything else is the
+     * local answer. `providers` is **absent** from the wire when it is empty
+     * (`StatusAnswer`'s `omitempty`), which is the empty list and not a defect.
      *
      * @param {{project: string, signal?: object}} input
-     * @returns {Promise<object>} `{ ok: true, answer }` or a refusal
+     * @returns {Promise<object>} `{ ok: true, status }` or a refusal
      */
     async status({ project, signal } = {}) {
       if (typeof project !== 'string' || project.length === 0) return refuse(HOP_CODES.BAD_ANSWER, 'project');
@@ -369,7 +383,11 @@ export function createVoiceHop({ baseUrl, hosts = DEFAULT_HOST_ALLOW_LIST, fetch
         contentType: 'application/json',
         signal,
       });
-      if (!called.ok) return called;
+      // The badge's own four words for *why*, and the hop's (or `shared/url`'s)
+      // own word for what happened carried beside it, so a caller holding the
+      // answer can still tell "no host is allowed yet" from "the phone is
+      // offline" without either module's vocabulary being re-spelled here.
+      if (!called.ok) return refuse(statusFailure(called), 'hop', called.detail ?? called.code);
       return readStatusAnswer(called.body, project);
     },
 
@@ -430,41 +448,93 @@ export function createVoiceHop({ baseUrl, hosts = DEFAULT_HOST_ALLOW_LIST, fetch
 }
 
 /**
- * The hop's project-status answer, read into the four fields this app uses.
+ * A status query that did not produce an answer, in the badge's four reasons.
  *
- * The wire's members are `wire.go`'s `StatusAnswer`; what is returned here is
- * that answer with the detail sentence dropped and `project` checked, and it is
- * **an answer and not a copy of the policy node** -- no member here is a policy
- * field the app may read a rule out of (§4.4 point 7).
+ * The mapping is the whole point of this function: `shared/voice-switch` reads
+ * `{ ok: false, code }` with the code in its own set, and the hop refuses with
+ * twelve wire reasons. Two of the twelve are answers the app holds and says
+ * (a token that will not verify, a device whose node is gone); a hop that could
+ * not be reached is the third; and everything else -- a policy node this service
+ * could not read, a body this app could not read, a path that is not there -- is
+ * `query-failed`, which §4.5 reads as no answer at all.
  */
-async function readStatusAnswer(called, project) {
+function statusFailure(called) {
+  if (called.code === HOP_CODES.UNREACHABLE || called.code === HOP_CODES.BAD_URL) {
+    return STATUS_FAILURE.UNREACHABLE;
+  }
+  if (called.code === HOP_CODES.NO_TOKEN) return STATUS_FAILURE.EXPIRED_TOKEN;
+  if (called.code === HOP_CODES.REFUSED) {
+    if (called.detail === HOP_REASON.TOKEN_UNVERIFIED) return STATUS_FAILURE.EXPIRED_TOKEN;
+    // `device_unknown` is revocation itself -- "the device node is gone" -- and
+    // the app says so. `not_a_device` is deliberately **not** folded into it: a
+    // token that verifies and is not a device's is a fact about the identity
+    // this app presented, and telling the user their device was revoked would be
+    // a false sentence about the world. It is a query that failed.
+    if (called.detail === HOP_REASON.DEVICE_UNKNOWN) return STATUS_FAILURE.REVOKED_DEVICE;
+  }
+  return STATUS_FAILURE.QUERY_FAILED;
+}
+
+/**
+ * The hop's `StatusAnswer`, read into the badge's own input.
+ *
+ * `wire.go`'s members are the wire's; what is returned here is
+ * `{ ok: true, providers, direction, reason }` -- the four fields
+ * `shared/voice-switch`'s `indicator` takes and the only four, because that
+ * module refuses a status answer carrying a field it does not name. The detail
+ * sentence is dropped here rather than carried: it is written for a person, and
+ * a field the badge does not read is a field the app might.
+ *
+ * **An answer is not a copy of the policy node.** No member here is a policy
+ * field the app may read a rule out of, and nothing on this path is a
+ * substitute for the hop's own refusal on the call itself (§4.4 point 7): the
+ * badge it feeds is what the screen shows, and the hop re-reads the node when
+ * the call arrives.
+ */
+async function readStatusAnswer(body, project) {
   let parsed;
   try {
-    parsed = JSON.parse(new TextDecoder().decode(called.body));
+    parsed = JSON.parse(new TextDecoder().decode(body));
   } catch {
-    return refuse(HOP_CODES.BAD_ANSWER, 'answer');
+    return refuse(STATUS_FAILURE.QUERY_FAILED, 'hop', HOP_CODES.BAD_ANSWER);
   }
-  if (!isPlainObject(parsed)) return refuse(HOP_CODES.BAD_ANSWER, 'answer');
-  if (parsed.project !== project) return refuse(HOP_CODES.BAD_ANSWER, 'project');
-  if (typeof parsed.remote !== 'boolean') return refuse(HOP_CODES.BAD_ANSWER, 'remote');
-  if (!Array.isArray(parsed.providers) || parsed.providers.some((name) => typeof name !== 'string')) {
-    return refuse(HOP_CODES.BAD_ANSWER, 'providers');
+  if (!isPlainObject(parsed)) return refuse(STATUS_FAILURE.QUERY_FAILED, 'hop', HOP_CODES.BAD_ANSWER);
+  // The echo is checked and not trusted: this is the one field of the answer
+  // that says *which* question it answers, and a cached answer read against
+  // another project would be a policy answer about somebody else's project.
+  if (parsed.project !== project) return refuse(STATUS_FAILURE.QUERY_FAILED, 'project');
+  if (typeof parsed.remote !== 'boolean') return refuse(STATUS_FAILURE.QUERY_FAILED, 'remote');
+  // `omitempty`: absent is the empty list, and the two spellings of "this
+  // project admits nobody" are one answer (§4.3).
+  const providers = parsed.providers === undefined ? [] : parsed.providers;
+  if (!Array.isArray(providers) || providers.some((name) => typeof name !== 'string')) {
+    return refuse(STATUS_FAILURE.QUERY_FAILED, 'providers');
   }
   const direction = parsed.direction;
   if (!isPlainObject(direction) || typeof direction.stt !== 'boolean' || typeof direction.tts !== 'boolean') {
-    return refuse(HOP_CODES.BAD_ANSWER, 'direction');
+    return refuse(STATUS_FAILURE.QUERY_FAILED, 'direction');
   }
-  if (parsed.reason !== undefined && parsed.reason !== '' && !REASONS.includes(parsed.reason)) {
-    return refuse(HOP_CODES.BAD_ANSWER, 'reason');
+  const reason = parsed.reason === undefined || parsed.reason === '' ? null : parsed.reason;
+  if (reason !== null && !REASONS.includes(reason)) return refuse(STATUS_FAILURE.QUERY_FAILED, 'reason');
+
+  // The three project-policy answers, in the badge's own vocabulary. A service
+  // that answered `remote: false` while naming no reason is the same answer as
+  // `no_admission` -- "an absent, empty or all-switches-off policy ... are one
+  // answer by design" -- and a node this service could not read is not an
+  // admission but a query that failed, so it is the one member of the family
+  // that does not come back as an answer.
+  let policy = null;
+  if (!parsed.remote) {
+    if (reason === HOP_REASON.POLICY_UNREADABLE) return refuse(STATUS_FAILURE.QUERY_FAILED, 'hop');
+    policy = reason === HOP_REASON.FORCE_LOCAL ? POLICY_REASON.FORCE_LOCAL : POLICY_REASON.NO_ADMISSION;
   }
   return Object.freeze({
     ok: true,
-    answer: Object.freeze({
-      project,
-      remote: parsed.remote,
-      providers: Object.freeze([...parsed.providers]),
+    status: Object.freeze({
+      ok: true,
+      providers: Object.freeze([...providers]),
       direction: Object.freeze({ stt: direction.stt, tts: direction.tts }),
-      reason: typeof parsed.reason === 'string' && parsed.reason !== '' ? parsed.reason : null,
+      reason: policy,
     }),
   });
 }
