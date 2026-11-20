@@ -105,6 +105,19 @@ func TestPackWithoutTimingsIsEqualWeight(t *testing.T) {
 	}
 }
 
+func TestPackWithoutABudgetIsOneLegPerPackage(t *testing.T) {
+	// A caller that named no budget is read as one that wants no packing: a
+	// leg per package, which runs every package and merges none.
+	legs := Pack([]string{"./x/one", "./x/two"}, "", 0)
+	want := []Leg{
+		{Name: "pack-0", Pkg: "./x/one", Index: 0, Of: 1},
+		{Name: "pack-1", Pkg: "./x/two", Index: 0, Of: 1},
+	}
+	if !slices.Equal(legs, want) {
+		t.Fatalf("Pack = %+v, want %+v", legs, want)
+	}
+}
+
 func TestPackWithoutPackagesIsAnEmptyList(t *testing.T) {
 	// The caller prints this as JSON, where a nil slice is null and a run
 	// whose legs are empty is an empty matrix.
