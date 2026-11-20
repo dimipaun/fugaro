@@ -975,12 +975,18 @@ file's word `level`, with the released `mode:` still read — added `rigorSpelli
 `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 57 to 58. The
 row is named here for the reason above: a reader who finds the figure stale should find who moved it.)
 
+(Amended 2026-11-20: the same plan's LV3.1 — a project area's `members` and the project's per-repo
+`defaults.rigor.repos` map — added the `rigor.repos` row to `internal/config/scope.go`, which moved
+the *Config scope rows* row from 117 to 118. The row is not an accident of the shape: the layer's
+scope walker asks that table about every `defaults.*` key and refuses the ones it does not carry, so
+a project layer stating a per-repo level needs the row whatever the key's reader is.)
+
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 14 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 15 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 117 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 118 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 5 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
