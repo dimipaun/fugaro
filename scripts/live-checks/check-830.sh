@@ -1177,11 +1177,14 @@ step_forge() {
   write_compare_py
   python3 "$SCRATCH/forge_args.py" "$SCRATCH/forge.keys" "$A_UID" "$JOB_A" "$A_VM_NAME" "$A_VM_ID" "$AUD" "$LINGER_B" >"$SCRATCH/forge.args" 2>/dev/null || true
   local labels_arg metadata_arg labels_json env_json skipped labels_b keys_tried
-  labels_arg=$(sed -n 's/^labels_arg\t//p' "$SCRATCH/forge.args")
-  metadata_arg=$(sed -n 's/^metadata_arg\t//p' "$SCRATCH/forge.args")
-  labels_json=$(sed -n 's/^labels_json\t//p' "$SCRATCH/forge.args")
-  env_json=$(sed -n 's/^env_json\t//p' "$SCRATCH/forge.args")
-  skipped=$(sed -n 's/^skipped\t//p' "$SCRATCH/forge.args")
+  # Read with awk rather than sed: awk's -F'\t' is a tab on every awk the owner
+  # may have, where BSD sed takes `\t` in a pattern for the two characters and
+  # would leave every one of these empty, failing this row on the owner's Mac.
+  labels_arg=$(awk -F'\t' '$1 == "labels_arg" { print $2 }' "$SCRATCH/forge.args")
+  metadata_arg=$(awk -F'\t' '$1 == "metadata_arg" { print $2 }' "$SCRATCH/forge.args")
+  labels_json=$(awk -F'\t' '$1 == "labels_json" { print $2 }' "$SCRATCH/forge.args")
+  env_json=$(awk -F'\t' '$1 == "env_json" { print $2 }' "$SCRATCH/forge.args")
+  skipped=$(awk -F'\t' '$1 == "skipped" { print $2 }' "$SCRATCH/forge.args")
   keys_tried=$(grep -c . "$SCRATCH/forge.keys" 2>/dev/null || true)
   if [ -z "$labels_arg" ]; then
     fact u1-forge FAIL "the forge attempt could not be built: not one candidate key (${keys_tried} of them) could be written as a label, so no second job was submitted and this run does not show that a launcher cannot forge the link"
