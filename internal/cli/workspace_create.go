@@ -119,6 +119,20 @@ func workspaceAccount(project string) string {
 	return tf.WorkspaceServiceAccountID + "@" + project + ".iam.gserviceaccount.com"
 }
 
+// workspaceIAMAccount is the address of the SA fallback's IAM account: the
+// SECOND account this stage's root creates (WU3 of the workspace-projects-users
+// plan, D2803), which Terraform grants nothing and which a member's owner later
+// gives roles/owner on their own project (WU20). It is named wherever the stage
+// says what it creates, because on an installation that is already converged —
+// the service account and its grant are in the cloud — this account is the ONLY
+// change the plan carries: a sentence naming the service account alone asks the
+// owner to type their project's name for a change it never described, and the
+// account it leaves out is the one that ends up holding authority over every
+// linked member.
+func workspaceIAMAccount(project string) string {
+	return tf.WorkspaceIAMAccountID + "@" + project + ".iam.gserviceaccount.com"
+}
+
 // declared is whether this installation is a workspace's own, and where it is
 // not, why — the detail the stage answers Skipped with.
 //
@@ -257,11 +271,11 @@ func (s *workspaceProjectStage) Check(ctx context.Context) (initflow.Status, err
 }
 
 // workspaceProjectTodo is what the stage says when it has something to do, in
-// Check and in the plan view: the account and the grant, with the root's own
-// name for what reaches what.
+// Check and in the plan view: the root's two accounts and the one grant, with
+// the root's own name for what reaches what.
 func workspaceProjectTodo(lc *localcfg.Config) string {
-	return fmt.Sprintf("the workspace's own service account %s and its one grant %s on %s are planned when applied",
-		workspaceAccount(lc.GCPProject), tf.WorkspaceDatabaseRole(lc.GCPProject), lc.GCPProject)
+	return fmt.Sprintf("the workspace root's two accounts (the workspace's own service account %s and the SA fallback's IAM account %s) and the one grant %s on %s are planned when applied",
+		workspaceAccount(lc.GCPProject), workspaceIAMAccount(lc.GCPProject), tf.WorkspaceDatabaseRole(lc.GCPProject), lc.GCPProject)
 }
 
 // workspaceProjectSkip is why this installation has no workspace's own project
@@ -322,12 +336,13 @@ func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (init
 	}
 	project := s.e.lc.GCPProject
 	account := workspaceAccount(project)
+	iamAccount := workspaceIAMAccount(project)
 	if plan == nil {
 		fmt.Fprintf(s.e.r.w, "No changes: the workspace's own service account %s holds %s on %s.\n", account, tf.WorkspaceDatabaseRole(project), project)
 		return initflow.Outcome{Detail: "the workspace's own service account and its one grant are already there"}, nil
 	}
 	fmt.Fprint(s.e.r.w, tf.Summary(plan))
-	confirmed, reachable, err := s.e.r.askTyped(fmt.Sprintf("creates the workspace's own service account %s in GCP project %s and grants it %s on that project's database (%s): the account is the one identity that reaches the workspace's database, because the database's rules deny every client — and it is a GRANT, so no flag confirms it; %s)", account, project, tf.WorkspaceDatabaseRole(project), counts.String(), initflow.AgentAdvice))
+	confirmed, reachable, err := s.e.r.askTyped(fmt.Sprintf("creates the workspace's own service account %s in GCP project %s and grants it %s on that project's database (%s), and creates the SA fallback's IAM account %s, which this root grants nothing: the service account is the one identity that reaches the workspace's database, because the database's rules deny every client — and it is a GRANT, so no flag confirms it; %s)", account, project, tf.WorkspaceDatabaseRole(project), counts.String(), iamAccount, initflow.AgentAdvice))
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
@@ -342,8 +357,8 @@ func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (init
 	}
 	s.applied = true
 	s.e.r.res.Applied = true
-	fmt.Fprintf(s.e.r.w, "created the workspace's own service account %s and its one grant (%s on %s)\n", account, tf.WorkspaceDatabaseRole(project), project)
-	return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("applied: %s (the workspace's own service account %s)", counts.String(), account)}, nil
+	fmt.Fprintf(s.e.r.w, "created the workspace root's two accounts and its one grant: the workspace's own service account %s, the SA fallback's IAM account %s, and %s on %s\n", account, iamAccount, tf.WorkspaceDatabaseRole(project), project)
+	return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("applied: %s (the workspace's own service account %s and the SA fallback's IAM account %s)", counts.String(), account, iamAccount)}, nil
 }
 
 // Verify re-reads what the apply claims: a fresh plan of the same root over the
@@ -393,13 +408,15 @@ func (s *workspaceProjectStage) readPlan(ctx context.Context, guard bool) (*tf.P
 	return plan, &counts, nil
 }
 
-// guard is this root's cover: the plan is the workspace's own role, its
-// service account and that account's one grant, and nothing else.
+// guard is this root's cover: the plan is the workspace's own role, its two
+// accounts and that service account's one grant, and nothing else.
 // tf.WorkspaceNotCovered answers what of
 // the plan is not, so the message can name it rather than say "refused".
 func (s *workspaceProjectStage) guard(plan *tf.Plan) error {
 	if why := tf.WorkspaceNotCovered(plan, s.e.lc.GCPProject, tf.WorkspaceServiceAccountID); len(why) > 0 {
-		return userErr("the workspace root's plan is not the workspace's own role, its service account and that account's one grant on the workspace's database (%s); nothing was applied, and a plan that carries anything else is not this root's to apply: read it with terraform in %s", strings.Join(why, "; "), s.dir)
+		project := s.e.lc.GCPProject
+		return userErr("the workspace root's plan is not the workspace's own role, its two accounts (the workspace's own service account %s and the SA fallback's IAM account %s) and the one grant that binds the service account to %s's database (%s); nothing was applied, and a plan that carries anything else is not this root's to apply: read it with terraform in %s",
+			workspaceAccount(project), workspaceIAMAccount(project), project, strings.Join(why, "; "), s.dir)
 	}
 	return nil
 }
