@@ -452,14 +452,245 @@ func TestJobDefinitionIsTheDesignsJob(t *testing.T) {
 	}
 }
 
+// TestTheSplitBuildsTheSameJob is BRS's pin: the job definition of one run,
+// built through the four helpers four later tasks each own one of -- the
+// task's environment (env.go, BR8), the sealed launch (seal.go, BR1), the
+// account a run's VMs are (account.go, BR10) and the mounted secrets
+// (secrets.go, BR11) -- is byte for byte the job it was before the split, as
+// Batch receives it.
+//
+// The goldens are the two jobs launched here, serialized as the fakes decoded
+// them from the request. That is what makes the split a move rather than a
+// rewrite: a helper that stops contributing shows up as a difference here
+// rather than in a reviewer's head. Hand mutation, one per helper: empty
+// jobVariables' map (or drop its reservation of the launch's own entries),
+// return nil from secretVariables, return "" from jobAccount, or have
+// sealedVars carry an entry instead of refusing it -- the last one shows as a
+// fourth variable in the "no daemon" golden, and TestLaunchRefusesASecretEnv
+// fails on it too.
+func TestTheSplitBuildsTheSameJob(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		spec   backend.LaunchSpec
+		tweak  func(*Options)
+		golden string
+	}{
+		{
+			name:   "the job of a run that asked for no daemon, on an installation that mounts a secret",
+			spec:   spec(),
+			tweak:  func(o *Options) { o.Secrets = map[string]string{"ANTHROPIC_API_KEY": testSecret} },
+			golden: goldenNoDaemonJob,
+		},
+		{
+			name:   "the job of a run that asked for the daemon",
+			spec:   dockerSpec(),
+			tweak:  func(o *Options) { o.Secrets = map[string]string{"ANTHROPIC_API_KEY": testSecret} },
+			golden: goldenDockerJob,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := createdJobJSON(t, tc.spec, tc.tweak); got != tc.golden {
+				t.Errorf("the job Batch was sent is not the job this definition built before the split:\n%s\n\nwant:\n%s", got, tc.golden)
+			}
+		})
+	}
+}
+
+// createdJobJSON is the job one launch creates, as Batch receives it. The job
+// is the fakes' decode of the request body, marshalled back with sorted keys,
+// so the comparison is over the job's fields and not over Go's map order.
+func createdJobJSON(t *testing.T, s backend.LaunchSpec, tweak func(*Options)) string {
+	t.Helper()
+	b, bf, _, _ := newTestBackend(t, tweak)
+	if _, err := b.Launch(context.Background(), s); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	creates := bf.Creates()
+	if len(creates) != 1 {
+		t.Fatalf("jobs.create calls = %d, want 1", len(creates))
+	}
+	blob, err := json.MarshalIndent(creates[0].Job, "", "  ")
+	if err != nil {
+		t.Fatalf("marshalling the created job: %v", err)
+	}
+	return string(blob)
+}
+
+// goldenNoDaemonJob and goldenDockerJob are the job definition of BRS's two
+// runs, captured from the definition as it stood before the split. They are a
+// job's whole JSON rather than the handful of fields the tests around them
+// name, because a move can drop a field no test of this package asserted --
+// and one Batch would then fill in from its own defaults on the VM instead.
+const (
+	goldenNoDaemonJob = `{
+  "allocationPolicy": {
+    "instances": [
+      {
+        "blockProjectSshKeys": true,
+        "policy": {
+          "bootDisk": {
+            "image": "projects/fake-project/global/images/fugaro-base-0-7-5",
+            "sizeGb": "50"
+          },
+          "machineType": "e2-standard-4"
+        }
+      }
+    ],
+    "labels": {
+      "fugaro": "managed",
+      "fugaro_repo": "acme-app",
+      "fugaro_run": "acme-app-20260927-100000-abcd",
+      "fugaro_workflow": "web"
+    },
+    "network": {
+      "networkInterfaces": [
+        {
+          "network": "projects/fake-project/global/networks/default",
+          "noExternalIpAddress": true,
+          "subnetwork": "projects/fake-project/regions/fake-region/subnetworks/default"
+        }
+      ]
+    },
+    "serviceAccount": {
+      "email": "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
+    }
+  },
+  "labels": {
+    "fugaro": "managed",
+    "fugaro_repo": "acme-app",
+    "fugaro_run": "acme-app-20260927-100000-abcd",
+    "fugaro_workflow": "web"
+  },
+  "logsPolicy": {
+    "destination": "CLOUD_LOGGING"
+  },
+  "taskGroups": [
+    {
+      "parallelism": "1",
+      "taskCount": "1",
+      "taskSpec": {
+        "computeResource": {
+          "cpuMilli": "2000",
+          "memoryMib": "4096"
+        },
+        "environment": {
+          "secretVariables": {
+            "ANTHROPIC_API_KEY": "projects/fake-project/secrets/fugaro-acme-app-anthropic-api-key"
+          },
+          "variables": {
+            "FUGARO_BACKEND": "cloud-batch",
+            "FUGARO_BATCH_JOB": "projects/fake-project/locations/fake-region/jobs/fugaro-acme-app-web-f31eb908886f",
+            "FUGARO_GCP_PROJECT": "fake-project",
+            "FUGARO_PROJECT": "acme",
+            "FUGARO_REGION": "fake-region",
+            "FUGARO_RUN": "acme-app/20260927-100000-abcd"
+          }
+        },
+        "maxRetryCount": 0,
+        "maxRunDuration": "1920s",
+        "runnables": [
+          {
+            "container": {
+              "imageUri": "fake-region-docker.pkg.dev/fake-project/fugaro-acme-app/acme-app:1"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}`
+	goldenDockerJob = `{
+  "allocationPolicy": {
+    "instances": [
+      {
+        "blockProjectSshKeys": true,
+        "policy": {
+          "bootDisk": {
+            "image": "projects/fake-project/global/images/fugaro-base-0-7-5",
+            "sizeGb": "50"
+          },
+          "machineType": "e2-standard-4"
+        }
+      }
+    ],
+    "labels": {
+      "fugaro": "managed",
+      "fugaro_repo": "acme-app",
+      "fugaro_run": "acme-app-20260927-100000-abcd",
+      "fugaro_workflow": "web"
+    },
+    "network": {
+      "networkInterfaces": [
+        {
+          "network": "projects/fake-project/global/networks/default",
+          "noExternalIpAddress": true,
+          "subnetwork": "projects/fake-project/regions/fake-region/subnetworks/default"
+        }
+      ]
+    },
+    "serviceAccount": {
+      "email": "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
+    }
+  },
+  "labels": {
+    "fugaro": "managed",
+    "fugaro_repo": "acme-app",
+    "fugaro_run": "acme-app-20260927-100000-abcd",
+    "fugaro_workflow": "web"
+  },
+  "logsPolicy": {
+    "destination": "CLOUD_LOGGING"
+  },
+  "taskGroups": [
+    {
+      "parallelism": "1",
+      "taskCount": "1",
+      "taskSpec": {
+        "computeResource": {
+          "cpuMilli": "2000",
+          "memoryMib": "4096"
+        },
+        "environment": {
+          "secretVariables": {
+            "ANTHROPIC_API_KEY": "projects/fake-project/secrets/fugaro-acme-app-anthropic-api-key"
+          },
+          "variables": {
+            "DOCKER_HOST": "unix:///var/run/docker.sock",
+            "FUGARO_BACKEND": "cloud-batch",
+            "FUGARO_BATCH_JOB": "projects/fake-project/locations/fake-region/jobs/fugaro-acme-app-web-f31eb908886f",
+            "FUGARO_GCP_PROJECT": "fake-project",
+            "FUGARO_PROJECT": "acme",
+            "FUGARO_REGION": "fake-region",
+            "FUGARO_RUN": "acme-app/20260927-100000-abcd"
+          }
+        },
+        "maxRetryCount": 0,
+        "maxRunDuration": "1920s",
+        "runnables": [
+          {
+            "container": {
+              "imageUri": "fake-region-docker.pkg.dev/fake-project/fugaro-acme-app/acme-app:1",
+              "options": "--group-add 998",
+              "volumes": [
+                "/var/run/docker.sock:/var/run/docker.sock"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}`
+)
+
 // TestLaunchSendsNoSecretValue is C10 stated as a search of the bytes Batch
 // receives, over the one surface where a caller could actually put a value
 // there: Options.Secrets. The job carries names only, and this is the test
 // that fails if someone later resolves one.
 //
-// Hand mutation: in run.go, write the secrets into the task's plain
-// Variables as well (`vars[k] = v` beside `env.SecretVariables = ...`, or
-// `env.Variables = b.o.Secrets` in its place). It is the mutation the review
+// Hand mutation: in secrets.go, write the secrets into the task's plain
+// Variables as well (`vars[k] = v` beside the SecretVariables the helper
+// returns, or `b.o.Secrets` in the variables' place). It is the mutation the review
 // called M4, and it stayed green against the earlier version of this test:
 // that one searched for a value the backend was never given, so nothing could
 // make it fail. This one passes a recognisable value through the API surface
