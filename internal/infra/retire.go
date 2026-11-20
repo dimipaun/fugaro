@@ -664,9 +664,9 @@ func ProxiedTokenAccessorAllowDelete(p *tf.Plan, spec RepoSpec) []string {
 // key of an `api-key` repository, and the OAuth token of an `oauth` one, the
 // default account's or the one this variant is for.
 //
-// It is B1.13's rule and B3.8's for the S2 flip, and it exists for the same
-// reason (CLAUDE.md's HARD RULE; the finding B2.7's own review left open, PR
-// 3152): the plan that lands the flip deletes an accessor the state holds and
+// It is B1.13's rule for the S2 flip, and it exists for the same reason
+// (CLAUDE.md's HARD RULE; the finding B2.7's own review left open, PR 3152):
+// the plan that lands the flip deletes an accessor the state holds and
 // this tree's spec no longer produces — a managed project's own retirement
 // converges it (init's retireManaged, whose guard is RetireAllowDelete) and a
 // project that is not managed takes the ordinary plan, where the run would
@@ -712,10 +712,10 @@ func ModelAccessorAllowDelete(p *tf.Plan, spec RepoSpec) []string {
 // what is left of the first, and why a drop added later that keeps a container
 // has to record its names the way dropVaultMounts does.
 //
-// It is a function of the spec alone and not of the arm, which is the caller's
-// own gate: the same name on a repository the switch holds off is a mount that
-// never went anywhere, and the plan that deletes its accessor there is the
-// operator's own change.
+// It is a function of the spec alone, the arm being the caller's own gate: a
+// repository the switch holds off plans no drop at all, so its job mounts
+// exactly what it always did and the plan that deletes an accessor there is
+// the operator's own change, judged as before (D2071).
 func modelMountDropped(ws WorkflowSpec, name string) bool {
 	if _, declared := ws.SecretIDs[name]; !declared {
 		return false
