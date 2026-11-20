@@ -115,4 +115,6 @@ resource "google_logging_log_view_iam_member" "runs" {
   name     = google_logging_log_view.runs[0].name
   role     = "roles/logging.viewAccessor"
   member   = each.value
+
+  depends_on = [google_logging_project_bucket_config.fugaro]
 }

@@ -42,8 +42,11 @@ func ObjectKey(slug, run string) string {
 // with ObjectKey as the additional authenticated data) and the caller hands
 // the same key to the one execution the token is for (D15). There is no
 // plaintext form: a key that is not one is ErrSealKey and nothing is written,
-// because a plaintext object in the bucket is the exposure the seal closes
-// (§7.4), and a reader of tokens/ must never find one written by Fugaro.
+// because a plaintext TOKEN object in the bucket is the exposure the seal
+// closes (§7.4), and a reader of tokens/ must never find one written by
+// Fugaro. The plaintext under tokens/ is the messages a launcher sends a
+// running run (docs/run-messages, D2941, F2), which are not this: a token is
+// never one of them.
 func PutObject(ctx context.Context, b *blobx.Bucket, slug, run, tok string, key []byte) error {
 	if !ValidSegment(slug) || !ValidSegment(run) {
 		return errors.New("budget token: invalid slug or run id")

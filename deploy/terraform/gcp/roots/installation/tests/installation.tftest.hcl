@@ -117,8 +117,20 @@ run "bucket_is_marked" {
     error_message = "the runs bucket must never be force-destroyed"
   }
   assert {
-    condition     = length(google_storage_bucket.runs.lifecycle_rule) == 5
-    error_message = "the runs bucket must have exactly the bootstrap's three lifecycle rules, the one its versioning adds and the one the stored reports expire under"
+    condition     = length(google_storage_bucket.runs.lifecycle_rule) == 6
+    error_message = "the runs bucket must have exactly the bootstrap's three lifecycle rules, the one its versioning adds, the one the stored reports expire under and the one message objects expire under"
+  }
+  assert {
+    condition = anytrue([for r in google_storage_bucket.runs.lifecycle_rule :
+      one(r.action).type == "Delete" && one(r.condition).age == 7 &&
+      one(r.condition).matches_prefix == tolist(["tokens/"]) &&
+    one(r.condition).matches_suffix == tolist([".msg.json"])])
+    error_message = "a launcher's message object (tokens/<slug>/<run>/messages/NNNN.msg.json, D2941) must be deleted after 7 days, whether or not the budget is enabled: nothing else under tokens/ carries that suffix, so the budget token's own rule is untouched (F11)"
+  }
+  assert {
+    condition = alltrue([for r in google_storage_bucket.runs.lifecycle_rule :
+    !contains(coalesce(one(r.condition).matches_suffix, []), "/budget-token")])
+    error_message = "without enable_budget no rule may match the budget token: its rule is the one the budget turns on, and the message rule's suffix must not reach it"
   }
   assert {
     condition     = one(google_storage_bucket.runs.versioning).enabled == true
@@ -1004,8 +1016,15 @@ run "budget_token_objects_expire" {
   }
 
   assert {
-    condition     = length(google_storage_bucket.runs.lifecycle_rule) == 6
-    error_message = "with enable_budget the runs bucket has the bootstrap's three lifecycle rules, the one its versioning adds, the one the stored reports expire under and one for untaken budget tokens"
+    condition     = length(google_storage_bucket.runs.lifecycle_rule) == 7
+    error_message = "with enable_budget the runs bucket has the bootstrap's three lifecycle rules, the one its versioning adds, the one the stored reports expire under, the one message objects expire under and one for untaken budget tokens"
+  }
+  assert {
+    condition = anytrue([for r in google_storage_bucket.runs.lifecycle_rule :
+      one(r.action).type == "Delete" && one(r.condition).age == 7 &&
+      one(r.condition).matches_prefix == tolist(["tokens/"]) &&
+    one(r.condition).matches_suffix == tolist([".msg.json"])])
+    error_message = "the message rule must be planned with the budget enabled too: it is unconditional, and it is not the budget token's rule under another name"
   }
   assert {
     condition     = contains(keys(google_project_service.this), "cloudbilling.googleapis.com")

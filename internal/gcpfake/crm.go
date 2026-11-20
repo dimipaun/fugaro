@@ -17,6 +17,17 @@ import (
 // carries, as the real API does, so a caller must send back the project it
 // read (see handle, and TestProjectUpdateReplacesTheProjectsEditableFields).
 //
+// It serves the v3 calls the folder authority makes besides them
+// (internal/infra/folder.go): folders.create (an operation, polled),
+// folders.get, folders.getIamPolicy and folders.setIamPolicy,
+// organizations.search, projects.move (an operation) and the project read
+// that answers a project's parent. A project's parent is what it was added,
+// created or moved with, so a move is visible in the read that follows it
+// (ProjectParent, Moves). v1 projects.setIamPolicy is served too, for the
+// same one-writer reason in reverse: the end-to-end test (WU21, level 5) drives
+// a member's own policy write against this fake, and WU2 is the only writer
+// crm.go has, so the write is here before the test that needs it.
+//
 // Like the real API, it answers a project it doesn't know with 403, not
 // 404, so a caller can't tell a missing project from one it may not read.
 type CRM struct {
@@ -31,6 +42,14 @@ type CRM struct {
 	states   map[string]string
 	noGet    map[string]bool // projects whose plain read answers 403 (the policy stays readable)
 	noUpdate map[string]bool // projects whose update answers 403 (the plain read stays readable)
+
+	folders        map[string]gcpFolder // folder ID (the number) -> what the folder is
+	folderPolicies map[string][]Binding
+	folderAudits   map[string][]AuditConfig
+	orgs           []string          // the organizations organizations.search answers
+	parents        map[string]string // a project's parent, once the fake knows one
+	moves          []ProjectMove
+	nextFolder     int64
 
 	// PropagationReads is how many reads of a project answer 403 right
 	// after its creation, as happens while a new project propagates.
@@ -59,9 +78,38 @@ type CreatedProject struct {
 	Labels map[string]string
 }
 
+// gcpFolder is one folder: its display name and its parent (organizations/N,
+// folders/N or "").
+type gcpFolder struct{ DisplayName, Parent string }
+
+// AuditConfig is one service's audit-logging configuration in a policy: the
+// service it covers and the log types it sets. It is what a folder policy
+// serves under "auditConfigs", and the shape a write carries back.
+type AuditConfig struct {
+	Service         string           `json:"service"`
+	AuditLogConfigs []AuditLogConfig `json:"auditLogConfigs,omitempty"`
+}
+
+// AuditLogConfig is one log type an audit configuration sets, with the members
+// exempted from it.
+type AuditLogConfig struct {
+	LogType         string   `json:"logType"`
+	ExemptedMembers []string `json:"exemptedMembers,omitempty"`
+}
+
+// ProjectMove is a move the fake accepted, in the order the moves completed.
+type ProjectMove struct{ Project, Parent string }
+
 type crmOp struct {
 	polls int
 	proj  CreatedProject
+	// kind is what the operation carries: "project" for a create (proj),
+	// "folder" for a folder create (folder is the folder's ID, and the
+	// operation answers the folder the create made) or "move" (move is the
+	// destination the project goes to when the operation completes).
+	kind   string
+	folder string
+	move   ProjectMove
 }
 
 // crmOpError is an operation's own error: a google.rpc.Code and its message,
@@ -79,11 +127,20 @@ type crmOpError struct {
 // repeating the constant.
 const FirstCreatedProjectNumber = 900000000001
 
+// FirstCreatedFolderNumber is the number the fake gives the first folder a
+// test creates through folders.create, on the same terms: nextFolder starts
+// just below it.
+const FirstCreatedFolderNumber = 700000000001
+
 var (
-	crmProjectRE = regexp.MustCompile(`^/v1/projects/([^/:]+)$`)
-	crmPolicyRE  = regexp.MustCompile(`^/v1/projects/([^/:]+):getIamPolicy$`)
-	crmV3GetRE   = regexp.MustCompile(`^/v3/projects/([^/:]+)$`)
-	crmV3OpRE    = regexp.MustCompile(`^/v3/(operations/[^/]+)$`)
+	crmProjectRE     = regexp.MustCompile(`^/v1/projects/([^/:]+)$`)
+	crmPolicyRE      = regexp.MustCompile(`^/v1/projects/([^/:]+):getIamPolicy$`)
+	crmSetPolicyRE   = regexp.MustCompile(`^/v1/projects/([^/:]+):setIamPolicy$`)
+	crmV3GetRE       = regexp.MustCompile(`^/v3/projects/([^/:]+)$`)
+	crmV3MoveRE      = regexp.MustCompile(`^/v3/projects/([^/:]+):move$`)
+	crmV3OpRE        = regexp.MustCompile(`^/v3/(operations/[^/]+)$`)
+	crmV3FolderRE    = regexp.MustCompile(`^/v3/folders/([^/:]+)$`)
+	crmV3FolderPolRE = regexp.MustCompile(`^/v3/folders/([^/:]+):(get|set)IamPolicy$`)
 )
 
 // NewCRM starts a Resource Manager fake that lives until the test ends.
@@ -92,9 +149,79 @@ func NewCRM(t *testing.T) *CRM {
 	f := &CRM{projects: map[string]int64{}, labels: map[string]map[string]string{}, names: map[string]string{}, named: map[string]bool{},
 		policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
 		noPolicy: map[string]bool{}, noUpdate: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{},
-		nextProj: FirstCreatedProjectNumber - 1}
+		folders: map[string]gcpFolder{}, folderPolicies: map[string][]Binding{}, folderAudits: map[string][]AuditConfig{}, parents: map[string]string{},
+		nextProj: FirstCreatedProjectNumber - 1, nextFolder: FirstCreatedFolderNumber - 1}
 	f.Server = newServer(t, f.handle)
 	return f
+}
+
+// AddFolder makes folder id exist, named displayName under parent.
+func (f *CRM) AddFolder(id, displayName, parent string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.folders[id] = gcpFolder{DisplayName: displayName, Parent: parent}
+}
+
+// SetFolderPolicy sets the bindings of folder's IAM policy.
+func (f *CRM) SetFolderPolicy(id string, bindings ...Binding) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.folderPolicies[id] = bindings
+}
+
+// FolderPolicy is folder's IAM policy bindings as the fake holds them now, so a
+// test can read what a write left behind.
+func (f *CRM) FolderPolicy(id string) []Binding {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Binding(nil), f.folderPolicies[id]...)
+}
+
+// SetFolderAuditConfigs sets the audit-logging configuration of folder's IAM
+// policy, which a policy write carries back whole alongside its bindings.
+func (f *CRM) SetFolderAuditConfigs(id string, configs ...AuditConfig) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.folderAudits[id] = configs
+}
+
+// FolderAuditConfigs is folder's audit-logging configuration as the fake holds
+// it now: empty when a write did not carry back what the read answered, which
+// is what a policy rebuilt from its bindings alone looks like.
+func (f *CRM) FolderAuditConfigs(id string) []AuditConfig {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]AuditConfig(nil), f.folderAudits[id]...)
+}
+
+// AddOrganization makes organizations.search answer id.
+func (f *CRM) AddOrganization(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.orgs = append(f.orgs, id)
+}
+
+// SetParent makes a read of project answer parent, for a project no create or
+// move of the test's put anywhere.
+func (f *CRM) SetParent(project, parent string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.parents[project] = parent
+}
+
+// ProjectParent is where a read of project puts it: the parent it was added,
+// created or moved with, and "" for a project the fake knows none for.
+func (f *CRM) ProjectParent(project string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.parents[project]
+}
+
+// Moves are the moves the fake completed, in order.
+func (f *CRM) Moves() []ProjectMove {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]ProjectMove(nil), f.moves...)
 }
 
 // AddProject makes project id exist with number.
@@ -304,13 +431,16 @@ type v3Project struct {
 
 func (f *CRM) v3Project(id string) v3Project {
 	p := v3Project{Name: "projects/" + strconv.FormatInt(f.projects[id], 10), ProjectID: id, DisplayName: id, State: cmpOr(f.states[id], "ACTIVE")}
+	p.Parent = f.parents[id]
 	if ls := f.labels[id]; len(ls) > 0 {
 		p.Labels = maps.Clone(ls)
 	}
 	return p
 }
 
-// handleV3 serves projects.create, its operation and projects.get.
+// handleV3 serves projects.create, projects.get, projects.move,
+// folders.create, folders.get, the folder policy, organizations.search and
+// the operations both creates and the move poll.
 func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool {
 	switch {
 	case r.URL.Path == "/v3/projects" && r.Method == http.MethodPost:
@@ -336,14 +466,42 @@ func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool
 		f.nextOp++
 		p := CreatedProject{ID: in.ProjectID, DisplayName: in.DisplayName, Parent: in.Parent, Number: f.nextProj, Labels: maps.Clone(in.Labels)}
 		f.projects[p.ID] = p.Number
+		if in.Parent != "" {
+			f.parents[p.ID] = in.Parent
+		}
 		if len(in.Labels) > 0 {
 			f.labels[p.ID] = maps.Clone(in.Labels)
 		}
 		f.hide[p.ID] = f.PropagationReads
 		f.creates = append(f.creates, p)
 		name := "operations/cp." + strconv.Itoa(f.nextOp)
-		f.ops[name] = &crmOp{polls: f.PendingPolls, proj: p}
+		f.ops[name] = &crmOp{polls: f.PendingPolls, kind: "project", proj: p}
 		writeJSON(w, http.StatusOK, map[string]any{"name": name, "done": false})
+		return true
+	case r.URL.Path == "/v3/folders" && r.Method == http.MethodPost:
+		var in struct {
+			DisplayName string `json:"displayName"`
+			Parent      string `json:"parent"`
+		}
+		if err := json.Unmarshal(body, &in); err != nil || in.DisplayName == "" {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a folder display name is required")
+			return true
+		}
+		f.nextFolder++
+		f.nextOp++
+		id := strconv.FormatInt(f.nextFolder, 10)
+		f.folders[id] = gcpFolder{DisplayName: in.DisplayName, Parent: in.Parent}
+		name := "operations/cf." + strconv.Itoa(f.nextOp)
+		f.ops[name] = &crmOp{polls: f.PendingPolls, kind: "folder", folder: id}
+		writeJSON(w, http.StatusOK, map[string]any{"name": name, "done": false})
+		return true
+	case r.URL.Path == "/v3/organizations:search" && r.Method == http.MethodGet:
+		out := make([]map[string]any, 0, len(f.orgs))
+		for _, id := range f.orgs {
+			out = append(out, map[string]any{"name": "organizations/" + id, "displayName": "organizations/" + id,
+				"state": "ACTIVE"})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"organizations": out})
 		return true
 	case crmV3OpRE.MatchString(r.URL.Path) && r.Method == http.MethodGet:
 		name := crmV3OpRE.FindStringSubmatch(r.URL.Path)[1]
@@ -358,13 +516,37 @@ func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool
 			return true
 		}
 		if f.failOp != nil {
-			// The real API creates no project when the operation ends in an
-			// error: the create was accepted, and the project never existed.
-			// The record the create made is dropped with it, so a test can
-			// assert that nothing was left behind (nothingDone reads Creates).
-			f.drop(op.proj.ID)
+			// The real API leaves nothing behind when an operation ends in an
+			// error: a create's project never existed (the record the create
+			// made is dropped with it, so a test can assert that nothing was
+			// left behind — nothingDone reads Creates) and a move's project
+			// stays where it was.
+			if op.kind == "project" {
+				f.drop(op.proj.ID)
+			}
+			if op.kind == "folder" {
+				delete(f.folders, op.folder)
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"name": name, "done": true,
 				"error": map[string]any{"code": f.failOp.code, "message": f.failOp.msg}})
+			return true
+		}
+		switch op.kind {
+		case "folder":
+			fo := f.folders[op.folder]
+			writeJSON(w, http.StatusOK, map[string]any{"name": name, "done": true,
+				"response": map[string]any{"@type": "type.googleapis.com/google.cloud.resourcemanager.v3.Folder",
+					"name": "folders/" + op.folder, "displayName": fo.DisplayName, "parent": fo.Parent, "state": "ACTIVE"}})
+			return true
+		case "move":
+			// The move lands when its operation completes, as the API's does:
+			// the project's read answers the new parent from here on.
+			f.parents[op.move.Project] = op.move.Parent
+			f.moves = append(f.moves, op.move)
+			p := f.v3Project(op.move.Project)
+			writeJSON(w, http.StatusOK, map[string]any{"name": name, "done": true,
+				"response": map[string]any{"@type": "type.googleapis.com/google.cloud.resourcemanager.v3.Project",
+					"name": p.Name, "projectId": p.ProjectID, "state": p.State, "parent": p.Parent}})
 			return true
 		}
 		resp := f.v3Project(op.proj.ID)
@@ -373,6 +555,65 @@ func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool
 		writeJSON(w, http.StatusOK, map[string]any{"name": name, "done": true,
 			"response": map[string]any{"@type": "type.googleapis.com/google.cloud.resourcemanager.v3.Project",
 				"name": resp.Name, "projectId": resp.ProjectID, "state": resp.State}})
+		return true
+	case crmV3MoveRE.MatchString(r.URL.Path) && r.Method == http.MethodPost:
+		id := crmV3MoveRE.FindStringSubmatch(r.URL.Path)[1]
+		if _, ok := f.projects[id]; !ok {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
+			return true
+		}
+		var in struct {
+			DestinationParent string `json:"destinationParent"`
+		}
+		if err := json.Unmarshal(body, &in); err != nil || in.DestinationParent == "" {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a destination parent is required")
+			return true
+		}
+		f.nextOp++
+		name := "operations/cm." + strconv.Itoa(f.nextOp)
+		f.ops[name] = &crmOp{polls: f.PendingPolls, kind: "move", move: ProjectMove{Project: id, Parent: in.DestinationParent}}
+		writeJSON(w, http.StatusOK, map[string]any{"name": name, "done": false})
+		return true
+	case crmV3FolderPolRE.MatchString(r.URL.Path) && r.Method == http.MethodPost:
+		m := crmV3FolderPolRE.FindStringSubmatch(r.URL.Path)
+		id, verb := m[1], m[2]
+		if _, ok := f.folders[id]; !ok {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
+			return true
+		}
+		if verb == "set" {
+			var in struct {
+				Policy struct {
+					Bindings     []Binding     `json:"bindings"`
+					AuditConfigs []AuditConfig `json:"auditConfigs"`
+				} `json:"policy"`
+			}
+			if err := json.Unmarshal(body, &in); err != nil {
+				writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a policy is required")
+				return true
+			}
+			f.folderPolicies[id] = in.Policy.Bindings
+			f.folderAudits[id] = in.Policy.AuditConfigs
+		}
+		bs := f.folderPolicies[id]
+		if bs == nil {
+			bs = []Binding{}
+		}
+		ac := f.folderAudits[id]
+		if ac == nil {
+			ac = []AuditConfig{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"version": 3, "etag": "BwFolder", "bindings": bs, "auditConfigs": ac})
+		return true
+	case crmV3FolderRE.MatchString(r.URL.Path) && r.Method == http.MethodGet:
+		id := crmV3FolderRE.FindStringSubmatch(r.URL.Path)[1]
+		fo, ok := f.folders[id]
+		if !ok {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "folder not found")
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"name": "folders/" + id, "displayName": fo.DisplayName,
+			"parent": fo.Parent, "state": "ACTIVE"})
 		return true
 	case crmV3GetRE.MatchString(r.URL.Path) && r.Method == http.MethodGet:
 		id := crmV3GetRE.FindStringSubmatch(r.URL.Path)[1]
@@ -402,6 +643,28 @@ func (f *CRM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			bs = []Binding{}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"version": 3, "etag": "BwX0", "bindings": bs})
+		return
+	}
+	if m := crmSetPolicyRE.FindStringSubmatch(r.URL.Path); m != nil && r.Method == http.MethodPost {
+		if _, ok := f.projects[m[1]]; !ok || f.noPolicy[m[1]] {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
+			return
+		}
+		var in struct {
+			Policy struct {
+				Bindings []Binding `json:"bindings"`
+			} `json:"policy"`
+		}
+		if err := json.Unmarshal(body, &in); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a policy is required")
+			return
+		}
+		f.policies[m[1]] = in.Policy.Bindings
+		bs := f.policies[m[1]]
+		if bs == nil {
+			bs = []Binding{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"version": 3, "etag": "BwX1", "bindings": bs})
 		return
 	}
 	m := crmProjectRE.FindStringSubmatch(r.URL.Path)

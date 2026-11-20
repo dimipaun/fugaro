@@ -122,7 +122,18 @@ import type {
   SpendModel,
   SpendReader,
 } from './screens/spend'
-import { BUSY_SLOT_CLASS, CACHE_FRESH_MS, CACHE_LIMIT, cacheKey, renderStamp, resultCache, sectionRead } from './section'
+import { cacheInvalidator } from './cache-invalidate'
+import type { CacheScope } from './cache-invalidate'
+import {
+  BUSY_SLOT_CLASS,
+  CACHE_FRESH_MS,
+  CACHE_LIMIT,
+  cacheKey,
+  renderRetry,
+  renderStamp,
+  resultCache,
+  sectionRead,
+} from './section'
 import {
   COORDINATOR_QUEUE_SHAPE,
   COORDINATOR_SHAPE,
@@ -3227,8 +3238,47 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }, READING_STILL_MS)
   }
 
-  const refuse = (operation: string, sentence: string): void => {
-    replace(refusedScreen(factory, operation, sentence, theme))
+  /**
+   * withRetry adds R1's Retry control to a refused page and wires it to the read
+   * that page is about (`docs/console-improvements/reconciliation.md`: a refused
+   * or timed-out section gets a control that re-spawns that section's own read,
+   * beside the CLI's sentence and command).
+   *
+   * **The read is a caller's closure and never a word.** Which read a section is
+   * waiting for is the one fact only the code that started it has -- `startCaps`
+   * for the Spend caps, `reReadJobs` for the coordinator's job list -- so the
+   * control is wired here and the read comes from the call site. Nothing is
+   * derived from the operation name: this console has no table from an operation
+   * back to a read, and inventing one would make the control's behaviour a
+   * string's.
+   *
+   * **A refused page with no read to name draws no control.** A Retry with
+   * nothing behind it is a control that answers a click with silence, and one
+   * kind of refusal in this file has no read: a refusal that is the answer to a
+   * *write* (the rail's own actions, `answered`) is not a section waiting on a
+   * read -- the operator's own button is that door, and a second one beside the
+   * sentence would be this console offering to repeat a write.
+   */
+  const withRetry = (page: SkewElement, retry: (() => void) | null): SkewElement => {
+    if (retry === null) return page
+    const control = renderRetry(factory)
+    page.append(control)
+    surface.nodeOf(control).addEventListener('click', retry)
+    return page
+  }
+
+  /** refusedInto draws one refused **section** into the host it belongs to: the
+   * section stays on the screen with its siblings (the owner's rule of
+   * 2026-10-31), and the refusal is what is drawn in its place. */
+  const refusedInto = (host: Drawn, page: SkewElement, retry: (() => void) | null): void => {
+    appendTo(host, withRetry(page, retry))
+  }
+
+  /** refuse replaces the whole panel with a refusal -- one read whose failure is
+   * the whole view's (the Live frame, the Graph's plan, a rail write) rather than
+   * one section among others. */
+  const refuse = (operation: string, sentence: string, retry: (() => void) | null = null): void => {
+    replace(withRetry(refusedScreen(factory, operation, sentence, theme), retry))
   }
 
   // ---- The views --------------------------------------------------------
@@ -3419,6 +3469,48 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (id === 'coordinator') void showCoordinator()
   }
 
+  /**
+   * invalidator is this console's one cache invalidator (R2; F17): the five tabs
+   * register what they hold and how to read it again, and a **write** names the
+   * scopes it touched.
+   *
+   * It is built here rather than at the module's top because two consoles in one
+   * process -- a window and a reload, a unit test's two surfaces -- are two
+   * installations, and a shared registry would let one window's write clear the
+   * other's caches.
+   *
+   * **A scope's read is the tab's own door, not a second one.** `show(scope)` is
+   * exactly what the operator's click on that tab does -- the marks, the
+   * placeholder, the reads -- so the invalidation cannot drift from what a visit
+   * means; the one scope that is not a `show` is Live, whose held frame *is* the
+   * screen (a `show` would draw it back rather than read again).
+   *
+   * **A scope that is not the tab in front is cleared and not read.** Nothing is
+   * on screen to draw a mark into, the next visit reads the tab on entry anyway,
+   * and a read for a tab nobody is on would spawn a child for a screen no one is
+   * looking at -- the rule `.claude/rules/console.md` states for every section of
+   * this console.
+   */
+  const invalidator = cacheInvalidator()
+  invalidator.remember('live', {
+    // What a launch makes stale is the **join**: the frame is the poll's, one
+    // second wide, and the mode chip on a row is `runs ls`'s answer held for
+    // `LIVE_RIGOR_TTL_MS`. Dropping the clock is what makes the launch's own run
+    // read now rather than at the end of the TTL.
+    clear: () => {
+      live.rigorAt = 0
+    },
+    reread: () => {
+      if (currentView !== 'live') return
+      void pollLive()
+      maybeRefreshRigor()
+    },
+  })
+  // The other four scopes are registered by the tabs themselves, when they open:
+  // what a tab holds and how to read it again are the tab's own facts -- the
+  // visit's read, its cache and its editor -- and a table here would have to
+  // reach into four screens for them.
+
   // The navigation is the redesign's five tabs, in the header after the
   // switcher. The redesign draws them as links; they stay buttons because the
   // renderer never writes an `href` (design section 2: a URL goes to
@@ -3561,7 +3653,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // The same rule `drawLive` keeps: a poll that fails while another view is
       // on screen does not replace the view the operator chose.
       rail.setState('silent')
-      if (currentView === 'live') refuse('live.watch', READ_UNREADABLE)
+      // The poll failed with nothing on screen that says why: the Retry is the
+      // same read, made again by the operator's own press.
+      if (currentView === 'live') refuse('live.watch', READ_UNREADABLE, () => void pollLive())
     } finally {
       live.inFlight = false
     }
@@ -3583,7 +3677,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const answer = replyData(reply)
     if (!answer.ok) {
       rail.setState('silent')
-      refuse('live.watch', answer.sentence)
+      refuse('live.watch', answer.sentence, () => void pollLive())
       return
     }
     const envelope = answer.data as Record<string, unknown>
@@ -3591,7 +3685,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const decoded = decodeSnapshot(envelope['document'], 'live.watch')
     if (!decoded.ok) {
       rail.setState('silent')
-      refuse('live.watch', decoded.skew.because)
+      refuse('live.watch', decoded.skew.because, () => void pollLive())
       return
     }
     const feed = feedHealthOf(envelope['receivedAt'], nowStamp())
@@ -3968,6 +4062,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     moveTurn += 1
     return moveTurn
   }
+  /**
+   * **readByMove is the move whose own flow is reading the plan again already**
+   * (R2). A confirmed move is a write, and the scope it names is this tab's; but
+   * the flow that made it goes on to read the scope itself, because the sheet
+   * over the drawing has to be answered in the light of the document the move
+   * left. So the invalidation clears the cache and leaves the read alone -- one
+   * write, one read -- and this number is how the scope's own `reread` knows the
+   * read it would make is already out.
+   */
+  let readByMove: number | null = null
   const moveFlowNow = (): MoveFlow => {
     moveFlow ??= new MoveFlow({
       move: async (args) => {
@@ -4216,7 +4320,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       return
     }
     graphTree = null
-    refuse('graph.read', sentence)
+    // The Graph's whole view is the read that refused, so its Retry is the tab's
+    // own door rather than a section's: `showGraph` reads the scope on screen
+    // again, which is what the operator's press means here.
+    refuse('graph.read', sentence, () => void showGraph())
   }
 
   /**
@@ -4347,7 +4454,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       drawNoCheckout(sentence)
       return
     }
-    refuse('plan.status', sentence)
+    refuse('plan.status', sentence, () => void showGraph())
   }
 
   /** openRow is the rail's open installation, which is the one the Graph reads
@@ -4472,6 +4579,22 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const showGraph = async (): Promise<void> => {
     const mine = claim()
     const held = graphViews.get(graphKey())
+    // R2: the scope a move names, registered by the visit that owns it. What it
+    // holds is the plan this session read, with the run list it was decorated
+    // with -- the document a move changes -- and the read is this tab's own, for
+    // the scope the operator is in.
+    invalidator.remember('graph', {
+      clear: () => graphViews.clear(),
+      reread: () => {
+        // The marker is read and cleared in the same breath: it stands for one
+        // read the flow has already started, and for that one only.
+        const byMove = readByMove
+        readByMove = null
+        if (stale(mine) || byMove === moveTurn) return
+        if (graph.scope === GRAPH_SCOPE_ALL) void readScope(claim(), graphRead.start())
+        else void readGraph(claim(), graphRead.start())
+      },
+    })
     // The cache holds the **plan** scope's document, so it is drawn when the plan
     // scope is the one in hand: a console that comes back to the Graph on the
     // coordinator scope draws the coordinator reading it already has (below) and
@@ -5003,6 +5126,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           if (sheet === null || mine !== moveTurn) return
           const applied = sheet.answer?.outcome?.status === 'applied'
           drawMove(sheet, applied ? UNDO_BUTTON : CANCEL_BUTTON)
+          if (applied) {
+            // R2: a move that was applied is a write, and the plan it moved is
+            // the scope this tab caches. The clear comes first, so nothing draws
+            // the pre-move plan out of the cache while the read below is out --
+            // and the read below **is** the scope's own (`readByMove`), which is
+            // why the invalidation does not start a second one.
+            readByMove = mine
+            invalidator.invalidate(['graph'])
+          }
           await readScope(claim(), graphRead.start())
           // The sheet is drawn again over the fresh document, and the keyboard
           // goes to the button that answers it in the light of what the record
@@ -5325,7 +5457,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       const drawn = mount()
       clearSection(drawn.caps, drawn.capsSlot)
       if (spendCapsSentence !== null) {
-        appendTo(drawn.capsSlot, refusedScreen(factory, 'budget.show', spendCapsSentence, theme))
+        // The Retry is this section's own read and not the report's: the two
+        // reads of this screen are independent, and a control that re-read a
+        // report the operator was not refused would answer the caps' sentence
+        // with a figure from another read.
+        refusedInto(
+          drawn.capsSlot,
+          refusedScreen(factory, 'budget.show', spendCapsSentence, theme),
+          () => startCaps(),
+        )
       } else {
         fillSpendCaps(factory, capsOf(spendBudget), drawn.caps)
       }
@@ -5405,7 +5545,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         reportPending = false
         const drawn = mount()
         clearSection(drawn.report, drawn.reportSlot)
-        appendTo(drawn.reportSlot, refusedScreen(factory, 'spend.report', outcome.reason, theme))
+        // The view is read again as the operator asked for it, which is the
+        // controls on screen: a Retry that re-read a range the operator had
+        // moved off would answer one refusal with another view's figures.
+        refusedInto(
+          drawn.reportSlot,
+          refusedScreen(factory, 'spend.report', outcome.reason, theme),
+          () => refresh(readWith),
+        )
         return
       }
       const at = Date.now()
@@ -5521,6 +5668,19 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (heldCaps) paintCaps(true)
     startCaps()
     if (cached === null || Date.now() - cached.at >= CACHE_FRESH_MS) refresh(controls)
+
+    // R2: the scope this screen registers when it opens. What it holds is the
+    // reports this session read for the installation; the read is the whole
+    // visit's own pair, which is what the stamp's Refresh draws (`refreshFrom`).
+    // The caps are read again with the report because they are the same
+    // installation's budget: a write that moved one moved the other.
+    invalidator.remember('spend', {
+      clear: () => spendViews.clear(),
+      reread: () => {
+        if (stale(mine)) return
+        refreshFrom(controls)
+      },
+    })
   }
 
   /**
@@ -6135,6 +6295,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         if (read.written) {
           ;(surface.nodeOf(box) as unknown as { disabled: boolean }).disabled = true
           ;(surface.nodeOf(submit) as unknown as { disabled: boolean }).disabled = true
+          // R2: the write names the tab it was made in. The row this box edits is
+          // one figure of the document the tab's body is drawn from, and the
+          // console's cached copy of it is now the one from before the write --
+          // dropped and read again at once, rather than served as fresh on the
+          // next visit.
+          invalidator.invalidate(['projects'])
         }
         const again = factory.create('button')
         again.setAttribute('type', 'button')
@@ -6442,7 +6608,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         bodyModel = null
         const drawn = mount(false)
         clearSection(drawn.body, drawn.slot)
-        appendTo(drawn.body, refusedScreen(factory, 'budget.show', answer.sentence, theme))
+        // The Retry is the budget read this section is drawn from and not the
+        // whole visit: `start` would take every other section of the tab down to
+        // read it again, and the six sections either side of the body answered
+        // for themselves.
+        refusedInto(drawn.body, refusedScreen(factory, 'budget.show', answer.sentence, theme), () => {
+          token = projectsRead.start()
+          const retry = mount(false)
+          projectsRead.mark(token, retry.body, retry.slot, PROJECTS_BUSY)
+          void load(token)
+        })
         return
       }
       budgetDoc = answer.data
@@ -6928,6 +7103,30 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         beginLaterSections()
       }
     }
+
+    // R2: the scope a settings write names, registered by the visit that owns it.
+    // The clear is this session's cached document for the tab; the read is the
+    // **budget's own**, which is the section a written setting moves and the read
+    // the cache holds.
+    //
+    // It is deliberately not `start()`: that would re-read the settings panel as
+    // well, and the panel is where the operator is reading the CLI's own answer
+    // to the write they just made (`drawOutcome`, D1112's flow) -- a repaint of
+    // that section would take the sentence off the screen before they had read
+    // it. The panel's own re-read is the `Read again` control the outcome draws,
+    // which is the operator's press and not this console's.
+    invalidator.remember('projects', {
+      clear: () => projectsViews.clear(),
+      reread: () => {
+        // A visit the operator has left has nothing to read: the registration is
+        // the visit's own, and the next visit reads the tab on entry.
+        if (stale(mine)) return
+        token = projectsRead.start()
+        const drawn = mount(false)
+        projectsRead.mark(token, drawn.body, drawn.slot, PROJECTS_BUSY)
+        void load(token)
+      },
+    })
   }
 
   // ---- Coordinator ------------------------------------------------------
@@ -7146,6 +7345,42 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let queueToken = 0
     let totalsToken = 0
     let bodyToken = 0
+
+    /**
+     * reReadSource is one queue part's own read again, and it is what that part's
+     * refusal offers under the CLI's sentence (R1). It reads **one** source: the
+     * four are independent documents, and a control on the alerts that read the
+     * stored view again as well would be a control whose effect is larger than
+     * the sentence it stands beside.
+     *
+     * The attempt is what keeps a slow earlier answer from landing under this
+     * one, and the source goes back into `out` before the read is started, so the
+     * part wears the queue's own mark until it answers.
+     */
+    const reReadSource = (source: CoordinatorQueueSource): void => {
+      attempts[source] += 1
+      const attempt = attempts[source]
+      out.add(source)
+      queueToken = coordinatorQueueRead.start()
+      mount(true)
+      if (source === 'document') void loadDocument(attempt)
+      else if (source === 'runs') void loadRuns(attempt)
+      else if (source === 'plans') void loadPlans(attempt)
+      else void loadBudget(attempt)
+    }
+
+    /** reReadSummary is the fleet strip's window read again, which is the read
+     * the strip's own refusal is about. Below the command's floor there is no
+     * read at all (`windowRead`), and there is no refusal to retry either: the
+     * strip draws the console's own sentence naming the version it needs. */
+    const reReadSummary = (): void => {
+      if (!windowRead) return
+      summaryAttempt += 1
+      summaryOut = true
+      summaryToken = coordinatorWindowRead.start()
+      mount(true)
+      void loadSummary(summaryAttempt)
+    }
 
     /** The job list's own state (K4): the pages drawn so far, the window's own
      * figures off the first page's `totals` (written once), how many rows are on
@@ -7528,7 +7763,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       const target = state.target
       clearSection(target.block, target.slot)
       if (state.sentence !== null) {
-        appendTo(target.block, refusedScreen(factory, 'coordinator.show', state.sentence, theme))
+        // The block's own read, and not the row's: the stamp's Refresh below is
+        // drawn only for a description this session has, so a refusal is the one
+        // state of this block with no control of its own (R1).
+        refusedInto(
+          target.block,
+          refusedScreen(factory, 'coordinator.show', state.sentence, theme),
+          () => reReadDescription(state),
+        )
         return
       }
       if (state.document === null) return
@@ -7572,7 +7814,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         surface.nodeOf(host).replaceChildren()
         const sentence = sentences[source]
         if (sentence !== undefined) {
-          appendTo(host, refusedScreen(factory, refusalOperation[source], sentence, theme))
+          refusedInto(host, refusedScreen(factory, refusalOperation[source], sentence, theme), () =>
+            reReadSource(source),
+          )
           continue
         }
         if (source === 'runs' && runs === null) {
@@ -7723,6 +7967,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
               reReadJobs()
             })
           }
+          // No Retry control on this one (R1's other arm): the section already
+          // draws the press that reads it again -- the head's own line above, or
+          // the stamp's Refresh -- and two controls for one read in one section
+          // would be the section arguing with itself. What the section never does
+          // is leave the sentence without a door.
           appendTo(section.list, refusedScreen(factory, 'runs.list', jobsSentence, theme))
           jobsRefusalDrawn = true
         }
@@ -7907,7 +8156,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         )
       } else {
         if (summarySentence !== null) {
-          appendTo(drawn.totals, refusedScreen(factory, 'runs.summary', summarySentence, theme))
+          refusedInto(
+            drawn.totals,
+            refusedScreen(factory, 'runs.summary', summarySentence, theme),
+            () => reReadSummary(),
+          )
         }
         fillCoordinatorWindow(factory, model(), drawn.totals)
       }
@@ -7937,7 +8190,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       if (view === null) {
         const sentence = sentences.document
         if (sentence !== undefined) {
-          appendTo(drawn.body, refusedScreen(factory, 'coordinator.status', sentence, theme))
+          // The stored view is the read this panel is drawn from, so it is the
+          // read its Retry asks for again -- and only it: the six other sections
+          // of this screen answered for themselves.
+          refusedInto(
+            drawn.body,
+            refusedScreen(factory, 'coordinator.status', sentence, theme),
+            () => reReadSource('document'),
+          )
         }
         return
       }
@@ -8012,6 +8272,8 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         surface.nodeOf(line.refresh).addEventListener('click', () => {
           reReadIntents()
         })
+        // The line drawn above is this pane's own press for the read that
+        // refused, so no second control is added here (`runs.list`'s rule).
         appendTo(section.host, refusedScreen(factory, 'coordinator.intents', intentsSentence, theme))
       }
       fillCoordinatorTranscript(factory, model(), section.host)
@@ -8359,6 +8621,19 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       paintTranscript()
     }
     start()
+
+    // R2: the scope this screen registers when it opens: the one document of
+    // this tab the session keeps, read again by the visit's own `start(true)` --
+    // the same door the stamp's Refresh draws, since a write that moved what
+    // this screen shows is not a reason to read three of its four sources and
+    // leave the store's view as it was.
+    invalidator.remember('coordinator', {
+      clear: () => coordinatorViews.clear(),
+      reread: () => {
+        if (stale(mine)) return
+        start(true)
+      },
+    })
   }
 
   // ---- Run detail -------------------------------------------------------
@@ -8464,8 +8739,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       surface.nodeOf(drawn.main).replaceChildren(...column)
     }
 
-    const recordToken = runRecordRead.start()
-    const logsToken = runLogsRead.start()
+    // Both tokens are the section's **current** one rather than the visit's, so
+    // the section's own Retry can take a new one and read again (R1): the two
+    // reads capture the token they were started under before they await, which
+    // is what keeps a slow first answer from settling the token of the read that
+    // replaced it.
+    let recordToken = runRecordRead.start()
+    let logsToken = runLogsRead.start()
     runRecordRead.mark(recordToken, drawn.recordHost, drawn.mainSlot, runBusyLabel(run, RUN_RECORD_BUSY), RUN_RECORD_SHAPE)
     runLogsRead.mark(logsToken, drawn.logs, drawn.logsSlot, runBusyLabel(run, RUN_LOGS_BUSY), RUN_LOGS_SHAPE)
     placeMain()
@@ -8481,10 +8761,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
 
     const loadRecord = async (): Promise<void> => {
+      const readToken = recordToken
       const answer = documentOf(await bridge.diagnoseRun({ run }))
       // The token goes first: the mark this host wears may belong to a later
       // visit, and `settle` would take that one down with it.
-      if (!runRecordRead.settle(recordToken)) return
+      if (!runRecordRead.settle(readToken)) return
       if (stale(mine)) return
       // The mark the read wore comes out of the host's slot, and the refusal,
       // when there is one, is drawn in its place: the host has no section of
@@ -8498,7 +8779,23 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         // refusing is not a reason to take the other's panel away.
         before = []
         diagnosisDrawn = false
-        appendTo(drawn.mainSlot, refusedScreen(factory, 'run.diagnose', answer.sentence, theme))
+        // The section's own read, and the section's own token with it: this
+        // screen had no press for a refusal at all before it (F21), and the
+        // breadcrumb back to Live is not one.
+        refusedInto(
+          drawn.mainSlot,
+          refusedScreen(factory, 'run.diagnose', answer.sentence, theme),
+          () => {
+            recordToken = runRecordRead.start()
+            runRecordRead.mark(
+              recordToken,
+              drawn.recordHost,
+              drawn.mainSlot,
+              runBusyLabel(run, RUN_RECORD_BUSY),
+            )
+            void loadRecord()
+          },
+        )
         placeMain()
         return
       }
@@ -8508,14 +8805,24 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
 
     const loadLogs = async (): Promise<void> => {
+      const readToken = logsToken
       const answer = documentOf(await bridge.readRunLogs({ run }))
-      if (!runLogsRead.settle(logsToken)) return
+      if (!runLogsRead.settle(readToken)) return
       if (stale(mine)) return
       if (!answer.ok) {
         window_ = null
         arrivals = []
         clearSection(drawn.logs, drawn.logsSlot)
-        appendTo(drawn.logsSlot, refusedScreen(factory, 'run.logs', answer.sentence, theme))
+        // This section's own read again, on the record's terms above.
+        refusedInto(
+          drawn.logsSlot,
+          refusedScreen(factory, 'run.logs', answer.sentence, theme),
+          () => {
+            logsToken = runLogsRead.start()
+            runLogsRead.mark(logsToken, drawn.logs, drawn.logsSlot, runBusyLabel(run, RUN_LOGS_BUSY))
+            void loadLogs()
+          },
+        )
         placeMain()
         return
       }
@@ -8651,6 +8958,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       setValueOf(surface, fields.task, '')
       countNow(fields, '')
       fields.hint.textContent = ''
+      // R2: a launch is a write, and the tab it was made in is the one that
+      // shows the run it started. The Live scope is cleared and read again at
+      // once -- the poll's own read, made now rather than at the next tick --
+      // because the frame on screen is the one from **before** the run existed.
+      invalidator.invalidate(['live'])
     }
   }
 
@@ -8711,18 +9023,18 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // another one's spend.
     spendBudget = null
     spendCapsSentence = null
-    spendViews.clear()
-    // The Projects screen's view is the same kind of fact: it is this
-    // installation's caps, and a cached one carries its figures.
-    projectsViews.clear()
-    // And so is an open settings editor: it is a box for one row of one
-    // installation's table, and the row under it belongs to the installation
+    // **Every cache goes through the invalidator** (R2's other half): the four
+    // session caches and the Live join are the scopes the tabs registered, and
+    // `forget` is the installation switch -- nothing is read here, because the
+    // console is about to close every read it holds and the first visit to a tab
+    // reads it.
+    invalidator.forget()
+    // An open settings editor is not a cache and is not the invalidator's: it is
+    // a box for one row of one installation's table, and the row under it belongs
+    // to the installation
     // that is gone. The section repaints on the next visit either way; this is
     // what takes the box down while the operator is still looking at the tab.
     closeSettingsEditor()
-    // And the Coordinator's: the stored view is one installation's own
-    // repositories, so a view read for another one is never drawn under it.
-    coordinatorViews.clear()
     // The graph is a picture of **one installation's** plan, laid out by a worker
     // this console started for it: both are dropped here, so the next
     // installation is drawn from its own document by its own engine rather than
@@ -8756,9 +9068,6 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // starts a child for the installation that is now open.
     graph.watching = false
     graph.feedInFlight = false
-    // The plan and the run list the Graph cache holds are this installation's
-    // own: a plan of the old one is never drawn under the new one's positions.
-    graphViews.clear()
     graph.runs = []
   }
 

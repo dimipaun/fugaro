@@ -77,11 +77,12 @@ func (c *Config) Shared() *Config {
 	// The published document is version 1 whatever the file it was read from
 	// says, because the version is what a READER refuses by name and the
 	// published document is the one thing here a teammate's older Fugaro meets
-	// first: ConfigVersion 2 renamed the two lists in the terraform block, and
-	// this copy carries no terraform block at all (dropped on the next line),
-	// so nothing in it is version 2's. Publishing this machine's 2 would stop
-	// every teammate whose Fugaro is not upgraded yet with "version 2 is newer
-	// than the 1 this Fugaro writes ... then run fugaro update" — a sentence
+	// first: ConfigVersion 2 renamed the two lists in the terraform block and
+	// version 3 the member table's accounts, and this copy carries neither the
+	// terraform block nor the member table (both dropped below), so nothing in
+	// it is either version's. Publishing this machine's ConfigVersion would
+	// stop every teammate whose Fugaro is not upgraded yet with "version N is
+	// newer than the 1 this Fugaro writes ... then run fugaro update" — a sentence
 	// naming a command they cannot run until the shared config they are
 	// refused by is readable again.
 	s.Version = SharedVersion
@@ -266,6 +267,14 @@ func (c *Config) Shared() *Config {
 	// it besides, because a shared config carrying it was not written by the
 	// converge.
 	s.Triage = nil
+	// ReviewAgainstTask travels the triage switch's way too, and is dropped
+	// here for its reason one key over: the switch is what turns off the check
+	// every review stage makes of a run's own work, so a launcher who could
+	// write it into the shared file would be having every teammate's pull
+	// requests reviewed against nothing — the check the owner published the
+	// node for. ParseShared refuses it besides, because a shared config
+	// carrying it was not written by the converge.
+	s.ReviewAgainstTask = nil
 	// RigorPending is dropped here for Triage's reason and one of its own that
 	// is nearer still: it is the wizard's rigor answer waiting to be written
 	// into the project layer, and the mode decides how much review every run of
@@ -318,12 +327,16 @@ func (c *Config) Shared() *Config {
 	// verifies against — at a party of its choosing. The membership key and
 	// the owner's member table are dropped with it: a shared file that could
 	// name a workspace would be one that could join this project to a group
-	// nobody here chose, and ParseShared refuses all four keys besides,
+	// nobody here chose, and the owner's shared list goes with the member table
+	// for its reason once more — a launcher who could write it would be
+	// choosing what the workspace's credentials service offers, which is the
+	// owner's act and no one else's. ParseShared refuses all five keys besides,
 	// because a shared config carrying one was not written by the converge.
 	s.Workspace = ""
 	s.WorkspacePin = WorkspacePin{}
 	s.WorkspaceMembers = nil
 	s.WorkspaceCap = nil
+	s.WorkspaceShared = nil
 	s.Repos = withoutRepoLocalKeys(c.Repos)
 	s.ModelPrices = withoutCacheSpellings(s.ModelPrices)
 	return &s

@@ -331,13 +331,25 @@ func TestOrchestratorServiceIsTheDesignsShape(t *testing.T) {
 		`service_account = google_service_account.orchestrator[0].email`,
 		`type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"`,
 		"ignore_changes = [client, client_version]",
-		// The three names the process reads, and the three values: the
-		// installation's own name (which is the node's id), its Firebase
-		// project, and the database it reads the node out of. None of them is
-		// a secret and none is a secret ID (section 6 rules 4 and 5).
+		// The six names the process reads, and the six values: the three the
+		// NODE is (P5.1c — the installation's own name, which is the node's
+		// id; its Firebase project; and the database it reads the node out
+		// of) and the three the LAUNCH is (P5.1d — the GCP project the
+		// installation's jobs are in, the region they were deployed to, and
+		// the runs bucket's own URL, which is the three facts a run's own
+		// container carries: internal/cli reads them under these same names
+		// inside a run, and internal/infra's BucketEnv, GCPProjectEnv and
+		// RegionEnv are the spellings). None of them is a secret and none is
+		// a secret ID (section 6 rules 4 and 5), and the two lists are held to
+		// internal/cli's own reads in both directions by
+		// internal/cli's TestOrchestratorServiceEnvIsTheDeploymentsOwn and by
+		// internal/infra/tf's orchestratorServiceEnv allow-list.
 		`name  = "FUGARO_PROJECT"`, `value = var.fugaro_project`,
 		`name  = "FUGARO_FIREBASE_PROJECT"`, `value = var.orchestrator.firebase_project`,
 		`name  = "FUGARO_RTDB_URL"`, `value = var.orchestrator.rtdb_url`,
+		`name  = "FUGARO_GCP_PROJECT"`, `value = var.project`,
+		`name  = "FUGARO_REGION"`, `value = var.region`,
+		`name  = "FUGARO_BUCKET"`, `value = "gs://${var.runs_bucket}"`,
 	} {
 		if !strings.Contains(svc, need) {
 			t.Errorf("%s: the orchestrator's service does not carry %q:\n%s", orchestratorTF, need, svc)

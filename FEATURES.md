@@ -6,7 +6,7 @@ Fugaro runs each task you hand it as its own throwaway job in your cloud project
 
 A ✓ under Community, Team or Enterprise means the feature is included there, and a dash means it is not.
 
-as_of: v0.26.0
+as_of: v0.26.1
 
 | Feature | What it does | Status | Community | Team | Enterprise |
 | --- | --- | --- | --- | --- | --- |
@@ -26,7 +26,7 @@ as_of: v0.26.0
 | Work with Bitbucket repositories | A Bitbucket repository is driven like a GitHub one: the agent pushes a branch and opens a pull request with credentials the installation holds. | Available | ✓ | ✓ | ✓ |
 | Connect Bitbucket with the token you have | A workspace, project or repository access token can be used to reach Bitbucket, and each token reaches only what it was granted. | Coming soon | ✓ | ✓ | ✓ |
 | Commits credited to the person who asked | A commit the agent makes is authored by the person who launched the run, and carries trailers that tie it back to the run and the model that produced it. | Coming soon | ✓ | ✓ | ✓ |
-| See which work a pull request belongs to | The pull requests Fugaro opens are labelled with the state of the run and the work it came from, so a list of pull requests says at a glance what each one is. | Coming soon | ✓ | ✓ | ✓ |
+| See which work a pull request belongs to | The pull requests Fugaro opens are labelled with the state of the run and the work it came from, so a list of pull requests says at a glance what each one is. | Available | ✓ | ✓ | ✓ |
 | Your credentials stay in your own cloud | Model and forge credentials are held by a service in your own project, and a workflow's own secret is stored once for the project and reaches only the runs allowed to use it. | Available | ✓ | ✓ | ✓ |
 | A run is handed its access, not a stored key | A job is given the access it needs when it starts, through a broker in your own project, rather than a stored key. | Coming soon | ✓ | ✓ | ✓ |
 | Say what counts as security-sensitive | A project names the paths that count as security-sensitive and the executables a run may use, so a change to a sensitive path is escalated and a run nobody reviewed is reported as such. | Available | ✓ | ✓ | ✓ |
@@ -53,7 +53,7 @@ as_of: v0.26.0
 ```json
 {
   "version": 1,
-  "as_of": "v0.26.0",
+  "as_of": "v0.26.1",
   "rows": [
     {
       "id": "run-a-task",
@@ -235,7 +235,7 @@ as_of: v0.26.0
       "id": "pull-request-labels",
       "name": "See which work a pull request belongs to",
       "explanation": "The pull requests Fugaro opens are labelled with the state of the run and the work it came from, so a list of pull requests says at a glance what each one is.",
-      "status": "coming-soon",
+      "status": "available",
       "plans": {
         "community": true,
         "team": true,
