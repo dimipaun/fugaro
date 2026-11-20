@@ -22,6 +22,10 @@
   "finalize_reserve_s": 30,
   "finished_at": "<time>",
   "head_sha": "<sha>",
+  "messages": {
+    "accepting": false,
+    "format": 1
+  },
   "outcome": "ready",
   "policy": {
     "effective": {

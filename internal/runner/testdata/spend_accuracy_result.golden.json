@@ -123,5 +123,9 @@
     "review_files": [
       "feature.txt"
     ]
+  },
+  "messages": {
+    "accepting": false,
+    "format": 1
   }
 }

@@ -70,6 +70,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/cli/run.go":                      "the kind a launch resolves for the slug it runs on, refused for a read-only context repository the credentials service cannot fetch",
 	"internal/cli/update_proxy_switch.go":      "the project's own repositories the update's Bitbucket proxy switch has to reach, and the workspace they are all in (D2306, D2314)",
 	"internal/config/validate.go":              "config.Providers, the config-side list, and the per-provider identity checks — held to runner.jobProviderKinds by internal/cli's TestProviderKindsAgreeWithTheConfigsList",
+	"internal/creds/route.go":                  "the kind vocabulary a run routes each credential by: the model credentials a run's calls go out on and the two forge credentials, whose spellings are this package's own KindBitbucket and KindGitHub so a route and a forge line up, held to them by TestRouteNamesArePinned (C2)",
 	"internal/credsvc/auth.go":                 "the provider a repository's build account is bound to, refused for one this service does not mint at",
 	"internal/credsvc/bitbucket.go":            "the credentials service's admission of a Bitbucket provider",
 	"internal/credsvc/bitbucketproxy.go":       "the proxied Bitbucket request's provider",
