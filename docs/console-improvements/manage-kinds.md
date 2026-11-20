@@ -111,8 +111,9 @@ sentence that is **a run of the command's own help text** -- `fugaro user revoke
 own record, `fugaro user offboard`'s deletion of the secrets stored under the member's prefix, `fugaro accounts
 rm`'s delete of the secret and the token it does not revoke -- quoted rather than composed, so the console cannot
 come to say about a command something the command does not say. A kind's test holds each sentence to the Go source
-it came from (the file is read as text and the run is matched against it, whitespace collapsed, as the console's
-other cross-language tests do). A copy that states nothing -- adding a pair, adding an account -- has no
+it came from (the file is read as text and the whole run is matched against it, whitespace collapsed, as the
+console's other cross-language tests do -- a run of the sentence is not enough, since a quoted beginning and end
+would let a rewritten middle claim something the command never says). A copy that states nothing -- adding a pair, adding an account -- has no
 `consequence` at all, and the field's absence is what the shell draws nothing from.
 
 ## What is not here

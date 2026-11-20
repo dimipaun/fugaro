@@ -379,78 +379,50 @@ describe('every write is a line to copy', () => {
 })
 
 describe('the consequence a destructive copy states', () => {
-  /** Each case is a command's copy, the file its own help is written in, and the
-   * run of that help the copy must carry. The run is checked both ways: the copy
-   * contains it, and the file contains it (whitespace collapsed), so a sentence
-   * that was composed here rather than quoted cannot pass. */
+  /** Each case is one destructive copy and the Go file the command's own help is
+   * written in. The check is the WHOLE sentence the copy carries, whitespace
+   * collapsed, matched against that file: a run of it is not enough, because a
+   * sentence whose middle was rewritten here and whose ends were quoted would
+   * pass such a check while claiming something the command does not say. */
   const CASES: readonly {
     readonly what: string
     readonly source: string
     readonly file: string
-    readonly run: string
+    readonly action: CopyCommandAction
   }[] = [
     {
       what: 'fugaro user revoke',
       source: USER_GRANT_SOURCE,
       file: 'internal/cli/user_grant.go',
-      run: "one person, in the installation's own record of who may do what",
-    },
-    {
-      what: 'fugaro user revoke',
-      source: USER_GRANT_SOURCE,
-      file: 'internal/cli/user_grant.go',
-      run: "which is what its next fugaro update derives the installation's IAM lists from",
+      action: only(row(roles, '["user:admin@example.com","admin","project"]').actions),
     },
     {
       what: 'fugaro user offboard',
       source: OFFBOARD_SOURCE,
       file: 'internal/cli/offboard.go',
-      run: "The installation's intake deletes the secrets stored under the member's own prefix, found by the owner annotation it wrote (R10).",
-    },
-    {
-      what: 'fugaro accounts rm',
-      source: ACCOUNTS_RM_SOURCE,
-      file: 'internal/cli/accounts_rm.go',
-      run: "Removing the declaration also deletes the secret claude-oauth-token-<name> through Secret Manager's own delete.",
-    },
-    {
-      what: 'fugaro accounts rm',
-      source: ACCOUNTS_RM_SOURCE,
-      file: 'internal/cli/accounts_rm.go',
-      run: "That delete cannot be undone — Secret Manager keeps no grace period for a secret — and the copy of the credential left behind is the token at the provider.",
-    },
-  ]
-
-  const CONSEQUENCES: readonly { readonly conjunction: string; readonly action: CopyCommandAction }[] = [
-    {
-      conjunction: 'fugaro user revoke',
-      action: only(row(roles, '["user:admin@example.com","admin","project"]').actions),
-    },
-    {
-      conjunction: 'fugaro user offboard',
       action: only(row(members, 'user:admin@example.com').actions),
     },
-    { conjunction: 'fugaro accounts rm', action: only(row(accounts, 'team').actions) },
+    {
+      what: 'fugaro accounts rm',
+      source: ACCOUNTS_RM_SOURCE,
+      file: 'internal/cli/accounts_rm.go',
+      action: only(row(accounts, 'team').actions),
+    },
   ]
 
   it('states a sentence for each destructive command, and none for an adding one', () => {
-    for (const { conjunction, action } of CONSEQUENCES) {
-      expect(action.consequence, conjunction).toBeTruthy()
+    for (const { what, action } of CASES) {
+      expect(action.consequence, what).toBeTruthy()
     }
     expect(only(roles.actions).consequence).toBeUndefined()
     expect(only(accounts.actions).consequence).toBeUndefined()
   })
 
-  it('quotes each sentence out of the command’s own help text', () => {
-    for (const { what, source, file, run } of CASES) {
-      expect(collapsed(source), `${file} no longer says: ${run}`).toContain(collapsed(run))
-      const carried = CONSEQUENCES.filter((each) => each.conjunction === what)
-      expect(carried.length, `no copy for ${what}`).toBeGreaterThan(0)
-      for (const { action } of carried) {
-        const consequence = action.consequence
-        if (consequence === undefined) throw new Error(`${what} carries no sentence at all`)
-        expect(consequence, `${what} does not carry: ${run}`).toContain(run)
-      }
+  it('quotes the whole of each sentence out of the command’s own help text', () => {
+    for (const { what, source, file, action } of CASES) {
+      const consequence = action.consequence
+      if (consequence === undefined) throw new Error(`${what} carries no sentence at all`)
+      expect(collapsed(source), `${file} does not carry, whole: ${consequence}`).toContain(collapsed(consequence))
     }
   })
 

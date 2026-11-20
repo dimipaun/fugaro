@@ -42,20 +42,28 @@
 // revocation's pair leaving the installation's own record, the offboarding's
 // deletion of the secrets stored under the member's prefix, and the account
 // removal's delete of the secret and the token it does not revoke -- and
-// `manage-people.test.ts` reads those Go files as text and holds each run to them
-// whitespace-normalised. They are quoted rather than written here, so this file
-// cannot come to say about a command something the command does not say.
+// `manage-people.test.ts` reads those Go files as text and holds the whole of
+// each sentence to them whitespace-normalised, so every word a copy states is a
+// word the command's own help states. They are quoted rather than written here,
+// so this file cannot come to say about a command something the command does not
+// say.
 
 import { buildCopyCommand, commandValue, commandWord } from '../command'
 import { defineManageKind } from '../types'
 import type { CommandPart } from '../command'
 import type { CopyCommandAction, ManageAction, ManageColumn, ManageRow } from '../types'
 
-/** REVOKE_CONSEQUENCE is `internal/cli/user_grant.go`'s own sentence about what a
- * revoke does: the pair leaves the installation's own record of who may do what,
- * and the IAM lists are derived from that record by the next `fugaro update`. */
+/** REVOKE_CONSEQUENCE is the run of `internal/cli/user_grant.go`'s own help that
+ * says what a revoke does to the pair: it leaves the installation's own record of
+ * who may do what -- the grants node at config/admin/access -- and the next
+ * `fugaro update` derives the IAM lists from that record.
+ *
+ * It begins at `one person` because that is where the help's sentence becomes
+ * fixed text: the words before it are the two the direction decides
+ * (`pairWord`'s verb and `pairTo`'s preposition), so a run that reached further
+ * back would be a run this file composed rather than quoted. */
 const REVOKE_CONSEQUENCE =
-  "The pair is taken away from one person, in the installation's own record of who may do what: the grants node, which is what its next fugaro update derives the installation's IAM lists from."
+  "one person, in the installation's own record of who may do what: the grants node at config/admin/access, which is what its next fugaro update derives the installation's IAM lists from."
 
 /** OFFBOARD_CONSEQUENCE is `internal/cli/offboard.go`'s own sentence about the
  * half of an offboarding a person cannot see from the command's line: the intake
