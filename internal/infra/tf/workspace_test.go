@@ -31,6 +31,24 @@ func wsPlan(t *testing.T, changes ...string) *Plan {
 	return mustPlan(t, `{"resource_changes":[`+strings.Join(changes, ",")+`]}`)
 }
 
+// wsPlanCfg is wsPlan with a configuration section: what terraform writes
+// beside the changes, and where a computed grant's member expression is written
+// as a reference to the account it reads (workspaceComputedMember).
+func wsPlanCfg(t *testing.T, cfg string, changes ...string) *Plan {
+	t.Helper()
+	return mustPlan(t, `{"resource_changes":[`+strings.Join(changes, ",")+
+		`],"configuration":{"root_module":{"resources":[`+cfg+`]}}}`)
+}
+
+// wsMemberExpr is the grant's member expression as the plan's configuration
+// writes it when the member is the address of the account resource named:
+// terraform writes an attribute path as the path and the resource
+// (testdata/managed_provider_wrapped_project_plan.json's own shape).
+func wsMemberExpr(account string) string {
+	return `{"address":"google_project_iam_member.workspace_database","mode":"managed","type":"google_project_iam_member","expressions":{"member":{"references":["` +
+		account + `.member","` + account + `"]}}}`
+}
+
 func wsActions(acts ...string) string {
 	q := make([]string, 0, len(acts))
 	for _, a := range acts {
@@ -92,42 +110,53 @@ func wsWhy(t *testing.T, p *Plan) string {
 
 func TestWorkspacePlanIsTheTwoAccountsAndItsOneGrant(t *testing.T) {
 	covered := []struct {
-		name    string
+		name string
+		// cfg is the plan's configuration, as the resource entries terraform
+		// writes it: the member of a computed grant is only held to the account
+		// it reads where the plan carries one (workspaceComputedMember), so a
+		// case with no cfg is a plan built by hand without a configuration.
+		cfg     string
 		changes []string
 	}{
-		{"the root's own plan, with the member terraform computes", []string{
+		{"the root's own plan, with the member terraform computes", "", []string{
 			wsPinnedRole(),
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
 			wsIAM(wsProject, WorkspaceIAMAccountID, "create"),
 			wsComputedGrant(wsProject, wsRole, "create"),
 		}},
-		{"the root's own plan converged: the role, the accounts and the grant are all no-ops", []string{
+		{"the root's own plan, with the configuration that writes the member terraform computes", wsMemberExpr("google_service_account.workspace"), []string{
+			wsPinnedRole(),
+			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
+			wsIAM(wsProject, WorkspaceIAMAccountID, "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}},
+		{"the root's own plan converged: the role, the accounts and the grant are all no-ops", "", []string{
 			wsPinnedRole(),
 			wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
 			wsIAM(wsProject, WorkspaceIAMAccountID, "no-op"),
 			wsComputedGrant(wsProject, wsRole, "no-op"),
 		}},
-		{"the same plan converged: every resource is a no-op", []string{
+		{"the same plan converged: every resource is a no-op", "", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
 			wsIAM(wsProject, WorkspaceIAMAccountID, "no-op"),
 			wsComputedGrant(wsProject, wsRole, "no-op"),
 		}},
-		{"the SA fallback's IAM account created while the rest is converged", []string{
+		{"the SA fallback's IAM account created while the rest is converged", "", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
 			wsIAM(wsProject, WorkspaceIAMAccountID, "create"),
 			wsComputedGrant(wsProject, wsRole, "no-op"),
 		}},
-		{"the member known, bare", []string{
+		{"the member known, bare", "", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
 			wsIAM(wsProject, WorkspaceIAMAccountID, "create"),
 			wsKnownGrant(wsProject, wsEmail, wsRole, "create"),
 		}},
-		{"the member known, as the root writes it", []string{
+		{"the member known, as the root writes it", "", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
 			wsIAM(wsProject, WorkspaceIAMAccountID, "create"),
 			wsKnownGrant(wsProject, "serviceAccount:"+wsEmail, wsRole, "create"),
 		}},
-		{"the accounts' display names updated, the grant held", []string{
+		{"the accounts' display names updated, the grant held", "", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "update"),
 			wsIAM(wsProject, WorkspaceIAMAccountID, "update"),
 			wsComputedGrant(wsProject, wsRole, "update"),
@@ -135,7 +164,11 @@ func TestWorkspacePlanIsTheTwoAccountsAndItsOneGrant(t *testing.T) {
 	}
 	for _, c := range covered {
 		t.Run(c.name, func(t *testing.T) {
-			if why := wsWhy(t, wsPlan(t, c.changes...)); why != "" {
+			p := wsPlan(t, c.changes...)
+			if c.cfg != "" {
+				p = wsPlanCfg(t, c.cfg, c.changes...)
+			}
+			if why := wsWhy(t, p); why != "" {
 				t.Errorf("the workspace root's own plan must be covered, got: %s", why)
 			}
 		})
@@ -211,6 +244,39 @@ func TestWorkspacePlanRefusesAGrantToAnotherPrincipal(t *testing.T) {
 			}
 			if !strings.Contains(why, "reached by "+wsEmail+" and by nobody else") {
 				t.Errorf("the refusal must name the account the workspace's database is reached by, got: %s", why)
+			}
+		})
+	}
+}
+
+// TestWorkspacePlanRefusesAComputedMemberThatReadsAnotherAccount is the half of
+// the grant rule that the change alone cannot answer (workspaceComputedMember,
+// WU3's second account): while a plan creates the workspace's own service
+// account, a grant whose member terraform knows only at apply is the root's own
+// shape — and a grant bound to the SA fallback's IAM account carries
+// after_unknown.member exactly the same way, so the plan's configuration is what
+// tells them apart. The account that would be bound is the one that ends up
+// holding roles/owner on every linked member (D2803, F20).
+func TestWorkspacePlanRefusesAComputedMemberThatReadsAnotherAccount(t *testing.T) {
+	own := wsSA(wsProject, WorkspaceServiceAccountID, "create")
+	grant := wsComputedGrant(wsProject, wsRole, "create")
+	refused := []struct {
+		name string
+		cfg  string
+		want string
+	}{
+		{"the member expression reads the SA fallback's IAM account", wsMemberExpr("google_service_account.workspace_iam"), "google_service_account.workspace_iam"},
+		{"the member expression reads a variable", `{"address":"google_project_iam_member.workspace_database","mode":"managed","type":"google_project_iam_member","expressions":{"member":{"references":["var.member"]}}}`, "var.member"},
+		{"the configuration has no member expression on the grant", `{"address":"google_project_iam_member.workspace_database","mode":"managed","type":"google_project_iam_member","expressions":{}}`, "no member expression"},
+	}
+	for _, c := range refused {
+		t.Run(c.name, func(t *testing.T) {
+			why := wsWhy(t, wsPlanCfg(t, c.cfg, own, grant))
+			if why == "" {
+				t.Fatalf("this plan must be refused: %s", c.name)
+			}
+			if !strings.Contains(why, c.want) {
+				t.Errorf("the refusal must name what the member reads, want a sentence with %q, got: %s", c.want, why)
 			}
 		})
 	}
