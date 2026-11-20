@@ -87,7 +87,8 @@ update keeps the custom role and waits for a Batch run in flight (R16), the key'
 removal class (BR5), and the claim that launches are refused "from the withdrawal on" was wrong
 for a machine with a local config. That last one went to the owner as D3112, answered as
 recommended: the credentials service refuses the registration where Batch is off (R17, BR22).
-These fixes were not reviewed again. O18 and O20 are left open.
+These fixes were not reviewed again, and the owner chose no further review. He accepted O18 as
+stated (as recommended), approved no further task, and left the pull request open to read.
 
 **What the reconciliation found that the brief did not know:** the token's carrier is one of seven
 gaps (F7 to F13); any carrier the run's service account opens can be replayed by a second

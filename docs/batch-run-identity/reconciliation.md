@@ -537,7 +537,8 @@ his earlier D2075 (F29, D3107).
 - **O18.** A stale operator's machine can publish "in" over a withdrawal, or the reverse, when
   the published copy is refused or too large and is replaced by that machine's view (F33, R15).
   Only an operator can publish, and an operator can opt in or out outright; the risk is a
-  mistake, not an attack. Doctor reports the published state. Not closed.
+  mistake, not an attack. Doctor reports the published state. **Accepted as stated** by the owner (2026-11-20, as
+  recommended).
 - **O19.** After an opt-out, a launcher whose local config still says "in" is not refused by the
   CLI until their next `fugaro update` (F33, R16). Before the update that removes the grants
   such a run works and is the run that update waits for. After it, the credentials service
