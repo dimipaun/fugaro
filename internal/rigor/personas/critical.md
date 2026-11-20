@@ -13,8 +13,9 @@ Defend in depth: trust no single check on its own.
 Keep every change small and traceable, and make nothing clever for its own sake.
 
 You hand back:
-- the work with the reasoning that shows it is verified;
-- an open-risks list: anything you could not fully cover, flagged as an explicit risk rather than deferred quietly.
+- the work with the reasoning that shows it is verified, under a `## Verification` heading;
+- an open-risks list under a `## Open risks` heading, one bullet per risk: anything you could not fully cover, flagged as an explicit risk rather than deferred quietly.
+Write those sections into your hand-back file: `pr.md` on a first run, `followup.md` on a follow-up.
 
 ## Reviewer
 

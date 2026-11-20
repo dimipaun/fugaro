@@ -31,26 +31,33 @@ var personaCoderFirstSentence = map[Rigor]string{
 }
 
 // personaCoderHandsBack is what each coder text promises to hand back (spec
-// §2, §6): the level's artefact, and the reason a "hands back" list exists at
-// all. POC is the level with none — he does not know what he skipped.
+// §2, §6): the level's artefact, the heading the runner reads it under, and
+// the reason a "hands back" list exists at all. POC is the level with none —
+// he does not know what he skipped, and no hand-back file is required of him.
 var personaCoderHandsBack = map[Rigor][]string{
 	POC:      {"how to run it and play with it", "this is a prototype, do not ship it"},
-	Startup:  {"a deferred list"},
-	Pro:      {"a deferred list"},
-	Critical: {"an open-risks list"},
-	Hotfix:   {"revert plan", "morning note"},
+	Startup:  {"a deferred list", "## Deferred"},
+	Pro:      {"a deferred list", "## Deferred"},
+	Critical: {"an open-risks list", "## Open risks", "## Verification"},
+	Hotfix:   {"revert plan", "## Revert plan", "morning note", "## Morning note"},
 }
 
 // personaReviewerStandard is the reviewer standard each level's text carries
 // (spec §5, LF14): the coder and the reviewer run at the same level, and the
-// standard is the level's own.
+// standard is the level's own. Hotfix's judge reads the same two sections the
+// coder writes, so those headings are pinned here too.
 var personaReviewerStandard = map[Rigor][]string{
 	POC:      {"Do not report missing error handling"},
 	Startup:  {"missing from the deferred list", "as a finding"},
 	Pro:      {"missing from the deferred list", "as a finding"},
 	Critical: {"adversarial"},
-	Hotfix:   {"minimality", "revert plan", "morning note"},
+	Hotfix:   {"minimality", "revert plan", "## Revert plan", "morning note", "## Morning note"},
 }
+
+// personaHandBackLevels are the levels whose hand-back the runner reads by
+// section (LV4.2, LV5.1): POC's note is the pull request's own body and needs
+// no file, so it is not one of them.
+var personaHandBackLevels = []Rigor{Startup, Pro, Critical, Hotfix}
 
 // personaDeployRE and personaNegationRE hold LD7's rule as a test: a persona
 // never tells an agent to deploy (D13), so every sentence that mentions
@@ -138,6 +145,30 @@ func TestPersonaCoderOpensWithItsOwnSentenceAndHandsBack(t *testing.T) {
 				t.Errorf("Persona(%s, %s) does not hand back %q:\n%s", level, Coder, want, text)
 			}
 		}
+	}
+}
+
+// TestPersonaNamesTheHandBackFileAndSections: a level's sections are read by
+// the runner from the agent's own hand-back file, and that file is `pr.md` on
+// a first run and `followup.md` on a follow-up (internal/followup's
+// SystemPromptLines replaces the pr.md line, internal/runner's followupFile
+// writes followup.md). A coder text that named only `pr.md` would send a
+// follow-up's deferrals to a file the runner does not read; POC needs no file
+// at all, so its text names none.
+func TestPersonaNamesTheHandBackFileAndSections(t *testing.T) {
+	if len(personaHandBackLevels) != 4 {
+		t.Fatalf("the levels with a hand-back file are %d; want the four LV5.1 checks to need one, %d", len(personaHandBackLevels), 4)
+	}
+	for _, level := range personaHandBackLevels {
+		text := Persona(level, Coder)
+		for _, want := range []string{"pr.md", "followup.md"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("Persona(%s, %s) does not name %q; a follow-up's hand-back file is followup.md, not pr.md", level, Coder, want)
+			}
+		}
+	}
+	if text := Persona(POC, Coder); strings.Contains(text, "pr.md") || strings.Contains(text, "followup.md") {
+		t.Errorf("the POC text names a hand-back file, and none is required of it:\n%s", text)
 	}
 }
 

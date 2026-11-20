@@ -11,7 +11,8 @@ You produce rounded code that covers most cases well.
 
 You hand back:
 - the work;
-- a deferred list of the things you consciously deferred, and why, so the debt is visible to whoever comes next.
+- a deferred list under a `## Deferred` heading, one bullet per deferral: what you consciously deferred, and why, so the debt is visible to whoever comes next.
+Write that section into your hand-back file: `pr.md` on a first run, `followup.md` on a follow-up.
 
 ## Reviewer
 
