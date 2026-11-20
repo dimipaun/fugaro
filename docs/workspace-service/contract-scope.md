@@ -1,0 +1,221 @@
+# The scope contract (C1)
+
+Task **C1** of [implementation-plan.md](implementation-plan.md). The rule it states is **R1** (the seam),
+and the two questions it answers for the route half are **R14** (what workspace mode serves) and **R18**
+(a call to the workspace's service carries no member secret), with **R5**, **R6**, **R8**, **R13**,
+**R17** and **R19** ([reconciliation.md](reconciliation.md)) behind the readers. The decisions are
+D2980 (a second Cloud Run service on the same binary), D2981 (a member's run calls it directly),
+D2982 (the route is decided once at the run's start), D2988 (a member's runs only), D2992 (shared
+project jobs are served) and D1299 as amended (the service holds no write on a member). The shapes
+are `internal/credsvc/scope.go`: `Scope`, `ScopeResolver`, `OfferingReader`, `ForgeReader`,
+`WorkspaceNodeReader`, `WorkspaceScopeConfig`, `WorkspaceScopeResolverFunc`,
+`NewWorkspaceScopeResolver` and `WorkspaceKeepWarmPath`. The stub this package ships while the sides
+are built (`scope_stub.go`, with its test) is deleted by **I1**.
+
+**WS1** (the installation's scope), **WS2** (the workspace's scope) and **WS5** (the process) are
+written against this document in parallel; **WS13** reads the keep-warm path from it, and **WS16**
+and **WS17** read the forge readers. What hands the scope to a running service — `Server.ServeHTTP`
+asking the resolver, and the gate that refuses a route the scope does not serve — is **WS1**'s, which
+edits `server.go`; what the workspace's readers are built from is **WS2**'s, over **C3**'s node and
+**WS15**'s pool. A side that finds this contract wrong or incomplete raises a change request
+([docs/contract-first-decoupling](../contract-first-decoupling/spec.md)) rather than working around
+it; **R-scope-forge** is the one already anticipated, and it is named [below](#the-forge-surface-is-this-contracts-best-reading-and-r-scope-forge-is-anticipated).
+
+## The shape
+
+The scope is one value per **call**, not per process, because the member a call belongs to is a fact
+only the call carries: its run identity verified it (`Workspace.Verify`), and it decides which
+database the readers read, which repository table the pairing resolves through and which pool the call
+may be served from.
+
+| Accessor | Who answers it | What it means |
+| --- | --- | --- |
+| `Caller() Identity` | the resolver's verification | the run identity the call's token proved; the zero `Identity` on a route answered ahead of the shared parse (a person, a daemon, a launcher or a build holds none) |
+| `Policy() PolicyReader` | the installation's one node, or the member's own published policy | the project's shared node and one repository's own admission node, for **this** caller |
+| `Kills() KillReader` | the installation's database, or the member's | the operator's stop switches this caller honours — the switches that stop **its** runs |
+| `State() creds.Store` | the installation's database, or the **workspace's own** | the marks, the leases, a run's placement, the tie-breaker and the per-repository auth record |
+| `Outcomes() OutcomeReader` | the installation's database, or the member's | whether a run of this caller's repository has already ended (W2) |
+| `Repos() map[string]string` | the installation's repository table, or the **calling job account's** repositories | the slug a run identity carries to the canonical name the policy speaks; a slug it does not hold is refused at the pairing, never guessed (D1066) |
+| `Offering() OfferingReader` | the bundle's own credentials, or the intersection over the workspace's pool | the pool the call may be served from — a narrowing, never a widening |
+| `Forge() ForgeReader` | the installation's token store and its table, or the workspace's | the Bitbucket token a proxied call is served with, and the coverage a forge call is admitted by |
+| `Meter() *WorkspaceMeter` | nil on an installation; the workspace's own meter | the workspace's cap, taken where a call is paid for (D1301 as amended) |
+| `Serves(path string) bool` | the deployment's route set | whether this deployment serves that route at all (R14) |
+| `AcceptsSlip() bool` | the deployment's caller rule | whether a call that presents a slip is served under it (R18) |
+
+`ScopeResolver.Resolve(ctx, r)` is the whole of what a deployment is parameterised by: it verifies the
+caller the request carries and answers the scope it is served under. It is handed the `*http.Request`
+and not a parsed `credsvc.Request`, because the routes answered ahead of `RequestFromHTTP` carry no
+run identity to parse and because **which** verification a route needs is a property of the route: the
+resolver decides it, so no route can reach a reader it was not admitted to.
+
+An error from `Resolve` is a refusal of the **caller** — the verifier's own, naming the field that
+failed and never its value — and `ServeHTTP` answers it exactly as it answers the verification it
+makes itself today. A route the deployment does not serve is **not** an error: `Resolve` answers a
+scope whose `Serves` is false, so that a route can be told apart from a caller, and so that the one
+gate that refuses an unserved route stays in one place.
+
+`NewWorkspaceScopeResolver` is a **variable** of the constructor's signature
+(`WorkspaceScopeResolverFunc`) and not a function, and that is the contract's own shape rather than an
+accident: WS5 builds a workspace-mode process through the constructor while WS2 — which owns its body,
+in `scope_workspace.go` — is still being written, and Go has no way to declare a function in one file
+of a package and define it in another. Both sides therefore assign it from `init`: `scope_stub.go`
+assigns a resolver whose scope refuses every call, and WS2's file assigns the real one. The toolchain
+presents a package's files in name order, so the stub is initialized first and WS2's assignment is
+what answers from the moment WS2 lands. A caller does not have to know any of that: it calls the
+constructor and gets either the workspace's resolver or a refusal, never a nil.
+
+## The rules
+
+1. **One route, one rule (R1).** A route reads every reader it needs through the scope and never
+   through a second derivation of the member. That is the whole point of the seam: a workspace's
+   service and an installation's are one binary with one set of routes, and what differs between them
+   is the resolver they are built with. **A second implementation of a route is the thing this
+   contract exists to prevent** — the rules here decide whether a credential is issued at all, and two
+   spellings of one rule drift.
+
+2. **The workspace's readers are the member's, and the state is the workspace's own (R1, R8, D1299 as
+   amended).** The policy, the kill switches, the outcomes and the repository table are read where the
+   member's own administrator wrote them: the member's database, through the verifier's `iss` (finding
+   6). The **state is not**: a cooldown, a rotation position and a spend figure for a workspace
+   credential are facts about the workspace's pool, so they live in the workspace's own database. The
+   service holds no write on any member at all, which is a property of this split and not a promise
+   about it.
+
+3. **The repository table is the caller's, and it is where R19 lands (R6, D2992, R19, F28).** An
+   installation's table is every repository it serves. A workspace's holds the repositories of the
+   **calling job account** and no other — one for a repository's own job, several for a shared project
+   job — so a run whose repository is not in that list is refused at the pairing with a typed reason
+   that names the workspace owner's `fugaro update`. A repository the workspace does not list is never
+   resolved by guessing it from the slug's text (D1066).
+
+4. **The offering is a narrowing, never a widening (R5).** Whatever the offering reader leaves out is
+   never served; what it answers is still held to the legs the route applies itself — the repository's
+   own admission, the crafts a node publishes and the repository's own auth record. A workspace
+   answers the intersection of the workspace's pool with the **member's** policy and the repository's
+   admission in the member's own database, which is the same intersection R5 fixes: a member's run is
+   never served a credential its own administrator did not admit.
+
+5. **Workspace mode serves a closed set of routes (R14, D2988, A2).** The model routes
+   (`/v1/messages`, `/v1/messages/count_tokens`); the forge routes a run calls — the git proxy under
+   `/v1/bitbucket/proxy/`, a run's own token mint (`/v1/github/installation-token`) and its context
+   tokens (`/v1/github/context-tokens`); and the keep-warm route. **Every other route is refused with
+   a typed refusal**: review signing (`/v1/review/sign`) and verification (`/v1/review/verify`), the
+   slips (`/v1/slip`, `/v1/slip/claim`), the workflow secrets (`/v1/workflow-secrets`), the build
+   tokens (`/v1/build/token`, `/v1/build/credentials`), the read mints (`/v1/bitbucket/read-token`,
+   `/v1/github/read-token`), the merge mint (`/v1/github/merge-token`), the label route
+   (`/v1/github/labels`) and the issue route (`/v1/github/issues`). A member's run keeps calling its
+   **own project's** service for those, and an installation serves all of them as it does today.
+
+6. **The keep-warm route carries no secret (R14, D2985, F33).** `WorkspaceKeepWarmPath` is where a run
+   that routed a kind to the workspace posts its beat, at the slip beat's interval, so that the
+   service is not scaled to zero between the calls it pays for. The beat the run already has posts the
+   slip's id and its claim secret, and R18 refuses both, so this route takes the job's identity and
+   nothing else. The path is C1's to name and both sides read it from here: the service that serves it
+   (WS2) and the run that posts it (WS13). It is the one route of the workspace mode that must exist
+   before the service serves anything, because a beat posted to a route the deployment does not serve
+   is a 404, which a run reads as the service being unreachable.
+
+7. **A call that presents a slip is refused (R18, F40).** A call to the workspace's service carries
+   the job's identity and the run's token and nothing else of the member's: no slip id, no claim
+   secret, no auth-mode or account header. A call that presents **no** slip is unaffected by the
+   answer, in both deployments: the slip-less path is what this service served before the slips
+   existed and what it goes on serving (`server.go`'s own rule, which is the slips plan's R9 and not
+   this one's).
+
+8. **The node is re-read, and a failed re-read refuses (R13, R17, F26).** The workspace's scope
+   re-reads the published node when the copy it holds is older than 60 seconds, conditionally, so a
+   member added or an entry shared or unshared takes effect within a minute with no new revision. When
+   that re-read fails and the copy held is older than the 60 seconds, the scope refuses the call: it
+   never serves from a stale table, because a table that cannot be re-read is not one that still
+   admits what it said. A member's **new repository** still needs the workspace owner to declare it and
+   run `fugaro update`, for the invoke grant and for the account's list.
+
+9. **The meter is declared and not yet wired.** `Meter()` is the scope's answer to "what is the
+   workspace's cap for this call", and the reservation, the settle and the advisory headroom the
+   member is answered with are **WS8**'s (R15). Nothing in this contract reserves anything: an
+   installation answers nil, a workspace answers its meter, and the wiring is a behavior change with a
+   task of its own rather than something half-landed here.
+
+## What this contract cannot promise
+
+### The forge surface is this contract's best reading, and R-scope-forge is anticipated
+
+`ForgeReader` carries two things — the Bitbucket token store a proxied call is served with, and the
+coverage a forge call is admitted by — and that is C1's reading of what WS16 and WS17 need, written
+before either of them exists. What the forge routes need **beside** that is deliberately not here: the
+App key and the proxy's own configuration come out of the bundle and the `Config` as they do today,
+and only what is per **caller** is on the scope. If WS16's or WS17's review finds a reader that is
+genuinely per caller and genuinely missing, the answer the plan already names is **R-scope-forge**: a
+contract change that adds a method here and to both implementations in the same sweep, reaching WS1
+and WS2 — never a second reader reached around the scope, which would be rule 1's second derivation
+under another name.
+
+The same is true of `OfferingReader`'s argument: it takes the `*Bundle` rather than holding a loader,
+because the route loads the bundle once for the credential **values** and a reader that loaded its own
+would be a second read of the one secret this service holds. A forge reader that needs the bundle
+would be a change of the same kind.
+
+### The outcome reader has no route reader today
+
+`Outcomes()` is declared because R1 names it and because the scope is the only place that can name the
+right database for a caller — the resolver's verification is what reads it today (an ended run's token
+is not honoured again, W2), and the workspace builds each member's verifier with that member's own
+outcome reader. **No route reads `Scope.Outcomes()` today.** It is carried as the caller's reader, not
+as a reader a route is promised to have a use for, and a review that finds it dead is reading a shape
+R1 asked for rather than a hole in this contract.
+
+### The refusals are declared here and written by WS1 and WS2
+
+This contract declares the **questions** — `Serves`, `AcceptsSlip`, `Covers`, and the readers that
+refuse — and not the sentences. The typed refusal of an unserved route is written where the gate is, in
+`ServeHTTP` (WS1, which edits `server.go`), and the workspace's tests for it are WS2's
+(`TestWorkspaceModeRefusesEveryOtherRoute`). Nothing in `scope.go` refuses anything itself: the stub's
+refusals are the stub's, and I1 deletes them.
+
+## What each side may rely on
+
+- **The installation's scope (WS1)** may rely on: every accessor answering out of today's `Config` and
+  today's verifier, with **no existing test in `internal/credsvc` changing**; `Serves` true for every
+  route this service has and `AcceptsSlip` true, which is today's behaviour; and `Meter()` nil. It may
+  not read the scope's readers before the resolver has answered a scope, and it may not reach a
+  `Config` field a route is supposed to take from the scope.
+- **The workspace's scope (WS2)** may rely on: the `MemberCall` `Workspace.Verify` produced as the one
+  thing that names the member, its database and its verified slug; C3's node as what the offering and
+  the forge coverage are read from, with `WorkspaceShared`'s signature as WS15 changes it; and the
+  constructor's signature as written here, which it supplies the body of by assigning
+  `NewWorkspaceScopeResolver`. It may not write to a member's database (R8) and may not serve a route
+  outside R14's set.
+- **The process (WS5)** may rely on: `NewWorkspaceScopeResolver` being non-nil whatever state the
+  sides are in — a nil constructor is a panic at startup rather than a refusal — and on the stub
+  answering a refusing scope rather than an error, so that a workspace-mode process starts and refuses
+  its calls before WS2 lands.
+- **Neither side may rely on** the other's internals: the resolver's route-to-verification mapping,
+  the workspace's node caching and the installation's table derivation are not this contract. A
+  field's meaning never changes ([CLAUDE.md](../../CLAUDE.md), "a field never changes meaning"): a new
+  accessor is additive, and a meaning that has to change gets a new name.
+
+## What this contract does not decide
+
+- **How a route is refused** — the status, the error type and the sentence. That is WS1's, and WS2's
+  tests read it through the server rather than through this shape.
+- **The node's caching and its clock** — where the 60 seconds are measured, how the re-read is made
+  conditional, and what the scope does with a node it decoded but does not validate. R13 and R17 fix
+  the behaviour; the mechanism is WS2's, and `WorkspaceScopeConfig.Now` is there for its tests.
+- **The meter's wiring** — the worst case reserved before a call, the settle on the answer's usage,
+  the refusal at the ceiling and the headroom header (R15). WS8's, and see rule 9.
+- **The route record and the mode's names** — which repository and kind goes to which service, the
+  workspace service's Cloud Run name and the environment name that selects the mode. Those are **C2**
+  (`internal/creds/route.go`).
+- **The node's shape** — the member rows, the job accounts' repository lists, the pool's entries and
+  their forge coverage. That is **C3** (`internal/projectpolicy`, version 2).
+- **Whether a workspace's service is deployed at all** for a workspace whose Firebase is another
+  project's: it is not (R12, A4).
+
+## Review
+
+Reviewer tier **opus + independent review** before WS1, WS2 and WS5 launch
+([implementation-plan.md](implementation-plan.md), Conventions): this is the seam a second deployment
+of the credentials service is built on, and the thing it fences — one set of routes serving two
+different databases and two different repository tables — is where a mistake would serve one member a
+credential another member's administrator admitted. O4 (the run's Firebase token reaches the
+workspace's service) is named for that review to confirm or to ask for a narrower token.
