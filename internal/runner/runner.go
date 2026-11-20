@@ -4044,7 +4044,7 @@ func (r *run) agentLoop(ctx context.Context) {
 		r.rebaseStep(ctx)
 		return
 	}
-	sys := SystemPrompt(r.systemPromptData(), r.instructions)
+	sys := SystemPrompt(r.systemPromptData(), r.instructions, r.coderPersona())
 	req := agent.Request{Prompt: r.spec.Task, SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
 	var opts stageOpts
 	if f := r.follow; f != nil {
@@ -4258,7 +4258,7 @@ func (r *run) agentLoop(ctx context.Context) {
 	// cut from another branch than its ref is narrowed to its own commits
 	// here, once, before the prompt and every round's input read the range.
 	r.narrowReviewRange(ctx)
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable())
+	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable(), r.reviewerPersona())
 	// The task the pull request was written for, quoted after the brief the
 	// levels already read (RA2, R3). It goes on the one prompt all three
 	// levels are handed — first line, senior and adversarial — so a finding of
@@ -4839,8 +4839,8 @@ func (r *run) fix(ctx context.Context, findings []Finding, sys, sessionID string
 	// Rule 1's third call site, with rule 4 in it: FixPrompt writes the
 	// widening sentence for the block, so the turn a message resumes this fix
 	// into carries it the same way the first turn did (D2943).
-	opts := stageOpts{Yield: &yieldOpts{Resume: func(block string) string { return FixPrompt(findings, block) }}}
-	req := agent.Request{Prompt: FixPrompt(findings, r.messageBlock(ctx, "fix")), AppendSystemPrompt: sys}
+	opts := stageOpts{Yield: &yieldOpts{Resume: func(block string) string { return FixPrompt(findings, block, r.coderPersona()) }}}
+	req := agent.Request{Prompt: FixPrompt(findings, r.messageBlock(ctx, "fix"), r.coderPersona()), AppendSystemPrompt: sys}
 	if sessionID == "" {
 		// No session exists to resume: a Fixed check gate (gate.go) skipped
 		// implement entirely, so this fix is the run's first real agent

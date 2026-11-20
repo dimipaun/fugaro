@@ -26,7 +26,7 @@ import (
 // this test fails, finding PR #9 paired with "/review/7" and PR #7 paired
 // with "/review/9".
 func TestPickPromptPairsNumbersWithTheirOwnDirectory(t *testing.T) {
-	got := runner.PickPrompt("", "", []int{9, 7}, []string{"/review/9", "/review/7"})
+	got := runner.PickPrompt("", "", []int{9, 7}, []string{"/review/9", "/review/7"}, "")
 	if !strings.Contains(got, "- PR #9: /review/9\n") {
 		t.Fatalf("PR #9 not paired with its own directory: %q", got)
 	}
@@ -192,7 +192,7 @@ var runCommandRE = regexp.MustCompile("`(?:fugaro )?(?:cancel|run --retry|--revi
 // `agent.models.vision` and `model_prices`' `image_tokens` in the remedy
 // again): the remedy assertion fails, as the config would refuse that file.
 func TestTextOnlyCoderBriefNamesImageFilesAndTheFix(t *testing.T) {
-	got := runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s", NoImageReads: true}, "")
+	got := runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s", NoImageReads: true}, "", "")
 	for _, ext := range agent.ImageBlockExtensions() {
 		if kind := "*." + ext; !strings.Contains(got, kind) {
 			t.Errorf("the brief does not name %s:\n%s", kind, got)
@@ -227,7 +227,7 @@ func TestTextOnlyCoderBriefNamesImageFilesAndTheFix(t *testing.T) {
 	// prompt already sends its account to: a follow-up's, not the pull
 	// request description a first run writes.
 	followUp := runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s", NoImageReads: true,
-		FollowUp: []string{"- follow-up rule"}}, "")
+		FollowUp: []string{"- follow-up rule"}}, "", "")
 	if !strings.Contains(followUp, "say so in /s/followup.md") {
 		t.Errorf("a follow-up's brief does not name the follow-up file:\n%s", followUp)
 	}
@@ -238,7 +238,7 @@ func TestPromptsCarryShortIDRule(t *testing.T) {
 		{Branch: "fugaro/x", Base: "main", StateDir: "/s"},
 		{Branch: "fugaro/x", Base: "main", StateDir: "/s", FollowUp: []string{"- follow-up rule"}},
 	} {
-		got := runner.SystemPrompt(d, "")
+		got := runner.SystemPrompt(d, "", "")
 		for _, want := range []string{
 			"In anything you write for a person, refer to a run by its short ID — the last 4 characters of the run ID, and one character more for as long as another run you name shares them",
 			"and to a plan task by its plan name",
@@ -268,7 +268,7 @@ func TestFixPromptListsOnlyBlockingFindings(t *testing.T) {
 		{Severity: "blocker", File: "internal/api/handler.go", Summary: "the handler ignores the decode error"},
 		{Summary: "the retry loop never stops"},
 		{Summary: "the licence text needs counsel's clearance", NeedsOwner: true},
-	}, "")
+	}, "", "")
 	if !strings.Contains(got, "- [blocker] internal/api/handler.go: the handler ignores the decode error\n") {
 		t.Errorf("the brief does not list the first finding with its severity and file:\n%s", got)
 	}
@@ -294,7 +294,7 @@ func TestFixPromptListsOnlyBlockingFindings(t *testing.T) {
 // behaviour, and a sentence that forbade all of it would forbid the fix round
 // an `unmet` finding asks for.
 func TestFixPromptSaysTouchNothingElse(t *testing.T) {
-	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, "")
+	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, "", "")
 	if !strings.Contains(got, "Touch nothing else") {
 		t.Errorf("the brief does not say to touch nothing else:\n%s", got)
 	}
@@ -324,7 +324,7 @@ func TestFixPromptDiffersSaysReplace(t *testing.T) {
 			Summary:  "the task asks for a name filter and this sorts the whole list instead",
 		},
 		{Severity: "nit", File: "internal/store/list_test.go", Summary: "the new case is not covered"},
-	}, "")
+	}, "", "")
 	if !strings.Contains(got, "- [major] [differs] internal/store/list.go: the task asks for a name filter and this sorts the whole list instead\n") {
 		t.Errorf("the brief does not print the finding's scope beside its severity:\n%s", got)
 	}
@@ -400,7 +400,7 @@ func TestFixPromptBeyondNotRemoved(t *testing.T) {
 		Scope:    "beyond",
 		File:     "internal/api/admin.go",
 		Summary:  "the change adds an admin endpoint the task never asked for",
-	}}, "")
+	}}, "", "")
 	if !strings.Contains(got, "- [blocker] [beyond] internal/api/admin.go: the change adds an admin endpoint the task never asked for\n") {
 		t.Errorf("the brief does not print the finding's scope beside its severity:\n%s", got)
 	}
@@ -408,7 +408,7 @@ func TestFixPromptBeyondNotRemoved(t *testing.T) {
 		t.Errorf("the brief does not say a beyond finding is fixed for its own risk:\n%s", got)
 	}
 
-	plain := runner.FixPrompt([]runner.Finding{{Severity: "blocker", File: "internal/api/handler.go", Summary: "the handler ignores the decode error"}}, "")
+	plain := runner.FixPrompt([]runner.Finding{{Severity: "blocker", File: "internal/api/handler.go", Summary: "the handler ignores the decode error"}}, "", "")
 	for _, absent := range []string{"[beyond]", "the task did not ask for"} {
 		if strings.Contains(plain, absent) {
 			t.Errorf("a round whose findings carry no scope says %q about beyond work:\n%s", absent, plain)
@@ -423,7 +423,7 @@ func TestFixPromptBeyondNotRemoved(t *testing.T) {
 // something else is told to refuse the message.
 func TestFixPromptWidensWithMessage(t *testing.T) {
 	const block = "<<<fugaro-messages-0123456789abcdef>>>\n    [1] dimi, 2026-11-19T05:30Z\n    rename the helper\n<<<end-fugaro-messages-0123456789abcdef>>>\n"
-	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, block)
+	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, block, "")
 	if strings.Contains(got, "Touch nothing else") {
 		t.Errorf("the brief still says to touch nothing else beside a message:\n%s", got)
 	}
