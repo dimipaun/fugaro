@@ -23,10 +23,10 @@
 // neither the installation's job accounts nor its Firebase key set nor any
 // database role (D1940). Everything it can do is in internal/intake.
 //
-// The environment is four names, and intakeServiceConfig below is the one
-// place they are read: FUGARO_GCP_PROJECT, FUGARO_INTAKE_URL,
+// The environment is five names, and intakeServiceConfig below is the one
+// place they are read: FUGARO_GCP_PROJECT, FUGARO_REGION, FUGARO_INTAKE_URL,
 // FUGARO_LAUNCHER_ACCOUNTS and FUGARO_RUNS_BUCKET. An installation whose
-// deployment names one of them twice, or names a fifth, is DS2.2's business
+// deployment names one of them twice, or names a sixth, is DS2.2's business
 // (the Terraform half of this feature): nothing here reads a variable it does
 // not need, and nothing here prints one.
 
@@ -125,7 +125,7 @@ const envIntakeURL = "FUGARO_INTAKE_URL"
 // intake.New accepts — could not be written. It is never set outside a test,
 // and it carries no value: it is two constructors.
 type intakeWiring struct {
-	secrets func(ctx context.Context, project string) (intake.SecretStore, error)
+	secrets func(ctx context.Context, project, region string) (intake.SecretStore, error)
 	bucket  func(ctx context.Context, name string) (*blobx.Bucket, error)
 }
 
@@ -139,11 +139,21 @@ var intakeTest *intakeWiring
 //
 // WHAT IT READS, AND WHY EACH NAME IS THERE.
 //
-// The set is four, and every one of them is a fact of the installation that
+// The set is five, and every one of them is a fact of the installation that
 // cannot be derived from the others, and none of them is a credential:
 //
 //   - FUGARO_GCP_PROJECT is the GCP project the containers live in: the Secret
 //     Manager project, which is the installation's.
+//   - FUGARO_REGION is the installation's own region, which a container this
+//     process creates is replicated in (D3082). It is READ AS OPTIONAL, and
+//     that is the design rather than an oversight: this process has no project
+//     config and no installation record it may read, so its deployment is the
+//     only thing that could tell it, and a service deployed before LP5a's
+//     variable existed names none. Such a service must still start and must
+//     still write, creating the automatic containers it always made — a
+//     refusal here would take the intake away from every installation that has
+//     not been updated since, and nothing about the containers it already made
+//     changes either way: only a create carries a replication policy.
 //   - FUGARO_INTAKE_URL is this service's own URL, which is the audience a
 //     caller's Google ID token is minted for — the one thing that binds such a
 //     token to *this* service. Cloud Run assigns it, so it is passed rather
@@ -209,8 +219,8 @@ func intakeServiceConfig(ctx context.Context, getenv func(string) string, errw i
 		return intake.Config{}, userErr("%s is not the runs bucket's name: the installation module passes the bucket's own name (fugaro-runs-<gcp-project>), never a URL", envRunsBucket)
 	}
 
-	secrets := func(ctx context.Context, project string) (intake.SecretStore, error) {
-		return intake.NewSecretManager(ctx, project)
+	secrets := func(ctx context.Context, project, region string) (intake.SecretStore, error) {
+		return intake.NewSecretManager(ctx, project, region)
 	}
 	bucket := func(ctx context.Context, name string) (*blobx.Bucket, error) {
 		return blobx.Open(ctx, "gs://"+name)
@@ -235,7 +245,13 @@ func intakeServiceConfig(ctx context.Context, getenv func(string) string, errw i
 	if err != nil {
 		return intake.Config{}, userErr("the secrets intake cannot verify its callers, so it will not start: %v", err)
 	}
-	store, err := secrets(ctx, project)
+	// The region a container the store creates is replicated in, passed here
+	// and not captured by the constructor above, so the wiring a test stands in
+	// with sees exactly what the deployment named. An empty one is not a
+	// refusal and is not replaced by a default: it is the deployment of a
+	// service from before this variable existed, whose containers are
+	// automatic (intake.NewSecretManager's own rule).
+	store, err := secrets(ctx, project, getenv(envRegion))
 	if err != nil {
 		return intake.Config{}, remote(fmt.Errorf("no Secret Manager client for the installation's containers: %w", err))
 	}
