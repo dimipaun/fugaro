@@ -154,11 +154,11 @@ installation plans no change.
 Go creators use automatic replication, which Google documents as global. The comment in
 `secrets.tf` says why it cannot simply change: "any other replication would replace them, which
 deletes every version first". An EU promise that covers credentials (D3082) needs user-managed
-replication on a new installation and automatic kept on an existing one, so the choice is not a function of the region. It is read from the cloud, container by
-container: one that exists keeps its own replication, and one not yet created takes the
-installation's policy (R5). The intake service's creator runs in the cloud with no project
-config and is told the policy by its environment (LP5a, LP5c); its own shape check, which holds a
-container to automatic today, accepts the installation's policy.
+replication on a new installation and automatic kept on an existing one, so a container that exists must keep what it has. Terraform is told to ignore the replication of
+a container it already manages or adopts, and every container created from then on is replicated
+in the region (R5). The intake service's creator runs in the cloud with no project config and is
+told the region by its environment (LP5a, LP5c); its own shape check, which holds a container to
+automatic today, accepts both.
 
 **F10 — Gap: the run log bucket is `global`.** It holds each run's output, which is the code and
 the agent's transcript, and its location is permanent. The same shape as F9: a new installation's
@@ -167,9 +167,12 @@ bucket goes in the place, an existing one stays `global`, and the import address
 `internal/cli/doctor_batch.go` stop assuming `global`.
 
 **F11 — Gap: an installation made before this work cannot be told from its region alone.** Its
-secrets are automatic and its log bucket global whatever its region. Every path that plans therefore
-reads what the cloud holds, thing by thing, and uses the mapping only for what does not exist
-yet; `fugaro update` writes that reading down as the record (R5, D3089).
+secrets are automatic and its log bucket global whatever its region. So nothing that exists is ever given the
+mapping's answer: a secret by Terraform ignoring that field, a database and the log bucket by
+discovery reading where they are (R5). One path plans with no discovery at all,
+`fugaro update --forget` (`ForgetSpec`, `internal/infra/forget.go`), and it turns log isolation
+off and keeps every secret declared, so it is safe under the same two rules and LP5a and LP6 each
+test it. `fugaro update` writes what the cloud holds down as the record (D3087, D3089).
 
 **F12 — Gap: a teammate's machine types the region again.** `fugaro update` on a new machine asks
 `--gcp-project` and `--region` (`firstRunMissing`), and nothing compares the answer with the
@@ -217,9 +220,11 @@ new text, pinned by a docs test (LP11).
 LP10 all edit `internal/cli/init_firebase.go`, and AB7's
 `TestTheBudgetDatabaseIsWrittenBeforeTheLocationNote` asserts an order around a note LP10 removes.
 AB7 also writes `init.go`, `init_new_machine.go`,
-`init_stages.go`, `internal/infra/firebase.go` and `website/content/cli-reference.md`, which LP4,
-LP8, LP14 and LP2 write. The plan orders AB7 after LP2, LP3, LP4 and LP8, and LP10 and LP14 after
-AB7, and says what AB7's test becomes (O2, O3).
+`init_stages.go`, `setup.go`, `init_images.go`, `init_review.go`, `setup_refusals_test.go`,
+`internal/infra/firebase.go` and `website/content/cli-reference.md`, most of which this plan
+writes too. The plan orders AB7 after LP2, LP4 and LP8, and LP3, LP6, LP10 and LP14 after AB7,
+and says what AB7's test becomes (O2, O3). The help texts in `setup.go` and `init.go` that say
+`us-east5` is permanent and separately confirmed, and their copy in the CLI reference, are LP10's.
 
 **F20 — Gap: run output is not only in the run log bucket.** With `--no-log-isolation`
 (`log_isolation` in `modules/installation/logging.tf`) there is no Fugaro bucket and every run's
@@ -270,25 +275,32 @@ All answered by the owner on 2026-11-20. None departs from the recommendation.
 | **D3090** | The Firestore location's own note (D12 of 2026-10-20)? | **Removed everywhere.** The line is printed and the database is created, in any session the stage itself may run in | as recommended: the brief's item 4; the stage's own fences still apply |
 | **D3091** | A database found outside the installation's place? | **Adopted if empty or ours, recorded where it really is, said once, and reported by `fugaro doctor` as information** | as recommended: accepted is not the same as hidden |
 
-**What changed in D3087, and why.** Two facts about the code contradict the answer as given.
+**What changed in D3087, and why.** Two facts about the code bear on the answer as given.
 First, the shared config decodes strictly, so a new field there stops a teammate's older CLI
-(F17). Second, a record that Terraform reads would, on any machine where it is absent, stale or
+(F17). That alone does not force the change: the same file already leaves fields out for older
+CLIs, so a shared record could have been published that way. Second, a record that Terraform reads would, on any machine where it is absent, stale or
 edited, plan a new replication for secrets that exist; every one of them carries
 `prevent_destroy`, so the update would fail until someone repaired it by hand, which the rule
 that `fugaro update` is the whole upgrade forbids (F9, R5). The owner's intent is kept: there is a
 record, update writes it with no question, and the cloud wins. What changed is that the record is
 this machine's own, and that it is written from the cloud and never read back as an input. A
-teammate's machine writes its own on its next `fugaro update`.
+teammate's machine writes its own on its next `fugaro update`. What is left of the record is
+small, and the owner should weigh it: its one reader is `fugaro doctor` (LP12), and a person
+whose update cannot read the cloud is told by doctor to run `fugaro update` until one can.
 
 **What D3082 does not promise.** The documents list each of these by name: prompts and code sent
 to a model provider (D3083); the git host; Google's global control plane (IAM, service accounts,
 resource names and labels, the API key, Identity Platform's configuration); the project's own
 `_Default` and `_Required` log buckets, which Google creates in `global` and which hold whatever
 the customer's project routes there; everything an installation made before this work already
-has; and two things about run output that are Fugaro's own (F20): an installation set up with
+has, and a database an installation adopts outside its place (D3091: whoever may create a
+database in the project can put one there first, and setup says so in one line); and two things
+about run output that are Fugaro's own (F20): an installation set up with
 `--no-log-isolation` has no run log bucket, so its run output is in `_Default`; and on every
 installation the build logs, the check jobs' lines and Cloud Run's system logs stay in
-`_Default`. A new secret on an installation whose secrets are automatic is automatic too.
+`_Default`. On an installation made before this work the secrets that exist stay automatic and
+every secret created afterwards is in the region, so such an installation is mixed, and the
+record says so.
 
 **What D3090 means.** A coding agent's session and a scripted `fugaro update` can now create a
 database whose location is permanent, where the stage itself may run. What keeps an agent out is
@@ -311,14 +323,14 @@ One defensible answer each, so stated and not asked.
   still refused, because that is not a location (F1).
 - **R4.** The module's region for the Realtime Database is the existing instance's location when
   discovery finds one, and the mapping's answer only when it finds none (F8).
-- **R5.** What Fugaro is told about a thing that exists is read from the cloud, for that thing,
-  on every path that plans (`infra.ObserveLocations`, part of discovery, LP7). A database, a log
-  bucket or a secret container that exists keeps its own location or replication; the mapping
-  answers only for what does not exist yet. A secret container not yet created takes the
-  installation's policy: automatic if any Fugaro container that exists is automatic, else the
-  mapping's. Where the cloud cannot be read, nothing is created under a guess. The record (D3087)
-  is written from that reading and is never an input, so a wrong, stale or edited record changes
-  no plan (F9, F11).
+- **R5.** Nothing that exists is given the mapping's answer, and no rule infers a policy from
+  what exists. A secret container keeps its replication because Terraform ignores that field on
+  a container it manages or adopts; every container created from then on, by Terraform, by the
+  CLI or by the intake service, is replicated in the region, on an old installation too. A
+  database or a log bucket that exists is found by discovery and keeps its location; the mapping
+  answers only for one that does not exist. The record (D3087) is written from a reading of the
+  cloud (`infra.ObserveLocations`, LP7) and is never an input, so a wrong, stale or edited record
+  changes no plan (F9, F11).
 - **R6.** A typed region that differs from the runs bucket's own location is refused (F12), by the
   same refusal as D3088.
 - **R7.** Setup prints where each thing will go, one line per row of the mapping, before anything
@@ -344,8 +356,9 @@ None. No two answers pull against each other.
   note (D3027). LP10 removes the note and is ordered after AB7; it rewrites that test to assert
   that no note is printed. If AB7 has not merged when LP10 is ready, LP10 waits.
 - **O3.** Always-a-budget's text (D3029, merged as #3305) says AB7 waits on "the part that says
-  where a new budget database goes". That part is LP2. Because AB7 shares files with LP3, LP4 and
-  LP8 (F19), this plan asks for more: AB7 launched once LP2, LP3, LP4 and LP8 have merged. That
+  where a new budget database goes". That part is LP2. Because AB7 shares files with this plan
+  (F19), this plan asks for more: AB7 launched once LP2, LP4 and LP8 have merged, and LP3, LP6,
+  LP10 and LP14 launched once AB7 has. That
   is a change to another plan's order and is the owner's to accept; always-a-budget's documents
   are not edited here.
 - **O4.** An installation in neither place (D3081) gets its Realtime Database on another
@@ -359,8 +372,18 @@ None. No two answers pull against each other.
   and never an input. The owner is asked to confirm the amended text.
 - **O7.** R10 (a region that cannot be checked is accepted with a line) is a resolution the owner
   may overrule.
-- **O8.** D3082's list of what is not promised grew in review (F20): log isolation turned off,
-  and the logs Fugaro leaves in `_Default`. The owner is asked to confirm the list.
+- **O8.** D3082 was sharpened in review, and the owner is asked to confirm four things. The list
+  of what is not promised grew: log isolation turned off, the logs Fugaro leaves in `_Default`
+  (F20), and a database adopted outside the place. On an installation made before this work,
+  secrets created afterwards are regional while the old ones stay automatic (R5); the owner's
+  answer spoke of new installations only. And the log bucket falls back to the place's
+  multi-region (`us`, `eu`) where its region has no log bucket; the answer said "a regional
+  location".
+- **O9.** The vendor's key service must be redeployed with LP15 before a release lets an
+  installation choose the EU. It is the owner's step, and the one step in this plan that
+  `fugaro update` does not carry, because it is not an installation's.
+- **O10.** Pull requests #3315 and #3323 both use D3060–D3079 and checks 810–819. Neither
+  touches this plan's block; it is noted for whoever lands them.
 
 ## UNVERIFIED
 
@@ -382,5 +405,11 @@ None. No two answers pull against each other.
 - **U7.** Which regions Secret Manager's user-managed replication and Cloud Logging's buckets
   offer, region by region. The pages were read for the regions named here, not for every region
   the mapping accepts; LP1 reads the full lists and dates them.
+- **U8.** What the legacy host and each regional host answer for a default database that lives
+  at another: a redirect, a 404 or something else. LP15's read depends on it. Settled by Check
+  820, which reads all three hosts for the scratch project.
+- **U9.** That `ignore_changes` on a secret's replication holds for a container Terraform adopts
+  by import, with the provider version the module pins. LP5a's `TestAnAdoptedSecretPlansNoChange`
+  runs it against the real binary.
 - **U6.** Whether a user-managed secret in one region is readable by a Cloud Run job in the same
   region with no other change. Secret Manager's page implies it; Check 820 measures it.

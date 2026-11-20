@@ -55,7 +55,8 @@
           "internal/infra/firebase.go",
           "internal/infra/discover_firebase.go",
           "internal/infra/testdata/firebase*.tfvars.json",
-          "internal/infra/tf/testdata/golden/firebase*.plan.json"
+          "internal/infra/tf/testdata/golden/firebase*.plan.json",
+          "internal/cli/init_firebase.go"
         ]
       }
     },
@@ -107,7 +108,7 @@
     },
     {
       "id": "LP5a",
-      "title": "a new installation's secrets are replicated in its region",
+      "title": "a secret created from now on is replicated in the region",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -120,13 +121,9 @@
           "deploy/terraform/gcp/modules/installation/orchestrator.tf",
           "deploy/terraform/gcp/modules/installation/credentials.tf",
           "deploy/terraform/gcp/modules/installation/intake.tf",
-          "deploy/terraform/gcp/modules/installation/variables.tf",
           "deploy/terraform/gcp/modules/repo/secrets.tf",
-          "deploy/terraform/gcp/modules/repo/variables.tf",
-          "deploy/terraform/gcp/roots/installation/*.tf",
-          "deploy/terraform/gcp/roots/repo/*.tf",
-          "internal/infra/tfvars.go",
-          "internal/infra/testdata/*.tfvars.json",
+          "deploy/terraform/gcp/roots/installation/tests/*.tftest.hcl",
+          "deploy/terraform/gcp/roots/repo/tests/*.tftest.hcl",
           "internal/infra/tf/testdata/golden/installation*.plan.json",
           "internal/infra/tf/testdata/golden/repo*.plan.json"
         ]
@@ -134,7 +131,7 @@
     },
     {
       "id": "LP5b",
-      "title": "a secret the CLI creates follows the installation's policy",
+      "title": "a secret the CLI creates is replicated in the region",
       "run": null,
       "version": null,
       "tier": "small",
@@ -150,7 +147,7 @@
     },
     {
       "id": "LP5c",
-      "title": "the intake service's secrets follow the installation's policy",
+      "title": "the intake service's secrets are replicated in the region",
       "run": null,
       "version": null,
       "tier": "small",
@@ -177,11 +174,13 @@
           "deploy/terraform/gcp/modules/installation/logging.tf",
           "deploy/terraform/gcp/modules/installation/variables.tf",
           "deploy/terraform/gcp/roots/installation/*.tf",
+          "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl",
           "internal/infra/discover.go",
           "internal/infra/imports.go",
           "internal/infra/tfvars.go",
+          "internal/cli/init.go",
           "internal/cli/doctor_batch.go",
-          "internal/infra/testdata/*.tfvars.json",
+          "internal/infra/testdata/installation*.tfvars.json",
           "internal/infra/tf/testdata/golden/installation*.plan.json"
         ]
       }
@@ -253,7 +252,11 @@
           "internal/cli/update_test.go",
           "internal/cli/testdata/region_prompts.golden",
           "internal/cli/init_firebase_always_test.go",
-          "docs/no-prompt-policy/reconciliation.md"
+          "docs/no-prompt-policy/reconciliation.md",
+          "internal/cli/setup.go",
+          "website/content/cli-reference.md",
+          "internal/cli/init_firestore_test.go",
+          "internal/cli/managed_money_steps_test.go"
         ]
       }
     },
@@ -340,7 +343,8 @@
         "prediction": true,
         "paths": [
           "ee/keyservice/workspaces.go",
-          "ee/keyservice/workspaces_test.go"
+          "ee/keyservice/workspaces_test.go",
+          "docs/releases/*.md"
         ]
       }
     }
@@ -362,12 +366,12 @@
       "reason": "the mapping's answers; the mapping is smaller than a contract for it"
     },
     {
-      "task": "LP5a",
+      "task": "LP5b",
       "needs": "LP1",
       "reason": "the mapping's answers; the mapping is smaller than a contract for it"
     },
     {
-      "task": "LP5b",
+      "task": "LP6",
       "needs": "LP1",
       "reason": "the mapping's answers; the mapping is smaller than a contract for it"
     },
@@ -387,14 +391,9 @@
       "reason": "order: a mistyped region is refused before a region decides a permanent location"
     },
     {
-      "task": "LP5a",
-      "needs": "LP7",
-      "reason": "behaviour: it must read what exists at its own merge"
-    },
-    {
-      "task": "LP5b",
-      "needs": "LP7",
-      "reason": "behaviour: it must read what exists at its own merge"
+      "task": "LP3",
+      "needs": "LP2",
+      "reason": "one file, internal/cli/init_firebase.go"
     },
     {
       "task": "LP5c",
@@ -404,7 +403,12 @@
     {
       "task": "LP6",
       "needs": "LP5a",
-      "reason": "shared files: the installation module's and root's variables, internal/infra/tfvars.go and the same golden plans"
+      "reason": "shared files: the installation root's test file and the same golden plans"
+    },
+    {
+      "task": "LP6",
+      "needs": "LP4",
+      "reason": "one file, internal/cli/init.go"
     },
     {
       "task": "LP12",
@@ -419,7 +423,12 @@
     {
       "task": "LP10",
       "needs": "LP4",
-      "reason": "shared files: internal/cli/init.go and the region prompts golden file"
+      "reason": "shared files: internal/cli/init.go, the CLI reference and the region prompts golden file"
+    },
+    {
+      "task": "LP10",
+      "needs": "LP6",
+      "reason": "one file, internal/cli/init.go"
     },
     {
       "task": "LP14",
@@ -489,7 +498,7 @@
     {
       "task": "LP11",
       "needs": "LP15",
-      "reason": "it states that the key service finds a regional installation"
+      "reason": "it states that the key service finds a regional installation, and shares the release notes file"
     },
     {
       "task": "LP13",
