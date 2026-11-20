@@ -244,6 +244,15 @@ var secretReaderExceptions = []struct {
 		id:   "E32",
 		keys: []string{"deploy/terraform/gcp/roots/workspace/main.tf google_secret_manager_secret_iam_member.workspace_bundle"},
 	},
+	// The locations read (location-preference LP7): `fugaro update` and
+	// `fugaro setup` list the project's `fugaro=managed` containers to write
+	// down whether they are automatic, regional or both, which is the one row
+	// of the record LP14 keeps that Secret Manager answers (D3087). It is the
+	// read class E23 and E27 make -- a listing by label, as the operator's own
+	// identity -- and it is a row of its own because it is a file of its own:
+	// no value comes out of it, and a listing answers names, labels and
+	// replication policy and nothing else.
+	{id: "E33", keys: []string{"internal/infra/locations_observe.go"}},
 }
 
 // A key under this prefix names a rule the scan enforces rather than a hit it
