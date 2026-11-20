@@ -5154,6 +5154,11 @@ type stageOpts struct {
 	// watch closes it when a flagged message reaches the run's queue, and a
 	// wrap-up turn's own bound closes it too.
 	YieldAsk <-chan struct{}
+	// YieldBound is how long that segment may then wait for a quiet point
+	// before the agent stops it where it stands (rule 2's ten minutes, or
+	// none at all on a wrap-up turn, whose own bound is the whole of its
+	// clock — rule 3).
+	YieldBound time.Duration
 	// BudgetUSD, when non-nil, is what is left of the stage's model budget:
 	// a segment resumed after a stop gets the stage's remainder and not a
 	// second agent.max_budget_usd (rule 2).
@@ -5236,7 +5241,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		once := opts
 		once.RetryTransient = !retried && r.transientRetryLeft()
 		if y != nil {
-			once.YieldAsk = y.segment(ys.wrapUp)
+			once.YieldAsk, once.YieldBound = y.segment(ys.wrapUp)
 			once.BudgetUSD = ys.remaining
 			if ys.forced {
 				once.Recoverable = yieldRecoverable(opts.Recoverable)
@@ -5579,9 +5584,9 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.stageBudget(opts)
 	if opts.YieldAsk != nil {
 		// The agent stops itself at its next quiet point when this closes
-		// (RM3, internal/agent/quiet.go); the bound is rule 2's ten minutes,
-		// after which the agent stops where it stands instead.
-		req.Yield = &agent.YieldRequest{Ask: opts.YieldAsk, Bound: nowQuietWait}
+		// (RM3, internal/agent/quiet.go); the bound is how long it may wait
+		// for one first, after which it stops where it stands instead.
+		req.Yield = &agent.YieldRequest{Ask: opts.YieldAsk, Bound: opts.YieldBound}
 	}
 
 	deadlineCtx, cancelDeadline := opts.stageDeadline(ctx, r.budget)

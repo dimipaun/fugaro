@@ -3,6 +3,7 @@ package runner_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -266,6 +267,73 @@ func TestResumedBudgetIsRemainder(t *testing.T) {
 	}
 }
 
+// TestSpentBudgetEndsTheStage: a stage with nothing left of its model budget
+// does not resume on a stop. The remainder is what the resumed segment would
+// run under, and one `--max-budget-usd` cannot state is not a cap at all —
+// the flag is left off the command when it is zero (internal/agent/agent.go),
+// so the segment would run uncapped, which is worse for the run than not
+// resuming it (rule 2). The coder stage ends there, and the message waits for
+// a coder stage that never comes, which the record says.
+//
+// The stopped segment's own usage is charged exactly once (it reports 60 into
+// a ceiling of 100, and the run goes on): a segment the stage does not resume
+// from is counted by the stage's caller, which is the only count it gets.
+func TestSpentBudgetEndsTheStage(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		budget float64
+		spent  float64
+	}{
+		{"the whole budget spent", 1, 1},
+		{"less left than a cap can state", 10, 9.996},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			budget := strconv.FormatFloat(tt.budget, 'f', -1, 64)
+			cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "  review_rounds: 2\n",
+				"  review_rounds: 2\n  max_budget_usd: "+budget+"\n  max_run_tokens: 100\n", 1)
+			h := newHarness(t, cfg, nil)
+			h.messagesOn()
+			var capped float64
+			rec, err := h.run(t,
+				func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+					capped = req.MaxBudgetUSD
+					res, err := implement("feature")(t, ctx, req)
+					if err != nil {
+						return res, err
+					}
+					res.Usage = agent.Usage{Input: 60}
+					if req.Yield == nil {
+						t.Fatal("the coder stage was given no yield request")
+					}
+					h.tellFlag(t, runID, "use the helper", runmsg.FlagNow)
+					select {
+					case <-req.Yield.Ask:
+					case <-ctx.Done():
+						t.Fatal("the stage ended before a message stopped it")
+					}
+					res.CostUSD, res.Yielded, res.YieldReason = tt.spent, true, agent.YieldAtQuietPoint
+					return res, nil
+				},
+				review("ship", 0),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mustReady(t, rec, err)
+			if capped != tt.budget {
+				t.Fatalf("the stage ran under --max-budget-usd %v, want the configured %v", capped, tt.budget)
+			}
+			if got := stageNames(rec); !eq(got, "implement", "review") {
+				t.Fatalf("the run's stages are %v, want the stopped stage and its review, with no segment resumed after it", got)
+			}
+			if d := delivery(t, rec, 1); d.State != runmsg.StateUndelivered {
+				t.Fatalf("the record's message 1 is %q, want undelivered: there was no budget left for a coder stage to resume under",
+					d.State)
+			}
+		})
+	}
+}
+
 // TestResumeKeepsDeadline: a stop does not restart the stage's clock — the
 // segment a message resumed runs under the deadline the stage's first segment
 // was given (rule 2).
@@ -305,7 +373,9 @@ func TestResumeKeepsDeadline(t *testing.T) {
 
 // TestWrapUpBounded: a wrap-up turn that goes on is stopped at rule 3's bound,
 // and the coder stage ends there as succeeded — the run goes on to its reviews
-// and its finalize rather than waiting for the turn (D2946).
+// and its finalize rather than waiting for the turn (D2946). The turn is also
+// given no quiet-point wait of its own: its fifteen minutes are the whole of
+// its clock, and rule 2's ten on top of them would make twenty-five.
 func TestWrapUpBounded(t *testing.T) {
 	const bound = 200 * time.Millisecond
 	h := newHarness(t, "", nil)
@@ -315,6 +385,13 @@ func TestWrapUpBounded(t *testing.T) {
 	rec, err := h.run(t,
 		h.stoppedAt(runID, "wrap it up", agent.YieldAtQuietPoint, runmsg.FlagWrapUp),
 		func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			if req.Yield == nil {
+				t.Fatal("the wrap-up turn was given no yield request")
+			}
+			if req.Yield.Bound != time.Nanosecond {
+				t.Errorf("the wrap-up turn waits %v for a quiet point, want it stopped at once: its own bound is the whole of its clock",
+					req.Yield.Bound)
+			}
 			// The work a wrap-up turn does before it goes on for too long: it
 			// commits what it has, and the bound then ends the turn and the
 			// stage with it (rule 3).

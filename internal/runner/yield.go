@@ -41,6 +41,21 @@ const (
 	// ends and the run carries on (rule 3, D2946). It is a bound on the turn
 	// and not on the run: a wrap-up cannot hold the run's end open.
 	wrapUpBound = 15 * time.Minute
+	// yieldStopAtOnce is the quiet-point bound the agent is given on a
+	// wrap-up turn: the shortest wait there is, which the agent reads as
+	// "stop here" (RM3, internal/agent/quiet.go). Zero would mean waiting for
+	// a quiet point however long that takes, and the turn's own bound is the
+	// whole of its clock — ten minutes on top of fifteen would let a coder
+	// stage run to twenty-five (rule 3).
+	yieldStopAtOnce = time.Nanosecond
+	// yieldBudgetFloor is the smallest stage remainder a message may resume a
+	// coder stage on: a cent. The budget reaches the agent as
+	// --max-budget-usd, which carries two decimals and is left off the
+	// command altogether when it is zero (internal/agent/agent.go), so a
+	// segment resumed on what is left of a spent budget would run with no
+	// per-stage cap at all — which is worse for the run than not resuming it
+	// (rule 2).
+	yieldBudgetFloor = 0.01
 )
 
 // The two reasons a stop carries in the record beside the message it delivered
@@ -194,18 +209,23 @@ func (y *coderYield) askIfAsked() {
 	close(y.ask)
 }
 
-// segment arms one segment of the stage and returns the ask it runs under. A
-// wrap-up turn is armed with its own bound as well: rule 3 ends the coder
-// stage fifteen minutes into that turn whatever the agent does.
-func (y *coderYield) segment(wrapUp bool) <-chan struct{} {
+// segment arms one segment of the stage and returns the ask it runs under and
+// the bound the agent waits for a quiet point under once that ask closes: rule
+// 2's ten minutes for the segment a `now` stopped, and at once for a wrap-up
+// turn, whose own clock is rule 3's. A wrap-up turn is armed with that bound as
+// well: rule 3 ends the coder stage fifteen minutes into the turn whatever the
+// agent does.
+func (y *coderYield) segment(wrapUp bool) (<-chan struct{}, time.Duration) {
 	y.mu.Lock()
 	defer y.mu.Unlock()
 	y.ask, y.asked = make(chan struct{}), false
 	ask := y.ask
+	wait := nowQuietWait
 	if wrapUp {
+		wait = yieldStopAtOnce
 		go y.bound(ask)
 	}
-	return ask
+	return ask, wait
 }
 
 // endSegment disarms the segment that just ended, so a later ask cannot close
@@ -380,21 +400,22 @@ func (r *run) stageSpend() float64 {
 
 // stageRemaining is what is left of the stage's model budget for the segment
 // now running: agent.max_budget_usd less what the stage has spent since it
-// started. A stage whose whole budget is spent resumes with none — the gateway
-// is what refuses then, and it refuses on the run's own cap rather than on a
-// figure this file invented.
+// started. It can be negative, because a stage that went past its budget is
+// below zero rather than at it, and a stop refuses to resume on anything under
+// yieldBudgetFloor (yieldStopped).
 func (r *run) stageRemaining(ys *yieldStage) float64 {
-	return max(0, r.cfg.Agent.MaxBudgetUSD-(r.stageSpend()-ys.before))
+	return r.cfg.Agent.MaxBudgetUSD - (r.stageSpend() - ys.before)
 }
 
 // stageBudget is the --max-budget-usd an attempt runs under: the run's own
 // agent.max_budget_usd, or, for a segment resumed after a stop, the stage's
-// remainder.
+// remainder — which a stop only ever resumes on above yieldBudgetFloor, so a
+// resumed segment is never run without a cap.
 func (r *run) stageBudget(o stageOpts) float64 {
 	if o.BudgetUSD == nil {
 		return r.cfg.Agent.MaxBudgetUSD
 	}
-	return max(0, *o.BudgetUSD)
+	return *o.BudgetUSD
 }
 
 // stageDeadline is the deadline an attempt runs under: the run's own bound and
@@ -423,16 +444,28 @@ func yieldRecoverable(prev func(error) bool) func(error) bool {
 
 // yieldStopped is what a stop did, in the stage loop's terms: it hands back the
 // request the stage is resumed with, or reports that the coder stage ends here
-// — which is rule 3's wrap-up turn, whose ending is the stage's own success
-// (D2946).
+// — rule 3's wrap-up turn, whose ending is the stage's own success (D2946), or
+// a stop the stage has no budget left to resume under (yieldBudgetFloor).
 func (r *run) yieldStopped(name string, res agent.Result, req *agent.Request, opts stageOpts, ys *yieldStage) (agent.Request, bool) {
 	if ys.wrapUp {
 		return *req, true
 	}
-	r.countTokens(res)
 	reason := ""
 	if res.YieldReason == agent.YieldAtBound {
 		reason = yieldNoQuietPoint
+	}
+	// A stop resumes the stage only under a cap the stage can still be given:
+	// what is left of its budget has to be a figure `--max-budget-usd` can
+	// state, or the resumed segment would run with no per-stage cap at all
+	// (yieldBudgetFloor). The coder stage ends here instead, and the message
+	// is left in the queue — the run's last read records it as one no coder
+	// stage was left to carry, rather than as delivered into a turn that
+	// never ran.
+	remaining := r.stageRemaining(ys)
+	if remaining < yieldBudgetFloor {
+		r.d.Log.Info("the coder stage's budget is spent; a message cannot resume it", "stage", name,
+			"remaining", remaining)
+		return *req, true
 	}
 	ys.msgs = r.claimYield(name, reason)
 	if len(ys.msgs) == 0 {
@@ -452,7 +485,13 @@ func (r *run) yieldStopped(name string, res agent.Result, req *agent.Request, op
 		session = req.SessionID
 	}
 	next.SessionID, next.Resume = session, true
-	remaining := r.stageRemaining(ys)
+	// The stopped segment is charged here, and only where the stage goes on
+	// in another one: the caller charges the segment that ends the stage, and
+	// charging this one in both places would count one segment's tokens
+	// twice against the run's ceiling (countTokens). Every ending above
+	// returns before this, so the caller's own count is the only one they
+	// get.
+	r.countTokens(res)
 	ys.remaining = &remaining
 	return next, false
 }
