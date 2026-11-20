@@ -228,7 +228,7 @@ func (e *initEngine) redaction() func() []string {
 func (e *initEngine) options() initflow.Options {
 	r, o := e.r, e.r.o
 	e.slots() // built once: the loop, the stage and the log share the slots
-	return initflow.Options{
+	opts := initflow.Options{
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: r.stdinTerminal(), JSON: o.asJSON, Agent: agentMarker(os.Getenv, r.stdinTerminal()), Out: r.w,
 		Program: o.loopProgram(),
@@ -246,6 +246,15 @@ func (e *initEngine) options() initflow.Options {
 		// mark on account of this line.
 		ManagedGate: e.managedStage,
 	}
+	// The event feed (setup_events.go): a run told to write one hands the loop
+	// the three moments a consumer renders — a stage reached, a stage settled,
+	// and a step left for the user — and a run without --events hands it
+	// nothing at all, which leaves the hooks nil and is exactly the run the CLI
+	// had before the flag existed.
+	if r.events != nil {
+		opts.OnStep, opts.OnStage, opts.OnLeft = r.events.step, r.events.stage, r.events.left
+	}
+	return opts
 }
 
 // initStages is the stages converge() runs, in the canonical order, built
