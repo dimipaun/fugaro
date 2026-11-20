@@ -425,13 +425,20 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 // enters, and it is the same rule the selection applies (creds.ProviderServes,
 // D3000): a provider's key is admitted whenever the policy admits it — which a
 // backed-off one needs as much as any other, because a backed-off credential
-// waits for a probe rather than for its clock (Mark.Free) and would otherwise
-// never be used again — but only for a model a provider may serve. A probe
+// waits for a probe rather than for its clock (creds.free, a mark that is not
+// Available) and would otherwise never be used again — but only for a model a
+// provider may serve. A probe
 // sends this call's own model through the credential it asks about, so without
 // that gate the service would route a CLAUDE model to a third party, which is
 // the one thing D150's Check 50 gates; and a call that names no model reads as
 // a Claude one (Selector.Model), so the zero value probes exactly what this
 // gate probed before the model was read here.
+//
+// A candidate of a tier this release does not know is dropped whichever the
+// policy says. Nothing selects one — a selection refuses such a tier outright
+// (creds.checkCandidates) — so no mark can be due on it, and the fail-closed
+// direction is the one to answer a list this service cannot read the way it
+// answers every other one.
 func probeCandidates(cands []creds.Credential, set creds.Settings, model string) []creds.Credential {
 	out := make([]creds.Credential, 0, len(cands))
 	for _, c := range cands {
