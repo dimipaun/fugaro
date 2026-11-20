@@ -1303,29 +1303,39 @@ assumed: the default node placement spread a row of seven cards 5393 units wide,
 `elk.separateConnectedComponents: 'false'` keeps the engine from packing the separate
 components of one row two-dimensionally, which drew a row of four 2000 units wide.
 
-**The picture has a scale floor, and below it the pane scrolls** (the graph-fits-the-width
-slice's G1.1; D735). Fitting the panel's width alone had one way to draw a
-wide graph: **small**. A picture wider than its panel was scaled down until a title wrapped
-over three lines arrived as a grey block, and the columns that made it wide — the streams,
-the releases, a level's own width — were the ones that decided how small. So a card may not
-be drawn narrower than **`GRAPH_MIN_SCALE`** of its own 260 px: at 0.75 that is 195 px, and
-the card's title (the theme's `--text-sm`, 13 px) is still drawn at 9.75 px, its footnotes
-(`--text-xs`, 12 px) at 9 px. The canvas carries the whole picture at that scale as its own
-`width`/`height` geometry — **attributes, never an inline style**, `style-src 'self'`
-admitting none (§5.5) — and the stylesheet turns that into a floor rather than a size:
-`width: auto; min-width: 100%`. A panel at or above the floor draws the canvas exactly as it
-did before, the picture at the panel's own width; a narrower one holds the canvas at the
-floor inside **`div.graph-canvas-pane`**, which carries the `overflow-x: auto` that reads the
-rest of the picture sideways. The floor is the **whole picture's** width, bands and release
-boxes included, never one level's or one stream's: a bound taken from a narrower rectangle
-would leave the columns that made the picture wide drawn under it. **The pane wraps the
-canvas and nothing else** — the list has no width of its own to keep, and the coordinator
-scope draws no picture at all — and the zoom is untouched by it: the frame is the picture
-scaled by the zoom, which stays the operator's own control and the way to go below the
-floor. **No ELK wrapping** (`elk.layered.wrapping`): the engine ignores it in a
-top-to-bottom picture, so the row bound above is built on the layering instead, and folding
-the layers toward a wide shape would widen the picture across the axis a reader moves along,
-for a new set of positions and a new cache key.
+**The picture has a scale floor, and the pane never scrolls across** (the
+graph-fits-the-width slice's G1.1 and D735 for the floor; **D2900**, the owner, 2026-11-18,
+for the axis). Fitting the panel's width alone had one way to draw a wide graph: **small**.
+A picture wider than its panel was scaled down until a title wrapped over three lines arrived
+as a grey block, and the columns that made it wide — the streams, the releases, a level's own
+width — were the ones that decided how small. So a card may not be drawn narrower than
+**`GRAPH_MIN_SCALE`** of its own 260 px: at 0.75 that is 195 px, and the card's title (the
+theme's `--text-sm`, 13 px) is still drawn at 9.75 px, its footnotes (`--text-xs`, 12 px) at
+9 px. What keeps the scale at or above it is the **row bound**: a level is stacked into rows
+of `GRAPH_ROW_CARDS` cards, which is as many as the pane the console opens in holds at the
+floor (four cards and three gaps are 978 px of its 1116), so the picture is never wider than
+the pane. The canvas carries the whole picture at that scale as its own `width`/`height`
+geometry — **attributes, never an inline style**, `style-src 'self'` admitting none (§5.5) —
+and the stylesheet draws the element at the pane's width (`width: 100%`, its intrinsic ratio
+deciding the height), so the picture is the pane's width wherever the console is opened. The
+floor is the **whole picture's** width, bands and release boxes included, never one level's
+or one stream's: a bound taken from a narrower rectangle would leave the columns that made
+the picture wide drawn under it — and it is now the number the row bound is measured against
+rather than a size the canvas is held at. A pane **narrower** than the picture at the floor —
+a window taken below the console's own opening width — draws the canvas at the pane's width
+and **scales the picture with it**. **`div.graph-canvas-pane` carries `overflow-x: hidden`**,
+so a picture read sideways is one the window has to be wide for, which is the shape step 6a
+had and this ruling reversed; the picture is read top to bottom instead, and it is the page
+around the pane that carries it down — nothing bounds the pane's height, so the
+`overflow-y: auto` beside that rule is only the value a `hidden` axis computes a `visible`
+one to. **The pane wraps the canvas and nothing
+else** — the list has no width of its own to keep, and the coordinator scope draws no picture
+at all — and the zoom is untouched by it: the frame is the picture scaled by the zoom, which
+stays the operator's own control and the way to reach a card the pane draws small. **No ELK
+wrapping** (`elk.layered.wrapping`): the engine ignores it in a top-to-bottom picture, so the
+row bound above is built on the layering instead, and folding the layers toward a wide shape
+would widen the picture across the axis a reader moves along, for a new set of positions and
+a new cache key.
 
 **One engine run per stream, and the runs are stacked as rows** (the owner's ruling of
 2026-10-31). The engine's packing is two-dimensional: handed every stream at once, it
@@ -1445,8 +1455,8 @@ every word already and carries neither kind of line.
 | `graph-chip-name`, `graph-chip-mark`, `graph-chip-version` | `span`s inside the chip | the name, the `✓` mark and the version |
 | `graph-chip-body`, `graph-chip-tasks`, `graph-chip-task`, `graph-chip-task-title` | the open chip's own panel | drawn **only** while `aria-expanded` is `true` |
 | `graph-release-bar` | `p` (chip body) and `span` (list heading) | the "n of m done" bar, both places |
-| `graph-canvas` | `svg` | `viewBox` carries the zoom, and `width`/`height` carry the picture's **scale floor** (`GRAPH_MIN_SCALE`, the whole picture at 0.75): the stylesheet makes them a floor rather than a size (`width: auto; min-width: 100%`), so the element's box is the panel's width whenever there is room and the floor only when there is not. Its dotted-grid ground is a CSS background on this element rather than an element of its own |
-| `graph-canvas-pane` | `div` | the box the canvas is read through: it wraps the canvas alone and carries `overflow-x: auto`, so a picture held at its floor is read by scrolling sideways. The list and the coordinator scope draw no pane — neither has a width of its own to keep |
+| `graph-canvas` | `svg` | `viewBox` carries the zoom, and `width`/`height` carry the picture's **scale floor** (`GRAPH_MIN_SCALE`, the whole picture at 0.75) as the element's intrinsic size: the stylesheet draws the element at the pane's width (`width: 100%`, `height: auto`), so the box is the pane's own width and the picture's ratio decides the height (D2900). Its dotted-grid ground is a CSS background on this element rather than an element of its own |
+| `graph-canvas-pane` | `div` | the box the canvas is read through: it wraps the canvas alone and carries `overflow-x: hidden` — the picture is never read across (D2900) — with the `overflow-y: auto` that axis computes to. The page around it is what carries the picture down. The list and the coordinator scope draw no pane — neither has a width of its own to keep |
 | `graph-band`, `graph-band-box` | `g` + `rect` | one band per stream that has a task on the picture, drawn **first** so it is the ground of its own row: the `g` carries `data-stream`, and the box is the row's wash |
 | `graph-band-label` | `text` at the band's head | the stream's own `Sanitized` name ("no stream" for the plans that name none) |
 | `graph-release`, `graph-release-box` | `g` + `rect` | one frame per release with a task on the picture |

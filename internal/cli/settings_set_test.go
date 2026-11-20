@@ -598,6 +598,30 @@ func TestTheThreeEditorsPreserveBytesTheSameWay(t *testing.T) {
 	}
 }
 
+// settingsGetRowLine is the one row `settings get` prints for key: the line
+// whose first field is the key, under the table's columns header. The two
+// tests below read it by its key rather than by its line number, because `get`
+// prints the setting's own label and description above the table as soon as
+// the metadata table has an entry for the key (SM-E, D2908) and neither key
+// here has one yet: the two lines SM4 adds for max_parallel and commit_name
+// move the row down without changing it.
+func settingsGetRowLine(t *testing.T, out, key string) string {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	for i, line := range lines {
+		fields := strings.Fields(line)
+		if i == 0 || len(fields) == 0 || fields[0] != key {
+			continue
+		}
+		if got := strings.Join(strings.Fields(lines[i-1]), " "); got != "KEY SCOPE VALUE WINS DEFAULT STATE" {
+			continue
+		}
+		return line
+	}
+	t.Fatalf("settings get %s prints no row for it under the table's columns header, got:\n%s", key, out)
+	return ""
+}
+
 // TestSettingsGetOnAKeySetNowhereIsTheDefaultRowAndExitZero: `get` is this
 // task's subcommand, and a key set nowhere prints its default row and exits 0
 // rather than failing an idempotent script (spec §4.1, D852).
@@ -607,13 +631,10 @@ func TestSettingsGetOnAKeySetNowhereIsTheDefaultRowAndExitZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("settings get on a key set nowhere = %v, want exit 0", err)
 	}
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("one key prints its header and its row, got:\n%s", out)
-	}
-	fields := strings.Fields(lines[1])
-	if len(fields) < 5 || fields[0] != "max_parallel" {
-		t.Fatalf("row = %q, want max_parallel and its columns", lines[1])
+	row := settingsGetRowLine(t, out, "max_parallel")
+	fields := strings.Fields(row)
+	if len(fields) < 5 {
+		t.Fatalf("row = %q, want max_parallel and its columns", row)
 	}
 	if fields[3] != "default" {
 		t.Errorf("WINS = %q, want default", fields[3])
@@ -635,13 +656,10 @@ func TestSettingsGetShowsTheRowOfAKeyALayerSets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("one key prints its header and its row, got:\n%s", out)
-	}
-	fields := strings.Fields(lines[1])
-	if len(fields) < 5 || fields[0] != "commit_name" {
-		t.Fatalf("row = %q, want commit_name and its columns", lines[1])
+	row := settingsGetRowLine(t, out, "commit_name")
+	fields := strings.Fields(row)
+	if len(fields) < 5 {
+		t.Fatalf("row = %q, want commit_name and its columns", row)
 	}
 	if fields[2] != "person-1" {
 		t.Errorf("VALUE = %q, want the value the layer holds", fields[2])
@@ -925,6 +943,14 @@ func settingsWriteLayerFile(t *testing.T, extra string) string {
 // `defaults.git.*` are `layer.default_profile` and `layer.defaults.git.*` here,
 // and a wildcard block is spelled by its pattern (D1161).
 //
+// `credentials.` left this list with K1 (D2613): §4.4 hands the name to this
+// path, but the registry's `credentials.*` rows are the published node's
+// spelling of the credentials cascade, whose writer is `fugaro accounts cascade
+// set` — and the prefix is what let a `credentials.` name reach the allowlist's
+// own branch at all. Every other key under it is refused with it, and the
+// refusal names the command rather than this list (settingsRefuseRow's
+// family-first order).
+//
 // The list is the first of the refusals, not the only one: a name it holds is
 // still refused when a family owns it (layer.defaults.agent.model) or when it
 // has a varying segment (the literal `workflows.*.commands.test`).
@@ -939,7 +965,7 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 		"followup.trusted", "followup.allow_public",
 		"governance.review_ratio", "governance.stage_budget", "layer.governance.review_ratio",
 		"layer.default_profile", "layer.defaults.git.provider", "layer.defaults.agent.review_rounds",
-		"credentials.fallback", "clone_urls.github",
+		"clone_urls.github",
 		// D1179: the four rows of a repository's own budget block are one set.
 		"budget.mode", "budget.per_day_usd",
 		// D1161: the wildcard blocks this design manages, in the registry's
@@ -961,6 +987,11 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 		"credentials_service.url", "budget.rtdb_url", "budget.firebase_api_key",
 		"name", "runs_bucket", "bucket_url", "repos.*.vertex",
 		"providers.*.base_url", "bitbucket_api_roots", "model_prices", "routing.claude",
+		// K1: the cascade's block left this list's prefixes, and both spellings
+		// of a member are the accounts family's — the carrier the command
+		// writes and the node's own leaf beside it (D2607, D2613).
+		"credentials.fallback", "credentials.concurrency_per_token",
+		"credential_cascade.fallback", "credential_cascade.concurrency_per_token",
 		// The registry's other wildcard rows, and the blocks the layer's own
 		// file holds that this design hands to no command of this path.
 		"claude_accounts.*.allow_data_to", "project_secrets.*.proxy",
@@ -970,6 +1001,46 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 		if settingsGenericKey(key) {
 			t.Errorf("settingsGenericKey(%q) = true, and no decision hands it to the generic path", key)
 		}
+	}
+}
+
+// TestSettingsSetCredentialsRefusesNamingTheCascadeCommand is item 5 of the
+// owner's direction on the cascade (K1, D2613): the generic path does not write
+// a cascade member, and the refusal names the command that does — the whole
+// command line with the flag that writes the member, so a person who typed the
+// key is handed the write rather than a family they would have to look up.
+//
+// Both spellings are held to it: `credentials.<leaf>` is the published node's
+// name for the block, which is the spelling `fugaro settings` reads, and
+// `credential_cascade.<leaf>` is this machine's own carrier, which is the file
+// the command edits (F23, D2607). A refusal that answered one of the two with
+// the allowlist's sentence would send a person looking for a key this release
+// does not write either way.
+func TestSettingsSetCredentialsRefusesNamingTheCascadeCommand(t *testing.T) {
+	_, localPath := settingsWriteHome(t)
+	before := readFileString(t, localPath)
+
+	for _, key := range []string{"credentials.fallback", "credential_cascade.fallback"} {
+		t.Run(key, func(t *testing.T) {
+			out, _, err := execute(t, "settings", "set", key, "oauth-only")
+			if err == nil {
+				t.Fatalf("settings set wrote %s:\n%s", key, out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+			}
+			for _, want := range []string{
+				key + " is written by fugaro accounts cascade set, not by the generic path",
+				"run `fugaro accounts cascade set --fallback <value>`",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not carry %q: %v", want, err)
+				}
+			}
+		})
+	}
+	if got := readFileString(t, localPath); got != before {
+		t.Errorf("a refused write changed the file:\n%s", got)
 	}
 }
 
