@@ -99,6 +99,38 @@ adds the rule (`TOKEN && auth.token.fs == $slug`), bumps `RulesVersion` and conv
 `TestRouteRecordRoundTripsAndMatchesItsSchema` holds the two together: the schema refuses what `DecodeRoute` refuses
 and accepts what it reads.
 
+## The import boundary this contract crosses
+
+`internal/creds` is behind an allow-list: `credsImporters` in
+[`internal/creds/boundary_test.go`](../../internal/creds/boundary_test.go) names exactly `internal/creds`,
+`internal/credsvc` and `internal/cli`, and `TestCredsIsNotReachableFromARun` fails on any other directory that
+imports the package. The list is there to keep a **write of the credential state** out of the code a run executes, so
+that a later loosening of the database rules is not on its own enough to hand the cascade's marks to a contributor's
+process.
+
+**C2 puts the record's Go half inside that boundary, and the run's reader is outside it.** `internal/gateway` (the
+in-runner gateway), where WS11's reader and its test live, is off the list today — and so is `internal/runner` if the
+half that builds the gateway names a type from here. So consuming C2 means those directories join it: a deliberate
+edit in `boundary_test.go`, in both the list and the `want` slice the test asserts against, each new entry with its
+reason next to it, made by WS11 in its own change where its review sees it. C2 makes
+no such edit now, and no other side of this contract needs one: the sides that read the record in Go are WS5
+(`internal/credsvc`), WS9 and WS14 (`internal/cli`) — all three already admitted — and WS11. WS3, WS6 and WS22 care
+about the names, not the record: their halves spell the pin's field, the environment entry and the path in a YAML
+tag, a Terraform variable and a rules template, none of which can import anything.
+
+**Why that widening is not a hole, and what WS11's entries have to say.** What WS11 imports is where each kind is
+served from: a value type and an interface, with no read and no write of the credential state. The state stays where
+it is — behind the service, inside `creds/`, denied to every run token by the rules (O1, D136) — and the one Cloud
+read its reader makes is of this record's policy leaf, `config/policy/route/<slug>`, which a run's own token is
+granted and `creds/` is not. A *guard* that holds one of those non-Go spellings to the constant here — WS3's for the
+pin's field, WS6's for the module's, WS22's for the template's — imports this package and therefore needs a directory
+the list admits: it lives in `internal/creds` or `internal/cli`, and not in the package whose file it reads.
+
+**If the owner would rather not widen the boundary, the Go half moves rather than the list.** The record's types
+would then live in a package the run already imports, and that is a contract change on the plan's §7 (R-route-home,
+which reaches WS11, WS14 and WS22), raised before WS11 is written — not something a consuming task decides on its
+own.
+
 ## What each side may rely on
 
 **The member's pin (WS3, WS9).** `WorkspacePinAddressField` is the pin field that carries the address, spelled
@@ -130,8 +162,10 @@ entry's allow-list, the member's policy, the repository's admission) is R5's and
 keeps the answer: a model call goes to the service the model route names and never to the other, exhausted or not
 (D2982, D2989). The address it calls is the one `Route.Address` carries, never one from the run's environment (R3,
 F32) — an address a launcher supplies is an address a launcher can move, and the run mints an identity token for
-whatever address it reads. `WorkspaceBeatSetting` is the setting that turns the keep-warm beat off; it is on by
-default, and its key is an `agent.` one because the beat is the run's.
+whatever address it reads. It is the one side of this contract that reads it from run-side code, which is what the
+boundary section above is about: its directories join `credsImporters` in its own change, with their reason.
+`WorkspaceBeatSetting` is the setting that turns the keep-warm beat off; it is on by default, and its key is an
+`agent.` one because the beat is the run's.
 
 **`fugaro doctor` (WS14).** It reads the same record and reports it, and it may rely on `Holder` for what to say about
 each kind. Flagging a route the bundle no longer matches is WS9's derivation, not a second one.
@@ -152,6 +186,10 @@ over that path and moves `RulesVersion` with it.
 - **A second implementation of any of this.** The names, the path, the vocabulary and the two functions are here, and
   a side that respelled one — the environment name in Terraform *and* in Go, the escape of a slug in the writer *and*
   in the reader — would be two answers that drift. WS3, WS6 and WS9 call these; they do not keep their own copy.
+- **An import of this package from a run-side package the allow-list has not admitted.** The list is the control,
+  and importing around it — the record's shapes copied into the run, or a widening nobody reviewed — is what would
+  turn the boundary section above into a claim. The run's reader imports the package, and the directories are
+  admitted in WS11's own change, with their reasons.
 - **A credential in the record.** There is no token, no secret value and no credential identifier here, and there
   never will be: the record is a document a member's admins write and a member's runs read, and a field carrying a
   value would put a credential in it.

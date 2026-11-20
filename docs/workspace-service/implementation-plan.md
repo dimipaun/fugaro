@@ -94,6 +94,11 @@ of WS11 is asked the question of O4 by name.
   `schemas/credential-route.schema.json` (new), `docs/workspace-service/contract-wire.md` (new).
 - Interfaces: produces `creds.Route`, `creds.RouteReader` and the names; consumed by WS5, WS11,
   WS14, WS20, WS22. WS3, WS6 and WS9 build its other side.
+- Boundary: the Go half sits inside `internal/creds`'s import allow-list (`credsImporters`,
+  `internal/creds/boundary_test.go`), and the run's reader is outside it: consuming C2 is what adds
+  `internal/gateway` and `internal/runner` to that list, deliberately and each with its reason, in
+  WS11's own change. C2 edits no entry itself, and the contract's boundary section says why the
+  widening is not a hole.
 - Tests: `TestRouteRecordDecodesStrictly`, `TestStubRouteIsAlwaysTheProject`.
 - Command: `go test ./internal/creds/ -run Route -count=1`.
 - Red step: an unknown key in the record is accepted until the strict decode lands.
@@ -332,11 +337,17 @@ its number is not reused).
   workspace's service halts the run at once with a reason naming the workspace owner's
   `fugaro update` (R16), and so does the scope's refusal of an unlisted repository (R19); a run
   with no record behaves as today. The `SECURITY.md` sentence on what
-  the workspace's service can write names the run's token (F30, O4).
+  the workspace's service can write names the run's token (F30, O4). This is the task that admits
+  the run side to `internal/creds`: the import allow-list `credsImporters`
+  (`internal/creds/boundary_test.go`) gains `internal/gateway`, and `internal/runner` where the half
+  that builds the gateway names a type from the package, each entry with its reason, because reading
+  the record means importing the package that holds it (C2's boundary note and the contract's
+  boundary section).
 - Files: `internal/gateway/gateway.go`, `internal/gateway/service.go`, `internal/runner/gateway.go`,
-  `internal/gateway/workspace_route_test.go` (new), `SECURITY.md` with `website/content/security.md`,
+  `internal/gateway/workspace_route_test.go` (new), `internal/creds/boundary_test.go`,
+  `SECURITY.md` with `website/content/security.md`,
   `internal/cli/docs_workspaces_security_test.go`.
-- Interfaces: consumes C2.
+- Interfaces: consumes C2, and the allow-list above; C2 edits no entry.
 - Tests: `TestARunRoutedToTheWorkspaceNeverCallsTheProject`,
   `TestAnExhaustedProjectDoesNotFallThrough`, `TestTheWorkspaceUpstreamHasItsOwnAudience`,
   `TestTheAddressIsNeverReadFromTheEnvironment`, `TestTheWorkspaceUpstreamCarriesNoSlip`,
