@@ -432,7 +432,7 @@ func modeRecords(objs []fcli.RunRecord, to int64) ([]report.Rec, int) {
 		rec := report.Rec{DayRecord: budget.DayRecord{Date: budget.DayDate(budget.Day(t)), Runs: 1}}
 		if c := o.Record(); c != nil {
 			if c.Rigor != nil {
-				rec.Mode = string(c.Rigor.Mode)
+				rec.Mode = string(c.Rigor.LevelOf())
 			}
 			if c.Cost != nil {
 				fcli.ApplyCost(&rec.DayRecord, *c.Cost)

@@ -3,6 +3,6 @@ project: aurora
 git: { provider: github }
 rigor:
   areas:
-    - { match: "internal/payments/**", mode: critical }
+    - { match: "internal/payments/**", level: critical }
 workflows:
   server: { commands: { build: make, test: make test } }

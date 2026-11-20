@@ -48,7 +48,7 @@ type AB struct {
 	// of the champion's median cost, before the mode keeps the champion
 	// (D565). A mode left out takes its shipped figure
 	// (ABExchangeRateDefault); POC's 0 means "never worth extra cost".
-	ExchangeRate map[rigor.Mode]float64 `yaml:"exchange_rate"`
+	ExchangeRate map[rigor.Rigor]float64 `yaml:"exchange_rate"`
 }
 
 const (
@@ -66,7 +66,7 @@ const (
 // champion. POC accepts none, Startup a quarter, Pro a half and Critical
 // double. Hotfix is not eligible for sampling at all (D558), so its figure
 // is 0: a pair is never sampled for one.
-func ABExchangeRateDefault(m rigor.Mode) float64 {
+func ABExchangeRateDefault(m rigor.Rigor) float64 {
 	switch m {
 	case rigor.Startup:
 		return 0.25
@@ -82,9 +82,9 @@ func ABExchangeRateDefault(m rigor.Mode) float64 {
 // out filled in from ABExchangeRateDefault, so a reader never has to tell a
 // missing mode from a zero one. The map is always a fresh one, the layer's
 // own map copied into it, so a caller cannot write into the block it read.
-func (a *AB) ExchangeRates() map[rigor.Mode]float64 {
-	out := make(map[rigor.Mode]float64, len(rigor.Modes))
-	for _, m := range rigor.Modes {
+func (a *AB) ExchangeRates() map[rigor.Rigor]float64 {
+	out := make(map[rigor.Rigor]float64, len(rigor.Rigors))
+	for _, m := range rigor.Rigors {
 		out[m] = ABExchangeRateDefault(m)
 	}
 	if a == nil {
@@ -143,7 +143,7 @@ func validateAB(p string, a *AB) []Problem {
 	}
 	for _, m := range sortedModes(a.ExchangeRate) {
 		v := a.ExchangeRate[m]
-		if !slices.Contains(rigor.Modes, m) {
+		if !slices.Contains(rigor.Rigors, m) {
 			add(fmt.Sprintf("%s.exchange_rate.%s", p, showKey(string(m))), "is not a rigor mode (%s)", modesList())
 			continue
 		}
@@ -262,15 +262,15 @@ const reviewerArmLevels = "l1, l2 or l3"
 // sortedModes is a map's modes in the vocabulary's order, an unknown mode
 // after them and sorted, so one bad block reports its problems in the same
 // order every time.
-func sortedModes(m map[rigor.Mode]float64) []rigor.Mode {
-	var unknown []rigor.Mode
+func sortedModes(m map[rigor.Rigor]float64) []rigor.Rigor {
+	var unknown []rigor.Rigor
 	for mode := range m {
-		if !slices.Contains(rigor.Modes, mode) {
+		if !slices.Contains(rigor.Rigors, mode) {
 			unknown = append(unknown, mode)
 		}
 	}
-	out := make([]rigor.Mode, 0, len(m))
-	for _, mode := range rigor.Modes {
+	out := make([]rigor.Rigor, 0, len(m))
+	for _, mode := range rigor.Rigors {
 		if _, ok := m[mode]; ok {
 			out = append(out, mode)
 		}
@@ -281,8 +281,8 @@ func sortedModes(m map[rigor.Mode]float64) []rigor.Mode {
 
 // modesList is the vocabulary as an error prints it.
 func modesList() string {
-	out := make([]string, 0, len(rigor.Modes))
-	for _, m := range rigor.Modes {
+	out := make([]string, 0, len(rigor.Rigors))
+	for _, m := range rigor.Rigors {
 		out = append(out, string(m))
 	}
 	return strings.Join(out, ", ")

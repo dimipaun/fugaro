@@ -602,7 +602,7 @@ func TestBudgetPreviewAdversarialStages(t *testing.T) {
 	// below are what level 3 adds to it.
 	for name, tc := range map[string]struct {
 		step string
-		mode rigor.Mode
+		mode rigor.Rigor
 		want map[string]int
 		// bound is StageBound(rp, 1, 1, rigor.AdversarialDefault(mode)) here,
 		// and mirrors whether the typical count must be it: it must, where the
@@ -1489,7 +1489,7 @@ func previewCheckoutRigor(t *testing.T, agentYAML, mode string) {
 func TestBudgetPreviewModeEqualsTheModesOwnEffects(t *testing.T) {
 	const agent = "  max_budget_usd: 10\n"
 	for _, tc := range []struct {
-		mode   rigor.Mode
+		mode   rigor.Rigor
 		first  int
 		rounds int
 		stages int
@@ -1547,11 +1547,11 @@ func TestBudgetPreviewModeEqualsTheModesOwnEffects(t *testing.T) {
 // ceiling than the run would really be held to.
 //
 // Hotfix is not one of these cases: the request takes it whole
-// (rigor.Mode.PerRun), so `--mode hotfix` is the mode the preview prices and
+// (rigor.Rigor.PerRun), so `--mode hotfix` is the mode the preview prices and
 // there is nothing to note (TestBudgetPreviewTakesHotfix).
 func TestBudgetPreviewModeNeverLowers(t *testing.T) {
 	const agent = "  max_budget_usd: 10\n"
-	for _, mode := range []rigor.Mode{rigor.POC, rigor.Startup} {
+	for _, mode := range []rigor.Rigor{rigor.POC, rigor.Startup} {
 		t.Run(string(mode), func(t *testing.T) {
 			f := newBudgetFixture(t, "")
 			f.SetCaps(100, 50, 100, 50)
@@ -1576,7 +1576,7 @@ func TestBudgetPreviewModeNeverLowers(t *testing.T) {
 
 // TestBudgetPreviewTakesHotfix: the preview prices the mode a run would really
 // be held to, and `--mode hotfix` is now that mode — the request takes it whole
-// (rigor.Mode.PerRun), with no opt-in (the owner's ruling of 2026-11-13,
+// (rigor.Rigor.PerRun), with no opt-in (the owner's ruling of 2026-11-13,
 // docs/rigor-command/implementation-plan.md R7). So the figures are hotfix's
 // and the "has no effect" note is not printed: it would tell a caller their
 // request was ignored while the preview had just priced it.
@@ -1611,7 +1611,7 @@ func TestBudgetPreviewTypicalStaysAbsentBelowTheMinimumInEveryMode(t *testing.T)
 	f.SetSpentToday(0)
 	f.Checkout(t, "  max_budget_usd: 10\n")
 	f.SeedRuns(t, 0, previewMinRuns-1, previewRunStages(0.60, 0.10, 0.20, 1.00))
-	for _, mode := range rigor.Modes {
+	for _, mode := range rigor.Rigors {
 		out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3", "--mode", string(mode))
 		if err != nil {
 			t.Fatal(err)

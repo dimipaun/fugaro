@@ -408,7 +408,7 @@ func TestRigorSetCreatesTheFileWhenNoLayerIsPublished(t *testing.T) {
 	if !strings.HasPrefix(got, rigorAnchors) {
 		t.Errorf("the created file does not carry the installation's own anchors:\n%s", got)
 	}
-	for _, want := range []string{"match: docs/**", "name: docs", "mode: critical"} {
+	for _, want := range []string{"match: docs/**", "name: docs", "level: critical"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the created file does not carry %q:\n%s", want, got)
 		}
@@ -480,7 +480,7 @@ func TestRigorSetAreaAddsARuleAndRequiresAName(t *testing.T) {
 	}
 	got := readFileString(t, path)
 	if !strings.Contains(got, "areas:") || !strings.Contains(got, "match: docs/**") ||
-		!strings.Contains(got, "name: docs") || !strings.Contains(got, "mode: critical") {
+		!strings.Contains(got, "name: docs") || !strings.Contains(got, "level: critical") {
 		t.Errorf("the layer file does not carry the rule:\n%s", got)
 	}
 	if !strings.Contains(got, "review_rounds: 4") {
@@ -503,7 +503,7 @@ func TestRigorSetAreaAddsARuleAndRequiresAName(t *testing.T) {
 func TestRigorSetAreaReplacesTheModeOfAnExistingGlob(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsManagedLayerFile(t, rigorAnchors+
-		"defaults:\n  rigor:\n    areas:\n      - match: docs/**\n        mode: critical\n        name: docs\n")
+		"defaults:\n  rigor:\n    areas:\n      - match: docs/**\n        level: critical\n        name: docs\n")
 	noAgentSession(t)
 	noTerminal(t)
 
@@ -542,7 +542,7 @@ func TestRigorSetAreaReplacesTheModeOfAnExistingGlob(t *testing.T) {
 func TestRigorSetAreaLowersABraceGlobRuleTheResolutionCannotSee(t *testing.T) {
 	const brace = "docs/{a,b}/**"
 	seeded := rigorAnchors +
-		"defaults:\n  rigor:\n    default: pro\n    areas:\n      - match: " + brace + "\n        mode: critical\n        name: docs subfolders\n"
+		"defaults:\n  rigor:\n    default: pro\n    areas:\n      - match: " + brace + "\n        level: critical\n        name: docs subfolders\n"
 	settingsWriteHome(t)
 	path := settingsManagedLayerFile(t, seeded)
 	noAgentSession(t)
@@ -558,7 +558,7 @@ func TestRigorSetAreaLowersABraceGlobRuleTheResolutionCannotSee(t *testing.T) {
 		t.Errorf("the owner's terminal did not print the lowering sentence:\n%s", out)
 	}
 	got := readFileString(t, path)
-	if !strings.Contains(got, "mode: startup") {
+	if !strings.Contains(got, "level: startup") {
 		t.Errorf("the write did not replace the rule's mode:\n%s", got)
 	}
 	if strings.Count(got, "match: "+brace) != 1 {
@@ -605,7 +605,7 @@ func TestRigorSetAreaRefusesANewRuleBelowTheDefault(t *testing.T) {
 			t.Errorf("--area %s: the owner's terminal did not print the lowering sentence:\n%s", glob, out)
 		}
 		got := readFileString(t, path)
-		if !strings.Contains(got, "mode: poc") || !strings.Contains(got, "match: "+glob) {
+		if !strings.Contains(got, "level: poc") || !strings.Contains(got, "match: "+glob) {
 			t.Errorf("--area %s: the write did not add the rule:\n%s", glob, got)
 		}
 	}
@@ -633,8 +633,8 @@ func TestRigorSetAreaRefusesANewRuleBelowTheDefault(t *testing.T) {
 func TestRigorSetAreaRefusesATwinGlob(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsManagedLayerFile(t, rigorAnchors+
-		"defaults:\n  rigor:\n    areas:\n      - match: docs/**\n        mode: critical\n        name: docs\n"+
-		"      - match: docs/**\n        mode: pro\n        name: docs again\n")
+		"defaults:\n  rigor:\n    areas:\n      - match: docs/**\n        level: critical\n        name: docs\n"+
+		"      - match: docs/**\n        level: pro\n        name: docs again\n")
 	before := readFileString(t, path)
 	noAgentSession(t)
 	noTerminal(t)
@@ -691,7 +691,7 @@ func TestRigorSetAreaRefusesAGlobOutsideTheRepository(t *testing.T) {
 func TestRigorSetAreaRefusesARuleItsOwnShapeCheckRejects(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsManagedLayerFile(t, rigorAnchors+
-		"defaults:\n  rigor:\n    areas:\n      - match: docs/**\n        mode: critical\n        name: docs\n")
+		"defaults:\n  rigor:\n    areas:\n      - match: docs/**\n        level: critical\n        name: docs\n")
 	before := readFileString(t, path)
 	noAgentSession(t)
 	noTerminal(t)

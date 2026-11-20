@@ -542,7 +542,9 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro workspace member add": {args: []string{"ws", "acme/app"}},
 	"fugaro workspace member rm":  {args: []string{"ws", "acme/app"}},
 	"fugaro workspace rm":         {args: []string{"ws"}},
+	"fugaro workspace share":      {args: []string{"anthropic-api-key", "--workspace", "ws", "--projects", "acme"}},
 	"fugaro workspace show":       {args: []string{"ws"}},
+	"fugaro workspace unshare":    {args: []string{"anthropic-api-key", "--workspace", "ws"}},
 }
 
 // closedStdinNoFixture is the other half of the classification, and the reason

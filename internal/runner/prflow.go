@@ -848,7 +848,7 @@ func (r *run) rigorPart() string {
 	if rg == nil {
 		return ""
 	}
-	out := "rigor: " + string(rg.Mode) + " (" + string(rg.From)
+	out := "rigor: " + string(rg.LevelOf()) + " (" + string(rg.From)
 	if len(rg.Areas) > 0 {
 		out += " " + inlineText(rg.Areas[0].Name)
 		if n := len(rg.Areas) - 1; n > 0 {

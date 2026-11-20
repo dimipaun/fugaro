@@ -268,7 +268,7 @@ func TestFixPromptListsOnlyBlockingFindings(t *testing.T) {
 		{Severity: "blocker", File: "internal/api/handler.go", Summary: "the handler ignores the decode error"},
 		{Summary: "the retry loop never stops"},
 		{Summary: "the licence text needs counsel's clearance", NeedsOwner: true},
-	})
+	}, "")
 	if !strings.Contains(got, "- [blocker] internal/api/handler.go: the handler ignores the decode error\n") {
 		t.Errorf("the brief does not list the first finding with its severity and file:\n%s", got)
 	}
@@ -294,7 +294,7 @@ func TestFixPromptListsOnlyBlockingFindings(t *testing.T) {
 // behaviour, and a sentence that forbade all of it would forbid the fix round
 // an `unmet` finding asks for.
 func TestFixPromptSaysTouchNothingElse(t *testing.T) {
-	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}})
+	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, "")
 	if !strings.Contains(got, "Touch nothing else") {
 		t.Errorf("the brief does not say to touch nothing else:\n%s", got)
 	}
@@ -324,7 +324,7 @@ func TestFixPromptDiffersSaysReplace(t *testing.T) {
 			Summary:  "the task asks for a name filter and this sorts the whole list instead",
 		},
 		{Severity: "nit", File: "internal/store/list_test.go", Summary: "the new case is not covered"},
-	})
+	}, "")
 	if !strings.Contains(got, "- [major] [differs] internal/store/list.go: the task asks for a name filter and this sorts the whole list instead\n") {
 		t.Errorf("the brief does not print the finding's scope beside its severity:\n%s", got)
 	}
@@ -400,7 +400,7 @@ func TestFixPromptBeyondNotRemoved(t *testing.T) {
 		Scope:    "beyond",
 		File:     "internal/api/admin.go",
 		Summary:  "the change adds an admin endpoint the task never asked for",
-	}})
+	}}, "")
 	if !strings.Contains(got, "- [blocker] [beyond] internal/api/admin.go: the change adds an admin endpoint the task never asked for\n") {
 		t.Errorf("the brief does not print the finding's scope beside its severity:\n%s", got)
 	}
@@ -408,11 +408,33 @@ func TestFixPromptBeyondNotRemoved(t *testing.T) {
 		t.Errorf("the brief does not say a beyond finding is fixed for its own risk:\n%s", got)
 	}
 
-	plain := runner.FixPrompt([]runner.Finding{{Severity: "blocker", File: "internal/api/handler.go", Summary: "the handler ignores the decode error"}})
+	plain := runner.FixPrompt([]runner.Finding{{Severity: "blocker", File: "internal/api/handler.go", Summary: "the handler ignores the decode error"}}, "")
 	for _, absent := range []string{"[beyond]", "the task did not ask for"} {
 		if strings.Contains(plain, absent) {
 			t.Errorf("a round whose findings carry no scope says %q about beyond work:\n%s", absent, plain)
 		}
+	}
+}
+
+// TestFixPromptWidensWithMessage: a fix that carries a run message ends with
+// rule 4's sentence instead of "Touch nothing else" (D2943). The two contradict
+// each other — the round below the message may ask for more than the findings
+// do — and a coder reading "touch nothing else" beside a message asking for
+// something else is told to refuse the message.
+func TestFixPromptWidensWithMessage(t *testing.T) {
+	const block = "<<<fugaro-messages-0123456789abcdef>>>\n    [1] dimi, 2026-11-19T05:30Z\n    rename the helper\n<<<end-fugaro-messages-0123456789abcdef>>>\n"
+	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, block)
+	if strings.Contains(got, "Touch nothing else") {
+		t.Errorf("the brief still says to touch nothing else beside a message:\n%s", got)
+	}
+	if !strings.Contains(got, "may ask for more than the findings do") {
+		t.Errorf("the brief does not widen the round for the message:\n%s", got)
+	}
+	if !strings.Contains(got, block) {
+		t.Errorf("the brief does not carry the message block it was handed:\n%s", got)
+	}
+	if !strings.Contains(got, "the retry loop never stops") {
+		t.Errorf("the brief lost the findings it still blocks on:\n%s", got)
 	}
 }
 

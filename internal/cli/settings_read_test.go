@@ -505,11 +505,11 @@ func TestSettingsWinsNamesALayerTheRowHas(t *testing.T) {
 
 // TestSettingsValueAtReadsANamedStringKeyedMap: a path element is text, so a
 // map is addressable by a string key whatever the key type is *named* —
-// config.AB's exchange_rate is map[rigor.Mode]float64, and a comparison of the
+// config.AB's exchange_rate is map[rigor.Rigor]float64, and a comparison of the
 // two reflect.Types would refuse "poc" there and report the key absent, which
 // is a row printing its default while the layer sets it.
 func TestSettingsValueAtReadsANamedStringKeyedMap(t *testing.T) {
-	doc := config.AB{ExchangeRate: map[rigor.Mode]float64{rigor.POC: 0.25}}
+	doc := config.AB{ExchangeRate: map[rigor.Rigor]float64{rigor.POC: 0.25}}
 	if got, ok := valueAt(doc, "exchange_rate.poc"); !ok || got != "0.25" {
 		t.Errorf("exchange_rate.poc = %q, %v: want 0.25, true", got, ok)
 	}
@@ -699,7 +699,7 @@ func TestSettingsRecordsEachLayersReadDuration(t *testing.T) {
 // hold lists and numbers, so a blank there would read as unset while the layer
 // sets the key.
 func TestSettingsValueAtRendersAMap(t *testing.T) {
-	doc := config.AB{ExchangeRate: map[rigor.Mode]float64{rigor.Pro: 1, rigor.POC: 0.25}}
+	doc := config.AB{ExchangeRate: map[rigor.Rigor]float64{rigor.Pro: 1, rigor.POC: 0.25}}
 	if got, ok := valueAt(doc, "exchange_rate"); !ok || got != `{"poc":0.25,"pro":1}` {
 		t.Errorf("exchange_rate = %q, %v, want the map as its JSON in key order", got, ok)
 	}

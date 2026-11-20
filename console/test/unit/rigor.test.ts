@@ -171,6 +171,39 @@ describe('readRigor', () => {
     expect(Object.keys(readRigor(block) ?? {})).toEqual(['mode', 'from', 'areas'])
   })
 
+  it('reads the level under `level`, and falls back to the old `mode`', () => {
+    // LD2 renamed this axis's key to `level`, and the record writes it beside
+    // `mode`, with the same value, so a reader that knows only the older name
+    // still finds one (`runstore.RigorRecord.MarshalJSON`). This reader prefers
+    // `level`, as the record's own `LevelOf` does, and a record written before
+    // the rename carries `mode` alone and reads as it always did.
+    const both = {
+      level: 'critical',
+      mode: 'critical',
+      from: 'area',
+      areas: [{ name: 'payments', level: 'hotfix', mode: 'hotfix', at: '2026-11-18T09:00:00Z' }],
+    }
+    expect(readRigor(both)).toEqual({
+      mode: 'critical',
+      from: 'area',
+      areas: [{ name: 'payments', mode: 'hotfix' }],
+    })
+    // The two keys disagreeing is a record no writer of this runner produces (a
+    // hand-edited one), and `level` is the key this axis is spelled with now, so
+    // it is the one read -- on the block and on an area rule alike.
+    expect(readRigor({ level: 'critical', mode: 'poc', from: 'repo' })?.mode).toBe('critical')
+    expect(
+      readRigor({ mode: 'critical', from: 'repo', areas: [{ name: 'docs', level: 'poc', mode: 'pro' }] })?.areas,
+    ).toEqual([{ name: 'docs', mode: 'poc' }])
+    // A record from before the rename: `mode` alone, read exactly as before.
+    expect(readRigor({ mode: 'pro', from: 'default' })).toEqual({ mode: 'pro', from: 'default', areas: [] })
+    // A `level` that is not a level is not one, so the older key is read in its
+    // place; a block carrying neither is no block at all.
+    expect(readRigor({ level: '', mode: 'pro', from: 'repo' })?.mode).toBe('pro')
+    expect(readRigor({ level: 1, mode: 'pro', from: 'repo' })?.mode).toBe('pro')
+    expect(readRigor({ level: null, from: 'repo' })).toBeNull()
+  })
+
   it('answers null for a value that is not a block', () => {
     // A record from before the field, a run that died before bootstrap, and a
     // document a job wrote something else into: one answer, because the screens

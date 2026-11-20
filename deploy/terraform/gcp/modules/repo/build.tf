@@ -2,6 +2,45 @@
 # submit builds as it, and the check job runs as it. Every grant is a
 # member resource, scoped to this repository where the resource allows.
 
+locals {
+  # The classes of secret the credentials service SERVES to this repository's
+  # builds (B4.9, the S4 flip; D2076, D2077): a class named here is served, so
+  # a switched repository's build request names none of that class's secrets
+  # and its build account keeps no secretAccessor on them — the credential step
+  # asks the installation's credentials service for the git credential and,
+  # with it, for the workflow's own build secrets (B4.5's fetch).
+  #
+  # The members are config.BuildSecretClassGit and
+  # config.BuildSecretClassBuild, and this literal is held to
+  # config.BuildServedSecretClasses by deploy/terraform's
+  # TestBuildServedClassesMatchTheModule, the way the module's other flip lists
+  # are held to theirs: Terraform cannot ask Go.
+  #
+  # It is FILLED, which is the flip itself, and it carries both classes since
+  # the flip's second commit filled it. The empty list is the inert state, and
+  # it is what the release before this one planned: with it empty both gates
+  # below are false whatever Go wrote, so this file plans exactly what it
+  # planned before it knew about the service. Filled, what it moves is one
+  # accessor list and one check mount, and only for a repository the service
+  # serves — var.installation.credentials_service is null for every other one
+  # (G9, D147) — whose build fetches both credentials at the address Go writes
+  # into its request (B4.5, D2076).
+  build_served_secret_classes = ["git", "build"]
+
+  # The build's own mounts leave with the class "build" (D2077): the build
+  # account's accessor list, the request's availableSecrets and the build
+  # step's secrets all go together, and the request carries no secret ID the
+  # account may no longer read.
+  build_mounts_served = var.installation.credentials_service != null && contains(local.build_served_secret_classes, "build")
+
+  # The check job's mount leaves with EITHER class: the job runs as the build
+  # account and mounts the repository's git credential (the class "git"), and
+  # that credential's accessor is the build account's own, which the class
+  # "build" takes away with the rest of the list — a job that mounted a secret
+  # its account may not read is a job Cloud Run refuses to create (C2.3).
+  check_mount_served = var.installation.credentials_service != null && length(local.build_served_secret_classes) > 0
+}
+
 resource "google_service_account" "build" {
   project      = var.project
   account_id   = var.repo.build_service_account.account_id
@@ -12,8 +51,13 @@ resource "google_service_account" "build" {
 # secret level. local.secrets, not google_secret_manager_secret.this, so a
 # name Readiness resolved to a project-wide container grants the build
 # account access to that same container (design §5).
+#
+# The list goes whole once the service serves this repository's builds (B4.9,
+# D2076, D2077): the request names none of these secrets any more, so an
+# accessor kept here would be one nothing reads, and the check job's own mount
+# leaves with it (check.tf).
 resource "google_secret_manager_secret_iam_member" "build" {
-  for_each = toset(var.repo.build_secrets)
+  for_each = toset(local.build_mounts_served ? [] : var.repo.build_secrets)
 
   project   = var.project
   secret_id = local.secrets[each.value]

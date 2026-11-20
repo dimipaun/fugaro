@@ -12,8 +12,8 @@ import (
 // escalationModeNames is the mode vocabulary as one refusal spells it, from
 // the package that owns the order.
 func escalationModeNames() string {
-	names := make([]string, 0, len(rigor.Modes))
-	for _, m := range rigor.Modes {
+	names := make([]string, 0, len(rigor.Rigors))
+	for _, m := range rigor.Rigors {
 		names = append(names, string(m))
 	}
 	return strings.Join(names, ", ")

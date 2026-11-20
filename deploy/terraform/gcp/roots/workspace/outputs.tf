@@ -26,3 +26,12 @@ output "workspace_iam_account" {
   value = google_service_account.workspace_iam.email
 }
 
+# The workspace's service URL, which the update reads back on the apply after
+# the one that creates the service and writes into credentials_service.url: it
+# is the audience a member's run mints its ID token for, so a revision that
+# guessed it would accept a token minted for another service. Empty when the
+# service is not deployed, which is what the update reads as "there is nothing
+# to carry forward".
+output "workspace_service_url" {
+  value = local.credentials_service_on ? google_cloud_run_v2_service.workspace[0].uri : ""
+}

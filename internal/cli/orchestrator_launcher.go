@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -394,6 +395,20 @@ type orchestratorLauncher struct {
 	// the one moment the binary check is skipped: a daemon that handed over
 	// mid-launch would abandon a start whose intent is already on the node.
 	started *launchInFlight
+	// issues is the route an item's ticket is read back through, or nil where
+	// this installation can reach no such route (issueReadSeam): an item whose
+	// ticket cannot be read is started on its own brief, which is the launch
+	// every item had before the route existed.
+	issues *orchestratorIssueReads
+	// nodes are the nodes this daemon works, and they are read for one thing
+	// only: the write that puts an item whose issue was edited back to queued
+	// and unapproved (requeueBodyChanged, D2720). A launcher that finds the item
+	// in none of them refuses rather than guessing.
+	nodes []orchestrator.Store
+	// now is the database server's clock (D1230), which is what that write is
+	// stamped with: it is a write under the subtree like any other, and a
+	// laptop's clock is exactly what no stamp there may come from.
+	now orchestrator.ServerNow
 }
 
 // Launch starts the run recorded as runID for one attempt, over the path
@@ -436,7 +451,21 @@ func (l *orchestratorLauncher) Launch(ctx context.Context, spec orchestrator.Spe
 	// mints where spec.md §6 allows one (D904). `fugaro run` installs one in
 	// the same place and for the same reason (finishLaunch).
 	ctx = withServiceReadCache(ctx)
-	slug, ts, err := l.prepare(ctx, spec, runID)
+	// The brief is built before anything else of the launch, and for an item
+	// that came from a GitHub issue that means the ticket is read back and
+	// checked against the body the item was approved with (briefFor, B9,
+	// D2720): an issue edited since the approval refuses the launch, and the
+	// item goes back to queued and unapproved rather than being briefed with
+	// text nobody read. It is here and not inside prepare because a refusal
+	// must cost nothing of the launch — no plan resolution, no gate, no task.
+	//
+	// A run that already holds a stored task is a different matter, and
+	// briefForAttempt is what tells the two apart.
+	brief, err := l.briefForAttempt(ctx, spec, runID)
+	if err != nil {
+		return "", err
+	}
+	slug, ts, err := l.prepare(ctx, spec, brief, runID)
 	if err != nil {
 		return "", err
 	}
@@ -445,6 +474,68 @@ func (l *orchestratorLauncher) Launch(ctx context.Context, spec orchestrator.Spe
 		return "", err
 	}
 	return res.RunID, nil
+}
+
+// briefForAttempt is the brief this launch uses: the one the run already
+// holds, where it holds one, and the brief built for this attempt otherwise
+// (briefFor).
+//
+// The two differ for one case, and it is the case a crash leaves: an attempt
+// whose task was stored and whose start did not happen is re-issued by the next
+// tick under the same run id (D1231), and what the runner of that run reads is
+// the stored task. So the stored brief is the run's own text, and rebuilding it
+// is both unnecessary and unsafe for an item that came from an issue — the
+// ticket is read again, and a body edited at the forge since the launch would
+// take the requeue path (requeueBodyChanged): the attempt the running launch
+// holds is closed as one nothing ran under, the item is requeued and
+// unapproved, a fact says nothing was launched, and the next approval starts a
+// second run over an execution that is already going. Nothing of that can be
+// true of a run whose task is the one it was briefed with, and the ticket the
+// stored brief carries is the text that was checked against the item's hash
+// when it was built — which is the check this launch owes, already made.
+//
+// createTask is what holds the two together: a re-issue whose resolved task
+// differs from the stored one is refused, so a brief built from a ticket read
+// again is a brief that can only ever be refused — the attempt failing under
+// its own run id every tick.
+func (l *orchestratorLauncher) briefForAttempt(ctx context.Context, spec orchestrator.Spec, runID string) (string, error) {
+	stored, err := l.storedBrief(ctx, spec, runID)
+	if err != nil {
+		return "", err
+	}
+	if stored != "" {
+		return stored, nil
+	}
+	return l.briefFor(ctx, spec)
+}
+
+// storedBrief is the brief the run recorded as runID was started with, or ""
+// where that run holds no stored task.
+//
+// It reads the task the launch path itself writes (runstore.Store.ReadTask,
+// under the slug the launch resolves and under the checkoutless context the
+// whole launch runs in), and an absent one is an answer and not an error:
+// every launch that has not reached its task store yet is this answer. Anything
+// else the bucket says — an answer that is not a task, a bucket that could not
+// be read — is an error, because a launch that could not tell whether its run
+// is the one already briefed is one that must not guess.
+//
+// The task's own text is the brief, and it is read for nothing else: the rest
+// of it is re-resolved by prepare, which keeps the stored task's own copy where
+// the two differ (createTask).
+func (l *orchestratorLauncher) storedBrief(ctx context.Context, spec orchestrator.Spec, runID string) (string, error) {
+	slug, err := l.env.repoSlug(spec.Repo, checkoutOf(ctx, spec.Repo))
+	if err != nil {
+		return "", err
+	}
+	ts, err := runstore.Open(l.env.bucket.Bucket, slug, runID).ReadTask(ctx)
+	switch {
+	case errors.Is(err, runstore.ErrNotFound):
+		return "", nil
+	case err != nil:
+		return "", remote(err)
+	}
+	return ts.Task, nil
 }
 
 // prepare is everything a launch does before it starts anything, and it is a
@@ -457,7 +548,11 @@ func (l *orchestratorLauncher) Launch(ctx context.Context, spec orchestrator.Spe
 // mark one itself: the launch is one resolution, and a part of it that installed
 // the switch on its own is how the launch ends up judging the repository with no
 // checkout and starting it on the one the daemon's directory holds.
-func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Spec, runID string) (string, *task.Spec, error) {
+//
+// brief is the run's brief as Launch built it and not spec.Brief: an item that
+// came from an issue is briefed with the ticket's own text, read at this launch
+// and fenced (briefFor).
+func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Spec, brief, runID string) (string, *task.Spec, error) {
 	// Everything here resolves under the launch's checkoutless context, which
 	// Launch installs over the whole launch: the plan, the project layer the
 	// task carries and every gate are one resolution, and the start that
@@ -472,7 +567,7 @@ func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Sp
 	if err != nil {
 		return "", nil, err
 	}
-	slug, ts, err := buildAttemptSpec(plan, o, spec.Brief)
+	slug, ts, err := buildAttemptSpec(plan, o, brief)
 	if err != nil {
 		return "", nil, err
 	}
