@@ -738,12 +738,26 @@ read_jobs() {
 # directory, and print the reader's answer. Cached so the two rows about one
 # repository read it once.
 read_build() { # read_build REPO KEY
-  local repo=$1 key=$2 f="$SCRATCH/builds-$2"
+  local key=$2 f
+  f="$SCRATCH/builds-$key"
   if [ ! -f "$f" ]; then
-    reader builds "$BUILDS_FILE" "$repo" >"$f" 2>"$SCRATCH/builds-$key.err" \
-      || stop "the project's own builds could not be read (the reader failed): $(last_lines "$SCRATCH/builds-$key.err")"
+    # A reader that failed returns non-zero and the CALLER stops the run: a
+    # `stop` in here would run inside the command substitution its callers read
+    # it through, which would end that subshell rather than this check and reach
+    # the owner as "an internal error ended this check" instead of as the one
+    # reason it could not measure.
+    reader builds "$BUILDS_FILE" "$1" >"$f" 2>"$SCRATCH/builds-$key.err" || return 1
   fi
   cat "$f"
+}
+
+# build_read REPO KEY — read_build, with a reader that failed stopping the run.
+build_read() { # build_read REPO KEY
+  local ans
+  if ! ans=$(read_build "$1" "$2"); then
+    stop "the project's own builds could not be read (the reader failed on ${1}): $(last_lines "$SCRATCH/builds-$2.err")"
+  fi
+  printf '%s\n' "$ans"
 }
 
 # is_build_account ACCOUNT — whether a Cloud Build serviceAccount field names a
@@ -794,7 +808,7 @@ audit_read() { # audit_read SLUG
 # switch on.
 step_service() {
   local ans url
-  ans=$(read_build "$REPO" github)
+  ans=$(build_read "$REPO" github)
   if [ "$(field_of found "$ans")" != yes ]; then
     return 0
   fi
@@ -811,7 +825,7 @@ step_service() {
 # check and the service's own lines for it.
 step_repo() { # step_repo LABEL REPO PROVIDER
   local label=$1 repo=$2 provider=$3 ans
-  ans=$(read_build "$repo" "$label")
+  ans=$(build_read "$repo" "$label")
   local found id status account slug workflow containers url
   found=$(field_of found "$ans")
   if [ "$found" != yes ]; then
@@ -868,7 +882,7 @@ step_repo() { # step_repo LABEL REPO PROVIDER
   if [ -z "$slug" ] || [ "$slug" = "-" ]; then
     unmeasured "served-$label" "the newest build of ${repo} carries no _SLUG substitution, so the key its record is written under — and the repository the service's own lines name — cannot be read"
   else
-    step_served "$label" "$repo" "$slug" "$account" "$provider"
+    step_served "served-$label" "$repo" "$slug" "$account" "$provider"
   fi
 }
 
@@ -891,14 +905,14 @@ read_audit_said() { # read_audit_said SLUG
   reader audit "$SCRATCH/audit-$1.json" 2>/dev/null | sed -n 's/^refused=[^|]*|//p' | head -n 1 | redact | cut -c1-300
 }
 
-# step_served LABEL REPO SLUG ACCOUNT PROVIDER — the service's own lines. The
+# step_served KEY REPO SLUG ACCOUNT PROVIDER — the service's own lines. The
 # credential a line must name is the provider's GIT credential and nothing else
 # (PurposeBuild): `github-app-key`, the App key a GitHub build signs with, or a
 # `bitbucket-token…` — the installation's bundle token, whose name carries which
 # token of the family it is (bbtokens.Name), so the reading takes the family
 # rather than one spelling of it and a typed token is not read as a wrong one.
 step_served() {
-  local label=$1 repo=$2 slug=$3 account=$4 provider=$5 ans lines
+  local key=$1 repo=$2 slug=$3 account=$4 provider=$5 ans lines
   local cred
   if [ "$provider" = github ]; then cred=github-app-key; else cred="bitbucket-token…"; fi
   if ! ans=$(audit_read "$slug"); then
@@ -909,7 +923,7 @@ step_served() {
   if [ "${lines:-0}" -eq 0 ]; then
     local refused
     refused=$(printf '%s\n' "$ans" | sed -n 's/^refused=[^|]*|//p' | head -n 1 | redact | cut -c1-300)
-    fact "served-$label" FAIL "the service wrote no 'credsvc: audit' line of purpose build for ${repo} (slug ${slug}): the build's credential was answered by something else, or the build's calls were refused.${refused:+ Its own refusal line reads: ${refused}.} Read the service's lines with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}'"
+    fact "$key" FAIL "the service wrote no 'credsvc: audit' line of purpose build for ${repo} (slug ${slug}): the build's credential was answered by something else, or the build's calls were refused.${refused:+ Its own refusal line reads: ${refused}.} Read the service's lines with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}'"
     return 0
   fi
   local got
@@ -919,14 +933,28 @@ step_served() {
   acaller=$(printf '%s' "$got" | cut -d'|' -f3)
   arepo=$(printf '%s' "$got" | cut -d'|' -f4)
   if [ "$acaller" != "$account" ]; then
-    fact "served-$label" FAIL "the service's own line for ${repo} names the caller ${acaller:-nobody}, not this repository's build account ${account}: the credential was served to another identity, which is the one field a call cannot claim for itself (G20). Read the lines by hand"
+    fact "$key" FAIL "the service's own line for ${repo} names the caller ${acaller:-nobody}, not this repository's build account ${account}: the credential was served to another identity, which is the one field a call cannot claim for itself (G20). Read the lines by hand"
   elif ! credential_matches "$provider" "$acred"; then
-    fact "served-$label" FAIL "the service's own line for ${repo} names the credential ${acred:-none}, not the ${provider} build's own git credential (${cred}): a build got a credential that is not its own repository's"
+    fact "$key" FAIL "the service's own line for ${repo} names the credential ${acred:-none}, not the ${provider} build's own git credential (${cred}): a build got a credential that is not its own repository's"
   elif [ -n "$arepo" ] && [ "$arepo" != "$slug" ]; then
-    fact "served-$label" FAIL "the service's own line for ${repo} names the repository ${arepo}, not this repository's slug ${slug}: a build was served another repository's record"
+    fact "$key" FAIL "the service's own line for ${repo} names the repository ${arepo}, not this repository's slug ${slug}: a build was served another repository's record"
   else
-    fact "served-$label" PASS "the service wrote ${lines} 'credsvc: audit' line(s) of purpose build for ${repo} (slug ${slug}), served to ${account} as ${cred}: the build's credential came from the service and the caller the service verified is this repository's own build account"
+    fact "$key" PASS "the service wrote ${lines} 'credsvc: audit' line(s) of purpose build for ${repo} (slug ${slug}), served to ${account} as ${acred}: the build's credential came from the service and the caller the service verified is this repository's own build account"
   fi
+}
+
+# step_check_repo LABEL REPO — the daily check of one repository, found by the
+# slug its own newest build carries. A repository whose build was not read has
+# no slug to find its job by, and the row says that rather than "this
+# installation deploys no check job", which is a different fact.
+step_check_repo() { # step_check_repo LABEL REPO
+  local label=$1 repo=$2 ans
+  ans=$(build_read "$repo" "$label")
+  if [ "$(field_of found "$ans")" != yes ]; then
+    unmeasured "check-$label" "no build of ${repo} was read, so the repository's slug — the key its daily check job is found by — could not be read either"
+    return 0
+  fi
+  step_check "$label" "$repo" "$(field_of slug "$ans")" "$(field_of account "$ans")"
 }
 
 # step_check LABEL REPO SLUG ACCOUNT — the daily image check: the repository's
@@ -1022,11 +1050,11 @@ step_boundary() {
 # availableSecrets, the check job mounts nothing, and a build still succeeds.
 step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
   local label=$1 repo=$2 provider=$3 ans
-  ans=$(read_build "$repo" "$label")
+  ans=$(build_read "$repo" "$label")
   if [ "$(field_of found "$ans")" != yes ]; then
     unmeasured "noavailable-$label" "no build of ${repo} is among the project's last ${BUILDS} builds: submit one with 'fugaro image refresh' after the flipping 'fugaro update' and run this mode again"
     unmeasured "build-flip-$label" "no build of ${repo} was read"
-    unmeasured "served-flip-$label" "no build of ${repo} was read"
+    unmeasured "served-$label-flip" "no build of ${repo} was read"
     unmeasured "noaccessor-$label" "no build of ${repo} was read, so the repository's slug and its check job could not be read"
     return 0
   fi
@@ -1042,8 +1070,12 @@ step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
   # noavailable-LABEL: the flip's whole point — the build request carries no
   # availableSecrets and no secretEnv, because the build account holds no
   # accessor on any of them once the class list carries the build's classes.
+  # Each count is held to being a number on its own: a `case` over "$a:$b"
+  # would read the separator as a non-digit and call every answer unmeasured.
+  case "$containers" in "" | *[!0-9]*) containers=unreadable ;; esac
+  case "$envcount" in "" | *[!0-9]*) envcount=unreadable ;; esac
   case "$containers:$envcount" in
-  ""*|*[!0-9]*) unmeasured "noavailable-$label" "the reader did not answer how many containers and secretEnv entries the build carries: $(last_lines "$SCRATCH/builds-$label.err")" ;;
+  *unreadable*) unmeasured "noavailable-$label" "the reader did not answer how many containers and secretEnv entries the build carries: $(last_lines "$SCRATCH/builds-$label.err")" ;;
   0:0)
     if [ "$url" != present ]; then
       fact "noavailable-$label" FAIL "the newest build of ${repo} carries no availableSecrets but also names no credentials service: a build with neither a mount nor a service has no credential at all and could only fail. The switch and the flip have moved apart — re-apply the root ('fugaro update --repo') and refresh the image"
@@ -1065,9 +1097,9 @@ step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
 
   # served-flip-LABEL: the service's own lines for that build.
   if [ -z "$slug" ] || [ "$slug" = "-" ]; then
-    unmeasured "served-flip-$label" "the newest build of ${repo} carries no _SLUG substitution, so the service's own lines for it cannot be read"
+    unmeasured "served-$label-flip" "the newest build of ${repo} carries no _SLUG substitution, so the service's own lines for it cannot be read"
   else
-    step_served "$label-flip" "$repo" "$slug" "$account" "$provider"
+    step_served "served-$label-flip" "$repo" "$slug" "$account" "$provider"
   fi
 
   # noaccessor-LABEL: the daily check job mounts nothing, which is the flip's
@@ -1115,6 +1147,7 @@ print_plan() {
 main() {
   need_tools
   scratch_up
+  write_reader
   guard_xtrace
   guard_inputs
 
@@ -1135,8 +1168,8 @@ main() {
     step_service
     step_repo github "$REPO" github
     step_repo bitbucket "$BB_REPO" bitbucket
-    step_check github "$REPO" "$(field_of slug "$(read_build "$REPO" github)")" "$(field_of account "$(read_build "$REPO" github)")"
-    step_check bitbucket "$BB_REPO" "$(field_of slug "$(read_build "$BB_REPO" bitbucket)")" "$(field_of account "$(read_build "$BB_REPO" bitbucket)")"
+    step_check_repo github "$REPO"
+    step_check_repo bitbucket "$BB_REPO"
     step_boundary
   fi
 }
