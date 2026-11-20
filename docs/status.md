@@ -61,7 +61,7 @@ Merged since the last read (22 commits): run-messages RM3, RM5, RM6 and RM10; re
 
 | Spec | State |
 | --- | --- |
-| ci-affected-tests | plan only: 0/12 tasks merged, none approved (docs/ci-affected-tests): D3040–D3043 answered 2026-11-20 as recommended; CS6 is copied into `ci.yml` only by the owner's word and Check 780 is owner-run |
+| ci-affected-tests | plan only: 0/11 tasks merged, none approved (docs/ci-affected-tests): D3040–D3043 answered 2026-11-20 as recommended; CS6 is copied into the workflows only by the owner's word and Check 790 is owner-run |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 | workspace-credentials | an addendum with no plan (docs/workspace-credentials): D2960–D2979 all answered 2026-11-19 (D2978: one project-then-workspace cascade for every credential kind; D2975 the owner's own answer: every model key through the credentials service, none mounted, which needs its own spec; D150's gate stays until Check 50 passes); it waits on the workspace service being deployed under its own plan (D2968) |
