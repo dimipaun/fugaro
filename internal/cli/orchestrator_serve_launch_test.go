@@ -150,6 +150,24 @@ func tickWithNode(t *testing.T, docs map[string]string, at time.Time, launch orc
 	return rec, log.String()
 }
 
+// tickWithoutTheMailboxLine is one tick's log with the mailbox half's own line
+// taken out. Every store here is a reader's, so every tick in this file is
+// served by a deployment with no consumer, which says so once per tick (P5.1f,
+// orchestratorNoConsumer). The claims in this file are about the PLAN's half —
+// what it carried, what it refused, and how many lines IT wrote — so they read
+// the log with that other line removed rather than counting one that is about a
+// half this test does not exercise.
+func tickWithoutTheMailboxLine(logged string) string {
+	var kept []string
+	for _, line := range strings.Split(strings.TrimSuffix(logged, "\n"), "\n") {
+		if strings.Contains(line, orchestratorNoConsumer) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
 // TestOrchestratorTickCarriesTheReissueItReads is P5.1d's half of the pass as
 // this deployment serves it, and it is written around the fact the P5.1c review
 // turned up: the fixture's item is in PhaseRunning with a run id — an attempt
@@ -178,6 +196,7 @@ func TestOrchestratorTickCarriesTheReissueItReads(t *testing.T) {
 	launch := &fakeResidentLauncher{}
 
 	rec, logged := tickWithNode(t, map[string]string{statePath: doc}, at, launch)
+	logged = tickWithoutTheMailboxLine(logged)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the tick answered %d (%s), and the node it read is this installation's: %s", rec.Code, rec.Body.String(), logged)
 	}
@@ -264,6 +283,10 @@ func TestOrchestratorTickCarriesTheRestWhenALauncherRefusesOne(t *testing.T) {
 	passLine, refusalLine := "", ""
 	for _, line := range strings.Split(strings.TrimSuffix(logged, "\n"), "\n") {
 		switch {
+		case strings.Contains(line, orchestratorNoConsumer):
+			// The mailbox half's own line, which is a warning on a deployment
+			// with no consumer and is not a refusal of this pass's (P5.1f).
+			continue
 		case strings.Contains(line, orchestratorPassLine):
 			passLine = line
 		case strings.Contains(line, "WARNING"):

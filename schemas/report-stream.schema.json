@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/report-stream.schema.json",
+  "title": "Fugaro report --stream",
+  "description": "One line of the newline-delimited feed `fugaro report --stream --json` writes (docs/console-improvements spec §7, D2906 as widened by O3): the report `report --json` prints whole, written as one record per line so a consumer draws each row as its line arrives instead of holding the document. The schema is of ONE LINE and not of the feed: a reader validates each line as it reads it, and the feed is the lines in order. Three kinds, and a reader may rely on nothing else: `row` carries one element of the whole document's own `rows` array, unchanged and in the document's own order, under the line's `row` key; `end` is the last line of a feed that ran to completion, carrying how many `row` lines went before it, the version of the shape they were written in, and the document's `totals` member; `error` is a feed that failed once at least one row had gone out, carrying the sentence the command would have printed, in one line. A feed with no `end` line is an interrupted read -- which is why the count is carried, since an empty window and a truncated read are otherwise the same bytes. The line shape's first version is 1 (reportStreamDocVersion in ee/report/cli/report_stream.go), and it is the feed's own version: the document `report --json` prints without --stream is unchanged by the flag, member for member and byte for byte, so no member -- a version among them -- could be added to it. What the feed does not carry is the document's header (`project`, `source`, `degraded`, `notice`, `by`, `since`, `until`, `weeks`) and its `warnings`: those are not rows and no line of this shape holds them, so a consumer that needs them reads `report --json`. Members are only ever added within a version, and additionalProperties is left true everywhere for that reason: a consumer that refused a member this schema does not know would refuse a newer CLI's feed. The `row` and the `totals` are not restated here: they are `report.JSONLine`, whose every member §4 of console/docs/json-contract.md documents and `report --json`'s own reader already holds, and a second copy in this file would be a shape that drifts from the struct.",
+  "oneOf": [
+    { "$ref": "#/$defs/row" },
+    { "$ref": "#/$defs/end" },
+    { "$ref": "#/$defs/error" }
+  ],
+  "$defs": {
+    "reportLine": {
+      "type": "object",
+      "description": "One row of the report, as `report --json` writes it: this is the shape of an element of that document's `rows` array and of its `totals` member, unchanged. §4 of console/docs/json-contract.md is where its members are documented and `report.JSONLine` is the struct -- this schema holds a report row to being an object and to no second telling of its members."
+    },
+    "row": {
+      "type": "object",
+      "description": "One row of the report: exactly one element of the `rows` array the whole document carries, unchanged -- the same members, in the same order, with the same values -- so a consumer that read the document whole before the flag existed reads the same row here. The rows arrive in the document's own order: by period ascending, or by spend descending for the groupings that are not periods.",
+      "required": ["type", "row"],
+      "properties": {
+        "type": {
+          "const": "row",
+          "$comment": "streamLineRow in ee/report/cli/report_stream.go."
+        },
+        "row": {
+          "$ref": "#/$defs/reportLine"
+        }
+      }
+    },
+    "end": {
+      "type": "object",
+      "description": "The last line of a feed that ran to completion. Its presence is the whole of it: a consumer that read rows and no end line is holding a read that was interrupted, and the count is what tells it how many it lost. It is also where the report is complete -- `totals` is the document's own totals member, which sums the rows that went before it, so it is the one part of the report that is last by construction.",
+      "required": ["type", "count", "version", "totals"],
+      "properties": {
+        "type": {
+          "const": "end",
+          "$comment": "streamLineEnd in ee/report/cli/report_stream.go."
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many `row` lines the feed carried before this one -- not what the document's own totals say. The two differ when a report groups its rows (a `--by model` report of one day carries one row per model and counts those rows), so the count is the feed's own and the totals are the document's."
+        },
+        "version": {
+          "const": 1,
+          "$comment": "reportStreamDocVersion in ee/report/cli/report_stream.go."
+        },
+        "totals": {
+          "$ref": "#/$defs/reportLine",
+          "description": "The document's `totals` member: the same object `report --json` writes under that key, unchanged, and the totals of the rows the feed carried."
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "description": "A feed that failed after at least one row had gone out, and the last line of it: the command exits non-zero, and there is no `end` line, so a consumer reads this feed as an interrupted read either way and this line is what says why. A failure before the first row writes no line at all -- there is nothing a consumer could have drawn -- so this line is never the first line of a feed.",
+      "required": ["type", "error"],
+      "properties": {
+        "type": {
+          "const": "error",
+          "$comment": "streamLineError in ee/report/cli/report_stream.go."
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The sentence the command would have printed on stderr, made safe for a terminal and for one line: its control sequences are dropped and a newline inside it would forge a second line of the feed, so it carries none (safetext.OneLine). Text the database's writer wrote can reach it, so a consumer classifies it as text and never as an instruction."
+        }
+      }
+    }
+  }
+}
