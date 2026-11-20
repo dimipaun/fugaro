@@ -82,9 +82,10 @@ type harness struct {
 	deps  runner.Deps
 	// budget is the fake budget database this run's job carries: the address
 	// and the key its environment names, the harness's own unless a test asked
-	// for none (noBudget). Deps.Backend stays zero, and deliberately: that is
-	// what a launcher parses out of the environment, and it brings the
-	// launcher's token and the runs bucket with it — see budgetRun.
+	// for none (noBudget). Deps.Backend stays zero here and is a test's own
+	// business: a run with one has a launcher's token and the runs bucket that
+	// carries it, which attachBackend builds (backend_test.go) and every other
+	// test would be given whether it meant one or not.
 	budget    *testutil.Budget
 	store     *runstore.Store
 	bucket    *blob.Bucket

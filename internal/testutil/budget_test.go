@@ -156,12 +156,12 @@ func testPermissionsCall(t *testing.T, f *gcpfake.CRM, project string, asked []s
 	return resp.StatusCode, out.Permissions
 }
 
-// quoted is names as a JSON array's contents: the permission IDs these tests
-// ask about are plain, so nothing here needs an encoder.
 // budgetProject is the GCP project these tests' fixtures live in, the one
 // internal/cli's own fixtures name.
 const budgetProject = "proj-1234"
 
+// quoted is names as a JSON array's contents: the permission IDs these tests
+// ask about are plain, so nothing here needs an encoder.
 func quoted(names []string) string {
 	q := make([]string, len(names))
 	for i, n := range names {

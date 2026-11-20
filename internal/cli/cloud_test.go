@@ -203,8 +203,7 @@ func setBudgetBlock(t *testing.T, path, block string) {
 // left is the installation of a release that never created one, whose config
 // names no database (localcfg loads that as budget == nil). A test that means
 // that world asks for it here rather than by leaving the block out, because
-// the harness gives every fixture one. The fake itself stays up, so a test can
-// still read it and assert that nothing wrote into it.
+// the harness gives every fixture one.
 func (f *cloudFixture) noBudget(t *testing.T) {
 	t.Helper()
 	if f.budget == nil {
