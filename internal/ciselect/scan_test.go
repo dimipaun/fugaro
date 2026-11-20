@@ -278,6 +278,90 @@ func repoRoot() string { return "../.." }
 	}
 }
 
+func TestScanFollowsABuildThroughATableOfImportPaths(t *testing.T) {
+	// internal/testutil/build.go builds cmd/fugaro and the fake claude out of a
+	// table it ranges over, so the argument the go command is handed is a
+	// variable. The packages the table holds are still built, and a test that
+	// calls the helper reads them however it spells the call (R4).
+	helper := `package testutil
+
+import (
+	"os/exec"
+	"path/filepath"
+)
+
+func Build(name string) string {
+	dir, _ := os.MkdirTemp("", "bin-")
+	for n, pkg := range map[string]string{
+		"fugaro": "example.com/m/internal/z/gen",
+		"claude": "example.com/m/internal/z/other",
+	} {
+		_ = exec.Command("go", "build", "-o", filepath.Join(dir, n), pkg).Run()
+	}
+	return filepath.Join(dir, name)
+}
+`
+	m := scanTree(t, map[string]string{
+		"go.mod": goMod,
+		"internal/z/gen/main.go": `package main
+
+import "example.com/m/internal/z/gen/dep"
+
+func main() { dep.Do() }
+`,
+		"internal/z/gen/dep/dep.go":  "package dep\n\nfunc Do() {}\n",
+		"internal/z/other/main.go":   "package main\n\nfunc main() {}\n",
+		"internal/testutil/build.go": helper,
+		"internal/a/a_test.go": `package a
+
+import (
+	"testing"
+
+	"example.com/m/internal/testutil"
+)
+
+func TestBuild(t *testing.T) { _ = testutil.Build("fugaro") }
+`,
+	})
+
+	a := entry(t, m, "./internal/a")
+	wantReads(t, a, "internal/z/gen/**", "internal/z/gen/dep/**", "internal/z/other/**")
+	if a.Any {
+		t.Errorf("./internal/a is any, want the closure of the built packages: %v", a.Reads)
+	}
+}
+
+func TestScanMarksAnUnreadableBuildArgumentAny(t *testing.T) {
+	// The same shape with a table the scan cannot read: nothing names the built
+	// package, so the test that calls the helper may read anything and the map
+	// says so (R4).
+	m := scanTree(t, map[string]string{
+		"go.mod": goMod,
+		"internal/testutil/build.go": `package testutil
+
+import "os/exec"
+
+func Build(pkg string) {
+	_ = exec.Command("go", "build", pkg).Run()
+}
+`,
+		"internal/a/a_test.go": `package a
+
+import (
+	"testing"
+
+	"example.com/m/internal/testutil"
+)
+
+func TestBuild(t *testing.T) { testutil.Build("example.com/m/internal/z/gen") }
+`,
+	})
+
+	if a := entry(t, m, "./internal/a"); !a.Any {
+		t.Errorf("./internal/a is not any, want any: %v", a.Reads)
+	}
+}
+
 func TestScanMarksAWalkOfTheRootThroughAHelperAny(t *testing.T) {
 	m := scanTree(t, map[string]string{
 		"go.mod":           goMod,

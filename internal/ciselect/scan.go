@@ -567,6 +567,12 @@ type value struct {
 	// place"). A prefix is only ever a directory, a file or a pattern of this
 	// repository, never a guess about where an unknown part leads.
 	prefix string
+	// alts are the texts a name bound by a range over a literal container may
+	// take: `for name, pkg := range map[string]string{"a": "x/y"}` leaves pkg one
+	// of the table's values, which is every one of them and no other. Text is
+	// empty for such a value — the name is not any single one of them — and alts
+	// is empty for every value that is not a table's.
+	alts []string
 }
 
 // rootedText reports whether a path text can denote a path inside the
@@ -675,6 +681,9 @@ func (f *fileScanner) stmt(st ast.Stmt) {
 		f.stmt(s.Post)
 		f.body(s.Body)
 	case *ast.RangeStmt:
+		if lit, ok := s.X.(*ast.CompositeLit); ok {
+			f.bindRange(s, lit)
+		}
 		f.inspect(s.X)
 		f.body(s.Body)
 	case *ast.BlockStmt:
@@ -724,8 +733,57 @@ func (f *fileScanner) bind(name string, v value) {
 			v.known = false
 		}
 		v.rooted = v.rooted || old.rooted
+		v.alts = mergeAlts(old.alts, v.alts)
 	}
 	f.values[name] = v
+}
+
+// mergeAlts is the alternatives of a name assigned twice: a name that is one of
+// a table's texts at one assignment and one of another table's at the next is one
+// of either set, and a name assigned anything else is not a table's text at all.
+func mergeAlts(old, new []string) []string {
+	if len(old) == 0 || len(new) == 0 {
+		return nil
+	}
+	return append(old[:len(old):len(old)], new...)
+}
+
+// bindRange binds the names a range statement takes its values from when the
+// container is written out as a literal: `for name, pkg := range
+// map[string]string{...}` leaves pkg one of the table's values, and a `go build
+// ... pkg` in the body names the packages the table holds even though no single
+// literal is the argument (internal/testutil/build.go builds cmd/fugaro that
+// way). A map literal binds the key and the value; a slice or array literal
+// binds the value alone. A container holding anything the scan cannot read binds
+// nothing — half a table is not the table, and the argument is then unknown,
+// which `any` covers.
+func (f *fileScanner) bindRange(s *ast.RangeStmt, lit *ast.CompositeLit) {
+	var keys, vals []string
+	for _, el := range lit.Elts {
+		kv, ok := el.(*ast.KeyValueExpr)
+		if !ok {
+			v := f.eval(el)
+			if !v.known {
+				return
+			}
+			vals = append(vals, v.text)
+			continue
+		}
+		k, v := f.eval(kv.Key), f.eval(kv.Value)
+		if !v.known {
+			return
+		}
+		vals = append(vals, v.text)
+		if k.known {
+			keys = append(keys, k.text)
+		}
+	}
+	if id, ok := s.Key.(*ast.Ident); ok && len(keys) > 0 && id.Name != "_" {
+		f.bind(id.Name, value{alts: keys})
+	}
+	if id, ok := s.Value.(*ast.Ident); ok && len(vals) > 0 && id.Name != "_" {
+		f.bind(id.Name, value{alts: vals})
+	}
 }
 
 // inspect walks one expression for everything this scan can see in it: the
@@ -1039,8 +1097,9 @@ func isGoTool(c *ast.CallExpr) bool {
 // goTool records the closure of every package a `go build`, `go run`, `go test`
 // or `go vet` names: the test reads that package's source and everything it
 // imports, and no import edge of the test's own package leads there. A package
-// argument the scan cannot read — a variable, or a "..." pattern — leaves the
-// package `any` instead of guessing.
+// argument that is not one literal is followed where the scan can — a name bound
+// to a literal, or to the table a range walks — and leaves the package `any`
+// where it cannot, rather than guessing.
 func (f *fileScanner) goTool(c *ast.CallExpr) {
 	args := c.Args
 	if len(args) > 1 {
@@ -1068,25 +1127,48 @@ func (f *fileScanner) goTool(c *ast.CallExpr) {
 			continue
 		}
 		if text == "" {
+			// A package named by something other than a literal: a name the scan
+			// followed to one literal is that package, a name bound by a range
+			// over a table of import paths names every one of them, and anything
+			// else — a variable, a parameter, a name the scan lost the value of —
+			// leaves the package `any`, since the go command builds whatever the
+			// file can name (R4). A path the scan can see is a scratch directory
+			// of the test's own names no package of this repository.
 			v := f.eval(a)
-			if !v.known && v.rooted {
+			if v.known {
+				f.build(v.text)
+				continue
+			}
+			if len(v.alts) > 0 {
+				for _, alt := range v.alts {
+					f.build(alt)
+				}
+				continue
+			}
+			if !v.notRepo {
 				f.out.reads.any = true
 				f.out.spread = true
 			}
 			continue
 		}
-		if strings.Contains(text, "...") {
-			f.out.reads.any = true
-			f.out.spread = true
-			continue
-		}
-		dir, ok := f.packageDir(text)
-		if !ok {
-			continue
-		}
-		f.out.builds = append(f.out.builds, dir)
-		f.out.spread = true
+		f.build(text)
 	}
+}
+
+// build records the closure of one package argument, or leaves the package `any`
+// when the argument names every package under a pattern.
+func (f *fileScanner) build(text string) {
+	if strings.Contains(text, "...") {
+		f.out.reads.any = true
+		f.out.spread = true
+		return
+	}
+	dir, ok := f.packageDir(text)
+	if !ok {
+		return
+	}
+	f.out.builds = append(f.out.builds, dir)
+	f.out.spread = true
 }
 
 // packageDir resolves a package argument — an import path, or a path relative to
