@@ -83,7 +83,8 @@
           "internal/backend/batch/seal_test.go",
           "internal/cli/docs_budget_token_channel_test.go",
           "docs/design/budget-token-channel.md",
-          "docs/design/compute-backend.md"
+          "docs/design/compute-backend.md",
+          "internal/backend/batch/register.go"
         ]
       }
     },
@@ -118,7 +119,8 @@
         "paths": [
           "internal/credsvc/joblink.go",
           "internal/credsvc/joblink_test.go",
-          "internal/gcpfake/batch.go"
+          "internal/gcpfake/batch.go",
+          "internal/gcpfake/compute.go"
         ]
       }
     },
@@ -162,15 +164,14 @@
       "title": "update applies the compute root",
       "run": null,
       "version": null,
-      "tier": "large",
-      "size": 3,
+      "tier": "medium",
+      "size": 2,
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/cli/init_stages.go",
           "internal/cli/init_compute.go",
           "internal/cli/update.go",
-          "internal/infra/compute.go",
           "internal/apply/steps.go",
           "internal/cli/update_batch_test.go",
           "docs/releases/**"
@@ -255,10 +256,11 @@
         "prediction": true,
         "paths": [
           "internal/backend/batch/secrets.go",
+          "internal/backend/batch/secrets_test.go",
           "internal/cli/launch_batch.go",
           "internal/cli/launch_batch_test.go",
           "internal/cli/run.go",
-          "internal/cli/doctor_batch.go"
+          "internal/cli/cloud_openers_test.go"
         ]
       }
     },
@@ -311,6 +313,61 @@
       }
     },
     {
+      "id": "BR15",
+      "title": "doctor and the readers' table follow",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor_batch.go",
+          "internal/cli/doctor_batch_test.go",
+          "internal/cli/doctor_secret_readers.go",
+          "docs/secrets-brokering/secret-readers.md",
+          "docs/secrets-brokering/reconciliation.md",
+          "SECURITY.md",
+          "website/content/security.md"
+        ]
+      }
+    },
+    {
+      "id": "BR16",
+      "title": "update writes the block",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_compute.go",
+          "internal/cli/init_compute_block_test.go",
+          "internal/infra/compute.go",
+          "internal/infra/compute_test.go",
+          "internal/localcfg/shared_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR17",
+      "title": "the registration",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/sealkey_register.go",
+          "internal/credsvc/sealkey_register_test.go",
+          "internal/credsvc/server.go",
+          "internal/budget/rules/**"
+        ]
+      }
+    },
+    {
       "id": "I1",
       "title": "integration",
       "run": null,
@@ -331,7 +388,7 @@
     },
     {
       "id": "R-C1-link-permission",
-      "title": "amend the key-release wire: the link's permission",
+      "title": "amend the key-release wire: the link's read, as the owner settled it",
       "run": null,
       "version": null,
       "tier": "trivial",
@@ -365,7 +422,7 @@
     {
       "task": "BR1",
       "needs": "C1",
-      "reason": "the envelope and the block's key fact"
+      "reason": "the envelope, the registration's calls and the block's key fact"
     },
     {
       "task": "BR1",
@@ -375,7 +432,7 @@
     {
       "task": "BR2",
       "needs": "C1",
-      "reason": "the envelope, the route and the two interfaces"
+      "reason": "the envelope, the route and the interfaces"
     },
     {
       "task": "BR3",
@@ -384,8 +441,8 @@
     },
     {
       "task": "BR3",
-      "needs": "BR0",
-      "reason": "data: the owner's result of Check 810 decides which fact is the link"
+      "needs": "R-C1-link-permission",
+      "reason": "data: it carries the owner's result of Check 810 and his answer on the second read"
     },
     {
       "task": "BR4",
@@ -393,9 +450,9 @@
       "reason": "the route's shapes and the marker's name"
     },
     {
-      "task": "BR6",
-      "needs": "C1",
-      "reason": "the block's key fact and the root's names"
+      "task": "BR5",
+      "needs": "R-C1-link-permission",
+      "reason": "data: it carries the owner's result of Check 810 and his answer on the second read, and comes after C1"
     },
     {
       "task": "BR7",
@@ -406,6 +463,11 @@
       "task": "BR8",
       "needs": "BRS",
       "reason": "one file: env.go, and the deployed-job variable's name"
+    },
+    {
+      "task": "BR9",
+      "needs": "BRS",
+      "reason": "the deployed-job variable's name, which BRS defines"
     },
     {
       "task": "BR10",
@@ -423,14 +485,14 @@
       "reason": "one file: secrets.go"
     },
     {
-      "task": "BR11",
-      "needs": "BR7",
-      "reason": "one file: doctor_batch.go"
-    },
-    {
       "task": "BR12",
       "needs": "C1",
       "reason": "the names the documents quote"
+    },
+    {
+      "task": "BR12",
+      "needs": "R-C1-link-permission",
+      "reason": "data: the page names the service's grants as the owner settled them"
     },
     {
       "task": "BR13",
@@ -441,6 +503,56 @@
       "task": "BR13",
       "needs": "BR0",
       "reason": "two files: the checklist and the scripts' list"
+    },
+    {
+      "task": "BR14",
+      "needs": "C1",
+      "reason": "the marker's name"
+    },
+    {
+      "task": "BR15",
+      "needs": "BR7",
+      "reason": "one file: doctor_batch.go"
+    },
+    {
+      "task": "BR15",
+      "needs": "BR12",
+      "reason": "one file: SECURITY.md"
+    },
+    {
+      "task": "BR16",
+      "needs": "C1",
+      "reason": "the block's key fact and the root's names"
+    },
+    {
+      "task": "BR16",
+      "needs": "BR6",
+      "reason": "one file: init_compute.go"
+    },
+    {
+      "task": "BR17",
+      "needs": "C1",
+      "reason": "the registration's calls, fields and Registry"
+    },
+    {
+      "task": "BR17",
+      "needs": "BR2",
+      "reason": "one file: server.go"
+    },
+    {
+      "task": "R-C1-link-permission",
+      "needs": "C1",
+      "reason": "amends a file C1 creates"
+    },
+    {
+      "task": "R-C1-link-permission",
+      "needs": "BR0",
+      "reason": "data: the owner's run of Check 810"
+    },
+    {
+      "task": "R-C1-project-job-account",
+      "needs": "C1",
+      "reason": "amends a file C1 creates"
     },
     {
       "task": "I1",
@@ -523,33 +635,28 @@
       "reason": "it wires the real sides and proves them together"
     },
     {
-      "task": "BR9",
-      "needs": "BRS",
-      "reason": "the deployed-job variable's name, which BRS defines"
-    },
-    {
-      "task": "R-C1-link-permission",
-      "needs": "C1",
-      "reason": "amends a file C1 creates"
-    },
-    {
-      "task": "R-C1-project-job-account",
-      "needs": "C1",
-      "reason": "amends a file C1 creates"
-    },
-    {
-      "task": "BR5",
-      "needs": "BR0",
-      "reason": "data: the owner's result of Check 810 and his confirmation of O1 decide the role"
-    },
-    {
-      "task": "BR14",
-      "needs": "C1",
-      "reason": "the marker's name"
+      "task": "I1",
+      "needs": "BR14",
+      "reason": "it wires the real sides and proves them together"
     },
     {
       "task": "I1",
-      "needs": "BR14",
+      "needs": "BR15",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR16",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR17",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "R-C1-link-permission",
       "reason": "it wires the real sides and proves them together"
     }
   ],
@@ -557,7 +664,7 @@
     {
       "contract": "C1",
       "was": {
-        "task": "BR6",
+        "task": "BR16",
         "needs": "BR5"
       },
       "integration": "I1",
@@ -567,7 +674,7 @@
       "contract": "C1",
       "was": {
         "task": "BR1",
-        "needs": "BR6"
+        "needs": "BR16"
       },
       "integration": "I1",
       "reason": "the backend needs the block's key fact, not the update that writes it"
@@ -576,7 +683,7 @@
       "contract": "C1",
       "was": {
         "task": "BR7",
-        "needs": "BR6"
+        "needs": "BR16"
       },
       "integration": "I1",
       "reason": "doctor needs the block's key fact, not the update that writes it"
@@ -634,17 +741,27 @@
       },
       "integration": "I1",
       "reason": "the reaper needs the marker's name, not the code that writes it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR17",
+        "needs": "BR1"
+      },
+      "integration": "I1",
+      "reason": "the registration needs the digest's definition, not the wrapper"
     }
   ],
   "contract_changes": [
     {
       "change": "R-C1-link-permission",
       "contract": "C1",
-      "raised_by": "BR3",
-      "reason": "once Check 810 has named the link's read and the owner has confirmed O1, it writes that permission into the contract",
+      "raised_by": "BR0",
+      "reason": "always runs: once the owner has run Check 810 and answered O1, it writes the link's read into the contract",
       "affects": [
         "BR3",
-        "BR5"
+        "BR5",
+        "BR12"
       ]
     },
     {

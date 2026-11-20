@@ -11,9 +11,11 @@ come from the credentials service alone (D3064). Review round 1 added two: launc
 on shared project job accounts where Batch is provisioned (D3065), and the reaper ends a sealed
 run that queues past its token's life (D3066). D3061 was asked again with the fact that a
 launcher can already mint (F24), and stands. D3062 is amended after review and awaits
-confirmation (O1).
+confirmation (O1). Review round 2 added two more: D3064 supersedes the owner's earlier D2075
+(D3067), and the launcher registers the job so that a re-created job receives nothing (D3068).
+D3062's second read is decided after Check 810.
 
-It is 18 runs: one contract, 16 tasks and one integration. Every one is a security path.
+It is 22 runs: one contract, one contract change that always runs, 19 tasks and one integration. Every one is a security path.
 
 ## 1. Conventions every task follows
 
@@ -43,7 +45,8 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (BR2, 
 | Constraint | Pinned by |
 | --- | --- |
 | The plain seal key is never a variable of a Batch job, in any field (F3) | BR1 |
-| A blob for one job releases nothing to another job's VM, to a VM whose job has ended, to a job created outside the bound, to a second job under the same name, or to a VM outside the installation's project (R1) | BR2, BR3 |
+| A blob for one job releases nothing to another job's VM, to a VM whose job has ended, to a job created outside the bound, to a job re-created under the same name, to a VM outside the installation's project, or to a VM that is not a Batch job's (R1, D3068, O8) | BR2, BR3, BR17 |
+| Only the launcher identity that registered a blob's digest may name its job, and no token holder can write the registration (D3068) | BR17 |
 | The route admits the per-repository and shared job classes only (R1) | BR2 |
 | The release route writes exactly one audit line per refusal once the caller is verified, and none carries the key or the blob | BR2 |
 | A job carrying both the plain marker and the wrapped one stops the run (R5) | BR4 |
@@ -53,7 +56,8 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (BR2, 
 | The reaper's role gains nothing. Launchers gain `actAs` on shared project job accounts where Batch is provisioned (D3065) and nothing on the key | BR5, BR6 |
 | The credentials service account gains, only where Batch is provisioned: decrypt on one key, `batch.jobs.get` conditioned on the Fugaro job-name prefix, and the one read Check 810 names for the link (D3062 as amended, O1) | BR5 |
 | The block's key fact is written by `fugaro update` alone, and a machine whose fact differs from the published one fails doctor (R13) | BR6, BR7 |
-| A sealed run does not start on a dead token (D3066) | BR14 |
+| A sealed run does not wait in the queue past its token's life less the reaper's interval; one that still starts late stops at its session (D3066, F31) | BR14 |
+| No CLI release is cut from `main` between the merge of BR1 or BR16 and I1 | the launcher of the plan |
 | Nothing is created per run (F18) | I1 |
 
 ## 3. The contract
@@ -70,8 +74,8 @@ reviewed at the strictest tier before any side starts, whatever the default says
   response; the interfaces `JobLink` (is this VM a VM of this job, and is the job live and created
   within the bound) and `KeyOpener` (decrypt with the installation's key); the names
   `FUGARO_BUDGET_TOKEN_WRAPPED` (R5); the rule that the job's digest and the wrap time sit
-  inside the encrypted plaintext; the classes the route admits; the record that makes a release
-  once-only; the link's permission, stated as "named by Check 810" and not guessed; the settings
+  inside the encrypted plaintext; the classes the route admits; the registration's two calls, its fields on
+  the run's budget record and the `Registry` interface the release reads (D3068); the link's permission, stated as "named by Check 810" and not guessed; the settings
   registry's entry for the key fact as a key no settings command writes (R13); the `batch:`
   block's key fact (the key version's name and its public key); the compute root's new output and input names.
 - Files: `internal/budget/token/wrap_contract.go` (new), `internal/credsvc/sealkey_wire.go` (new),
@@ -94,9 +98,11 @@ No other task's Files names a file of C1. A task that finds the contract wrong r
 ## 4. Slices and tasks
 
 **Slice 0, inert:** C1, BRS, BR0. Nothing a user can meet changes.
-**Slice 1, the sides:** BR1 to BR9, BR12, BR13. Each is inert until I1 wires it: the block names
-no key until BR6 runs inside an update, so the refusal stands.
-**Slice 2:** BR10, BR11.
+**Slice 1, the sides:** BR1 to BR9, BR11 to BR14, BR16, BR17. They are not all inert: BR6 and
+BR16 change what `fugaro update` applies, and BR1 with BR16 turns the refusal into a launch that
+cannot yet be released. So no CLI release is cut from `main` between the merge of BR1 or BR16
+and I1.
+**Slice 2:** BR10, BR15.
 **Slice 3:** I1. After it, an updated installation on Batch launches.
 
 ### BRS: the job definition, split along its seams (`job-environment`)
@@ -139,18 +145,21 @@ no key until BR6 runs inside an update, so the refusal stands.
 - Acceptance: a sealed launch on an installation whose block names the key produces a job whose
   only trace of the key is the wrapped variable, bound to that job's name; where the block names
   no key the launch is refused before anything is created, with `fugaro update` as the fix; the
-  plain marker is never a job variable; the blob prints redacted and is in no run record (R7);
+  plain marker is never a job variable; before the create it registers the blob's digest with the
+  service and after it the job's unique id, and a launch whose first call fails creates nothing
+  (D3068); the blob prints redacted and is in no run record (R7);
   the two design documents' pinned sentence and the test that holds it say what the new refusal
   says (F28).
 - Files: `internal/budget/token/wrap.go` (new), `internal/budget/token/wrap_test.go` (new),
   `internal/backend/batch/seal.go`, `internal/backend/batch/seal_test.go` (new),
-  `internal/cli/docs_budget_token_channel_test.go`, `docs/design/budget-token-channel.md`,
+  `internal/backend/batch/register.go` (new), `internal/cli/docs_budget_token_channel_test.go`, `docs/design/budget-token-channel.md`,
   `docs/design/compute-backend.md`. Past five; the last three are one sentence each.
 - Interfaces: consumes C1 (envelope, names) and BRS (`seal.go`).
 - Tests: `TestASealedBatchLaunchCarriesOnlyTheWrappedKey`, `TestAWrappedKeyNamesItsJob`,
   `TestABatchLaunchWithoutTheKeyFactIsRefusedWithItsFix`, `TestTheRefusalNeverQuotesTheKey`,
-  `TestTheWrappedBlobIsRedactedAndNotRecorded`.
-- Command: `go test ./internal/budget/token/ -run Wrap -count=1 && go test ./internal/backend/batch/ -run 'SealedBatchLaunch|WrappedKeyNamesItsJob|WithoutTheKeyFact|NeverQuotesTheKey|WrappedBlobIsRedacted' -count=1 && go test ./internal/cli/ -run Docs -count=1`.
+  `TestTheWrappedBlobIsRedactedAndNotRecorded`, `TestTheJobIsRegisteredBeforeAndAfterTheCreate`,
+  `TestAFailedRegistrationCreatesNothing`.
+- Command: `go test ./internal/budget/token/ -run Wrap -count=1 && go test ./internal/backend/batch/ -run 'SealedBatchLaunch|WrappedKeyNamesItsJob|WithoutTheKeyFact|NeverQuotesTheKey|WrappedBlobIsRedacted|JobIsRegistered|FailedRegistrationCreatesNothing' -count=1 && go test ./internal/cli/ -run Docs -count=1`.
 - Red step: the plain key appears among the job's variables.
 - Depends on: C1 (the wire); BRS (kept: one file). `docs/design/budget-token-channel.md` is also
   AB9's file: BR1 starts after AB9 merges if AB9 has an open pull request.
@@ -160,8 +169,10 @@ no key until BR6 runs inside an update, so the refusal stands.
 ### BR2: the release route (`key-release`)
 - Acceptance: the route releases the seal key to a verified job account whose VM `JobLink` accepts
   for the job the blob names, and to nobody else: only the per-repository and shared job classes
-  are admitted; the token's project and zone must be the installation's; and a blob already
-  released to one job's unique id is refused for any other. Each refusal after the caller is verified writes
+  are admitted; the token's project must be the installation's and its zone in the installation's
+  region; the job's unique id must be the one registered for the blob (read through C1's
+  `Registry`, a stub until I1); the creation-time bound allows a stated clock tolerance. Each
+  refusal after the caller is verified writes
   exactly one audit line, naming the field and never its content.
 - Files: `internal/credsvc/sealkey.go` (new), `internal/credsvc/sealkey_test.go` (new),
   `internal/credsvc/kmsopen.go` (new), `internal/credsvc/server.go`, `internal/credsvc/audit.go`,
@@ -170,9 +181,9 @@ no key until BR6 runs inside an update, so the refusal stands.
 - Tests: `TestTheKeyIsReleasedToTheJobsOwnVM`, `TestABlobForAnotherJobIsRefused`,
   `TestAnAccountOutsideTheJobTableIsRefused`, `TestAStaleBlobIsRefused`,
   `TestTheReviewAndPersonClassesAreRefused`, `TestAVMOutsideTheProjectIsRefused`,
-  `TestABlobIsReleasedToOneJobOnly`,
+  `TestAnUnregisteredJobIsRefused`, `TestTheBoundAllowsTheStatedClockTolerance`,
   `TestEachReleaseRefusalWritesOneAuditLine`, `TestNoAuditLineCarriesTheKeyOrTheBlob`.
-- Command: `go test ./internal/credsvc/ -run 'KeyIsReleased|BlobForAnotherJob|OutsideTheJobTable|StaleBlob|ReviewAndPersonClasses|VMOutsideTheProject|ReleasedToOneJobOnly|ReleaseRefusalWritesOne|CarriesTheKeyOrTheBlob' -count=1`.
+- Command: `go test ./internal/credsvc/ -run 'KeyIsReleased|BlobForAnotherJob|OutsideTheJobTable|StaleBlob|ReviewAndPersonClasses|VMOutsideTheProject|UnregisteredJobIsRefused|BoundAllowsTheStatedClock|ReleaseRefusalWritesOne|CarriesTheKeyOrTheBlob' -count=1`.
 - Red step: a blob for another job is released.
 - Depends on: C1.
 - Commit: `credsvc: the seal key is released to the run's own VM (BR2, D3061, D3062)`.
@@ -181,15 +192,16 @@ no key until BR6 runs inside an update, so the refusal stands.
 ### BR3: the link from a VM to its job (`key-release`)
 - Acceptance: `JobLink` accepts a VM only on the fact Check 810 recorded, for a job that exists, is
   not finished and was created within the bound; it refuses a VM of another job, a VM whose
-  launcher-set labels claim the job, and a job re-created under the same name later.
+  launcher-set labels claim the job, and a plain Compute Engine VM that is no Batch job's (O8).
 - Files: `internal/credsvc/joblink.go` (new), `internal/credsvc/joblink_test.go` (new),
-  `internal/gcpfake/batch.go`.
+  `internal/gcpfake/batch.go`, `internal/gcpfake/compute.go`.
 - Interfaces: consumes C1 and the recorded result of Check 810.
 - Tests: `TestTheLinkAcceptsTheJobsOwnVM`, `TestALabelIsNotALink`,
-  `TestARecreatedJobIsRefused`, `TestAFinishedJobIsRefused`.
-- Command: `go test ./internal/credsvc/ -run 'LinkAccepts|LabelIsNotALink|RecreatedJob|FinishedJob' -count=1`.
+  `TestAPlainVMIsRefused`, `TestAFinishedJobIsRefused`.
+- Command: `go test ./internal/credsvc/ -run 'LinkAccepts|LabelIsNotALink|PlainVMIsRefused|FinishedJob' -count=1`.
 - Red step: a VM carrying only a forged label is accepted.
-- Depends on: C1; BR0 (kept, data: the owner's result of Check 810 decides the fact, R4).
+- Depends on: C1; `R-C1-link-permission` (kept, data: it carries the owner's result of Check 810
+  and his answer on the second read, R4, O1).
 - Commit: `credsvc: a VM is its job's by what Google says, not by a label (BR3, R1, R4)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -228,36 +240,49 @@ no key until BR6 runs inside an update, so the refusal stands.
 - Tests: the root's `terraform test`; `TestTheComputeRootsNewTypesAreCovered`.
 - Command: `terraform fmt -check -recursive deploy/terraform && (cd deploy/terraform/gcp/roots/compute && TF_DATA_DIR=$(mktemp -d) terraform init -backend=false -lockfile=readonly && terraform validate && terraform test) && scripts/gen-golden-plans.sh && go test ./internal/infra/tf/ -run 'ComputeRootsNewTypes|Golden' -count=1 && go test -tags terraform ./internal/infra/... && tflint --chdir=deploy/terraform/gcp && sh deploy/terraform/scan.sh`.
 - Red step: the tftest fails on a role holding a permission beyond the two named.
-- Depends on: BR0 (kept, data: the owner's run of Check 810 and his confirmation of O1 decide the
-  role). It also starts after C1 merges, for the names; the graph records the BR0 edge only,
-  because a contract edge there would record a break this task does not have.
+- Depends on: `R-C1-link-permission` (kept, data: it carries the owner's result of Check 810 and
+  his answer on the second read, and it comes after C1, whose names this task uses).
 - Commit: `terraform: the Batch seal key, and who may use it (BR5, D3062, R9)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### BR6: update applies the compute root (`update-converge`)
-- Acceptance: `fugaro update` on an installation with a `batch:` block applies the compute root,
-  records the key fact in the block, removes `batch.secrets` and the single `service_account`
-  from it, feeds the root the project job accounts beside the per-repository ones (which is what
-  gives launchers `actAs` on them, D3065), and publishes the block; the key fact is rewritten from
-  the root's output on every run (R13); it asks nothing, is refused in an agent's session, and
-  prints one line naming what it applies and that a changed apply rebuilds the preload image, with
-  the cost (R12); with a Batch run in flight it says so in one line and changes
-  nothing the run holds; an installation with no block is untouched; the release notes' `### For
-  operators` says "run `fugaro update`".
+- Acceptance: `fugaro update` on an installation with a `batch:` block applies the compute root;
+  it asks nothing, is refused in an agent's session, and does not wait; an apply that changes
+  only a key, a role or a grant starts no rebuild of the preload image, and one that changes the
+  image's inputs says so in one line with the cost (R12); with a Batch run in flight it says so
+  in one line and changes nothing the run holds; an installation with no block is untouched; the
+  release notes' `### For operators` says "run `fugaro update`".
 - Files: `internal/cli/init_stages.go`, `internal/cli/init_compute.go`, `internal/cli/update.go`,
-  `internal/infra/compute.go`, `internal/apply/steps.go`, `internal/cli/update_batch_test.go`
-  (new), the next release's notes under `docs/releases/`. Past five; the last two are one entry
-  each.
-- Interfaces: consumes C1 (the block's key fact, the root's names).
+  `internal/apply/steps.go`, `internal/cli/update_batch_test.go` (new), the next release's notes
+  under `docs/releases/`.
+- Interfaces: none.
 - Tests: `TestUpdateAppliesTheComputeRootWhereThereIsABlock`,
-  `TestUpdateRecordsTheSealKeyInTheBlock`, `TestUpdateLeavesAnInstallationWithoutABlockAlone`,
-  `TestUpdateRemovesBatchSecretsInPlace`, `TestTheUpdateSaysABatchRunKeepsRunning`,
+  `TestUpdateLeavesAnInstallationWithoutABlockAlone`, `TestTheUpdateSaysABatchRunKeepsRunning`,
   `TestTheComputeStageUnderUpdateAsksNothing`, `TestTheComputeStageUnderUpdateIsRefusedInAnAgentSession`,
-  `TestTheComputeStageNamesThePreloadRebuild`.
-- Command: `go test ./internal/cli/ -run 'UpdateAppliesTheComputeRoot|UpdateRecordsTheSealKey|WithoutABlockAlone|UpdateRemovesBatchSecrets|ABatchRunKeepsRunning|ComputeStageUnderUpdate|ComputeStageNamesThePreload|RefusalMatrix|Docs' -count=1 && go test ./internal/apply/ -run StepsMatches -count=1`.
+  `TestAGrantOnlyApplyStartsNoPreloadRebuild`.
+- Command: `go test ./internal/cli/ -run 'UpdateAppliesTheComputeRoot|WithoutABlockAlone|ABatchRunKeepsRunning|ComputeStageUnderUpdate|GrantOnlyApplyStartsNoPreload|RefusalMatrix|Docs' -count=1 && go test ./internal/apply/ -run StepsMatches -count=1`.
+- Red step: an update with a block leaves the compute root unapplied.
+- Depends on: none.
+- Commit: `update: the compute root is applied by the one command (BR6, R2, R12)`.
+- Reviewer tier: opus, mandatory independent review.
+
+### BR16: update writes the block (`update-converge`)
+- Acceptance: after `fugaro update` the block carries the key fact, rewritten from the root's
+  output on every run (R13); `batch.secrets` and the single `service_account` are gone from the
+  file, in place; the root is fed the project job accounts beside the per-repository ones, which
+  is what gives launchers `actAs` on them (D3065); the block is published, and a launcher who is
+  not an operator reads the key fact from the published copy.
+- Files: `internal/cli/init_compute.go`, `internal/cli/init_compute_block_test.go`,
+  `internal/infra/compute.go`, `internal/infra/compute_test.go`,
+  `internal/localcfg/shared_test.go`.
+- Interfaces: consumes C1 (the block's key fact, the root's names).
+- Tests: `TestUpdateRecordsTheSealKeyInTheBlock`, `TestUpdateRewritesAKeyFactThatDiffers`,
+  `TestUpdateRemovesBatchSecretsInPlace`, `TestTheRootIsFedTheProjectJobAccounts`,
+  `TestALauncherReadsTheKeyFactFromThePublishedBlock`.
+- Command: `go test ./internal/cli/ -run 'UpdateRecordsTheSealKey|RewritesAKeyFactThatDiffers|UpdateRemovesBatchSecrets|KeyFactFromThePublishedBlock' -count=1 && go test ./internal/infra/ -run RootIsFedTheProjectJobAccounts -count=1 && go test ./internal/localcfg/ -run Shared -count=1`.
 - Red step: after an update the block names no key.
-- Depends on: C1.
-- Commit: `update: the compute root, the seal key and the block, in the one command (BR6, R2, R9, R10, R12, R13, D3065)`.
+- Depends on: C1; BR6 (kept: one file, `init_compute.go`).
+- Commit: `update: the seal key and the accounts reach the block (BR16, R10, R13, D3065)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### BR7: doctor and validate say where the carrier stands (`update-converge`)
@@ -331,18 +356,17 @@ no key until BR6 runs inside an update, so the refusal stands.
 
 ### BR11: nothing is mounted on a Batch job (`service-credentials`)
 - Acceptance: a Batch job carries no `secretVariables`; a launch on Batch for a repository the
-  credentials service does not serve is refused before the mint, with its fix; doctor's secret
-  check for the block is gone.
-- Files: `internal/backend/batch/secrets.go`, `internal/cli/launch_batch.go` (new),
-  `internal/cli/launch_batch_test.go` (new), `internal/cli/run.go`,
-  `internal/cli/doctor_batch.go`.
+  credentials service does not serve is refused before the mint, with its fix.
+- Files: `internal/backend/batch/secrets.go`, `internal/backend/batch/secrets_test.go` (new),
+  `internal/cli/launch_batch.go` (new), `internal/cli/launch_batch_test.go` (new),
+  `internal/cli/run.go`, `internal/cli/cloud_openers_test.go`.
 - Interfaces: consumes BRS (`secrets.go`).
 - Tests: `TestABatchJobMountsNothing`, `TestAnUnservedRepositoryIsRefusedOnBatchWithItsFix`,
   `TestTheRefusalComesBeforeTheMint`.
-- Command: `go test ./internal/backend/batch/ -run BatchJobMountsNothing -count=1 && go test ./internal/cli/ -run 'UnservedRepositoryIsRefusedOnBatch|RefusalComesBeforeTheMint|DoctorBatch' -count=1`.
+- Command: `go test ./internal/backend/batch/ -run BatchJobMountsNothing -count=1 && go test ./internal/cli/ -run 'UnservedRepositoryIsRefusedOnBatch|RefusalComesBeforeTheMint|Openers' -count=1`.
 - Red step: a job with `batch.secrets` set still carries `secretVariables`.
-- Depends on: BRS (kept: one file); BR7 (kept: one file, `doctor_batch.go`).
-- Commit: `batch: a run's credentials come from the service alone (BR11, D3064, R10)`.
+- Depends on: BRS (kept: one file).
+- Commit: `batch: a run's credentials come from the service alone (BR11, D3064, D3067, R10)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### BR12: the documents (`live-proof`)
@@ -354,16 +378,17 @@ no key until BR6 runs inside an update, so the refusal stands.
 - Tests: the Docs tests; `website`'s `security.mjs`.
 - Command: `go run ./internal/clidoc && go test ./internal/cli/ -run Docs -count=1 && (cd website && npm run check)`.
 - Red step: the website's security test fails until the page is regenerated.
-- Depends on: C1. `docs/backends.md` is also AB9's file: BR12 starts after AB9 merges if AB9 has
-  an open pull request.
+- Depends on: C1; `R-C1-link-permission` (kept, data: the page names the service's grants as
+  the owner settled them). `docs/backends.md` is also AB9's file: BR12 starts after AB9 merges if
+  AB9 has an open pull request.
 - Commit: `docs: a Batch run's identity, and who can reach its key (BR12, D3061, D3062, D3065)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### BR13: Check 811, the proof (`live-proof`)
 - Acceptance: one script launches a sandbox run on Batch, reads that it opened its session and
   was metered, and then, as a second launcher account, fails to obtain the first run's seal key
-  three ways: reading the job, replaying the blob into a job of its own, and calling the release
-  route. It ends with the cost and with nothing left to delete.
+  four ways: reading the job, replaying the blob into a job of its own, calling the release
+  route, and deleting a queued job and re-creating it under the same name (D3068). It ends with the cost and with nothing left to delete.
 - Files: `scripts/live-checks/check-811.sh` (new), `scripts/live-checks/check-811_test.sh` (new),
   `scripts/live_checks_test.go` (its list of scripts), `docs/gcp-live-checklist.md`.
 - Tests: the self-test.
@@ -377,22 +402,58 @@ no key until BR6 runs inside an update, so the refusal stands.
   agent performs any step of it.
 
 ### BR14: the reaper ends a sealed run at its token's life (`job-environment`)
-- Acceptance: a job that carries the wrapped marker and is still queued when its token's
-  lifetime has passed is deleted by the reaper, reported with that reason, and reads as ended in
-  the queue; a job with no marker keeps today's queue deadline; nothing else the reaper deletes
+- Acceptance: a job that carries the wrapped marker and has been queued for the token's lifetime
+  less the reaper's own interval and a stated start margin is deleted by the reaper, reported
+  with that reason, and reads as ended in the queue; the boundary is tested at one tick either
+  side (F31); a job with no marker keeps today's queue deadline; nothing else the reaper deletes
   changes.
 - Files: `internal/backend/batch/reap.go`, `internal/backend/batch/reap_sealed_test.go` (new).
 - Interfaces: consumes C1 (the marker's name) and `token.Lifetime`.
-- Tests: `TestASealedJobQueuedPastItsTokenIsDeleted`, `TestAnUnsealedJobKeepsTheQueueDeadline`,
+- Tests: `TestASealedJobQueuedPastItsTokenIsDeleted`, `TestTheSealedDeadlineLeavesATickAndAMargin`,
+  `TestAnUnsealedJobKeepsTheQueueDeadline`,
   `TestTheReaperNeverReadsTheBlobsValue`.
-- Command: `go test ./internal/backend/batch/ -run 'SealedJobQueuedPastItsToken|UnsealedJobKeepsTheQueueDeadline|NeverReadsTheBlobsValue|Reap' -count=1`.
+- Command: `go test ./internal/backend/batch/ -run 'SealedJobQueuedPastItsToken|SealedDeadlineLeavesATick|UnsealedJobKeepsTheQueueDeadline|NeverReadsTheBlobsValue|Reap' -count=1`.
 - Red step: a sealed job queued for two hours is left to start.
 - Depends on: C1.
 - Commit: `reaper: a sealed run does not outlive its token in the queue (BR14, D3066)`.
 - Reviewer tier: opus, mandatory independent review.
 
+### BR15: doctor and the readers' table follow (`service-credentials`)
+- Acceptance: doctor's secret check for the block and its Batch row in the secret-readers check
+  are gone; row E5 of the secret-readers table and `SECURITY.md` say that a Batch run mounts
+  nothing and that D3067 supersedes D2075; the tests that pin those sentences agree.
+- Files: `internal/cli/doctor_batch.go`, `internal/cli/doctor_batch_test.go`,
+  `internal/cli/doctor_secret_readers.go`, `docs/secrets-brokering/secret-readers.md`,
+  `docs/secrets-brokering/reconciliation.md` (D2075's cell, marked superseded), `SECURITY.md`,
+  `website/content/security.md` (generated). Past five; three are one sentence each.
+- Tests: `TestDoctorHasNoBatchSecretsCheck`, the Docs tests.
+- Command: `go run ./internal/clidoc && go test ./internal/cli/ -run 'DoctorHasNoBatchSecretsCheck|DoctorBatch|SecretReaders|Docs' -count=1 && (cd website && npm run check)`.
+- Red step: the Docs test pinning row E5 fails.
+- Depends on: BR7 (kept: one file, `doctor_batch.go`); BR12 (kept: one file, `SECURITY.md`).
+- Commit: `doctor, docs: a Batch run mounts nothing; D2075 is superseded (BR15, D3067)`.
+- Reviewer tier: opus, mandatory independent review.
+
+### BR17: the registration (`key-release`)
+- Acceptance: a launcher's verified identity registers a blob's digest and job name on the run's
+  budget record, and later that job's unique id; a second identity cannot name the job; a second
+  registration of one digest is refused; no token holder can write the fields, by the database
+  rules; `Registry` answers the release from them; each refusal writes one audit line.
+- Files: `internal/credsvc/sealkey_register.go` (new), `internal/credsvc/sealkey_register_test.go`
+  (new), `internal/credsvc/server.go`, `internal/budget/rules/rules.json.tmpl`, the rules' own
+  test beside it.
+- Interfaces: consumes C1 (the two calls, the fields, `Registry`).
+- Tests: `TestTheWrappingLauncherRegistersTheJob`, `TestAnotherIdentityCannotNameTheJob`,
+  `TestADigestRegistersOnce`, `TestNoTokenHolderWritesTheRegistration`,
+  `TestEachRegistrationRefusalWritesOneAuditLine`.
+- Command: `go test ./internal/credsvc/ -run 'WrappingLauncherRegisters|AnotherIdentityCannotName|DigestRegistersOnce|RegistrationRefusalWritesOne' -count=1 && go test ./internal/budget/... -run 'NoTokenHolderWritesTheRegistration|Rules' -count=1`.
+- Red step: a run's own token writes the job id field.
+- Depends on: C1; BR2 (kept: one file, `server.go`).
+- Commit: `credsvc: the launcher that wrapped a key names its job (BR17, D3068)`.
+- Reviewer tier: opus, mandatory independent review.
+
 ### I1: integration (all)
-- Acceptance: the stub is deleted and the real link and key opener are wired into the service;
+- Acceptance: the stub is deleted and the real link, registry and key opener are wired into the
+  service;
   `batchOptions` fills the backend from the block and the configuration; end to end and
   hermetically, a sealed launch on Batch reaches an open session, an installation at the previous
   version converges under `fugaro update`, a Batch run in flight across that update keeps running,
@@ -401,11 +462,12 @@ no key until BR6 runs inside an update, so the refusal stands.
   `internal/cli/cloud.go`, `internal/cli/batch_identity_end_to_end_test.go` (new),
   `internal/cli/update_in_flight_batch_test.go` (new).
 - Tests: `TestABatchRunOpensItsSessionEndToEnd`, `TestASecondJobCannotOpenTheFirstRunsKey`,
+  `TestARecreatedJobCannotOpenTheFirstRunsKey`,
   `TestUpdateConvergesABatchInstallationAtThePreviousVersion`,
   `TestUpdateLeavesABatchRunInFlightRunning`, `TestNothingIsCreatedPerBatchRun`.
-- Command: `go build ./... && go vet ./... && ! git grep -n 'sealkey_stub' -- '*.go' && go test ./internal/cli/ -run 'BatchRunOpensItsSession|SecondJobCannotOpen|ConvergesABatchInstallation|LeavesABatchRunInFlight|NothingIsCreatedPerBatchRun' -count=1`.
+- Command: `go build ./... && go vet ./... && ! git grep -n 'sealkey_stub' -- '*.go' && go test ./internal/cli/ -run 'BatchRunOpensItsSession|SecondJobCannotOpen|RecreatedJobCannotOpen|ConvergesABatchInstallation|LeavesABatchRunInFlight|NothingIsCreatedPerBatchRun' -count=1`.
 - Red step: the build fails on the deleted stub's last user.
-- Depends on: C1 and every task: BRS, BR0 to BR14.
+- Depends on: C1, `R-C1-link-permission` and every task: BRS, BR0 to BR17.
 - Commit: `batch: a run on Cloud Batch gets its identity, end to end (I1, D3060)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -415,24 +477,26 @@ no key until BR6 runs inside an update, so the refusal stands.
 
 | Level | Tasks |
 | --- | --- |
-| 0 | C1, BRS, BR0 |
-| 1 | BR1, BR2, BR4, BR6, BR7, BR8, BR9, BR12, BR13, BR14; and BR3 and BR5 once the owner has run Check 810 |
-| 2 | BR10, BR11 |
-| 3 | I1 |
+| 0 | C1, BRS, BR0, BR6 |
+| 1 | BR1, BR2, BR4, BR7, BR8, BR9, BR11, BR13, BR14, BR16; and `R-C1-link-permission` once the owner has run Check 810 and answered O1 |
+| 2 | BR10, BR17; and BR3, BR5, BR12 after `R-C1-link-permission` |
+| 3 | BR15 |
+| 4 | I1 |
 
 **Edges broken by C1**, each because the dependent needs a shape and not a behaviour:
 
 | Was | Why the contract is enough |
 | --- | --- |
-| BR6 after BR5 | the update needs the root's output and input names, not the resources |
-| BR1 after BR6 | the backend needs the block's key fact, not the update that writes it |
-| BR7 after BR6 | doctor needs the same fact |
+| BR16 after BR5 | the update needs the root's output and input names, not the resources |
+| BR1 after BR16 | the backend needs the block's key fact, not the update that writes it |
+| BR7 after BR16 | doctor needs the same fact |
 | BR2 after BR1 | the service needs the blob's layout, not the code that writes it |
 | BR3 after BR2 | the link implements an interface the route calls; it does not need the route |
 | BR4 after BR2 | the runner needs the route's request and response, not the route |
 | BR12 after BR2 | the documents quote names, not code |
 | BR13 after BR4 | the script reads names, not the runner |
 | BR14 after BR1 | the reaper needs the marker's name, not the code that writes it |
+| BR17 after BR1 | the registration needs the digest's definition, not the wrapper |
 
 **Edges kept:**
 
@@ -440,16 +504,19 @@ no key until BR6 runs inside an update, so the refusal stands.
 | --- | --- |
 | BR1, BR8, BR10, BR11 after BRS | one file: each owns a helper BRS creates |
 | BR9 after BRS | the one name BRS defines; a contract for one constant would cost more than the edge |
-| BR3 and BR5 after BR0 | data: the owner's measurement decides which fact is the link and which permission reads it (R4, O1) |
+| `R-C1-link-permission` after BR0; BR3, BR5 and BR12 after it | data: the owner's measurement and his answer decide which fact is the link and which permission reads it (R4, O1) |
+| BR16 after BR6 | one file, `init_compute.go` |
+| BR17 after BR2 | one file, `server.go` |
+| BR15 after BR7 and BR12 | one file each, `doctor_batch.go` and `SECURITY.md` |
 | BR10 after BR8 | behaviour: a project job's environment is what BR8 builds |
-| BR11 after BR7 | one file, `doctor_batch.go` |
 | BR13 after BR0 | two files, the checklist and the scripts' list |
 | I1 after all | it wires the real sides and proves them together |
 
-**The gain**, as `fugaro plan graph` reports it: 9 edges broken, 10 kept, 4 added; the critical
-path was 7 tasks of weight 17 and is 4 tasks of weight 7. **The critical path** is BRS, BR8, BR10,
-I1, and BRS is the bottleneck. By the calendar the longest wait is not a task: it is the owner's
-run of Check 810 between BR0 and BR3.
+**The gain**, as `fugaro plan graph` reports it: 10 edges broken, 11 kept, 4 added; the critical
+path was 6 tasks of weight 14 and is 5 tasks of weight 8.5. **The critical path** is BR0,
+`R-C1-link-permission`, BR12, BR15, I1, and BR0 is the bottleneck: between it and the contract
+change stand the owner's run of Check 810 and his answer on the second read. Everything that does
+not need that answer runs meanwhile.
 
 **Shared files.** No level holds two writers of one file.
 
@@ -460,49 +527,60 @@ run of Check 810 between BR0 and BR3.
 | `internal/backend/batch/seal.go` | BRS (0), BR1 (1) |
 | `internal/backend/batch/env.go` | BRS (0), BR8 (1) |
 | `internal/backend/batch/account.go` | BRS (0), BR10 (2) |
-| `internal/backend/batch/secrets.go` | BRS (0), BR11 (2) |
-| `internal/credsvc/server.go` | BR2 (1), I1 (3) |
-| `internal/credsvc/sealkey_stub.go` | C1 (0), I1 (3, deletes) |
-| `internal/gcpfake/batch.go` | BR3 (1) |
+| `internal/backend/batch/secrets.go` | BRS (0), BR11 (1) |
+| `internal/credsvc/server.go` | BR2 (1), BR17 (2), I1 (4) |
+| `internal/credsvc/audit.go`, `internal/gcpfake/kms.go` | BR2 (1) |
+| `internal/budget/rules/rules.json.tmpl` | BR17 (2) |
+| `internal/credsvc/sealkey_stub.go` | C1 (0), I1 (4, deletes) |
+| `internal/gcpfake/batch.go`, `internal/gcpfake/compute.go` | BR3 (2) |
 | `internal/backend/batch/reap.go` | BR14 (1) |
 | `internal/cli/docs_budget_token_channel_test.go` | BRS (0), BR1 (1) |
 | `docs/design/budget-token-channel.md`, `docs/design/compute-backend.md` | BR1 (1) |
-| `.claude/rules/credentials-service.md` | BR5 (1) |
-| `internal/infra/spec.go` | BR8 (1) |
+| `.claude/rules/credentials-service.md` | BR5 (2) |
+| `internal/infra/spec.go`, `internal/backend/launchenv.go` | BR8 (1) |
 | `scripts/live_checks_test.go` | BR0 (0), BR13 (1) |
 | `internal/settings/registry.go`, `schemas/settings.schema.json` | C1 (0) |
-| `internal/cli/doctor_batch.go` | BR7 (1), BR11 (2) |
+| `internal/cli/doctor_batch.go`, `internal/cli/doctor_batch_test.go` | BR7 (1), BR15 (3) |
+| `internal/cli/doctor_secret_readers.go`, `docs/secrets-brokering/secret-readers.md`, `docs/secrets-brokering/reconciliation.md` | BR15 (3) |
 | `internal/cli/backends_use_test.go`, `internal/cli/validate_batch.go` | BR7 (1) |
-| `internal/cli/run.go` | BR11 (2) |
-| `internal/cli/cloud.go` | I1 (3) |
-| `internal/infra/compute.go`, `internal/cli/init_compute.go`, `init_stages.go`, `update.go` | BR6 (1) |
-| `internal/infra/tf/cover.go`, the compute module and root | BR5 (1) |
+| `internal/cli/run.go`, `internal/cli/cloud_openers_test.go` | BR11 (1) |
+| `internal/runner/budget_session.go`, `internal/gitops/gitops.go` | BR4 (1) |
+| `internal/runner/projectjob.go` | BR9 (1) |
+| `internal/cli/cloud.go` | I1 (4) |
+| `internal/cli/init_compute.go` | BR6 (0), BR16 (1) |
+| `internal/cli/init_stages.go`, `internal/cli/update.go`, `internal/apply/steps.go` | BR6 (0) |
+| `internal/infra/compute.go`, `internal/localcfg/shared_test.go` | BR16 (1) |
+| `internal/infra/tf/cover.go`, the compute module and root | BR5 (2) |
 | `internal/localcfg/localcfg.go` | C1 (0) |
 | `internal/backend/deployedjob.go` | BRS (0) |
-| `internal/credsvc/sealkey_wire.go` | C1 (0) |
+| `internal/credsvc/sealkey_wire.go`, the contract document | C1 (0), `R-C1-link-permission` (1) |
 | `docs/gcp-live-checklist.md` | BR0 (0), BR13 (1) |
-| `docs/backends.md`, `SECURITY.md` | BR12 (1) |
+| `docs/backends.md` | BR12 (2) |
+| `SECURITY.md`, `website/content/security.md` | BR12 (2), BR15 (3) |
 
 **Files another plan also writes.** `internal/backend/batch/run.go`,
 `internal/cli/doctor_batch.go`, `internal/cli/validate_batch.go`, `docs/backends.md` and
-`docs/design/budget-token-channel.md` are AB9's in always-a-budget; `internal/credsvc/server.go`
+`docs/design/budget-token-channel.md` are AB9's in always-a-budget, which is approved and
+launching; `internal/credsvc/server.go`
 and `internal/credsvc/audit.go` are touched by keys-through-service. A launcher checks for an
 open pull request on each before starting BRS, BR1, BR2, BR7 and BR12.
 
 ## 6. The estimate
 
-18 runs. At the repository's own caps the worst case is 18 times one run's cap, plus 18
+22 runs. At the repository's own caps the worst case is 22 times one run's cap, plus 22
 independent reviews. No run is proposed for launch here: nothing starts until the owner approves
 tasks by name.
 
 ## 7. Contract changes anticipated
 
-- **`R-C1-link-permission`.** Once Check 810 has named the link's read and the owner has
-  confirmed O1, it writes that permission into the contract. It reaches BR3 and BR5.
+- **`R-C1-link-permission`. It always runs**, and is counted in the 22. Once Check 810 has named
+  the link's read and the owner has answered O1, it writes that read into the contract. BR3, BR5
+  and BR12 wait on it. If the owner's answer is a release service of its own, it does not run:
+  D3062 is reversed and this plan is re-sliced first.
 - **`R-C1-project-job-account`.** If `LaunchSpec` cannot name the project job's account (BR10), it
   records the field in the contract document. It reaches BR10.
 
-Neither runs unless raised; they are not counted in the 18.
+The second runs only if raised and is not counted.
 
 ## 8. Checks the plan takes
 
@@ -510,8 +588,8 @@ From the reserved block 810 to 819:
 
 | Check | Measures | Who | When |
 | --- | --- | --- | --- |
-| 810 | What links a Batch VM to its job and which permission reads it, whether a launcher can forge it, what the identity token carries, where Batch writes variables, how soon a job's name can be reused (U1, U2, U3, U8) | the owner | after BR0 merges, before BR3 and BR5 start |
-| 811 | The brief's item 6: launch, session, metering, and a second launcher failing three ways (R11) | the owner | after the release, on an updated `fugaro-dev` |
+| 810 | What links a Batch VM to its job and which permission reads it, whether a launcher can forge it, what the identity token carries, where Batch writes variables, how soon a job's name can be reused (U1, U2, U3, U8) | the owner | after BR0 merges, before `R-C1-link-permission`, BR3, BR5 and BR12 start |
+| 811 | The brief's item 6: launch, session, metering, and a second launcher failing four ways (R11, D3068) | the owner | after the release, on an updated `fugaro-dev` |
 
 812 to 819 are reserved and unused. Check 124 stays as it is; 811 does not replace its preemption
 and cost parts.
@@ -534,6 +612,9 @@ note says.
 - **Letting a queued run fail at start on a dead token**, and leaving it open (D3066).
 - **Reversing D3063 to avoid the `actAs` widening** (D3065).
 - **A grant on the key for launchers**: the public key reaches them through the block (R13).
+- **Keeping D2075's mount for workflow secrets** (D3067), and **accepting the re-created job**
+  (D3068).
+- **A record written at first release**: it names whichever job asks first (F30).
 - **A per-run service account**: what phase 3 removed, with an account to delete per run.
 - **Binding the blob to the job's unique id**: Google assigns it at creation, after the blob is
   wrapped; the creation-time bound in R1 does its work.

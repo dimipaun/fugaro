@@ -2,27 +2,27 @@
 
 **Status: plan only; nothing is implemented; no task approved.** See
 [docs/status.md](../status.md) for the current table. Spec owner: Dimi Paun (the owner). Date:
-2026-11-20. Checked against `origin/main` at `d57d71ddb`.
+2026-11-20. Checked against `origin/main` at `d57d71ddb`, rebased onto `0a8b4e221`.
 
 A run launched on Cloud Batch receives the key to its sealed budget token from the credentials
 service, which releases it only to that run's own VM. The plan also closes the other gaps that
 stop a Batch run from completing, because the owner chose to finish the backend rather than
 remove it. It lifts the refusal that D3021 of [always a budget](../always-a-budget/README.md)
-adds; that plan is pull request #3302 and was read on branch `docs/always-a-budget` at
-`8bf13231f`, not on `main`.
+adds; that plan was read on branch `docs/always-a-budget` at `8bf13231f` and has since merged
+(#3302, #3305), with its tasks approved and launching.
 
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's rulings; no typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: the module map, assumptions A1–A5, findings F1–F28, the threat model of each carrier, decisions D3060–D3066 with the owner's answers, resolutions R1–R13, open items O1–O7, UNVERIFIED U1–U8. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Contract C1, tasks BRS and BR0 to BR14, integration I1 (18 runs), and two contract changes that run only if raised; levels, critical path, shared files; Checks 810 and 811 |
+| [reconciliation.md](reconciliation.md) | The amended spec: the module map, assumptions A1–A5, findings F1–F31, the threat model of each carrier, decisions D3060–D3068 with the owner's answers, resolutions R1–R13, open items O1–O10, UNVERIFIED U1–U8. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Contract C1, tasks BRS and BR0 to BR17, the contract change that carries the owner's answer after Check 810, integration I1 (22 runs), and one contract change that runs only if raised; levels, critical path, shared files; Checks 810 and 811 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
-**Numbers reserved:** decisions **D3060–D3079** (D3060–D3066 used), checks **810–819** (810 and
+**Numbers reserved:** decisions **D3060–D3079** (D3060–D3068 used), checks **810–819** (810 and
 811 used). Read on 2026-11-20 against `main` and every open pull request: the highest decision on
-`main` was D3026 (the keys plan's documents cite it), with D3020–D3039 held by pull request #3302
-and D3040–D3059 with checks 800–809 set aside for the "credentials belong to models" spec, which
-has no branch or pull request yet; the highest check on `main` was 782, and #3302 holds 790–799.
+`main` was D3026 (the keys plan's documents cite it), with D3020–D3039 held by always-a-budget
+(then pull request #3302) and D3040–D3059 with checks 800–809 set aside for the "credentials belong to models" spec, which
+has no branch or pull request yet; the highest check on `main` was 782, and always-a-budget holds 790–799.
 
 **Owner answers of 2026-11-20**, all as recommended: D3060 finish the backend; D3061 the
 VM-attested release; D3062 the release lives in the credentials service, which **amends the
@@ -39,11 +39,20 @@ queues past its token's life: as recommended). **D3062 is amended after review**
 owner's confirmation (O1). The round also added BR14, four guards on the release (R1), and moved
 BR5 behind Check 810.
 
+**Review round 2** found the owner's earlier ruling D2075 (Batch keeps mounted workflow secrets,
+and no Batch caller class in the service), which D3064 and D3061 reverse. Asked, the owner ruled
+that **D3064 supersedes D2075** (D3067, as recommended). It found that a second launcher could
+replace a queued job and receive its key; the owner chose to close it by having the launcher
+register the job (D3068, as recommended). **D3062 was asked a third time**: the second read is
+decided after Check 810 (as recommended). The round split BR6, added BR15 to BR17, made the
+contract change a task that always runs, and rebased onto a `main` that had moved.
+
 **What the reconciliation found that the brief did not know:** the token's carrier is one of seven
 gaps (F7 to F13); any carrier the run's service account opens can be replayed by a second
 launcher (F4); and the chosen design rests on one platform fact that only a live probe can settle
 (U1, Check 810).
 
 **What a reader should not take from here:** no task is approved; each needs the owner's go by
-name. Nothing is launched. Checks 810 and 811 are owner-run; BR3 and BR5 do not start before the
-owner has run Check 810 and confirmed O1.
+name. Nothing is launched. Checks 810 and 811 are owner-run; BR3, BR5 and BR12 do not start before the
+owner has run Check 810 and answered O1. No CLI release is cut between the merge of BR1 or BR16
+and I1.

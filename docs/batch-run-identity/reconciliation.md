@@ -1,8 +1,9 @@
 # A run on Cloud Batch gets its identity: reconciliation
 
 **Where this document disagrees with [spec.md](spec.md), this document wins.** Checked against
-`origin/main` at `d57d71ddb` on 2026-11-20. The always-a-budget documents are not on `main`: they
-were read on branch `docs/always-a-budget` at `8bf13231f` (pull request #3302, open). Cloud Batch,
+`origin/main` at `d57d71ddb` on 2026-11-20, and rebased onto `0a8b4e221` the same day. The
+always-a-budget documents were read on branch `docs/always-a-budget` at `8bf13231f`; they have
+since merged (#3302, #3305), and its tasks are approved and launching, AB9 among them. Cloud Batch,
 Secret Manager, Cloud KMS and IAM documentation was fetched on 2026-11-20; what a fetched page did
 not state is under UNVERIFIED, never in a finding.
 
@@ -46,12 +47,15 @@ No finding contradicts A1 to A5. A2 is what D3061 turns on.
 | --- | --- |
 | "the key … travels on the execution" | `LaunchSpec.SecretEnv` (`internal/backend/backend.go`), the marker `FUGARO_BUDGET_TOKEN` whose value is the key (`sealMarker`) |
 | "the Batch backend refuses any sealed launch" | `jobDefinition` in `internal/backend/batch/run.go`, on any `kv.Secret` entry |
-| "the refusal D3021 adds" | Task AB9 of always-a-budget: not merged, not approved |
+| "the refusal D3021 adds" | Task AB9 of always-a-budget: approved, not merged |
 | "the same credentials service admission" | `verifyJob` and `verifyRun`, `internal/credsvc/auth.go` |
 | "the reaper" | `internal/backend/batch/reap.go`, role `google_project_iam_custom_role.reaper` |
 | "its live check" | Check 124 (four parts, one script) and Check 57b, both NOT RUN |
 
 ## Findings
+
+Findings are grouped by subject; their numbers follow the order they were found, so a group can
+hold a late number. The same holds for resolutions, open items and UNVERIFIED.
 
 ### The platform (`key-release`)
 
@@ -196,30 +200,32 @@ is not a secret to its readers, but it is kept out of the record all the same (R
 `internal/cli/validate_batch.go` has the offline half. Both flip rather than being added.
 Consequence: BR7.
 
-**F18 — Exists: nothing is left behind per run today, and K3 adds nothing.** The sealed object is
+**F18 — Exists: nothing is left behind per run today, and K3 adds nothing to clean up.** The sealed object is
 deleted by the bucket's lifecycle rule after one day (`modules/installation/bucket.tf`, suffix
-`/budget-token`); a rejected launch drops it at once (`dropBudgetToken`). K3 creates no resource
-per run: the blob lives in the job and goes when the job does. Requirement 5 holds with no new
-cleanup, and the ruling against deleting secrets is not touched.
+`/budget-token`); a rejected launch drops it at once (`dropBudgetToken`). K3 creates no cloud
+resource per run: the blob lives in the job and goes when the job does. The registration of D3068
+is two fields on the budget record the run already has, which is kept or swept as that record is
+today. Requirement 5 holds with no new cleanup, and the ruling against deleting secrets is not
+touched.
 
 ### Rules and the other plans
 
 **F19 — Rule: the credentials service account's grants.** `.claude/rules/credentials-service.md`
-says the account's only project-level grant is the database role. K3 gives it one read permission
-on the project. Consequence: D3062; the rule's text is amended in BR12.
+says the account's only project-level grant is the database role. K3 gives it reads on the
+project (F26). Consequence: D3062; the rule's text is amended in BR5, with the grant.
 
 **F20 — Rule: a field never changes meaning.** `FUGARO_BUDGET_TOKEN` means "the seal key". The
 wrapped blob gets a name of its own (R5).
 
-**F21 — Gap: AB9 is not merged, and its text will be wrong either way.** AB9 makes Batch refuse
+**F21 — Gap: AB9 is approved and not merged, and its text will be wrong either way.** AB9 makes Batch refuse
 every launch once every launch is sealed. If it merges first, BR1 replaces its refusal. If this
 plan runs first, AB9 has nothing left to do in `run.go` beyond what BR1 leaves. Consequence: R8,
 O2.
 
 **F22 — Wrong: two stale lines.** `docs/design/budget-token-channel.md` and
 `internal/backend/launchenv.go` both say Batch's launcher wiring is not built. `openCloudFor` and
-`batchOptions` (`internal/cli/cloud.go`) wire it. Consequence: BR12 (the document), BR8 (the
-comment, with the code beside it).
+`batchOptions` (`internal/cli/cloud.go`) wire it. Consequence: BR1 (the document, with the sentences F28 names), BR8 (the comment, with the code
+beside it).
 
 **F23 — Gap: the credentials service is on the path of every Batch run.** Under K3 a Batch run
 cannot open its session if the service is down or cold, where a Cloud Run run that needs no
@@ -233,7 +239,7 @@ Consequence: D3066, BR14.
 
 **F26 — Gap, found in review round 1: `jobs.get` cannot be the link.** The Batch API's job carries
 no instance name or id (`InstanceStatus` in the vendored `batch/v1` holds a boot disk, a machine
-type, a provisioning model and a task pack). So `batch.jobs.get` gives the job's existence, state
+type, a provisioning model and a task pack; read in the `google.golang.org/api` module). So `batch.jobs.get` gives the job's existence, state
 and creation time, and the link from a VM to its job needs a second read:
 `compute.instances.get`, or the tasks API. Consequence: D3062 is amended; O1; BR5 waits on Check
 810.
@@ -249,23 +255,43 @@ Consequence: R12.
 cannot launch on Batch, and `internal/cli/docs_budget_token_channel_test.go` holds them to the
 refusal's text in `run.go`. Consequence: BRS and BR1 change the three together.
 
+**F29 — Rule, found in review round 2: D2075.** The owner ruled on 2026-11-10
+(`docs/secrets-brokering/reconciliation.md`) that on Batch a workflow's secrets stay
+`secretVariables` as "a permanent listed exception", and declined "a Batch VM caller class in the
+service" for its cost. `SECURITY.md` and row E5 of `docs/secrets-brokering/secret-readers.md` say
+so. D3064 and D3061 reverse both halves. Consequence: put to the owner; D3067; BR15.
+
+**F30 — Wrong, found in review round 2: a release record does not close a re-created job.** While
+the first job is still queued, a second launcher can read its blob, delete the job and create one
+under the same name with a task of their own (`roles/batch.jobsEditor` on the prefix carries
+delete and create). That job is the first to ask, so a record written at first release names the
+wrong job. Consequence: D3068; the record R1 described in round 1 is replaced by a registration.
+
+**F31 — Gap, found in review round 2: the reaper's clock.** The reaper runs on a schedule
+(`deploy/terraform/gcp/modules/compute/reaper.tf`) and can judge a job only by its creation time,
+which is after the mint. BR14 therefore cannot promise that no sealed run starts on a dead token;
+it can bound the wait. A run that still starts late stops at its session, as it does today.
+Consequence: BR14's acceptance says so.
+
 ## Decisions
 
 All answered by the owner on 2026-11-20 with `AskUserQuestion`. None departs from the
-recommendation. D3061 was asked twice, D3062 is amended after review, and D3065 and D3066 were
-added by review round 1.
+recommendation. D3061 was asked twice, D3062 three times, D3065 and D3066 were added by review round 1, and D3067
+and D3068 by review round 2.
 
 | # | Module | Question | Recommendation and why | Alternatives and their cost | Answer |
 | --- | --- | --- | --- | --- | --- |
 | **D3060** | all | What happens to the Cloud Batch backend (F7, F14)? | Finish it: the carrier plus every gap that stops a run. It is the only backend with a Docker daemon | Remove it: about 6 tasks, `update` retires the compute root, `docker: true` loses its home. Carrier only: no run can complete, Check 811 cannot run. Park: nothing built | **Finish it** (as recommended, 2026-11-20) |
 | **D3061** | `key-release` | Which carrier (F2, F4, F5)? | K3, the VM-attested release: the only candidate that meets "no other launcher" | K1: about 3 tasks, a second launcher replays it. K2: a secret per run, new launcher permissions, the same weakness | **K3** (as recommended, 2026-11-20). **Asked again after review round 1** with F24 stated: the owner kept K3 (as recommended, 2026-11-20) |
-| **D3062** | `key-release` | Where does the release live (F19)? | In the credentials service, with one read permission in a custom role, granted only where Batch is provisioned | A separate service: about 3 more tasks and a second service to deploy and review | **The credentials service** (as recommended, 2026-11-20). Amends the standing rule on that account's grants. **Amended after review:** the question said "one read-only permission"; F26 shows the service needs `batch.jobs.get` and a second read for the link. The owner's intent, the narrowest read that does the job, is kept; the count awaits his confirmation (O1) |
+| **D3062** | `key-release` | Where does the release live (F19)? | In the credentials service, with one read permission in a custom role, granted only where Batch is provisioned | A separate service: about 3 more tasks and a second service to deploy and review | **The credentials service** (as recommended, 2026-11-20). Amends the standing rule on that account's grants. **Amended after review:** the question said "one read-only permission"; F26 shows the service needs `batch.jobs.get` and a second read for the link. **Asked again after review round 2:** the owner decides the second read after Check 810 (as recommended, 2026-11-20); BR3 and BR5 wait for that answer (O1) |
 | **D3063** | `project-jobs` | Does Batch learn shared project jobs (F10, F11)? | Yes: otherwise Batch serves no repository once shared jobs finish | No: zero tasks, and no user afterwards | **Yes, in this plan** (as recommended, 2026-11-20) |
 | **D3064** | `service-credentials` | How does a Batch run get its credentials (F12)? | From the credentials service only; nothing is mounted; an unserved repository is refused on Batch with its fix | Mounts as well: about 3 more tasks and per-secret IAM that keys-through-service is removing | **The service only** (as recommended, 2026-11-20) |
 | **D3065** | `project-jobs` | D3063 gives every launcher `actAs` on every shared project job account, where Cloud Run confines them to the deployed job. Accept it? | Accept it, and say so in `SECURITY.md`: a Batch launcher creates the job itself | Reverse D3063: no widening, and no user for Batch after shared jobs finish | **Accepted, named** (as recommended, 2026-11-20) |
 | **D3066** | `job-environment` | A sealed run queued longer than its token lives (F25)? | The reaper ends it at the token's lifetime, and it is launched again | Let it fail at start: a VM billed for a run that cannot work. Decide later | **The reaper ends it** (as recommended, 2026-11-20) |
+| **D3067** | `service-credentials` | D3064 and D3061 reverse D2075 (F29). Which stands? | D3064 supersedes D2075: its premise was the cost of a caller class, which D3061 now pays | Keep D2075 for workflow secrets: about 2 more tasks, and a mount Cloud Run is losing | **D3064 supersedes D2075** (as recommended, 2026-11-20) |
+| **D3068** | `key-release` | A second launcher can replace a queued job and receive its key (F30). Close it? | The launcher that wrapped the key registers the job with the service, which releases only to that job | Accept it, stated: zero tasks, the letter of requirement 1 lost to one attack. Switch to K1 | **The launcher registers the job** (as recommended, 2026-11-20) |
 
-D3067 to D3079 are reserved and unused.
+D3069 to D3079 are reserved and unused.
 
 ## Resolutions
 
@@ -283,13 +309,20 @@ One defensible answer each; stated, not asked.
   job the blob names (U1); that job exists and is not finished; and the job was created within a
   short bound after the blob was wrapped. From there the runner does what it does today. The
   encryption carries no authenticity, and needs none: a forged blob holds a key that opens nothing.
-  Four guards were added in review round 1. The job's digest and the wrap time are inside the
-  encrypted plaintext, never beside it. The token's project and zone must be the installation's
-  own. The route admits the per-repository and the shared job classes and refuses every other
-  class. And a blob is released to one job only: the service records, in the budget database it
-  already writes, the unique id of the job it first released a blob to, and refuses the same blob
-  for any other job, which closes a delete and re-create of the same name inside the bound. The
-  launchers get no grant on the key: the public key reaches them through the block alone.
+  Three guards were added in review round 1. The job's digest and the wrap time are inside the
+  encrypted plaintext, never beside it. The token's project must be the installation's own, and
+  its zone one of the installation's region. The route admits the per-repository and the shared
+  job classes and refuses every other class. The launchers get no grant on the key: the public key
+  reaches them through the published block alone.
+  **The registration (D3068, review round 2).** Before it creates the job, the launcher tells the
+  service the blob's digest and the job's name; the service writes them, with the launcher's
+  verified identity, on the run's budget record. After the create returns, the same launcher tells
+  the service the job's unique id, and only the identity that registered the digest may. The
+  release requires the calling VM's job to carry that id. A job re-created under the same name has
+  another id and is refused. The fields are the service's to write: the database rules refuse
+  them to every token holder. A launcher that dies between the two calls leaves a run that stops
+  at release, which is the safe side. The bound on creation time allows for the launcher's clock
+  being off by a stated tolerance.
 - **R2 (`update-converge`). `fugaro update` applies the compute root** for an installation that
   already carries a `batch:` block, and records the key in the block. First provisioning stays
   `fugaro setup --provision-batch`. This is the hard rule's own answer (F13).
@@ -320,13 +353,17 @@ One defensible answer each; stated, not asked.
   which rewrites the local file in place and republishes; a block that still carries it is read,
   not refused, until then.
 - **R12 (`update-converge`). Under `fugaro update` the compute stage asks nothing** (F27). It is
-  refused in an agent's session, as every cloud write of `update` is; it prints one line naming
-  what it applies and that a changed apply rebuilds the preload image, with the cost; and it does
-  not wait. The typed confirmation stays where it is, on `fugaro setup --provision-batch`, which
+  refused in an agent's session, as every cloud write of `update` is, and it does not wait. An
+  apply that changes only the key, a role or a grant starts no rebuild of the preload image; one
+  that does change the image's inputs says so in one line, with the cost. `CLAUDE.md` says job
+  images are rebuilt behind a confirmation of their own and the no-prompt policy says nothing
+  asks; this plan adds no rebuild and no prompt, and leaves that difference where it found it
+  (O7). The typed confirmation stays where it is, on `fugaro setup --provision-batch`, which
   this plan does not touch.
 - **R13 (`update-converge`). The key fact is written by `fugaro update` alone**, from the root's
-  own output, on every run; no settings command writes it, and doctor fails a machine whose local
-  key fact differs from the published one. A substituted public key would hand its holder every
+  own output, on every run, and published with the block, which is how a launcher who is not an
+  operator receives it; no settings command writes it, and doctor fails a machine whose local key
+  fact differs from the published one. A substituted public key would hand its holder every
   seal key wrapped to it, while the runs themselves fail at release.
 - **R11 (`live-proof`). Check 811 is the brief's item 6**, run by the owner on `fugaro-dev` after
   the release, as one script with a hermetic self-test. Its second principal is a real second
@@ -334,14 +371,17 @@ One defensible answer each; stated, not asked.
 
 ## Open tensions
 
-None. No two answers pull against each other.
+None open. One was found in review round 2 and closed by the owner the same day: D3064 against
+his earlier D2075 (F29, D3067).
 
 ## Open items
 
-- **O1. To confirm: D3062 as amended.** The service needs `batch.jobs.get`, conditioned on the
-  Fugaro job-name prefix, and one more read for the link, which Check 810 names (F26). BR5 writes
-  the role only after the owner has run the check and confirmed the two permissions.
-- **O2.** AB9's text (always-a-budget, not approved) should be amended to say this plan lifts its
+- **O1. D3062's second read, decided after Check 810** (the owner's answer of 2026-11-20). The
+  service needs `batch.jobs.get`, conditioned on the Fugaro job-name prefix, and one more read for
+  the link (F26). If the check names `compute.instances.get`, it cannot be scoped to Fugaro's
+  VMs, and the owner then chooses between that read and a release service of its own. The answer
+  is written into the contract by `R-C1-link-permission`; BR3 and BR5 wait on it.
+- **O2.** AB9's text (always-a-budget, approved and launching) should be amended to say this plan lifts its
   refusal. Not done here: that folder is another pull request's.
 - **O3.** The wire of the new route and of the blob is settled in contract C1, reviewed at the
   strictest tier before either side is written. Its exact fields are not decided in this document.
@@ -350,7 +390,17 @@ None. No two answers pull against each other.
 - **O6.** F24: minting stays with launchers. Taking `signJwt` off them is what would make K3 a
   boundary against a launcher. It is a spec of its own and is not written here.
 - **O7.** R12 has `fugaro update` apply the compute root with no confirmation, where `setup`
-  types one. That is the no-prompt policy's answer; it is listed so the owner sees it.
+  types one, and A5 means that includes an installation that carries a `batch:` block and never
+  selected the backend: it gets a key ring that can never be deleted and a key with a small
+  monthly cost. That is the no-prompt policy's and the hard rule's answer; it is listed so the
+  owner sees it.
+- **O8.** The link must also refuse a plain Compute Engine VM that someone with
+  `compute.instances.create` and `actAs` on a run account made by hand. Check 810 tries it; no
+  Fugaro role holds that pair today.
+- **O9.** BR2 and BR4 rest on U2 and are built before Check 810 runs. If the check fails U2, R4
+  applies and their work is at risk.
+- **O10.** The `secrets` and `service_account` fields stay in `localcfg.Batch` so an old file
+  still loads (R10). Deleting the fields is a later change, not in this plan.
 - **O5.** Whether `docker: true` on Batch changes the threat model. With the Docker socket the
   agent is root on its own VM and can obtain that VM's identity token; that is its own run's
   identity (A3). Stated for the reviewer of BR2; no task changes it.
