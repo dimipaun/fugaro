@@ -15,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/failure"
+	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -445,7 +446,11 @@ func reviewToolchainVars(home string) map[string]string {
 // one (fugaro run --recipe NAME --pr N TEXT, the same "TEXT adds
 // instructions" rule a follow-up's --pr already follows) — trusted text
 // from the launcher, not the reviewed checkout, so it needs no redaction
-// of its own before being spliced in, unlike r.reviewFile's content.
+// of its own before being spliced in, unlike r.reviewFile's content. The
+// task the pull request was written for is added as its own quoted block
+// (taskSpecBlock, RA1) and the launcher's TEXT stays a block of its own
+// beside it (D2934), because the two are different claims: one is what the
+// change is judged against, the other is an instruction to this review.
 //
 // Unlike an ordinary run or a follow-up, this never passes a leading-slash
 // agent.review straight to ReviewPrompt/PickPrompt: readBaseConfig already
@@ -479,6 +484,21 @@ func (r *run) reviewModePrompt(ctx context.Context) string {
 		p = PickPrompt("", r.reviewFile, nums, dirs)
 	}
 	p += "\n\n" + baseInstructionsBlock(rev, len(r.reviewHeads) > 1, r.baseInstructions(ctx, rev))
+	// The task this pull request was written for, quoted as data (RA1, R3):
+	// the launcher's block for a launched review — with the section of the plan
+	// the brief names, read at the commit it pins or the launch ref and never
+	// the pull request's own base, whose author can retarget it (D2932) — and
+	// this run's own task, or its root task, for every other review stage. A
+	// pick run quotes the one shared brief once, beside the directories rather
+	// than per directory (R9).
+	//
+	// Nothing is added when there is nothing to check against: a code-only
+	// review judges the diff alone, and the reason travels in the launcher's
+	// warning, the artifact's `against` and the comment's own line rather than
+	// in the reviewer's prompt (spec §9).
+	if spec := r.resolveReviewSpec(ctx); spec.found() {
+		p += "\n\n" + taskSpecBlock(spec, r.redactor(), followup.NewNonce())
+	}
 	if task := strings.TrimSpace(r.spec.Task); task != "" {
 		p += "\n\nAdditional instructions from the launcher:\n\n" + task
 	}
@@ -742,7 +762,7 @@ func (r *run) postReviewComments(ctx context.Context, v Verdict) {
 		nums[i] = h.Number
 	}
 	marker := "\n" + gitprov.ReportMarker(r.rec.RunID) + "\n"
-	content := agent.Redact(ReviewComment(r.rec.Recipe.Name, v, nums, r.secretList()), r.secretList())
+	content := agent.Redact(ReviewComment(r.rec.Recipe.Name, v, nums, r.reviewAgainst(ctx), r.secretList()), r.secretList())
 	body := clipBody(content, maxBodyBytes-len(marker)) + marker
 	reviewed := make([]runstore.ReviewedPR, 0, len(r.reviewHeads))
 	for _, h := range r.reviewHeads {
@@ -762,7 +782,10 @@ func (r *run) postReviewComments(ctx context.Context, v Verdict) {
 // G12), without the trailing run marker (postReviewComments appends
 // gitprov.ReportMarker itself, after redacting and clipping, so clipping
 // can reserve it room): the header names the recipe and the verdict (both
-// Fugaro's own text, never the model's), a pick run (len(prs) > 1) also
+// Fugaro's own text, never the model's), the line under it says what the
+// review was checked against (againstLine, F36: a run that posts no artifact
+// — fugaro run --recipe review-only — records the same fact here that the
+// artifact's own `against` carries), a pick run (len(prs) > 1) also
 // says which pull request to keep, and the findings follow as a list. Each
 // finding's own free text (Severity, File, Summary) comes from the
 // reviewed pull request's own model turn — as untrusted as the diff it
@@ -774,9 +797,12 @@ func (r *run) postReviewComments(ctx context.Context, v Verdict) {
 // form and no longer match the altered text. postReviewComments redacts
 // the whole assembled body again afterwards, as a second, defense-in-depth
 // pass, before clipping.
-func ReviewComment(recipeName string, v Verdict, prs []int, secrets []string) string {
+func ReviewComment(recipeName string, v Verdict, prs []int, against *runstore.Against, secrets []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Fugaro review (%s): %s\n", recipeName, v.Verdict)
+	if line := againstLine(against); line != "" {
+		fmt.Fprintf(&b, "\n%s\n", line)
+	}
 	if len(prs) > 1 {
 		fmt.Fprintf(&b, "\nkeep #%d\n", v.Keep)
 		for _, n := range prs {
@@ -814,6 +840,33 @@ func ReviewComment(recipeName string, v Verdict, prs []int, secrets []string) st
 		}
 	}
 	return b.String()
+}
+
+// againstLine is the one line a review's comment gives to what it was checked
+// against (R8, F36): the same record the artifact carries, so a reader of the
+// pull request's own comment — where the review-only path leaves its whole
+// record, since it writes no artifact — can tell a review judged against the
+// task from one that judged the code alone, and why. An empty line is the
+// record's own absence: a caller with no record writes no claim about one.
+//
+// The source, the run and the digest are Fugaro's own words and its own
+// spelling of a run id and a hex digest; only the reason is text a launcher
+// wrote, and it is neutralized like every other field of this comment that
+// reaches a repository through it (ReviewComment).
+func againstLine(a *runstore.Against) string {
+	switch {
+	case a == nil:
+		return ""
+	case a.Source == runstore.AgainstSourceRun:
+		return fmt.Sprintf("Checked against: the task of run %s (sha256 %s).", a.Run, a.SHA256)
+	case a.Source == runstore.AgainstSourceFile:
+		return fmt.Sprintf("Checked against: the spec supplied by hand (sha256 %s).", a.SHA256)
+	}
+	reason := neutralizeFinding(safetext.OneLine(a.Reason))
+	if reason == "" {
+		return "Checked against: nothing."
+	}
+	return fmt.Sprintf("Checked against: nothing (%s).", reason)
 }
 
 // findingLineBreakRE, findingHashRE, findingSchemeRE, findingMailtoRE,
