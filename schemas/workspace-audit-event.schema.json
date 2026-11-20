@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/workspace-audit-event.schema.json",
+  "title": "Fugaro workspace audit event",
+  "description": "One entry of a workspace's audit trail (D2811): a membership change, a role granted or revoked, a domain edited, an admin's binding changed, recorded with who did it and when. The event is created in the workspace's own Firestore, in the collection internal/workspace.AuditCollection, one document per event, created and never updated -- create-only is a property of the write (the `currentDocument.exists=false` precondition), so an id that is already there is a refusal and not a replacement. The same document is what a MEMBER's own trail holds (C2, internal/workspace/memberops.go), written into `config/admin/workspace-audit` of the member's database, because a project admin holds no write on the workspace's project at all (F11, D2813) -- which is why the entry's shape lives here, in the contract both writers share, and not at either of them. The Go type is internal/workspace.AuditEvent (DecodeAuditEvent and EncodeAuditEvent), every object here is closed because that reader decodes strictly, and the id's pattern is the grammar that reader mints an id with.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "id",
+    "time",
+    "actor",
+    "action"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "workspace.AuditEventVersion (internal/workspace/roster.go).",
+      "description": "The version of this document, written in every event and refused by a reader when it is another value: an audit entry is created once and never updated, so an entry read as the wrong shape is an entry nothing can correct."
+    },
+    "id": {
+      "type": "string",
+      "allOf": [
+        {
+          "pattern": "^[\\x21-\\x22\\x25-\\x2d\\x30-\\x5a\\x5c\\x5e-\\x7e]{1,200}$"
+        },
+        {
+          "not": {
+            "pattern": "^__"
+          }
+        }
+      ],
+      "$comment": "workspace.validateAuditEventID, and workspace.MaxAuditIDBytes is the 200.",
+      "description": "The event's own id: a Firestore document id in the workspace's collection AND a child key in a member's audit node, so it carries nothing either store refuses -- printable ASCII without `.`, `#`, `$`, `/`, `[` or `]` (the six a Realtime Database key refuses) -- and it never begins with `__`, which Firestore reserves for its own documents. workspace.NewAuditEventID mints one per event: the instant in UTC, a `-`, and eight random bytes, so a listing in key order is a listing in time order to the second and two events made in the same second are two documents rather than one create-only refusal."
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the change was made, as an RFC 3339 instant. `format` is an annotation in JSON Schema and not something a validator enforces, so the reader is what holds a node to it (the type holds the instant parsed, and a string that is not one is refused at the decode); the zero instant is refused too, because it is a clock nothing read and an id that would sort every later event after it. Two events in one second are ordered by their ids' random suffixes, and nothing here claims more than second resolution."
+    },
+    "actor": {
+      "$ref": "#/$defs/address",
+      "description": "Who made the change: the address of the person who ran the command, in the canonical spelling. It is the caller's own address and not a name it typed -- the workspace knows no other identity -- and a change made by the workspace's own service records that account."
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "init",
+        "user.add",
+        "user.remove",
+        "user.offboard",
+        "admin.add",
+        "admin.remove",
+        "domain.add",
+        "domain.remove",
+        "grant.write",
+        "grant.remove",
+        "project.add",
+        "project.remove",
+        "project.link",
+        "project.unlink"
+      ],
+      "$comment": "workspace.Actions().",
+      "description": "What was done. The set is closed: an action outside it is a change nobody decided how to record, and the reader refuses it rather than storing a string a later reader would have to guess at. The names follow the commands that write them (`workspace init`, `workspace user add|rm|grant|revoke`, the `--admin` changes, `workspace domains`, the `workspace project` changes and the offboarding a `workspace user rm` runs), so a trail can be read back against the plan."
+    },
+    "project": {
+      "$ref": "#/$defs/project",
+      "description": "The member the change was about, when it was about one: a grant written into that member's roster, a person offboarded out of it, a machine's expected role. Absent for a change that names no member, and then the key is left out rather than written empty."
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "What the change was made to: an address added or removed, a domain edited, a project named. It is free text and bounded, because it names things of several grammars, and an entry with no subject leaves the key out. The reader reads a subject written empty as the absence it means -- nothing writes an event back, because the trail is create-only, so this program never produces the empty spelling, and this pattern is what refuses it where an editor would be the one writing."
+    },
+    "role": {
+      "$ref": "#/$defs/role",
+      "description": "The role a grant carried, when the action wrote one (`grant.write`, `grant.remove`, `user.add --admin` records an admin rather than a role). Absent for a change that carried none."
+    }
+  },
+  "$defs": {
+    "address": {
+      "type": "string",
+      "pattern": "^[\\x21-\\x3f\\x41-\\x7e]+@[\\x21-\\x3f\\x5b-\\x60a-z\\x7b-\\x7e]+$",
+      "description": "The canonical spelling of an address, the same one the roster holds (workspace.CanonicalAddress, and `$defs.address` of schemas/workspace-roster.schema.json): printable ASCII with no whitespace, one `@`, a non-empty local part and a non-empty domain folded to lower case. The two files state it twice because a schema file stands alone -- it is fetched by its own `$id` -- and the reader they are held to is one function."
+    },
+    "project": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+      "$comment": "The same pattern as config.ProjectNameRE (internal/config/project.go).",
+      "description": "A Fugaro project name: the member the change was about."
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "viewer",
+        "operator",
+        "admin"
+      ],
+      "$comment": "workspace.Roles(), the member roster's own set restated.",
+      "description": "A role a grant carries, in the set the member rosters hold. `admin` is a role inside one member and is not a workspace admin: a change to the admin list records the action `admin.add` or `admin.remove` and carries a subject rather than a role."
+    }
+  }
+}
