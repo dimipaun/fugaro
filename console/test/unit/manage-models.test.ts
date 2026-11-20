@@ -12,6 +12,9 @@
 // keys kind is names and status, no value anywhere on it, and the only thing it
 // offers is the two commands to copy -- `fugaro secrets set NAME` (which stores a
 // new version each time, and so is the rotation) and `fugaro secrets rm NAME`.
+// The status is the console's word for the container's metadata, and `stored` is
+// the CLI's own presence rule: a container is not a value, so one that resolves
+// to no enabled version draws `no value`.
 // The last block is the red step: a scan of the kind's own file that fails the
 // moment an input control is added to it.
 
@@ -67,11 +70,13 @@ const MODELS_DOC: unknown = {
 }
 
 /** KEYS_DOC is `secrets ls --json`'s body (contract section 6.6): the bare
- * array, with one stored key and one the repository's jobs mount and nothing
- * resolves. The entry carries every member that is **not** a value but could be
- * mistaken for something to draw -- the container's `id`, when it was created,
- * its newest version, its labels -- and the tests below assert that none of them
- * reaches a cell. */
+ * array, with the three states the table has to tell apart -- a key with a value
+ * to resolve, a required name the repository's jobs mount and nothing resolves,
+ * and the empty container `init` leaves behind before a value is stored. The
+ * entries carry every member that is **not** a value but could be mistaken for
+ * something to draw -- the container's `id`, when it was created, its version
+ * count and newest enabled version, its labels -- and the tests below assert
+ * that none of them reaches a cell. */
 const KEYS_DOC: unknown = [
   {
     name: 'fugaro-github-token',
@@ -80,10 +85,20 @@ const KEYS_DOC: unknown = [
     id: 'projects/example-cloud/secrets/fugaro-github-token',
     created: '2026-09-01T09:00:00Z',
     labels: { managed_by: 'fugaro' },
-    versions: 3,
+    versions: 4,
     latest: '3',
   },
   { name: 'fugaro-slack-webhook', scope: 'project', allowed: [], versions: 0, missing: true },
+  {
+    name: 'fugaro-optional-token',
+    scope: 'repo',
+    allowed: [],
+    id: 'projects/example-cloud/secrets/fugaro-optional-token',
+    created: '2026-09-02T09:00:00Z',
+    labels: { managed_by: 'fugaro' },
+    versions: 0,
+    latest: '',
+  },
 ]
 
 /** KIND_SOURCE is the keys kind's own file: the red step is about what is *in*
@@ -239,6 +254,7 @@ describe('the keys kind', () => {
     expect(rows(KEYS_KIND, KEYS_DOC).map((row) => row.cells)).toEqual([
       { name: 'fugaro-github-token', scope: 'repo', status: 'stored' },
       { name: 'fugaro-slack-webhook', scope: 'project', status: 'missing' },
+      { name: 'fugaro-optional-token', scope: 'repo', status: 'no value' },
     ])
   })
 
@@ -246,15 +262,35 @@ describe('the keys kind', () => {
     expect(rows(KEYS_KIND, KEYS_DOC).map((row) => row.key)).toEqual([
       'fugaro-github-token',
       'fugaro-slack-webhook',
+      'fugaro-optional-token',
     ])
   })
 
   it('reads the document’s own missing flag as the status, and nothing else', () => {
     expect(rows(KEYS_KIND, KEYS_DOC)[1]?.cells.status).toBe('missing')
     // `missing` is written `true` and never anything else; a document that
-    // spells it some other way is not the CLI's flag.
-    expect(rows(KEYS_KIND, [{ name: 'x', missing: 'yes' }])[0]?.cells.status).toBe('stored')
-    expect(rows(KEYS_KIND, [{ name: 'x' }])[0]?.cells.status).toBe('stored')
+    // spells it some other way is not the CLI's flag, and the row falls to the
+    // container's own metadata (`latest` here, so a stored key).
+    expect(rows(KEYS_KIND, [{ name: 'x', missing: 'yes', latest: '1' }])[0]?.cells.status).toBe('stored')
+    expect(rows(KEYS_KIND, [{ name: 'x', latest: '1' }])[0]?.cells.status).toBe('stored')
+    // And a row the CLI did mark is missing whatever else it carries.
+    expect(rows(KEYS_KIND, [{ name: 'x', missing: true, latest: '1' }])[0]?.cells.status).toBe('missing')
+  })
+
+  it('draws no value for a container that resolves to nothing, and stored only for one that does', () => {
+    // The CLI's own presence rule (`markMissingRequired`): a name counts as
+    // present when the row carries a latest enabled version, so a container is
+    // not a value. `{versions: 0}` is the empty container `init` leaves behind
+    // before a value is stored (there is no `latest` at all), and `latest: ''`
+    // is one whose versions are all disabled.
+    const status = (entry: unknown): unknown => rows(KEYS_KIND, [entry])[0]?.cells.status
+    expect(status({ name: 'x', scope: 'repo', versions: 0 })).toBe('no value')
+    expect(status({ name: 'x', scope: 'repo', versions: 0, latest: '' })).toBe('no value')
+    expect(status({ name: 'x', scope: 'repo', versions: 2, latest: '' })).toBe('no value')
+    expect(status({ name: 'x', scope: 'repo', versions: 2, latest: '2' })).toBe('stored')
+    // A document with no metadata of its own is a row the console cannot call
+    // stored: nothing says a value resolves for it.
+    expect(status({ name: 'x', scope: 'repo' })).toBe('no value')
   })
 
   it('never draws a member of the entry that is not a name, a scope or the flag', () => {
@@ -267,9 +303,12 @@ describe('the keys kind', () => {
     ]) {
       expect(drawn, `${member} reached a cell`).not.toContain(member)
     }
-    // The version count is the one number of the entry, and the status is a word
-    // rather than it: `3` appears nowhere on the rows.
+    // The entry's two numbers are the version count and the newest enabled
+    // version, and the status is a word rather than either of them -- `latest`
+    // is read to choose that word and is never drawn, so `4` and `3` both
+    // appear nowhere on the rows.
     expect(drawn).not.toContain('3')
+    expect(drawn).not.toContain('4')
   })
 
   it('answers no rows for a document that is not the array', () => {

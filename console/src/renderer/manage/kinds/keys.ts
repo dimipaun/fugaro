@@ -42,23 +42,40 @@ import { defineManageKind } from '../types'
 import type { ManageAction, ManageColumn, ManageKind, ManageRow } from '../types'
 
 /**
- * MISSING_WORD and STORED_WORD are the console's two words for a row's status,
- * and the document's own `missing` flag decides between them: it is written,
- * `true` only, for a name a repository's jobs mount that no container of the
- * repository or the project resolves (`secrets ls`'s MISSING column, the CLI's
- * "yes"). Every other row is a container the inventory found, so `stored` is a
- * fact about the row rather than a claim about a value -- which is the one thing
- * this kind may not make (contract section 6.6: the document carries no value,
- * and the two words here are drawn from the flag alone).
+ * The console's three words for a row's status, decided by the document's own
+ * non-secret metadata.
+ *
+ * `missing` is tested first and exactly, because the flag is written `true` and
+ * nothing else: the CLI marks a name this repository's jobs mount and nothing
+ * resolves for it (`secrets ls`'s MISSING column, the CLI's "yes"), and it
+ * never marks a name that is merely optional -- there is no flag for "this key
+ * is offered but unused".
+ *
+ * The other two are the CLI's own presence rule (`markMissingRequired` and the
+ * `Latest == ""` test doctor, init and the workspace probe share,
+ * `internal/cli/secrets.go`): a name counts as present when the row carries a
+ * **latest enabled version** -- a container is not a value. The empty container
+ * `init` leaves behind before a value is stored, and one whose versions are all
+ * disabled, resolve to nothing and carry no `latest`; drawing those `stored`
+ * would tell an operator a key holds a value when nothing is stored, which is
+ * the one claim this kind may not make (contract section 6.6: the document
+ * carries no value, and the words here come from the container's metadata
+ * alone). The CLI's own table gives the same row a `-` in LATEST.
+ *
+ * The `versions` count is deliberately not read for this answer, and it cannot
+ * disagree with `latest`: no version can be the enabled latest one when there
+ * are none, and all-disabled is what leaves `latest` empty. One rule, stated
+ * once, is worth more than two that must be kept in step.
  */
 const MISSING_WORD = 'missing'
+const NO_VALUE_WORD = 'no value'
 const STORED_WORD = 'stored'
 
 /**
  * KEYS_COLUMNS is the table's three columns. The key's name and its scope are
  * the two text members the CLI's own table prints (NAME and SCOPE), both
  * `label`, which is the class the Projects tab's secrets panel draws the same
- * two values under; the status is the console's word for the document's flag.
+ * two values under; the status is the console's word for the entry's metadata.
  */
 const KEYS_COLUMNS: readonly ManageColumn[] = [
   { key: 'name', title: 'Key', class: 'label' },
@@ -105,12 +122,23 @@ function jsonText(raw: unknown): string | null {
   return typeof raw === 'string' ? raw : null
 }
 
+/** keysStatus is one entry's status word: the CLI's `missing` flag first, then
+ * the presence rule `latest` states -- a non-empty version is a value the
+ * repository resolves, absent or empty is none. The `latest` string itself
+ * reaches no cell: it is read to choose a word, never drawn. */
+function keysStatus(object: Record<string, unknown>): string {
+  if (object['missing'] === true) return MISSING_WORD
+  const latest = jsonText(object['latest'])
+  return latest === null || latest === '' ? NO_VALUE_WORD : STORED_WORD
+}
+
 /** keysRow is one entry of the inventory as one table row. An entry whose name
  * is not a string is **skipped**: the name is the row's identity and the first
  * thing drawn on it, so an entry without one is not a row this kind can key --
  * and a row keyed by a guess would collide with the next. Nothing else of the
- * entry is read: `id`, `created`, `latest` and `labels` reach no cell, which is
- * the surest way to keep a value off a screen (D2905). */
+ * entry reaches a cell: `id`, `created`, `labels` and `versions` are not read
+ * at all, and `latest` is read for the status word alone (`keysStatus`) and
+ * never drawn, which is the surest way to keep a value off a screen (D2905). */
 function keysRow(entry: unknown): ManageRow | null {
   const object = jsonObject(entry)
   if (object === null) return null
@@ -124,7 +152,7 @@ function keysRow(entry: unknown): ManageRow | null {
       // it out of a row that has none: `n/a` is a value the document does not
       // carry, never an empty cell a reader would take for a blank.
       scope: jsonText(object['scope']) ?? UNAVAILABLE_MARK,
-      status: object['missing'] === true ? MISSING_WORD : STORED_WORD,
+      status: keysStatus(object),
     },
   }
 }
