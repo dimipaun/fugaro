@@ -2,6 +2,7 @@ package ciselect
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"slices"
 	"testing"
@@ -12,12 +13,15 @@ import (
 // one of each shape this repository has: a chain of imports (core <- mid <-
 // top), a package that reaches another from its own test file (probe <- tiny)
 // and one that does from an external test file (ext <- tinyext), a package that
-// embeds a data file and one whose test embeds a template, a package whose
-// importers sit behind the four tags one file apiece and a file behind a tag
-// none of them sets, and a testdata fixture no package owns. The capture leaves
-// out the standard library's own entries, about 130 of them and none of which a
-// repository file can change, and rewrites its module root to /mod; nothing
-// else about it is edited.
+// embeds a data file and one whose test embeds a template, a package that
+// embeds a directory holding a package of its own (cfg embeds cfg/sub), a
+// package whose importers sit behind the four tags one file apiece and a file
+// behind a tag none of them sets, and a testdata fixture no package owns. leaf
+// has a test file of its own as well as an external one, which is what makes go
+// list list wrap a second time as `wrap [leaf.test]`, DepOnly. The capture
+// leaves out the standard library's own entries, about 130 of them and none of
+// which a repository file can change, and rewrites its module root to /mod and
+// the build cache to /build; nothing else about it is edited.
 const graphFixture = "testdata/graph.json"
 
 func parseGraphFixture(t *testing.T) *Graph {
@@ -76,6 +80,35 @@ func TestAffectedFollowsAnEmbeddedFile(t *testing.T) {
 	// nothing else can be in this answer.
 	checkAffected(t, g, []string{"internal/golden/testdata/golden.txt"},
 		"example.com/m/internal/golden")
+	// An embedded directory can hold a package: sub/sub.go is a file of cfg/sub
+	// and, through cfg's `//go:embed all:sub`, a file of cfg as well. Both own
+	// it, so a change to it reaches both, and cfguser through cfg.
+	checkAffected(t, g, []string{"internal/cfg/sub/sub.go"},
+		"example.com/m/internal/cfg", "example.com/m/internal/cfg/sub", "example.com/m/internal/cfguser")
+	checkAffected(t, g, []string{"internal/cfg/sub/sub_test.go"},
+		"example.com/m/internal/cfg", "example.com/m/internal/cfg/sub", "example.com/m/internal/cfguser")
+}
+
+func TestAffectedOwnsEveryFileOfAPackageCopiedForATest(t *testing.T) {
+	g := parseGraphFixture(t)
+	// leaf's test file imports wrap and wrap imports leaf, so -test prints wrap
+	// twice: `wrap` and `wrap [leaf.test]`, DepOnly, with ForTest naming leaf —
+	// the package the copy is built for, not the package it is. Reading ForTest
+	// there would hand internal/wrap/wrap.go to internal/leaf, and every file
+	// under a package a test binary rebuilds would land in the package under
+	// test. The answer Affected gives cannot show that here: leaf and wrap reach
+	// each other, so both readings close over the same packages. This reads the
+	// ownership itself, which is where the two readings differ.
+	for file, want := range map[string]string{
+		"internal/wrap/wrap.go":         "example.com/m/internal/wrap",
+		"internal/leaf/leaf.go":         "example.com/m/internal/leaf",
+		"internal/leaf/leaf_in_test.go": "example.com/m/internal/leaf",
+		"internal/leaf/leaf_test.go":    "example.com/m/internal/leaf",
+	} {
+		if got := slices.Sorted(maps.Keys(g.owner[file])); !slices.Equal(got, []string{want}) {
+			t.Errorf("owner[%q] = %q, want %q", file, got, want)
+		}
+	}
 }
 
 func TestAffectedUnionsTheBuildTags(t *testing.T) {

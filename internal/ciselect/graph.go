@@ -21,10 +21,10 @@ import (
 const BuildTags = "terraform,firebase,docker,live"
 
 // Graph is the reverse import graph of one module: the packages that import
-// each package, and the package that owns each file.
+// each package, and the packages that own each file.
 type Graph struct {
 	importers map[string]map[string]bool
-	owner     map[string]string
+	owner     map[string]map[string]bool
 }
 
 // ParseGraph reads the stream of JSON objects `go list -deps -test -json -tags
@@ -39,7 +39,7 @@ type Graph struct {
 func ParseGraph(r io.Reader) (*Graph, error) {
 	g := &Graph{
 		importers: map[string]map[string]bool{},
-		owner:     map[string]string{},
+		owner:     map[string]map[string]bool{},
 	}
 	dec := json.NewDecoder(r)
 	root := ""
@@ -64,9 +64,18 @@ func ParseGraph(r io.Reader) (*Graph, error) {
 		// A test variant (`pkg [pkg.test]`, `pkg_test [pkg.test]`) names no
 		// directory of its own: its imports and files belong to the package
 		// under test, which is the package ForTest names.
-		pkg := lp.ForTest
-		if pkg == "" {
-			pkg = lp.ImportPath
+		//
+		// A copy go list rebuilds for a test binary is the exception. -test
+		// lists a dependency of a package under test once more — as
+		// `dep [pkg.test]`, DepOnly, ForTest naming the package under test —
+		// when it has to be built against the test variant because it imports
+		// that package, and it is the dependency's own files that are built.
+		// ForTest there names the package the copy exists for, not the package
+		// the copy is, so reading it would hand the dependency's files to the
+		// package under test.
+		pkg := canonical(lp.ImportPath)
+		if lp.ForTest != "" && !lp.DepOnly {
+			pkg = lp.ForTest
 		}
 		for _, imp := range slices.Concat(lp.Imports, lp.TestImports, lp.XTestImports) {
 			if imp = canonical(imp); imp == pkg {
@@ -86,12 +95,21 @@ func ParseGraph(r io.Reader) (*Graph, error) {
 		// the one behind -tags ee or firestore, and the other platform's
 		// openfile_other.go. They are still files of this package, and a change
 		// to one has to reach it.
+		//
+		// A file can be a file of more than one package. An `//go:embed all:gcp`
+		// names every file under gcp/ in EmbedFiles, and each of those is a file
+		// of the package it lives in as well: both own it, and a change to one
+		// reaches both, so both are kept.
 		for _, name := range slices.Concat(lp.GoFiles, lp.CgoFiles, lp.IgnoredGoFiles,
 			lp.TestGoFiles, lp.XTestGoFiles, lp.EmbedFiles, lp.TestEmbedFiles) {
 			if filepath.IsAbs(name) {
 				continue
 			}
-			g.owner[path.Join(dir, filepath.ToSlash(name))] = pkg
+			file := path.Join(dir, filepath.ToSlash(name))
+			if g.owner[file] == nil {
+				g.owner[file] = map[string]bool{}
+			}
+			g.owner[file][pkg] = true
 		}
 	}
 	if root == "" {
@@ -101,7 +119,7 @@ func ParseGraph(r io.Reader) (*Graph, error) {
 }
 
 // Affected returns the import paths of the packages a change to one of
-// changedFiles reaches: the package owning a changed file, and every package
+// changedFiles reaches: every package owning a changed file, and every package
 // that imports one of those, directly or transitively, test imports included.
 // The result is sorted and holds packages of the module only.
 //
@@ -112,12 +130,13 @@ func (g *Graph) Affected(changedFiles []string) []string {
 	seen := map[string]bool{}
 	var queue []string
 	for _, f := range changedFiles {
-		pkg, ok := g.owner[path.Clean(f)]
-		if !ok || seen[pkg] {
-			continue
+		for pkg := range g.owner[path.Clean(f)] {
+			if seen[pkg] {
+				continue
+			}
+			seen[pkg] = true
+			queue = append(queue, pkg)
 		}
-		seen[pkg] = true
-		queue = append(queue, pkg)
 	}
 	for len(queue) > 0 {
 		pkg := queue[0]
@@ -137,6 +156,7 @@ func (g *Graph) Affected(changedFiles []string) []string {
 type listedPkg struct {
 	ImportPath     string
 	ForTest        string
+	DepOnly        bool
 	Name           string
 	Dir            string
 	Module         *listedModule
