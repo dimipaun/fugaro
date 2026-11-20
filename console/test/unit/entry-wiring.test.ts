@@ -6931,6 +6931,114 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     ).toEqual([null, null, null, 'budget.show'])
   })
 
+  it('puts the jobs part back where it found it when another part’s Retry takes the queue', async () => {
+    // The queue's four parts share one sequence token, and every read of every
+    // part takes it (`reReadSource`): a Retry on any part is a newer change to
+    // the section than a jobs read still in flight, and that read's answer is
+    // not the section's any more. The jobs read is the one part that draws
+    // **while its read is out** (RS2, `runs.stream`), so it is the one part with
+    // something on screen to take back: left as it was, the rows it had drawn
+    // would stay drawn as the list -- a queue nothing finished reading -- with no
+    // control to read it again, under the mark of a read nobody is making.
+    const status = holding()
+    const plans = holding()
+    const caps = holding()
+    const { bridge, calls } = queueBridge({
+      coordinatorStatus: () => status.reply(),
+      planStatus: () => plans.reply(),
+      showBudget: () => caps.reply(),
+    })
+    // A bridge that **can** ask `runs.stream` (C-OPS's operation over AL's
+    // read): two rows and the line that ends the list. `listRuns` is answered by
+    // no case here, so a read that fell back to the whole document is a call
+    // this case can see.
+    const secondRun = '20261030-221500-9f02'
+    const lines: readonly unknown[] = [
+      { type: 'row', ...QUEUE_RUN },
+      { type: 'row', ...QUEUE_RUN, run: secondRun },
+      { type: 'end', version: 1, count: 2 },
+    ]
+    const stream = holding()
+    const streamCalls: unknown[] = []
+    bridge['streamRuns'] = (args: unknown): unknown => {
+      streamCalls.push(args)
+      return stream.reply()
+    }
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    // The tab's three reads answer and none of them holds an item: the stored
+    // view's open pull request stands behind no run and the plan fixture names
+    // another repository -- so what this case draws in the queue's own body is
+    // what the jobs read brought.
+    status.release({ ok: true, data: { document: COORDINATOR_STATUS } })
+    plans.release(planStatusReply())
+    caps.release({ ok: false, reason: BUDGET_REFUSAL })
+    await flush()
+
+    // The press asks the operation -- `runs.stream`, with the queue's own window
+    // -- and the section says it is reading.
+    const control = buttonLabelled(panelOf(document), COORDINATOR_QUEUE_JOBS_WORD)
+    expect(control.attributes.get('aria-expanded'), 'the control was drawn already pressed').toBe(
+      'false',
+    )
+    // The Live screen's own join has read the run list by now, so what this
+    // counts is the reads the press makes and no others.
+    const readForTheQueue = calls.filter((call) => call.name === 'listRuns').length
+    control.click()
+    await flush()
+    expect(streamCalls).toEqual([{ since: RUNS_SINCE }])
+    expect(
+      calls.filter((call) => call.name === 'listRuns').length - readForTheQueue,
+      'the read fell back to the whole document with a stream answering',
+    ).toBe(0)
+    expect(busyLabels(document)).toContain(COORDINATOR_QUEUE_BUSY)
+
+    // The first row is drawn while the read is still going: the part holds it
+    // (and the control it came from is gone with it), and the second row is one
+    // tick away.
+    stream.release({ ok: true, data: { document: { lines } } })
+    await flush()
+    expect(holdsText(panelOf(document), shortRun(QUEUE_RUN_ID))).toBe(true)
+    expect(classed(panelOf(document), COORDINATOR_QUEUE_JOBS_CLASS)).toEqual([])
+
+    // Another part's Retry: the caps part refused, and its sentence carries the
+    // control that reads it again. It takes the queue's token with it, so the
+    // jobs read is not the section's read any more -- and nothing has landed
+    // yet, so the part still holds the row it drew.
+    const parts = classed(panelOf(document), COORDINATOR_QUEUE_PART_CLASS)
+    const retry = classed(parts[3] as FakeNode, RETRY_CLASS)[0]
+    expect(retry, 'the refused caps part offered no Retry').toBeDefined()
+    retry?.click()
+    await flush()
+    expect(holdsText(panelOf(document), shortRun(QUEUE_RUN_ID))).toBe(true)
+    expect(busyLabels(document)).toContain(COORDINATOR_QUEUE_BUSY)
+
+    // The tick the abandoned read was waiting on, and its landing.
+    await vi.advanceTimersByTimeAsync(10)
+    await flush()
+
+    // The part is back where it found it: the control, un-pressed, the rows the
+    // abandoned read had drawn taken back with the read, and no mark left
+    // standing over a read nobody is making.
+    const back = buttonLabelled(panelOf(document), COORDINATOR_QUEUE_JOBS_WORD)
+    expect(back.attributes.get('aria-expanded')).toBe('false')
+    expect(classed(panelOf(document), COORDINATOR_QUEUE_JOBS_CLASS)).toHaveLength(1)
+    expect(holdsText(panelOf(document), shortRun(QUEUE_RUN_ID))).toBe(false)
+    expect(busyLabels(document), 'the mark of a read nobody is making stayed up').toEqual([])
+
+    // And the control it offers is a working one: the same read goes out again,
+    // and this time it lands.
+    back.click()
+    await flush()
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(10)
+    await flush()
+    expect(streamCalls).toHaveLength(2)
+    expect(holdsText(panelOf(document), shortRun(QUEUE_RUN_ID))).toBe(true)
+    expect(holdsText(panelOf(document), shortRun(secondRun))).toBe(true)
+  })
+
   it('draws a queue it cannot decode as `runs ls`’s own refusal, with no item and no button', async () => {
     // The queue's reader refuses a page holding a row it cannot read -- here a
     // `terminal` that is a word where the struct writes a boolean -- and it

@@ -8540,8 +8540,25 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       })
       if (attempts.runs !== attempt) return
       out.delete('runs')
-      if (stale(mine) || !coordinatorQueueRead.current(token)) return
-      if (result.status === 'dropped') return
+      if (stale(mine)) return
+      if (!coordinatorQueueRead.current(token)) {
+        // **A read the section has moved on from puts the part back where it
+        // found it.** The queue's four parts share one token and every part's
+        // read takes it (`reReadSource`), so a Retry on another part supersedes
+        // a jobs read that is still out -- and this is the one read of the four
+        // that draws while it is out, so what it drew is already on screen. A
+        // list nothing finished reading is not the part (`readStream` answers
+        // `dropped` for the same fact between its chunks), and leaving the visit
+        // as it was would leave those rows drawn as the list with no control to
+        // read it again, under the mark of a read nobody is making. The part
+        // goes back to the state it has before it is asked -- control and all,
+        // so the operator can ask again -- and this landing draws it.
+        jobsAsked = false
+        runs = null
+        runsPartial = false
+        draw('runs')
+        return
+      }
       runsPartial = false
       runsOperation = result.source === 'stream' ? RUNS_STREAM_OPERATION : RUNS_LIST_OPERATION
       // **A list no read finished is not drawn as the part.** An interrupted
