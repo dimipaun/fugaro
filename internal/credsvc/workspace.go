@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -197,6 +198,26 @@ type WorkspaceConfig struct {
 	// cascade that reads no mark and treats every credential of the pool as
 	// available.
 	State creds.Store
+	// Kills is the workspace's OWN stop switch, read from the workspace's own
+	// database: `config/kill/global` there is the node `fugaro budget kill
+	// --workspace <name>` writes (D1302, internal/cli/budget_kill_workspace.go,
+	// which spells it out: "the switch is the workspace's own global one and
+	// never a repository's"), and it is the stop an operator under pressure
+	// has — the one that reaches every member at once without any member being
+	// written to.
+	//
+	// **It is a field of the workspace's own and not of a member, and a
+	// workspace-mode call is held to it AS WELL AS to the calling member's own
+	// pair.** contract-scope.md leaves that choice to the workspace's scope and
+	// asks for the decision in its comment; the decision and its reasons are on
+	// workspaceKills (scope_workspace.go), which is the one reader of this
+	// field. `*rtdb.Client` is one.
+	//
+	// It is required, for State's reason: a deployment that started without it
+	// would serve every shared-credential call with the workspace's own stop
+	// switch unread, which is the one control that does not depend on a
+	// member's honesty (spec.md §8).
+	Kills budget.KillGetter
 	// Now is the clock, for tests; nil means time.Now.
 	Now func() time.Time
 }
@@ -361,6 +382,7 @@ type Workspace struct {
 	auths       map[string]*Authenticator
 	databases   map[string]Getter
 	state       creds.Store
+	kills       budget.KillGetter
 	front       *Authenticator
 }
 
@@ -382,6 +404,8 @@ func NewWorkspace(cfg WorkspaceConfig) (*Workspace, error) {
 		return nil, fmt.Errorf("%w: no database opener, so no member's state could be read", ErrWorkspaceConfig)
 	case cfg.State == nil:
 		return nil, fmt.Errorf("%w: no store of its own, so the pool's marks and leases would be written into no database (R8)", ErrWorkspaceConfig)
+	case cfg.Kills == nil:
+		return nil, fmt.Errorf("%w: no stop switch of its own, so a call this deployment serves would be held to the calling member's switches alone and `fugaro budget kill --workspace` would stop nothing (D1302)", ErrWorkspaceConfig)
 	case len(cfg.Members) == 0:
 		return nil, fmt.Errorf("%w: the table names no member, so the deployment could admit nobody", ErrWorkspaceConfig)
 	}
@@ -412,6 +436,7 @@ func NewWorkspace(cfg WorkspaceConfig) (*Workspace, error) {
 		auths:       make(map[string]*Authenticator, len(cfg.Members)),
 		databases:   make(map[string]Getter, len(cfg.Members)),
 		state:       cfg.State,
+		kills:       cfg.Kills,
 		front:       front,
 	}
 	if err := w.readMembers(cfg); err != nil {
@@ -713,6 +738,15 @@ func (w *Workspace) Policy(ctx context.Context, c MemberCall) (*projectpolicy.Po
 // selection cannot reach the per-repository auth record through it — that read
 // is RepoAuth's below, and it is the MEMBER's database that answers it.
 func (w *Workspace) State() StateStore { return w.state }
+
+// Kills is the workspace's own stop switch, and it is the deployment's and not
+// a caller's: it is read from the workspace's own database — the node
+// `fugaro budget kill --workspace <name>` writes — and it is the workspace's
+// own because a member holds no grant on that database at all and reads no node
+// of it (spec.md §9). It is what the workspace-mode scope reads BESIDE the
+// calling member's own pair, and the decision to read both is workspaceKills'
+// (scope_workspace.go).
+func (w *Workspace) Kills() budget.KillGetter { return w.kills }
 
 // Shared is the effective set of the workspace's pool for this caller: the
 // credentials the workspace offers this member (the node's shared entries with

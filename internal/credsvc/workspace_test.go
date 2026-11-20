@@ -157,7 +157,15 @@ type wsFixture struct {
 	run   string
 	dbs   map[string]*wsDB
 	store *fakeStore
-	ws    *Workspace
+	// own is the workspace's OWN database, and it is where the workspace's own
+	// stop switch is read from: `config/kill/global` there is the node `fugaro
+	// budget kill --workspace` writes (D1302). It is held apart from `store`
+	// because the two are two interfaces over that one database — the state is
+	// a creds.Store and the switch is a budget.KillGetter — and it is NOT one
+	// of `dbs`, which are the members': no member's database is ever the
+	// workspace's own.
+	own *wsDB
+	ws  *Workspace
 }
 
 func newWSFixture(t *testing.T) *wsFixture {
@@ -173,6 +181,7 @@ func newWSFixtureWith(t *testing.T, mutate func(*WorkspaceConfig)) *wsFixture {
 		now:   now,
 		run:   now.Format("20060102-150405") + "-ab12",
 		store: newFakeStore(),
+		own:   &wsDB{url: "https://" + wsWorkspace + "-default-rtdb.firebaseio.com", nodes: map[string]any{}},
 		dbs: map[string]*wsDB{
 			wsMemberA: {url: "https://" + wsMemberA + "-default-rtdb.firebaseio.com", nodes: map[string]any{}},
 			wsMemberB: {url: "https://" + wsMemberB + "-default-rtdb.firebaseio.com", nodes: map[string]any{}},
@@ -199,6 +208,10 @@ func newWSFixtureWith(t *testing.T, mutate func(*WorkspaceConfig)) *wsFixture {
 		// a call this fixture hears about, since a member is opened as a
 		// Getter and nothing wider.
 		State: f.store,
+		// The workspace's own stop switch, read from the workspace's own
+		// database: the switch `fugaro budget kill --workspace` writes (D1302),
+		// which the scope reads beside the calling member's own pair.
+		Kills: f.own,
 		// The opener is the ONLY thing that decides which member's state a
 		// call can read, and it is asked for a URL: a deployment that opened a
 		// URL nothing derived is a deployment this test would hear about.
@@ -850,6 +863,7 @@ func TestNewWorkspaceOpensTheDatabaseTheMembersRegionNames(t *testing.T) {
 		Keys:        staticKeys{testKid: &testKey().PublicKey},
 		JobKeys:     staticKeys{testJobKid: &testKey().PublicKey},
 		State:       newFakeStore(),
+		Kills:       &wsDB{nodes: map[string]any{}},
 		Now:         func() time.Time { return now },
 	}
 	var opened []string
@@ -1597,6 +1611,7 @@ func TestNewWorkspaceRefusesAConfigurationItCannotCheck(t *testing.T) {
 			Keys:        staticKeys{testKid: &testKey().PublicKey},
 			JobKeys:     staticKeys{testJobKid: &testKey().PublicKey},
 			State:       newFakeStore(),
+			Kills:       &wsDB{nodes: map[string]any{}},
 			Open:        func(string) (Getter, error) { return &wsDB{nodes: map[string]any{}}, nil },
 		}
 	}
@@ -1610,6 +1625,11 @@ func TestNewWorkspaceRefusesAConfigurationItCannotCheck(t *testing.T) {
 		// marks and leases of the pool's credentials, and the one store it
 		// could reach for is a member's.
 		"no store of its own": func(c *WorkspaceConfig) { c.State = nil },
+		// D1302: a workspace with no switch of its own serves every
+		// shared-credential call of a workspace its owner has stopped — and
+		// that switch is the one control that does not depend on a member's
+		// honesty (spec.md §8).
+		"no stop switch of its own": func(c *WorkspaceConfig) { c.Kills = nil },
 		"a member with no job service account": func(c *WorkspaceConfig) {
 			c.Members[0].JobAccounts = nil
 		},

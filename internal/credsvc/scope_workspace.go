@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/bbtokens"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -35,6 +36,11 @@ import (
 //     position and a lease for a workspace credential are facts about the
 //     workspace's pool, and because the service holds no write on any member at
 //     all (R8, D1299 as amended);
+//   - the STOP SWITCHES are BOTH: the CALLING MEMBER's own pair, read from its
+//     own database as its own service reads it, and the WORKSPACE's own switch,
+//     read from the workspace's own database — which is where `fugaro budget
+//     kill --workspace` writes it and how one command stops every member
+//     (D1302) — because neither stop contains the other (workspaceKills);
 //   - the REPOSITORY TABLE is the CALLING JOB ACCOUNT's, which is where the
 //     run's verified repository is held to what the workspace owner declared
 //     for that account (R6, D2992, R19);
@@ -275,7 +281,9 @@ func (res *workspaceResolver) nodeFor(ctx context.Context) (*projectpolicy.Works
 // answered: a scope is one call's, and the readers the model path asks are
 // built over the one database the call resolved to — which is what keeps a
 // second read of the node or the member's row from being possible below this
-// line.
+// line. The stop switches are the exception and are deliberately TWO readers
+// behind one KillReader: the calling member's own pair, over its own database,
+// and the workspace's own switch, over the workspace's (workspaceKills).
 func (res *workspaceResolver) scopeFor(call MemberCall, node *projectpolicy.WorkspaceCredentials) (Scope, error) {
 	db, err := res.w.database(call)
 	if err != nil {
@@ -287,7 +295,7 @@ func (res *workspaceResolver) scopeFor(call MemberCall, node *projectpolicy.Work
 		meter: res.meter,
 		readers: workspaceReaders{
 			policy:   RTDBPolicy{DB: db},
-			kills:    RTDBKills{DB: db},
+			kills:    workspaceKills{workspace: res.w.Kills(), member: db},
 			state:    res.w.State(),
 			repoAuth: &creds.RTDBStore{DB: memberReadOnly{Getter: db}},
 			outcomes: RTDBOutcomes{DB: db},
@@ -296,6 +304,70 @@ func (res *workspaceResolver) scopeFor(call MemberCall, node *projectpolicy.Work
 			repos:    repos,
 		},
 	}, nil
+}
+
+// workspaceKills is the stop switches a workspace-mode call is held to, and the
+// choice contract-scope.md left open — "the member's own operator's, the
+// workspace's, or both read together" — is BOTH, read together, because they
+// are two stops an operator holds over two different things and neither
+// contains the other:
+//
+//   - **The workspace's own switch** is `config/kill/global` of the workspace's
+//     own database, which `fugaro budget kill --workspace <name>` writes
+//     (D1302): it stops the runs of every member of the workspace, and it makes
+//     the workspace's service refuse every shared-credential call — and that
+//     refusal IS this reader, because the switch is in a database no member can
+//     write and no member's operator can undo (spec.md §6, §8). A scope that
+//     read the member's switches alone would serve every call of a workspace its
+//     owner had stopped, and the gate's own comment would be false: "the
+//     installation's own pair for an installation, and the workspace's for a
+//     workspace" (server.go).
+//   - **The calling member's own pair** is what that member's operators write
+//     in that member's own database (`fugaro budget kill` and `--repo`), read
+//     here exactly as the member's own service reads it (RTDBKills): a member's
+//     stop is a narrowing of what its own runs may do, and a call drawing on the
+//     workspace's pool on that member's behalf is still that member's run.
+//
+// **The pair is read as the service's own reader reads it and no wider**, and
+// the workspace's own switch as the workspace's own: `ReadGlobalKill` on the
+// workspace's database and never `ReadKills`, because a workspace's switch is
+// its global one and never a repository's (the CLI's own comment on the write),
+// so a repository's node of the workspace's database is not read at all. Which
+// of the two stopped the call is named on the refusal the run reads — the
+// workspace's word is "workspace", not "global", because "global" is the word
+// the member's own operator reads against its OWN database, where the same word
+// names a different node — and an unreadable switch of either is an error the
+// gate refuses on rather than an off switch (budget's own fail-closed rule in
+// one place: the two reads below are budget's).
+type workspaceKills struct {
+	// workspace is the workspace's OWN database; *rtdb.Client is one.
+	workspace budget.KillGetter
+	// member is the CALLING member's own database, which is also what the
+	// scope's other readers read.
+	member budget.KillGetter
+}
+
+// workspaceKillWord is what the gate's refusal names when the switch that
+// stopped the call is the WORKSPACE's own: "the credentials service is stopped
+// by the workspace kill switch". It is deliberately not budget's "global": that
+// word is what a member's operator greps its own database for, and the switch
+// here is one they hold no grant on and can neither read nor lift.
+const workspaceKillWord = "workspace"
+
+func (k workspaceKills) Stop(ctx context.Context, slug string) (bool, string, error) {
+	// The workspace's own switch first, so the stop asks nothing of a member
+	// for itself: it is one read of the workspace's own database, and a
+	// stopped workspace refuses every member's call on it without a member's
+	// switches being consulted at all — which is the whole of D1302's reach,
+	// and it is what makes the stop one no member's operator can undo.
+	killed, err := budget.ReadGlobalKill(ctx, k.workspace)
+	if err != nil {
+		return false, "", err
+	}
+	if killed.Global != nil && killed.Global.On {
+		return true, workspaceKillWord, nil
+	}
+	return RTDBKills{DB: k.member}.Stop(ctx, slug)
 }
 
 // memberReadOnly is one member's database as creds' own reader of the

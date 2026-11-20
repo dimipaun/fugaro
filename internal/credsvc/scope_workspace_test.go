@@ -1088,14 +1088,16 @@ func TestNewWorkspaceScopeResolverRefusesAConfigurationItCannotCheck(t *testing.
 
 // TestWorkspaceScopeWritesAndReadsUnderItsOwnReaders: the scope's readers are
 // the ones C1 declares, and each is the member's own database — except the
-// state, which is the workspace's, and the offering, which is the intersection
-// (C1's rule 2 and rule 9).
+// state, which is the workspace's, the stop switches, which are BOTH read
+// together, and the offering, which is the intersection (C1's rule 2, rule 9,
+// D1302).
 func TestWorkspaceScopeAnswersItsReaders(t *testing.T) {
 	s := newWSScope(t, nil)
 	s.setPolicy(wsMemberA, wsPoolName)
-	// The member's own kill switch is ON: the scope's reader is that member's,
-	// and a workspace-level switch would be a second answer to a question the
-	// caller's own deployment already answers.
+	// The stop switches are the calling member's own pair AND the workspace's
+	// own switch, read together: either one stops the call, and the two are
+	// read where they are written — the member's switches in the member's own
+	// database, and the workspace's in the workspace's own (D1302, spec.md §6).
 	kill := budget.PathKillRepo(wsSlug)
 	s.dbs[wsMemberA].nodes[kill] = map[string]any{"on": true, "by": "operator@project-a.example.com", "reason": "the member's own operator stopped it"}
 	sc := s.served(t, MessagesPath, wsAccountA)
@@ -1107,10 +1109,20 @@ func TestWorkspaceScopeAnswersItsReaders(t *testing.T) {
 		t.Errorf("Kills().Stop = (%v, %q), want the member's own switch and its reason", on, reason)
 	}
 	if !s.dbs[wsMemberA].read(kill) {
-		t.Errorf("the kill switch was not read from the calling member's database: a member's stop switches are its own service's business (read %v)", s.dbs[wsMemberA].paths)
+		t.Errorf("the kill switch was not read from the calling member's database (read %v)", s.dbs[wsMemberA].paths)
 	}
 	if len(s.dbs[wsMemberB].paths) != 0 {
-		t.Errorf("another member's database was read (%v): the switch is the calling member's", s.dbs[wsMemberB].paths)
+		t.Errorf("another member's database was read (%v): each member's switches are read from its own", s.dbs[wsMemberB].paths)
+	}
+	// And the workspace's own switch is read beside them, from the workspace's
+	// own database: the pair above is a narrowing of a call that pays with the
+	// workspace's credentials, and the workspace's stop is the one that reaches
+	// every member at once.
+	if !s.own.read(budget.PathKillGlobal) {
+		t.Errorf("the workspace's own switch was not read (read %v): a workspace its owner has stopped would go on serving", s.own.paths)
+	}
+	if s.own.read(budget.PathKillRepo(wsSlug)) {
+		t.Error("the workspace's database was read for a REPOSITORY's switch: a workspace's stop is its global one and never a repository's")
 	}
 	// The state is the workspace's own store and never the member's, which is
 	// the one reader C1's rule 2 excepts (R8).
@@ -1141,6 +1153,87 @@ func TestWorkspaceScopeAnswersItsReaders(t *testing.T) {
 	}
 	if covered, err := sc.Forge().Covers(context.Background(), wsRepoOther); err != nil || covered {
 		t.Errorf("Covers(%q) = (%v, %v), want false: the account is not declared on it", wsRepoOther, covered, err)
+	}
+}
+
+// TestAWorkspaceKillRefusesAServedMemberCall is D1302's refusal, and the one
+// control of a workspace that does not depend on a member's honesty (spec.md
+// §8): `fugaro budget kill --workspace <name>` writes the workspace's own
+// global switch, and the workspace's service refuses every shared-credential
+// call on it. The call below is a member's own served call — 200 with the
+// switch off, and the gate's stop refusal with it on — and the switch is in a
+// database no member can write, which is why no member's operator can undo it.
+//
+// The member's own pair is read beside it and neither stop contains the other:
+// the middle of this test is the member's own switch stopping the same call,
+// which is a narrowing of that member's own runs rather than a second way to
+// stop the workspace.
+func TestAWorkspaceKillRefusesAServedMemberCall(t *testing.T) {
+	s := newWSScope(t, nil)
+	s.serve(wsMemberA, wsPoolName)
+	svc := wsService(t, s)
+
+	// The control: with neither switch on, the call is served.
+	resp, body := svc.call(t, callBody("ws2-unstopped"), s.hdr(wsAccountA))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call with both switches off = %d, want 200: %s", resp.StatusCode, body)
+	}
+	if got := lines(svc.audit); len(got) != 1 {
+		t.Errorf("the served call wrote %d audit lines, want one (a served call of this service writes one)", len(got))
+	}
+
+	// The member's own operator stops its own runs: the pair in the member's
+	// own database, which the member's own service reads too.
+	memberSwitch := budget.PathKillRepo(wsSlug)
+	s.dbs[wsMemberA].nodes[memberSwitch] = budget.Kill{On: true, By: "operator@project-a.example.com", Reason: "runaway spend"}
+	resp, body = svc.callPath(t, MessagesPath, callBody("ws2-member-killed"), s.hdr(wsAccountA))
+	if resp.StatusCode != StatusUnavailable {
+		t.Errorf("the call under the member's own switch = %d, want %d", resp.StatusCode, StatusUnavailable)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable || !strings.Contains(e.Message, "kill switch") {
+		t.Errorf("the refusal = %+v, want the stop's own refusal of the call", e)
+	}
+	delete(s.dbs[wsMemberA].nodes, memberSwitch)
+
+	// The workspace's own stop, and it is the half this test exists for: the
+	// switch `fugaro budget kill --workspace` writes, read from the workspace's
+	// own database over the members' heads.
+	s.own.nodes[budget.PathKillGlobal] = budget.Kill{On: true, By: "owner@workspace.example.com", Reason: "runaway spend"}
+	ownBefore, memberBefore := len(s.own.paths), len(s.dbs[wsMemberA].paths)
+	resp, body = svc.callPath(t, MessagesPath, callBody("ws2-workspace-killed"), s.hdr(wsAccountA))
+	if resp.StatusCode != StatusUnavailable {
+		t.Errorf("the call under the workspace's own switch = %d, want %d", resp.StatusCode, StatusUnavailable)
+	}
+	e := refusal(t, resp.StatusCode, body)
+	if e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal type = %q, want %q: a stop is the service's own refusal and not a verdict about the caller", e.Error, ErrorStateUnavailable)
+	}
+	if !strings.Contains(e.Message, workspaceKillWord+" kill switch") {
+		t.Errorf("the refusal %q does not name the workspace's own switch: the member's operator holds no grant on the database that switch is in, and the run's halt has to say which stop it met", e.Message)
+	}
+	read := false
+	for _, path := range s.own.paths[ownBefore:] {
+		if path == budget.PathKillGlobal {
+			read = true
+		}
+	}
+	if !read {
+		t.Errorf("the workspace's own switch was not read (the workspace's database was asked for %v)", s.own.paths[ownBefore:])
+	}
+	// The member's own STOP SWITCHES are not read for the workspace's stop: the
+	// refusal is answered before the member's pair is asked, so a stopped
+	// workspace reads nothing of a member's for it — and writes nothing of a
+	// member's at all (spec.md §9). What the member's database is read for in
+	// this call is Verify's own liveness scan, which every verified call reads.
+	for _, path := range s.dbs[wsMemberA].paths[memberBefore:] {
+		if path == budget.PathKillGlobal || path == budget.PathKillRepo(wsSlug) {
+			t.Errorf("the member's %q was read for the workspace's stop: a stopped workspace reads no member's switch", path)
+		}
+	}
+	// And the refusal is an audited one: the three calls wrote three lines,
+	// one each, because the caller was verified before any switch was read.
+	if got := lines(svc.audit); len(got) != 3 {
+		t.Errorf("the three calls wrote %d audit lines, want one each", len(got))
 	}
 }
 
