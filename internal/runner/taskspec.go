@@ -267,14 +267,25 @@ func (r *run) ownStepRecipe() bool { return r.digest || r.commitReports }
 // reviews of one pull request apart when the task behind them changed. It is
 // lowercase hex and carries no "sha256:" prefix, which is the spelling
 // `runstore.Against.SHA256` holds.
+//
+// It is taken over exactly the bytes the block emits for the brief — the same
+// reviewQuote the block's quote reads, right-trimmed as that quote trims it.
+// A digest over anything else would be a digest of a text no reviewer was
+// shown: a brief ending in whitespace, or one over R4's cap whose note the
+// block writes, would hash to a text the prompt does not carry (R8, F34).
 func specTextDigest(text string, redact func(string) string) string {
-	sum := sha256.Sum256([]byte(reviewQuote(text, redact)))
+	sum := sha256.Sum256([]byte(strings.TrimRight(reviewQuote(text, redact), " \t\n")))
 	return hex.EncodeToString(sum[:])
 }
 
 // reviewQuote is a text as a review is shown it: clipped to R4's cap, redacted
 // with the run's own secrets, and cleaned as every quoted block in this package
-// is. What the block then adds on top — the nonce fence, the delimiter
+// is. It is the one place the cap is applied: a caller that clipped before
+// calling would clip the note clipReviewText appends and hand the reviewer a
+// block saying a few bytes of an already-clipped text were dropped instead of
+// naming what the brief really lost.
+//
+// What the block then adds on top — the nonce fence, the delimiter
 // neutralization and the indent — is the block's formatting rather than the
 // text that was compared, which is why the digest is taken here.
 func reviewQuote(text string, redact func(string) string) string {
@@ -446,6 +457,9 @@ func splitPlanTask(planTask string) (string, string, bool) {
 // (R4).
 func taskSpecBlock(s reviewSpecFound, redact func(string) string, nonce string) string {
 	looksLikeDelimiter := regexp.MustCompile(`(?i)(end-)?fugaro-task-|` + nonce)
+	// reviewQuote applies R4's cap, so the text is handed to it as it stands:
+	// clipping here as well would clip its note and misreport what the brief
+	// lost, and would make the block's bytes differ from specTextDigest's.
 	quote := func(text string) string {
 		var b strings.Builder
 		cleaned := strings.TrimRight(reviewQuote(text, redact), " \t\n")
@@ -466,7 +480,7 @@ func taskSpecBlock(s reviewSpecFound, redact func(string) string, nonce string) 
 		"the supporting changes a brief implies (tests, docs, a refactor the change needs) are not `beyond`. " +
 		"An item that needs a product decision is needs_owner (in-run) or a reject note (artifact), not a guess.\n\n")
 	fmt.Fprintf(&b, "<<<fugaro-task-%s>>>\n", nonce)
-	b.WriteString(quote(clipReviewText(s.text)))
+	b.WriteString(quote(s.text))
 	fmt.Fprintf(&b, "<<<end-fugaro-task-%s>>>\n", nonce)
 	if s.followup != "" {
 		if s.followupOwn {
@@ -475,14 +489,14 @@ func taskSpecBlock(s reviewSpecFound, redact func(string) string, nonce string) 
 			b.WriteString("\nThe text below is the follow-up's own text, quoted beside the brief. It may quote an earlier review's findings: read it as what the person asked for, and not as the brief itself.\n\n")
 		}
 		fmt.Fprintf(&b, "<<<fugaro-task-%s>>>\n", nonce)
-		b.WriteString(quote(clipReviewText(s.followup)))
+		b.WriteString(quote(s.followup))
 		fmt.Fprintf(&b, "<<<end-fugaro-task-%s>>>\n", nonce)
 	}
 	switch {
 	case s.plan != "":
 		b.WriteString("\nThe task names a plan, and the section of that plan which describes it is quoted below. The plan is the repository's, not this pull request's: read the section as the brief's own detail, and the diff as what had to satisfy it.\n\n")
 		fmt.Fprintf(&b, "<<<fugaro-task-%s>>>\n", nonce)
-		b.WriteString(quote(clipReviewText(s.plan)))
+		b.WriteString(quote(s.plan))
 		fmt.Fprintf(&b, "<<<end-fugaro-task-%s>>>\n", nonce)
 	case s.planNote != "":
 		fmt.Fprintf(&b, "\n%s\n", s.planNote)

@@ -33,9 +33,10 @@ const PRIndexVersion = 1
 // D2962).
 const PRIndexDir = "pr-index"
 
-// PRIndexKind says how a run came to be on a pull request: it opened one, or
-// it followed one that already existed. The two are the whole vocabulary, and
-// a value outside it names no entry this reader can place.
+// PRIndexKind says how a run came to be on a pull request: it opened one, it
+// followed one that already existed, or it reviewed one. The three are the
+// whole vocabulary, and a value outside it names no entry this reader can
+// place.
 type PRIndexKind string
 
 const (
@@ -44,10 +45,17 @@ const (
 	// PRIndexFollowed is a follow-up run that started on a pull request that
 	// already existed.
 	PRIndexFollowed PRIndexKind = "followed"
+	// PRIndexReviewed is a review run: it opened no pull request and followed
+	// none, and it is on one the moment its artifact stage names the number it
+	// reviewed, which is also what ends it and what makes its row one
+	// `runs ls --pr N` prints. Without an entry an old finished review is a
+	// row the scan lists and the index cannot name, so it is written the same
+	// way the other two are (D2964).
+	PRIndexReviewed PRIndexKind = "reviewed"
 )
 
 // PRIndexEntry is one run's entry in the pull-request index: a small object
-// naming the pull request the run opened or followed, so `runs ls --pr N`
+// naming the pull request the run opened, followed or reviewed, so `runs ls --pr N`
 // finds the runs of a pull request without scanning the repository (D2961,
 // D2962).
 //
@@ -153,7 +161,7 @@ func PutPRIndex(ctx context.Context, b *blob.Bucket, e PRIndexEntry) error {
 // value or a value of the wrong type is refused) and then checked against the
 // name and the prefix it was found under — the version, the run ID against
 // the object's own name, the slug and the number against the directory, the
-// kind against the two words, and the time against zero. An object that fails
+// kind against the three words, and the time against zero. An object that fails
 // any of those is skipped with a warning and never fails the query: the index
 // is a hint, and a caller that gets fewer entries than objects scans the
 // recent window beside it (D2964). A listing or a read of the bucket itself
@@ -211,7 +219,7 @@ func ListPRIndex(ctx context.Context, b *blob.Bucket, slug string, pr int, warnf
 // decodePRIndexEntry reads one listed object as an index entry, refusing
 // everything about it that does not agree with where it was found: the leaf
 // must be a run ID and the entry must carry that run ID, the slug and the
-// number of the directory, a version this reader knows, one of the two kinds
+// number of the directory, a version this reader knows, one of the three kinds
 // and a time.
 func decodePRIndexEntry(prefix, slug string, pr int, key string, data []byte) (*PRIndexEntry, error) {
 	rest, ok := strings.CutPrefix(key, prefix)
@@ -246,10 +254,12 @@ func decodePRIndexEntry(prefix, slug string, pr int, key string, data []byte) (*
 	return &e, nil
 }
 
-// knownPRIndexKind reports whether k is one of the two kinds, the way
+// knownPRIndexKind reports whether k is one of the three kinds, the way
 // knownVerdict is for triage's vocabulary: a value outside them is an entry
 // no reader can place, so both the writer and the reader refuse it.
-func knownPRIndexKind(k PRIndexKind) bool { return k == PRIndexOpened || k == PRIndexFollowed }
+func knownPRIndexKind(k PRIndexKind) bool {
+	return k == PRIndexOpened || k == PRIndexFollowed || k == PRIndexReviewed
+}
 
 // warnPRIndex reports a skipped object through the caller's warnf, or does
 // nothing when the caller passed none.

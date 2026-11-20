@@ -32,7 +32,8 @@ import (
 // What it writes is a hint and nothing else (D2963): an entry names the pull
 // request a run worked on, one object per run, and it is created only when the
 // run has none — so the step never rewrites an object a run holds, waits for no
-// run (a run in flight has no record to read and is left alone), and a second
+// run (a run in flight is left alone: it has no record to read yet, or a record
+// that names no pull request, which is every review still going), and a second
 // update writes nothing at all.
 //
 // Nothing here may fail the update, for the reason update_budget_mode.go's step
@@ -183,21 +184,14 @@ func indexedRuns(ctx context.Context, b *blob.Bucket, slug string) (map[string]b
 // it, read from the run's own records — the same two objects the row reader
 // reads (task.json and result.json), and the same question it asks of them
 // (runs.go's onPR). A run that names no pull request, and a run whose records
-// are not there at all, answers 0 and so gets no entry.
+// are not there at all, answers 0 and so gets no entry. The kind is how the run
+// came to be on the pull request: a review of one is `reviewed`, and a run that
+// opened or followed it is one of the other two.
 func prIndexOfRun(ctx context.Context, b *blob.Bucket, slug, id string) (int, runstore.PRIndexKind, error) {
 	s := runstore.Open(b, slug, id)
 	spec, err := s.ReadTask(ctx)
 	if err != nil {
 		return 0, "", fmt.Errorf("its task could not be read: %w", err)
-	}
-	// A review run is not indexed, and the reader of the index is why: RL3
-	// finds the review run going on a pull request beside the index (the fold
-	// needs it, and it can be younger than the window's newest entry), while
-	// what the index holds is the runs that opened or followed the pull
-	// request — the rows a listing shows, which a review run is not
-	// (runs.go's stateOnly).
-	if len(spec.ReviewPRs) > 0 {
-		return 0, "", nil
 	}
 	if spec.PR > 0 {
 		return spec.PR, runstore.PRIndexFollowed, nil
@@ -216,6 +210,16 @@ func prIndexOfRun(ctx context.Context, b *blob.Bucket, slug, id string) (int, ru
 	}
 	if rec.PR == nil || rec.PR.Number <= 0 {
 		return 0, "", nil
+	}
+	// A review run opened no pull request and followed none: the number its
+	// record names is the one its artifact stage reviewed, and it is the same
+	// number `runs ls --pr N` prints its row from (runs.go's onPR). A review
+	// that is still going has no number in its record yet — its task's is the
+	// only one, and the review is the run RL3 reads beside the index rather
+	// than through it — so it is left alone here and writes its own entry when
+	// the artifact stage reaches its number (writeReviewArtifact).
+	if len(spec.ReviewPRs) > 0 {
+		return rec.PR.Number, runstore.PRIndexReviewed, nil
 	}
 	return rec.PR.Number, runstore.PRIndexOpened, nil
 }

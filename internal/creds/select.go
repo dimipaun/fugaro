@@ -83,7 +83,16 @@ const (
 // because the service is stateless and several instances select at once.
 type Selector struct {
 	// Store is the cascade's shared state. It must not be nil.
-	Store Store
+	//
+	// It is CascadeState and not Store deliberately: a selection reads marks,
+	// leases, placements, the tie-breaker and nothing else, and the
+	// per-repository auth record — which the ADMISSION around this selection
+	// does read — is not the selection's state but a repository's own
+	// configuration, read where that repository's own update wrote it (D2070
+	// (a)). A selection that could reach RepoAuth through this handle would be
+	// a second way to the record, and in a two-deployment world a way to the
+	// wrong database.
+	Store CascadeState
 	// Settings are the policy's settings as this package enforces them.
 	Settings Settings
 	// Now is the clock. nil is time.Now.

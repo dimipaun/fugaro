@@ -579,13 +579,18 @@ func (r *run) readPRRetrying(ctx context.Context) (gitprov.PRInfo, error) {
 // before updating its pull request, as the infra_error Run then records,
 // so diagnose still shows what the agent did. Nothing is posted.
 func (r *run) storeUnposted(ctx context.Context, err error, records []verify.Record) {
+	// Rule 5's last read, at this ending as at every other: a message written
+	// after the last poll is recorded here rather than lost, and the report
+	// below is written after it (F18, D2944).
+	r.finalReadMessages(context.WithoutCancel(ctx))
 	// The copy carries the class the ending itself is written with, read off
 	// the error the same way Run's fallback reads it (endClassOf): a stored
 	// report that named a different family from the record beside it would be
 	// two readings of one run's cause.
 	rec := reportCopy(r.rec, runstore.StatusInfraError, runstore.OutcomeNone, endClassOf(err), r.redact(err.Error()))
 	fu := r.followUpSection()
-	report := agent.Redact(FollowUpReport(&rec, r.d.Store.Prefix(), r.logTail(false, records), fu), r.secretList())
+	report := agent.Redact(reportWithMessages(&rec, r.d.Store.Prefix(), r.logTail(false, records), fu, nil,
+		r.reportMessages(r.prNumber())), r.secretList())
 	r.storeReport(ctx, report, fu)
 }
 
@@ -640,12 +645,18 @@ func (r *run) endUnchanged(ctx context.Context, reason string, records []verify.
 
 // storeEnded stores the report of a run that ends without posting it.
 func (r *run) storeEnded(ctx context.Context, records []verify.Record) {
+	// Rule 5's last read, for the endings that do not reach finalize — a
+	// halt, a cancel, an infra error, a pull request that moved under the run
+	// — so a message written since the last poll is recorded pending rather
+	// than lost (F18, D2944). finalize does its own for the endings that do.
+	r.finalReadMessages(context.WithoutCancel(ctx))
 	r.updateCost()
 	var fu *FollowUpSection
 	if r.follow != nil {
 		fu = r.followUpSection()
 	}
-	report := agent.Redact(FollowUpReport(r.rec, r.d.Store.Prefix(), r.logTail(false, records), fu), r.secretList())
+	report := agent.Redact(reportWithMessages(r.rec, r.d.Store.Prefix(), r.logTail(false, records), fu, nil,
+		r.reportMessages(r.prNumber())), r.secretList())
 	r.storeReport(ctx, report, fu)
 }
 

@@ -84,7 +84,8 @@ type prIndexRuns struct {
 	// plain never launched: it has a task and no record, and names no pull
 	// request to index.
 	plain string
-	// review is a review run of pull request 7.
+	// review is a finished review run of pull request 7: its record names the
+	// pull request the artifact stage wrote, which is a `reviewed` entry.
 	review string
 	// running is a run mid-flight in the window: its record is written and its
 	// task is not, the order the launcher and the runner write them in.
@@ -94,11 +95,14 @@ type prIndexRuns struct {
 // prIndexIDs names the fixture's six runs, without planting anything.
 func prIndexIDs() prIndexRuns {
 	return prIndexRuns{
-		root:    runIDAt(30, "090000", "a1a1"),
-		fu:      runIDAt(0, "000100", "b2b2"),
-		other:   runIDAt(0, "000200", "c3c3"),
-		plain:   runIDAt(0, "000300", "d4d4"),
-		review:  runIDAt(0, "000400", "e5e5"),
+		root:  runIDAt(30, "090000", "a1a1"),
+		fu:    runIDAt(0, "000100", "b2b2"),
+		other: runIDAt(0, "000200", "c3c3"),
+		plain: runIDAt(0, "000300", "d4d4"),
+		// The review is older than prIndexRecent on purpose: it is the run the
+		// index is the only way to reach, since neither the last 24 hours nor
+		// the live set can name it.
+		review:  runIDAt(25, "040000", "e5e5"),
 		running: runIDAt(0, "000500", "f6f6"),
 	}
 }
@@ -110,10 +114,10 @@ func plantPRIndexRuns(t *testing.T, r *convergeRig) prIndexRuns {
 	t.Helper()
 	ids := prIndexIDs()
 	b := prIndexBucket(t, r)
-	// The review run's record names pull request 7 too, so what keeps it out of
-	// the index below is the review rule and not the absence of a pull request:
-	// RL3 reads the review run going on a pull request beside the index, and the
-	// index carries the runs that opened or followed one.
+	// The review run's record names pull request 7 as a finished review's does,
+	// so the walk indexes it as `reviewed`: `runs ls --pr 7` prints its row from
+	// that number (runs.go's onPR), so an index that could not name it would
+	// list less than the scan does (D2964).
 	reviewRec := prRecord(ids.review, "", sevenPR, 1)
 	reviewRec.Status, reviewRec.Stage, reviewRec.Outcome = runstore.StatusSucceeded, "finalize", runstore.OutcomeNone
 	for _, run := range []struct {
@@ -289,13 +293,14 @@ func lsRunIDs(t *testing.T, args ...string) []string {
 // request. Every entry is read back through ListPRIndex, which refuses an object
 // the run's own records do not agree with (D2963).
 //
-// The fixture's review run is a row of the listing and deliberately not an
-// entry: the index's vocabulary is the two ways a run comes to be on a pull
-// request (RL2W writes `opened` when a run opens one and `followed` when a
-// follow-up starts on one, and a review opens none), while `runs ls --pr N`
-// shows a review run whose record names the pull request. RL3 is where the two
-// meet — it reads the review run going on the pull request beside the entries,
-// and the last 24 hours beside those.
+// The fixture's review run is a row of the listing and an entry of the index:
+// the index's vocabulary is the three ways a run comes to be on a pull request
+// (RL2W writes `opened` when a run opens one and `followed` when a follow-up
+// starts on one, and `reviewed` is the number a review's own artifact stage
+// wrote into its record), and `runs ls --pr N` shows a review run whose record
+// names the pull request. A walk that skipped it would leave the index listing
+// less than the scan does (D2964) — the review of the fixture is twenty-five
+// days old, so neither the last 24 hours nor the live set can reach it.
 func TestUpdateBackfillsPRIndex(t *testing.T) {
 	r := prIndexRig(t)
 	ids := plantPRIndexRuns(t, r)
@@ -315,16 +320,17 @@ func TestUpdateBackfillsPRIndex(t *testing.T) {
 
 	// What the run said: the count of entries it created, and nothing else about
 	// the index.
-	if !strings.Contains(out, "pull-request index: 3 run(s)") {
+	if !strings.Contains(out, "pull-request index: 4 run(s)") {
 		t.Errorf("the update does not say how many runs it indexed:\n%s", out)
 	}
-	// What it wrote: the two runs on pull request 7, each with the kind it came
-	// to be on it by — the first run opened it, the follow-up continued it.
+	// What it wrote: the three runs on pull request 7, each with the kind it
+	// came to be on it by — the first run opened it, the follow-up continued it,
+	// and the review read it.
 	seven := prIndexEntries(t, b, appSlug, sevenPR)
-	if got, want := indexRunIDs(seven), slices.Sorted(slices.Values([]string{ids.root, ids.fu})); !slices.Equal(got, want) {
-		t.Errorf("the index of pull request %d names %v, want the two runs the fixture has on it", sevenPR, got)
+	if got, want := indexRunIDs(seven), slices.Sorted(slices.Values([]string{ids.root, ids.fu, ids.review})); !slices.Equal(got, want) {
+		t.Errorf("the index of pull request %d names %v, want the three runs the fixture has on it", sevenPR, got)
 	}
-	for id, want := range map[string]runstore.PRIndexKind{ids.root: runstore.PRIndexOpened, ids.fu: runstore.PRIndexFollowed} {
+	for id, want := range map[string]runstore.PRIndexKind{ids.root: runstore.PRIndexOpened, ids.fu: runstore.PRIndexFollowed, ids.review: runstore.PRIndexReviewed} {
 		e := seven[id]
 		if e.Kind != want {
 			t.Errorf("%s is indexed as %q, want %q", id, e.Kind, want)
@@ -336,19 +342,18 @@ func TestUpdateBackfillsPRIndex(t *testing.T) {
 	if got := indexRunIDs(prIndexEntries(t, b, appSlug, 8)); !slices.Equal(got, []string{ids.other}) {
 		t.Errorf("the index of pull request 8 names %v, want the one run that opened it", got)
 	}
-	// And what it left alone: no entry for a run that opened or followed no pull
-	// request, and the three objects the walk wrote are the whole of what it
-	// wrote.
-	for _, id := range []string{ids.plain, ids.review, ids.running} {
+	// And what it left alone: no entry for a run that names no pull request at
+	// all, and the four objects the walk wrote are the whole of what it wrote.
+	for _, id := range []string{ids.plain, ids.running} {
 		if e, ok := seven[id]; ok {
-			t.Errorf("%s is in the index of pull request %d (%+v) and it opened or followed no pull request", id, sevenPR, e)
+			t.Errorf("%s is in the index of pull request %d (%+v) and it names no pull request", id, sevenPR, e)
 		}
 	}
 	want := []string{}
 	for _, e := range []struct {
 		pr int
 		id string
-	}{{sevenPR, ids.root}, {sevenPR, ids.fu}, {8, ids.other}} {
+	}{{sevenPR, ids.root}, {sevenPR, ids.fu}, {sevenPR, ids.review}, {8, ids.other}} {
 		key, err := runstore.PRIndexPath(appSlug, e.pr, e.id)
 		if err != nil {
 			t.Fatal(err)
@@ -383,8 +388,8 @@ func TestUpdateBackfillsPRIndex(t *testing.T) {
 // The second run is given a run that appeared since the first — a run of the
 // window that opened a pull request and has no entry — so that the silence is
 // not the silence of a step that never ran: the line below is the count of what
-// the second update wrote, and it is one, not four. Everything else the bucket
-// held is byte for byte what it was, the three entries of the first update
+// the second update wrote, and it is one, not five. Everything else the bucket
+// held is byte for byte what it was, the four entries of the first update
 // included (a rewrite of one of them would show here).
 func TestUpdateBackfillIdempotent(t *testing.T) {
 	r := prIndexRig(t)
@@ -465,13 +470,19 @@ func TestUpdateBackfillQuietWhenNothing(t *testing.T) {
 		ids := prIndexIDs()
 		plain, review, running := ids.plain, ids.review, ids.running
 		plantRun(t, b, appSlug, plain, firstRunSpec(plain), nil)
-		plantRun(t, b, appSlug, review, reviewRunSpec(review, sevenPR), prRecord(review, "", sevenPR, 1))
+		// The review is still going: its task names the pull request it reads
+		// and its record names one only at the artifact stage, which is where
+		// the review writes its own entry (writeReviewArtifact). There is
+		// nothing here for the walk to place it on.
+		reviewRec := prRecord(review, "", sevenPR, 1)
+		reviewRec.PR = nil
+		plantRun(t, b, appSlug, review, reviewRunSpec(review, sevenPR), reviewRec)
 		plantRun(t, b, appSlug, running, nil, &runstore.Record{Version: 1, RunID: running, Repo: "acme/app", Workflow: "app",
 			Status: runstore.StatusRunning, Stage: "implement", Outcome: runstore.OutcomeNone})
-		// The premise: the walk had runs to read. A recordless run, a review run
-		// and a run in flight are the three shapes it finds nothing to write
-		// about, and a walk that found none of them would be silent for the
-		// wrong reason.
+		// The premise: the walk had runs to read. A recordless run, a review
+		// whose record names no pull request yet and a run in flight are the
+		// three shapes it finds nothing to write about, and a walk that found
+		// none of them would be silent for the wrong reason.
 		if _, err := runstore.Open(b, appSlug, plain).ReadTask(t.Context()); err != nil {
 			t.Fatalf("the fixture's recordless run has no task either (%v)", err)
 		}
@@ -523,15 +534,15 @@ func TestUpdateBackfillLeavesRunInFlight(t *testing.T) {
 	if line := inFlightLine(t, out); !strings.Contains(line, "1 run in flight") {
 		t.Errorf("the update's note does not count the run in flight:\n%s", line)
 	}
-	if !strings.Contains(out, "pull-request index: 3 run(s)") {
+	if !strings.Contains(out, "pull-request index: 4 run(s)") {
 		t.Errorf("the update indexed nothing beside the run in flight:\n%s", out)
 	}
 	// The entries are there, and no run that is still going is among them: the
 	// run in flight has written no task, and the run that will name a pull
 	// request writes its own entry when it opens it.
 	seven := prIndexEntries(t, b, appSlug, sevenPR)
-	if got, want := indexRunIDs(seven), slices.Sorted(slices.Values([]string{ids.root, ids.fu})); !slices.Equal(got, want) {
-		t.Errorf("the index of pull request %d names %v, want the two runs the fixture has on it", sevenPR, got)
+	if got, want := indexRunIDs(seven), slices.Sorted(slices.Values([]string{ids.root, ids.fu, ids.review})); !slices.Equal(got, want) {
+		t.Errorf("the index of pull request %d names %v, want the three runs the fixture has on it", sevenPR, got)
 	}
 	// What every planted run holds is what it held: the step creates the objects
 	// that are missing and rewrites nothing, so the whole of every run's own
