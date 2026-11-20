@@ -27,6 +27,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -367,6 +368,42 @@ var credentialsServiceEnvNames = []string{
 	envCredentialsServiceURL, envJobAccounts,
 }
 
+// credentialsServiceWorkspaceEnvNames is the whole of what the WORKSPACE's
+// process requires: the six names the workspace root sets on the service it
+// deploys (deploy/terraform/gcp/roots/workspace/main.tf, planned against
+// internal/infra/tf's WorkspaceServiceEnv, WS6), which is that list less the
+// mode's own name (creds.WorkspaceModeEnv, read before this list). The six are
+// the installation's own first six because a workspace is a Fugaro project like
+// any other and this process reads the SAME things about it: its own database,
+// its own Firebase project, its own URL.
+//
+// **FUGARO_JOB_ACCOUNTS is deliberately not here**, and it is the one name the
+// two lists differ by: that document is an installation's per-repository jobs,
+// and a workspace's deployment has none — a member's job is admitted by the
+// published credentials node and the invoke grant, not by an environment
+// (WorkspaceServiceEnv's own comment). A process that required it would refuse
+// to start on the container the workspace root creates, which is the whole
+// deployment this list exists for.
+var credentialsServiceWorkspaceEnvNames = []string{
+	envProject, envGCPProject, envRegion,
+	envRTDBURL, envFirebaseFP,
+	envCredentialsServiceURL,
+}
+
+// credentialsServiceMissing is the refusal for a name the process needs and its
+// deployment did not set, and it says which deployment that is: the installation
+// module's service for the seven names, the workspace root's for the six a
+// workspace's process needs. An operator reads this line with the root they
+// applied in hand, so the sentence names the variable, the deployment that sets
+// it and nothing that was in it.
+func credentialsServiceMissing(workspace, name string) string {
+	set := "the installation module sets it on the service"
+	if workspace != "" {
+		set = "the workspace mode is on (" + creds.WorkspaceModeEnv + " is set), so the workspace root sets it on the service"
+	}
+	return fmt.Sprintf("the credentials service needs %s in its environment (%s, and it is the whole of how this process is configured: there is no flag, no config file and no default)", name, set)
+}
+
 // credentialsWiring points the configuration builder at stand-ins for the two
 // things it needs that reach Google with the service's own identity: the token
 // source the database is read with, and the Secret Manager client the bundle
@@ -379,13 +416,45 @@ var credentialsServiceEnvNames = []string{
 type credentialsWiring struct {
 	tokens  func(ctx context.Context) (oauth2.TokenSource, error)
 	secrets func(ctx context.Context) (*secretmanager.Service, error)
+	// database builds the client the process reaches its own database with, at
+	// the URL it was configured with. nil is rtdb.New over the token source
+	// above, and a test sets it for the reason the other two are here and one
+	// more: the workspace mode READS its published credentials node at startup
+	// (credentialsWorkspaceService), so a test of that read has to reach a fake
+	// rather than a Firebase host.
+	database func(ctx context.Context, url string, ts oauth2.TokenSource) (*rtdb.Client, error)
 }
 
-// credentialsTest is nil in production: the two functions above are then
-// google.DefaultTokenSource over the database scopes and Secret Manager's own
-// client, both over the service's identity (the service account the revision
-// runs as, which is the one grant it holds).
+// credentialsTest is nil in production: the three functions above are then
+// google.DefaultTokenSource over the database scopes, Secret Manager's own
+// client and rtdb's own constructor, all over the service's identity (the
+// service account the revision runs as, which is the one grant it holds).
 var credentialsTest *credentialsWiring
+
+// credentialsWorkspaceTest is nil in production: C1's constructor for the
+// workspace's resolver, which is NewWorkspaceScopeResolver -- a VARIABLE in
+// another package, assigned by that package's own files (scope_stub.go now,
+// scope_workspace.go when WS2 lands) and by nothing outside it.
+//
+// A test of this package sets it to record the configuration the process built
+// -- the whole of what WS5 is accepted for, and unobservable through the
+// resolver's own answers until WS2 lands -- and delegates to the real
+// constructor, so that the resolver the process serves under is C1's and not
+// the test's. It is never set outside a test and carries no value.
+var credentialsWorkspaceTest func(cfg credsvc.WorkspaceScopeConfig) (credsvc.ScopeResolver, error)
+
+// credentialsDatabase builds the client the process reads and writes the
+// database at url with: the service's own token source, which is the identity
+// every read and write is made as. The URL is the only thing that says which
+// database a call reaches, and it is never built here -- an installation's comes
+// from FUGARO_RTDB_URL and a member's from the member's own Firebase project
+// (credsvc's workspaceDatabase, which this function is handed the answer of).
+func credentialsDatabase(ctx context.Context, url string, ts oauth2.TokenSource) (*rtdb.Client, error) {
+	if credentialsTest != nil && credentialsTest.database != nil {
+		return credentialsTest.database(ctx, url, ts)
+	}
+	return rtdb.New(url, rtdb.Auth{Source: ts})
+}
 
 // credentialsServiceConfig builds the service's configuration out of the
 // deployment's environment, and it is the whole of this task's wiring.
@@ -481,18 +550,47 @@ var credentialsTest *credentialsWiring
 // hostCredentialsService logs to, so the auditor and the process share one
 // stream.
 func credentialsServiceConfig(ctx context.Context, getenv func(string) string, errw io.Writer) (credsvc.Config, error) {
-	// The seven names credentials.tf sets on the service, and the allow-list
-	// init's cover holds its container to (credentialsServiceEnv). An empty
-	// variable is not a value the module can set: Terraform writes each of
-	// these from an input the installation has, so an empty one is a
-	// deployment that is wrong rather than a deployment with a default. The
-	// names read outside this loop are the class-specific ones the module
-	// renders only where they apply, and the rest are not.
+	// WHICH SERVICE THIS PROCESS IS (R2, C2). FUGARO_WORKSPACE_MODE is the
+	// mode's own name: it is set only on the workspace's service and its value
+	// is the workspace this process is the credentials service OF. It is read
+	// before anything else because it decides which environment the rest of
+	// this function reads: an installation's container carries no such name
+	// (credentials.tf), and the workspace's carries it and none of the
+	// installation's class lists (internal/infra/tf's WorkspaceServiceEnv,
+	// which the workspace root sets and that cover holds it to, WS6). With the
+	// name absent the process below is exactly the one it was before the mode
+	// existed: same names, same tables, same Server, and no resolver of its
+	// own.
+	workspace := getenv(creds.WorkspaceModeEnv)
+	// The names this process requires: the installation's seven, or a
+	// workspace's six (credentialsServiceWorkspaceEnvNames). An empty variable
+	// is not a value either deployment can set: Terraform writes each of these
+	// from an input the root has, so an empty one is a deployment that is wrong
+	// rather than a deployment with a default. The names read outside this loop
+	// are the class-specific ones the module renders only where they apply, and
+	// the rest are not.
+	required := credentialsServiceEnvNames
+	if workspace != "" {
+		required = credentialsServiceWorkspaceEnvNames
+	}
 	env := map[string]string{}
-	for _, k := range credentialsServiceEnvNames {
+	for _, k := range required {
 		if env[k] = getenv(k); env[k] == "" {
-			return credsvc.Config{}, userErr("the credentials service needs %s in its environment (the installation module sets it on the service, and it is the whole of how this process is configured: there is no flag, no config file and no default)", k)
+			return credsvc.Config{}, userErr("%s", credentialsServiceMissing(workspace, k))
 		}
+	}
+	// The mode's value IS the workspace's Fugaro project name: the name its
+	// bundle container is derived from, the name its published node is read
+	// under and the name its own record is written at. The workspace root sets
+	// both from one input (roots/workspace's var.workspace, WS6), so a pair that
+	// disagrees is a deployment no plan of this repository produces — and
+	// refusing it here rather than serving it is what keeps this process from
+	// reading the node of the workspace the mode names while holding the bundle
+	// of the project FUGARO_PROJECT names, which is a deployment handing out one
+	// project's credentials under another's name. The refusal names the two
+	// variables and neither value.
+	if workspace != "" && env[envProject] != workspace {
+		return credsvc.Config{}, userErr("%s and %s disagree: the mode's value is the workspace this service is the credentials service OF, which is the workspace's own Fugaro project name, and the workspace root sets the two from one input. Nothing was started and no credential was issued", creds.WorkspaceModeEnv, envProject)
 	}
 	// Outside that loop, because the module renders this entry only on an
 	// installation that named a verifier: an absent value is the empty list
@@ -583,13 +681,31 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err := credentialsServiceAudience(env[envCredentialsServiceURL]); err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
-	accounts, repos, repoBuilds, err := credentialsServiceJobAccounts(env[envJobAccounts], env[envProject], env[envGCPProject])
-	if err != nil {
-		return credsvc.Config{}, userErr("%v", err)
-	}
-	emails := make([]string, 0, len(accounts))
-	for _, a := range accounts {
-		emails = append(emails, a.Email)
+	// The installation's own job document, and the three tables derived from it.
+	// A workspace's process reads none of them and its container carries no such
+	// name (credentialsServiceWorkspaceEnvNames): the identities it admits are
+	// the members' job accounts the published node names, and the repositories a
+	// call is bound to are the node's own per-account lists (C3's
+	// JobAccountRepos), so a table built from an environment here would be a
+	// second answer to a question the node has already answered. The three
+	// values stay empty, and cfg.JobAccounts with them: a workspace's process is
+	// configured with no job document at all, its resolver binds its runs
+	// through the node, and NewServer accepts an empty table from a deployment
+	// that hands in a resolver of its own (server.go's check).
+	var (
+		accounts   []credsvc.JobAccount
+		repos      map[string]string
+		repoBuilds []credsvc.RepoBuildAccount
+	)
+	emails := []string{}
+	if workspace == "" {
+		accounts, repos, repoBuilds, err = credentialsServiceJobAccounts(env[envJobAccounts], env[envProject], env[envGCPProject])
+		if err != nil {
+			return credsvc.Config{}, userErr("%v", err)
+		}
+		for _, a := range accounts {
+			emails = append(emails, a.Email)
+		}
 	}
 
 	tokens, secrets := credentialsProductionWiring()
@@ -605,7 +721,7 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err != nil {
 		return credsvc.Config{}, remote(fmt.Errorf("no credentials for the installation's database: %w", err))
 	}
-	db, err := rtdb.New(env[envRTDBURL], rtdb.Auth{Source: ts})
+	db, err := credentialsDatabase(ctx, env[envRTDBURL], ts)
 	if err != nil {
 		// Unreachable past ValidateURL, and deliberately not reported with the
 		// client's own error: that one quotes the URL.
@@ -622,6 +738,28 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		Secret:  credsvc.BundleSecretID(env[envProject]),
 		Service: sm,
 	}}
+	// The workspace's own half of the process (WS5), and nothing for an
+	// installation: the node this deployment reads its callers out of, the
+	// verified front door built over it, the meter over the workspace's own
+	// database, and C1's resolver, which is what the Server serves under. It is
+	// built BEFORE the verifier because the member table is this deployment's
+	// caller list: a workspace's process has no job document to read one from
+	// (above), and the accounts the node names are the identities its auth is
+	// built with.
+	var (
+		members  []credsvc.WorkspaceMember
+		resolver credsvc.ScopeResolver
+	)
+	if workspace != "" {
+		half, err := credentialsWorkspaceService(ctx, workspace, env, db, ts)
+		if err != nil {
+			return credsvc.Config{}, err
+		}
+		members, resolver = half.members, half.resolver
+		for _, m := range members {
+			emails = append(emails, m.JobAccounts...)
+		}
+	}
 	auth, err := credsvc.NewAuthenticator(credsvc.AuthConfig{
 		Project:         env[envProject],
 		FirebaseProject: env[envFirebaseFP],
@@ -691,7 +829,7 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err != nil {
 		return credsvc.Config{}, userErr("the credentials service cannot verify its callers, so it will not start: %v", err)
 	}
-	return credsvc.Config{
+	cfg := credsvc.Config{
 		Auth:    auth,
 		Bundles: loader,
 		Policy:  credsvc.RTDBPolicy{DB: db},
@@ -765,7 +903,145 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// rather than answer a grant naming a proxy that admits nothing.
 		BuildPairs: &creds.RTDBStore{DB: db},
 		Log:        log,
-	}, nil
+	}
+	// The workspace's resolver, and nil for an installation: nil is the
+	// installation's own, which NewServer builds over this same configuration
+	// (scope_installation.go), so an installation's deployment is served by the
+	// one front door it always was.
+	cfg.Resolver = resolver
+	return cfg, nil
+}
+
+// credentialsWorkspaceDeployment is the workspace's own half of the process: what
+// the mode builds that an installation's deployment has no counterpart for
+// (WS5).
+type credentialsWorkspaceDeployment struct {
+	// members is the published node's member table, read by credsvc's own
+	// conversion (WorkspaceMembersOf) so that the node's reader and the service
+	// cannot come to different answers about what a row says. It is this
+	// deployment's whole caller list: the accounts in it are the ones its
+	// verifier admits.
+	members []credsvc.WorkspaceMember
+	// resolver is C1's workspace resolver, built over the front door, the node
+	// reader and the meter below. It is what the Server serves every call of
+	// this deployment under, and it is the same Server an installation is
+	// served by.
+	resolver credsvc.ScopeResolver
+}
+
+// credentialsWorkspaceService builds the workspace's half: the node reader, the
+// verified front door, the meter and the resolver, in that order.
+//
+// WHAT IT READS AT STARTUP, AND WHY IT READS IT HERE. The workspace's members
+// are not an environment: they are the workspace's own published credentials
+// node (projectpolicy.PathWorkspaceCredentials of this workspace, C3's node),
+// which the workspace owner's `fugaro update` writes (WS4), and this process
+// reads it ONCE, at startup, out of the workspace's OWN database (the one
+// FUGARO_RTDB_URL names; no member's database is reached before a caller has
+// been verified). Two things follow from that read being here rather than in a
+// call:
+//
+//   - the *Workspace built from it is the deployment's verified front door: it
+//     answers which member a job account belongs to, resolves the run identity
+//     beside it and holds that member's own outcome reader and database. It is
+//     the VERIFIER and not the membership — who is admitted is what the node the
+//     resolver re-reads says (C1's WorkspaceScopeConfig comment, R11/R13), and
+//     nothing in this function freezes that.
+//   - a workspace that has published no node, or one that cannot be read or
+//     decoded, REFUSES here rather than starting: a revision that fails to start
+//     is what tells an owner which step is left (their `fugaro update`), while a
+//     service that answered every call with a refusal would look healthy and
+//     halt every run that reached it (D143's fail-closed direction).
+//
+// It builds the meter over the same client and the same database (budget's
+// WorkspaceSpendDB, which *rtdb.Client is): the cap it enforces is the
+// WORKSPACE's own figure, and the meter holds no write on any member. The
+// resolver is C1's constructor's answer — a workspace whose resolution could not
+// be built is a refusal and not a nil, which is what keeps a call from being
+// served by something nobody checked.
+func credentialsWorkspaceService(ctx context.Context, workspace string, env map[string]string, db *rtdb.Client, ts oauth2.TokenSource) (credentialsWorkspaceDeployment, error) {
+	node := credentialsWorkspaceNode{db: db, name: workspace}
+	published, found, err := node.WorkspaceNode(ctx)
+	if err != nil {
+		return credentialsWorkspaceDeployment{}, remote(fmt.Errorf("the workspace's published credentials node could not be read: %w", err))
+	}
+	if !found {
+		return credentialsWorkspaceDeployment{}, userErr("%s is set and the workspace it names has published no credentials node: the node is what this service binds its callers and its pool to, and the workspace owner's `fugaro update` is what publishes it. Nothing was started and no credential was issued", creds.WorkspaceModeEnv)
+	}
+	members := credsvc.WorkspaceMembersOf(published)
+	w, err := credsvc.NewWorkspace(credsvc.WorkspaceConfig{
+		Project:  workspace,
+		Audience: env[envCredentialsServiceURL],
+		Members:  members,
+		// No owner person is named, and none can be: this deployment's
+		// environment carries no roster, and the workspace-wide routes that
+		// class is for are not among the routes this mode serves (R14: the
+		// model routes, a run's forge routes and the keep-warm route, and the
+		// workspace owner's own read mint stays the installation's, D2988). An
+		// empty list is the fail-closed answer for a class no route here
+		// admits.
+		Keys:    credsvc.NewGoogleKeys(),
+		JobKeys: credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
+		// A member's database client, at the URL the service derived from that
+		// member's own Firebase project: this function opens exactly the URL it
+		// is handed and chooses nothing about which member's state a call may
+		// read.
+		Open: func(databaseURL string) (credsvc.Getter, error) {
+			return credentialsDatabase(ctx, databaseURL, ts)
+		},
+	})
+	if err != nil {
+		return credentialsWorkspaceDeployment{}, userErr("the workspace's service cannot verify its callers, so it will not start: %v", err)
+	}
+	meter, err := credsvc.NewWorkspaceMeter(credsvc.WorkspaceMeterConfig{Name: workspace, DB: db})
+	if err != nil {
+		return credentialsWorkspaceDeployment{}, userErr("the workspace's service cannot keep the workspace's own cap, so it will not start: %v", err)
+	}
+	build := credsvc.NewWorkspaceScopeResolver
+	if credentialsWorkspaceTest != nil {
+		build = credentialsWorkspaceTest
+	}
+	resolver, err := build(credsvc.WorkspaceScopeConfig{Workspace: w, Node: node, Meter: meter})
+	if err != nil {
+		return credentialsWorkspaceDeployment{}, userErr("the workspace's service cannot serve a call, so it will not start: %v", err)
+	}
+	return credentialsWorkspaceDeployment{members: members, resolver: resolver}, nil
+}
+
+// credentialsWorkspaceNode reads the workspace's own published credentials node
+// out of the workspace's own database: the one read of this deployment that is
+// not made for a call, and C1's WorkspaceNodeReader.
+//
+// It holds no cache and no clock of its own. The rule the resolver is held to —
+// a copy older than sixty seconds is re-read, and a re-read that fails refuses
+// the call rather than serving from the stale copy (R13, R17) — is the
+// resolver's, with the node's caching and its clock beside it (C1's comment on
+// the interface): this reader answers what is at the path NOW, and a caller that
+// wants a freshness rule wraps it.
+type credentialsWorkspaceNode struct {
+	db   *rtdb.Client
+	name string
+}
+
+// WorkspaceNode answers the node, false where none is published. The document is
+// decoded by C3's own reader, which reads the version it finds, refuses a
+// version no release wrote, and validates what it read; absent is false and not
+// an error, because a workspace that published none is a state of the
+// deployment and not a failure of the read (C1's WorkspaceNodeReader).
+func (n credentialsWorkspaceNode) WorkspaceNode(ctx context.Context) (*projectpolicy.WorkspaceCredentials, bool, error) {
+	var raw json.RawMessage
+	found, err := n.db.Get(ctx, projectpolicy.PathWorkspaceCredentials(n.name), &raw)
+	if err != nil {
+		return nil, false, err
+	}
+	if !found {
+		return nil, false, nil
+	}
+	w, found, err := projectpolicy.DecodeWorkspaceCredentials(raw)
+	if err != nil {
+		return nil, false, err
+	}
+	return w, found, nil
 }
 
 // credentialsProductionWiring is the two things the builder needs that reach
