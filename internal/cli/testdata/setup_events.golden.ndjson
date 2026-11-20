@@ -37,4 +37,5 @@
 {"type":"stage","name":"layer","state":"blocked","detail":"waits for installation","after":"","undone":false}
 {"type":"stage","name":"checkout","state":"blocked","detail":"waits for installation","after":"","undone":false}
 {"type":"stage","name":"unit","state":"blocked","detail":"waits for installation","after":"","undone":false}
-{"type":"error","stage":"","error":"fugaro setup is not finished: 1 step(s) left for you, listed above","fix":"","exit_code":1}
+{"type":"done","exit_code":1}
+{"type":"error","stage":"","error":"fugaro setup does not take --check: that is fugaro update's (it reports what a converge that has already run would do, and a first run has nothing to report: fugaro setup --check has no installation to read)","fix":"","exit_code":1}

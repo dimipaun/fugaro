@@ -258,12 +258,22 @@ func TestSetupEventsLeftForYou(t *testing.T) {
 		t.Errorf("the line's commands are %v, the document's are %v", l.Raw["commands"], lf.Commands)
 	}
 
-	// A run that left a step for the user is not finished, and the feed's last
-	// line is the error that says so with the code the process exits with: the
-	// lines above it are the steps, and this one is the outcome.
+	// A run that left a step for the user is not finished, and it is not a
+	// failure either: the feed ends `done` with the code the process exits with
+	// — 1, the "step(s) left for you" code — and the lines above it are the
+	// steps. An `error` line here would be a surface reading a hand-off as a
+	// crash, which is what the console's wizard draws off this line.
 	last := feed[len(feed)-1]
-	if last.Type != setupEventError || last.str("error") != err.Error() || last.Raw["exit_code"] != float64(ExitUserError) {
-		t.Errorf("the feed ends with %+v, want the run's own refusal (%v)", last.Raw, err)
+	if last.Type != setupEventDone || last.Raw["exit_code"] != float64(ExitUserError) {
+		t.Errorf("the feed ends with %+v, want done with exit %d behind the run's own account (%v)", last.Raw, ExitUserError, err)
+	}
+	for _, l := range feed {
+		if l.Type == setupEventError {
+			t.Errorf("a run that only left steps for the user wrote an error line: %+v", l.Raw)
+		}
+	}
+	if err.Error() != "fugaro setup is not finished: 1 step(s) left for you, listed above" {
+		t.Errorf("the run's own account changed: %v", err)
 	}
 	// The step was left and not asked for: what the person reads on stderr is
 	// the same step, and nothing in the run touched stdin.
@@ -285,6 +295,29 @@ func TestSetupEventsNeedsJSON(t *testing.T) {
 	}
 	if strings.Contains(out, `"type":`) {
 		t.Errorf("the refused run wrote a feed on stdout:\n%s", out)
+	}
+}
+
+// TestSetupEventsRefusalEndsError is the other end of the one the test above
+// pins: a run the door refuses before any stage ends `error`, with no stage of
+// its own — it stopped at none — and the refusal's own code. A run with steps
+// left for the user is `done` (there is no failure and the steps are the lines
+// above it); everything that stops the run without one is this line.
+func TestSetupEventsRefusalEndsError(t *testing.T) {
+	_, out, _, err := setupEventsRun(t, "setup", "--json", "--events", "--check")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("the refused run answered %v, want a refusal", err)
+	}
+	feed := setupFeed(t, out)
+	last := feed[len(feed)-1]
+	if last.Type != setupEventError || last.Raw["exit_code"] != float64(ExitUserError) {
+		t.Errorf("the feed ends with %+v, want error with exit %d", last.Raw, ExitUserError)
+	}
+	if last.str("stage") != "" {
+		t.Errorf("the refusal names the stage %q, and it stopped at none", last.str("stage"))
+	}
+	if !strings.Contains(last.str("error"), "--check") {
+		t.Errorf("the line does not carry the refusal's own sentence: %q", last.str("error"))
 	}
 }
 
@@ -322,12 +355,14 @@ func TestSetupEventsSchema(t *testing.T) {
 	// for member.
 	_, planOut, _, _ := setupEventsRun(t, "setup", "--plan-only", "--json", "--events")
 	_, leftOut, _, _ := setupEventsRun(t, "setup", "--json", "--events")
+	_, refusedOut, _, _ := setupEventsRun(t, "setup", "--json", "--events", "--check")
 	for _, tc := range []struct {
 		name string
 		out  string
 	}{
 		{"the plan-only run", planOut},
 		{"the run that leaves a step", leftOut},
+		{"the refused run", refusedOut},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			feed := setupFeed(t, tc.out)
@@ -383,10 +418,12 @@ func TestSetupEventsSchema(t *testing.T) {
 // TestSetupEventsGolden pins the feeds a hermetic run writes, line for line:
 // the shape the console's decoder is compared against (I-OPS).
 //
-// Two whole feeds are in the file, in the shape pair-events.golden.jsonl keeps
-// its two streams: the plan-only run of a first setup, which is what the plan
-// names for this golden and what the console's wizard reads first, and the run
-// of a coding agent's session, which leaves a step for the user. The second is
+// Three whole feeds are in the file, in the shape pair-events.golden.jsonl
+// keeps its two streams: the plan-only run of a first setup, which is what the
+// plan names for this golden and what the console's wizard reads first; the
+// run of a coding agent's session, which leaves a step for the user and ends
+// `done` with exit 1 behind it; and a run the door refuses before any stage,
+// which is the only end that is an `error` line. The second and the third are
 // here because the first cannot carry more than two of the five kinds — a
 // plan-only run works on no stage and leaves nothing — and a golden a decoder
 // is compared against is worth as much as the kinds it exercises. Every kind
@@ -407,7 +444,11 @@ func TestSetupEventsGolden(t *testing.T) {
 	if lerr == nil {
 		t.Fatal("the session run reported success over the step it left for the user")
 	}
-	got := strings.ReplaceAll(plan, r.cfg, "<config>") + left
+	_, refused, _, rerr := setupEventsRun(t, "setup", "--json", "--events", "--check")
+	if rerr == nil {
+		t.Fatal("the refused run answered success")
+	}
+	got := strings.ReplaceAll(plan, r.cfg, "<config>") + left + refused
 
 	feed := setupFeed(t, got)
 	kinds := feedKinds(feed)

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -23,9 +24,12 @@ import (
 // settled, `left_for_you` is one thing only the user can do — with the step's
 // own line to run, because a surface reading this has no terminal to hand it
 // to — and the last line is `done` with the run's own exit code, or `error`
-// naming the stage the run stopped at. A feed with no last line is an
-// interrupted read, and that is the failure a consumer is written against
-// either way: a killed child, a truncated pipe, a cap reached.
+// naming the stage the run stopped at. A run that ends with steps left for the
+// user ends `done` with exit 1 and not `error`: it did not fail, the steps are
+// the lines above it, and a surface draws its hand-off off that distinction.
+// A feed with no last line is an interrupted read, and that is the failure a
+// consumer is written against either way: a killed child, a truncated pipe, a
+// cap reached.
 //
 // It is an output and never a way in. --json confirms no step (unconfirmedWhy,
 // init.go), so every step that needs a confirmation arrives here as a
@@ -181,6 +185,14 @@ func (e *setupEvents) left(lf initflow.Left) {
 // stage it stopped at, or the refusal that stopped it before any stage — and
 // `done` for every other run, whatever it left for the user.
 //
+// A run with steps left for the user ends `done` with exit 1, and that is the
+// line a surface reads as its hand-off: it applied everything it had, the
+// `left_for_you` lines above are the steps that remain, and it did not fail —
+// the console's wizard shows its list of steps off the back of it. A refusal
+// is the other end: `error`, with no stage of its own, because there is no
+// stage it stopped at. The two are the same exit code and the same kind of
+// error, and init_stages.go's notFinished is what tells them apart.
+//
 // err is the command's own result, so exit is the very number the process
 // exits with (ExitCode is what main reads), and the feed cannot come to say
 // something the process does not do. The sentences are made safe for a
@@ -192,6 +204,7 @@ func (e *setupEvents) finish(res *initResult, err error) {
 		return
 	}
 	exit := ExitCode(err)
+	var leftForYou *notFinished
 	switch {
 	case res != nil && res.Failed != nil:
 		e.line(setupErrorEvent{
@@ -199,7 +212,7 @@ func (e *setupEvents) finish(res *initResult, err error) {
 			Error: oneLine(res.Failed.Error), Fix: oneLine(res.Failed.Fix),
 			ExitCode: exit,
 		})
-	case err != nil:
+	case err != nil && !errors.As(err, &leftForYou):
 		e.line(setupErrorEvent{Type: setupEventError, Error: oneLine(ErrorText(err)), ExitCode: exit})
 	default:
 		e.line(setupDoneEvent{Type: setupEventDone, ExitCode: exit})

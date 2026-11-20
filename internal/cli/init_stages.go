@@ -643,10 +643,21 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// an issue on GitHub needs (`gh`), and that nothing else about issues does.
 	e.announceGhHint()
 	if len(res.Left) > 0 && !o.planOnly {
-		return userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))
+		return &notFinished{userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))}
 	}
 	return nil
 }
+
+// notFinished is a run's own end with steps left for the user: it applied
+// everything it had, the steps that remain are the person's, and that is exit
+// 1 and not a failure. It is a type of its own rather than a plain userErr
+// because the event feed tells the two apart with it (setup_events.go): a run
+// with steps left ends its feed `done` with exit 1 — the hand-off a wizard
+// draws — where a refusal ends it `error`, and this error and the refusals
+// above it are otherwise the same error with the same code.
+type notFinished struct{ error }
+
+func (e *notFinished) Unwrap() error { return e.error }
 
 // planned is the one-line summary of the installation plan the engine
 // just showed, if it showed one.
