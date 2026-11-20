@@ -177,7 +177,7 @@ func TestRigorFloorAddsAnEntryAskingNothing(t *testing.T) {
 
 // The floor is per mode, and hotfix is a mode it takes. This is the owner's
 // lever for a floored hotfix run: `fugaro run --mode hotfix` is taken
-// whole by the run's request (R7, rigor.Mode.PerRun), so a run reaches the mode
+// whole by the run's request (R7, rigor.Rigor.PerRun), so a run reaches the mode
 // whatever the layers resolved and the row it is held to is hotfix's own — the
 // row this command writes. Nothing here is special to hotfix: the mode is in
 // the vocabulary, so the write is the ordinary addition every other mode gets

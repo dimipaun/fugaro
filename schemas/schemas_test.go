@@ -303,6 +303,34 @@ func TestFugaroSchemaCorpus(t *testing.T) {
 	}
 }
 
+// TestRigorScalarShorthandIsBothASchemaAndALoaderForm: the repository's rigor
+// block may be written as the level alone beside the mapping (the owner's
+// ruling of 2026-11-18 on item 8's shorthand half), so the two spellings have
+// to agree in both
+// places a document is judged: a schema that took only the mapping would fail a
+// `rigor: critical` a run accepted, and one that took any string would pass a
+// level the loader refuses. The project layer's own defaults.rigor is not here:
+// it takes the mapping alone, every key of that layer being a fugaro.yaml key
+// its own command writes.
+func TestRigorScalarShorthandIsBothASchemaAndALoaderForm(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	const scalar = "version: 1\nproject: aurora\ngit: { provider: github }\nrigor: critical\n" +
+		"workflows: { server: { commands: { build: make, test: make test } } }\n"
+	if err := sch.Validate(yamlInstance(t, []byte(scalar))); err != nil {
+		t.Errorf("fugaro.schema.json rejects the scalar rigor shorthand: %v", err)
+	}
+	if _, ps := config.Parse([]byte(scalar)); len(ps) > 0 {
+		t.Errorf("config.Parse rejects the scalar rigor shorthand: %v", ps)
+	}
+	bad := strings.Replace(scalar, "rigor: critical", "rigor: paranoid", 1)
+	if err := sch.Validate(yamlInstance(t, []byte(bad))); err == nil {
+		t.Error("fugaro.schema.json accepts a rigor level outside the vocabulary")
+	}
+	if _, ps := config.Parse([]byte(bad)); len(ps) == 0 {
+		t.Error("config.Parse accepts a rigor level outside the vocabulary")
+	}
+}
+
 // schemaDescriptionAt walks file's raw JSON (not through the jsonschema
 // compiler, which drops "description") down path and returns the
 // "description" string at the end of it.
@@ -432,7 +460,7 @@ func TestTaskSchemaCorpus(t *testing.T) {
 }
 
 // TestTaskSchemaRigorRequestMatchesTheGoRules ties the task schema's `rigor`
-// and `paths` properties to the Go rules they mirror (rigor.Modes,
+// and `paths` properties to the Go rules they mirror (rigor.Rigors,
 // task.MaxDeclaredPaths, task.MaxDeclaredPathBytes): the schema's enum and
 // bounds are separate copies of both, so without this a mode added to the
 // vocabulary, or a bound moved, would drift from the published schema with
@@ -462,12 +490,12 @@ func TestTaskSchemaRigorRequestMatchesTheGoRules(t *testing.T) {
 	} else if err := json.Unmarshal(raw, &mode); err != nil {
 		t.Fatal(err)
 	}
-	want := make([]string, 0, len(rigor.Modes))
-	for _, m := range rigor.Modes {
+	want := make([]string, 0, len(rigor.Rigors))
+	for _, m := range rigor.Rigors {
 		want = append(want, string(m))
 	}
 	if !slices.Equal(mode.Enum, want) {
-		t.Errorf("schema rigor enum %v != rigor.Modes %v", mode.Enum, want)
+		t.Errorf("schema rigor enum %v != rigor.Rigors %v", mode.Enum, want)
 	}
 	var paths struct {
 		MaxItems int `json:"maxItems"`
@@ -593,6 +621,79 @@ func TestTaskSchemaInputs(t *testing.T) {
 		if err := validate(head + tc.lit + `}`); err == nil {
 			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
 		}
+	}
+}
+
+// TestTaskSchemaReports pins the task schema's `reports` property (plan task
+// R16, D2754): the project's stored reports a `fugaro run --commit-reports`
+// launch hands its run, as the commit_reports step reads them. The schema is
+// additionalProperties: false, so without this property every commit run
+// writes a task.json the published schema rejects — and the schema is what
+// every other reader of a task (the console, the history, anything that never
+// links this binary) checks that task against.
+//
+// The shape is `inputs`'s, one member per report, and the two are deliberately
+// not one property: an input is a file the launcher attached for a mode:
+// artifact run to download into inputs/, and a report is an object the launcher
+// read from the project's store for the commit step to commit. What the members
+// carry is the same rule each, and Spec.Validate states it for both.
+//
+// The ONE rule this test does not ask the schema for is the name's shape: what
+// a report name may be is the mirror's (digest.ParseMirrorPath), applied where
+// the name becomes a path in the repository, and refusing the mirror's shape
+// here would make that check unreachable, since the decoder runs first
+// (Spec.Validate's own note).
+//
+// Mutation (drop the reports property from schemas/task.schema.json, or rename
+// the Go field's json tag): the marshalled task below is rejected as an unknown
+// key.
+func TestTaskSchemaReports(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(lit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	head := `{"version":1,"run_id":"20261119-100000-c4a1","repo":"acme/app","ref":"main","task":"commit the stored reports"`
+	sha := strings.Repeat("a", 64)
+	// The name below is a real mirror name, the repository's day report, and
+	// the aggregate's shape is accepted beside it: neither level of the mirror
+	// is a schema rule, so both must pass here.
+	ok := head + `,"reports":[{"name":"acme-app-dc4d4e59e884fc44/2026/2026-10-20.md","bytes":1024,"sha256":"` + sha + `"},{"name":"2026/2026-W43.md","bytes":2048,"sha256":"` + sha + `"}]` + `}`
+	if err := validate(ok); err != nil {
+		t.Fatalf("schema rejects a task carrying reports: %v", err)
+	}
+	if err := validate(head + `}`); err != nil {
+		t.Fatalf("schema rejects a task carrying none: %v", err)
+	}
+	for _, tc := range []struct{ name, lit string }{
+		{"not an array", `,"reports":{}`},
+		{"empty name", `,"reports":[{"name":"","bytes":1,"sha256":"` + sha + `"}]`},
+		{"whitespace-only name", `,"reports":[{"name":"   ","bytes":1,"sha256":"` + sha + `"}]`},
+		{"negative bytes", `,"reports":[{"name":"2026/2026-10-20.md","bytes":-1,"sha256":"` + sha + `"}]`},
+		{"short sha256", `,"reports":[{"name":"2026/2026-10-20.md","bytes":1,"sha256":"abc"}]`},
+		{"upper-case sha256", `,"reports":[{"name":"2026/2026-10-20.md","bytes":1,"sha256":"` + strings.Repeat("A", 64) + `"}]`},
+		{"unknown key", `,"reports":[{"name":"2026/2026-10-20.md","bytes":1,"sha256":"` + sha + `","content_type":"text/markdown"}]`},
+		{"missing sha256", `,"reports":[{"name":"2026/2026-10-20.md","bytes":1}]`},
+	} {
+		if err := validate(head + tc.lit + `}`); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
+		}
+	}
+	// The property's name is the Go field's own json tag, so the two cannot
+	// drift silently: the launcher writes this member and nothing else reads
+	// this document.
+	data, err := json.Marshal(task.Spec{
+		Version: 1, RunID: "20261119-100000-c4a1", Repo: "acme/app", Ref: "main", Task: "commit the stored reports",
+		Reports: []task.InputFile{{Name: "2026/2026-10-20.md", Bytes: 1, SHA256: sha}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"reports":`) {
+		t.Fatalf("task.Spec marshals its reports as %s, and schemas/task.schema.json calls the member \"reports\"", data)
 	}
 }
 
@@ -833,10 +934,10 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		// And the rigor block (docs/rigor-modes/implementation-plan.md T1.2):
 		// the mode the run resolved, the layer that won, the areas that
 		// matched with the moment each was applied, and the revision it read.
-		Rigor: &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
+		Rigor: &runstore.RigorRecord{Level: rigor.Critical, From: rigor.FromArea,
 			Areas: []runstore.RigorArea{
-				{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap},
-				{Name: "docs", Mode: rigor.POC, At: runstore.RigorAtRound},
+				{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtBootstrap},
+				{Name: "docs", Level: rigor.POC, At: runstore.RigorAtRound},
 			},
 			At:       runstore.RigorAtFinalize,
 			Revision: "origin/main"},
@@ -1012,10 +1113,12 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		{"an area's moment outside D22's three", `"at":"round"`, `"at":"lunchtime"`},
 		{"a revision that is not text", `"revision":"origin/main"`, `"revision":5`},
 		{"an area with no name", `"name":"payments"`, `"match":"internal/payments/**"`},
-		{"an area with no mode", `"mode":"critical","at":"bootstrap"`, `"at":"bootstrap"`},
-		{"an area's mode outside the vocabulary", `"mode":"critical","at":"bootstrap"`, `"mode":"paranoid","at":"bootstrap"`},
+		{"an area with no mode", `{"name":"payments","mode":"critical","level":"critical","at":"bootstrap"}`, `{"name":"payments","level":"critical","at":"bootstrap"}`},
+		{"an area's mode outside the vocabulary", `"name":"payments","mode":"critical"`, `"name":"payments","mode":"paranoid"`},
+		{"an area's level outside the vocabulary", `"name":"payments","mode":"critical","level":"critical"`, `"name":"payments","mode":"critical","level":"paranoid"`},
 		{"a name that is not one", `"name":"payments"`, `"name":"../../etc/passwd"`},
 		{"the block with no mode", `"mode":"critical",`, ``},
+		{"the block's level outside the vocabulary", `"mode":"critical","level":"critical"`, `"mode":"critical","level":"paranoid"`},
 		{"the block with no layer", `"from":"area",`, ``},
 		{"the block with no moment", `,"at":"finalize"`, ``},
 		{"a key the block does not carry", `"revision":"origin/main"`, `"score":9`},
@@ -1032,6 +1135,27 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			t.Errorf("schema accepts %s: %s", tc.name, repl)
 		}
 	}
+	// The level is carried under two keys (LD2): `mode`, which the block has
+	// always had, and `level` beside it. The key is additive, so a record a
+	// runner before the rename wrote — `mode` alone, block and areas alike —
+	// is still a document this schema accepts, and one written since carries
+	// both and reads the same way.
+	legacy := bytes.ReplaceAll(data, []byte(`,"level":"critical"`), nil)
+	legacy = bytes.ReplaceAll(legacy, []byte(`,"level":"poc"`), nil)
+	const withoutLevel = `"rigor":{"mode":"critical","from":"area",` +
+		`"areas":[{"name":"payments","mode":"critical","at":"bootstrap"},` +
+		`{"name":"docs","mode":"poc","at":"round"}]`
+	if !bytes.Contains(legacy, []byte(withoutLevel)) {
+		t.Fatalf("the legacy fixture is not a block written before the rename: %s", legacy)
+	}
+	old2, err := jsonschema.UnmarshalJSON(bytes.NewReader(legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(old2); err != nil {
+		t.Errorf("schema rejects a record written before the rename: %v", err)
+	}
+
 	// The filed items (docs/rigor-modes T4.5, D9): an id is the day and the
 	// day's sequence, so a record carrying anything else names no file. The
 	// field is additive — a record from before it existed, which is most of

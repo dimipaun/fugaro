@@ -48,7 +48,7 @@ func rigorStdin(rigorAnswer string) string {
 // what each says about review and rounds comes from the two tables that hold
 // it (rigor/levels.go, rigor/rounds.go) and a test that spelled them out would
 // be a second copy of those tables rather than a check of this question.
-func rigorLine(out string, mode rigor.Mode) string {
+func rigorLine(out string, mode rigor.Rigor) string {
 	for _, line := range strings.Split(out, "\n") {
 		if strings.HasPrefix(line, "  "+string(mode)+": ") {
 			return line
@@ -77,7 +77,7 @@ func TestSetupAsksTheRigorModeWithNoSilentDefault(t *testing.T) {
 	// Every mode the answer takes is offered, and each line says what the mode
 	// runs and what it spends — read off the tables, so a mode whose review or
 	// rounds changed is a line that changed.
-	for _, mode := range []rigor.Mode{rigor.Pro, rigor.Startup, rigor.POC, rigor.Critical} {
+	for _, mode := range []rigor.Rigor{rigor.Pro, rigor.Startup, rigor.POC, rigor.Critical} {
 		line := rigorLine(printed, mode)
 		if line == "" {
 			t.Errorf("the question does not offer %s:\n%s", mode, printed)
@@ -96,7 +96,7 @@ func TestSetupAsksTheRigorModeWithNoSilentDefault(t *testing.T) {
 	if at := strings.Index(printed, "  pro: "); at < 0 {
 		t.Errorf("the question does not offer pro:\n%s", printed)
 	} else {
-		for _, after := range []rigor.Mode{rigor.Startup, rigor.POC, rigor.Critical} {
+		for _, after := range []rigor.Rigor{rigor.Startup, rigor.POC, rigor.Critical} {
 			if i := strings.Index(printed, "  "+string(after)+": "); i >= 0 && i < at {
 				t.Errorf("%s is listed above pro, and pro is the recommended answer:\n%s", after, printed)
 			}
@@ -123,7 +123,7 @@ func TestSetupAsksTheRigorModeWithNoSilentDefault(t *testing.T) {
 // TestSetupRigorAnswerRefusesANearMiss: the answer is read by the closed
 // vocabulary (rigor.Known, through setupRigorMode), and everything outside it
 // is refused with the modes this question accepts — the ones it printed a line
-// above (rigorChoices) and not rigor.ModeList, whose hotfix the same function
+// above (rigorChoices) and not rigor.RigorList, whose hotfix the same function
 // refuses two lines later: a refusal that named it would send the reader to a
 // second refusal.
 func TestSetupRigorAnswerRefusesANearMiss(t *testing.T) {

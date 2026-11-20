@@ -78,7 +78,7 @@ func rigorRepoBlock(t *testing.T, path string) config.Rigor {
 }
 
 // rigorRepoMode is the mode a checkout's own file sets.
-func rigorRepoMode(t *testing.T, path string) rigor.Mode {
+func rigorRepoMode(t *testing.T, path string) rigor.Rigor {
 	t.Helper()
 	return rigorRepoBlock(t, path).Default
 }
@@ -148,7 +148,7 @@ func TestRigorSetRepoLayerWritesTheCheckout(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	rules := rigorRepoBlock(t, path).Areas
-	if len(rules) != 1 || rules[0].Match != "src/**" || rules[0].Name != "core" || rules[0].Mode != rigor.Critical {
+	if len(rules) != 1 || rules[0].Match != "src/**" || rules[0].Name != "core" || rules[0].Level != rigor.Critical {
 		t.Errorf("the checkout's rigor.areas reads %+v, want one rule src/** named core at critical:\n%s", rules, readFileString(t, path))
 	}
 	if !strings.Contains(out, "owner/repo-a's working tree and nowhere else") {

@@ -154,7 +154,11 @@ secrets, so this run cannot submit it. That one is never passed over in silence:
 the images stage prints one line per such entry naming the entry, its checkout
 and the exact command (`fugaro image build <entry>`), ends with a line saying
 what it did not cover, and leaves the command as a step for the user (exit 1)
-rather than reporting a stage that skipped half of itself as done.
+rather than reporting a stage that skipped half of itself as done. An entry
+whose own definition its rebuild refused — a pinned branch that mounts a
+secret — is the one exception, and it is the reader's: the command reads those
+same bytes and refuses them the same way, so the step prints the refusal, which
+names the line and the change, and no command at all.
 
 A run of that repository, started on an image it kept, would halt at bootstrap
 on a node its runner cannot read. The launcher refuses that launch before the

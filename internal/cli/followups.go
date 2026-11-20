@@ -573,7 +573,7 @@ func followUpsFiledBy(filed map[string]string, g followUpGroup) (string, bool) {
 // reader may trust (rigor not in the vocabulary, an unknown layer or moment) is
 // not a decision anybody made (RigorRecord.Bounded). And hotfix is off the
 // rigor axis and is the mode an operator asks for on the run that needs it
-// (rigor.Mode.PerRun), so a filed task never carries it (D1844): the task is a
+// (rigor.Rigor.PerRun), so a filed task never carries it (D1844): the task is a
 // launch that asked for nothing, and it reaches hotfix by saying so on its own
 // `fugaro run --mode hotfix`.
 //
@@ -581,18 +581,18 @@ func followUpsFiledBy(filed map[string]string, g followUpGroup) (string, bool) {
 // parent's own diff measured, and the request the runner applies is raise-only
 // (rigor.Resolve), so a repository whose floors are higher than the parent's
 // recorded mode resolves them again for this run and a lower mode never wins.
-func followUpsParentMode(r *runstore.RigorRecord) rigor.Mode {
+func followUpsParentMode(r *runstore.RigorRecord) rigor.Rigor {
 	b := r.Bounded()
-	if b == nil || b.Mode == rigor.Hotfix {
+	if b == nil || b.LevelOf() == rigor.Hotfix {
 		return ""
 	}
-	return b.Mode
+	return b.LevelOf()
 }
 
 // followUpsTaskSpec builds one group's task: a first run of its own (it
 // continues no pull request), marked as debt and naming the parent and the keys
 // it settles.
-func followUpsTaskSpec(ctx context.Context, env *cloudEnv, repo, parent string, parentSpec *task.Spec, g followUpGroup, mode rigor.Mode, pr gitprov.PRInfo) (*task.Spec, error) {
+func followUpsTaskSpec(ctx context.Context, env *cloudEnv, repo, parent string, parentSpec *task.Spec, g followUpGroup, mode rigor.Rigor, pr gitprov.PRInfo) (*task.Spec, error) {
 	me, err := env.lc.Me(ctx)
 	if err != nil {
 		return nil, userErr("%v", err)

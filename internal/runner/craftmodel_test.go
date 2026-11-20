@@ -43,7 +43,7 @@ func craftRun(t *testing.T, agent config.Agent) *run {
 		cfg:  &config.Config{Agent: agent},
 		spec: &task.Spec{Version: 1, Repo: "acme/app", Ref: "main", Task: "the crafts' models"},
 		rec: &runstore.Record{Version: 1, Rigor: &runstore.RigorRecord{
-			Mode: rigor.Pro, From: rigor.FromDefault,
+			Level: rigor.Pro, From: rigor.FromDefault,
 		}},
 		d: Deps{Log: slog.New(slog.DiscardHandler), Now: time.Now},
 	}

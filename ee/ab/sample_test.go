@@ -138,7 +138,7 @@ func TestSampledRateMatchesOverManyIDs(t *testing.T) {
 // recipe, is what a project samples.
 func TestEligibleAllowsAFirstCodeRun(t *testing.T) {
 	spec := firstRun()
-	for _, mode := range []rigor.Mode{rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical} {
+	for _, mode := range []rigor.Rigor{rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical} {
 		if !ab.Eligible(spec, recipe.ModeImplement, mode, ab.LaunchFlags{}) {
 			t.Errorf("Eligible(a first run of a code task, recipe %q, mode %s) = false: a first run of a code task at POC to Critical is exactly what D558 samples",
 				recipe.ModeImplement, mode)
@@ -260,7 +260,7 @@ func TestEligibleExcludesHotfix(t *testing.T) {
 	if ab.Eligible(spec, recipe.ModeImplement, rigor.Hotfix, ab.LaunchFlags{}) {
 		t.Errorf("Eligible(a first run of a code task, mode hotfix) = true, want false: hotfix is off the rigor axis and D558 excludes it — its bar is the smallest safe change, which is not what a pair measures")
 	}
-	for _, mode := range []rigor.Mode{"", "bogus"} {
+	for _, mode := range []rigor.Rigor{"", "bogus"} {
 		if ab.Eligible(spec, recipe.ModeImplement, mode, ab.LaunchFlags{}) {
 			t.Errorf("Eligible(a first run of a code task, mode %q) = true, want false: a mode outside the vocabulary is not one of the four D558 samples, and a run that resolved none is not a launch this build may spend on", mode)
 		}

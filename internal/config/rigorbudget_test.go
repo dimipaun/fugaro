@@ -19,7 +19,7 @@ import (
 // is what a run of it gets today.
 func TestRigorBudgetFractionsArePinned(t *testing.T) {
 	want := []struct {
-		mode     rigor.Mode
+		mode     rigor.Rigor
 		fraction float64
 	}{
 		{rigor.Hotfix, 0.4},
@@ -30,8 +30,8 @@ func TestRigorBudgetFractionsArePinned(t *testing.T) {
 		// The zero mode is what a caller that has resolved none carries, and
 		// a mode outside the vocabulary ranks below every real one: neither
 		// may lower the owner's cap on the way past.
-		{rigor.Mode(""), 1},
-		{rigor.Mode("Poc"), 1},
+		{rigor.Rigor(""), 1},
+		{rigor.Rigor("Poc"), 1},
 	}
 	for _, w := range want {
 		if got := RigorBudgetFraction(w.mode); got != w.fraction {
@@ -51,7 +51,7 @@ func TestRigorBudgetDefaultsNeverRaiseTheDeployedCap(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, m := range rigor.Modes {
+		for _, m := range rigor.Rigors {
 			got := RigorBudgetCap(m, deployed)
 			if got > deployed {
 				t.Errorf("RigorBudgetCap(%s, $%v) = %v, above the deployed cap", m, usd, got)
@@ -78,7 +78,7 @@ func TestRigorBudgetDefaultsAreOrdered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	order := []rigor.Mode{rigor.Hotfix, rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical}
+	order := []rigor.Rigor{rigor.Hotfix, rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical}
 	for i := 1; i < len(order); i++ {
 		lo, hi := order[i-1], order[i]
 		if RigorBudgetCap(lo, deployed) >= RigorBudgetCap(hi, deployed) {
@@ -116,7 +116,7 @@ func TestRigorBudgetDefaultsFinishTheSmokeCheck(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, m := range rigor.Modes {
+		for _, m := range rigor.Rigors {
 			if got := RigorBudgetCap(m, deployed).USD(); got < RigorBudgetFloorUSD() {
 				t.Errorf("RigorBudgetCap(%s, $%v) = $%v, under the floor $%v a stage needs: a run at this cap can be granted nothing", m, usd, got, RigorBudgetFloorUSD())
 			}
@@ -148,7 +148,7 @@ func TestRigorBudgetFloorCannotLiftATinyCap(t *testing.T) {
 		if deployed.USD() >= RigorBudgetFloorUSD() {
 			t.Fatalf("$%v is not under the floor $%v: this case is about a cap the floor cannot carry", usd, RigorBudgetFloorUSD())
 		}
-		for _, m := range rigor.Modes {
+		for _, m := range rigor.Rigors {
 			got := RigorBudgetCap(m, deployed)
 			if got != deployed {
 				t.Errorf("RigorBudgetCap(%s, $%v) = %v; want the whole deployed cap: a mode may lower a cap and never raise it (F15)", m, usd, got)

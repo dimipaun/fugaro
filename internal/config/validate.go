@@ -465,10 +465,10 @@ func validateRebuild(p string, r Rebuild) []Problem {
 // rather than a replacement (D20c), and a repository's rule for the project
 // layer's glob is a rule of its own, which this function never sees because
 // each layer is validated on its own.
-func validateRigor(p string, mode rigor.Mode, areas []rigor.Area) []Problem {
+func validateRigor(p string, mode rigor.Rigor, areas []rigor.Area) []Problem {
 	var ps []Problem
 	if mode != "" && !rigor.Known(mode) {
-		ps = append(ps, Problem{Path: p + ".default", Message: "must be one of " + rigor.ModeList()})
+		ps = append(ps, Problem{Path: p + ".default", Message: "must be one of " + rigor.RigorList()})
 	}
 	if len(areas) > rigor.MaxAreas {
 		ps = append(ps, Problem{Path: p + ".areas", Message: fmt.Sprintf("must hold at most %d rules", rigor.MaxAreas)})

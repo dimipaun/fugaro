@@ -1947,6 +1947,51 @@ var runAccountGrants = setOf(
 	// and the member is the ID this scan already knows from the bundle
 	// container's grant above.
 	`google_project_iam_member | "projects/${var.credentials_service.firebase_project}/roles/fugaroCredentialsDatabase" | project=var.credentials_service.firebase_project | google_service_account.credentials[0].member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
+	// Reviewed for P5 (the public mobile service; D2782 as amended by F31, O1,
+	// O8): the second Cloud Run service of the credentials image, running beside
+	// the private one on the same switch, and the three rows that are the whole
+	// of what it and its account reach. The account is created in the
+	// installation's project (modules/installation/mobile_service.tf) and the
+	// service runs as it; the database row is the SAME custom role on the SAME
+	// whole-instance binding as the row above, written in credentials.tf beside
+	// it; the signJwt is on the DEVICE-ONLY signer the Firebase root creates,
+	// and it is written in THAT module's own iam.tf beside the account — not in
+	// the installation root that creates the service, because `fugaro update`
+	// applies the installation root before the Firebase stage and a row naming
+	// an account of the later root would 404 the apply that first carried it.
+	// The member is therefore the installation's own account as a tfvars string
+	// (var.mobile_account) rather than a reference to a resource this module
+	// creates; the signer holds no roles at all ("It is granted NO roles, in the
+	// FP or anywhere"); and the invoker row is the tree's third
+	// allUsers binding, the front door's and the hop's shape.
+	//
+	// Why none of the three is a write path to the marker, re-derived here
+	// because this list is where that sentence has to hold. The database row is
+	// the two data permissions of the instance and no instance lifecycle: what it
+	// writes is Firebase database nodes, and fugaro/managed.json is an object at
+	// the runs bucket's root, which Realtime Database IAM never reaches. The
+	// signJwt row signs as an account that holds nothing — signing as the device
+	// signer gives its holder an identity with no permissions — and the mobile
+	// account cannot be signed as in turn: nobody is granted actAs,
+	// serviceAccountTokenCreator or serviceAccountKeys.create on it (history.tf's
+	// rule, restated in mobile_service.tf's header), so the public endpoint
+	// reaches no account that could. roles/run.invoker carries no storage
+	// permission, no permission to grant a role, no actAs and no token minting at
+	// all; what the member reaches THROUGH it is a container, and the container's
+	// account is the one the other two rows describe. Nothing here submits a
+	// build, grants itself a role, or acts as a job, build or deployer account.
+	//
+	// What the rows deliberately ARE, and the record these are: the account
+	// behind an endpoint anybody may call holds an instance-wide database role
+	// and one signJwt, and iam.serviceAccounts.signJwt cannot be limited to a
+	// claim set — what holds it to device tokens is the process's route
+	// allowlist, not this grant (O8; SECURITY.md states the residual risk). The
+	// owner weighed that cost and confirmed it, and a second member on either
+	// row, a second grant to this account, or a wider role here is the finding
+	// this list is for.
+	`google_project_iam_member | "projects/${var.credentials_service.firebase_project}/roles/fugaroCredentialsDatabase" | project=var.credentials_service.firebase_project | google_service_account.mobile[0].member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
+	`google_service_account_iam_member | "projects/${var.project}/roles/fugaroTokenMinter" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-device-signer@${var.project}.iam.gserviceaccount.com" | "serviceAccount:${var.mobile_account}" | for_each= | perms=?`,
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_service.mobile[0].name | "allUsers" | for_each= | perms=`,
 	// Reviewed for O16b (D2020 (a)) and, for the row after it, for P5.3.3:
 	// the two readers' own accounts, on the get-only role the same module
 	// declares for them both (modules/installation/state_read.tf), in the
@@ -2277,7 +2322,13 @@ var runAccountGrants = setOf(
 	`google_artifact_registry_repository_iam_member | var.installation.role_ids.tag_mover | repository=var.installation.shared_registry | google_service_account.build.member | for_each= | perms=artifactregistry.tags.delete`,
 	`google_project_iam_member | "roles/logging.logWriter" | project=var.project | google_service_account.build.member | for_each={ log_writer = "roles/logging.logWriter" build_submitter = var.installation.role_ids.build_submitter } | perms=`,
 	`google_project_iam_member | var.installation.role_ids.build_submitter | project=var.project | google_service_account.build.member | for_each={ log_writer = "roles/logging.logWriter" build_submitter = var.installation.role_ids.build_submitter } | perms=cloudbuild.builds.create,cloudbuild.builds.get`,
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=local.secrets[each.value] | google_service_account.build.member | for_each=toset(var.repo.build_secrets) | perms=`,
+	// Since B4.9 (the S4 flip) the list goes whole for a repository the
+	// credentials service serves: the build's credential and its workflow
+	// secrets come from the service, so the request names no secret and this
+	// accessor list is empty. A repository the service does not serve keeps
+	// every accessor — var.installation.credentials_service is null for it,
+	// which is what the gate reads (G9).
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=local.secrets[each.value] | google_service_account.build.member | for_each=toset(local.build_mounts_served ? [] : var.repo.build_secrets) [local.build_mounts_served=var.installation.credentials_service != null && contains(local.build_served_secret_classes, "build")] | perms=`,
 	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id=google_service_account.build.name | google_service_account.build.member | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=var.installation.runs_bucket | google_service_account.build.member | for_each= | perms=`,
 	// Reviewed for PIC4, the project image catalog: the same account's

@@ -198,8 +198,8 @@ func embeddedRecipe(spec *task.Spec) *recipe.Recipe {
 // expression the launcher's own policy merge reads it by (chainLimitPolicyOf):
 // the project layer's rigor over the repository's, with the launch's --path
 // set applied.
-func launchedMode(cfg *config.Config, spec *task.Spec) rigor.Mode {
-	return rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
+func launchedMode(cfg *config.Config, spec *task.Spec) rigor.Rigor {
+	return rigor.Resolve(cfg.RigorConfig(), rigor.Request{Level: rigor.Rigor(spec.Rigor), Paths: spec.Paths}).Level
 }
 
 // challengersToday counts the challenger arms this repository's day already

@@ -180,7 +180,7 @@ type layerPlan struct {
 // not there yet is written with the base first, and one that IS there is left
 // to the swap (which is also what shows a replaced value in the diff).
 type layerRigor struct {
-	mode      rigor.Mode
+	mode      rigor.Rigor
 	base      []byte
 	next      []byte
 	writeBase bool
@@ -239,14 +239,14 @@ func (s *layerStage) plan(ctx context.Context) (*layerPlan, error) {
 // first run that failed or stopped between its Installation stage, which writes
 // that config, and this stage would otherwise leave the project on the built-in
 // pro with `fugaro rigor set` as the only way back.
-func (s *layerStage) rigorMode() rigor.Mode {
+func (s *layerStage) rigorMode() rigor.Rigor {
 	if s.e.r.o.setupCreates(s.e.firstRun()) {
-		return rigor.Mode(s.e.r.o.rigor)
+		return rigor.Rigor(s.e.r.o.rigor)
 	}
 	if s.e.lc == nil {
 		return ""
 	}
-	return rigor.Mode(s.e.lc.RigorPending)
+	return rigor.Rigor(s.e.lc.RigorPending)
 }
 
 // layerPlanFor reads the state and decides what this run does about it. A
@@ -258,7 +258,7 @@ func (s *layerStage) rigorMode() rigor.Mode {
 // (task W of docs/rigor-command/implementation-plan.md; D900): an answer turns
 // the state below into the state it leaves, because the run that asks writes
 // what it was told.
-func layerPlanFor(ctx context.Context, lc *localcfg.Config, mode rigor.Mode) (*layerPlan, error) {
+func layerPlanFor(ctx context.Context, lc *localcfg.Config, mode rigor.Rigor) (*layerPlan, error) {
 	p := &layerPlan{lc: lc, url: recordReadURL(lc)}
 	path, err := localcfg.LayerFile(os.Getenv, lc.Name)
 	if err != nil {
@@ -396,7 +396,7 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config, mode rigor.Mode) (*l
 // one, where the bucket was read, and the one where it could not be, where the
 // file is still written and only the publish is dropped (pubSkip) — and the two
 // must write the same bytes for the same answer.
-func (p *layerPlan) rigorAnswer(lc *localcfg.Config, mode rigor.Mode, base []byte, writeBase bool) error {
+func (p *layerPlan) rigorAnswer(lc *localcfg.Config, mode rigor.Rigor, base []byte, writeBase bool) error {
 	// The answer is read again where it is written. The question's own reader is
 	// the one reading (setupRigorMode), so the value that reaches the file is a
 	// mode and not whatever a run carried here: a walk that skips the question —

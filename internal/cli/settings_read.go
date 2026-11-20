@@ -794,7 +794,7 @@ func stepInto(v reflect.Value, part string) (reflect.Value, string) {
 		}
 		// A path element is text, so a map is addressable only by a string
 		// key: every map the config types carry is one — map[string]Workflow
-		// and map[rigor.Mode]float64 alike, and the second is a named string
+		// and map[rigor.Rigor]float64 alike, and the second is a named string
 		// type a comparison of the two types would refuse. A map keyed by
 		// anything else is not addressable by a path, and says so by returning
 		// the invalid value rather than guessing at a rendering of its key.

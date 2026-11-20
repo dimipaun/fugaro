@@ -776,10 +776,10 @@ var layerRows = []Row{
 	layerRow("defaults.agent.adversarial_rounds", "the run's rigor mode decides (rigor.AdversarialDefault)", "settings set", docLayer),
 	layerRow("defaults.agent.review_stop_fraction", "0.8 (config.DefaultReviewStopFraction)", "settings set", docLayer),
 	layerRow("defaults.agent.recipe", "the built-in recipe", "models", docModels),
-	layerRow("defaults.rigor.default", "the built-in mode (pro)", "rigor", docRigor),
+	layerRow("defaults.rigor.default", "the built-in level (pro)", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.name", "none", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.match", "none", "rigor", docRigor),
-	layerRow("defaults.rigor.areas.*.mode", "none", "rigor", docRigor),
+	layerRow("defaults.rigor.areas.*.level", "none", "rigor", docRigor),
 	// The planning pass's switch, read the way defaults.git.pr.early_draft
 	// above is: a layer that states nothing leaves it as the fugaro.yaml row
 	// says (docs/contract-first-decoupling, D1813).

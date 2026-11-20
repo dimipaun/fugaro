@@ -122,7 +122,7 @@ func TestRunRefusesAModeOutsideTheVocabulary(t *testing.T) {
 // block carries the mode's two keys and nothing else, so there is no
 // `rigor.hotfix` for a launcher or a runner to read.
 //
-// Mutation (put the old behaviour back — rigor.Mode.PerRun() false for hotfix,
+// Mutation (put the old behaviour back — rigor.Rigor.PerRun() false for hotfix,
 // so Resolve's rank comparison discards a request ranking 0): the resolution
 // answers pro, the launcher prints the note, and this fails on the note.
 func TestRunTakesHotfixWithNoOptIn(t *testing.T) {
@@ -141,8 +141,8 @@ func TestRunTakesHotfixWithNoOptIn(t *testing.T) {
 	if strings.Contains(errOut, rigorNoEffect) {
 		t.Errorf("the launcher says the request had no effect, and the run's mode is the request:\n%s", errOut)
 	}
-	if got := rigor.Resolve(rigor.Config{}, rigor.Request{Mode: rigor.Hotfix}); got.Mode != rigor.Hotfix || got.From != rigor.FromRequest {
-		t.Fatalf("Resolve = (%q, %q); want hotfix from the request: this is the property the note above reads", got.Mode, got.From)
+	if got := rigor.Resolve(rigor.Config{}, rigor.Request{Level: rigor.Hotfix}); got.Level != rigor.Hotfix || got.From != rigor.FromRequest {
+		t.Fatalf("Resolve = (%q, %q); want hotfix from the request: this is the property the note above reads", got.Level, got.From)
 	}
 	if !slices.Equal(keys, []string{"areas", "default"}) {
 		t.Errorf("schemas/fugaro.schema.json's rigor block carries %v; want only the mode's two keys: the ruling dropped the gate D12 named, and a key that does not exist cannot opt a run in", keys)
@@ -182,23 +182,32 @@ func TestRunTakesHotfixInAnAgentSession(t *testing.T) {
 // sorted. It is read from the schema rather than from a list here because the
 // claim it serves is "no opt-in key exists anywhere": a key added to the
 // document a repository's fugaro.yaml is validated against would be the gate
-// the 2026-11-13 ruling dropped.
+// the 2026-11-13 ruling dropped. The block is an `anyOf` of the level alone
+// (`rigor: critical`, the owner's ruling of 2026-11-18 on item 8's shorthand
+// half) and its mapping, so the
+// keys are the mapping branch's.
 func repoRigorKeys(t *testing.T) []string {
 	t.Helper()
 	var doc struct {
 		Properties struct {
 			Rigor struct {
-				Properties map[string]any `json:"properties"`
+				AnyOf []struct {
+					Type       string         `json:"type"`
+					Properties map[string]any `json:"properties"`
+				} `json:"anyOf"`
 			} `json:"rigor"`
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal([]byte(readDoc(t, "schemas/fugaro.schema.json")), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Properties.Rigor.Properties) == 0 {
-		t.Fatal("schemas/fugaro.schema.json has no rigor block")
+	for _, branch := range doc.Properties.Rigor.AnyOf {
+		if len(branch.Properties) > 0 {
+			return slices.Sorted(maps.Keys(branch.Properties))
+		}
 	}
-	return slices.Sorted(maps.Keys(doc.Properties.Rigor.Properties))
+	t.Fatal("schemas/fugaro.schema.json has no rigor block: its `rigor` key is neither a level nor a mapping of keys")
+	return nil
 }
 
 // TestRunRefusesTooManyDeclaredPaths: the list is bounded (task.
@@ -377,11 +386,15 @@ const rigorNoEffect = "it has no effect"
 // request is recorded as asked, and the note is no error.
 //
 // Hotfix is not one of these cases: it is the mode a request takes whole
-// (rigor.Mode.PerRun), so it takes effect from any starting point and there is
+// (rigor.Rigor.PerRun), so it takes effect from any starting point and there is
 // nothing to note (TestRunTakesHotfixWithNoOptIn).
 //
 // Mutation (drop the note): the first two cases see nothing on stderr.
 func TestRunNotesAModeThatRaisesNothing(t *testing.T) {
+	// The area rule writes the released `mode:` spelling: this fixture's job
+	// image is one the two spellings this release adds ship behind, and the
+	// gate for them refuses a `level:`-writing file on it before the note is
+	// ever reached (TestRunRefusesTheNewRigorSpellingsOnAnOlderBaseImage).
 	cases := []struct {
 		name, rigorYAML, mode string
 		paths                 []string

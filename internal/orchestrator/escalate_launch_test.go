@@ -106,7 +106,7 @@ func ladderTick(t *testing.T, s orchestrator.State, now time.Time, runs ...strin
 // reading is what the daemon read about an item: a mode, an age, a head and no
 // churn. Read true, because a reading that was not made is a person's question
 // and not rung 1.
-func reading(mode rigor.Mode, elapsed time.Duration, head string) orchestrator.LadderReading {
+func reading(mode rigor.Rigor, elapsed time.Duration, head string) orchestrator.LadderReading {
 	return orchestrator.LadderReading{Read: true, Mode: mode, Elapsed: elapsed, Churn: escalation.KindNone, HeadSHA: head}
 }
 

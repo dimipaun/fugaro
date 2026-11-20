@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -2646,9 +2647,14 @@ type repoRootFixture struct {
 // the model credentials happens only for a repository the service serves, and
 // a cascade job mounts none of them (D143, CredentialsServiceServes).
 var repoRootFixtures = map[string]repoRootFixture{
-	"repo_root":             {agent: repoRootOAuthAgent},
-	"repo_root_vertex":      {agent: repoRootVertexAgent},
-	"repo_root_credentials": {agent: repoRootCascadeAgent, credentialsService: true, credentialsReady: true},
+	"repo_root":        {agent: repoRootOAuthAgent},
+	"repo_root_vertex": {agent: repoRootVertexAgent},
+	// Its local config carries the service's address as well, which is what
+	// `fugaro update` leaves on a machine whose installation has one: every
+	// job that reaches the service — the check job now included (B4.9) —
+	// learns the address there and nowhere else (localcfg, and providers.
+	// EnvCredentialsServiceURL on the job).
+	"repo_root_credentials": {agent: repoRootCascadeAgent, credentialsService: true, credentialsReady: true, lc: repoRootLC + credentialsServiceLCBlock},
 	// repo_root_catalog_check is the D1148 fixture: the same oauth spec with
 	// the installation's catalog check job account set, so the one address the
 	// mirror adds (the actAs on the build account, modules/repo/catalogcheck.tf)
@@ -2674,7 +2680,7 @@ var repoRootFixtures = map[string]repoRootFixture{
 	// job keeps the account's token and the accessor beside it, because that
 	// token is the stage's and its stages go straight to Anthropic (B0's
 	// ruling, docs/design/mixed-credentials.md §11; C1.20).
-	"repo_root_mixed_served": {agent: `agent: { auth: api-key }`, lc: repoRootMixedLC, credentialsService: true, credentialsReady: true, mode: config.BudgetEnforce},
+	"repo_root_mixed_served": {agent: `agent: { auth: api-key }`, lc: repoRootMixedLC + credentialsServiceLCBlock, credentialsService: true, credentialsReady: true, mode: config.BudgetEnforce},
 }
 
 // repoRootFixtureSpec builds one fixture's spec by name, the opt-in
@@ -3077,6 +3083,12 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 	// the service too, and it is one address for the module rather than one
 	// per workflow, because a repository has one build account.
 	buildInvoker := []string{"module.repo.google_cloud_run_v2_service_iam_member.build_credentials[0]"}
+	// buildSecret is the build account's own accessor on one logical secret
+	// (modules/repo/build.tf), the list B4.9's flip empties for a served
+	// repository: its build names no secret at all any more.
+	buildSecret := func(logical string) string {
+		return `module.repo.google_secret_manager_secret_iam_member.build["` + logical + `"]`
+	}
 	for _, tc := range []struct {
 		name string
 		in   Inputs
@@ -3103,14 +3115,17 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 			name: "cascade, the auth the service serves",
 			in:   repoRootInputs(t, repoRootCascadeAgent),
 			lc:   parseLC(t, repoRootLC),
-			// The switch's own delta and B3.8's fill meet in this row, and
-			// both are job accessors: the credential the job reads stops being
-			// handed over by its own account and starts being fetched for it
-			// (config.VaultFetchedSecretClasses, npm-token here), while the
-			// service keeps its own accessor on that container — that is the
-			// one D2074 grant the fill does not narrow, and it is what lets
-			// the service hand the value over at all.
-			wantGone:      []string{accessor("web", "npm-token")},
+			// The switch's own delta and the two fills meet in this row, and
+			// every one of them is an accessor: the credential the job reads
+			// stops being handed over by its own account and starts being
+			// fetched for it (config.VaultFetchedSecretClasses, npm-token
+			// here), while the service keeps its own accessor on that
+			// container — that is the one D2074 grant the fill does not
+			// narrow, and it is what lets the service hand the value over at
+			// all. B4.9's fill is the other half (D2076): the build account
+			// keeps no accessor either, because the build's own request names
+			// none of these secrets and fetches them at the service.
+			wantGone:      []string{accessor("web", "npm-token"), buildSecret("github-app-key"), buildSecret("npm-token")},
 			wantAdd:       slices.Concat(invoker("web"), buildInvoker, []string{serviceAccessor("web", "github-app-key"), serviceAccessor("web", "npm-token")}),
 			wantAddAppKey: slices.Concat(invoker("web"), buildInvoker, []string{serviceAccessor("web", "npm-token")}),
 			wantAppKey:    appKey("web"),
@@ -3927,6 +3942,133 @@ func TestFilledVaultListKeepsAnUnswitchedRepository(t *testing.T) {
 	}
 }
 
+// repoRootServedLC is repoRootVaultLC with the installation's credentials
+// service address, which `fugaro update` writes into the local config from the
+// installation's own outputs: the state a switched repository's machine is in,
+// and the one a launch or a check job's environment is planned from (a job
+// learns the address there, providers.EnvCredentialsServiceURL).
+const repoRootServedLC = repoRootVaultLC + credentialsServiceLCBlock
+
+// buildAccessors are a spec's build-account secretAccessor addresses, sorted:
+// the module's google_secret_manager_secret_iam_member.build, one per logical
+// name the account may read, which is the list B4.9's flip empties for a
+// repository the credentials service serves.
+func buildAccessors(rs RepoSpec) []string {
+	var out []string
+	for _, a := range rs.Addresses() {
+		if strings.Contains(a, ".google_secret_manager_secret_iam_member.build[") {
+			out = append(out, a)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestEmptyBuildListChangesNothing is the build flip's inert state pinned
+// (B4.9, D2076, D2077): while config.BuildServedSecretClasses is empty no
+// build takes anything from the credentials service, so a switched repository
+// plans exactly what it planned before — the build account's accessor list
+// with the provider credential and the workflow's own build secret in it, and
+// the check job's own mount of the git credential, with the redaction list
+// that follows it.
+//
+// The list is cleared here and restored afterwards rather than assumed empty,
+// so this is the same test in the flip's first commit and its second: it is
+// the counterfactual the filled pair below is read against.
+func TestEmptyBuildListChangesNothing(t *testing.T) {
+	saved := config.BuildServedSecretClasses
+	config.BuildServedSecretClasses = nil
+	t.Cleanup(func() { config.BuildServedSecretClasses = saved })
+
+	off := vaultSpecUnswitched(t)
+	on := repoRootServed(t, repoRootCascadeAgent, repoRootServedLC, config.BudgetEnforce)
+	if on.Installation.CredentialsService == nil {
+		t.Fatal("the fixture is not on the switch: nothing below would be about a switched repository")
+	}
+	if off.Check == nil || on.Check == nil {
+		t.Fatal("the fixture plans no check job: the check's own mount is half of what this flip moves")
+	}
+	if got, want := on.BuildSecrets, off.BuildSecrets; !slices.Equal(got, want) {
+		t.Errorf("the switched repository's build secrets are %v, want the unswitched one's %v: with the class list empty no build is served, so the build account's accessor list does not move (D147's shape, D2076)", got, want)
+	}
+	if !slices.Contains(on.BuildSecrets, config.BitbucketSecret) && !slices.Contains(on.BuildSecrets, "github-app-key") {
+		t.Errorf("the fixture's build secrets are %v and name no provider credential: the test would be vacuous", on.BuildSecrets)
+	}
+	if !maps.Equal(on.Check.SecretEnv, off.Check.SecretEnv) {
+		t.Errorf("the switched repository's check job mounts %v, want the unswitched one's %v: the class list is empty, so the job keeps the credential it mounts and fetches nothing", on.Check.SecretEnv, off.Check.SecretEnv)
+	}
+	if got, want := on.Check.Env[runner.SecretEnvsVar], redactionEnvs(on.Check.SecretEnv); got != want {
+		t.Errorf("the switched check job's %s = %q, want %q: a mount that moved without its redaction entry is one the run would print", runner.SecretEnvsVar, got, want)
+	}
+	if _, named := on.Check.Env[providers.EnvCredentialsServiceURL]; named {
+		t.Errorf("the switched check job's environment names a credentials service (%v): with no class served the job mounts its credential and asks nobody for it", on.Check.Env)
+	}
+	if got, want := buildAccessors(on), buildAccessors(off); !slices.Equal(got, want) {
+		t.Errorf("the switched repository's build account holds the accessors %v, want %v: no build named a service, so no accessor moves", got, want)
+	}
+}
+
+// TestFilledBuildListDropsTheBuildAccessor is B4.9's flip pinned where it
+// holds: the class list is filled, so a repository the credentials service
+// serves plans its build account without a single secretAccessor — the
+// request names no secret for it to read (gcp.BuildRequest, whose own test
+// holds the request half) and the check job's mount goes with it (check.tf) —
+// while a repository the switch holds off keeps every one of them.
+func TestFilledBuildListDropsTheBuildAccessor(t *testing.T) {
+	if !config.BuildServesClass(config.BuildSecretClassBuild) {
+		t.Fatalf("config.BuildServedSecretClasses = %v and does not carry %q: B4.9's flip is what empties a switched repository's build account accessor list and makes its build fetch the credential from the service instead (D2076, D2077)", config.BuildServedSecretClasses, config.BuildSecretClassBuild)
+	}
+	off := vaultSpecUnswitched(t)
+	on := repoRootServed(t, repoRootCascadeAgent, repoRootVaultLC, config.BudgetEnforce)
+	if on.Installation.CredentialsService == nil {
+		t.Fatal("the fixture is not on the switch: nothing below would be about a switched repository")
+	}
+	if len(buildAccessors(off)) == 0 {
+		t.Fatalf("the unswitched fixture's build account holds no accessor at all: the test would be vacuous")
+	}
+	if got := buildAccessors(on); len(got) != 0 {
+		t.Errorf("the switched repository's build account holds the accessors %v, want none: the request names no secret, so an accessor kept here is one nothing reads (D2076)", got)
+	}
+	if got := on.BuildSecrets; len(got) != 0 {
+		t.Errorf("the switched repository's build secrets are %v, want none: the tfvars answer is the module's for_each, and the two are one list", got)
+	}
+	if got, want := buildAccessors(off), buildAccessors(vaultSpecUnswitched(t)); !slices.Equal(got, want) {
+		t.Errorf("an unswitched repository's build accessors are %v and then %v: the flip moves a served repository's list alone (G9, D147)", got, want)
+	}
+}
+
+// TestFilledBuildListDropsTheCheckMounts is the check job's half of the same
+// flip: the daily check runs as the build account, so the accessor its mount
+// of the repository's git credential is read under is the one the class
+// "build" takes away — the mount goes with either class (C2.3) and the job
+// fetches the credential from the service instead, which is what the address
+// its environment now carries is for (B4.5's checkGitCredential).
+func TestFilledBuildListDropsTheCheckMounts(t *testing.T) {
+	if !config.BuildServesClass(config.BuildSecretClassGit) || !config.BuildServesClass(config.BuildSecretClassBuild) {
+		t.Fatalf("config.BuildServedSecretClasses = %v and does not carry %q and %q: the check job's mount goes with the git credential's own class, and its accessor is the build account's, which the build's class takes away (C2.3)", config.BuildServedSecretClasses, config.BuildSecretClassGit, config.BuildSecretClassBuild)
+	}
+	off := vaultSpecUnswitched(t)
+	on := repoRootServed(t, repoRootCascadeAgent, repoRootServedLC, config.BudgetEnforce)
+	if off.Check == nil || on.Check == nil {
+		t.Fatal("the fixture plans no check job: nothing below would be about its mounts")
+	}
+	if len(off.Check.SecretEnv) == 0 {
+		t.Fatalf("the unswitched fixture's check job mounts nothing: the test would be vacuous")
+	}
+	if len(on.Check.SecretEnv) != 0 {
+		t.Errorf("the switched repository's check job mounts %v, want none: the job runs as the build account, whose accessor on the credential the same flip takes away, and Cloud Run refuses a job that mounts a secret its account may not read (C2.3)", on.Check.SecretEnv)
+	}
+	if got := on.Check.Env[runner.SecretEnvsVar]; got != redactionEnvs(on.Check.SecretEnv) {
+		t.Errorf("the switched check job's %s = %q, want %q: the list follows the mounts", runner.SecretEnvsVar, got, redactionEnvs(on.Check.SecretEnv))
+	}
+	if got := on.Check.Env[providers.EnvCredentialsServiceURL]; got != "https://fugaro-credentials-123456789012.us-east5.run.app" {
+		t.Errorf("the switched check job's %s = %q, want the installation's service: the job mounts no credential, so the address is the only way it can fetch one (B4.5, D2076)", providers.EnvCredentialsServiceURL, got)
+	}
+	if !maps.Equal(off.Check.SecretEnv, map[string]string{"FUGARO_GITHUB_APP_PRIVATE_KEY": "github-app-key"}) {
+		t.Errorf("the unswitched repository's check job mounts %v: a repository the switch holds off keeps the mount and reads it itself (G9, D147)", off.Check.SecretEnv)
+	}
+}
+
 // TestCascadeStillDropsItsMounts is the cascade's arm, unchanged by this task:
 // the one auth whose in-job credential the service replaces whole, so its
 // answer is `all` and every model mount and accessor goes (D143, C1.18/C1.20).
@@ -4430,10 +4572,12 @@ func TestEmptyProxiedListKeepsTheMountAndAccessor(t *testing.T) {
 // job gives up the mount, the secret id and the redaction entry, and the plan
 // gives up the account's accessor on it — together, always, because a container
 // that still mounted a secret its account cannot resolve is a job Cloud Run
-// refuses to create. The check job keeps its own: it runs as the build account,
-// which clones with the token until S4 (D148, F3). The guard below is the
-// list's own half: with it emptied again the mount and the accessor come back,
-// which TestEmptyProxiedListKeepsTheMountAndAccessor reads.
+// refuses to create. The check job kept its own until S4, because it runs as
+// the build account and cloned with the token (D148, F3); B4.9 is that
+// release, so the check job gives the mount up too and fetches the credential
+// at the service, which is what its environment now names. The guard below is
+// the list's own half: with it emptied again the mount and the accessor come
+// back, which TestEmptyProxiedListKeepsTheMountAndAccessor reads.
 func TestFilledProxiedListDropsMountAndAccessor(t *testing.T) {
 	if !slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret) {
 		t.Fatalf("config.ProxiedGitSecretNames = %v does not name %s: the flip is B1.13 part two, and until it fills the list a proxied repository's job keeps the mount and the accessor this test is written to see go", config.ProxiedGitSecretNames, config.BitbucketSecret)
@@ -4469,8 +4613,8 @@ func TestFilledProxiedListDropsMountAndAccessor(t *testing.T) {
 	if ready.Check == nil {
 		t.Fatal("the fixture deploys no check job: the assertion below would pass vacuously")
 	}
-	if got := ready.Check.SecretEnv[bitbucketTokenEnv]; got != config.BitbucketSecret {
-		t.Errorf("the check job's SecretEnv = %v, want %s -> %s kept: it runs as the build account, which keeps its accessor (D148, F3)", ready.Check.SecretEnv, bitbucketTokenEnv, config.BitbucketSecret)
+	if got, mounted := ready.Check.SecretEnv[bitbucketTokenEnv]; mounted {
+		t.Errorf("the check job's SecretEnv = %v, want no %s mount: it runs as the build account, whose accessor on the token B4.9's flip takes away with the build's own (D2076, C2.3) — and D148's 'the check job keeps its own' is what that release supersedes", ready.Check.SecretEnv, got)
 	}
 }
 
@@ -4766,6 +4910,141 @@ func TestVaultAccessorAllowDeleteIsTheFlipsOwn(t *testing.T) {
 	config.VaultFetchedSecretClasses = old
 	if got := VaultAccessorAllowDelete(nil, switched); len(got) != 0 {
 		t.Errorf("the allow-list for a run that read no plan = %v, want none", got)
+	}
+}
+
+// TestBuildAccessorAllowDeleteIsTheFlipsOwn is B4.9's half of the two tests
+// above: the guard's allow-list for the BUILD account's accessors, on a project
+// that is not managed, which is the ordinary plan. Its fixture is deliberately
+// NOT a proxied repository as well (the flips are separate, G22) and it is a
+// CASCADE one, so the only secrets the build's list ever names are the git
+// credential and the workflow's own build secrets — the repositories the class
+// "build" moves, and no model credential.
+//
+// The rows are that filter's whole surface: an accessor this spec stopped
+// producing (the build account's on sandbox-probe, the workflow's own build
+// secret, which the flip serves from the credentials service instead) is
+// admitted; a logical name this repository no longer declares, a create rather
+// than a delete, an address under another module and one of the workflow
+// module's own job accessors are not. The clauses after the table are the
+// guard's own inputs (an unswitched repository admits nothing, the class list
+// emptied admits nothing, and so does a plan the run could not read).
+func TestBuildAccessorAllowDeleteIsTheFlipsOwn(t *testing.T) {
+	if !config.BuildServesClass(config.BuildSecretClassBuild) {
+		t.Fatalf("config.BuildServedSecretClasses = %v and does not carry %q: every row below is about the flip being filled (D2076, D2077)", config.BuildServedSecretClasses, config.BuildSecretClassBuild)
+	}
+	switched, err := Repo(proxiedSandboxInputs(t, "", publishedNode(t, false, "workspace-b/other")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if switched.BitbucketProxied {
+		t.Fatalf("the fixture is proxied, so its rows would be about the other flip's list as well: this one's has to answer without it (G22)")
+	}
+	if !switched.BuildMountsServed() {
+		t.Fatal("the fixture's build is not served: nothing below would be about a repository whose build reads its secrets from the service")
+	}
+	if len(switched.BuildSecrets) != 0 {
+		t.Fatalf("the served fixture's build list is %v, want none: the module declares no accessor of this resource at all once the class is served, and the rows below read the spec's own answer", switched.BuildSecrets)
+	}
+	// The two names the build's list carried before the drop: the provider
+	// credential and the workflow's own build secret (sandbox-probe, which the
+	// same document mounts into the build).
+	buildAddr := func(name string) string {
+		return `module.repo.google_secret_manager_secret_iam_member.build["` + name + `"]`
+	}
+	dropped := buildAddr("sandbox-probe")
+	git := buildAddr(config.BitbucketSecret)
+	for _, name := range []string{"sandbox-probe", config.BitbucketSecret} {
+		if _, declared := switched.Secrets[name]; !declared {
+			t.Fatalf("the fixture's spec declares no %s, so the row about its accessor would pass for the wrong reason: the allowance reads spec.Secrets for the names it admits", name)
+		}
+		if slices.Contains(switched.Addresses(), buildAddr(name)) {
+			t.Fatalf("this tree's spec still produces %s, so the positive row below would admit an address the plan has no reason to delete", buildAddr(name))
+		}
+	}
+	gone := `module.repo.google_secret_manager_secret_iam_member.build["some-other-secret"]`
+	jobAddr := `module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["sandbox-probe"]`
+	otherModule := strings.Replace(dropped, "module.repo.", "module.installation.", 1)
+	for _, tc := range []struct {
+		what string
+		plan *tf.Plan
+		addr string
+		want bool
+	}{
+		{"the accessor this spec stopped producing", planDeleting(dropped), dropped, true},
+		{"the provider credential's own", planDeleting(git), git, true},
+		{"a name this repository no longer declares", planDeleting(gone), gone, false},
+		{"a job account's accessor in the workflow module", planDeleting(jobAddr), jobAddr, false},
+		{"the same address created, not deleted", &tf.Plan{ResourceChanges: []tf.ResourceChange{change(dropped, "create")}}, dropped, false},
+		{"an address outside the repository root's module", planDeleting(otherModule), otherModule, false},
+	} {
+		got := BuildAccessorAllowDelete(tc.plan, switched)
+		if slices.Contains(got, tc.addr) != tc.want {
+			t.Errorf("%s: admitted = %v, want %v (allow-list %v)", tc.what, !tc.want, tc.want, got)
+		}
+	}
+
+	// The repository the switch holds off: its build keeps every accessor, and
+	// an address the spec still produces is somebody's real change.
+	off := vaultSpecUnswitched(t)
+	if off.Installation.CredentialsService != nil {
+		t.Fatal("the unswitched fixture carries a credentials service: nothing below would be about a repository the switch holds off")
+	}
+	if gots := BuildAccessorAllowDelete(planDeleting(dropped), off); len(gots) != 0 {
+		t.Errorf("the allow-list for a repository the switch holds off = %v, want none: its build mounts every secret it ever did, so a delete of this address is somebody's real change and the guard judges it as before", gots)
+	}
+	old := config.BuildServedSecretClasses
+	config.BuildServedSecretClasses = nil
+	t.Cleanup(func() { config.BuildServedSecretClasses = old })
+	if gots := BuildAccessorAllowDelete(planDeleting(dropped), switched); len(gots) != 0 {
+		t.Errorf("the allow-list with the class list empty = %v, want none: this is the state the release before the flip ran, and an allow-list that still admitted its delete would be one that admits a delete no plan of this tree makes", gots)
+	}
+	config.BuildServedSecretClasses = old
+	if gots := BuildAccessorAllowDelete(nil, switched); len(gots) != 0 {
+		t.Errorf("the allow-list for a run that read no plan = %v, want none", gots)
+	}
+}
+
+// TestBuildMountsServedIsTheDropThePlanMakes holds RepoSpec.BuildMountsServed
+// to the drop the plan actually makes, the way TestDropsBitbucketTokenIsTheDropThePlanMakes
+// holds that flip's predicate to its own: the guard's allowance reads it before
+// it admits the flip's accessor deletes, so an answer that says true while the
+// spec kept every accessor would be a licence for any of them, and one that
+// says false while the list emptied would owe the operator a flag for the
+// flip's own delete (CLAUDE.md's HARD RULE).
+//
+// The two rows are the served fixture (the list is empty, and the predicate
+// says so) and the repository the switch holds off (the list is the build's
+// own, and it says that) — a condition added to one side and not the other
+// fails here rather than in a plan.
+func TestBuildMountsServedIsTheDropThePlanMakes(t *testing.T) {
+	served, err := Repo(proxiedSandboxInputs(t, "", publishedNode(t, false, "workspace-b/other")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := vaultSpecUnswitched(t)
+	for _, tc := range []struct {
+		what string
+		spec RepoSpec
+	}{
+		{"a repository the service serves", served},
+		{"a repository the switch holds off", off},
+	} {
+		if dropped := len(tc.spec.BuildSecrets) == 0; dropped != tc.spec.BuildMountsServed() {
+			t.Errorf("%s: BuildMountsServed() = %v while its build list is %v, and the two are one answer (the build's list is never empty otherwise: it always names the provider credential)",
+				tc.what, tc.spec.BuildMountsServed(), tc.spec.BuildSecrets)
+		}
+	}
+	if off.Installation.CredentialsService != nil {
+		t.Fatal("the unswitched fixture carries a credentials service: the second row would then be about a served repository too")
+	}
+	if len(off.BuildSecrets) == 0 {
+		t.Fatal("the unswitched fixture's build list is empty, so the row above would read as agreement for the wrong reason: the list always names the provider credential")
+	}
+	for _, name := range off.BuildSecrets {
+		if _, declared := off.Secrets[name]; !declared {
+			t.Errorf("the unswitched fixture's build list names %s, which its spec does not declare: the two sides of the predicate's own row disagree about what the build mounts", name)
+		}
 	}
 }
 
