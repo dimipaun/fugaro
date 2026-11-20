@@ -1224,8 +1224,12 @@ type mailboxInbox struct {
 // commit a record whose action belongs to another message. A child whose `at`
 // cannot be read is sorted first and refused by the checks that follow it.
 func (c *mailboxConsumer) readInbox(ctx context.Context, uid string) ([]mailboxInbox, error) {
+	path, err := mailbox.InboxPath(uid)
+	if err != nil {
+		return nil, err
+	}
 	var raw map[string]json.RawMessage
-	found, err := c.db.Get(ctx, "mailbox/"+uid+"/inbox", &raw)
+	found, err := c.db.Get(ctx, path, &raw)
 	if err != nil {
 		return nil, dbErr(c.lc, err, false)
 	}
