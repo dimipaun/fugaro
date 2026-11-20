@@ -108,6 +108,19 @@ registration and the link answer, and a request that could name any of them woul
 choosing what it is proved by. Two guards hold the token's own claims (R1's second guard): its
 project must be the installation's, and its zone one of the installation's region.
 
+**Where the two claims come from.** Both are the launcher's own strings, and the tree already has
+each one's home, which is why this contract does not mint a third spelling:
+
+| Claim | The variable | The name |
+| --- | --- | --- |
+| `run` | the job variable the launcher writes, `<slug>/<run id>` | `FUGARO_RUN`, the value `backend.Execution.Run` reads back and `gcp.CheckRunExecution` binds a name to a run by |
+| `job` | the job variable carrying the Batch job's own resource name, which Batch injects for nothing and the launcher therefore supplies | `backend.BatchJobEnv` — `FUGARO_BATCH_JOB` |
+
+The launcher-forgeable reading is F24's and is why R1's release rests on the link and the
+registration rather than on the claims: a launcher can write any `FUGARO_RUN` into a job of their
+own, and the account the service verified, the VM-to-job link and the registered job id are what
+such a job cannot reproduce.
+
 **The bound.** The job must have been created within a short bound after the wrap time read out of
 the plaintext, tolerance included, so a blob is worthless long after it was wrapped. The bound is the
 route's constant (BR2's), and the link is given the wrap time to apply it: a job created outside the
