@@ -260,10 +260,14 @@ func (f *Folders) poll(ctx context.Context, op *crm3.Operation, what string) (*c
 		if err := sleep(ctx); err != nil {
 			return nil, err
 		}
-		var err error
-		if op, err = f.crm.Operations.Get(op.Name).Context(ctx).Do(); err != nil {
+		// The read is kept apart from op: a failed call answers no operation at
+		// all, so assigning it into op would leave the message below — and the
+		// loop's next turn — reading a name off a nil one.
+		next, err := f.crm.Operations.Get(op.Name).Context(ctx).Do()
+		if err != nil {
 			return nil, fmt.Errorf("%s: waiting for %s: %w", what, op.Name, err)
 		}
+		op = next
 	}
 	if op.Error != nil {
 		return nil, fmt.Errorf("%s: %s (code %d)", what, op.Error.Message, op.Error.Code)

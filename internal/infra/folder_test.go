@@ -195,6 +195,27 @@ func TestFoldersOperationError(t *testing.T) {
 	}
 }
 
+// TestFoldersOperationPollFailure: a read of an operation that fails is that
+// read's own error, all the way out of Create and Move — the operation the
+// caller never got is not read for its name.
+func TestFoldersOperationPollFailure(t *testing.T) {
+	ctx := context.Background()
+	f, fs := wu2FolderFake(t)
+	f.AddProject("member-a", 900000000123)
+	f.RefusePath("/v3/operations/", 503, "UNAVAILABLE", "UNAVAILABLE", "the service is unavailable")
+
+	if _, err := fs.Create(ctx, "fugaro-workspace-aurora", "organizations/123"); err == nil {
+		t.Error("Create = nil, want the operation read's error")
+	} else if !strings.Contains(err.Error(), "the service is unavailable") {
+		t.Errorf("Create = %v, want the operation read's own error", err)
+	}
+	if err := fs.Move(ctx, "member-a", "folders/9"); err == nil {
+		t.Error("Move = nil, want the operation read's error")
+	} else if !strings.Contains(err.Error(), "the service is unavailable") {
+		t.Errorf("Move = %v, want the operation read's own error", err)
+	}
+}
+
 // TestFolderFakeServesTheProjectPolicyWrite: the v1 projects.setIamPolicy the
 // fake gains with this task (the plan puts it in crm.go, whose only writer this
 // task is, for the end-to-end test WU21 drives against it), pinned here so the
