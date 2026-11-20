@@ -40,6 +40,9 @@ if ! [[ $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; the
   echo "::error::tag '$tag' is not a strict vX.Y.Z or mobile-vX.Y.Z release tag" >&2
   exit 1
 fi
+# The maintenance branch a patch release was resolved to, set below and read
+# where the dispatch hint picks the ref it names; empty for a tag on main.
+maintenance_branch=""
 retry_read git fetch --quiet origin main
 if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
   # The one other place a release commit may be: a maintenance branch, for a
@@ -59,7 +62,6 @@ if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
   # The required checks below are read from the commit itself, on any branch, so
   # CI dispatched on the maintenance branch is what vouches for the commit.
   maintenance_ok=""
-  maintenance_branch=""
   if [[ $tag =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.([1-9][0-9]*)$ ]]; then
     line="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
     branch="release/$line"
