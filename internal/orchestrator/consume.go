@@ -22,15 +22,14 @@
 // differs is the identity the writes are made with and the process that holds
 // them, and that difference is the whole of P5.1f's wiring: the command writes
 // as the operator's admin credential, which bypasses the rules (D113b's
-// honesty note), while this pass writes as a service account and must satisfy
-// CONSUMER (`auth.token.mc == $mb`) to write either node at all — so this is
-// the first mailbox writer the rules can hold to "the outbox and the heartbeat
-// and nothing else" (section 4.3). The mint that claim comes from is
-// internal/budget/token's `MintConsumer`, which the caller exchanges for an ID
-// token and builds the writer below with; the read is the deployment's own
-// client. The pass is handed those two credentials apart (ConsumerReader and
-// ConsumerWriter) because they cannot be one: the rules let the consumer write
-// and read nothing.
+// honesty note), while this pass must satisfy CONSUMER (`auth.token.mc == $mb`)
+// to write either node at all — so this is the first mailbox writer the rules
+// can hold to "the outbox and the heartbeat and nothing else" (section 4.3).
+// That claim comes from internal/budget/token's `MintConsumer`, which the
+// caller exchanges for an ID token and builds a mailbox's writer with; the
+// reads are the deployment's own client. The pass is handed those two
+// credentials apart (ConsumerReader and ConsumerWriter) because they cannot be
+// one: the rules give the consumer two writes and no read at all.
 //
 // **What it does not act on, and why the phone is still owed an answer.**
 // Section 4.2's fourth step — "acts" — is the launcher's and the envelope's,
@@ -133,7 +132,7 @@ type ConsumerReader interface {
 
 // ConsumerWriter is one mailbox's write half: the compare-and-swap write the
 // two nodes CONSUMER admits are written with, and the mailbox the credential
-// making it is minted for.
+// making that write is minted for.
 //
 // **It is not a database client, and a `*rtdb.Client` is not one.** The write
 // is fenced by CONSUMER, `auth.token.mc != null && auth.token.mc == $mb`, and
@@ -183,18 +182,18 @@ func (c consumerCAS) PutIfMatch(ctx context.Context, path, etag string, v any) e
 	return c.writer.PutIfMatch(ctx, path, etag, v)
 }
 
-// ConsumerMailbox is one phone this pass may serve: the mailbox — the phone's
+// ConsumerMailbox is one phone this pass may serve: the mailbox (the phone's
 // own `m~` uid, which is the node the inbox, the outbox and the heartbeat all
-// live under, and the name CONSUMER's `$mb` compares against — the pairing's
-// MAC key, which is section 4.2's third copy of it (P5.1e's Secret Manager
-// container, read as a set by keychain.Cloud.Keys and handed in here), and the
-// writer whose credential is minted for exactly this mailbox.
+// live under and the name CONSUMER's `$mb` compares against), the pairing's
+// MAC key (section 4.2's third copy of it: P5.1e's Secret Manager container,
+// read as a set by keychain.Cloud.Keys), and the writer whose credential is
+// minted for exactly this mailbox.
 //
 // The three travel together because none is any use alone: a key with no
 // mailbox verifies nothing, a mailbox with no key is a phone whose messages
-// this pass would have to refuse, and a mailbox with no writer is one this pass
-// could read and answer nothing in. The writer is per mailbox and not per pass
-// because the claim it carries names one mailbox (`mc == $mb`), so a
+// this pass would have to refuse, and a mailbox with no writer is one whose
+// messages could be read and never answered. The writer is per mailbox and not
+// per pass because the claim it carries names one mailbox (`mc == $mb`), so a
 // deployment serving two phones holds two of them.
 type ConsumerMailbox struct {
 	Mailbox string
@@ -347,7 +346,7 @@ type consumerRun struct {
 func consumeMailbox(ctx context.Context, reader ConsumerReader, m ConsumerMailbox, holder string, at time.Time) (consumerRun, error) {
 	var run consumerRun
 	if m.Writer == nil {
-		return run, fmt.Errorf("mailbox %s has no writer, and the two nodes CONSUMER admits can be written with nothing else", m.Mailbox)
+		return run, fmt.Errorf("mailbox %s has no writer, and CONSUMER admits a write of the heartbeat or the outbox under no other credential", m.Mailbox)
 	}
 	if claimed := m.Writer.Mailbox(); claimed != m.Mailbox {
 		return run, fmt.Errorf("the writer for mailbox %s is minted for %s, and CONSUMER (`mc == $mb`) admits a write only into the mailbox its own claim names", m.Mailbox, claimed)

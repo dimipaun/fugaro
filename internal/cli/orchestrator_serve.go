@@ -60,12 +60,14 @@
 // THE CLAIM IT WRITES UNDER IS `mc`, and that is the whole difference between
 // this consumer and the laptop's. `fugaro mailbox` writes as the operator's own
 // admin credential, which bypasses the rules (D113b says so out loud); this
-// process writes as a service account, so the only way it may write those two
-// nodes at all is the rules' CONSUMER macro (`auth.token.mc == $mb`), minted by
-// internal/budget/token's MintConsumer — which makes this the first mailbox
-// writer the rules can hold to "the outbox and the heartbeat and nothing else"
-// (the design's section 4.3). The holder it takes the lease under is the
-// installation's own orchestrator account and NOT a per-instance boot id, and
+// process carries a service account, which the rules never fence either, so a
+// write of those two nodes is admitted only under the rules' CONSUMER macro
+// (`auth.token.mc == $mb`) — a claim internal/budget/token's MintConsumer mints
+// and the process exchanges for an ID token — which makes this the first
+// mailbox writer the rules can hold to "the outbox and the heartbeat and
+// nothing else" (the design's section 4.3). The holder it takes the lease under
+// is the installation's own orchestrator account and NOT a per-instance boot
+// id, and
 // the reason is the lease's own arithmetic: a holder that changed with every
 // instance would renew nothing (Renew answers lost when the claim it reads names
 // somebody else) and its take of that claim is refused to everyone while it is
@@ -79,7 +81,8 @@
 // so the inbox, the heartbeat and the outbox this pass reads are read by the
 // deployment's own service-account client (the `rtdb.New(rawURL,
 // rtdb.Auth{Source: ts})` below), which the rules never see, while the two
-// writes go through a client built from the exchanged consumer token. That is
+// writes go through a client built with the ID token that token is exchanged
+// into. That is
 // why orchestrator's Consume takes a ConsumerReader and, per mailbox, a
 // ConsumerWriter (a `*rtdb.Client` satisfies the first and cannot satisfy the
 // second): handing this client to both halves would be a consumer whose every
@@ -94,7 +97,8 @@
 // service builds none of it and no name in its environment points at the
 // container); the Firebase web API key, which the
 // minted custom token must be exchanged with before it is an identity the rules
-// know — the service's own environment does not carry it (orchestrator.tf's six
+// know, and which is therefore what keeps a mailbox's writer unbuildable — the
+// service's own environment does not carry it (orchestrator.tf's six
 // names are three of the node's and three of the launch's, and
 // TestOrchestratorServiceEnvIsTheDeploymentsOwn holds that list in both
 // directions); and the database read the inbox itself needs, which is an IAM
