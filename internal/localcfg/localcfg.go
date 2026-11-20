@@ -62,15 +62,25 @@ import (
 // (internal/access, under config/admin) is their authority: `fugaro update`
 // derives these lists from it on every converge, and its migration writes the
 // node from the version-1 lists an installation already had.
-const ConfigVersion = 2
+//
+// Version 3 retypes ONE key, and it is the same reason the bump exists at all:
+// `workspace_members.*.job_service_accounts` is a list of service account
+// addresses in version 2 and a list of entries carrying an address and the
+// repositories it is a job of here (R6, D2992), so a version-2 list read as
+// this shape would decode as a list of entries with no account at all. The
+// document's own version is what tells the two apart, and a version-2 document
+// is folded (foldLegacyMemberAccounts) rather than refused: a config the
+// release behind wrote must keep parsing, and every command in that project —
+// `fugaro update` above all — reads it through this one.
+const ConfigVersion = 3
 
 // Config is the local CLI config.
 type Config struct {
 	// Version is the document's own version, and the field an older Fugaro
 	// refuses: ConfigVersion is the one this release writes, and Parse returns
-	// every accepted document as this version, because folding a version-1
-	// document produces version 2's shape and a document that says 1 while
-	// carrying 2's keys is the one spelling nobody may read.
+	// every accepted document as this version, because folding an older
+	// document produces this version's shape and a document that says 1 or 2
+	// while carrying 3's keys is the one spelling nobody may read.
 	Version int `yaml:"version"`
 	// Name is the Fugaro project (config.ProjectNameRE), which the file
 	// is named after.
@@ -972,10 +982,16 @@ type WorkspaceMember struct {
 	//
 	// One account carries one repository for a repository's own job, and
 	// several for a shared project job, which serves exactly the repositories
-	// its profile admits. An account with no repository is refused at the
-	// load: a job is a repository's, so an account this table cannot say the
-	// job of is a caller whose runs the service would refuse whatever slug
-	// they presented.
+	// its profile admits. An entry with no repository is the one
+	// foldLegacyMemberAccounts writes for a version-2 file, which named the
+	// member's accounts and never their jobs, and the load reads it rather
+	// than refusing it: the fold produces it, and a refusal would leave every
+	// command in that project — `fugaro update` among them — unable to read
+	// the file the release behind wrote. What the entry means is the narrow
+	// reading and never a widening: the service holds a run's verified slug to
+	// this list, so an account with none is served nothing. `fugaro workspace
+	// member add` refuses to write one, and a published account has to carry
+	// its repositories on the node's own row (R6, D2992, F42).
 	JobAccounts []WorkspaceJobAccount `yaml:"job_service_accounts,omitempty"`
 	// DatabaseRegion is the region the member's Realtime Database lives in,
 	// and it is empty for a database in the project's default region. The
@@ -2493,6 +2509,76 @@ func foldLegacyLists(data []byte, top map[string]yaml.Node) ([]byte, error) {
 	return out, nil
 }
 
+// foldLegacyMemberAccounts rewrites a version-2 document's member table into
+// the spelling this release reads: each `workspace_members.<name>.job_service_accounts`
+// entry, which was a service account address, becomes an entry carrying that
+// address and the repositories it is a job of (ConfigVersion, R6, D2992).
+//
+// It writes NO repositories, and that restraint is the whole of its judgement:
+// a version-2 file names the member's accounts and never which job each is, so
+// the fold states the pair with the second half empty rather than filling it
+// from the repositories the member contributes. Copying those would hand an
+// account a reach its owner never declared — the shared project job is exactly
+// the case where the two differ — and the fold's one job is to read an old
+// document in the shape this release reads it, never to decide anything the old
+// document did not say. An entry that is already a mapping is left as it is, so
+// a document whose `version` is behind while its table is already this shape —
+// a hand-written file, or one a future release writes — keeps what it wrote.
+//
+// Like the version-1 fold it works on the parsed YAML tree: the rewrite is the
+// shape of one list, the comments and the rest of the document are nobody's
+// business here, and an entry that is not a string is left for the typed decode
+// to refuse with its own message.
+func foldLegacyMemberAccounts(data []byte, top map[string]yaml.Node) ([]byte, error) {
+	if documentVersion(top) >= 3 {
+		return data, nil
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return data, nil // not YAML at all: the typed decode says so, in its own words
+	}
+	if root.Kind != yaml.DocumentNode || len(root.Content) != 1 || root.Content[0].Kind != yaml.MappingNode {
+		return data, nil
+	}
+	members := mappingValue(root.Content[0], "workspace_members")
+	if members == nil || members.Kind != yaml.MappingNode {
+		return data, nil
+	}
+	moved := false
+	for i := 0; i+1 < len(members.Content); i += 2 {
+		entry := members.Content[i+1]
+		if entry.Kind != yaml.MappingNode {
+			continue
+		}
+		accounts := mappingValue(entry, "job_service_accounts")
+		if accounts == nil || accounts.Kind != yaml.SequenceNode {
+			continue
+		}
+		for j, a := range accounts.Content {
+			if a.Kind != yaml.ScalarNode || a.Tag != "!!str" {
+				continue
+			}
+			accounts.Content[j] = &yaml.Node{
+				Kind: yaml.MappingNode,
+				Tag:  "!!map",
+				Content: []*yaml.Node{
+					{Kind: yaml.ScalarNode, Tag: "!!str", Value: "account"},
+					a,
+				},
+			}
+			moved = true
+		}
+	}
+	if !moved {
+		return data, nil
+	}
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // documentVersion is the `version` a document states, or 0 when it states none
 // and when the document itself could not be read.
 func documentVersion(top map[string]yaml.Node) int {
@@ -2557,6 +2643,14 @@ func Parse(data []byte) (*Config, error) {
 		}
 	}
 	folded, err := foldLegacyLists(data, top)
+	if err != nil {
+		return nil, fmt.Errorf("local config: %w", err)
+	}
+	// The two folds read the version from `top`, the document as it was
+	// written, and not from each other's output: one document's version is one
+	// fact, and it is what tells every shape in it from the shape this release
+	// writes.
+	folded, err = foldLegacyMemberAccounts(folded, top)
 	if err != nil {
 		return nil, fmt.Errorf("local config: %w", err)
 	}
@@ -3543,23 +3637,21 @@ func validateWorkspace(c *Config, bad func(string, ...any)) {
 			if why := duplicated(m.Repos); why != "" {
 				bad("workspace_members.%s: repos lists %s twice", name, why)
 			}
-			// The account and its repositories are one statement, and both
-			// halves are held here: an account with no repository is a caller
-			// the workspace's service cannot hold a run's repository to, so
-			// refusing it at the load is what keeps the run's own slug check
-			// (WS2's) from being the only thing that knows the entry is
-			// unusable. The repositories are concrete names and never a
-			// pattern (F42): the service compares a run's verified slug to
-			// this list, and a pattern would be a promise about what the
-			// account may be a job of rather than the jobs it is.
+			// The account and its repositories are one statement, and what the
+			// load holds of it is the account's own spelling and the shape of
+			// each repository: concrete `owner/name` and never a pattern
+			// (F42), because the service compares a run's verified slug to
+			// this list. An account that names no repository is NOT refused
+			// here — the fold writes exactly that entry for a version-2 file,
+			// and a load that refused it would refuse the migration's own
+			// output (see the field's note). The command that writes an entry
+			// refuses it, so a hand-edited one is the only way to reach the
+			// load with it, and there it means the narrow thing.
 			accounts := make([]string, 0, len(m.JobAccounts))
 			for _, a := range m.JobAccounts {
 				accounts = append(accounts, a.Account)
 				if !signerRE.MatchString(a.Account) {
 					bad("workspace_members.%s: job_service_accounts entry %q is not a service account address", name, a.Account)
-				}
-				if len(a.Repos) == 0 {
-					bad("workspace_members.%s: job_service_accounts %q names no repos: an account carries the repositories it is a job of, one for a repository's own job and several for a shared project job", name, a.Account)
 				}
 				for _, repo := range a.Repos {
 					if !repoRE.MatchString(repo) {

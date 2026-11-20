@@ -1792,7 +1792,7 @@ var defaultValues = map[string]Default{
 	// release writes for a file that sets it nowhere (localcfg.Parse), which is
 	// localcfg.ConfigVersion, so the value is written here and read back out of
 	// a parsed config like the two above.
-	"local.version": value("2", "localcfg.ConfigVersion"),
+	"local.version": value("3", "localcfg.ConfigVersion"),
 	// The Issues section's nudge thresholds (T-IS15): the loader answers the
 	// constants for a file that sets neither, through the accessors rather
 	// than the fields, so "the file wrote nothing" and "the file wrote the

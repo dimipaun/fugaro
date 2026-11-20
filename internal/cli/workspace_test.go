@@ -788,6 +788,11 @@ workspace_shared:
 		{"member add", workspaceMemberAddArgs()},
 		{"member rm", []string{"workspace", "member", "rm", "workspace-alpha", "aurora"}},
 		{"cap set", []string{"workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50"}},
+		// The owner's shared list is the fourth thing this family writes, and
+		// it is the one entry below the fixture already carries: unshare takes
+		// it out and share puts a different credential in, so each has a diff.
+		{"share", workspaceShareArgsNoYes()},
+		{"unshare", []string{"workspace", "unshare", "marker-model-key", "--workspace", "workspace-alpha"}},
 	} {
 		out, _, err := execute(t, tc.args...)
 		if err == nil {
@@ -966,15 +971,17 @@ func TestMemberAddRefusesAWorkspaceThisMachineDoesNotHold(t *testing.T) {
 	}
 }
 
-// TestWorkspaceKeysAreNeverPublished: the membership, the pin, the member table
-// and the cap are this machine's own. The shared config is the file any
-// launcher with objectAdmin on the runs bucket can write, and a launcher who
-// could write the membership key would be choosing which workspace reaches this
-// project's runs, and one who could write the pin would be aiming this
-// project's exchange (spec §2's rule 1). So the publisher drops all four
-// (localcfg.Config.Shared) and the reader refuses them.
+// TestWorkspaceKeysAreNeverPublished: the membership, the pin, the member table,
+// the cap and the owner's shared list are this machine's own. The shared config
+// is the file any launcher with objectAdmin on the runs bucket can write, and a
+// launcher who could write the membership key would be choosing which workspace
+// reaches this project's runs, one who could write the pin would be aiming this
+// project's exchange, and one who could write the shared list would be handing
+// this project's credentials to whoever it names (spec §2's rule 1, D1298). So
+// the publisher drops all five (localcfg.Config.Shared) and the reader refuses
+// them.
 func TestWorkspaceKeysAreNeverPublished(t *testing.T) {
-	for _, key := range []string{"workspace", "workspace_pin", "workspace_members", "workspace_cap"} {
+	for _, key := range []string{"workspace", "workspace_pin", "workspace_members", "workspace_cap", "workspace_shared"} {
 		if !slices.Contains(sharedForbidden, key) {
 			t.Errorf("sharedForbidden does not name %s, so a published membership would be read", key)
 		}

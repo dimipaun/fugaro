@@ -1281,7 +1281,7 @@
         },
         "local.version": {
           "$comment": "localcfg.ConfigVersion",
-          "default": "2"
+          "default": "3"
         },
         "log_view": {
           "default": "unset = the project's default logs"
