@@ -48,7 +48,11 @@
 // builds and nothing else, and rule 10 is the absence of a timer, a file, a
 // store or an array in this module that could hold a turn past the one it
 // belongs to. A design that could only express these as promises would be a
-// design that had not understood them.
+// design that had not understood them. The one thing this module keeps between
+// turns is which direction has a call going out **now** -- a record about the
+// call and not the turn, cleared the moment the call is over -- because §4.2's
+// badge is honest about the audio leaving, and the module that starts the call
+// is the only thing that knows.
 //
 // **The residual, stated honestly, because the app cannot do better.** Nothing
 // here can classify an utterance before it has been transcribed, and on a device
