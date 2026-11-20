@@ -382,8 +382,20 @@ run "a redirect is a failed call, not a call to a host nothing checked" \
   "        redirect: 'follow'," \
   "$HOP" "$HOP_SUITE"
 run "an oversized answer is refused before it is read" \
-  "    if (claimed(response)) return refuse(HOP_CODES.BAD_ANSWER, 'answer');" \
-  "    if (false) return refuse(HOP_CODES.BAD_ANSWER, 'answer');" \
+  "    if (claimed(response, max)) return { ok: false };" \
+  "    if (false) return { ok: false };" \
+  "$HOP" "$HOP_SUITE"
+# The claim is a claim: a chunked answer makes none, and a body may make a false
+# one. These two are the bound applied to the bytes as they arrive and to the
+# ones that were read in one piece -- the halves a `Content-Length` check alone
+# leaves open.
+run "an answer that claimed nothing is held by the count of what was read" \
+  "      return bytes.byteLength > max ? { ok: false } : { ok: true, bytes };" \
+  "      return { ok: true, bytes };" \
+  "$HOP" "$HOP_SUITE"
+run "and a body still arriving is abandoned the moment it passes the bound" \
+  "        if (size > max) {" \
+  "        if (false) {" \
   "$HOP" "$HOP_SUITE"
 run "an engine name is checked before it can reach the URL" \
   "    if (typeof engine !== 'string' || !ENGINE_NAME.test(engine)) return refuse(HOP_CODES.BAD_ANSWER, 'engine');" \

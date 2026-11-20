@@ -42,6 +42,44 @@ function response({ status = 200, body = '', contentType = 'application/json', c
   };
 }
 
+/**
+ * A response whose body arrives in chunks, one pulled per `read()`.
+ *
+ * A part is either the bytes themselves or a length, allocated when that chunk
+ * is pulled -- an answer over the bound does not have to be held whole in the
+ * test to be tested as one. There is deliberately **no `arrayBuffer` and no
+ * `text`** on it: a client that buffered the body instead of reading it would
+ * throw here rather than bound it, which is the difference under test.
+ */
+function streaming({ status = 200, parts = [], contentType = 'application/json', claims = {} } = {}) {
+  const headers = new Map([['content-type', contentType], ...Object.entries(claims)]);
+  const seen = { pulled: [], cancels: 0 };
+  return {
+    seen,
+    status,
+    headers: { get: (name) => headers.get(name.toLowerCase()) ?? null },
+    body: {
+      getReader() {
+        let at = 0;
+        let over = false;
+        return {
+          async read() {
+            if (over || at >= parts.length) return { done: true, value: undefined };
+            const part = parts[at++];
+            const value = typeof part === 'number' ? new Uint8Array(part) : part;
+            seen.pulled.push(value.byteLength);
+            return { done: false, value };
+          },
+          async cancel() {
+            over = true;
+            seen.cancels += 1;
+          },
+        };
+      },
+    },
+  };
+}
+
 /** A transport that answers `answers` in order and counts its calls. */
 function transport(...answers) {
   const calls = [];
@@ -263,6 +301,96 @@ test('the answer is handed back as it arrived, bounded', async () => {
   // hold an answer it never asked for.
   const huge = await hop.transcribe({ project: PROJECT, engine: ENGINE, audio: AUDIO, contentType: 'audio/wav' });
   assert.equal(huge.code, HOP_CODES.BAD_ANSWER);
+});
+
+test('a streamed answer is read as it arrives, and never buffered whole', async () => {
+  // The response has no `arrayBuffer` and no `text`: the only way this answer
+  // can come back is chunk by chunk, which is what a bound that bounds anything
+  // has to be applied to.
+  const encoder = new TextEncoder();
+  const answer = streaming({ parts: [encoder.encode('{"text":'), encoder.encode('"hello"}')] });
+  const hop = client(transport(answer));
+
+  const said = await hop.transcribe({ project: PROJECT, engine: ENGINE, audio: AUDIO, contentType: 'audio/wav' });
+  assert.equal(said.ok, true);
+  assert.equal(said.contentType, 'application/json');
+  assert.equal(new TextDecoder().decode(said.body), '{"text":"hello"}');
+  assert.deepEqual(answer.seen.pulled, [8, 8], 'both chunks, and the body read once');
+});
+
+test('a streamed answer over the bound is abandoned while it is still arriving', async () => {
+  // Two chunks are already past `MAX_ANSWER_BYTES`, and the third and fourth
+  // are there to be pulled if the client kept reading. The bound is the count
+  // taken while the body arrives: a count after `arrayBuffer()` would be a
+  // report on an answer this phone is already holding.
+  const HALF = (MAX_ANSWER_BYTES >> 1) + 1;
+  const answer = streaming({ parts: [HALF, HALF, HALF, HALF] });
+  const hop = client(transport(answer));
+
+  const huge = await hop.transcribe({ project: PROJECT, engine: ENGINE, audio: AUDIO, contentType: 'audio/wav' });
+  assert.equal(huge.ok, false);
+  assert.equal(huge.code, HOP_CODES.BAD_ANSWER);
+  assert.deepEqual(answer.seen.pulled, [HALF, HALF], 'the rest of the body was never pulled');
+  assert.equal(answer.seen.cancels, 1, 'and the body was let go of rather than drained');
+});
+
+test('an answer that claimed nothing is counted after the read, and that count refuses it', async () => {
+  // The half no `Content-Length` can cover: a body that made no claim at all.
+  // There is no stream to abandon here, so the count taken after the one read
+  // is the only thing between this phone and an answer of any size -- and it is
+  // the half a claim-only check leaves open.
+  const heavy = {
+    ...response({ status: 200 }),
+    arrayBuffer: async () => new ArrayBuffer(MAX_ANSWER_BYTES + 1),
+  };
+  const hop = client(transport(heavy));
+  const huge = await hop.transcribe({ project: PROJECT, engine: ENGINE, audio: AUDIO, contentType: 'audio/wav' });
+  assert.equal(huge.ok, false);
+  assert.equal(huge.code, HOP_CODES.BAD_ANSWER);
+});
+
+test('a refusal body is held to the bound too, and a streamed one still names its reason', async () => {
+  // `refusedBy` reads the refusal's own body to find the wire reason, through
+  // the same reader: within the bound the reason is adopted --
+  const named = streaming({ status: 503, parts: [new TextEncoder().encode('{"error":"force_local"}')] });
+  const told = await client(transport(named)).transcribe({
+    project: PROJECT,
+    engine: ENGINE,
+    audio: AUDIO,
+    contentType: 'audio/wav',
+  });
+  assert.equal(told.code, HOP_CODES.REFUSED);
+  assert.equal(told.detail, HOP_REASON.FORCE_LOCAL);
+
+  // -- a streamed body over the bound is abandoned without being decoded, and a
+  // reason this client could not read is no reason at all (§4.5).
+  const HALF = (MAX_ANSWER_BYTES >> 1) + 1;
+  const streamed = streaming({ status: 503, parts: [HALF, HALF, HALF] });
+  const abandoned = await client(transport(streamed)).transcribe({
+    project: PROJECT,
+    engine: ENGINE,
+    audio: AUDIO,
+    contentType: 'audio/wav',
+  });
+  assert.equal(abandoned.code, HOP_CODES.REFUSED);
+  assert.equal(abandoned.detail, null);
+  assert.deepEqual(streamed.seen.pulled, [HALF, HALF]);
+  assert.equal(streamed.seen.cancels, 1);
+
+  // And the same body with no stream at all: counted after the read, refused,
+  // and again no reason.
+  const claimedNothing = {
+    ...response({ status: 503 }),
+    arrayBuffer: async () => new ArrayBuffer(MAX_ANSWER_BYTES + 1),
+  };
+  const counted = await client(transport(claimedNothing)).transcribe({
+    project: PROJECT,
+    engine: ENGINE,
+    audio: AUDIO,
+    contentType: 'audio/wav',
+  });
+  assert.equal(counted.code, HOP_CODES.REFUSED);
+  assert.equal(counted.detail, null);
 });
 
 test('the ID token is read per call, and an unusable one is not sent', async () => {

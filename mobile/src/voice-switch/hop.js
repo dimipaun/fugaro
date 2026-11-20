@@ -157,7 +157,10 @@ const REASONS = Object.freeze(Object.values(HOP_REASON));
  * turn's text and for a synthesised sentence, and it is a bound rather than a
  * measurement -- what it stops is this app holding an answer it never asked
  * for. A `Content-Length` over it is refused **before** the body is read, and
- * the bytes that did arrive are counted again, because the header is a claim.
+ * the count is kept **while the body arrives**, chunk by chunk, because the
+ * header is a claim and a chunked answer makes none: a bound applied after
+ * `arrayBuffer()` has resolved is a report on a body this phone is already
+ * holding, which is the thing it exists to prevent.
  */
 export const MAX_ANSWER_BYTES = 4 << 20;
 
@@ -322,33 +325,102 @@ export function createVoiceHop({ baseUrl, hosts = DEFAULT_HOST_ALLOW_LIST, fetch
   }
 
   /** A `Content-Length` claim over the bound, refused before the body is read. */
-  function claimed(response) {
+  function claimed(response, max) {
     const headers = response.headers;
     if (headers === null || typeof headers !== 'object' || typeof headers.get !== 'function') return false;
     const value = Number(headers.get('content-length'));
-    return Number.isFinite(value) && value > MAX_ANSWER_BYTES;
+    return Number.isFinite(value) && value > max;
+  }
+
+  /** The response's own readable body, where the transport offers one. */
+  function readerFor(response) {
+    const body = response.body;
+    if (body === null || typeof body !== 'object' || typeof body.getReader !== 'function') return null;
+    try {
+      return body.getReader();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The body's bytes, held to `max` **while they arrive**.
+   *
+   * A count taken after `arrayBuffer()` has resolved is a report rather than a
+   * bound: by then the whole body is already in this phone's memory, which is
+   * the one thing the bound exists to prevent. And `Content-Length` is a claim
+   * -- a chunked answer makes none, and a body may make a false one -- so where
+   * the transport hands back a readable body the chunks are read one at a time
+   * and the reader is **cancelled** the moment the running total passes `max`:
+   * nothing further is pulled, and the chunks in hand are dropped. A response
+   * with no readable body (a plain object, and what a transport that predates
+   * streams answers with) is read in one piece and counted after, which is the
+   * same answer one allocation later.
+   *
+   * @returns {Promise<{ok: true, bytes: Uint8Array} | {ok: false}>}
+   */
+  async function readBounded(response, max) {
+    if (claimed(response, max)) return { ok: false };
+    const reader = readerFor(response);
+    if (reader === null) {
+      let buffer;
+      try {
+        buffer = await response.arrayBuffer();
+      } catch {
+        return { ok: false };
+      }
+      const bytes = new Uint8Array(buffer);
+      return bytes.byteLength > max ? { ok: false } : { ok: true, bytes };
+    }
+    const chunks = [];
+    let size = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+        size += chunk.byteLength;
+        if (size > max) {
+          await cancel(reader);
+          return { ok: false };
+        }
+        chunks.push(chunk);
+      }
+    } catch {
+      await cancel(reader);
+      return { ok: false };
+    }
+    const bytes = new Uint8Array(size);
+    let at = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, at);
+      at += chunk.byteLength;
+    }
+    return { ok: true, bytes };
+  }
+
+  /** Let go of a body this client has stopped reading. */
+  async function cancel(reader) {
+    try {
+      await reader.cancel();
+    } catch {
+      // A reader that will not cancel is a body already abandoned: the answer is
+      // a refusal either way, and what a cancel rejects with is not this tree's.
+    }
   }
 
   /** The answer's bytes, held to `MAX_ANSWER_BYTES` on the way in. */
   async function readBytes(response) {
-    if (claimed(response)) return refuse(HOP_CODES.BAD_ANSWER, 'answer');
-    let buffer;
-    try {
-      buffer = await response.arrayBuffer();
-    } catch {
-      return refuse(HOP_CODES.BAD_ANSWER, 'answer');
-    }
-    const bytes = new Uint8Array(buffer);
-    if (bytes.byteLength > MAX_ANSWER_BYTES) return refuse(HOP_CODES.BAD_ANSWER, 'answer');
-    return Object.freeze({ ok: true, body: bytes });
+    const bounded = await readBounded(response, MAX_ANSWER_BYTES);
+    if (!bounded.ok) return refuse(HOP_CODES.BAD_ANSWER, 'answer');
+    return Object.freeze({ ok: true, body: bounded.bytes });
   }
 
-  /** The answer's text, held to `max` bytes. */
+  /** The answer's text, held to `max` bytes. It throws, and its caller's `catch` is the answer. */
   async function readText(response, max) {
-    if (claimed(response)) throw new RangeError('the answer is over this client’s bound');
-    const text = await response.text();
-    if (typeof text !== 'string' || text.length > max) throw new RangeError('the answer is over this client’s bound');
-    return text;
+    const bounded = await readBounded(response, max);
+    if (!bounded.ok) throw new RangeError('the answer is over this client’s bound');
+    return new TextDecoder().decode(bounded.bytes);
   }
 
   return Object.freeze({

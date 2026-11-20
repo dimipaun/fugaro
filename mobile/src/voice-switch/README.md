@@ -212,7 +212,7 @@ will stop it is here, and `switch.test.js` is where it is proved.
 ## The mutation proof
 
 ```sh
-mobile/src/voice-switch/mutation-proof.sh    # 64 guards, one planted bug each
+mobile/src/voice-switch/mutation-proof.sh    # 66 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
@@ -223,7 +223,8 @@ name), `settings.js` with `settings.test.js` (the default, the key that cannot
 be composed, the field set, and the round-trip), `indicator.js` with
 `indicator.test.js` (`send`, the two words about the badge, and the fail-closed
 draw), `hop.js` with `hop.test.js` (the allow-list, the token, the ambient
-credential, the redirect, the bound, the engine name, an unknown reason, the
+credential, the redirect, the bound on the claimed size and on the body as it
+arrives, the engine name, an unknown reason, the
 status-failure table and the status answer's shape -- the badge's input and
 nothing beside it) and `egress.js` with `egress.test.js` (§5's rules, one
 mutation each -- including the two sentinels that are `null` and never
