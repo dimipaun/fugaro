@@ -78,8 +78,14 @@ func (a *scriptedAgent) Run(ctx context.Context, req agent.Request) (agent.Resul
 }
 
 type harness struct {
-	files     map[string]string
-	deps      runner.Deps
+	files map[string]string
+	deps  runner.Deps
+	// budget is the fake budget database this run's job carries: the address
+	// and the key its environment names, the harness's own unless a test asked
+	// for none (noBudget). Deps.Backend stays zero, and deliberately: that is
+	// what a launcher parses out of the environment, and it brings the
+	// launcher's token and the runs bucket with it — see budgetRun.
+	budget    *testutil.Budget
 	store     *runstore.Store
 	bucket    *blob.Bucket
 	provider  *fake.Provider
@@ -215,11 +221,21 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 		},
 		store: store, bucket: bucket, provider: p, agent: a, remote: remote, failsFile: failsFile,
 	}
+	h.budget = testutil.NewBudget(t)
+	h.deps.Env = append(h.deps.Env, h.budget.Env()...)
 	// Every harness starts its sidecar through the fake, so no test spawns a
 	// real process; a test that never turns compression on never calls it.
 	h.deps.StartHeadroom = h.startFakeSidecar
 	a.before = h.beforeStage
 	return h
+}
+
+// noBudget asks the harness for a run whose job carries no budget database at
+// all: the state this work refuses a run for (a run whose job names no
+// database address has no policy to read and no session to open).
+func (h *harness) noBudget() {
+	h.budget = testutil.NoBudget()
+	h.deps.Env = filterEnv(filterEnv(h.deps.Env, runner.RTDBURLEnv), runner.FirebaseAPIKeyEnv)
 }
 
 // setTask replaces the task text the run bootstraps from: the bootstrap's own

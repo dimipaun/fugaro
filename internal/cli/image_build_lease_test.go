@@ -59,8 +59,11 @@ func buildBudgetWorld(t *testing.T, f *cloudFixture) *gcpfake.RTDB {
 	if f.db != nil {
 		return f.db
 	}
-	db := gcpfake.NewRTDB(t)
-	f.appendConfig(t, budgetBlock(db))
+	if f.budget == nil {
+		t.Fatal("buildBudgetWorld needs a fixture whose installation has a budget database (newCloudFixture)")
+	}
+	db := f.budget.DB
+	f.rewriteConfig(t, f.budget.ConfigBlock(), budgetBlock(db))
 	adoptBudgetFake(db)
 	buildBudgetCaps(db)
 	stubBuildPricer(t)

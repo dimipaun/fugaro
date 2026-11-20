@@ -234,7 +234,8 @@ func TestWatchWrongProjectDatabase(t *testing.T) {
 }
 
 func TestWatchRefusesWithoutFirebaseConfigUsesDegraded(t *testing.T) {
-	newCloudFixture(t) // no budget block
+	f := newCloudFixture(t)
+	f.noBudget(t) // no budget block: the degraded view
 	out, errOut, err := execute(t, "watch", "--once")
 	if err != nil {
 		t.Fatal(err)

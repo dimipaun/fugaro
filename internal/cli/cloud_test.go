@@ -55,6 +55,11 @@ type cloudFixture struct {
 	// installation at (buildBudgetWorld): nil for a rig that only reads, and
 	// the fake a test changes a cap or a counter on afterwards.
 	db *gcpfake.RTDB
+	// budget is the fake budget database this installation has, which every
+	// harness here gives one unless the test asked for none (noBudget): its
+	// address is in the config, and its database is the one buildBudgetWorld
+	// leases against.
+	budget *testutil.Budget
 }
 
 // newCloudFixture writes a local config whose endpoints point at the Run and
@@ -70,8 +75,16 @@ func newCloudFixture(t *testing.T, extraEndpoints ...string) *cloudFixture {
 		t.Fatal(err)
 	}
 	f.bucket = "file://" + runs
+	// The installation has a budget database, as every installation does: the
+	// harness's own fake, adopted (the project name and the mark every writer
+	// asks for), named in the config with no mode — the block says the
+	// installation has one, never how a run is accounted for, which is the
+	// job's mode and the project's published policy. A test that means the
+	// installation of a release that never had one asks for none (noBudget).
+	f.budget = testutil.NewBudget(t)
+	adoptBudgetFake(f.budget.DB)
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\nbucket_url: " + f.bucket +
-		"\nuser: someone@example.com\nmax_parallel: 2\n" +
+		"\nuser: someone@example.com\nmax_parallel: 2\n" + f.budget.ConfigBlock() +
 		"endpoints: { run: " + f.run.URL + "/, logging: " + f.logging.URL + "/, " + extra(extraEndpoints) + "no_auth: true }\n" +
 		"repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
 	// The project config is aurora's, in a config directory of the test's
@@ -138,9 +151,80 @@ func isolateProjects(t *testing.T, dir string) string {
 	return filepath.Join(projects, "aurora.yaml")
 }
 
-// appendConfig adds top-level YAML (such as registry: …) to the local config.
+// rewriteConfig replaces old with new in the local config, once: the harness's
+// own budget block is one line a fixture's setup has to be able to take back
+// out (noBudget) or to build a world on (buildBudgetWorld).
+func (f *cloudFixture) rewriteConfig(t *testing.T, old, replacement string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), old) {
+		t.Fatalf("the fixture's config does not carry %q:\n%s", old, data)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), old, replacement, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// setBudgetBlock makes the local config at path carry block as its budget
+// block, replacing the one it has — the harness's default, or a world's — and
+// appending it to a config that carries none. A fixture that writes the config
+// file itself says what its database is with this rather than by appending a
+// second budget key, which localcfg's strict decode refuses.
+func setBudgetBlock(t *testing.T, path, block string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(data), "\n")
+	out := make([]string, 0, len(lines)+1)
+	replaced := false
+	for _, l := range lines {
+		if !replaced && strings.HasPrefix(l, "budget:") {
+			out = append(out, strings.TrimRight(block, "\n"))
+			replaced = true
+			continue
+		}
+		out = append(out, l)
+	}
+	if !replaced {
+		out = append(out, strings.TrimRight(block, "\n"))
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// noBudget takes the harness's budget database back out of a fixture: what is
+// left is the installation of a release that never created one, whose config
+// names no database (localcfg loads that as budget == nil). A test that means
+// that world asks for it here rather than by leaving the block out, because
+// the harness gives every fixture one. The fake itself stays up, so a test can
+// still read it and assert that nothing wrote into it.
+func (f *cloudFixture) noBudget(t *testing.T) {
+	t.Helper()
+	if f.budget == nil {
+		t.Fatal("noBudget needs a fixture whose installation has a budget database (newCloudFixture)")
+	}
+	f.rewriteConfig(t, f.budget.ConfigBlock(), "")
+	f.budget = nil
+}
+
+// appendConfig adds top-level YAML (such as registry: …) to the local config. A
+// test that appends a budget block of its own means to replace the harness's
+// default one: the two cannot both be in the file (localcfg decodes strictly,
+// so a second budget key is an error, and the block a test appends is the world
+// it means), so the harness's own line goes first.
 func (f *cloudFixture) appendConfig(t *testing.T, yaml string) {
 	t.Helper()
+	if f.budget != nil && (strings.HasPrefix(yaml, "budget:") || strings.Contains(yaml, "\nbudget:")) {
+		f.rewriteConfig(t, f.budget.ConfigBlock(), "")
+		f.budget = nil
+	}
 	path := os.Getenv("FUGARO_CONFIG")
 	data, err := os.ReadFile(path)
 	if err != nil {

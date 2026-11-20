@@ -1,4 +1,4 @@
-package testutil
+package testutil_test
 
 import (
 	"encoding/json"
@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // TestTheHarnessGivesARunABudgetDatabase: what NewBudget answers is a database
@@ -18,7 +19,7 @@ import (
 // installation carries. The address is the fake's, so a test that seeds a node
 // and the run that opens a session against it are the same database.
 func TestTheHarnessGivesARunABudgetDatabase(t *testing.T) {
-	b := NewBudget(t)
+	b := testutil.NewBudget(t)
 	if b.URL() == "" {
 		t.Fatal("the harness's database has no address")
 	}
@@ -44,13 +45,13 @@ func TestTheHarnessGivesARunABudgetDatabase(t *testing.T) {
 	// reads a project with. It names the database and nothing about how a run
 	// is accounted for, which is what every harness here leans on: the block
 	// changes what a mode-unset installation does at no test's merge.
-	cfg, err := localcfg.Parse([]byte("version: 2\nname: aurora\ngcp_project: " + b.Project + "\n" +
+	cfg, err := localcfg.Parse([]byte("version: 2\nname: aurora\ngcp_project: " + budgetProject + "\n" +
 		"region: us-east5\nruns_bucket: unused-bucket\nbucket_url: 'file://" + t.TempDir() + "'\n" +
 		"endpoints: { no_auth: true }\n" + b.ConfigBlock()))
 	if err != nil {
 		t.Fatalf("the config block the harness writes does not load: %v", err)
 	}
-	if cfg.Budget == nil || cfg.Budget.RTDBURL != b.URL() || cfg.Budget.FirebaseProject != b.Project {
+	if cfg.Budget == nil || cfg.Budget.RTDBURL != b.URL() || cfg.Budget.FirebaseAPIKey != b.APIKey {
 		t.Fatalf("the config holds %+v, want the database at %s", cfg.Budget, b.URL())
 	}
 }
@@ -60,7 +61,7 @@ func TestTheHarnessGivesARunABudgetDatabase(t *testing.T) {
 // this work refuses a run, a launch and an update for. A null budget answers
 // nothing, and a harness that appends its environment blindly adds nothing.
 func TestTheHarnessCanAskForNone(t *testing.T) {
-	b := NoBudget()
+	b := testutil.NoBudget()
 	if b.URL() != "" || b.Env() != nil || b.ConfigBlock() != "" {
 		t.Fatalf("a null budget answered %q, %v, %q", b.URL(), b.Env(), b.ConfigBlock())
 	}
@@ -90,17 +91,17 @@ func TestTheFakeProjectAnswersAPermissionTest(t *testing.T) {
 	const get = "resourcemanager.projects.get"
 	const setIam = "resourcemanager.projects.setIamPolicy"
 	f := gcpfake.NewCRM(t)
-	f.AddProject(BudgetProject, 1234)
-	f.SetHeldPermissions(BudgetProject, get)
+	f.AddProject(budgetProject, 1234)
+	f.SetHeldPermissions(budgetProject, get)
 
 	asked := []string{get, setIam}
-	if got := testPermissions(t, f, BudgetProject, asked); len(got) != 1 || got[0] != get {
+	if got := testPermissions(t, f, budgetProject, asked); len(got) != 1 || got[0] != get {
 		t.Fatalf("the fake answered %v for %v, want just %s", got, asked, get)
 	}
 	// A caller that holds none of them is answered an empty list, not a
 	// refusal: the two mean different things, and an update that read one as
 	// the other would create a database for a caller that cannot.
-	if got := testPermissions(t, f, BudgetProject, []string{setIam}); len(got) != 0 {
+	if got := testPermissions(t, f, budgetProject, []string{setIam}); len(got) != 0 {
 		t.Fatalf("the fake answered %v for a permission the caller does not hold, want none", got)
 	}
 	// A project the caller cannot read is refused, as the fake's other IAM
@@ -157,6 +158,10 @@ func testPermissionsCall(t *testing.T, f *gcpfake.CRM, project string, asked []s
 
 // quoted is names as a JSON array's contents: the permission IDs these tests
 // ask about are plain, so nothing here needs an encoder.
+// budgetProject is the GCP project these tests' fixtures live in, the one
+// internal/cli's own fixtures name.
+const budgetProject = "proj-1234"
+
 func quoted(names []string) string {
 	q := make([]string, len(names))
 	for i, n := range names {

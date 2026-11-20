@@ -4,7 +4,16 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
-	"github.com/dimipaun/fugaro/internal/runner"
+)
+
+// The job environment variables that name a run's budget backend. They are
+// internal/runner's own (its RTDBURLEnv and FirebaseAPIKeyEnv), respelled: this
+// package is imported by that one's tests, internal ones among them, so it
+// cannot import it back — and this package's own test pins the two spellings to
+// those constants, so a rename fails there rather than in a harness.
+const (
+	rtdbURLEnv        = "FUGARO_RTDB_URL"
+	firebaseAPIKeyEnv = "FUGARO_FIREBASE_API_KEY"
 )
 
 // Budget is a fake budget database: the hermetic stand-in for the Firebase
@@ -23,32 +32,25 @@ type Budget struct {
 	// DB is the fake database itself, for a test that seeds a node or reads
 	// back what a run wrote.
 	DB *gcpfake.RTDB
-	// Project is the Firebase project the database is in, as a project
-	// config names it (budget.firebase_project): a GCP project ID, which is
-	// also the installation's own project for the fixtures here.
-	Project string
 	// APIKey is the Firebase web API key a client exchanges the run's budget
-	// token with. It is shaped like one (and is not one).
+	// token with. It is shaped like one and is not one, and it is the string
+	// internal/e2e's budget rig has always used.
 	APIKey string
-	// Signer is the service account a launcher has sign a run's budget token
-	// (budget.token_signer).
-	Signer string
 }
 
-// The values a fake budget database is named by. The project and the signer are
-// the fixtures' own installation (aurora, proj-1234 in internal/cli's world),
-// and the key is the string internal/e2e's budget rig has always used: it is a
-// shape, not a credential, and nothing in this repository holds a real one.
+// The database lives in the installation's own GCP project, which every
+// fixture's config already names (gcp_project), so the block says nothing about
+// a Firebase project of its own: a test that means a database *elsewhere* is a
+// test about the stage that picks one, and it says so itself.
 const (
-	BudgetProject = "proj-1234"
-	BudgetAPIKey  = "AIzaSyFakeWebApiKeyForTests000000000"
-	BudgetSigner  = "fugaro-token-signer@proj-1234.iam.gserviceaccount.com"
+	// BudgetAPIKey is the web API key a fake budget database is named by.
+	BudgetAPIKey = "AIzaSyFakeWebApiKeyForTests000000000"
 )
 
 // NewBudget starts a fake budget database, which lives until the test ends.
 func NewBudget(t *testing.T) *Budget {
 	t.Helper()
-	return &Budget{DB: gcpfake.NewRTDB(t), Project: BudgetProject, APIKey: BudgetAPIKey, Signer: BudgetSigner}
+	return &Budget{DB: gcpfake.NewRTDB(t), APIKey: BudgetAPIKey}
 }
 
 // NoBudget is how a test asks a harness for no database at all: a *Budget whose
@@ -70,25 +72,23 @@ func (b *Budget) URL() string {
 // Env is the entries a job's environment carries for this database: the address
 // the run's budget client reaches it at, and the web API key the token exchange
 // is made with. Empty for a null budget, so a harness can append it blindly.
-//
-// The names are the runner's own constants rather than respelled here, so a
-// harness's environment and the run that reads it cannot drift.
 func (b *Budget) Env() []string {
 	if b == nil {
 		return nil
 	}
-	return []string{runner.RTDBURLEnv + "=" + b.DB.URL, runner.FirebaseAPIKeyEnv + "=" + b.APIKey}
+	return []string{rtdbURLEnv + "=" + b.DB.URL, firebaseAPIKeyEnv + "=" + b.APIKey}
 }
 
 // ConfigBlock is the budget block a project config carries for this database,
-// as one line for a fixture's config text: the database, and no mode — the
-// block says the installation has one, never how a run is accounted for. A
-// test that also means a *mode*, a per-run cap or the project the database is
-// in adds that itself, the way internal/cli's buildBudgetWorld does. Empty for
-// a null budget.
+// as one line for a fixture's config text: the database and the key a client
+// exchanges a run's token with, and no mode — the block says the installation
+// has one, never how a run is accounted for, which is the job's mode and the
+// project's published policy. A test that also means a mode, a per-run cap or a
+// signer adds that itself, the way internal/cli's buildBudgetWorld does. Empty
+// for a null budget.
 func (b *Budget) ConfigBlock() string {
 	if b == nil {
 		return ""
 	}
-	return "budget: { firebase_project: " + b.Project + ", firebase_api_key: " + b.APIKey + ", rtdb_url: " + b.DB.URL + " }\n"
+	return "budget: { firebase_api_key: " + b.APIKey + ", rtdb_url: " + b.DB.URL + " }\n"
 }

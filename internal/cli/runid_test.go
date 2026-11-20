@@ -170,6 +170,7 @@ func TestWatchWindowFollowsTheClock(t *testing.T) {
 	degradedAt := func(t *testing.T, mintAt, listAt time.Time) (string, string) {
 		t.Helper()
 		f := newCloudFixture(t)
+		f.noBudget(t)
 		f.run.Project, f.run.Region = "proj-1234", "us-east5"
 		watchNow = func() time.Time { return mintAt }
 		id := runID(time.Minute, "deed")
