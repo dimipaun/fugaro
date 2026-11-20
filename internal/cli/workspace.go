@@ -656,7 +656,7 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 	if declared {
 		current = (*lc.WorkspaceMembers)[project].DatabaseRegion
 	}
-	if o.databaseRegion, err = workspaceMemberRegion(project, o.databaseRegion, current); err != nil {
+	if o.databaseRegion, err = workspaceMemberRegion(project, o.firebaseProject, o.databaseRegion, current); err != nil {
 		return err
 	}
 
@@ -795,9 +795,9 @@ func workspaceJobAccountsPhrase(o *workspaceMemberAddOptions) string {
 
 // workspaceMemberRegion is the region an entry records for a member: the flag's
 // when it is given, and otherwise the region of the member's own Realtime
-// Database, read out of its own config's budget.rtdb_url (F14, D3084). current
-// is the region the entry carries today, "" when the table declares no member
-// yet.
+// Database, read out of its own config's budget.rtdb_url (F14, D3084).
+// firebaseProject is the project this declaration names, and current is the
+// region the entry carries today, "" when the table declares no member yet.
 //
 // A member's installation is never read from the cloud here and never changed:
 // what this reads is the URL the installation already has, so a member that
@@ -813,7 +813,19 @@ func workspaceJobAccountsPhrase(o *workspaceMemberAddOptions) string {
 // is a member's own installation saying nothing about where its database is, and
 // reading that silence as the default location would move a member the table had
 // already placed, which is the same loss as a config this machine cannot read.
-func workspaceMemberRegion(member, flag, current string) (string, error) {
+//
+// The config is found by the member's name, which is a project id, so the file
+// that answers may be another installation's — one that was declared once under
+// the same name and left behind, or a member re-created under a new Firebase
+// project. Such a config's database is not the member's, and the region it names
+// would derive a host that is nobody's database at all (credsvc's
+// workspaceDatabase builds `<firebase_project>-default-rtdb` from the region):
+// the pair is checked before anything is read out of it, both halves of it — the
+// budget's own firebase_project and the label of its rtdb_url — against the
+// project the declaration names, and a mismatch is refused with the flag
+// printed as the fix. That is the pair the history sweeper (checkDatabaseHost)
+// and the rules stage (rulesForeignDatabase) already refuse.
+func workspaceMemberRegion(member, firebaseProject, flag, current string) (string, error) {
 	if flag != "" {
 		return flag, nil
 	}
@@ -824,8 +836,17 @@ func workspaceMemberRegion(member, flag, current string) (string, error) {
 	if err != nil {
 		return "", userErr("member %s's own config could not be read, so where its database is cannot be told from it: %v; fix that file, or pass --database-region to record the region without reading it", member, err)
 	}
-	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+	if lc.Budget == nil {
 		return current, nil
+	}
+	if lc.Budget.FirebaseProject != "" && lc.Budget.FirebaseProject != firebaseProject {
+		return "", userErr("member %s's own config names the Firebase project %s, and this declaration names %s: another Firebase project's config says nothing about where this member's database is, and the region read out of it would point the workspace's service at a host that is not the member's database; pass --database-region with the region that database is in (fugaro workspace member add --help)", member, lc.Budget.FirebaseProject, firebaseProject)
+	}
+	if lc.Budget.RTDBURL == "" {
+		return current, nil
+	}
+	if checkDatabaseHost(lc.Budget.RTDBURL, firebaseProject) != nil {
+		return "", userErr("member %s's own budget.rtdb_url (%s) is not the database of the Firebase project this declaration names (%s): a Firebase project's own database is <project>-default-rtdb, so that URL is another installation's and where it keeps its data is not where this member's database is; pass --database-region with the region the member's database is in (fugaro workspace member add --help)", member, oneLine(lc.Budget.RTDBURL), firebaseProject)
 	}
 	return workspaceDatabaseRegion(member, lc.Budget.RTDBURL)
 }

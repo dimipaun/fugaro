@@ -116,6 +116,58 @@ func TestARegionThatIsNoDatabaseLocationIsRefused(t *testing.T) {
 	workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
 }
 
+// TestAConfigFromAnotherFirebaseProjectIsRefused: the config a region is read
+// out of is found by the member's name, and a project id is a name another
+// installation may already have used — a member declared once under that name
+// and re-created under a new Firebase project, or a workspace's member whose
+// config was never cleaned up. Another Firebase project's database says nothing
+// about where this member's is, and the region read out of one would derive a
+// host that is nobody's database: credsvc's workspaceDatabase builds
+// `<firebase_project>-default-rtdb` out of the project and the region together.
+// So the pair is held to the declaration's project — the budget's own
+// firebase_project, and the label of its rtdb_url — and a mismatch is refused
+// with the flag printed rather than recorded.
+func TestAConfigFromAnotherFirebaseProjectIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name, budget, want string
+	}{
+		{
+			"the config names another Firebase project",
+			"budget: { mode: observe, per_run_usd: 5, firebase_project: borealis-fb, rtdb_url: https://aurora-fb-default-rtdb.europe-west1.firebasedatabase.app }\n",
+			"names the Firebase project borealis-fb",
+		},
+		{
+			"the config's database is another Firebase project's",
+			"budget: { mode: observe, per_run_usd: 5, rtdb_url: https://borealis-fb-default-rtdb.europe-west1.firebasedatabase.app }\n",
+			"is not the database of the Firebase project this declaration names",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, aurora, owner := workspaceOwnerHome(t)
+			workspaceAppend(t, aurora, tc.budget)
+			before := readFileString(t, owner)
+
+			out, _, err := execute(t, workspaceMemberAddArgs()...)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("a config that is not the member's was read to place its database: %v\n%s", err, out)
+			}
+			if !strings.Contains(err.Error(), "--database-region") {
+				t.Errorf("the refusal does not print the fix:\n%v", err)
+			}
+			if after := readFileString(t, owner); after != before {
+				t.Errorf("the refusal wrote the table:\n%s", after)
+			}
+			// The fix the refusal names is one: the same member, declared with
+			// the region its database is in, is linked.
+			out, _, chainErr := execute(t, workspaceMemberAddArgs("--database-region", "europe-west1")...)
+			if got := workspaceOwnerRegion(t, owner); got != "europe-west1" {
+				t.Errorf("database region = %q, want the one the flag gave", got)
+			}
+			workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+		})
+	}
+}
+
 // workspaceLinkedEntry is the table entry an earlier declaration wrote, region
 // and all: the entry a re-declaration is read against when the question is
 // whether it keeps what it records.
