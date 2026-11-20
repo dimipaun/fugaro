@@ -219,6 +219,10 @@ layer.version	label:file
 layer_generation	label:plumbing
 local.gcp_project	label:plumbing
 local.version	label:plumbing
+locations.firestore	label:plumbing
+locations.log_bucket	label:plumbing
+locations.rtdb	label:plumbing
+locations.secrets	label:plumbing
 log_view	label:plumbing
 mailbox.keychain_item	open:no-writer
 mobile_allow.operator.address	open:no-writer
