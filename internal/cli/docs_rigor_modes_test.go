@@ -794,8 +794,8 @@ func TestDocsRigorModesEveryTaskIsComplete(t *testing.T) {
 }
 
 // rigorModesCriticalPin is the one-line pin D19's answer gives a repository that
-// wants today's behaviour after Pro became the default: without it in the
-// documents, the change of behaviour has no stated way back.
+// wants Critical's finding thresholds after Pro became the default: without it
+// in the documents, the change of behaviour has no stated way back.
 const rigorModesCriticalPin = "`rigor.default: critical`"
 
 // rigorModesUnchangedClaims is the restated form of the folder's strongest
@@ -819,12 +819,17 @@ var rigorModesUnchangedClaims = []string{
 // rigorModesWithdrawnClaims are the phrasings the restatement withdrew, and they
 // are pinned absent rather than scoped to Critical: a reader who meets one of
 // them meets a claim this folder has already answered, which is the failure this
-// guard exists for. A later document that wants to quote one back says so in its
-// own words.
+// guard exists for. The pin restores Critical's finding *thresholds* and nothing
+// else, so a sentence promising "today's behaviour" makes the same withdrawn
+// claim in longer words, and is listed here for that reason. A later document
+// that wants to quote one back says so in its own words.
 var rigorModesWithdrawnClaims = []string{
 	"relaxes nothing",
 	"byte-identical to today",
 	"behaves exactly as it does today",
+	"keep today's behaviour",
+	"wants today's behaviour",
+	"restores today's behaviour",
 }
 
 // rigorModesScopeWindow is how close two facts in these documents have to sit to
@@ -926,7 +931,7 @@ func TestDocsRigorModesAnswersSayWhatTheyChange(t *testing.T) {
 		{rigorModesPlan, flat[rigorModesPlan]},
 	} {
 		if !strings.Contains(doc.text, rigorModesCriticalPin) {
-			t.Errorf("%s does not state %q: D19's answer makes Pro the default, and the one-line pin is what a repository keeps today's behaviour with", doc.path, rigorModesCriticalPin)
+			t.Errorf("%s does not state %q: D19's answer makes Pro the default, and the one-line pin is the stated way back to Critical's finding thresholds", doc.path, rigorModesCriticalPin)
 		}
 	}
 
