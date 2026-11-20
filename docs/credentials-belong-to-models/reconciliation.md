@@ -346,9 +346,9 @@ documents task that amends the keys plan and its graph before anything else of t
 `model_grades.<grade>.access` may be written in a repository's file (`config.Scopes`),
 `applyGrade` (`internal/runner/routing.go`) writes it into the coder's and the merge judge's
 access, and `fugaro accounts grade set` writes the repository's file by default
-(`internal/cli/accounts_craft.go`). Consequence: D3062's answer reaches it: a grade's access is
+(`internal/cli/accounts_craft.go`). Consequence: D3062's answer reaches it, **which the owner confirmed on 2026-11-20**: a grade's access is
 the project's alone, the file's key joins the retired list (R3), the question C1 writes takes
-the task's grade, and the command writes the project (CM34). Listed for the owner in O10.
+the task's grade, and the command writes the project (CM34). Confirmed by him on 2026-11-20 (O10).
 
 **F39 — Gap (review round 2): one generated file, three tasks.** `TestCliReferenceIsCurrent`
 (`ee/clidoc`) holds `website/content/cli-reference.md` to the command tree byte for byte, so a
@@ -404,8 +404,8 @@ CM2; CM15 writes the job's entry; CM29 removes the launch and runner fallback an
 checked-out file, so in release 2 a follow-up on a branch that predates the removal commit would
 be rejected, with a diff offered only for the checkout. Consequence: R3 as amended: the key is
 rejected by `validate`, by `update` and at a launch from the default branch; a run of a ref
-whose file still writes it reads it as ignored and says so in its log. Listed for the owner in
-O10.
+whose file still writes it reads it as ignored and says so in its log. **Confirmed by
+the owner on 2026-11-20** (O10).
 
 **F47 — Wrong (review round 3), corrects F33 and R15 (2).** The service is not the only strict
 reader of the per-repository node: `tightenAdmissions` (`internal/cli/project_cmd.go`) decodes
@@ -444,7 +444,7 @@ amendment beside the first answer.
 | **D3060** | What names the credential a stage's calls use, once a repository has no auth mode (F2)? | The craft's access, as built: it names a declared credential or pool, and the run's path follows that credential's type | as recommended. **It reverses model crafts' F24** |
 | **D3061** | What does an access no one wrote mean (F2)? | *First answer, kept:* the declared credentials that reach the craft's model, in the order the project lists them, Vertex last where the project has it on. **Amended by the owner, 2026-11-20:** "I don't like the idea of falling through to vertex, it will result in unexpected charges. User should explicitly specify it like 'vertex' or 'native', wdyt?" So: **the first declared credential that reaches the craft's model, and nothing after it. Vertex is never implied**: a craft goes out on it only where its access, or a pool, names `vertex`. An unset access that no declared credential reaches is refused with the fix. Moving on from one credential to another needs a pool someone wrote. `fugaro update` writes today's answer explicitly, so nothing moves on upgrade | as recommended, then **amended by the owner**; the amendment's two parts were asked as questions and answered as recommended (the name stays `vertex`, not `native`; no move to a paid key without a pool). **It reverses D1624**, where unset meant Vertex |
 | **D3062** | Does a repository's file keep `agent.crafts.<craft>.access` (F8)? | No. Access is written only in the project's config; `fugaro update` moves a file's existing choice there | as recommended |
-| **D3063** | What does the release do with a committed `fugaro.yaml` that still says `agent.auth` (F7)? | It is read, sets nothing and is named: `update`, `validate` and `doctor` say so and offer its removal as a diff. A later release rejects it, behind a gate on the job image's age | as recommended. *Made precise after review round 1 (F26, F27):* "sets nothing" holds from the moment `update` has migrated that repository; until then the key is read once more, by the migration's own rule, so that an unmigrated repository runs as it did (R3) |
+| **D3063** | What does the release do with a committed `fugaro.yaml` that still says `agent.auth` (F7)? | It is read, sets nothing and is named: `update`, `validate` and `doctor` say so and offer its removal as a diff. A later release rejects it, behind a gate on the job image's age | as recommended. *Made precise after review round 1 (F26, F27):* "sets nothing" holds from the moment `update` has migrated that repository; until then the key is read once more, by the migration's own rule, so that an unmigrated repository runs as it did (R3). **Confirmed by the owner, 2026-11-20** |
 | **D3064** | What becomes of `cascade` (F11)? | *First answer, kept:* a pool that `fugaro update` writes, with the same members in the same order, and the crafts pointed at it; the service's ordering, stickiness and wait rule unchanged. **Amended after review round 1 (F24), by the owner's answer of 2026-11-20:** the pool `update` writes is **marked as the cascade's**. It carries the cascade's existing consent, so its subscriptions are served exactly as the cascade serves them today although `subscription_spread` is off, and it is published as `legacy_open`, so it needs no owner. A pool anyone writes afterwards still obeys the switch | as recommended, then **amended after review**: a plain pool would have stopped serving every subscription (F24). The amendment was asked as a question and answered as recommended |
 | **D3065** | Is the operator's consent switch, `routing.claude.via: cascade`, still required (F11)? | No. The service's admission of each credential for each repository is the consent. The switch stays readable for older images | as recommended. **It retires O2** (the owner's ruling of 2026-10-17) |
 | **D3066** | What does "through its gateway and the credentials service" mean for Vertex (F12)? | Vertex is reached through the run's gateway with the job's own identity. The service holds nothing for it and is not called | as recommended |
@@ -638,11 +638,11 @@ No two answers pull against each other.
 - **O9.** The graph cannot say that I1 and the contract change wait for C1: it records a wait on
   a contract only for an edge the pass moved there. I1 waits on every side, so it loses nothing;
   the contract change is launched only if raised, by hand.
-- **O10.** D3064 is amended after review (F24) and D3063 made precise (F26, F27). The owner
-  answered the first as a question. The second changes no option he chose but does change what
-  "sets nothing" means until a repository is migrated, and **awaits his confirmation**. So does
-  F38's reading that D3062 reaches a model grade's access, and F46's that a run of an older
-  branch reads the rejected key as ignored.
+- **O10.** *Closed by the owner on 2026-11-20.* Three readings the reviews added were asked of him
+  as questions, and each was confirmed as recommended: D3063 means the key sets nothing once a
+  repository is migrated and is read by the migration's rule until then (F26, F27); D3062 reaches
+  a model grade's access (F38); and in release 2 a run of an older ref reads the rejected key as
+  ignored (F46). D3064's amendment (F24) he had answered already.
 - **O11.** The keys plan is amended by CM35, a task of this plan and so not approved. Until it
   merges, the keys plan's KS13 names tasks that will not run (F37). If KS6, KS9 or KS10 is
   launched before then, "withdrawn" becomes "superseded and reverted".
@@ -659,9 +659,9 @@ No two answers pull against each other.
 
 ## 7. UNVERIFIED
 
-- **U1.** That the provider's terms let a subscription token be attached by the service for every
-  run that uses it, as they do for the cascade's tier A today. The service already does exactly
-  this for a switched repository; the owner confirms nothing new is implied.
+- **U1.** *Settled by the owner on 2026-11-20:* that every run on a subscription has its token
+  attached by the service is within what he has confirmed of the provider's terms; it is the
+  mechanism already in use.
 - **U2.** *Settled by review rounds 1 and 2 (F29, F33):* `projectpolicy.DecodeRepo` is strict and
   its reader is the service, so the block waits on the deployed service (R15).
 - **U8.** Which launch paths build an execution's environment outside `internal/cli/run.go`

@@ -39,8 +39,8 @@ WS1 (#3280), which edits `internal/credsvc`. The symbols this plan cites were no
 by one at the new commit (O14).
 
 **Owner answers of 2026-11-20:** D3060–D3073, every one as recommended when first asked; two
-were amended afterwards (D3061, D3064) and one made precise by review and awaiting his
-confirmation (D3063, O10), with two readings of his answers the reviews added (F38, F46). **D3061 was then amended
+were amended afterwards (D3061, D3064) and one made precise by review (D3063), with two readings of his answers the reviews added (F38,
+F46). **He confirmed all three, and the provider-terms question U1, on 2026-11-20** (O10). **D3061 was then amended
 by the owner**, in his own words: "I don't like the idea of falling through to vertex, it will
 result in unexpected charges. User should explicitly specify it like 'vertex' or 'native', wdyt?" Vertex is never implied, and an
 unset access is one credential, not a chain. Four answers change an earlier ruling or rule, and
