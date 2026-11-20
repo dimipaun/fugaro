@@ -261,6 +261,16 @@ type wsConfig struct {
 	admitted []string
 	// coverErr, when set, is what the coverage read fails with.
 	coverErr error
+	// noStore is the workspace's forge reader answering NO token store at all: a
+	// nil selector, which the route refuses rather than escapes into a fallback
+	// (D143, D2355).
+	noStore bool
+	// legacyBundle writes the deployment's legacy `bitbucket-token` entry into
+	// the workspace's bundle beside the named one, which is what a test of that
+	// refusal needs: a route that restored the legacy fallback would be served
+	// the legacy value and answer the call, so the bundle has to hold one for
+	// the refusal to be this route's own doing rather than the bundle's.
+	legacyBundle bool
 }
 
 // wsWorld is a workspace-mode service, the fake bitbucket.org its route forwards
@@ -289,7 +299,7 @@ type wsWorld struct {
 func newWSWorld(t *testing.T, cfg wsConfig, mutate ...func(*svc, *Config, *wsScope)) *wsWorld {
 	t.Helper()
 	up := newProxyUpstream(t)
-	doc, values := proxyTokenBundle(t, false, wsTokenName)
+	doc, values := proxyTokenBundle(t, cfg.legacyBundle, wsTokenName)
 	store := &wsTokenStore{name: bbtokens.Name(config.BitbucketTokenKey(wsTokenName))}
 	w := &wsWorld{
 		t:      t,
@@ -314,6 +324,9 @@ func newWSWorld(t *testing.T, cfg wsConfig, mutate ...func(*svc, *Config, *wsSco
 		},
 		kills: &fakeKills{repos: map[string]bool{}},
 		forge: wsForge{store: store, covers: covered, err: cfg.coverErr},
+	}
+	if cfg.noStore {
+		sc.forge = wsForge{covers: covered, err: cfg.coverErr}
 	}
 	s := newSvcWith(t, func(s *svc, c *Config) {
 		// The run identity the scope answers for a run of the repository the
@@ -608,6 +621,47 @@ func TestWorkspaceProxyRefusesACoverageItCannotRead(t *testing.T) {
 	}
 	if line := w.s.onlyAuditLine(t); line["status"] != ErrorStateUnavailable {
 		t.Errorf("the audit line = %v, want the service's own failure recorded", line)
+	}
+}
+
+// TestWorkspaceProxyRefusesAStoreTheScopeDoesNotHold: the store a call is served
+// from is the scope's own answer (ForgeReader.Bitbucket), and a scope that
+// answers none is REFUSED rather than served out of the deployment's legacy
+// entry (D143, D2355). Everything else about the call is admitted — the account
+// is bound to the repository, the owner's credential covers it and the member's
+// policy admits it with the proxy switch on — so what refuses it is the missing
+// store and nothing else.
+//
+// The workspace's bundle holds the legacy `bitbucket-token` as well as the
+// named one (legacyBundle), which is the whole of the fence: a route that kept
+// the fallback this task removes would choose that entry and serve the call, so
+// the refusal below is that fallback's absence and not the bundle's.
+func TestWorkspaceProxyRefusesAStoreTheScopeDoesNotHold(t *testing.T) {
+	w := newWSWorld(t, wsConfig{
+		repo:         wsMemberRepo,
+		accountRepos: []string{wsMemberRepo},
+		covered:      []string{wsMemberRepo},
+		admitted:     []string{wsMemberRepo},
+		noStore:      true,
+		legacyBundle: true,
+	})
+	w.up.answerWith(http.StatusOK, wsFetchAnswer)
+
+	resp, ans := w.callAs(t, http.MethodGet, wsFetchPath(wsMemberRepo), nil, wsMemberRepo)
+	// The token store's own class and not one of the rules': not_admitted,
+	// proxy_off and the coverage's own refusal are all passed here, so a refusal
+	// under any of them would mean this fence was never asked.
+	proxyRefused(t, resp, ans, StatusRequestRefused, ErrorRequestRefused, string(bbtokens.ClassNoToken))
+	if n := w.up.count(); n != 0 {
+		t.Fatalf("bitbucket.org saw %d calls, want none: a call whose credential nothing chose is not made", n)
+	}
+	line := w.s.onlyAuditLine(t)
+	if line["status"] != ErrorRequestRefused || line["repository"] != bitbucketSlug(t, wsMemberRepo) ||
+		auditField(line, "credential") != config.BitbucketSecret || auditField(line, "purpose") != PurposeGit {
+		t.Errorf("the audit line = %v, want one refusal of the run's own repository, under git's purpose and the credential a line names before any token was chosen", line)
+	}
+	if !strings.Contains(w.s.logs.String(), "class="+string(bbtokens.ClassNoToken)) {
+		t.Errorf("the operator's line does not name the class %q: %s", string(bbtokens.ClassNoToken), w.s.logs.String())
 	}
 }
 
