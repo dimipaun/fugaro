@@ -258,9 +258,11 @@ var runsBucketLocation = func(ctx context.Context, lc *localcfg.Config, bucket s
 
 // refuseAnotherRegion refuses a typed region that is not the installation's
 // own, naming the installation's region, saying it cannot move, and printing
-// the fix: the same command with that region (D3088 as amended, R6).
+// the fix: the same command with that region (D3088 as amended, R6). The
+// comparison folds case: the region it is handed may be a bucket's location,
+// which the API spells in upper case.
 func refuseAnotherRegion(o *initOptions, own string) error {
-	if o.cloud.region == "" || o.cloud.region == own {
+	if o.cloud.region == "" || strings.EqualFold(o.cloud.region, own) {
 		return nil
 	}
 	return userErr("--region %s is not the installation's region %s: an installation's region is where it was created and cannot move (the runs bucket and the installation's data are regional). Run the same command with --region %s", o.cloud.region, own, own)
@@ -284,5 +286,8 @@ func checkNewRegion(ctx context.Context, o *initOptions, lc *localcfg.Config) er
 		fmt.Fprintf(o.cloud.errw(), "fugaro: note: --region %s was not checked against the runs bucket gs://%s, whose location could not be read\n", o.cloud.region, bucket)
 		return nil
 	}
-	return refuseAnotherRegion(o, loc)
+	// The bucket answers the location the API's way, "US-EAST5"; a region a
+	// --region and the config's own validation accept is lower case, and the
+	// fix this refusal prints has to be one the flag takes.
+	return refuseAnotherRegion(o, strings.ToLower(loc))
 }

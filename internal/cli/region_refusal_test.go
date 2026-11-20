@@ -113,31 +113,53 @@ func TestPlanOnlyInAnotherRegionIsRefused(t *testing.T) {
 
 // A machine with no project config has no region written down to compare a typed
 // one with, so the runs bucket's own location is the installation's (R6, F12):
-// the bucket was made in that region and cannot move either.
+// the bucket was made in that region and cannot move either. The location is the
+// Cloud Storage API's, which spells it in upper case ("US-EAST5"), while a
+// region a --region and the config take is lower case: the two spellings are one
+// region, and the fix a refusal prints has to be a flag value that is accepted.
 func TestANewMachinesRegionMustBeTheInstallations(t *testing.T) {
-	r := updateRig(t)
-	stubRunsBucketLocation(t, "europe-west1", nil)
-	if err := os.Remove(r.cfg); err != nil {
-		t.Fatal(err)
-	}
-	out, errOut, err := executeStdin(t, "", "update", "--config-only", "--gcp-project", initProject, "--region", "us-east5")
-	got := typedRegionOutput(out, errOut, err)
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("a new machine's update in another region: exit %d, want %d\n%s", ExitCode(err), ExitUserError, got)
-	}
-	for _, want := range []string{
-		"--region us-east5 is not the installation's region europe-west1",
-		"cannot move",
-		"Run the same command with --region europe-west1",
+	for _, tc := range []struct {
+		name, location, typed string
+		own                   string // the region the refusal names, empty when none is due
+	}{
+		{name: "another region", location: "europe-west1", typed: "us-east5", own: "europe-west1"},
+		{name: "another region, as the API spells it", location: "EUROPE-WEST1", typed: "us-east5", own: "europe-west1"},
+		{name: "the installation's own region, as the API spells it", location: "US-EAST5", typed: "us-east5"},
 	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the refusal lacks %q:\n%s", want, got)
-		}
-	}
-	// And nothing was written: the region is refused before the installation's
-	// local config is created, not after.
-	if _, err := os.Stat(r.cfg); err == nil {
-		t.Errorf("the run wrote %s although it refused the region", r.cfg)
+		t.Run(tc.name, func(t *testing.T) {
+			r := updateRig(t)
+			stubRunsBucketLocation(t, tc.location, nil)
+			if err := os.Remove(r.cfg); err != nil {
+				t.Fatal(err)
+			}
+			out, errOut, err := executeStdin(t, "", "update", "--config-only", "--gcp-project", initProject, "--region", tc.typed)
+			got := typedRegionOutput(out, errOut, err)
+			if tc.own == "" {
+				// The installation's own region, just spelled the API's way: not a
+				// refusal, and not a region the person is told to type back.
+				if strings.Contains(got, "is not the installation's region") {
+					t.Fatalf("the installation's own region, spelled %q, was refused:\n%s", tc.location, got)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("a new machine's update in another region: exit %d, want %d\n%s", ExitCode(err), ExitUserError, got)
+			}
+			for _, want := range []string{
+				"--region " + tc.typed + " is not the installation's region " + tc.own,
+				"cannot move",
+				"Run the same command with --region " + tc.own,
+			} {
+				if !strings.Contains(got, want) {
+					t.Errorf("the refusal lacks %q:\n%s", want, got)
+				}
+			}
+			// And nothing was written: the region is refused before the installation's
+			// local config is created, not after.
+			if _, err := os.Stat(r.cfg); err == nil {
+				t.Errorf("the run wrote %s although it refused the region", r.cfg)
+			}
+		})
 	}
 }
 
