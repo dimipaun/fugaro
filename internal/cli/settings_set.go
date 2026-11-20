@@ -338,13 +338,20 @@ var settingsGenericKeys = map[string]bool{
 // carries a varying segment, and settingsWriteLookup reaches a wildcard
 // registry row only for a spelling settingsGenericKeys names, so a prefix is
 // never the reason a map entry resolves.
-// `credentials.` and `clone_urls.` are §4.4's own names for the blocks §5.6's
-// family adds: they are listed now so the generic path does not refuse a name
-// the spec hands it once that family lands.
+//
+// `credentials.` stood here until K1 and is deliberately gone (D2613). §4.4
+// handed this path the name, but the registry's `credentials.*` rows are the
+// published node's spelling of the credentials cascade — `credential_cascade`
+// is what this machine's file calls the same block (F23) — whose owner is the
+// accounts family and whose writer is `fugaro accounts cascade set`. The prefix
+// was the reason a `credentials.` name reached the allowlist's branch at all,
+// and a block the owner writes through a command of its own is not one this
+// path may go on claiming. `clone_urls.` is §4.4's name for a block §5.6's
+// family adds, and it stays until that family lands.
 var settingsGenericPrefixes = []string{
 	"agent.", "git.", "followup.", "governance.", "watch.",
 	"layer.defaults.", "layer.governance.",
-	"credentials.", "clone_urls.",
+	"clone_urls.",
 	// The ladder's own block (E3). It is §4.4's list's successor in shape and
 	// not in origin: the keys are T-E3's, and the generic path is their one
 	// door — which is what puts the owner's own hand (the typed form below) and
@@ -695,7 +702,7 @@ func settingsRefuseRow(key, registry string, row settings.Row) (settings.Row, er
 		if w, ok := settingsRefusalWriter(key); ok {
 			return settings.Row{}, userErr("%s", settingsRefusalNamesTheWriter(key, row, w))
 		}
-		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*), the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account), the pools' subscription switch (subscription_spread) and a repository's workflows.<name>.* and the project layer's profiles.<name>.*, and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
+		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, clone_urls.* and the layer's defaults.*), the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account), the pools' subscription switch (subscription_spread) and a repository's workflows.<name>.* and the project layer's profiles.<name>.*, and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
 	}
 	return row, nil
 }
