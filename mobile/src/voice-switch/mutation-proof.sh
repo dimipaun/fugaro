@@ -409,6 +409,13 @@ run "an unreachable hop is unreachable, and not a failed query" \
     return STATUS_FAILURE.UNREACHABLE;
   }" \
   "$HOP" "$HOP_SUITE"
+# A status answer decorated with this client's own `field` and `detail` is a
+# status answer `shared/voice-switch` refuses, and a refused status is the
+# fail-closed `local -- checking` badge rather than §4.5's revoked-device row.
+run "a status answer is the badge's input and nothing beside it" \
+  "      if (!called.ok) return statusFailed(statusFailure(called));" \
+  "      if (!called.ok) return refuse(statusFailure(called), 'hop', called.detail ?? called.code);" \
+  "$HOP" "$HOP_SUITE"
 
 # ---------------------------------------------------------------------------
 # The ten rules (P5.3.7). Each of these is a rule of §5 turned off in one line:

@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { DEFAULT_HOST_ALLOW_LIST } from '../../../shared/url/index.js';
+import { indicator } from '../../../shared/voice-switch/index.js';
 import { HOP_CODES, HOP_HEADER, HOP_PATHS, HOP_REASON, MAX_ANSWER_BYTES, createVoiceHop } from './hop.js';
 
 const HOST = 'voice.hop.test';
@@ -167,12 +168,16 @@ test('a host that is not on the list is refused, in the same breath', async () =
   assert.equal(answer.detail, 'host-not-allowed');
   assert.equal(port.calls.length, 0);
 
-  // A status query is refused the same way and says the same thing, in the
-  // badge's own vocabulary: the app's answer to "no host is allowed yet" is the
-  // local engine either way (§4.5).
+  // A status query carries the same local answer in the badge's own vocabulary
+  // -- the app's answer to "no host is allowed yet" is the local engine either
+  // way (§4.5) -- and it carries it in **exactly** the two fields a badge's
+  // `status` input has. `shared/url`'s `host-not-allowed`, which the forwarding
+  // routes carry in `detail`, is not one of them: `shared/voice-switch` refuses
+  // a status answer with a field it does not name, and a refused status is the
+  // fail-closed `local -- checking` badge rather than the row the answer drew.
   const asked = await hop.status({ project: PROJECT });
   assert.equal(asked.code, 'unreachable');
-  assert.equal(asked.detail, 'host-not-allowed');
+  assert.deepEqual(Object.keys(asked).sort(), ['code', 'ok']);
   assert.equal(port.calls.length, 0);
 });
 
@@ -293,33 +298,30 @@ test('the ID token is read per call, and an unusable one is not sent', async () 
 test('the status answer is read into the badge’s own input, in its own words', async () => {
   const answers = {
     [`{"project":"${PROJECT}","remote":true,"providers":["deepgram"],"direction":{"stt":true,"tts":false}}`]: {
-      ok: true,
-      status: { ok: true, providers: ['deepgram'], direction: { stt: true, tts: false }, reason: null },
+      ok: true, providers: ['deepgram'], direction: { stt: true, tts: false }, reason: null,
     },
     [`{"project":"${PROJECT}","remote":false,"providers":["x"],"direction":{"stt":true,"tts":true},"reason":"force_local"}`]: {
-      ok: true,
-      status: { ok: true, providers: ['x'], direction: { stt: true, tts: true }, reason: 'force-local' },
+      ok: true, providers: ['x'], direction: { stt: true, tts: true }, reason: 'force-local',
     },
     [`{"project":"${PROJECT}","remote":false,"direction":{"stt":false,"tts":false},"reason":"no_admission"}`]: {
-      ok: true,
-      status: { ok: true, providers: [], direction: { stt: false, tts: false }, reason: 'no-admission' },
+      ok: true, providers: [], direction: { stt: false, tts: false }, reason: 'no-admission',
     },
     // `providers` is `omitempty` on the wire, and absent is the empty list.
     [`{"project":"${PROJECT}","remote":false,"direction":{"stt":false,"tts":false}}`]: {
-      ok: true,
-      status: { ok: true, providers: [], direction: { stt: false, tts: false }, reason: 'no-admission' },
+      ok: true, providers: [], direction: { stt: false, tts: false }, reason: 'no-admission',
     },
   };
 
   for (const [body, wanted] of Object.entries(answers)) {
     const port = transport(response({ status: 200, body }));
     const answer = await client(port).status({ project: PROJECT });
-    assert.equal(answer.ok, true, body);
-    // Exactly the four fields `shared/voice-switch` names: that module refuses a
-    // status answer carrying a field it does not know, and the detail sentence
-    // the wire carries is therefore dropped rather than handed on.
-    assert.deepEqual(answer.status, wanted.status, body);
-    assert.deepEqual(Object.keys(answer.status).sort(), ['direction', 'ok', 'providers', 'reason'], body);
+    // The answer **is** the badge's input, unwrapped: exactly the four fields
+    // `shared/voice-switch` names, because that module refuses a status answer
+    // carrying a field it does not know. The detail sentence the wire carries,
+    // and this client's own reading of the body, are dropped rather than handed
+    // on, and a caller hands this object over as it stands.
+    assert.deepEqual(answer, wanted, body);
+    assert.deepEqual(Object.keys(answer).sort(), ['direction', 'ok', 'providers', 'reason'], body);
   }
 });
 
@@ -342,7 +344,48 @@ test('a status query that did not answer says so in the badge’s four failures'
     const got = await client(port).status({ project: PROJECT });
     assert.equal(got.ok, false, expected);
     assert.equal(got.code, expected, expected);
+    // And that is the whole answer: a `field` or a `detail` here would be a
+    // field `shared/voice-switch` does not know, which is the fail-closed
+    // `local -- checking` badge instead of §4.5's revoked-device or
+    // expired-token row.
+    assert.deepEqual(Object.keys(got).sort(), ['code', 'ok'], expected);
   }
+});
+
+test('a status answer is handed to the badge as it stands, so §4.5’s rows are the rows drawn', async () => {
+  // The proof is not that the answer *looks* like a badge's input but that the
+  // badge reads it: `shared/voice-switch` refuses a status answer carrying a
+  // field it does not name, and a refused status is the fail-closed
+  // `local -- checking` badge -- so an answer this client decorated with its own
+  // `field` or `detail` would cost the owner the sentence §4.5 asks for. Remote
+  // is on and the consent is recorded in every row below, which is what makes
+  // the local answer the *answer's* doing rather than the settings'.
+  const settings = { stt: 'remote', tts: 'local' };
+  const consent = [{ provider: ENGINE, at: 1 }];
+
+  for (const [answer, reason] of [
+    [response({ status: 403, body: JSON.stringify({ error: HOP_REASON.DEVICE_UNKNOWN }) }), 'revoked-device'],
+    [response({ status: 401, body: JSON.stringify({ error: HOP_REASON.TOKEN_UNVERIFIED }) }), 'expired-token'],
+    [new Error('offline'), 'unreachable'],
+  ]) {
+    const asked = await client(transport(answer)).status({ project: PROJECT });
+    const badge = indicator({ direction: 'stt', settings, consent, status: asked });
+    assert.equal(badge.ok, true, reason);
+    assert.equal(badge.reason, reason, reason);
+    assert.equal(badge.state, 'local', reason);
+    assert.equal(badge.engine, 'local', reason);
+  }
+
+  // ... and the same hand-over draws the remote badge when the answer admits the
+  // name: one object, handed over as it stands, on both paths.
+  const port = transport(response({
+    status: 200,
+    body: JSON.stringify({ project: PROJECT, remote: true, providers: [ENGINE], direction: { stt: true, tts: false } }),
+  }));
+  const admitted = await client(port).status({ project: PROJECT });
+  const badge = indicator({ direction: 'stt', settings, consent, status: admitted });
+  assert.equal(badge.ok, true);
+  assert.equal(badge.text, `remote (${ENGINE})`);
 });
 
 test('a client built without a transport, a token or an address is refused where it is built', () => {

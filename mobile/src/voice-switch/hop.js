@@ -355,13 +355,19 @@ export function createVoiceHop({ baseUrl, hosts = DEFAULT_HOST_ALLOW_LIST, fetch
     /**
      * Ask what the project's policy is for this device (§4.4 point 7).
      *
-     * What comes back is **the badge's own input**, not the hop's `StatusAnswer`
-     * field for field: `shared/voice-switch`'s `indicator` takes
-     * `{ ok: true, providers, direction, reason }` with the reason in its own
-     * kebab vocabulary, or `{ ok: false, code }` with one of its four status
-     * failures, and that is what a caller here gets, ready to hand over. The
-     * translation is one table (below) and it lives here because the hop's wire
-     * vocabulary is this client's business and nobody else's.
+     * What comes back is **the badge's own input and nothing else**, so the
+     * answer is handed to `shared/voice-switch`'s `indicator` as its `status`
+     * argument **as it stands**, with no unwrapping and no field to strip:
+     * `{ ok: true, providers, direction, reason }` with the reason in the
+     * badge's own kebab vocabulary, or `{ ok: false, code }` with one of its
+     * four status failures. That second shape is what draws §4.5's rows -- a
+     * revoked device, an expired token -- and it is why this client keeps its
+     * own `field` and `detail` to itself: an answer carrying either is refused
+     * by that module as a field it does not know, and a refused status is the
+     * fail-closed `local -- checking` badge rather than the row the answer was
+     * meant to draw. The translation is one table (below) and it lives here
+     * because the hop's wire vocabulary is this client's business and nobody
+     * else's.
      *
      * The body is read strictly enough that the app cannot mistake one it does
      * not understand for an admission: `project` must be the slug that was asked
@@ -371,8 +377,15 @@ export function createVoiceHop({ baseUrl, hosts = DEFAULT_HOST_ALLOW_LIST, fetch
      * local answer. `providers` is **absent** from the wire when it is empty
      * (`StatusAnswer`'s `omitempty`), which is the empty list and not a defect.
      *
+     * A `project` that is not a slug is the caller's own mistake and not an
+     * answer about the policy: it comes back as this client's own `bad-answer`
+     * refusal, the same one `transcribe` and `speak` give for the same mistake,
+     * and a caller holding one knows it has a bug rather than a badge.
+     *
      * @param {{project: string, signal?: object}} input
-     * @returns {Promise<object>} `{ ok: true, status }` or a refusal
+     * @returns {Promise<object>} `{ ok: true, providers, direction, reason }` or
+     *   `{ ok: false, code }` -- both of them a badge's `status` input as they
+     *   stand -- or this client's refusal for a `project` that is not a slug
      */
     async status({ project, signal } = {}) {
       if (typeof project !== 'string' || project.length === 0) return refuse(HOP_CODES.BAD_ANSWER, 'project');
@@ -383,11 +396,7 @@ export function createVoiceHop({ baseUrl, hosts = DEFAULT_HOST_ALLOW_LIST, fetch
         contentType: 'application/json',
         signal,
       });
-      // The badge's own four words for *why*, and the hop's (or `shared/url`'s)
-      // own word for what happened carried beside it, so a caller holding the
-      // answer can still tell "no host is allowed yet" from "the phone is
-      // offline" without either module's vocabulary being re-spelled here.
-      if (!called.ok) return refuse(statusFailure(called), 'hop', called.detail ?? called.code);
+      if (!called.ok) return statusFailed(statusFailure(called));
       return readStatusAnswer(called.body, project);
     },
 
@@ -496,26 +505,26 @@ async function readStatusAnswer(body, project) {
   try {
     parsed = JSON.parse(new TextDecoder().decode(body));
   } catch {
-    return refuse(STATUS_FAILURE.QUERY_FAILED, 'hop', HOP_CODES.BAD_ANSWER);
+    return statusFailed(STATUS_FAILURE.QUERY_FAILED);
   }
-  if (!isPlainObject(parsed)) return refuse(STATUS_FAILURE.QUERY_FAILED, 'hop', HOP_CODES.BAD_ANSWER);
+  if (!isPlainObject(parsed)) return statusFailed(STATUS_FAILURE.QUERY_FAILED);
   // The echo is checked and not trusted: this is the one field of the answer
   // that says *which* question it answers, and a cached answer read against
   // another project would be a policy answer about somebody else's project.
-  if (parsed.project !== project) return refuse(STATUS_FAILURE.QUERY_FAILED, 'project');
-  if (typeof parsed.remote !== 'boolean') return refuse(STATUS_FAILURE.QUERY_FAILED, 'remote');
+  if (parsed.project !== project) return statusFailed(STATUS_FAILURE.QUERY_FAILED);
+  if (typeof parsed.remote !== 'boolean') return statusFailed(STATUS_FAILURE.QUERY_FAILED);
   // `omitempty`: absent is the empty list, and the two spellings of "this
   // project admits nobody" are one answer (§4.3).
   const providers = parsed.providers === undefined ? [] : parsed.providers;
   if (!Array.isArray(providers) || providers.some((name) => typeof name !== 'string')) {
-    return refuse(STATUS_FAILURE.QUERY_FAILED, 'providers');
+    return statusFailed(STATUS_FAILURE.QUERY_FAILED);
   }
   const direction = parsed.direction;
   if (!isPlainObject(direction) || typeof direction.stt !== 'boolean' || typeof direction.tts !== 'boolean') {
-    return refuse(STATUS_FAILURE.QUERY_FAILED, 'direction');
+    return statusFailed(STATUS_FAILURE.QUERY_FAILED);
   }
   const reason = parsed.reason === undefined || parsed.reason === '' ? null : parsed.reason;
-  if (reason !== null && !REASONS.includes(reason)) return refuse(STATUS_FAILURE.QUERY_FAILED, 'reason');
+  if (reason !== null && !REASONS.includes(reason)) return statusFailed(STATUS_FAILURE.QUERY_FAILED);
 
   // The three project-policy answers, in the badge's own vocabulary. A service
   // that answered `remote: false` while naming no reason is the same answer as
@@ -525,16 +534,30 @@ async function readStatusAnswer(body, project) {
   // that does not come back as an answer.
   let policy = null;
   if (!parsed.remote) {
-    if (reason === HOP_REASON.POLICY_UNREADABLE) return refuse(STATUS_FAILURE.QUERY_FAILED, 'hop');
+    if (reason === HOP_REASON.POLICY_UNREADABLE) return statusFailed(STATUS_FAILURE.QUERY_FAILED);
     policy = reason === HOP_REASON.FORCE_LOCAL ? POLICY_REASON.FORCE_LOCAL : POLICY_REASON.NO_ADMISSION;
   }
   return Object.freeze({
     ok: true,
-    status: Object.freeze({
-      ok: true,
-      providers: Object.freeze([...providers]),
-      direction: Object.freeze({ stt: direction.stt, tts: direction.tts }),
-      reason: policy,
-    }),
+    providers: Object.freeze([...providers]),
+    direction: Object.freeze({ stt: direction.stt, tts: direction.tts }),
+    reason: policy,
   });
+}
+
+/**
+ * A status query that did not answer, in the badge's own failure shape: exactly
+ * `{ ok: false, code }`, one of `shared/voice-switch`'s four status failures.
+ *
+ * **The two fields and nothing beside them is the whole point.** That module
+ * refuses a status answer carrying a field it does not name, and a refused
+ * status is not an error a screen shows -- it is the fail-closed
+ * `local -- checking` badge. A revoked device and an expired token are exactly
+ * the two rows §4.5 asks the app to say out loud, so this client's own word for
+ * what happened (`shared/url`'s `allow-list-empty`, the hop's wire reason, the
+ * member of the answer it could not read) stops at this boundary: carried
+ * beside the answer it would cost the owner the sentence that names the cause.
+ */
+function statusFailed(code) {
+  return Object.freeze({ ok: false, code });
 }
