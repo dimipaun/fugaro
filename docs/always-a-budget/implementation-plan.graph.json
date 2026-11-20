@@ -1,0 +1,621 @@
+{
+  "schema_version": 3,
+  "plan": "docs/always-a-budget/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the mode vocabulary",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/policy/mode.go",
+          "internal/policy/mode_test.go",
+          "docs/always-a-budget/contract-mode.md"
+        ]
+      },
+      "kind": "contract"
+    },
+    {
+      "id": "AB1a",
+      "title": "the run always opens its session",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/spend.go",
+          "internal/runner/policy.go",
+          "internal/runner/budget_session.go",
+          "internal/runner/projectpolicy.go",
+          "internal/runner/budget_always_test.go"
+        ]
+      }
+    },
+    {
+      "id": "AB1b",
+      "title": "the gateway always runs",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/routing.go",
+          "internal/runner/gateway.go",
+          "internal/runner/runner.go",
+          "internal/runner/compression.go",
+          "internal/runner/triage_stage.go",
+          "internal/agent/env.go",
+          "internal/runner/agentenv.go",
+          "internal/runner/gateway_always_test.go"
+        ]
+      }
+    },
+    {
+      "id": "AB2",
+      "title": "off is no longer a mode",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/policy/policy.go",
+          "internal/policy/merge.go",
+          "internal/localcfg/localcfg.go",
+          "internal/config/validate.go",
+          "internal/config/stage_accounts.go",
+          "internal/config/providers.go",
+          "schemas/fugaro.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "AB3",
+      "title": "the CLI's readers of the mode",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/validate.go",
+          "internal/cli/doctor.go",
+          "internal/cli/doctor_brokering.go",
+          "internal/cli/budget.go",
+          "internal/cli/budget_always_cli_test.go"
+        ]
+      }
+    },
+    {
+      "id": "AB4",
+      "title": "the launcher always mints",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/launch_budget.go",
+          "internal/cli/chain_continues.go",
+          "internal/cli/orchestrator_serve.go",
+          "internal/cli/craft.go",
+          "internal/cli/launch_budget_always_test.go"
+        ]
+      }
+    },
+    {
+      "id": "AB5",
+      "title": "the job always names its mode",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/spec.go",
+          "internal/infra/readiness.go",
+          "internal/infra/spec_budget_env_test.go"
+        ]
+      }
+    },
+    {
+      "id": "AB6",
+      "title": "the backend's Terraform is unconditional",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/installation/*.tf",
+          "internal/infra/tfvars.go",
+          "deploy/terraform/terraform_test.go"
+        ]
+      }
+    },
+    {
+      "id": "AB7",
+      "title": "fugaro update creates the database",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_stages.go",
+          "internal/cli/init_firebase.go",
+          "internal/cli/init.go",
+          "internal/cli/init_new_machine.go",
+          "internal/cli/setup.go",
+          "internal/cli/setup_refusals_test.go",
+          "internal/cli/init_firebase_always_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "AB8a",
+      "title": "the published policy is migrated",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/projectpolicy/migrate.go",
+          "internal/projectpolicy/policy.go",
+          "internal/cli/init_policy_migrate.go",
+          "internal/cli/project_cmd.go",
+          "internal/projectpolicy/migrate_off_test.go"
+        ]
+      }
+    },
+    {
+      "id": "AB8b",
+      "title": "the local config, the repository's file and what will stop",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_budget_off.go",
+          "internal/cli/update_budget_off_test.go",
+          "internal/cli/init_fugaroyaml.go",
+          "internal/cli/init_stages.go",
+          "internal/cli/update_in_flight.go",
+          "docs/design/update-in-flight.md",
+          "internal/apply/steps.go"
+        ]
+      }
+    },
+    {
+      "id": "AB9",
+      "title": "Cloud Batch refuses every launch",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/batch/run.go",
+          "internal/cli/doctor_batch.go",
+          "internal/cli/validate_batch.go",
+          "docs/backends.md",
+          "docs/design/budget-token-channel.md"
+        ]
+      }
+    },
+    {
+      "id": "AB10",
+      "title": "the enterprise code",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/ab/admit.go",
+          "ee/coordinator/cli/declare.go"
+        ]
+      }
+    },
+    {
+      "id": "AB11",
+      "title": "the settings registry and the record's schema",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json",
+          "schemas/result.schema.json",
+          "internal/runstore/result_schema_off_test.go"
+        ]
+      }
+    },
+    {
+      "id": "AB12",
+      "title": "the documents and the operator notes",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "README.md",
+          "docs/how-to/budgets.md",
+          "docs/design/m9-budget-and-dashboard.md",
+          "docs/design/v1.md",
+          "docs/multi-model.md",
+          "docs/gcp-live-checklist.md",
+          "docs/releases/*.md"
+        ]
+      }
+    },
+    {
+      "id": "AB13",
+      "title": "the plugin and the website",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/setup/reference/decisions.md",
+          "plugin/skills/setup/SKILL.md",
+          "website/content/security.md",
+          "SECURITY.md"
+        ]
+      }
+    },
+    {
+      "id": "AB14",
+      "title": "the live checks, as scripts",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check790*.sh",
+          "scripts/live-checks/check791*.sh",
+          "scripts/live_checks_test.go",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "AB15",
+      "title": "the switch loses its mode argument",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/readiness.go",
+          "internal/infra/spec.go",
+          "internal/cli/init_credentials.go",
+          "internal/cli/doctor_brokering.go",
+          "internal/infra/readiness_test.go"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "integration",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/policy/policy.go",
+          "internal/config/config.go",
+          "internal/localcfg/localcfg.go",
+          "internal/cli/budget_always_end_to_end_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "R-mode-text",
+      "title": "amend the mode vocabulary: the refusal text",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/policy/mode.go",
+          "docs/always-a-budget/contract-mode.md"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "AB1a",
+      "needs": "C1",
+      "reason": "what a mode string means"
+    },
+    {
+      "task": "AB3",
+      "needs": "C1",
+      "reason": "what a mode string means"
+    },
+    {
+      "task": "AB4",
+      "needs": "C1",
+      "reason": "what a mode string means"
+    },
+    {
+      "task": "AB5",
+      "needs": "C1",
+      "reason": "what a mode string means"
+    },
+    {
+      "task": "AB8a",
+      "needs": "C1",
+      "reason": "what a mode string means"
+    },
+    {
+      "task": "AB8b",
+      "needs": "C1",
+      "reason": "what a mode string means"
+    },
+    {
+      "task": "AB10",
+      "needs": "C1",
+      "reason": "what a mode string means"
+    },
+    {
+      "task": "AB1b",
+      "needs": "AB1a",
+      "reason": "the gateway needs the session"
+    },
+    {
+      "task": "AB2",
+      "needs": "AB7",
+      "reason": "an unset mode may mean observe only once the update builds the database"
+    },
+    {
+      "task": "AB4",
+      "needs": "AB7",
+      "reason": "the refusal's fix must be able to build the database"
+    },
+    {
+      "task": "AB6",
+      "needs": "AB7",
+      "reason": "the resources may be unconditional only once the update builds the database"
+    },
+    {
+      "task": "AB8b",
+      "needs": "AB7",
+      "reason": "both edit init_stages.go"
+    },
+    {
+      "task": "AB11",
+      "needs": "AB1a",
+      "reason": "its test reads the run's default"
+    },
+    {
+      "task": "AB12",
+      "needs": "AB2",
+      "reason": "the statements become true only then"
+    },
+    {
+      "task": "AB12",
+      "needs": "AB14",
+      "reason": "both edit gcp-live-checklist.md"
+    },
+    {
+      "task": "AB13",
+      "needs": "AB7",
+      "reason": "the skill may name only flags the CLI takes"
+    },
+    {
+      "task": "AB15",
+      "needs": "AB5",
+      "reason": "both edit infra/spec.go and readiness.go"
+    },
+    {
+      "task": "AB15",
+      "needs": "AB3",
+      "reason": "both edit doctor_brokering.go"
+    },
+    {
+      "task": "AB15",
+      "needs": "AB1b",
+      "reason": "the switch may ignore the mode only once every run has the gateway"
+    },
+    {
+      "task": "I1",
+      "needs": "C1",
+      "reason": "the contract it rejoins"
+    },
+    {
+      "task": "I1",
+      "needs": "AB2",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "AB1a",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "AB3",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "AB4",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "AB5",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "AB8a",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "AB8b",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "AB10",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "AB1b",
+      "reason": "the end-to-end test needs it"
+    },
+    {
+      "task": "I1",
+      "needs": "AB6",
+      "reason": "the end-to-end test needs it"
+    },
+    {
+      "task": "I1",
+      "needs": "AB7",
+      "reason": "the end-to-end test needs it"
+    },
+    {
+      "task": "I1",
+      "needs": "AB9",
+      "reason": "the end-to-end test needs it"
+    },
+    {
+      "task": "I1",
+      "needs": "AB11",
+      "reason": "the end-to-end test needs it"
+    },
+    {
+      "task": "I1",
+      "needs": "AB15",
+      "reason": "the end-to-end test needs it"
+    },
+    {
+      "task": "R-mode-text",
+      "needs": "C1",
+      "reason": "amends a file C1 creates"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "AB1a",
+        "needs": "AB2"
+      },
+      "integration": "I1",
+      "reason": "it needs to know what a mode string means, not the validation's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "AB3",
+        "needs": "AB2"
+      },
+      "integration": "I1",
+      "reason": "it needs to know what a mode string means, not the validation's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "AB4",
+        "needs": "AB2"
+      },
+      "integration": "I1",
+      "reason": "it needs to know what a mode string means, not the validation's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "AB5",
+        "needs": "AB2"
+      },
+      "integration": "I1",
+      "reason": "it needs to know what a mode string means, not the validation's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "AB8a",
+        "needs": "AB2"
+      },
+      "integration": "I1",
+      "reason": "it needs to know what a mode string means, not the validation's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "AB8b",
+        "needs": "AB2"
+      },
+      "integration": "I1",
+      "reason": "it needs to know what a mode string means, not the validation's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "AB10",
+        "needs": "AB2"
+      },
+      "integration": "I1",
+      "reason": "it needs to know what a mode string means, not the validation's code"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-mode-text",
+      "contract": "C1",
+      "raised_by": "AB7",
+      "reason": "if the one refusal text cannot name the right fix for both a flag and a file",
+      "affects": [
+        "AB2",
+        "AB3",
+        "AB8a"
+      ]
+    }
+  ]
+}
