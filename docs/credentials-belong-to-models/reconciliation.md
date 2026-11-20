@@ -2,12 +2,13 @@
 
 Checked against `origin/main` at `d57d71ddb` on 2026-11-20. **Where this file disagrees with
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
-**D3040–D3053**, all answered by the owner on 2026-11-20, every one as recommended. It carries out
+**D3040–D3053**, all answered by the owner on 2026-11-20, every one as recommended; **D3041 was
+amended by the owner the same day**. It carries out
 **D3007** of [every model key through the credentials service](../keys-through-service/reconciliation.md)
 (the keys plan, merged as #3299) and **D3026** of always a budget (pull request #3302, open, read
 at `8bf13231f` on branch `docs/always-a-budget`), and answers the keys plan's O4 and that plan's
 R12 and O8. It reverses **F24** of [model crafts](../model-crafts/reconciliation.md) ("`agent.auth`
-stays per run and picks the path"), narrows **D1624** (what an unset access means), retires
+stays per run and picks the path"), reverses **D1624** (an unset access no longer means Vertex), retires
 **O2** of the credentials service (the operator's consent switch) and replaces the keys plan's
 tasks **KS6, KS9 and KS10**; each is marked where it bites.
 
@@ -243,7 +244,7 @@ All answered by the owner on 2026-11-20, each as recommended.
 | # | Question | Answer | Mark |
 | --- | --- | --- | --- |
 | **D3040** | What names the credential a stage's calls use, once a repository has no auth mode (F2)? | The craft's access, as built: it names a declared credential or pool, and the run's path follows that credential's type | as recommended. **It reverses model crafts' F24** |
-| **D3041** | What does an access no one wrote mean (F2)? | The declared credentials that reach the craft's model, in the order the project lists them, Vertex last where the project has it on. `fugaro update` writes today's answer explicitly, so nothing moves on upgrade | as recommended. **It narrows D1624**, where unset meant Vertex |
+| **D3041** | What does an access no one wrote mean (F2)? | *First answer, kept:* the declared credentials that reach the craft's model, in the order the project lists them, Vertex last where the project has it on. **Amended by the owner, 2026-11-20:** "I don't like the idea of falling through to vertex, it will result in unexpected charges. User should explicitly specify it." So: **the first declared credential that reaches the craft's model, and nothing after it. Vertex is never implied**: a craft goes out on it only where its access, or a pool, names `vertex`. An unset access that no declared credential reaches is refused with the fix. Moving on from one credential to another needs a pool someone wrote. `fugaro update` writes today's answer explicitly, so nothing moves on upgrade | as recommended, then **amended by the owner**; the amendment's two parts were asked as questions and answered as recommended (the name stays `vertex`, not `native`; no move to a paid key without a pool). **It reverses D1624**, where unset meant Vertex |
 | **D3042** | Does a repository's file keep `agent.crafts.<craft>.access` (F8)? | No. Access is written only in the project's config; `fugaro update` moves a file's existing choice there | as recommended |
 | **D3043** | What does the release do with a committed `fugaro.yaml` that still says `agent.auth` (F7)? | It is read, sets nothing and is named: `update`, `validate` and `doctor` say so and offer its removal as a diff. A later release rejects it | as recommended |
 | **D3044** | What becomes of `cascade` (F11)? | A pool that `fugaro update` writes, with the same members in the same order, and the crafts pointed at it. The service's ordering, stickiness and wait rule are unchanged | as recommended |
@@ -261,8 +262,12 @@ All answered by the owner on 2026-11-20, each as recommended.
 
 - A project can no longer let one repository's file pick a credential (D3042). A repository that
   needs a different one gets it in the project's config, by the project's owner or operator.
-- Adding a credential to a project can change what a craft with no written access is served by
-  (D3041). `fugaro update` and `fugaro craft ls` print what each craft resolves to.
+- A craft with no written access goes out on the first declared credential that reaches its
+  model, so the order of the project's `credentials:` list now matters, and a repository with
+  nothing declared that reaches its model launches nothing until someone declares a credential or
+  writes `access: vertex` (D3041 as amended). Vertex was the silent default until now.
+  `fugaro update` writes today's answer for every existing repository, and `fugaro craft ls`
+  prints what each craft resolves to.
 - The operator's switch for the shared subscriptions is gone (D3045). What stands between a
   repository and a subscription is the admission the project wrote for that credential.
 - The subscription token stays in the agent's environment, for a repository the service does not
@@ -281,7 +286,8 @@ All answered by the owner on 2026-11-20, each as recommended.
   the four of A2. Contract C1 writes the question down; no reader keeps a switch on four words.
 - **R2. Reach is worked out, never declared.** A `claude-oauth` or `anthropic` credential reaches
   a Claude model (`config.IsClaudeModel`); a provider credential reaches the models its provider
-  claims (`config.ProviderFor`); Vertex reaches a Claude model where the project has Vertex on.
+  claims (`config.ProviderFor`); Vertex reaches a Claude model, and is used only
+  where it is named (D3041 as amended).
   This is the brief's "declared once, for the models it reaches" without a new key: the
   credential's type and the project's `providers:` block already say it.
 - **R3. The retired keys, and their two releases.** `agent.auth`, `defaults.agent.auth`,
@@ -309,9 +315,10 @@ All answered by the owner on 2026-11-20, each as recommended.
 - **R7. The migration, in `fugaro update`, in place.** For the project: each named account is
   already a credential (`deriveCraftCredentials`); a stage's account becomes its craft's access
   (D3048); a project whose cascade serves anything gets a pool with the cascade's members in its
-  order (D3044). For each repository, read from the configuration a run of it checks out
+  order (D3044), the paid key among them only where the policy's `fallback` is `auto` today. For each repository, read from the configuration a run of it checks out
   (`deploymentConfig`): `oauth` writes that repository's crafts to its account's credential,
-  `api-key` to the Anthropic credential, `cascade` to the pool, and `vertex` to `vertex`; a
+  `api-key` to the Anthropic credential, `cascade` to the pool, and `vertex`, written or
+  defaulted, to an explicit `vertex`; a
   provider's model keeps the provider credential it already resolves to; a file's own
   `access` is moved as written (D3042). It writes only what a craft does not already say, prints
   one line per repository naming what each craft now resolves to, and names what it could not
@@ -353,9 +360,9 @@ No two answers pull against each other.
 - **O2.** D3052 sets the version rule aside. The exposure is the one stated under the decisions:
   an older CLI on an older image.
 - **O3.** D3041's order is the order of the project's `credentials:` list, which until now meant
-  nothing. A project that listed its paid key before its subscription gets the key first for an
-  unset craft; the migration writes today's answer explicitly, so this bites only a craft added
-  later.
+  nothing. A project that listed its paid key before its subscription gets the key, and only
+  the key, for an unset craft; the migration writes today's answer explicitly, so this bites
+  only a repository or a craft added later.
 - **O4.** The keys plan and always a budget are amended by F19 to F22 and by D3048. Their own
   documents are not edited by this pull request; the first task of this plan to launch does not
   start until the keys plan's README and plan say KS6, KS9 and KS10 are withdrawn (a documents
@@ -365,9 +372,10 @@ No two answers pull against each other.
 - **O6.** The cascade's own settings (`fallback`, the wait threshold, the back-off) stay
   project-wide in the node's `credentials` block. Making them a pool's own is model crafts' F24
   second half and is not in this plan.
-- **O7.** Vertex stays refused under `enforce` (F12). With Vertex still the last resort of an
-  unset access (D3041), a project in `enforce` with no other credential launches nothing, as
-  today.
+- **O7.** Vertex stays refused under `enforce` (F12). A craft whose access names `vertex`, in
+  a project in `enforce`, launches nothing, as today. A new repository in a project that declares
+  no credential launches nothing either, until someone chooses (D3041 as amended); `update`,
+  `setup` and the setup skill say so and name the choices (CM19, CM27).
 - **O8.** The second release of this plan cannot be cut before keys release B's KS13, which
   itself waits on Check 50 (D3013) and release A.
 

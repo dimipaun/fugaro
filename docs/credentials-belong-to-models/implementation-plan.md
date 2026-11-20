@@ -7,8 +7,8 @@ cited as `D#`, findings as `F#`, resolutions as `R#`. Checked against `origin/ma
 on 2026-11-20.
 
 **The answers that shaped it** (all the owner's, 2026-11-20, all as recommended): a craft's
-access names the credential (D3040); an unset access is the credentials that reach the model, in
-the project's order (D3041); access is the project's alone (D3042); the old key is read, ignored
+access names the credential (D3040); an unset access is the first declared credential that reaches the model, and never Vertex
+unless named (D3041, amended by the owner the same day); access is the project's alone (D3042); the old key is read, ignored
 and named for one release, then rejected with no version bump (D3043, D3052); the cascade becomes
 a pool (D3044) and its consent switch is no longer required (D3045); Vertex stays on the job's
 identity through the gateway (D3046); the subscription token leaves the agent's environment in
@@ -110,20 +110,22 @@ documents:** CM24 to CM27.
 
 ### CM1: the resolver, by reach
 - Acceptance: a `Resolver` answers every craft: a written access as written; an unset one as the
-  declared credentials that reach the craft's model, in the order the project lists them, Vertex
-  last and only where the project has Vertex on (D3041, R2); an access whose credential cannot
+  first declared credential, in the order the project lists them, that reaches the craft's model,
+  and nothing after it; Vertex only where an access or a pool names it; an unset access nothing
+  declared reaches is a problem that names the two fixes, declare a credential or write
+  `access: vertex` (D3041 as amended, R2); an access whose credential cannot
   reach its craft's model is a problem at the key that wrote it. It adds a function and leaves
   `craft.Resolve` as it is; I1 removes the old default.
 - Files: `internal/craft/reach.go` (new), `internal/craft/reach_test.go` (new).
 - Interfaces: consumes C1 (the interface and the reach signature); produces the real resolver.
 - Tests: `TestASubscriptionAndAKeyBothReachAClaudeModel`,
   `TestAProviderCredentialReachesOnlyItsProvidersModels`,
-  `TestAnUnsetAccessIsTheReachingCredentialsInProjectOrder`,
-  `TestVertexIsLastAndOnlyWhereItIsOn`, `TestAnAccessThatCannotReachItsModelIsAProblem`.
-- Command: `go test ./internal/craft/ -run 'Reach|UnsetAccess|VertexIsLast|CannotReach' -count=1`.
+  `TestAnUnsetAccessIsTheFirstReachingCredentialOnly`, `TestVertexIsNeverImplied`,
+  `TestAnUnsetAccessNothingReachesIsRefusedWithTheFix`, `TestAnAccessThatCannotReachItsModelIsAProblem`.
+- Command: `go test ./internal/craft/ -run 'Reach|UnsetAccess|VertexIsNeverImplied|CannotReach' -count=1`.
 - Red step: an unset access with a subscription declared answers `vertex`.
 - Depends on: C1.
-- Commit: `craft: an access is resolved by reach (CM1, D3040, D3041)`.
+- Commit: `craft: an unset access is the first credential that reaches, never Vertex (CM1, D3041)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### CM2: the project's per-repository crafts
@@ -163,7 +165,9 @@ documents:** CM24 to CM27.
 ### CM4: `fugaro update` migrates auth to access
 - Acceptance: on every write of the local config and for each repository `update` is run for,
   R7 is carried out in place: stage accounts become their craft's access (D3048); a project whose
-  cascade serves anything gets a pool with its members in its order (D3044); each repository's
+  cascade serves anything gets a pool with its members in its order, the paid key among them
+  only where `fallback` is `auto` today (D3044); a repository on Vertex, written or defaulted,
+  gets an explicit `access: vertex` (D3041 as amended); each repository's
   crafts are written, in the project's per-repository block, to what its runs go out on today,
   read from the configuration a run checks out (`deploymentConfig`); a file's own access is moved
   as written (D3042). It writes only what a craft does not already say, is idempotent, prints one
@@ -173,11 +177,12 @@ documents:** CM24 to CM27.
   `internal/cli/init_access_migrate_test.go` (new), `internal/cli/init.go`,
   `internal/cli/update_converge_test.go`.
 - Interfaces: consumes C1, CM1's resolver and CM2's block.
-- Tests: `TestUpdateKeepsWhatEachCraftGoesOutOn` (one case per old auth value, and the mix),
+- Tests: `TestUpdateKeepsWhatEachCraftGoesOutOn` (one case per old auth value, the mix, and a
+  file that names no auth), `TestADefaultedVertexIsWrittenExplicitly`,
   `TestTheCascadeBecomesAPoolInItsOrder`, `TestAStageAccountBecomesItsCraftsAccess`,
   `TestAFilesAccessMovesToTheProject`, `TestTheMigrationIsSilentTheSecondTime`,
   `TestWhatCannotBeConvertedIsNamedEveryTime`.
-- Command: `go test ./internal/cli/ -run 'UpdateKeepsWhatEachCraft|TheCascadeBecomesAPool|AStageAccountBecomes|AFilesAccessMoves|TheMigrationIsSilent|WhatCannotBeConverted|UpdateConverge' -count=1`.
+- Command: `go test ./internal/cli/ -run 'UpdateKeepsWhatEachCraft|ADefaultedVertexIsWritten|TheCascadeBecomesAPool|AStageAccountBecomes|AFilesAccessMoves|TheMigrationIsSilent|WhatCannotBeConverted|UpdateConverge' -count=1`.
 - Red step: after `update`, a repository whose runs go out on a subscription resolves to `vertex`.
 - Depends on: C1; CM1 (kept, behaviour: the migration writes what the resolver answers, and a
   stub's answer written into a config is a wrong config on disk); CM2 (kept: it writes the
@@ -443,8 +448,9 @@ documents:** CM24 to CM27.
 ### CM19: the update says what will change, first
 - Acceptance: before it changes anything, `fugaro update` prints R8's lines for the repository
   it is run for; each retired key in the checkout is offered its removal as a diff, by the
-  anchor's precedent, written on `--yes` or the person's word and printed otherwise; with runs in
-  flight it prints the one line R10 names; the Vertex and cascade gates of the update read the
+  anchor's precedent, written on `--yes` or the person's word and printed otherwise; a repository none of whose
+  declared credentials reaches a craft's model is told so, with the two fixes, by `update` and by
+  `setup` alike; with runs in flight it prints the one line R10 names; the Vertex and cascade gates of the update read the
   crafts. It asks nothing new.
 - Files: `internal/cli/update_access_notice.go` (new),
   `internal/cli/update_access_notice_test.go` (new), `internal/cli/init.go`,
@@ -528,7 +534,7 @@ documents:** CM24 to CM27.
 ### I1: integration
 - Acceptance: the two stub files are deleted and the real resolver and accessor are wired in;
   what release 1's tasks left for it is removed: `EnvSpec.Auth`, the old default of
-  `craft.Resolve`, `infra.CredentialsServiceServes`, `config.CheckProviderAuth`,
+  `craft.Resolve` and `config.DefaultCredential` with it (nothing defaults to Vertex), `infra.CredentialsServiceServes`, `config.CheckProviderAuth`,
   `config.CheckStageAccountMix` and its helpers, `config.ServiceServedAuths`,
   `runner.ServiceSwitchedAuth` and `GatewayOn`'s auth argument; nothing outside the migration
   and the retired-key notice reads `Agent.Auth`; an installation at the previous release, with
@@ -609,7 +615,8 @@ documents:** CM24 to CM27.
 
 ### CM27: the plugin's skills
 - Acceptance: the setup skill no longer asks for `agent.auth`: its second decision is which
-  credentials the project declares and what each craft goes out on, and it writes nothing about
+  credentials the project declares and what each craft goes out on, with Vertex offered as a
+  choice a person makes and never as what happens when they make none, and it writes nothing about
   credentials into a repository's file; the working skill's references describe a usage-limit
   switch and notional spend by credential; every command and flag a skill names exists.
 - Files: `plugin/skills/setup/SKILL.md`, `plugin/skills/setup/reference/decisions.md`,
@@ -836,6 +843,10 @@ No step is another command, a deletion by hand or a repair.
 
 ## 10. Considered and declined
 
+- **Vertex as the last resort of an unset access, and every reaching credential in order**
+  (D3041's first answer): the owner amended it, because a credential nobody named would bill
+  the project. The name `native` for Vertex was also declined: `vertex` is the built-in
+  credential's name everywhere already.
 - **A per-model list of credentials, and a fixed order by kind** (D3040's other options): a
   second config surface beside crafts and pools; or spending nobody chose.
 - **Keeping `agent.crafts.<craft>.access` in a repository's file** (D3042): the one tie between

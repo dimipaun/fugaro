@@ -5,8 +5,9 @@
 2026-11-20. Checked against `origin/main` at `d57d71ddb`.
 
 A repository has no auth mode. `agent.auth` is retired: a credential is declared once in the
-project, a craft's access names the credential or pool its model calls go out on, and what an
-unwritten access means is worked out from which credentials reach the model. It carries out D3007
+project, a craft's access names the credential or pool its model calls go out on, and an
+unwritten access means the first declared credential that reaches the model. Vertex is used only
+where it is named. It carries out D3007
 of [every model key through the credentials service](../keys-through-service/README.md) and D3026
 of always a budget, and is the third spec of that series.
 
@@ -28,9 +29,11 @@ open pull request wrote a check at or above 800.
 was read on `main`. Always a budget is not merged: pull request #3302, branch
 `docs/always-a-budget`, was read at commit `8bf13231f`.
 
-**Owner answers of 2026-11-20:** D3040–D3053, every one as recommended. Four of them change an
-earlier ruling or rule, and say so in their row: D3040 reverses model crafts' F24, D3041 narrows
-D1624, D3045 retires the consent switch O2, and D3052 sets the rule that a removed field bumps
+**Owner answers of 2026-11-20:** D3040–D3053, every one as recommended. **D3041 was then amended
+by the owner**, in his own words: "I don't like the idea of falling through to vertex, it will
+result in unexpected charges. User should explicitly specify it." Vertex is never implied, and an
+unset access is one credential, not a chain. Four answers change an earlier ruling or rule, and
+say so in their row: D3040 reverses model crafts' F24, D3041 reverses D1624, D3045 retires the consent switch O2, and D3052 sets the rule that a removed field bumps
 its format's version aside for `fugaro.yaml`.
 
 **What it changes in the two plans before it** (reconciliation F19 to F22): the keys plan's KS6,
