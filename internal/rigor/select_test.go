@@ -196,6 +196,90 @@ func TestConfigAreasUnionsTheTwoLayers(t *testing.T) {
 	}
 }
 
+// TestSelectMatchesAProjectsMembers is LD4 at the matcher: an area of the
+// project layer is made of members, each a whole repository or a repository
+// with the paths of it that are in the area, so a rule matches a run when the
+// run's repository is one of its members and — for a member with paths — the
+// run touches a path of it. A member of another repository never matches, and
+// neither does a member with paths when the run touched none of them.
+func TestSelectMatchesAProjectsMembers(t *testing.T) {
+	areas := []Area{
+		{Name: "console", Members: []Member{
+			{Repo: "acme/console-web"},
+			{Repo: "acme/app", Paths: []string{"ui/**"}},
+		}, Level: Pro},
+		{Name: "mobile", Members: []Member{
+			{Repo: "acme/app", Paths: []string{"mobile/**"}},
+		}, Level: Critical},
+	}
+	cases := []struct {
+		repo  string
+		paths []string
+		want  []string
+	}{
+		{"acme/console-web", nil, []string{"console"}},
+		{"acme/console-web", []string{"anything/at/all.go"}, []string{"console"}},
+		{"acme/app", []string{"ui/button.tsx"}, []string{"console"}},
+		{"acme/app", []string{"mobile/screen.tsx"}, []string{"mobile"}},
+		{"acme/app", []string{"docs/readme.md"}, nil},
+		{"acme/app", nil, nil},
+		{"acme/payments-core", []string{"ui/button.tsx"}, nil},
+		{"", []string{"ui/button.tsx"}, nil},
+	}
+	for _, c := range cases {
+		if names := areaNames(Select(areas, c.repo, c.paths)); !slices.Equal(names, c.want) {
+			t.Errorf("Select(%q, %v) = %v; want %v", c.repo, c.paths, names, c.want)
+		}
+	}
+}
+
+// TestSelectTakesTheStrictestOfOneLayersAreas pins D23 as amended: two areas
+// of *one* layer that match one run resolve to the strictest of them, which is
+// the normal case once members carry paths — acme/app's ui/ is in the console
+// area and, through a whole-repo member, in a second area of the same project
+// layer too. The weaker area is written first, so a rule that kept the first
+// match rather than the strictest answers pro here instead of critical.
+func TestSelectTakesTheStrictestOfOneLayersAreas(t *testing.T) {
+	project := []Area{
+		{Name: "console", Members: []Member{{Repo: "acme/app", Paths: []string{"ui/**"}}}, Level: Pro},
+		{Name: "app", Members: []Member{{Repo: "acme/app"}}, Level: Critical},
+	}
+	got := Select(project, "acme/app", []string{"ui/button.tsx"})
+	if names := areaNames(got); !slices.Equal(names, []string{"app", "console"}) {
+		t.Fatalf("Select = %v; want [app console], strictest first", names)
+	}
+	if level := Strictest(RigorsOf(got)...); level != Critical {
+		t.Errorf("the strictest of the layer's matched areas = %q; want %q", level, Critical)
+	}
+	// And the resolver reads that through: the layer's own level is the answer.
+	cfg := Config{Project: POC, ProjectAreas: project}
+	if r := Resolve(cfg, Request{Repo: "acme/app", Paths: []string{"ui/button.tsx"}}); r.Level != Critical || r.From != FromArea {
+		t.Errorf("Resolve over one layer's two matched areas = (%q, %q); want (%q, %q)", r.Level, r.From, Critical, FromArea)
+	}
+}
+
+// TestSelectMembersAreMuteWithoutARepo pins the fail-closed half: a member
+// names one repository, so a caller that knows no repository — a resolution
+// whose Request carries no repo, which is every run of a repository that is
+// itself the area's subject — matches no member at all. A member read as
+// matching a repo it was never compared against would put every project area
+// in effect for every run.
+func TestSelectMembersAreMuteWithoutARepo(t *testing.T) {
+	areas := []Area{{Name: "console", Members: []Member{{Repo: "acme/app"}}, Level: Critical}}
+	for _, paths := range [][]string{nil, {"ui/button.tsx"}} {
+		if got := Select(areas, "", paths); len(got) != 0 {
+			t.Errorf("Select(\"\", %v) = %v; want no match: a member names its repository", paths, areaNames(got))
+		}
+	}
+	// A rule that writes a glob instead is about paths alone, so it still
+	// matches without one (the shape v0.11.0 shipped, and a repository's own
+	// rules).
+	glob := []Area{{Name: "payments", Match: "internal/payments/**", Level: Critical}}
+	if got := Select(glob, "", []string{"internal/payments/card.go"}); len(got) != 1 {
+		t.Errorf("Select over a glob rule = %v; want the match", areaNames(got))
+	}
+}
+
 // areaNames is the names of areas, in order, for a test that compares only
 // which rules matched.
 func areaNames(areas []Area) []string {

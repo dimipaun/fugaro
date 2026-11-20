@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -494,6 +495,34 @@ type LayerRigor struct {
 	Default rigor.Rigor            `yaml:"default"`
 	Areas   []rigor.Area           `yaml:"areas"`
 	Repos   map[string]rigor.Rigor `yaml:"repos"`
+}
+
+// RigorRepoNamesOf are the repository names l's rigor block states, sorted and
+// without repeats: every member of every area and every key of the per-repo
+// map (LD4). It is what a reader that judges those names against something
+// outside the layer needs — `fugaro doctor` asks the published allow_repos
+// whether it admits them — and nothing about the names' shape is checked here:
+// the layer's own validation refuses a name that is not owner/name, and
+// whether the name is a repository of the project is the policy's answer, not
+// a file's.
+func RigorRepoNamesOf(l *ProjectLayer) []string {
+	if l == nil {
+		return nil
+	}
+	r := l.Defaults.Rigor
+	seen := make(map[string]bool, len(r.Repos))
+	for name := range r.Repos {
+		seen[name] = true
+	}
+	for _, a := range r.Areas {
+		for _, m := range a.Members {
+			seen[m.Repo] = true
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // LayerGit is defaults.git.

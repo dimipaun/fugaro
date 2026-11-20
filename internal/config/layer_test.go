@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 const testLayer = `version: 1
@@ -879,6 +881,209 @@ defaults:
 		if !strings.Contains(ps[0].Message, want) {
 			t.Errorf("the refusal of defaults.rigor.areas[1] does not carry %q: %q", want, ps[0].Message)
 		}
+	}
+}
+
+// TestLayerAreasCarryMembers is LD4's shape at the project layer: an area is a
+// named part of the project, made of members that are whole repositories or
+// repositories with paths, and one repository may be a member of two areas on
+// disjoint paths — the case semantic areas exist for, so it is not a repeat.
+// The two rules keep their own levels, and a per-repo entry beside them is a
+// third thing: the level one repository of the project runs at.
+//
+// The resolver's side of it — which area a run's repo and paths match, and
+// D23's strictest within one layer — is internal/rigor's select and resolve
+// tests; this one is the layer file's own reader.
+func TestLayerAreasCarryMembers(t *testing.T) {
+	const text = `version: 1
+project: acme
+gcp_project: acme-fugaro
+defaults:
+  rigor:
+    default: startup
+    areas:
+      - name: console
+        members:
+          - repo: acme/console-web
+          - repo: acme/app
+            paths: ["ui/**"]
+        level: pro
+      - name: mobile
+        members:
+          - { repo: acme/app, paths: ["mobile/**"] }
+        level: critical
+    repos:
+      acme/legacy-api: pro
+      acme/payments-core: critical
+`
+	l, ps := ParseProjectLayer([]byte(text), testAnchor)
+	if len(ps) > 0 {
+		t.Fatalf("problems = %s", problemsText(ps))
+	}
+	got := l.Defaults.Rigor
+	if got.Default != rigor.Startup {
+		t.Errorf("default = %q; want startup", got.Default)
+	}
+	if len(got.Areas) != 2 {
+		t.Fatalf("areas = %+v; want the two, one repository of them in both", got.Areas)
+	}
+	console, mobile := got.Areas[0], got.Areas[1]
+	if console.Name != "console" || console.Level != rigor.Pro || console.Match != "" {
+		t.Errorf("areas[0] = %+v; want the console area, level pro, with no match of its own", console)
+	}
+	wantMembers := []rigor.Member{
+		{Repo: "acme/console-web"},
+		{Repo: "acme/app", Paths: []string{"ui/**"}},
+	}
+	if !slices.EqualFunc(console.Members, wantMembers, func(a, b rigor.Member) bool {
+		return a.Repo == b.Repo && slices.Equal(a.Paths, b.Paths)
+	}) {
+		t.Errorf("console members = %+v; want %+v", console.Members, wantMembers)
+	}
+	if mobile.Name != "mobile" || mobile.Level != rigor.Critical || len(mobile.Members) != 1 || mobile.Members[0].Repo != "acme/app" {
+		t.Errorf("areas[1] = %+v; want the mobile area, level critical, made of acme/app's mobile/", mobile)
+	}
+	if want := map[string]rigor.Rigor{"acme/legacy-api": rigor.Pro, "acme/payments-core": rigor.Critical}; !maps.Equal(got.Repos, want) {
+		t.Errorf("repos = %+v; want %+v", got.Repos, want)
+	}
+}
+
+// TestLayerRigorRepoNamesAreEveryNameItStates pins what the layer's rigor
+// block names, which is what `fugaro doctor` judges against the published
+// allow-list (LD4): every member of every area and every key of the per-repo
+// map, once each and sorted. A name two areas share is one name — a warning
+// that listed it twice would read as two entries to fix — and the sorted order
+// is what makes doctor's sentence the same on every run of one layer.
+func TestLayerRigorRepoNamesAreEveryNameItStates(t *testing.T) {
+	const text = `version: 1
+project: acme
+gcp_project: acme-fugaro
+defaults:
+  rigor:
+    areas:
+      - name: console
+        members:
+          - repo: acme/console-web
+          - repo: acme/app
+        level: pro
+      - name: app
+        members:
+          - repo: acme/app
+            paths: ["ui/**"]
+        level: critical
+    repos:
+      acme/legacy-api: pro
+      acme/app: startup
+`
+	l, ps := ParseProjectLayer([]byte(text), testAnchor)
+	if len(ps) > 0 {
+		t.Fatalf("problems = %s", problemsText(ps))
+	}
+	want := []string{"acme/app", "acme/console-web", "acme/legacy-api"}
+	if got := RigorRepoNamesOf(l); !slices.Equal(got, want) {
+		t.Errorf("RigorRepoNamesOf = %v; want %v", got, want)
+	}
+	// A layer that states no repository at all names none, and so does no layer
+	// at all: doctor's line is about names, and an empty list is not a finding.
+	for _, nilish := range []*ProjectLayer{nil, {}} {
+		if got := RigorRepoNamesOf(nilish); got != nil {
+			t.Errorf("RigorRepoNamesOf(%+v) = %v; want none", nilish, got)
+		}
+	}
+}
+
+// TestLayerRefusesAMemberPathThatLeavesItsRepo: a member is a part of its own
+// repository, so a path of it that climbs out with ".." is refused by name,
+// with the reason. It is the shape the corpus's rigor-area-outside-repo.yaml
+// carries, and this test pins that file's exact path and message so the
+// fixture cannot drift into a refusal for another reason — an unknown key, a
+// missing field — that would satisfy a bare "it was refused" too.
+func TestLayerRefusesAMemberPathThatLeavesItsRepo(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "project-layer", "invalid", "rigor-area-outside-repo.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, ps := ParseProjectLayer(data, LayerAnchor{Project: "aurora", GCPProject: "proj-1234"})
+	if l != nil {
+		t.Fatal("the layer parsed")
+	}
+	const want = "a member is a part of its repository, so its paths stay inside it"
+	if !hasProblem(ps, "defaults.rigor.areas[0]", want, 0) {
+		t.Fatalf("problems = %s; want defaults.rigor.areas[0] refused with %q", problemsText(ps), want)
+	}
+	for _, p := range ps {
+		if strings.Contains(p.Message, "not a fugaro.yaml key") || strings.Contains(p.Message, "not found in type") {
+			t.Errorf("the fixture was refused as an unknown key rather than as a member path leaving its repository: %q", p.Message)
+		}
+	}
+}
+
+// TestLayerRefusesARepoNameThatIsNoSlug: a project area's member and a key of
+// defaults.rigor.repos are repository names, and the layer checks them for
+// shape and for nothing else — whether the name is a repository of the project
+// is the published allow_repos' answer, which fugaro doctor warns about
+// (internal/cli). A name that is not owner/name is refused here, as a key and
+// as a member, with the sentence that says what a name is.
+func TestLayerRefusesARepoNameThatIsNoSlug(t *testing.T) {
+	const head = `version: 1
+project: acme
+gcp_project: acme-fugaro
+defaults:
+  rigor:
+`
+	for _, c := range []struct {
+		name, body, path, want string
+	}{
+		{
+			"a member whose repo is a bare name",
+			"    areas:\n      - name: console\n        members: [{ repo: console-web }]\n        level: pro\n",
+			"defaults.rigor.areas[0]", "a member's repo must be owner/name",
+		},
+		{
+			"a member whose repo climbs out of it",
+			"    areas:\n      - name: console\n        members: [{ repo: acme/../etc }]\n        level: pro\n",
+			"defaults.rigor.areas[0]", "no . or .. segment",
+		},
+		{
+			"a repos key that is a bare name",
+			"    repos:\n      console-web: pro\n",
+			"defaults.rigor.repos.console-web", "must be a repository name, owner/name",
+		},
+	} {
+		_, ps := ParseProjectLayer([]byte(head+c.body), testAnchor)
+		if !hasProblem(ps, c.path, c.want, 0) {
+			t.Errorf("%s: problems = %s; want %s refused with %q", c.name, problemsText(ps), c.path, c.want)
+		}
+	}
+}
+
+// TestLayerResolvesAWrittenHotfix: D12 as amended leaves the file alone. The
+// command that writes a level refuses `hotfix` in every form it can write
+// (D834, internal/cli's rigorHotfixRefusal, pinning that the request is the
+// door: `fugaro run --mode hotfix`), and a hand-written hotfix still resolves —
+// as a default, as an area's level and as a per-repo level at the project
+// layer, and as the repository's own default. The plan states it in so many
+// words ("the command that writes a default still refuses hotfix in every
+// form ... a hand-written rigor.default: hotfix still resolves", LV3.1's
+// Global constraints), and a layer this reader refused would strand an
+// installation whose file already carries one.
+func TestLayerResolvesAWrittenHotfix(t *testing.T) {
+	for _, c := range []struct{ name, body string }{
+		{"as the project default", "    default: hotfix\n"},
+		{"as an area's level", "    areas:\n      - name: console\n        members: [{ repo: acme/console-web }]\n        level: hotfix\n"},
+		{"as a per-repo level", "    repos:\n      acme/payments-core: hotfix\n"},
+	} {
+		text := "version: 1\nproject: acme\ngcp_project: acme-fugaro\ndefaults:\n  rigor:\n" + c.body
+		if _, ps := ParseProjectLayer([]byte(text), testAnchor); len(ps) > 0 {
+			t.Errorf("hotfix %s: refused with %s; the write command is what refuses hotfix (D834), never the file", c.name, problemsText(ps))
+		}
+	}
+	cfg, _, ps := Resolve([]byte(minimalRepo+"rigor: { default: hotfix }\n"), mustLayer(t, testLayer))
+	if len(ps) > 0 {
+		t.Fatalf("the repository's own hotfix default was refused: %s", problemsText(ps))
+	}
+	if cfg.Rigor.Default != rigor.Hotfix {
+		t.Errorf("the repository's own hotfix default resolved as %q; want hotfix", cfg.Rigor.Default)
 	}
 }
 
