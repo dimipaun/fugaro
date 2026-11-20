@@ -201,10 +201,30 @@ func providerEntry(t *testing.T, provider string) string {
 // same run records, and the release that adds it turns no repository off.
 func TestTheFactIsRecordedWhenEveryProviderEntryIsThere(t *testing.T) {
 	entry := providerEntry(t, providerServedProvider)
-	theLoaderReadsProviderEntries(t)
+	r := providerServedRig(t, "", providerServedProviders, providerServedBundle(t, entry))
 
-	with := providerServedRecord(t, providerServedRig(t, "", providerServedProviders,
-		providerServedBundle(t, entry)).initRig, providerServedPolicy(), config.BudgetObserve)
+	// The same bundle in THIS tree's own state first, before the release that
+	// reads the family lands: the loader has no arm for the family
+	// (providerEntriesLoaderShipped, tied to the loader by
+	// TestProviderEntriesSinceIsTheLoaderThisTreeBuilds), so the document is
+	// refused WHOLE and the entry keeps the records the person's last run left
+	// on it — an entry no update has judged, which is what it reads as
+	// (localcfg.Repo's pointers). A switch recorded from this bundle would be a
+	// plan that drops the job's model mounts while the service the same run
+	// deploys answers every call of the installation with the loader's refusal.
+	e, refused := providerServedRun(t, r.initRig, providerServedPolicy(), config.BudgetObserve)
+	if refused.CredentialsServiceReady != nil || refused.ProviderKeysServed != nil || refused.StageAccountServed != nil {
+		t.Errorf("a bundle this tree's loader refuses whole (%+v) wrote a record: nothing was read from it, and the switch it would carry decides whether every job of this repository keeps the model credential it mounts", refused)
+	}
+	if w := strings.Join(e.r.res.Warnings, "\n"); !strings.Contains(w, credsvc.RepoCredentialPrefix) {
+		t.Errorf("the run wrote nothing from a bundle holding a key of C1's family and said nothing about it: a person reading its output cannot tell a bundle the release cannot read from one no update has judged, and the warning is where the refusal speaks (it said:\n%s)", w)
+	}
+
+	// And the world the release that ships the fact leaves: the loader knows the
+	// family, the same bundle is a reading, and the fact is recorded from it —
+	// the value the repository root's plan hands to its jobs.
+	theLoaderReadsProviderEntries(t)
+	with := providerServedRecord(t, r.initRig, providerServedPolicy(), config.BudgetObserve)
 	if !with.CredentialsServiceOn() {
 		t.Fatalf("the fixture's switch is off (%+v): the bundle holds the Anthropic key an api-key repository's readiness is read from and the mode is observe, so this test would say nothing about the fact", with)
 	}
@@ -481,19 +501,16 @@ func TestTheStageFactNeedsAServiceThatServesOne(t *testing.T) {
 // entries is served only by a service whose loader has the family's arm — and
 // the service a release ships is built from that release's own tree.
 //
-// Neither half is a value to remember. The gate is read against the loader's
-// own key rule (credsvc.CredentialKey, the rule internal/credsvc/bundle.go
-// reads every document key with), so the tree that lands KS1 and forgets the
-// gate fails here, and so does one that flips the gate without the arm.
+// The gate is not a value to remember: it is read here against the loader's own
+// key rule (credsvc.CredentialKey, the rule internal/credsvc/bundle.go reads
+// every document key with), so the tree that lands KS1 and forgets the gate
+// fails here, and so does one that flips the gate without the arm.
 //
-// And the door over a bundle holding such a key is read the same way, from
-// this tree's real state rather than from the helper above: while the loader
-// cannot read the family, nothing is recorded from the bundle at all — the
-// entry keeps the records the person's last run left, which is what origin/main
-// answered this same document with — because a reading taken around the family
-// writes the switch and both facts true while the service the same run deploys
-// refuses every call of it (the plan drops the job's model mounts on the
-// switch).
+// What the gate itself does with such a bundle is pinned where the fact is
+// recorded, on the rig that already holds one
+// (TestTheFactIsRecordedWhenEveryProviderEntryIsThere's first arm): nothing is
+// written from it while the loader cannot read the family, which is what
+// origin/main answered this same document with.
 func TestProviderEntriesSinceIsTheLoaderThisTreeBuilds(t *testing.T) {
 	key := providerEntry(t, providerServedProvider)
 	if !strings.HasPrefix(key, credsvc.RepoCredentialPrefix) {
@@ -502,17 +519,5 @@ func TestProviderEntriesSinceIsTheLoaderThisTreeBuilds(t *testing.T) {
 	_, _, _, known := credsvc.CredentialKey(key)
 	if known != providerEntriesLoaderShipped {
 		t.Errorf("credsvc.CredentialKey answers %v for %s, a key of C1's family, and providerEntriesLoaderShipped — what readCredentialsBundle gates the whole reading on, and what providerEntriesSince's claim that a service reads the family rests on — is %v: a tree whose loader has no arm for the family can build no service that reads a document holding one, and a switch or a fact recorded as if it could names a service that refuses every call of the installation", known, key, providerEntriesLoaderShipped)
-	}
-
-	r := providerServedRig(t, "", providerServedProviders, providerServedBundle(t, key))
-	e, entry := providerServedRun(t, r.initRig, providerServedPolicy(), config.BudgetObserve)
-	recorded := entry.CredentialsServiceReady != nil || entry.ProviderKeysServed != nil || entry.StageAccountServed != nil
-	if recorded != known {
-		t.Errorf("the door recorded %v over a bundle holding %s, and this tree's loader answers %v for that key: the record has to be the loader's answer, because a reading taken around the family is a switch and two facts a service built from this tree refuses whole (credsvc.ErrBundleUnknownKey)", recorded, key, known)
-	}
-	if !known {
-		if w := strings.Join(e.r.res.Warnings, "\n"); !strings.Contains(w, credsvc.RepoCredentialPrefix) {
-			t.Errorf("the run recorded nothing from a bundle this tree's loader refuses whole and said nothing about it: a person reading its output has no way to tell a bundle the release cannot read from one no update has judged, and the warning is where the refusal speaks (it said:\n%s)", w)
-		}
 	}
 }
