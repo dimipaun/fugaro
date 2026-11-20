@@ -125,6 +125,17 @@ func TestSettingsMetaLayerComplete(t *testing.T) {
 			t.Errorf("%s carries metadata, and settings set refuses it: a key no write lands on is not this family's", row.Key)
 		}
 	}
+
+	// One entry here is a copy of a vocabulary the loader owns, and it is the
+	// copy a third forge has to be added to as well as to config's own list: the
+	// metadata table writes the forge kinds out for the console's enum rather
+	// than reading them (internal/gitprov's forgeKindGoSites is where that copy
+	// is inventoried), so the two are held together here. A kind in one list and
+	// not the other is a console offering a value the write refuses, or hiding
+	// one it takes.
+	if m, ok := settings.MetaOf("layer.defaults.git.provider"); ok && !slices.Equal(m.Enum, config.Providers) {
+		t.Errorf("layer.defaults.git.provider offers %v, and the config's providers are %v", m.Enum, config.Providers)
+	}
 }
 
 // TestSettingsMetaLayerBoundariesAreAccepted is the plan's proof that the

@@ -105,6 +105,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/runner/reviewmode.go":            "review mode's Bitbucket form",
 	"internal/runner/runner.go":                "the run's provider kind, its host table and NoWorkflows",
 	"internal/runner/runnertest/runnertest.go": "the slug the test runner fixtures a GitHub repository with",
+	"internal/settings/meta_layer.go":          "the forge kinds the metadata table offers a console for layer.defaults.git.provider: config.Providers written out rather than read, which internal/cli's TestSettingsMetaLayerComplete holds to it",
 }
 
 // forgeKindNonGoSites are the places outside Go where a forge kind is written
