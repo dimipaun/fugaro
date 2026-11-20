@@ -97,6 +97,7 @@ import type {
 } from '../../src/renderer/manage/shell'
 import { MANAGE_GROUPS, defineManageKind } from '../../src/renderer/manage/types'
 import type {
+  CopyCommandAction,
   ManageAction,
   ManageColumn,
   ManageGroup,
@@ -402,7 +403,7 @@ function kindOf(fixture: Fixture): ManageKind {
  * builder: a fixture that assembled an argv by hand could carry a word the
  * builder would have refused, and this file is about what the shell does with an
  * admitted action. */
-function copyAction(parts: readonly CommandPart[]): ManageAction {
+function copyAction(parts: readonly CommandPart[]): CopyCommandAction {
   const answer = buildCopyCommand(parts)
   if (!answer.ok) throw new Error(`the fixture command was refused: ${answer.reason}`)
   return answer.action

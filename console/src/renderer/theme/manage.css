@@ -54,9 +54,9 @@ section.manage-section {
 
 /* ---- The four groups ------------------------------------------------------
  *
- * A group is a real `details`/`summary`, so the disclosure's own affordance is
- * the element's: the marker the browser draws, the keyboard's Enter and Space,
- * and the folding are all the element's and none of them is this file's. What is
+ * A group is a real `details`/`summary`, so its own affordance is the element
+ * itself: the marker the browser draws, the keyboard's Enter and Space, and the
+ * folding are all the element's and none of them is this file's. What is
  * here is the row's measure (a group title is a target a person clicks, so it
  * takes the theme's row height), the hairline between two groups, and the indent
  * that puts a group's kinds under its own title rather than level with it.
