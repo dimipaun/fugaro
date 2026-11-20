@@ -717,16 +717,16 @@ test.describe('the graph view in a window', () => {
     }
   })
 
-  test('scrolls vertically only, and draws the picture at the pane’s own width', async () => {
+  test('never scrolls across, and draws the picture at the pane’s own width', async () => {
     // **The picture never scrolls sideways** (D2900's second half). The layout is
     // top to bottom and a level wider than a row is stacked into rows of four, so
-    // the axis the picture grows along is the pane's **height**, which is the one
-    // the pane scrolls (`overflow-y: auto`). Where the pane is narrower than the
-    // picture's own floor the canvas is drawn at the pane's width and scaled with
-    // it rather than held at a width the reader has to scroll to. The claim is
-    // the pane's own box, which only a browser computes: `scrollWidth` is the
-    // width the pane's content wants, `clientWidth` the width it has, and the
-    // canvas's box the width the picture is drawn at.
+    // the picture grows downward -- the page around the pane is what carries it
+    // down, the pane's own height being unbounded -- and where the pane is
+    // narrower than the picture's own floor the canvas is drawn at the pane's
+    // width and scaled with it rather than held at a width the reader has to
+    // scroll to. The claim is the pane's own box, which only a browser computes:
+    // `scrollWidth` is the width the pane's content wants, `clientWidth` the
+    // width it has, and the canvas's box the width the picture is drawn at.
     //
     // **Only a pane *under* the picture's floor tells this stylesheet from the
     // one it replaced**, which held the canvas at its floor (`min-width: 100%`

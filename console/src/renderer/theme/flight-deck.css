@@ -3036,15 +3036,16 @@ button.graph-fit:hover {
   color: var(--text);
 }
 
-/* The pane scrolls **vertically only** (D2900, the owner, 2026-11-18). The
- * picture is read top to bottom and a level wider than a row is stacked into
- * rows of four (`GRAPH_ROW_CARDS`, whose arithmetic is in `graph/layout.ts`), so
- * the axis it grows along is the pane's height. What the width cannot hold, the
- * canvas is **scaled** to (`width: 100%` below) rather than the reader scrolling
- * sideways: a picture read sideways is one the window has to be wide for, which
- * is the shape step 6a had and this ruling reversed. The horizontal rule is
- * `hidden` and not `clip` so the pane stays the scroll container the vertical
- * axis is read in.
+/* The pane **never scrolls across** (D2900, the owner, 2026-11-18). What the
+ * width cannot hold, the canvas is **scaled** to (`width: 100%` below) rather
+ * than the reader scrolling sideways: a picture read sideways is one the window
+ * has to be wide for, which is the shape step 6a had and this ruling reversed.
+ * The picture is read top to bottom instead, and it is the **page**
+ * (`main.console-page`) that carries it down, not this box: nothing bounds the
+ * pane's height, so the pane grows with the picture. `overflow-y` is written out
+ * as `auto` rather than left out because that is what `overflow-x: hidden`
+ * computes it to anyway -- a `visible` axis beside a non-`visible` one is not
+ * `visible` -- and the pair reads better together.
  *
  * **It wraps the canvas and nothing else**, so a screen with no picture -- the
  * list, or the coordinator scope -- grows no scroll area it never uses. */

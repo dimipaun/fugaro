@@ -1303,7 +1303,7 @@ assumed: the default node placement spread a row of seven cards 5393 units wide,
 `elk.separateConnectedComponents: 'false'` keeps the engine from packing the separate
 components of one row two-dimensionally, which drew a row of four 2000 units wide.
 
-**The picture has a scale floor, and the pane scrolls vertically only** (the
+**The picture has a scale floor, and the pane never scrolls across** (the
 graph-fits-the-width slice's G1.1 and D735 for the floor; **D2900**, the owner, 2026-11-18,
 for the axis). Fitting the panel's width alone had one way to draw a wide graph: **small**.
 A picture wider than its panel was scaled down until a title wrapped over three lines arrived
@@ -1322,11 +1322,13 @@ floor is the **whole picture's** width, bands and release boxes included, never 
 or one stream's: a bound taken from a narrower rectangle would leave the columns that made
 the picture wide drawn under it — and it is now the number the row bound is measured against
 rather than a size the canvas is held at. A pane **narrower** than the picture at the floor —
-the inspector open beside the canvas takes 300 px of it — draws the canvas at the pane's
-width and **scales the picture with it**: the picture is read top to bottom, so its own axis
-is the vertical one, and **`div.graph-canvas-pane` carries `overflow-x: hidden` with
-`overflow-y: auto`** — a picture read sideways is one the window has to be wide for, which is
-the shape step 6a had and this ruling reversed. **The pane wraps the canvas and nothing
+a window taken below the console's own opening width — draws the canvas at the pane's width
+and **scales the picture with it**. **`div.graph-canvas-pane` carries `overflow-x: hidden`**,
+so a picture read sideways is one the window has to be wide for, which is the shape step 6a
+had and this ruling reversed; the picture is read top to bottom instead, and it is the page
+around the pane that carries it down — nothing bounds the pane's height, so the
+`overflow-y: auto` beside that rule is only the value a `hidden` axis computes a `visible`
+one to. **The pane wraps the canvas and nothing
 else** — the list has no width of its own to keep, and the coordinator scope draws no picture
 at all — and the zoom is untouched by it: the frame is the picture scaled by the zoom, which
 stays the operator's own control and the way to reach a card the pane draws small. **No ELK
@@ -1454,7 +1456,7 @@ every word already and carries neither kind of line.
 | `graph-chip-body`, `graph-chip-tasks`, `graph-chip-task`, `graph-chip-task-title` | the open chip's own panel | drawn **only** while `aria-expanded` is `true` |
 | `graph-release-bar` | `p` (chip body) and `span` (list heading) | the "n of m done" bar, both places |
 | `graph-canvas` | `svg` | `viewBox` carries the zoom, and `width`/`height` carry the picture's **scale floor** (`GRAPH_MIN_SCALE`, the whole picture at 0.75) as the element's intrinsic size: the stylesheet draws the element at the pane's width (`width: 100%`, `height: auto`), so the box is the pane's own width and the picture's ratio decides the height (D2900). Its dotted-grid ground is a CSS background on this element rather than an element of its own |
-| `graph-canvas-pane` | `div` | the box the canvas is read through: it wraps the canvas alone and carries `overflow-x: hidden` with `overflow-y: auto`, so the picture is read by scrolling down and never across (D2900). The list and the coordinator scope draw no pane — neither has a width of its own to keep |
+| `graph-canvas-pane` | `div` | the box the canvas is read through: it wraps the canvas alone and carries `overflow-x: hidden` — the picture is never read across (D2900) — with the `overflow-y: auto` that axis computes to. The page around it is what carries the picture down. The list and the coordinator scope draw no pane — neither has a width of its own to keep |
 | `graph-band`, `graph-band-box` | `g` + `rect` | one band per stream that has a task on the picture, drawn **first** so it is the ground of its own row: the `g` carries `data-stream`, and the box is the row's wash |
 | `graph-band-label` | `text` at the band's head | the stream's own `Sanitized` name ("no stream" for the plans that name none) |
 | `graph-release`, `graph-release-box` | `g` + `rect` | one frame per release with a task on the picture |

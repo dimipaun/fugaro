@@ -2414,14 +2414,16 @@ describe('the graph screen and the scale it is drawn at', () => {
     expect(rule['min-width']).toBeUndefined()
   })
 
-  it('graph: scrolls vertically only, with the canvas the pane’s width', async () => {
-    // **The pane scrolls down and never across** (D2900's second half, which
-    // reversed the sideways reading below the floor). The picture is read top to
-    // bottom and a level wider than a row is stacked, so the axis it grows along
-    // is the pane's height -- and where the pane is narrower than the picture at
-    // its floor (the inspector takes 300 px of it) the canvas is drawn at the
-    // pane's width and scaled with it rather than held at the floor and scrolled.
-    // The browser's own reading of that is `graph.spec.ts`'s, in a real window.
+  it('graph: never scrolls across, with the canvas the pane’s width', async () => {
+    // **The pane never scrolls across** (D2900's second half, which reversed the
+    // sideways reading below the floor). Where the pane is narrower than the
+    // picture at its floor -- a window narrower than the console opens in -- the
+    // canvas is drawn at the pane's width and scaled with it rather than held at
+    // the floor and scrolled. The picture is read top to bottom, and it is the
+    // page around the pane that carries it down: nothing bounds the pane's
+    // height, so `overflow-y` is only the value `overflow-x: hidden` computes it
+    // to. The browser's own reading of the width is `graph.spec.ts`'s, in a real
+    // window.
     const screen = elkScreen()
     await screen.load(DOCUMENT, RUNS)
     const root = drawingOf(screen)
@@ -2430,7 +2432,7 @@ describe('the graph screen and the scale it is drawn at', () => {
     if (canvas === undefined) throw new Error('the drawing put no canvas up')
 
     const pane = classedIn(root, 'graph-canvas-pane')[0]
-    if (pane === undefined) throw new Error('the canvas was drawn with no pane to scroll it in')
+    if (pane === undefined) throw new Error('the canvas was drawn with no pane around it')
     expect(pane.children.map((each) => each.getAttribute('class'))).toEqual(['graph-canvas'])
     // The stage still holds the drawing: the pane is between the two, and the
     // inspector is still the stage's own second column.
@@ -2439,6 +2441,8 @@ describe('the graph screen and the scale it is drawn at', () => {
 
     const paneRule = themeRule('flight-deck.css', 'div.graph-canvas-pane')
     expect(paneRule['overflow-x'], 'the pane still scrolls across').toBe('hidden')
+    // And the other axis is `auto`, which is the value `overflow-x: hidden`
+    // gives it whether or not the stylesheet writes it out.
     expect(paneRule['overflow-y']).toBe('auto')
     expect(themeRule('flight-deck.css', 'section.graph svg.graph-canvas')['width']).toBe('100%')
     // The floor is below the picture's own width, or the attributes above would
