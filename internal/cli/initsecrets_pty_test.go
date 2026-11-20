@@ -390,7 +390,7 @@ func TestSecretsStageAgainstSecretManagerFake(t *testing.T) {
 	const val = "bb-secret-value-EXAMPLE"
 	session := func(t *testing.T, sm *gcpfake.Secrets, f *ttyFixture) loopResult {
 		r := newSecretsRig(t, bitbucketOrigin, f.tty)
-		r.e.lc = &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Repos: map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket"}}, Endpoints: localcfg.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}}
+		r.e.lc = &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5", Repos: map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket"}}, Endpoints: localcfg.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}}
 		r.stage = newSecretsStage(r.e) // the real client, not the memStore
 		sm.Seed(gcp.SecretID(bitbucketSlug, "claude-oauth-token"), map[string]string{
 			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: mustLabel(t, bitbucketSlug), gcp.LabelSecret: "claude-oauth-token"}, []byte(tokenValue))
