@@ -29,6 +29,10 @@ const (
 	// authority composes out of the workspace and the account, and the one an
 	// admin's token-creator binding is on.
 	wu20AccountName = "projects/ws-aurora/serviceAccounts/fugaro-workspace-iam@ws-aurora.iam.gserviceaccount.com"
+	// wu20AccountMember is that account as an IAM policy member: the spelling
+	// every grant and read of it uses, and the one this test checks reaches the
+	// surface — the bare address above is not a member Google resolves.
+	wu20AccountMember = "serviceAccount:" + wu20Account
 	// wu20Admin and wu20Second are two workspace admins, so a test can see one
 	// binding left alone while another goes.
 	wu20Admin  = "user:ada@example.com"
@@ -145,7 +149,7 @@ func TestSALinkGrantsOwner(t *testing.T) {
 	if err := a.Link(ctx, m); err != nil {
 		t.Fatalf("Link: %v", err)
 	}
-	if want := []string{wu20Account}; !slices.Equal(iam.owners["member-a"], want) {
+	if want := []string{wu20AccountMember}; !slices.Equal(iam.owners["member-a"], want) {
 		t.Errorf("member-a's owners after Link = %v, want %v", iam.owners["member-a"], want)
 	}
 	if held, err := a.Holds(ctx, m); err != nil || !held {
@@ -154,17 +158,17 @@ func TestSALinkGrantsOwner(t *testing.T) {
 	if err := a.Link(ctx, m); err != nil {
 		t.Fatalf("Link again: %v", err)
 	}
-	if want := []string{wu20Account}; !slices.Equal(iam.owners["member-a"], want) {
+	if want := []string{wu20AccountMember}; !slices.Equal(iam.owners["member-a"], want) {
 		t.Errorf("member-a's owners after a second Link = %v, want %v: a link is not a second binding", iam.owners["member-a"], want)
 	}
 	// The write is the member owner's own grant and the whole of what a link
 	// does: nothing here impersonates the account and nothing here reaches a key
 	// (D2803, F20).
 	if want := []string{
-		"Owns member-a " + wu20Account,
-		"GrantOwner member-a " + wu20Account,
-		"Owns member-a " + wu20Account,
-		"GrantOwner member-a " + wu20Account,
+		"Owns member-a " + wu20AccountMember,
+		"GrantOwner member-a " + wu20AccountMember,
+		"Owns member-a " + wu20AccountMember,
+		"GrantOwner member-a " + wu20AccountMember,
 	}; !slices.Equal(iam.log, want) {
 		t.Errorf("the calls a link made are %v, want %v", iam.log, want)
 	}
@@ -186,13 +190,13 @@ func TestSALinkCoversTheFirebaseProject(t *testing.T) {
 		t.Fatalf("Link: %v", err)
 	}
 	for _, p := range []string{"member-a", "member-a-firebase"} {
-		if want := []string{wu20Account}; !slices.Equal(iam.owners[p], want) {
+		if want := []string{wu20AccountMember}; !slices.Equal(iam.owners[p], want) {
 			t.Errorf("%s's owners after Link = %v, want %v", p, iam.owners[p], want)
 		}
 	}
 	if want := []string{
-		"GrantOwner member-a " + wu20Account,
-		"GrantOwner member-a-firebase " + wu20Account,
+		"GrantOwner member-a " + wu20AccountMember,
+		"GrantOwner member-a-firebase " + wu20AccountMember,
 	}; !slices.Equal(iam.log, want) {
 		t.Errorf("the calls a link made are %v, want %v: the GCP project first, then its Firebase project", iam.log, want)
 	}
@@ -214,7 +218,7 @@ func TestSALinkCoversTheFirebaseProject(t *testing.T) {
 	if err := one.sa().Link(ctx, MemberTarget{Project: "member-a", Firebase: "member-a"}); err != nil {
 		t.Fatalf("Link with one project spelled twice: %v", err)
 	}
-	if want := []string{"GrantOwner member-a " + wu20Account}; !slices.Equal(one.log, want) {
+	if want := []string{"GrantOwner member-a " + wu20AccountMember}; !slices.Equal(one.log, want) {
 		t.Errorf("Link on a member whose Firebase project is its own made %v, want %v", one.log, want)
 	}
 }
@@ -251,9 +255,9 @@ func TestSAUnlinkRemovesGrant(t *testing.T) {
 		t.Errorf("the account's token creators after an unlink = %v, want %v: an unlink drops the authority over the member and not the workspace's own admins", iam.creators[wu20AccountName], want)
 	}
 	if want := []string{
-		"RemoveOwner member-a " + wu20Account,
-		"RemoveOwner member-a-firebase " + wu20Account,
-		"Owns member-a " + wu20Account,
+		"RemoveOwner member-a " + wu20AccountMember,
+		"RemoveOwner member-a-firebase " + wu20AccountMember,
+		"Owns member-a " + wu20AccountMember,
 	}; !slices.Equal(iam.log, want) {
 		t.Errorf("the calls an unlink made are %v, want %v", iam.log, want)
 	}

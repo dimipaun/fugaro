@@ -63,6 +63,12 @@ const (
 // The project side is Resource Manager v1 — the client Clients.CRM is, and the
 // one firebase.go reads project policies through — and the account side is IAM
 // v1.
+//
+// Every member argument is an IAM member string, prefix and all:
+// serviceAccount:<address> for the workspace's account, user:<address> or
+// group:<address> for a person. That is the only spelling a policy write or a
+// read resolves, so the caller composes it (workspace.SAAuthority.accountMember)
+// and nothing here strips or adds the prefix.
 type SAProjects struct {
 	crm *crm.Service
 	iam *iam.Service
@@ -85,6 +91,11 @@ func NewSAProjects(crm *crm.Service, iam *iam.Service) *SAProjects {
 // (D2825) instead of a permission error, and the API's own answer stays in the
 // message and in the chain, because whether the refusal is U8's or another is
 // exactly what a person reading it has to judge.
+//
+// Only the WRITE's refusal is read that way (ownerWriteError). A policy that
+// cannot be READ fails before a grant is attempted, and answering that with an
+// invitation to accept would send the caller to a console page that changes
+// nothing about the read.
 func (s *SAProjects) GrantOwner(ctx context.Context, project, member string) error {
 	err := s.changeOwners(ctx, project, "", func(owners []string) []string {
 		if slices.Contains(owners, member) {
@@ -92,7 +103,8 @@ func (s *SAProjects) GrantOwner(ctx context.Context, project, member string) err
 		}
 		return append(owners, member)
 	})
-	if err != nil && ownerInviteRefusal(err) {
+	var write *ownerWriteError
+	if errors.As(err, &write) && ownerInviteRefusal(err) {
 		return fmt.Errorf("%w (%w)", err, workspace.ErrSAOwnerInvite)
 	}
 	return err
@@ -251,10 +263,19 @@ func (s *SAProjects) changeOwners(ctx context.Context, project, removing string,
 		Policy: &crm.Policy{Etag: pol.Etag, Version: 3, Bindings: out, AuditConfigs: pol.AuditConfigs},
 	}).Context(ctx).Do()
 	if err != nil {
-		return classify(err, "changing the owners of project "+project)
+		return &ownerWriteError{classify(err, "changing the owners of project "+project)}
 	}
 	return nil
 }
+
+// ownerWriteError marks a failure of the owner WRITE, as told apart from the
+// read that comes before it. Only a write's refusal can be U8's — no invitation
+// is being extended when a policy cannot be read — and GrantOwner's
+// classification of it says why that matters.
+type ownerWriteError struct{ err error }
+
+func (e *ownerWriteError) Error() string { return e.err.Error() }
+func (e *ownerWriteError) Unwrap() error { return e.err }
 
 // accountPolicy reads the account's IAM policy at the version that carries
 // conditions.

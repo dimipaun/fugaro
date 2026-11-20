@@ -32,9 +32,13 @@ var _ workspace.SAProjects = (*SAProjects)(nil)
 const (
 	wu20Workspace = "ws-aurora"
 	wu20Account   = "fugaro-workspace-iam@ws-aurora.iam.gserviceaccount.com"
-	wu20Member    = "member-a"
-	wu20Admin     = "user:ada@example.com"
-	wu20Second    = "user:grace@example.com"
+	// wu20AccountMember is the account as an IAM policy member, which is the
+	// spelling every owner binding holds: the bare address above is the
+	// principal's name, and a policy that wrote it as a member would be refused.
+	wu20AccountMember = "serviceAccount:" + wu20Account
+	wu20Member        = "member-a"
+	wu20Admin         = "user:ada@example.com"
+	wu20Second        = "user:grace@example.com"
 )
 
 // wu20Rig is the two fakes, the clients over them and the surface under test.
@@ -130,28 +134,28 @@ func TestSACloudOwnerGrantAddedAndRemoved(t *testing.T) {
 		gcpfake.Binding{Role: SAProjectOwnerRole, Members: []string{"user:founder@example.com"}})
 
 	for range 2 {
-		if err := r.sap.GrantOwner(ctx, wu20Member, wu20Account); err != nil {
+		if err := r.sap.GrantOwner(ctx, wu20Member, wu20AccountMember); err != nil {
 			t.Fatalf("GrantOwner: %v", err)
 		}
 	}
-	if got, want := r.owners(t, wu20Member), []string{"user:founder@example.com", wu20Account}; !slices.Equal(got, want) {
+	if got, want := r.owners(t, wu20Member), []string{"user:founder@example.com", wu20AccountMember}; !slices.Equal(got, want) {
 		t.Errorf("the project's owners = %v, want %v: granted once, however often the call is made", got, want)
 	}
-	if held, err := r.sap.Owns(ctx, wu20Member, wu20Account); err != nil || !held {
+	if held, err := r.sap.Owns(ctx, wu20Member, wu20AccountMember); err != nil || !held {
 		t.Errorf("Owns after GrantOwner = %v, %v; want true, nil", held, err)
 	}
-	if err := r.sap.RemoveOwner(ctx, wu20Member, wu20Account); err != nil {
+	if err := r.sap.RemoveOwner(ctx, wu20Member, wu20AccountMember); err != nil {
 		t.Fatalf("RemoveOwner: %v", err)
 	}
 	if got, want := r.owners(t, wu20Member), []string{"user:founder@example.com"}; !slices.Equal(got, want) {
 		t.Errorf("the project's owners after RemoveOwner = %v, want %v", got, want)
 	}
-	if held, err := r.sap.Owns(ctx, wu20Member, wu20Account); err != nil || held {
+	if held, err := r.sap.Owns(ctx, wu20Member, wu20AccountMember); err != nil || held {
 		t.Errorf("Owns after RemoveOwner = %v, %v; want false, nil", held, err)
 	}
 	// A removal of a member the project does not bind changes nothing and is not
 	// an error: an unlink of a member the account never held is a no-op.
-	if err := r.sap.RemoveOwner(ctx, wu20Member, wu20Account); err != nil {
+	if err := r.sap.RemoveOwner(ctx, wu20Member, wu20AccountMember); err != nil {
 		t.Errorf("RemoveOwner of a member the project does not bind: %v", err)
 	}
 	pol, err := r.c.Projects.GetIamPolicy(wu20Member, &crm.GetIamPolicyRequest{}).Context(ctx).Do()
@@ -165,7 +169,7 @@ func TestSACloudOwnerGrantAddedAndRemoved(t *testing.T) {
 
 	// A project the caller may not read is refused with the API's own words.
 	r.crm.DenyPolicy(wu20Member)
-	if _, err := r.sap.Owns(ctx, wu20Member, wu20Account); err == nil {
+	if _, err := r.sap.Owns(ctx, wu20Member, wu20AccountMember); err == nil {
 		t.Error("Owns of a project whose policy cannot be read = nil, want the API's refusal")
 	}
 }
@@ -333,7 +337,7 @@ func TestSACloudOwnerRefusalIsTheInvite(t *testing.T) {
 
 	for _, code := range []int{400, 412} {
 		r.crm.RefusePath(":setIamPolicy", code, "FAILED_PRECONDITION", "FAILED_PRECONDITION", "basic roles cannot be granted here")
-		err := r.sap.GrantOwner(ctx, wu20Member, wu20Account)
+		err := r.sap.GrantOwner(ctx, wu20Member, wu20AccountMember)
 		if err == nil {
 			t.Fatalf("GrantOwner with the API answering %d = nil, want a refusal", code)
 		}
@@ -350,7 +354,7 @@ func TestSACloudOwnerRefusalIsTheInvite(t *testing.T) {
 	// itself, because sending that caller to the console would hide a permission
 	// they can fix.
 	r.crm.RefusePath(":setIamPolicy", 403, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "Permission 'resourcemanager.projects.setIamPolicy' denied")
-	err := r.sap.GrantOwner(ctx, "member-b", wu20Account)
+	err := r.sap.GrantOwner(ctx, "member-b", wu20AccountMember)
 	if err == nil {
 		t.Fatal("GrantOwner with the write denied = nil, want a refusal")
 	}
@@ -361,16 +365,29 @@ func TestSACloudOwnerRefusalIsTheInvite(t *testing.T) {
 
 	// A policy the caller may not read is refused by the read, before any write.
 	r.crm.DenyPolicy("member-b")
-	if _, err := r.sap.Owns(ctx, "member-b", wu20Account); err == nil {
+	if _, err := r.sap.Owns(ctx, "member-b", wu20AccountMember); err == nil {
 		t.Error("Owns of a project whose policy cannot be read = nil, want the API's refusal")
 	}
+
+	// A READ answered with a 400 is the read's own answer and not U8's: no
+	// invitation is being extended by a policy that could not be read, so the
+	// caller is not sent to the console for it.
+	r.crm.RefusePath(":getIamPolicy", 400, "INVALID_ARGUMENT", "", "the request is malformed")
+	err = r.sap.GrantOwner(ctx, "member-b", wu20AccountMember)
+	if err == nil {
+		t.Fatal("GrantOwner with the read refused = nil, want a refusal")
+	}
+	if errors.Is(err, workspace.ErrSAOwnerInvite) {
+		t.Errorf("GrantOwner = %v, want no ErrSAOwnerInvite for a refusal of the read", err)
+	}
+	r.crm.RefusePath(":getIamPolicy", 0, "", "", "")
 
 	// Removing the role is not the invite's case either: the invitation is about
 	// a grant being made. The project holds the grant already — that is the state
 	// the person's accepted invitation leaves it in — so the removal is a write.
-	r.crm.SetPolicy(wu20Member, gcpfake.Binding{Role: SAProjectOwnerRole, Members: []string{wu20Account}})
+	r.crm.SetPolicy(wu20Member, gcpfake.Binding{Role: SAProjectOwnerRole, Members: []string{wu20AccountMember}})
 	r.crm.RefusePath(":setIamPolicy", 400, "INVALID_ARGUMENT", "", "refused")
-	if err := r.sap.RemoveOwner(ctx, wu20Member, wu20Account); err == nil {
+	if err := r.sap.RemoveOwner(ctx, wu20Member, wu20AccountMember); err == nil {
 		t.Error("RemoveOwner with the write refused = nil, want a refusal")
 	} else if errors.Is(err, workspace.ErrSAOwnerInvite) {
 		t.Errorf("RemoveOwner = %v, want no ErrSAOwnerInvite: no invitation adds the role back", err)
@@ -380,13 +397,13 @@ func TestSACloudOwnerRefusalIsTheInvite(t *testing.T) {
 	// With the refusal lifted the calls converge: the grant is already there, so
 	// GrantOwner writes nothing and adds nothing, and the removal the refusal
 	// stopped goes through.
-	if err := r.sap.GrantOwner(ctx, wu20Member, wu20Account); err != nil {
+	if err := r.sap.GrantOwner(ctx, wu20Member, wu20AccountMember); err != nil {
 		t.Fatalf("GrantOwner with the refusal lifted: %v", err)
 	}
-	if got, want := r.owners(t, wu20Member), []string{wu20Account}; !slices.Equal(got, want) {
+	if got, want := r.owners(t, wu20Member), []string{wu20AccountMember}; !slices.Equal(got, want) {
 		t.Errorf("the project's owners = %v, want %v", got, want)
 	}
-	if err := r.sap.RemoveOwner(ctx, wu20Member, wu20Account); err != nil {
+	if err := r.sap.RemoveOwner(ctx, wu20Member, wu20AccountMember); err != nil {
 		t.Fatalf("RemoveOwner with the refusal lifted: %v", err)
 	}
 	if got := r.owners(t, wu20Member); len(got) != 0 {

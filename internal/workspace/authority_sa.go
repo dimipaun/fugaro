@@ -67,8 +67,16 @@ var ErrSAOwnerInvite = errors.New("Google refuses an owner grant made by API out
 // this one).
 //
 // A project is named by its ID, not by projects/<id>, as it is everywhere else
-// in this package; the account is named by its API resource name,
-// projects/<workspace>/serviceAccounts/<email>, which the authority composes.
+// in this package; the account — where an argument is one — is named by its API
+// resource name, projects/<workspace>/serviceAccounts/<email>, which the
+// authority composes.
+//
+// Every member argument is an IAM member string, prefix and all: the account is
+// serviceAccount:<address> and a person is user:<address>, which is the grammar
+// a policy holds and the only spelling Google resolves. The address alone is not
+// one — a policy that names it is refused — so the authority composes the
+// prefix where it composes the member, in accountMember, and the account's bare
+// address never reaches this surface as a member.
 type SAProjects interface {
 	// GrantOwner gives member roles/owner on project.
 	GrantOwner(ctx context.Context, project, member string) error
@@ -148,7 +156,7 @@ func (a *SAAuthority) Link(ctx context.Context, m MemberTarget) error {
 		return err
 	}
 	for _, p := range saProjects(m) {
-		if err := a.Projects.GrantOwner(ctx, p, a.Account); err != nil {
+		if err := a.Projects.GrantOwner(ctx, p, a.accountMember()); err != nil {
 			return fmt.Errorf("granting %s roles/owner on %s: %w", a.Account, p, err)
 		}
 	}
@@ -166,7 +174,7 @@ func (a *SAAuthority) Unlink(ctx context.Context, m MemberTarget) error {
 		return err
 	}
 	for _, p := range saProjects(m) {
-		if err := a.Projects.RemoveOwner(ctx, p, a.Account); err != nil {
+		if err := a.Projects.RemoveOwner(ctx, p, a.accountMember()); err != nil {
 			return fmt.Errorf("removing %s's roles/owner on %s: %w", a.Account, p, err)
 		}
 	}
@@ -193,7 +201,7 @@ func (a *SAAuthority) Holds(ctx context.Context, m MemberTarget) (bool, error) {
 		return false, err
 	}
 	for _, p := range saProjects(m) {
-		owned, err := a.Projects.Owns(ctx, p, a.Account)
+		owned, err := a.Projects.Owns(ctx, p, a.accountMember())
 		if err != nil {
 			return false, fmt.Errorf("reading %s's roles/owner on %s: %w", a.Account, p, err)
 		}
@@ -286,6 +294,16 @@ func (a *SAAuthority) AdminBindings(ctx context.Context) ([]string, error) {
 // read and written on (projects/<workspace>/serviceAccounts/<email>).
 func (a *SAAuthority) account() string {
 	return "projects/" + a.Workspace + "/serviceAccounts/" + a.Account
+}
+
+// accountMember is the account as an IAM policy member: serviceAccount: and its
+// address. The prefix is the API's grammar for the principal and not decoration
+// — a policy naming the bare address is refused — so a link that spelled it bare
+// would fail on every project with an answer that reads like any other refusal.
+// Account itself stays the bare address, because that is what
+// WorkspaceIAMAccountOutput carries and what a message to a person reads as.
+func (a *SAAuthority) accountMember() string {
+	return "serviceAccount:" + a.Account
 }
 
 // inviteStep is the line AddAdmin prints when Google refuses the owner grant:
