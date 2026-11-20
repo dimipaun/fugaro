@@ -74,9 +74,10 @@
 // every tick.
 //
 // WHAT THIS DEPLOYMENT STILL LACKS TO SERVE ONE, named rather than left to a
-// tick that refuses: the pairing keys (the container is the module's, and the
-// grant is the secret row P5.1e added, but this process builds no Secret
-// Manager client and reads no version); the Firebase web API key, which the
+// tick that refuses: the pairing keys (the container is the module's, the grant
+// is the secret row P5.1e added and the reader is keychain.Cloud.Keys, but this
+// service builds none of it and no name in its environment points at the
+// container); the Firebase web API key, which the
 // minted custom token must be exchanged with before it is an identity the rules
 // know — the service's own environment does not carry it (orchestrator.tf's six
 // names are three of the node's and three of the launch's, and
