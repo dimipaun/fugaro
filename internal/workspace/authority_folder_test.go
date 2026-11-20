@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -128,6 +129,32 @@ func wu2Record(t *testing.T, db *rtdb.Client) (FolderLinkRecord, bool) {
 		t.Fatalf("decoding %s: %v", PathWorkspaceLink, err)
 	}
 	return rec, true
+}
+
+// wu2RawRecord is the node's document as the database holds it, a map so a
+// test can compare it with what it wrote whatever the field order.
+func wu2RawRecord(t *testing.T, db *rtdb.Client) (map[string]any, bool) {
+	t.Helper()
+	var raw map[string]any
+	found, err := db.Get(t.Context(), PathWorkspaceLink, &raw)
+	if err != nil {
+		t.Fatalf("reading %s: %v", PathWorkspaceLink, err)
+	}
+	return raw, found
+}
+
+// wu2Raw is a record as the document that carries it.
+func wu2Raw(t *testing.T, rec FolderLinkRecord) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 // wu2WriteRecord puts a record at the node by hand, as a member's budget admin
@@ -279,6 +306,71 @@ func TestFolderLinkRefusesOtherWorkspaceFolder(t *testing.T) {
 	}
 }
 
+// TestFolderLinkRefusesAProjectUnderItsOwnFolder: a project in a folder of its
+// own inside the workspace's folder inherits the workspace's admins already,
+// and a link places a project directly in the workspace's folder, so it is
+// refused rather than recorded as a move that did not happen.
+func TestFolderLinkRefusesAProjectUnderItsOwnFolder(t *testing.T) {
+	cloud, db := wu2Cloud(), wu2DB(t)
+	cloud.folder("folders/9", WorkspaceFolderName("aurora"), "organizations/123")
+	cloud.folder("folders/7", "member-a-team", "folders/9")
+	cloud.project("member-a", "folders/7")
+	a := &FolderAuthority{Workspace: "aurora", Folder: "folders/9", CRM: cloud, DB: db}
+
+	err := a.Link(t.Context(), FolderMember{Project: "member-a"})
+	if err == nil {
+		t.Fatal("Link of a project in a folder under the workspace's own folder was allowed")
+	}
+	for _, want := range []string{"folders/7", "this workspace's own folder"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+	if len(cloud.moves) != 0 {
+		t.Errorf("the refused link made the move(s) %v", cloud.moves)
+	}
+	if _, found := wu2Record(t, db); found {
+		t.Errorf("the refused link wrote %s", PathWorkspaceLink)
+	}
+}
+
+// TestFolderLinkRefusesAProjectWithNoParent: a project created outside any
+// organization has no parent, and the move back has to name a destination —
+// the API takes no "no parent" for one — so linking it would move it into the
+// folder with no way out. Link refuses it, the Firebase project included.
+func TestFolderLinkRefusesAProjectWithNoParent(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		member FolderMember
+	}{
+		{"the member's own project", FolderMember{Project: "member-a"}},
+		{"the member's Firebase project", FolderMember{Project: "member-b", Firebase: "member-b-fb"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cloud, db := wu2Cloud(), wu2DB(t)
+			cloud.folder("folders/9", WorkspaceFolderName("aurora"), "organizations/123")
+			cloud.project("member-a", "")
+			cloud.project("member-b", "organizations/123")
+			cloud.project("member-b-fb", "")
+			a := &FolderAuthority{Workspace: "aurora", Folder: "folders/9", CRM: cloud, DB: db}
+
+			err := a.Link(t.Context(), tc.member)
+			if err == nil {
+				t.Fatal("Link moved a project that is under no parent into the folder")
+			}
+			if !strings.Contains(err.Error(), "no parent") {
+				t.Errorf("the refusal %q does not say that the project has no parent", err)
+			}
+			if len(cloud.moves) != 0 {
+				t.Errorf("the refused link made the move(s) %v", cloud.moves)
+			}
+			if _, found := wu2Record(t, db); found {
+				t.Errorf("the refused link wrote %s", PathWorkspaceLink)
+			}
+		})
+	}
+}
+
 // TestFolderUnlinkRestoresParent: the unlink moves the project back to the
 // parent its own record names, prints where it goes, drops the record, and
 // Holds reports where the project stands on either side of it.
@@ -369,6 +461,10 @@ func TestFolderUnlinkRefusesATamperedParent(t *testing.T) {
 			"names no parent",
 			FolderLinkRecord{Project: "member-a"},
 			FolderMember{Project: "member-a"}},
+		{"a Firebase project with no parent",
+			"with no parent for it",
+			FolderLinkRecord{Project: "member-a", Parent: "organizations/123", Firebase: "member-a-fb"},
+			FolderMember{Project: "member-a", Firebase: "member-a-fb"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cloud, db := wu2Cloud(), wu2DB(t)
@@ -391,8 +487,8 @@ func TestFolderUnlinkRefusesATamperedParent(t *testing.T) {
 			if len(cloud.moves) != 0 {
 				t.Errorf("the refused unlink made the move(s) %v", cloud.moves)
 			}
-			if rec, found := wu2Record(t, db); !found || rec != tc.rec {
-				t.Errorf("the record is %+v (found=%v) after the refusal, want it left as it was: a refusal does not drop a record a person has to correct", rec, found)
+			if got, found := wu2RawRecord(t, db); !found || !reflect.DeepEqual(got, wu2Raw(t, tc.rec)) {
+				t.Errorf("the record is %v (found=%v) after the refusal, want it left as it was: a refusal does not drop a record a person has to correct", got, found)
 			}
 		})
 	}

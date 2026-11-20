@@ -182,6 +182,13 @@ func validateFolderLink(rec FolderLinkRecord) error {
 	if rec.FirebaseParent != "" && !folderParentRE.MatchString(rec.FirebaseParent) {
 		return fmt.Errorf("firebase_parent: %q is not organizations/<number> or folders/<number>", rec.FirebaseParent)
 	}
+	// A recorded Firebase project and its parent go together: Unlink moves the
+	// two projects back in one act, and a record that names the first without
+	// the second is a record that would leave a project in the folder while the
+	// other went home.
+	if rec.Firebase != "" && rec.FirebaseParent == "" {
+		return fmt.Errorf("firebase_parent: the record names the Firebase project %s with no parent for it", rec.Firebase)
+	}
 	return nil
 }
 
@@ -256,10 +263,13 @@ func (a *FolderAuthority) Holds(ctx context.Context, m FolderMember) (FolderHold
 // other order can lose the parent for good.
 //
 // It refuses a project that sits in another workspace's folder (R2) — a
-// project belongs to at most one workspace (D1291) — and one whose record is
-// already written, naming `unlink` as the way out. A member already in the
-// workspace's folder is already linked: Link then does nothing, whatever the
-// record says, rather than overwrite a parent it did not record.
+// project belongs to at most one workspace (D1291) — one that sits in a folder
+// of its own under this workspace's folder (the admins are inherited either
+// way, and link places a project directly in the folder), one that is under no
+// parent (there would be no parent to record and so no way back) and one whose
+// record is already written, naming `unlink` as the way out. A member already
+// in the workspace's folder is already linked: Link then does nothing, whatever
+// the record says, rather than overwrite a parent it did not record.
 func (a *FolderAuthority) Link(ctx context.Context, m FolderMember) error {
 	if err := a.check(m); err != nil {
 		return err
@@ -285,8 +295,23 @@ func (a *FolderAuthority) Link(ctx context.Context, m FolderMember) error {
 		if err != nil {
 			return err
 		}
+		if above == a.Folder {
+			// Under this workspace's own folder, but in a folder of its own
+			// inside it: the workspace's admins are inherited either way, and a
+			// link places a project directly in the folder, so this is refused
+			// rather than recorded as though the project had moved.
+			return fmt.Errorf("project %s is in the folder %s, under this workspace's own folder %s: link places a project directly in the workspace's folder, so move it out of %s first", p, parent, a.Folder, parent)
+		}
 		if above != "" {
-			return fmt.Errorf("project %s is in the folder %s, which is another workspace's (named %q): a project belongs to at most one workspace, so have that workspace's owner run `fugaro workspace project rm %s`, or move the project out of its folder first, before linking it here", p, above, a.Folder, m.Project)
+			return fmt.Errorf("project %s is in the folder %s, which is another workspace's: a project belongs to at most one workspace, so have that workspace's owner run `fugaro workspace project rm %s`, or move the project out of its folder first, before linking it here", p, above, m.Project)
+		}
+	}
+	// A project under no parent is not linked: the move back has to name a
+	// destination, and the API takes no "no parent" for one, so a project moved
+	// into the folder from there could never be moved out again.
+	for _, p := range m.projects() {
+		if parents[p] == "" {
+			return fmt.Errorf("project %s is under no parent: a project moved into the workspace's folder is moved back to the parent it is recorded at, and there is none to record; put it under an organization or a folder first and link it then", p)
 		}
 	}
 	if linked {
@@ -345,11 +370,13 @@ func (a *FolderAuthority) Unlink(ctx context.Context, m FolderMember) error {
 	if rec.Project != m.Project || rec.Firebase != m.Firebase {
 		return fmt.Errorf("the record at %s names %s and %q, not this member (%s and %q): the record was rewritten or belongs to another project, and nothing here moves a project on a record it cannot trust", PathWorkspaceLink, rec.Project, rec.Firebase, m.Project, m.Firebase)
 	}
+	if rec.Parent == "" {
+		return fmt.Errorf("the record at %s names no parent for %s: a project moved back needs a destination, and there is none; move it by hand", PathWorkspaceLink, m.Project)
+	}
 	for _, pair := range []struct{ what, parent string }{{"project", rec.Parent}, {"Firebase project", rec.FirebaseParent}} {
 		if pair.parent == "" {
-			if pair.what == "project" {
-				return fmt.Errorf("the record at %s names no parent for %s: a project moved back needs a destination, and there is none; move it by hand", PathWorkspaceLink, m.Project)
-			}
+			// No Firebase project of its own, which is the common case: nothing
+			// to check and nothing to move.
 			continue
 		}
 		above, err := a.workspaceFolderAbove(ctx, pair.parent)
