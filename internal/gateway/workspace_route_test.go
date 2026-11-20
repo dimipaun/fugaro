@@ -607,3 +607,128 @@ func TestNoRecordIsTodaysRun(t *testing.T) {
 		}
 	})
 }
+
+// wsValidRoute is the second upstream a run builds from a record, before a case
+// below breaks one thing about it: every field Workspace.validate requires,
+// holding no identity of the member's (R18) — the job's identity, the run's own
+// token, and the job's name, which is a claim and not a secret.
+func wsValidRoute(t *testing.T) *gateway.Workspace {
+	t.Helper()
+	return &gateway.Workspace{
+		Address:    "https://fugaro-workspace-credentials.example.invalid",
+		Job:        wsJob,
+		IDToken:    func(context.Context, string) (string, error) { return "id-token-" + mirrorName(t), nil },
+		RunIDToken: func() string { return "run-identity-" + mirrorName(t) },
+	}
+}
+
+// TestTheGatewayRefusesAWorkspaceUpstreamItCannotCallSafely: the gateway's own
+// check of the second upstream, which is what still holds when Options is built
+// by something other than the runner that read the record — the runner's own
+// reader refuses these first (creds.DecodeRoute checks the address, the
+// reader's own half), and a gateway that leaned on that would be a gateway
+// whose rule lives in its caller.
+//
+// The address is the one that matters most: a routed call carries the run's own
+// token, so an upstream that is not a scheme and a host, or that travels in the
+// clear off loopback, is a token sent where nobody chose. The rest are the
+// identity the workspace's service is called by and the two facts a call
+// presents, and a run missing one of them is a run whose every call would be
+// refused one at a time instead of at its start.
+//
+// The first case is the control: the same Options with nothing broken starts,
+// so a table of refusals is not a table that refuses everything.
+func TestTheGatewayRefusesAWorkspaceUpstreamItCannotCallSafely(t *testing.T) {
+	base := func() gateway.Options {
+		return gateway.Options{
+			Upstream: gateway.Upstream{Kind: "anthropic"},
+			Prices:   pricing.Embedded(),
+			Mode:     gateway.Observe,
+			Log:      slog.New(slog.DiscardHandler),
+			// What the runner hands over for a record that serves the model
+			// kind from the workspace: the second upstream, and the answer
+			// that the model calls are its.
+			Workspace:          wsValidRoute(t),
+			ModelFromWorkspace: true,
+		}
+	}
+	tests := []struct {
+		name string
+		edit func(*gateway.Options)
+		// want is what the refusal must say; the empty string is the control
+		// case, which must start.
+		want string
+	}{
+		{
+			name: "the record's upstream, unbroken",
+		},
+		{
+			name: "an empty address",
+			edit: func(o *gateway.Options) { o.Workspace.Address = "" },
+			want: "the workspace upstream has no address",
+		},
+		{
+			name: "http on a host that is not loopback",
+			edit: func(o *gateway.Options) {
+				o.Workspace.Address = "http://fugaro-workspace-credentials.example.invalid"
+			},
+			want: "must be https, or http on a loopback address",
+		},
+		{
+			name: "an address that carries a path",
+			edit: func(o *gateway.Options) {
+				o.Workspace.Address = "https://fugaro-workspace-credentials.example.invalid/creds"
+			},
+			want: "must be a scheme and a host only",
+		},
+		{
+			name: "no job identity",
+			edit: func(o *gateway.Options) { o.Workspace.IDToken = nil },
+			want: "the workspace upstream has no job identity",
+		},
+		{
+			name: "no run identity",
+			edit: func(o *gateway.Options) { o.Workspace.RunIDToken = nil },
+			want: "the workspace upstream has no run identity",
+		},
+		{
+			name: "no job name",
+			edit: func(o *gateway.Options) { o.Workspace.Job = "" },
+			want: "the workspace upstream reports no Cloud Run job name",
+		},
+		{
+			name: "a route that serves the model from the workspace with no upstream for it",
+			edit: func(o *gateway.Options) { o.Workspace = nil },
+			want: "serves the model from the workspace and no workspace upstream was built for it",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := base()
+			if tc.edit != nil {
+				tc.edit(&opts)
+			}
+			gw, err := gateway.Start(context.Background(), opts)
+			if gw != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				_ = gw.Close(ctx)
+			}
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("Start refused the run's own route: %v", err)
+				}
+				if gw == nil {
+					t.Fatal("Start answered no server and no error")
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Start accepted a workspace upstream with %s: a routed call carries the run's own token, so this is a call made before anything decided it could be", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not name the fault (%q): %v", tc.want, err)
+			}
+		})
+	}
+}
