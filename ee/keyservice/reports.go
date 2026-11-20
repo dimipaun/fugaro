@@ -13,6 +13,12 @@ package keyservice
 // disagree, and every figure an operator reads is walkable back to the event or
 // the statement it came from (wire_reports.go's own sentence).
 //
+// **A report states one currency.** The ledger keeps the currency each line was
+// in, because the merchant prices in the buyer's own, and this report's figures
+// are named in one (reportCurrency): a month holding a sale in another is
+// refused rather than answered, because nothing here has a rate to convert with
+// and a figure that mixed the two would be money of neither.
+//
 // **A grant that books no money is not revenue.** The free seat, a trial and a
 // licence operations mints outside a sale are grants and not purchases (D2199,
 // D2203); nothing in this file prices one, so a month of comped seats adds
@@ -33,6 +39,7 @@ package keyservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -50,6 +57,27 @@ const (
 // and D456's rule that the reads are logged holds for it as it does for every
 // other read the operations membership widens.
 const actionReportRead = "report.read"
+
+// reportCurrency is the one currency a report states, and it is the unit the
+// shapes around it are already named in: the ledger's `amount_micros` and this
+// area's two figures are micro-dollars (wire_ledger.go, wire_reports.go,
+// ledger.schema.json), and micro-dollars is what the operations screen draws.
+//
+// It is stated rather than assumed because the ledger keeps the currency each
+// line was in — Paddle prices in the buyer's currency and `grandTotalMicros`
+// reads the minor unit of whatever one the body named — so a month can hold
+// lines this report has no unit for. Two currencies added into one figure is
+// money of two kinds in one number (a month of dollars and euros is neither),
+// and there is no rate here to convert with; a line left out in silence is the
+// month of sales that never happened. So a month holding one is refused
+// (`errReportCurrency`), and what an operator is left with is the ledger's own
+// month read, which carries every line's own currency.
+const reportCurrency = "USD"
+
+// errReportCurrency is a month that holds sales in a currency a report does not
+// state. It is a refusal of the read and not a bad query: the month was asked
+// for correctly, and it is the month's own lines that cannot be added up.
+var errReportCurrency = errors.New("keyservice: that month holds sales in a currency a report does not state")
 
 // reportLine is one customer's month while it is being added up: what each
 // channel booked for them, whether either did, and whether the month granted
@@ -200,6 +228,15 @@ func (s *Service) reportLines(ctx context.Context, start, end time.Time) (report
 		if !inUTCmonth(entry.At, start, end) {
 			continue
 		}
+		// A line the report has no unit for stops the read rather than moving a
+		// figure (reportCurrency). The ledger's lines carry the currency the
+		// merchant's own body named, and this report states one: what it cannot
+		// do is add another to it, or leave it out and answer a month that is
+		// missing its sales.
+		if !strings.EqualFold(strings.TrimSpace(entry.Currency), reportCurrency) {
+			return reportMonthLines{}, fmt.Errorf("%w: the line %s of %s is in %q",
+				errReportCurrency, entry.ID, start.Format(statementMonthLayout), entry.Currency)
+		}
 		// The month's figure is every line of the month, named or not, because
 		// that is what the ledger's own read of the same month adds up
 		// (wire_reports.go signs both figures for exactly this): an adjustment —
@@ -236,6 +273,10 @@ func (s *Service) reportLines(ctx context.Context, start, end time.Time) (report
 		by.direct += entry.AmountMicros
 	}
 
+	// The reseller half needs no currency check and carries none: a statement's
+	// lines are the portal's own accrual, priced in the micros the policy table
+	// states (wire_resellers.go's `daily_rate_micros`), and no merchant body's
+	// currency reaches them.
 	statements, err := recordsWhere[WireStatement](ctx, s.docs, statementsCollection,
 		Where{Field: "month", Value: start.Format(statementMonthLayout)})
 	if err != nil {

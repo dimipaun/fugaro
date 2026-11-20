@@ -153,16 +153,51 @@ func reportBodyAt(t *testing.T, e Event, occurredAt string) []byte {
 // against (merchant.go's `entitlementFor`).
 func (f *fixture) reportDirectSale(t *testing.T, id, name, workspace string, at time.Time) WireOrganisation {
 	t.Helper()
+	return f.reportSaleIn(t, id, name, workspace, at, reportCurrency)
+}
+
+// reportSaleIn is the same sale in one named currency: the merchant prices in
+// the buyer's own, so the body's `currency_code` is the sale's and not this
+// fixture's, and the ledger keeps it on the line it makes. It is what the case
+// about a month a dollar report has no unit for (below) sells in.
+func (f *fixture) reportSaleIn(t *testing.T, id, name, workspace string, at time.Time, currency string) WireOrganisation {
+	t.Helper()
 	buyer := f.seededOrganisation(id+".example", name, orgTypeCustomer, danaUID, danaEmail, roleOwner)
 	f.actsAs(danaUID, danaEmail, signInGoogle)
-	f.deliver(Event{
+	e := f.claimsOf(Event{
 		ID: id, Type: EventPurchase, OccurredAt: at,
 		Subscription: "sub-" + id,
 		Organisation: buyer.ID, WorkspaceID: workspace,
 		Email: buyerAddress(buyer.ID),
 		Seats: 5, TermDays: 365,
 	})
+	body := reportBodyData(t, e, "currency_code", currency)
+	if rec := f.deliverRaw(body, signEvent(f.secret, f.now, body)); rec.Code != http.StatusOK {
+		t.Fatalf("the %s purchase %s was answered %d, want 200: %s", currency, e.ID, rec.Code, rec.Body)
+	}
 	return buyer
+}
+
+// reportBodyData is one notification body with one field of its `data` object
+// replaced: the fixture's own body states dollars, so a case about another
+// currency states it itself rather than reading it back out of a fixture that
+// has no other one.
+func reportBodyData(t *testing.T, e Event, field string, value any) []byte {
+	t.Helper()
+	var body map[string]any
+	if err := json.Unmarshal(notificationBody(t, e, ""), &body); err != nil {
+		t.Fatalf("decoding the notification %s: %v", e.ID, err)
+	}
+	data, held := body["data"].(map[string]any)
+	if !held {
+		t.Fatalf("the fixture's own body for %s carries no data object", e.ID)
+	}
+	data[field] = value
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("encoding the notification %s: %v", e.ID, err)
+	}
+	return encoded
 }
 
 // TestReportSplitsDirectAndReseller: the report is the month's sales split by
@@ -424,6 +459,63 @@ func TestReportCountsARefundItsEventNamesNoCustomerFor(t *testing.T) {
 	if line := reportCustomer(t, report, buyer.ID, channelDirect); line.AmountMicros != reportSaleMicros {
 		t.Errorf("the buyer's line is %d micro-dollars, want the purchase's own %d: the refund named no customer and is nobody's line",
 			line.AmountMicros, reportSaleMicros)
+	}
+}
+
+// TestReportRefusesAMonthInAnotherCurrency: a report states micro-dollars, which
+// is the unit its own figures are named in (wire_reports.go, reports.schema.json)
+// — and the ledger keeps the currency each of its lines was in, because the
+// merchant prices in the buyer's own (wire_ledger.go's `Currency`, and
+// `grandTotalMicros` reads the minor unit of whatever currency the body named).
+//
+// A month holding one the report has no unit for is refused and not answered:
+// adding two currencies into one figure is money of neither, and leaving the line
+// out is a month of sales that never happened, which is the number the operations
+// team reconciles against. What an operator is left with is the ledger's own
+// month read, which carries each line's own currency, and the refusal says so.
+//
+// The month beside it is answered as before: what is refused is the month holding
+// the sale and not the report.
+func TestReportRefusesAMonthInAnotherCurrency(t *testing.T) {
+	f := newFixture(t)
+	f.now = time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+
+	buyer := f.reportDirectSale(t, "acme", "Acme Ltd", "ws-acme", f.now)
+
+	// One sale the merchant took in euros, in the month after the dollars, so
+	// that the two are months read apart.
+	const euroMonth = "2026-06"
+	f.now = time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	f.reportSaleIn(t, "europa", "Europa GmbH", "ws-europa", f.now, "EUR")
+
+	// The ledger keeps the currency on the line, which is the fact the report
+	// reads and one an operator can see for themselves.
+	var euro WireLedgerEntry
+	for _, entry := range f.ledger(t) {
+		if entry.ID == "europa" {
+			euro = entry
+		}
+	}
+	if euro.ID == "" || euro.Currency != "EUR" || euro.AmountMicros != reportSaleMicros {
+		t.Fatalf("the ledger holds %+v for the euro sale, want a line of %d micros in EUR: this case is about the line a dollar report has no unit for",
+			euro, reportSaleMicros)
+	}
+
+	f.operationsOrg(roleOwner)
+
+	refused := f.apiAsCaller(http.MethodGet, apiOpsReportsPath+"?month="+euroMonth, "")
+	if refused.Code != http.StatusConflict || refusal(f, refused) != "unsupported_currency" {
+		t.Errorf("the month holding the euro sale was answered %d (%s), want a 409 unsupported_currency: a report states micro-dollars, and it cannot add another currency to them",
+			refused.Code, refused.Body)
+	}
+
+	may := f.reportOf(reportMonth)
+	if may.DirectMicros != reportSaleMicros {
+		t.Errorf("May holds %d micro-dollars, want the dollar sale alone (%d): the refusal is the month's and not the report's",
+			may.DirectMicros, reportSaleMicros)
+	}
+	if line := reportCustomer(t, may, buyer.ID, channelDirect); line.AmountMicros != reportSaleMicros {
+		t.Errorf("May's line for the buyer is %d micro-dollars, want the purchase's own %d", line.AmountMicros, reportSaleMicros)
 	}
 }
 
