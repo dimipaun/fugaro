@@ -8,8 +8,8 @@ Secret Manager, Cloud KMS and IAM documentation was fetched on 2026-11-20; what 
 not state is under UNVERIFIED, never in a finding.
 
 The short reading: the brief asks for a carrier, and the code shows the carrier is one of seven
-things that stop a Batch run. The owner chose to finish the backend (D3060), with a carrier that
-releases the seal key only to the run's own VM (D3061).
+things that stop a Batch run. The owner chose to finish the backend (D3100), with a carrier that
+releases the seal key only to the run's own VM (D3101).
 
 ## Modules
 
@@ -22,7 +22,7 @@ The owner approved this map on 2026-11-20. Every finding, decision and task name
 | `project-jobs` | Batch runs a workflow that belongs to a shared project job | `job-environment` |
 | `service-credentials` | A Batch run's model and git credentials come from the credentials service alone | nothing |
 | `update-converge` | `fugaro update` applies the compute root, the key and the grants, and the refusal lifts where the carrier is in place | `key-release` (its interface) |
-| `live-proof` | Checks 810 and 811, the documents, `SECURITY.md` | all |
+| `live-proof` | Checks 830 and 831, the documents, `SECURITY.md` | all |
 
 ## Assumptions
 
@@ -37,10 +37,9 @@ The owner approved this map on 2026-11-20. Every finding, decision and task name
 - A4. "Nothing left behind per run" means no cloud resource a person must delete. The sealed token
   object already expires by the bucket's lifecycle rule and is not counted.
 - A5. "An installation on Batch" is one whose config carries a `batch:` block, whether or not it
-  selects the backend. **Contradicted by D3070**: for `fugaro update`, it is one that selects the
-  backend.
+  selects the backend. **Contradicted by D3110**: for `fugaro update`, it is one an operator has opted in.
 
-No finding contradicts A1 to A4. A2 is what D3061 turns on.
+No finding contradicts A1 to A4. A2 is what D3101 turns on.
 
 ## What the brief names, and what the repository has
 
@@ -65,7 +64,7 @@ hold a late number. The same holds for resolutions, open items and UNVERIFIED.
 v1; v1alpha's patch "currently only supports increasing the value of the first `taskCount` field".
 One job is one run, which is how this backend already uses it (`JobID` hashes the run id). The
 release notes of 2025 and 2026 change nothing about secrets, KMS or identity. Consequence: the
-earlier design's premise holds; D3061.
+earlier design's premise holds; D3101.
 
 **F2 — Open, answered: Batch offers two secret carriers, and both are opened by the job's service
 account.** `Environment.secretVariables` maps a name to a Secret Manager version path, and "The VM
@@ -76,7 +75,7 @@ additional authenticated data. Who decrypts is not documented (U2). Consequence:
 **F3 — Gap: Batch may print variables.** Google's own page says "Batch prints out variables
 (including any secrets) in plain text" and that a secret "can be recorded in unauthorized places,
 like Cloud Logging". Consequence: the plain seal key must never be a job variable of any kind, and
-Check 810 reads the logs for the wrapped value (U3).
+Check 830 reads the logs for the wrapped value (U3).
 
 **F4 — Gap: any carrier the run account opens can be replayed by a second launcher.** A launcher
 holds `roles/batch.jobsEditor` on the Fugaro job prefix and `roles/iam.serviceAccountUser` on the
@@ -86,7 +85,7 @@ launcher can read the first job, create a job of their own under the same accoun
 the same secret reference or ciphertext, and have that run open it. That defeats requirement 1's
 "no other launcher" for `secretVariables`, for `encryptedVariables`, and for any per-run secret
 granted to the account. Consequence: only an opener that is one run's alone meets the requirement;
-D3061.
+D3101.
 
 **F24 — Gap, found in review round 1: a launcher can already mint the identity itself.** Every
 launcher and operator holds the signer's `signJwt` (`google_service_account_iam_member.minter`,
@@ -96,7 +95,7 @@ mint a token for the first run's identity without the first run's key. K3 stops 
 obtaining that key; it does not stop one from spending as that run. Against a launcher, K3's gain
 over K1 is the letter of requirement 1, and a boundary only if minting is ever taken off
 launchers. Against the reaper and other readers of the job, K1 and K3 are equal. Consequence: put
-to the owner again; D3061 stands.
+to the owner again; D3101 stands.
 
 **F5 — Open, answered: why the earlier design rejected a per-run secret, and whether it holds.**
 `docs/design/budget-token-channel.md` rejected C2 for three reasons. (a) The account is shared, so
@@ -105,7 +104,7 @@ fail-closed: no longer true as stated, because a secret can carry an expire time
 deletes it ("the secret and all of its secret versions are irreversibly deleted without warning").
 (c) Cost and a new launcher permission: still true (`google_project_iam_custom_role.launcher` holds
 only `secretmanager.secrets.list` and `secretmanager.versions.list`). The rejection stands on (a).
-Consequence: D3061, option declined.
+Consequence: D3101, option declined.
 
 ### The threat model of each candidate (`key-release`)
 
@@ -123,7 +122,7 @@ K3's remaining readers are the run itself (A3), the credentials service, and any
 the service or the KMS key's policy: the project owner, and an operator who applies the compute
 root. F24 says what the table's "second launcher" column does not: they can mint. K3 rests on one platform fact that is not
 verified: that the link from a VM to its Batch job is made by Google and cannot be forged by a
-launcher (U1). Check 810 measures it before the task that depends on it starts (R4).
+launcher (U1). Check 830 measures it before the task that depends on it starts (R4).
 
 **F6 — Gap: the comparison with Cloud Run is itself unverified.** Requirement 2 holds Cloud Run up
 as the standard. Whether a launcher's `run.executions.get` returns an execution's override is the
@@ -134,7 +133,7 @@ so nobody reads "same as Cloud Run" as a measured claim.
 ### The backend as it stands (`job-environment`, `project-jobs`, `service-credentials`)
 
 **F7 — Wrong: "Without it the Cloud Batch backend can launch nothing" understates it.** With a
-carrier and nothing else, a Batch run still cannot complete. F8 to F13 are why. Consequence: D3060.
+carrier and nothing else, a Batch run still cannot complete. F8 to F13 are why. Consequence: D3100.
 
 **F8 — Gap: a Batch job carries no runs bucket and no budget backend.** `jobDefinition` sets
 `FUGARO_RUN`, `FUGARO_BACKEND`, `FUGARO_BATCH_JOB`, `FUGARO_PROJECT`, `FUGARO_GCP_PROJECT` and
@@ -159,7 +158,7 @@ deployed job it stands in for, in a new variable (R6); BR8, BR9.
 
 **F10 — Gap: Batch refuses every workflow on a shared project job.** `Launch` returns "Cloud Batch
 has no project jobs yet" when `spec.Job` is set. Shared jobs are the default
-(`docs/status.md`: shared-jobs-default 29/32). Consequence: D3063, BR10.
+(`docs/status.md`: shared-jobs-default 29/32). Consequence: D3103, BR10.
 
 **F11 — Wrong: the Batch run account is not the shared account the earlier design assumed.**
 `JobRunAccounts` (`internal/infra/compute.go`) matches display names beginning "Fugaro job " or
@@ -167,11 +166,11 @@ has no project jobs yet" when `spec.Job` is set. Shared jobs are the default
 "Fugaro project job " and is not matched. `batchBlockAccount` (`internal/cli/init_compute.go`)
 records an account only when exactly one exists. So today a Batch installation with two
 repositories has no account recorded, and one with shared jobs has none that fits. Consequence:
-D3063, BR10.
+D3103, BR10.
 
 **F12 — Gap: nothing grants a Batch run its secrets.** `batch.secrets` (`localcfg.Batch`) is
 written by hand; `doctorBatchSecrets` checks a label and says itself that it does not read
-whether the run account can read the secret. Consequence: D3064, BR11.
+whether the run account can read the secret. Consequence: D3104, BR11.
 
 **F13 — Rule: `fugaro update` never applies the compute root.** `update` refuses
 `--provision-batch` ("provisioning the Batch backend's root is a first run's",
@@ -183,7 +182,7 @@ again, which the hard rule on `fugaro update` forbids. Consequence: R2, BR6.
 config in the repository selects `backend: cloud-batch`. The release notes that brought the provisioning say "no
 run can use the Batch backend yet", and those of v0.25.0 say "nothing turns it on". Checks 57b and 124 are NOT RUN.
 F8 to F12 mean no run could have completed on this code. The owner was asked with removal as an
-option and chose to finish it (D3060).
+option and chose to finish it (D3100).
 
 ### The reaper, the run record and doctor (`key-release`, `update-converge`)
 
@@ -204,7 +203,7 @@ Consequence: BR7.
 **F18 — Exists: nothing is left behind per run today, and K3 adds nothing to clean up.** The sealed object is
 deleted by the bucket's lifecycle rule after one day (`modules/installation/bucket.tf`, suffix
 `/budget-token`); a rejected launch drops it at once (`dropBudgetToken`). K3 creates no cloud
-resource per run: the blob lives in the job and goes when the job does. The registration of D3068
+resource per run: the blob lives in the job and goes when the job does. The registration of D3108
 is one small entry per launch attempt on the budget record the run already has, which is kept or
 swept as that record is today. Requirement 5 holds with no new cleanup, and the ruling against deleting secrets is not
 touched.
@@ -213,7 +212,7 @@ touched.
 
 **F19 — Rule: the credentials service account's grants.** `.claude/rules/credentials-service.md`
 says the account's only project-level grant is the database role. K3 gives it reads on the
-project (F26). Consequence: D3062; the rule's text is amended in BR5, with the grant.
+project (F26). Consequence: D3102; the rule's text is amended in BR5, with the grant.
 
 **F20 — Rule: a field never changes meaning.** `FUGARO_BUDGET_TOKEN` means "the seal key". The
 wrapped blob gets a name of its own (R5).
@@ -230,20 +229,20 @@ beside it).
 
 **F23 — Gap: the credentials service is on the path of every Batch run.** Under K3 a Batch run
 cannot open its session if the service is down or cold, where a Cloud Run run that needs no
-credential from it could. D3064 puts it on the path regardless. Consequence: the fetch retries
+credential from it could. D3104 puts it on the path regardless. Consequence: the fetch retries
 within a bound and then stops the run (fail closed); BR4.
 
 **F25 — Gap, found in review round 1: a token outlives no queue.** A custom token is valid for one
 hour (`token.Lifetime`, `internal/budget/token/token.go`). A Batch job may sit queued up to the
 reaper's `QueueDeadline`, which is far longer. A run that starts after an hour holds a dead token.
-Consequence: D3066, BR14.
+Consequence: D3106, BR14.
 
 **F26 — Gap, found in review round 1: `jobs.get` cannot be the link.** The Batch API's job carries
 no instance name or id (`InstanceStatus` in the vendored `batch/v1` holds a boot disk, a machine
 type, a provisioning model and a task pack; read in the `google.golang.org/api` module). So `batch.jobs.get` gives the job's existence, state
 and creation time, and the link from a VM to its job needs a second read:
-`compute.instances.get`, or the tasks API. Consequence: D3062 is amended; O1; BR5 waits on Check
-810.
+`compute.instances.get`, or the tasks API. Consequence: D3102 is amended; O1; BR5 waits on Check
+830.
 
 **F27 — Rule, found in review round 1: the compute stage asks.** Under `fugaro setup
 --provision-batch` the stage refuses in an agent's session and asks for a typed confirmation
@@ -260,13 +259,13 @@ refusal's text in `run.go`. Consequence: BRS and BR1 change the three together.
 (`docs/secrets-brokering/reconciliation.md`) that on Batch a workflow's secrets stay
 `secretVariables` as "a permanent listed exception", and declined "a Batch VM caller class in the
 service" for its cost. `SECURITY.md` and row E5 of `docs/secrets-brokering/secret-readers.md` say
-so. D3064 and D3061 reverse both halves. Consequence: put to the owner; D3067; BR15.
+so. D3104 and D3101 reverse both halves. Consequence: put to the owner; D3107; BR15.
 
 **F30 — Wrong, found in review round 2: a release record does not close a re-created job.** While
 the first job is still queued, a second launcher can read its blob, delete the job and create one
 under the same name with a task of their own (`roles/batch.jobsEditor` on the prefix carries
 delete and create). That job is the first to ask, so a record written at first release names the
-wrong job. Consequence: D3068; the record R1 described in round 1 is replaced by a registration.
+wrong job. Consequence: D3108; the record R1 described in round 1 is replaced by a registration.
 
 **F31 — Gap, found in review round 2: the reaper's clock.** The reaper runs on a schedule
 (`deploy/terraform/gcp/modules/compute/reaper.tf`) and can judge a job only by its creation time,
@@ -274,28 +273,38 @@ which is after the mint. BR14 therefore cannot promise that no sealed run starts
 it can bound the wait. A run that still starts late stops at its session, as it does today.
 Consequence: BR14's acceptance says so.
 
+**F32 — Wrong, found in the review the owner asked for after round 3: D3110 as first written
+does not work.** Three facts. `backend:` is a per-machine key that the shared config drops
+(`internal/localcfg/shared.go`), so an installation-wide apply would hang on which operator's
+machine runs the update. `backendsUseGate` (`internal/cli/backends.go`) refuses the selection
+while any Batch check fails, and on an installation with shared jobs the run-account checks
+(`doctorBatchRunAccounts` and the `actAs` and role checks behind it, `internal/cli/doctor_batch.go`)
+pass only after the apply the selection was meant to trigger. And `MergeShared` keeps a machine's
+own `batch:` block whole, so a machine that never applied would publish a block with no key fact
+over one that has it. Consequence: D3110 amended; R2, R14; BR18, BR19.
+
 ## Decisions
 
-All answered by the owner on 2026-11-20 with `AskUserQuestion`. **D3070 is not the
-recommendation**; no other answer departs from it. D3061 and D3062 were each asked twice (D3062 was amended in between, after review round 1), D3065 and D3066 were added by review round 1, and D3067
-and D3068 by review round 2. D3069 and D3070 answer the two questions review round 3 left open,
+All answered by the owner on 2026-11-20 with `AskUserQuestion`. **D3110 is not the
+recommendation**; no other answer departs from it. D3101 and D3102 were each asked twice (D3102 was amended in between, after review round 1), D3105 and D3106 were added by review round 1, and D3107
+and D3108 by review round 2. D3109 and D3110 answer the two questions review round 3 left open,
 asked after the pull request was opened.
 
 | # | Module | Question | Recommendation and why | Alternatives and their cost | Answer |
 | --- | --- | --- | --- | --- | --- |
-| **D3060** | all | What happens to the Cloud Batch backend (F7, F14)? | Finish it: the carrier plus every gap that stops a run. It is the only backend with a Docker daemon | Remove it: about 6 tasks, `update` retires the compute root, `docker: true` loses its home. Carrier only: no run can complete, Check 811 cannot run. Park: nothing built | **Finish it** (as recommended, 2026-11-20) |
-| **D3061** | `key-release` | Which carrier (F2, F4, F5)? | K3, the VM-attested release: the only candidate that meets "no other launcher" | K1: about 3 tasks, a second launcher replays it. K2: a secret per run, new launcher permissions, the same weakness | **K3** (as recommended, 2026-11-20). **Asked again after review round 1** with F24 stated: the owner kept K3 (as recommended, 2026-11-20) |
-| **D3062** | `key-release` | Where does the release live (F19)? | In the credentials service, with one read permission in a custom role, granted only where Batch is provisioned | A separate service: about 3 more tasks and a second service to deploy and review | **The credentials service** (as recommended, 2026-11-20). Amends the standing rule on that account's grants. **Amended after review:** the question said "one read-only permission"; F26 shows the service needs `batch.jobs.get` and a second read for the link. **Asked again after review round 2:** the owner decides the second read after Check 810 (as recommended, 2026-11-20); BR3 and BR5 wait for that answer (O1) |
-| **D3063** | `project-jobs` | Does Batch learn shared project jobs (F10, F11)? | Yes: otherwise Batch serves no repository once shared jobs finish | No: zero tasks, and no user afterwards | **Yes, in this plan** (as recommended, 2026-11-20) |
-| **D3064** | `service-credentials` | How does a Batch run get its credentials (F12)? | From the credentials service only; nothing is mounted; an unserved repository is refused on Batch with its fix | Mounts as well: about 3 more tasks and per-secret IAM that keys-through-service is removing | **The service only** (as recommended, 2026-11-20) |
-| **D3065** | `project-jobs` | D3063 gives every launcher `actAs` on every shared project job account, where Cloud Run confines them to the deployed job. Accept it? | Accept it, and say so in `SECURITY.md`: a Batch launcher creates the job itself | Reverse D3063: no widening, and no user for Batch after shared jobs finish | **Accepted, named** (as recommended, 2026-11-20) |
-| **D3066** | `job-environment` | A sealed run queued longer than its token lives (F25)? | The reaper ends it at the token's lifetime, and it is launched again | Let it fail at start: a VM billed for a run that cannot work. Decide later | **The reaper ends it** (as recommended, 2026-11-20) |
-| **D3067** | `service-credentials` | D3064 and D3061 reverse D2075 (F29). Which stands? | D3064 supersedes D2075: its premise was the cost of a caller class, which D3061 now pays | Keep D2075 for workflow secrets: about 2 more tasks, and a mount Cloud Run is losing | **D3064 supersedes D2075** (as recommended, 2026-11-20) |
-| **D3068** | `key-release` | A second launcher can replace a queued job and receive its key (F30). Close it? | The launcher that wrapped the key registers the job with the service, which releases only to that job | Accept it, stated: zero tasks, the letter of requirement 1 lost to one attack. Switch to K1 | **The launcher registers the job** (as recommended, 2026-11-20) |
-| **D3069** | `key-release` | The service's launcher class admits people on its roster only, so a service account cannot register a job (O11). What should the plan do? | Build for the class as it is: a service-account launch on Batch is refused with its reason | Admit named service accounts: about 2 more tasks and a new kind of principal. Drop the registration: reverses D3068 | **People on the roster only** (as recommended, 2026-11-20) |
-| **D3070** | `update-converge` | Where does `fugaro update` apply the compute root and create the key (O13)? | Wherever a `batch:` block exists: selection then works straight after an update | Only where the backend is selected: about 1 more task, because selecting is gated on a doctor check that wants the key first | **Only where Batch is selected. Not the recommendation** (2026-11-20) |
+| **D3100** | all | What happens to the Cloud Batch backend (F7, F14)? | Finish it: the carrier plus every gap that stops a run. It is the only backend with a Docker daemon | Remove it: about 6 tasks, `update` retires the compute root, `docker: true` loses its home. Carrier only: no run can complete, Check 831 cannot run. Park: nothing built | **Finish it** (as recommended, 2026-11-20) |
+| **D3101** | `key-release` | Which carrier (F2, F4, F5)? | K3, the VM-attested release: the only candidate that meets "no other launcher" | K1: about 3 tasks, a second launcher replays it. K2: a secret per run, new launcher permissions, the same weakness | **K3** (as recommended, 2026-11-20). **Asked again after review round 1** with F24 stated: the owner kept K3 (as recommended, 2026-11-20) |
+| **D3102** | `key-release` | Where does the release live (F19)? | In the credentials service, with one read permission in a custom role, granted only where Batch is provisioned | A separate service: about 3 more tasks and a second service to deploy and review | **The credentials service** (as recommended, 2026-11-20). Amends the standing rule on that account's grants. **Amended after review:** the question said "one read-only permission"; F26 shows the service needs `batch.jobs.get` and a second read for the link. **Asked again after review round 2:** the owner decides the second read after Check 830 (as recommended, 2026-11-20); BR3 and BR5 wait for that answer (O1) |
+| **D3103** | `project-jobs` | Does Batch learn shared project jobs (F10, F11)? | Yes: otherwise Batch serves no repository once shared jobs finish | No: zero tasks, and no user afterwards | **Yes, in this plan** (as recommended, 2026-11-20) |
+| **D3104** | `service-credentials` | How does a Batch run get its credentials (F12)? | From the credentials service only; nothing is mounted; an unserved repository is refused on Batch with its fix | Mounts as well: about 3 more tasks and per-secret IAM that keys-through-service is removing | **The service only** (as recommended, 2026-11-20) |
+| **D3105** | `project-jobs` | D3103 gives every launcher `actAs` on every shared project job account, where Cloud Run confines them to the deployed job. Accept it? | Accept it, and say so in `SECURITY.md`: a Batch launcher creates the job itself | Reverse D3103: no widening, and no user for Batch after shared jobs finish | **Accepted, named** (as recommended, 2026-11-20) |
+| **D3106** | `job-environment` | A sealed run queued longer than its token lives (F25)? | The reaper ends it at the token's lifetime, and it is launched again | Let it fail at start: a VM billed for a run that cannot work. Decide later | **The reaper ends it** (as recommended, 2026-11-20) |
+| **D3107** | `service-credentials` | D3104 and D3101 reverse D2075 (F29). Which stands? | D3104 supersedes D2075: its premise was the cost of a caller class, which D3101 now pays | Keep D2075 for workflow secrets: about 2 more tasks, and a mount Cloud Run is losing | **D3104 supersedes D2075** (as recommended, 2026-11-20) |
+| **D3108** | `key-release` | A second launcher can replace a queued job and receive its key (F30). Close it? | The launcher that wrapped the key registers the job with the service, which releases only to that job | Accept it, stated: zero tasks, the letter of requirement 1 lost to one attack. Switch to K1 | **The launcher registers the job** (as recommended, 2026-11-20) |
+| **D3109** | `key-release` | The service's launcher class admits people on its roster only, so a service account cannot register a job (O11). What should the plan do? | Build for the class as it is: a service-account launch on Batch is refused with its reason | Admit named service accounts: about 2 more tasks and a new kind of principal. Drop the registration: reverses D3108 | **People on the roster only** (as recommended, 2026-11-20) |
+| **D3110** | `update-converge` | Where does `fugaro update` apply the compute root and create the key (O13)? | Wherever a `batch:` block exists: selection then works straight after an update | Only where the backend is selected: about 1 more task, because selecting is gated on a doctor check that wants the key first | **Only where Batch is selected. Not the recommendation** (2026-11-20). **Amended after review:** as answered, the trigger was the updating machine's own `backend:` key, which is never published (F32). Asked again, the owner chose a published opt-in fact (as recommended, 2026-11-20): his intent, no key ring until someone chooses Batch, is kept; the trigger is the installation's, not a machine's |
 
-D3071 to D3079 are reserved and unused.
+D3111 to D3119 are reserved and unused.
 
 ## Resolutions
 
@@ -318,7 +327,7 @@ One defensible answer each; stated, not asked.
   its zone one of the installation's region. The route admits the per-repository and the shared
   job classes and refuses every other class. The launchers get no grant on the key: the public key
   reaches them through the published block alone.
-  **The registration (D3068, review round 2).** Before it creates the job, the launcher tells the
+  **The registration (D3108, review round 2).** Before it creates the job, the launcher tells the
   service the blob's digest and the job's name; the service writes them, with the launcher's
   verified identity, on the run's budget record. After the create returns, the same launcher tells
   the service the job's unique id, and only the identity that registered the digest may. The
@@ -329,29 +338,37 @@ One defensible answer each; stated, not asked.
   being off by a stated tolerance.
   Review round 3 fixed how it is stored, because the guarantee depends on it. The record holds
   one entry per digest, written once and never overwritten or removed while the run's record
-  lives; the job's id is written once per entry. A `--retry`, or the relaunch D3066 leads to,
+  lives; the job's id is written once per entry. A `--retry`, or the relaunch D3106 leads to,
   mints again under a new key, so it has a new digest and adds an entry beside the old one. An
   entry another launcher adds for a digest of their own blocks nothing and opens nothing. The
   calls are admitted for the launcher class alone (`VerifyLauncher`, `internal/credsvc/auth.go`);
   the job, review and every other class are refused. The run's own agent can read the entries
   and cannot write them.
-- **R2 (`update-converge`). `fugaro update` applies the compute root** for an installation whose
-  config selects `cloud-batch`, and records the key in the block; an installation that carries a
-  block and has not selected the backend is left alone (D3070, which amends this resolution as
-  first written). First provisioning stays `fugaro setup --provision-batch`. The path is: select
-  the backend, then run `fugaro update`. `backend:` is a per-machine key, so it is the selection
-  on the machine that runs the update that counts; other machines read the key fact from the
-  published block.
-- **R14 (`update-converge`). Selecting the backend does not wait for the key** (D3070). `fugaro
-  backends use cloud-batch` is refused while doctor's Batch checks fail, and the seal check
-  fails until the key exists, which only an update after selection creates. So a missing key
-  fact is not among the refusals of `backends use`: doctor still reports it, with `fugaro update`
-  as its fix, and every launch is refused with the same fix until that update has run.
+- **R2 (`update-converge`). `fugaro update` applies the compute root where the published block
+  carries the opt-in fact** (D3110 as amended). The fact is one field of the `batch:` block. An
+  operator's `fugaro backends use cloud-batch` writes it and publishes it; from then on any
+  operator's `fugaro update` applies the root and records the key, whatever that operator's own
+  machine selects, and an installation nobody opted in is left alone, block or no block. The
+  fact is never withdrawn by a machine that selects `cloud-run` again: once in, the root keeps
+  being applied, so a later tightening reaches every opted-in installation. A person who is not
+  an operator can select the backend locally and cannot opt the installation in; `update` on
+  their machine skips the stage with one line, and their launches are refused until an operator
+  has opted in and updated. First provisioning stays `fugaro setup --provision-batch`.
+- **R14 (`update-converge`). Selecting the backend does not wait for what only the update
+  creates** (F32). Every Batch check whose fix is the compute root applied by `fugaro update`
+  (the key fact when missing, and the run accounts' roles and `actAs` for accounts the root has
+  not yet been fed) is marked as such by doctor and is not among the refusals of `backends use`.
+  Doctor still reports each, with `fugaro update` as its fix, and every launch is refused with
+  that fix until the update has run. A key fact that differs from the published one is a
+  different failure with its own id and still refuses the selection.
+- **R15 (`update-converge`). Publishing never drops the key fact or the opt-in fact.** The
+  block's merge takes those two fields from the published copy when the publishing machine's
+  own block lacks them.
 - **R3 (`update-converge`). "The carrier is in place" is a fact in the `batch:` block.** The
   backend wraps when the block names the key and refuses when it does not, and the refusal's fix
   is `fugaro update`. This is requirement 3. No launch reads the cloud to decide it.
-- **R4 (`live-proof`). Check 810 runs before the link is written.** The task that verifies the
-  VM-to-job link (BR3) starts only after the owner has run Check 810 and recorded which Google-made
+- **R4 (`live-proof`). Check 830 runs before the link is written.** The task that verifies the
+  VM-to-job link (BR3) starts only after the owner has run Check 830 and recorded which Google-made
   fact carries the link. If the check finds no such fact, or finds a launcher can forge it, the
   work stops and returns to the owner; it does not fall back to K1.
 - **R5 (`key-release`). New names.** The blob travels as `FUGARO_BUDGET_TOKEN_WRAPPED`.
@@ -386,18 +403,18 @@ One defensible answer each; stated, not asked.
   operator receives it; no settings command writes it, and doctor fails a machine whose local key
   fact differs from the published one. A substituted public key would hand its holder every
   seal key wrapped to it, while the runs themselves fail at release.
-- **R11 (`live-proof`). Check 811 is the brief's item 6**, run by the owner on `fugaro-dev` after
+- **R11 (`live-proof`). Check 831 is the brief's item 6**, run by the owner on `fugaro-dev` after
   the release, as one script with a hermetic self-test. Its second principal is a real second
   launcher account, and it tries both the replay of F4 and a direct read.
 
 ## Open tensions
 
-None open. One was found in review round 2 and closed by the owner the same day: D3064 against
-his earlier D2075 (F29, D3067).
+None open. One was found in review round 2 and closed by the owner the same day: D3104 against
+his earlier D2075 (F29, D3107).
 
 ## Open items
 
-- **O1. D3062's second read, decided after Check 810** (the owner's answer of 2026-11-20). The
+- **O1. D3102's second read, decided after Check 830** (the owner's answer of 2026-11-20). The
   service needs `batch.jobs.get`, conditioned on the Fugaro job-name prefix, and one more read for
   the link (F26). If the check names `compute.instances.get`, it cannot be scoped to Fugaro's
   VMs, and the owner then chooses between that read and a release service of its own. The answer
@@ -407,28 +424,32 @@ his earlier D2075 (F29, D3067).
   does not read the change; R8 covers that.
 - **O3.** The wire of the new route and of the blob is settled in contract C1, reviewed at the
   strictest tier before either side is written. Its exact fields are not decided in this document.
-- **O4.** D3064 means provider keys reach a Batch run only after keys-through-service lands. Until
-  then Check 811 runs on a repository whose credentials the service already serves.
+- **O4.** D3104 means provider keys reach a Batch run only after keys-through-service lands. Until
+  then Check 831 runs on a repository whose credentials the service already serves.
 - **O6. Recorded, no spec now** (the owner, 2026-11-20). F24: minting stays with launchers.
   Taking `signJwt` off them is what would make K3 a boundary against a launcher. No backlog item
   was filed: the backlog is written by `fugaro backlog add`, which this work did not run.
 - **O7.** R12 has `fugaro update` apply the compute root with no confirmation, where `setup`
-  types one, and A5 means that includes an installation that carries a `batch:` block and never
-  selected the backend: it gets a key ring that can never be deleted and a key with a small
-  monthly cost. That is the no-prompt policy's and the hard rule's answer; it is listed so the
+  types one. Under D3110 that happens only on an installation an operator opted in; one that
+  never chose Batch gets no key ring. That is the no-prompt policy's and the hard rule's answer; it is listed so the
   owner sees it.
 - **O8.** The link must also refuse a plain Compute Engine VM that someone with
-  `compute.instances.create` and `actAs` on a run account made by hand. Check 810 tries it; no
+  `compute.instances.create` and `actAs` on a run account made by hand. Check 830 tries it; no
   Fugaro role holds that pair today.
-- **O11. Closed by D3069.**
+- **O11. Closed by D3109.**
 - **O12.** The launcher's identity token is a bearer token for an audience wider than this
   service, valid for an hour. The registration proves the caller is on the launcher roster, not
   that the caller minted this run. A launcher can mint anyway (F24); stated, not fixed.
-- **O13. Closed by D3070**, which also narrows O7: an installation that never selected the
-  backend gets no key ring.
-- **O14.** "No CLI release between the merge of BR1 or BR16 and I1" is a rule for whoever cuts
+- **O13. Closed by D3110**, which also narrows O7.
+- **O15.** D3109's refusal: the service answers every unverified launcher alike, so the launch's
+  message cannot say which reason applied. It names the roster as the likely one and how a person
+  joins it (the launcher grant, then `fugaro update`). The roster is read only by a machine with
+  a local config; a service account with none already runs on Cloud Run.
+- **O16.** The opt-in fact is never withdrawn, so nothing retires the key or the grants of an
+  installation that stops using Batch. Stated, not planned.
+- **O14.** "No CLI release between the merge of BR1, BR6, BR16 or BR18 and I1" is a rule for whoever cuts
   releases. Nothing enforces it.
-- **O9.** BR2 and BR4 rest on U2 and are built before Check 810 runs. If the check fails U2, R4
+- **O9.** BR2 and BR4 rest on U2 and are built before Check 830 runs. If the check fails U2, R4
   applies and their work is at risk.
 - **O10.** The `secrets` and `service_account` fields stay in `localcfg.Batch` so an old file
   still loads (R10). Deleting the fields is a later change, not in this plan.
@@ -440,18 +461,18 @@ his earlier D2075 (F29, D3067).
 
 - **U1.** Which Google-made fact links a Batch VM to its job (the instance's name, a label Batch
   sets, or neither), and whether a launcher can forge it through `AllocationPolicy.labels` or any
-  job field. Settled by Check 810, run by the owner.
+  job field. Settled by Check 830, run by the owner.
 - **U2.** Whether a task's container on a Batch VM can reach the metadata server, and whether the
   identity token in full format carries the instance's id, name, project and zone there. Google's
-  Compute Engine documentation says the full format does on a VM; not fetched for Batch. Check 810.
+  Compute Engine documentation says the full format does on a VM; not fetched for Batch. Check 830.
 - **U3.** Whether Batch writes a job's variables to Cloud Logging, to instance metadata or to the
-  `CreateJob` audit record (F3). Check 810 reads all three for the wrapped value.
-- **U8.** How soon Batch lets a deleted job's name be used again. Check 810 measures it; the
-  registration of D3068 does not depend on the answer.
+  `CreateJob` audit record (F3). Check 830 reads all three for the wrapped value.
+- **U8.** How soon Batch lets a deleted job's name be used again. Check 830 measures it; the
+  registration of D3108 does not depend on the answer.
 - **U4.** Who decrypts `encryptedVariables` (F2). Not needed by K3; not pursued.
 - **U5.** Secret Manager's price per version and the 60-day deletion of finished Batch jobs: read
   from search summaries only. Neither is relied on.
 - **U6.** That a Batch run completes at all once F8 to F12 are closed. Nothing has measured this
-  backend on an installation that selects it. Check 811 is the first measurement.
+  backend on an installation that selects it. Check 831 is the first measurement.
 - **U7.** Whether the sandbox repository of `fugaro-dev` is on a shared project job. It decides
-  which half of BR10 Check 811 exercises. The owner knows.
+  which half of BR10 Check 831 exercises. The owner knows.

@@ -53,7 +53,7 @@
     },
     {
       "id": "BR0",
-      "title": "Check 810, the probe",
+      "title": "Check 830, the probe",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -61,8 +61,8 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "scripts/live-checks/check-810.sh",
-          "scripts/live-checks/check-810_test.sh",
+          "scripts/live-checks/check-830.sh",
+          "scripts/live-checks/check-830_test.sh",
           "docs/gcp-live-checklist.md",
           "scripts/live_checks_test.go"
         ]
@@ -175,8 +175,7 @@
           "internal/cli/init_compute.go",
           "internal/cli/update.go",
           "internal/apply/steps.go",
-          "internal/cli/update_batch_test.go",
-          "docs/releases/**"
+          "internal/cli/update_batch_test.go"
         ]
       }
     },
@@ -286,7 +285,7 @@
     },
     {
       "id": "BR13",
-      "title": "Check 811, the proof",
+      "title": "Check 831, the proof",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -294,8 +293,8 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "scripts/live-checks/check-811.sh",
-          "scripts/live-checks/check-811_test.sh",
+          "scripts/live-checks/check-831.sh",
+          "scripts/live-checks/check-831_test.sh",
           "docs/gcp-live-checklist.md",
           "scripts/live_checks_test.go"
         ]
@@ -352,7 +351,7 @@
           "internal/cli/init_compute_block_test.go",
           "internal/infra/compute.go",
           "internal/infra/compute_test.go",
-          "internal/localcfg/shared_test.go"
+          "docs/releases/**"
         ]
       }
     },
@@ -386,6 +385,21 @@
           "internal/cli/backends.go",
           "internal/cli/backends_use_test.go",
           "docs/backends.md"
+        ]
+      }
+    },
+    {
+      "id": "BR19",
+      "title": "publishing never drops the key or the opt-in",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/localcfg/shared.go",
+          "internal/localcfg/shared_test.go"
         ]
       }
     },
@@ -464,7 +478,7 @@
     {
       "task": "BR3",
       "needs": "R-C1-link-permission",
-      "reason": "data: it carries the owner's result of Check 810 and his answer on the second read"
+      "reason": "data: it carries the owner's result of Check 830 and his answer on the second read"
     },
     {
       "task": "BR4",
@@ -474,7 +488,7 @@
     {
       "task": "BR5",
       "needs": "R-C1-link-permission",
-      "reason": "data: it carries the owner's result of Check 810 and his answer on the second read, and comes after C1"
+      "reason": "data: it carries the owner's result of Check 830 and his answer on the second read, and comes after C1"
     },
     {
       "task": "BR7",
@@ -569,7 +583,7 @@
     {
       "task": "R-C1-link-permission",
       "needs": "BR0",
-      "reason": "data: the owner's run of Check 810"
+      "reason": "data: the owner's run of Check 830"
     },
     {
       "task": "R-C1-project-job-account",
@@ -695,6 +709,21 @@
       "task": "I1",
       "needs": "BR18",
       "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "BR6",
+      "needs": "C1",
+      "reason": "the block's opt-in fact"
+    },
+    {
+      "task": "BR19",
+      "needs": "C1",
+      "reason": "the block's two facts"
+    },
+    {
+      "task": "I1",
+      "needs": "BR19",
+      "reason": "it wires the real sides and proves them together"
     }
   ],
   "decoupling": [
@@ -787,6 +816,24 @@
       },
       "integration": "I1",
       "reason": "the registration needs the digest's definition, not the wrapper"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR6",
+        "needs": "BR5"
+      },
+      "integration": "I1",
+      "reason": "the update's stage needs the block's opt-in fact and the root's input names, not the root's resources"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR19",
+        "needs": "BR16"
+      },
+      "integration": "I1",
+      "reason": "the merge needs the two fields' shape, not the update that writes them"
     }
   ],
   "contract_changes": [
@@ -794,7 +841,7 @@
       "change": "R-C1-link-permission",
       "contract": "C1",
       "raised_by": "BR0",
-      "reason": "always runs: once the owner has run Check 810 and answered O1, it writes the link's read into the contract",
+      "reason": "always runs: once the owner has run Check 830 and answered O1, it writes the link's read into the contract",
       "affects": [
         "BR3",
         "BR5",
