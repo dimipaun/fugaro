@@ -694,6 +694,15 @@ func (a *contextAdmission) Error() string { return a.message }
 // policy admitted them at the launch (C1's rule 2: the readers are the caller's,
 // and the workspace's own node is not the one a context repository is admitted
 // by).
+//
+// The workspace OWNER's coverage is deliberately not asked here, and a reader
+// who expects R5's third fence will look for it: a context repository is one a
+// run reads from outside its own repository, so it is often outside the
+// installation's own table too (contexttoken_test.go's second one is), and C1
+// gives an installation the one answer that its coverage is its table — asking
+// it here would refuse calls this service answers today, which is the half of
+// WS17's acceptance that binds. The claim and the member's policy are this
+// route's two fences, and a workspace's policy is the member's own.
 func (s *Server) admitContextRepos(ctx context.Context, sc Scope, id Identity, repos []string) error {
 	claimed := make(map[string]bool, len(id.ContextRepos))
 	for _, repo := range id.ContextRepos {
