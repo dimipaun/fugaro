@@ -112,19 +112,21 @@ const SCOPE_PLACEHOLDER = 'SCOPE'
  *   every one of those spellings -- it holds a bare address. The whole point of
  *   the column is that an installation's roster is not only people.
  * - A **role** is `label`: one word out of a closed set, which is what a label is.
- * - A **scope** is `label`, and deliberately not `repoPattern`, which is the class
- *   that would hold a repository's name: a stored scope is one string that may be
- *   the word `project`, the word `all-repos`, one pattern, or a comma-separated
- *   list of patterns, so there is no class that validates it -- `repoPattern`
- *   refuses `project`. `label` draws each of them, and the console's own redaction
- *   of a path inside it is what happens to a path everywhere in the renderer.
- *   The Copy-command is where the exact value is preserved.
+ * - A **scope** is `scope`, and no other class of the set holds it: a stored
+ *   scope is one string that may be the word `project`, the word `all-repos`, or
+ *   a comma-separated list of canonical repository patterns. `repoPattern`
+ *   refuses `project`, and `label`, which drew this column before, runs the
+ *   free-text rules whose path rule draws `github/acme/app` as `github<path>` --
+ *   a redaction the grants node does not carry, and for the scopes the
+ *   Copy-command cannot carry (`*` and `,` are not characters the builder copies)
+ *   the only place the value appears at all. So `sanitize.ts` gained the class,
+ *   and it holds `ParseScope`'s grammar.
  */
 const MEMBER_COLUMN: ManageColumn = { key: 'member', title: 'Member', class: 'label' }
 const ROLES_COLUMN: ManageColumn = { key: 'roles', title: 'Roles', class: 'label' }
 const STATUS_COLUMN: ManageColumn = { key: 'status', title: 'Status', class: 'label' }
 const ROLE_COLUMN: ManageColumn = { key: 'role', title: 'Role', class: 'label' }
-const SCOPE_COLUMN: ManageColumn = { key: 'scope', title: 'Scope', class: 'label' }
+const SCOPE_COLUMN: ManageColumn = { key: 'scope', title: 'Scope', class: 'scope' }
 const ACCOUNT_COLUMN: ManageColumn = { key: 'account', title: 'Account', class: 'person' }
 const STATE_COLUMN: ManageColumn = { key: 'state', title: 'State', class: 'label' }
 

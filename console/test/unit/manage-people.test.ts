@@ -180,7 +180,7 @@ describe('the three kinds of People & access', () => {
     expect(roles.columns).toEqual([
       { key: 'member', title: 'Member', class: 'label' },
       { key: 'role', title: 'Role', class: 'label' },
-      { key: 'scope', title: 'Scope', class: 'label' },
+      { key: 'scope', title: 'Scope', class: 'scope' },
       { key: 'status', title: 'Status', class: 'label' },
     ])
     expect(accounts.columns).toEqual([
@@ -480,6 +480,27 @@ describe('the cells of every row', () => {
           expect(drawn.ok, `${kind.id}.${column.key} refused ${each.cells[column.key]}`).toBe(true)
         }
       }
+    }
+  })
+
+  it('draws a stored scope as the node spells it, and not as a redaction of it', () => {
+    // The Scope column's class is validating, so the text drawn is the cell
+    // itself, and the equality is asserted through the class the column
+    // declares rather than through the class named here. `label`, which held
+    // this column before MO-P's review, runs the free-text rules whose path
+    // rule draws `github/example-owner/example-repo` as `github<path>` -- a
+    // value the grants node does not hold -- and for the scopes whose Copy the
+    // builder refuses (`*` and `,` are not characters `command.ts` copies) the
+    // cell is the only place the value appears at all.
+    const column = roles.columns.find((each) => each.key === 'scope')
+    if (column === undefined) throw new Error('the roles kind declares no Scope column')
+    const scopes = rowsOf(roles).map((each) => each.cells.scope)
+    expect(scopes).toContain('github/example-owner/example-repo')
+    for (const scope of scopes) {
+      if (scope === undefined) throw new Error('a roles row drew no Scope cell')
+      const drawn = sanitizeText(scope, column.class, 'roles.scope')
+      if (!drawn.ok) throw new Error(`roles.scope refused ${scope}: ${drawn.reason}`)
+      expect(drawn.text, scope).toBe(scope)
     }
   })
 
