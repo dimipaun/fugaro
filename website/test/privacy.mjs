@@ -875,8 +875,11 @@ export function allowListedReachFailures(files) {
 
 /** Every production source that names `host`, or []. */
 export function reachFailures(files, host) {
-  // A host ends where a name does: `fugaro.device-key.` is the app's secure-store key prefix and
-  // only begins with the same letters, so a bare substring match refused it.
+  // A host ends where a name does: the app's secure-store key prefix (mobile-identity-pairing C1)
+  // only begins with the same letters as the host, so a bare substring match refused an item name
+  // that is not the host. The prefix is not spelled out here because this file is under
+  // `website/`: the canonical origin has one source in the tree and a scan holds every other file
+  // to naming none of it (TestWebsiteCanonicalHostAppearsOnlyInSiteYaml).
   const named = new RegExp(`${host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9-])`)
   return files
     .filter((file) => named.test(file.text))
