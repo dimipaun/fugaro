@@ -47,8 +47,7 @@
         "paths": [
           "internal/ciselect/trace.go",
           "internal/ciselect/trace_test.go",
-          "scripts/ci-readmap/trace.go",
-          "docs/ci-affected-tests/README.md"
+          "scripts/ci-readmap/trace.go"
         ]
       }
     },
@@ -139,7 +138,8 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "docs/pending-workflows/README.md"
+          "docs/pending-workflows/README.md",
+          "docs/pending-workflows/console-release.yml"
         ]
       }
     },
@@ -171,7 +171,9 @@
         "paths": [
           "scripts/live-checks/check800.sh",
           "scripts/live-checks/check800_test.sh",
-          "docs/ci-affected-tests/check-800.md"
+          "scripts/live_checks_test.go",
+          "docs/ci-affected-tests/check-800.md",
+          "docs/ci-affected-tests/README.md"
         ]
       }
     },
@@ -187,7 +189,8 @@
         "paths": [
           "internal/cli/docs_desktop_console_test.go",
           "internal/cli/docs_mobile_release_workflow_test.go",
-          "internal/cli/docs_runner_timeout_test.go"
+          "internal/cli/docs_runner_timeout_test.go",
+          "internal/cli/docs_ci_selector_test.go"
         ]
       }
     }

@@ -2,7 +2,7 @@
 
 **Status: plan only. Nothing is implemented and no task is approved; each task needs the owner's explicit go by name.** It builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md), which wins where the two disagree.
 
-The answers that shaped it: the release gate requires a full run on the tag's commit (D3040); one scheduled nightly full run (D3041); the selector is a Go program with tests under `scripts/` (D3042); a recorded read-map, refreshed by the full run, says which tests a file change reaches beyond imports (D3043). Resolutions R1-R11 of the reconciliation fix the rest.
+The answers that shaped it: the release gate requires a full run on the tag's commit (D3040); one scheduled nightly full run (D3041); the selector is a Go program with tests under `scripts/` (D3042); a recorded read-map, refreshed by the full run, says which tests a file change reaches beyond imports (D3043). Resolutions R1-R12 of the reconciliation fix the rest.
 
 ## 1. Conventions every task follows
 
@@ -49,10 +49,10 @@ Each of CS1, CS2a, CS3 and CS4 owns the types it declares; CS4 composes the othe
 - Owner-run: no.
 
 ### CS2a: the read-map, the static scan
-- Acceptance: `scripts/ci-readmap` reads every `_test.go` file in the repository, and every non-test Go file that reads a repository path (`internal/testutil/fixture.go` is the known one; its reads go to every test package that imports it, through CS1's graph), and writes `docs/ci-affected-tests/read-map.json`: per package the repository files its tests name by literal (`../../docs/x.md`, `readRepoFile("a/b.go")`, `repoRoot()` joins), globs where the literal is a directory, the closure of a package named by a `go build`/`go run` import path (F2), `any` where a path is built dynamically or a test walks the tree (every walker, F3: no list of three), and for a walker the `ignores` it states; the file is deterministic (sorted).
+- Acceptance: `scripts/ci-readmap` reads every `_test.go` file in the repository, and every non-test Go file that reads a repository path (`internal/testutil/fixture.go` is the known one; its reads go to every test package that imports it, through CS1's graph), and follows the shell a test runs: a script a test executes brings in the files it sources with `.`/`source` (`scripts/release-gate.sh` sources `scripts/retry.sh`; `scripts/release.sh` sources `versions.sh` and `hotfix-commits.sh`), and their reads go to every test package that executes the script; it writes `docs/ci-affected-tests/read-map.json`: per package the repository files its tests name by literal (`../../docs/x.md`, `readRepoFile("a/b.go")`, `repoRoot()` joins), globs where the literal is a directory, the closure of a package named by a `go build`/`go run` import path (F2), `any` where a path is built dynamically or a test walks the tree (every walker, F3: no list of three), and for a walker the `ignores` it states; the file is deterministic (sorted).
 - Files: `internal/ciselect/scan.go` (new), `internal/ciselect/scan_test.go` (new), `scripts/ci-readmap/main.go` (new), `docs/ci-affected-tests/read-map.json` (new).
 - Interfaces: declares `ReadMap` (with its `reads` and `ignores` fields from the start, so CS2b adds values and no field) and `Scan`; produces the committed map CS4, CS5 and CS2b use.
-- Tests: `TestScanFindsLiteralRepoPaths`, `TestScanMarksADynamicPathAny`, `TestScanMarksEveryWalkerAny`, `TestScanFollowsABuildByImportPath`, `TestScanAttributesAHelpersReadsToItsImporters`, `TestScanIsDeterministic`.
+- Tests: `TestScanFindsLiteralRepoPaths`, `TestScanMarksADynamicPathAny`, `TestScanMarksEveryWalkerAny`, `TestScanFollowsABuildByImportPath`, `TestScanAttributesAHelpersReadsToItsImporters`, `TestScanFollowsASourcedShellLibrary`, `TestScanIsDeterministic`.
 - Command: `go test ./internal/ciselect/ -run 'TestScan' -count=1`
 - Red step: `TestScanFollowsABuildByImportPath` fails against a scan of path literals only.
 - Depends on: none.
@@ -61,8 +61,8 @@ Each of CS1, CS2a, CS3 and CS4 owns the types it declares; CS4 composes the othe
 - Owner-run: no.
 
 ### CS2b: the read-map, the runtime trace
-- Acceptance: the trace step ships behind a flag with the safe default (every package that spawns a build is marked `any`); the full run records, per shard, the repository files the test process and its children opened (`strace -f` where CS9's measurement on `ubuntu-latest` says it is worth its cost; the measurement and the choice are written in `docs/ci-affected-tests/README.md`), reduces them to repository-relative paths and merges them into the map as `reads`; `ci-readmap --from-artifact <dir>` does the merge (R10); a path the trace found and the scan did not is printed as a scan gap.
-- Files: `internal/ciselect/trace.go` (new), `internal/ciselect/trace_test.go` (new), `scripts/ci-readmap/trace.go` (new), `docs/ci-affected-tests/README.md`.
+- Acceptance: the trace step ships behind a flag with the safe default (every package that spawns a build or executes a repository script is marked `any`); the full run records, per shard, the repository files the test process and its children opened (`strace -f` where CS9's measurement on `ubuntu-latest` says it is worth its cost, which CS9 writes down and a later change to the flag follows), reduces them to repository-relative paths and merges them into the map as `reads`; `ci-readmap --from-artifact <dir>` does the merge (R10); a path the trace found and the scan did not is printed as a scan gap.
+- Files: `internal/ciselect/trace.go` (new), `internal/ciselect/trace_test.go` (new), `scripts/ci-readmap/trace.go` (new).
 - Interfaces: consumes CS2a's `ReadMap`; produces the map with traced `reads`.
 - Tests: `TestTraceReducesOpensToRepoPaths`, `TestTraceReportsAScanGap`, `TestTraceIgnoresTheGoBuildCache`, `TestFromArtifactMergesIntoTheCommittedMap`.
 - Command: `go test ./internal/ciselect/ -run 'TestTrace|TestFromArtifact' -count=1`
@@ -85,10 +85,10 @@ Each of CS1, CS2a, CS3 and CS4 owns the types it declares; CS4 composes the othe
 - Owner-run: no.
 
 ### CS4: the selector program
-- Acceptance: `scripts/ci-select` prints `Output` (`Full`, `Reason`, `Legs`) as JSON and a summary on `$GITHUB_STEP_SUMMARY`; it finds the base as the head of the last successful `ci (full)` run on `main` through an injected `gh` interface, downloads the last full run's `test-times-*` through the same interface (a failure means equal weights, R5), takes the changed files from `git diff --name-only --no-renames <base> <head>` in a full checkout (R2), unions CS1's affected packages with the read-map's, packs them with CS3, returns `Full: true` with a reason for every doubt in R8, chooses `terraform` and `rules` from the tagged graph (R6), always selects `check`, and for a documents-only change selects the Docs-reading packages as whole families (R7).
+- Acceptance: `scripts/ci-select` prints `Output` (`Full`, `Reason`, `Legs`) as JSON and a summary on `$GITHUB_STEP_SUMMARY`; it finds the base as the head of the last successful `ci (full)` run on `main` through an injected `gh` interface, downloads the last full run's `test-times-*` through the same interface (a failure means equal weights, R5), takes the changed files from `git diff --name-only --no-renames <base> <head>` in a full checkout (R2), unions CS1's affected packages with the read-map's, packs them with CS3, returns `Full: true` with a reason for every doubt in R8, chooses `terraform` and `rules` from the tagged graph (R6), always selects `check`, and for a documents-only change selects the Docs-reading packages as whole families (R7); an empty leg set prints `legs: []` and CS6's `shard` job is skipped on it (GitHub fails an empty matrix; the `test` job already counts a skipped shard as success); "unmapped" means a path that no read-map entry names, no package of the graph owns and no `ignores` rule excludes, and an `any` entry does not map every path.
 - Files: `scripts/ci-select/main.go` (new), `internal/ciselect/select.go` (new), `internal/ciselect/select_test.go` (new).
 - Interfaces: declares `Input`, `Output` and `Select`; composes CS1, CS2a and CS3.
-- Tests: `TestSelectIsFullForEveryDoubtOfR8` (one row each), `TestSelectBaseIsTheLastFullRunOnMain`, `TestSelectUsesATwoDotDiffWithoutRenames`, `TestSelectCatalogFetchReachesPlugin`, `TestSelectFakeTerraformReachesCli`, `TestSelectAnEmbeddedTemplateReachesItsDocsReaders`, `TestSelectDocsOnlyRunsTheDocsReaders`, `TestSelectFixtureRepoReachesFixtureFilesCallers`, `TestSelectTimingsDownloadFailureIsEqualWeights`, `TestSelectTerraformAndRulesFromTheTaggedGraph`, `TestSelectWorkflowChangeIsFull`.
+- Tests: `TestSelectIsFullForEveryDoubtOfR8` (one row each), `TestSelectBaseIsTheLastFullRunOnMain`, `TestSelectUsesATwoDotDiffWithoutRenames`, `TestSelectCatalogFetchReachesPlugin`, `TestSelectFakeTerraformReachesCli`, `TestSelectAnEmbeddedTemplateReachesItsDocsReaders`, `TestSelectDocsOnlyRunsTheDocsReaders`, `TestSelectFixtureRepoReachesFixtureFilesCallers`, `TestSelectSourcedShellLibraryReachesItsCallers` (`scripts/retry.sh` selects `./internal/cli`), `TestSelectAnEmptyLegSetSkipsTheShardJob`, `TestSelectTimingsDownloadFailureIsEqualWeights`, `TestSelectTerraformAndRulesFromTheTaggedGraph`, `TestSelectWorkflowChangeIsFull`.
 - Command: `go test ./internal/ciselect/ -run 'TestSelect' -count=1`
 - Red step: each fails against an empty `Select`.
 - Depends on: CS1, CS2a, CS3 (behaviour: it composes the real code; a stub would be a second implementation).
@@ -109,7 +109,7 @@ Each of CS1, CS2a, CS3 and CS4 owns the types it declares; CS4 composes the othe
 - Owner-run: no.
 
 ### CS7: the release gate reads that the run was full
-- Acceptance: `scripts/release-gate.sh` lists the workflow runs of the tag's SHA (`actions/runs?head_sha=`), keeps the `ci` runs titled `ci (full)` or exactly `ci`, reads those runs' check suites for `test`, `terraform` and `rules` only (the console legs keep today's reading) and requires success from them, from runs of the `ci` workflow file only; a `ci (selected)` run is ignored; the identical-tree fallback applies the same title rule; `test`'s state no longer combines other runs of the name. The first step measures whether a token without `actions: read` can list runs and writes the answer in the task's pull request.
+- Acceptance: `scripts/release-gate.sh` lists the workflow runs of the tag's SHA (`actions/runs?head_sha=`), keeps the `ci` runs titled `ci (full)` or exactly `ci`, reads those runs' check suites for `test`, `terraform` and `rules` only (the console legs keep today's reading) and requires success from them, from runs of the `ci` workflow file only; a `ci (selected)` run is ignored, and a SHA that has only selected runs is refused at once with the command to dispatch a full run (`gh workflow run ci --ref main -f full=true` for main's tip) printed, instead of waiting out the timeout on "missing"; the identical-tree fallback applies the same title rule; `test`'s state no longer combines other runs of the name. The first step measures whether a token without `actions: read` can list runs and writes the answer in the task's pull request.
 - Files: `scripts/release-gate.sh`, `scripts/release_test.go`, `scripts/testdata/fake-gh.sh`, `internal/cli/docs_desktop_console_test.go` (its `gateFakeGH` answers the new calls).
 - Interfaces: consumes R1's title strings (a decision, not a code interface); produces the gate CS6 needs before it is copied in.
 - Tests: `TestGateCountsAFullRunsChecks`, `TestGateIgnoresASelectedRun`, `TestGateAcceptsTheOldTitle`, `TestGateFallbackAppliesTheTitleRule`, `TestGateKeepsTheConsoleLegsReading`, and the existing `TestFakeGHAnswersEveryCheckTheGateRequires`.
@@ -121,7 +121,7 @@ Each of CS1, CS2a, CS3 and CS4 owns the types it declares; CS4 composes the othe
 - Owner-run: no.
 
 ### CS7b: a release dispatches its own full run
-- Acceptance: `scripts/release.sh`'s ordinary path, after the bump's merge, dispatches `gh workflow run ci -f full=true` when no `ci (full)` run has the merge commit as its head and waits for the run whose head is that commit (R12; a dispatch is by ref, so the script reads the run it started and refuses with the exact command when the head differs); its hotfix path dispatches the same on `release/X.Y`, passing `-f full=true` only when that branch's `ci.yml` declares the input; the tests cover both paths and both branch shapes.
+- Acceptance: `scripts/release.sh`'s ordinary path, after the bump's merge, dispatches `gh workflow run ci -f full=true` when no `ci (full)` run has the merge commit as its head and waits for the run whose head is that commit (R12; a dispatch is by ref, so the script reads the run it started and, when the head is not the merge commit because main moved on, refuses naming the commit and the command `gh workflow run ci --ref <a branch that points at that commit> -f full=true`; it creates no ref itself); its hotfix path dispatches the same on `release/X.Y`, passing `-f full=true` only when that branch's `ci.yml` declares the input, and `-f live_scripts=always` when it declares that one (a `ci.yml` from #3301 on, whose `auto` mode could skip the live-script runners); the tests cover both paths and both branch shapes.
 - Files: `scripts/release.sh`, `scripts/release_test.go`.
 - Interfaces: consumes the `full` input CS6 adds.
 - Tests: `TestReleaseDispatchesAFullRunForTheMergeCommit`, `TestHotfixDispatchesAFullRun`, `TestHotfixOnAnOlderBranchPassesNoInput`.
@@ -133,8 +133,8 @@ Each of CS1, CS2a, CS3 and CS4 owns the types it declares; CS4 composes the othe
 - Owner-run: no.
 
 ### CS6: `ci.yml` calls the selector
-- Acceptance: the text, written into `docs/pending-workflows/README.md` as the section the owner copies (F9): a `select` job (checkout with `fetch-depth: 0`, `go run ./scripts/ci-select`), the `shard`, `terraform` and `rules` jobs chosen from its output, a `full` dispatch input, `run-name` branching on `github.event_name == 'schedule'` (R11), a nightly `schedule:` that runs the full variant and uploads the `test-times-*` and the traced reads as artifacts (`contents: read`, no push, R10), `live_scripts` removed (R9), and `actions: read` at job level for the `select` job, and on the gate jobs of `release.yml`, `images.yml`, `mobile-release.yml` and `console-release.yml` only if CS7's measurement says the token needs it (F13).
-- Files: `docs/pending-workflows/README.md`.
+- Acceptance: the text, written into `docs/pending-workflows/README.md` as the section the owner copies (F9): a `select` job (checkout with `fetch-depth: 0`, `go run ./scripts/ci-select`), the `shard`, `terraform` and `rules` jobs chosen from its output, a `full` dispatch input, `run-name` branching on `github.event_name == 'schedule'` (R11), a nightly `schedule:` that runs the full variant and uploads the `test-times-*` and the traced reads as artifacts (`contents: read`, no push, R10), `live_scripts` removed (R9), and `actions: read` at job level for the `select` job and on the gate jobs of `release.yml`, `images.yml`, `mobile-release.yml` and `console-release.yml` (the `console-release.yml` edit is made in its staged copy `docs/pending-workflows/console-release.yml`, which is what the console's permission pin reads), whatever CS7's measurement says: the grant is harmless if the token did not need it and required if it did (F13).
+- Files: `docs/pending-workflows/README.md`, `docs/pending-workflows/console-release.yml`.
 - Interfaces: consumes CS4's output JSON and CS7's title strings.
 - Tests: `go test ./internal/cli/ -run Docs -count=1`, a test that the pending text's matrix keys equal CS3's `Leg` field names, and in a clean worktree with the edit applied `go test ./internal/cli/ -run 'Docs|ReleaseGate|Release' -count=1`, `go test ./images/ ./deploy/terraform/ -count=1`.
 - Command: the ones above.
@@ -145,12 +145,12 @@ Each of CS1, CS2a, CS3 and CS4 owns the types it declares; CS4 composes the othe
 - Owner-run: copying the workflows in; the owner says "copy it" and the edit lands as a pull request (as #3301).
 
 ### CS6b: the tests that pin what CS6 changes
-- Acceptance: the tests that pin the workflows' permissions and the runner matrix are updated in the same sweep as CS6's copy: `docs_desktop_console_test.go` (console-release gate permissions, today exactly `contents: read`, `checks: read`), `docs_mobile_release_workflow_test.go` (every mobile-release job), and `docs_runner_timeout_test.go` (`TestRunnerTimeoutDocsMatchCI` reads the literal `pkg: ./internal/runner` line, which a matrix built from the selector's output no longer has); each keeps the pinned fact and changes the way it is read.
-- Files: `internal/cli/docs_desktop_console_test.go`, `internal/cli/docs_mobile_release_workflow_test.go`, `internal/cli/docs_runner_timeout_test.go`.
+- Acceptance: the tests that pin the workflows' permissions and the runner matrix are updated in the same sweep as CS6's copy: `docs_desktop_console_test.go` (console-release gate permissions, today exactly `contents: read`, `checks: read`), `docs_mobile_release_workflow_test.go` (every mobile-release job), and `docs_runner_timeout_test.go` (`TestRunnerTimeoutDocsMatchCI` reads the literal `pkg: ./internal/runner` line, which a matrix built from the selector's output no longer has); each keeps the pinned fact and changes the way it is read. A new `docs_ci_selector_test.go` pins that the keys CS6's text puts in a matrix leg equal CS3's `Leg` field names (the test CS3 cannot own, because the text it reads does not exist until CS6).
+- Files: `internal/cli/docs_desktop_console_test.go`, `internal/cli/docs_mobile_release_workflow_test.go`, `internal/cli/docs_runner_timeout_test.go`, `internal/cli/docs_ci_selector_test.go` (new).
 - Interfaces: consumes CS6's pending text.
-- Tests: the three tests above, run in a clean worktree with CS6's edit applied.
-- Command: `go test ./internal/cli/ -run 'ReleaseGate|MobileRelease|RunnerTimeout' -count=1`
-- Red step: with CS6's edit applied and these files untouched, the three tests fail.
+- Tests: the three tests above and `TestCISelectorLegKeysAreTheMatrixKeys`, run in a clean worktree with CS6's edit applied.
+- Command: `go test ./internal/cli/ -run 'ReleaseGate|ConsoleReleaseWorkflow|MobileRelease|RunnerTimeout|CISelector' -count=1`
+- Red step: with CS6's edit applied and these files untouched, the permission and matrix pins fail.
 - Depends on: CS6 (it reads the text it adapts the tests to).
 - Commit: `docs tests: the permission and matrix pins read the selector's workflow`
 - Reviewer tier: standard.
@@ -170,7 +170,7 @@ Each of CS1, CS2a, CS3 and CS4 owns the types it declares; CS4 composes the othe
 
 ### CS9: Check 800, measure and break one on purpose
 - Acceptance: a script (`scripts/live-checks/check800.sh`, with its `_test.sh` run by the live-check tests) and a procedure that dispatch one selected run on a trivial commit and one full run, report the wall time of each, then change a Docs pin's sentence on a branch and show the selected run fails it.
-- Files: `scripts/live-checks/check800.sh` (new), `scripts/live-checks/check800_test.sh` (new), `docs/ci-affected-tests/check-800.md` (new).
+- Files: `scripts/live-checks/check800.sh` (new), `scripts/live-checks/check800_test.sh` (new), `scripts/live_checks_test.go` (lists the new script's test in `liveCheckScripts`), `docs/ci-affected-tests/check-800.md` (new), `docs/ci-affected-tests/README.md` (the `strace` measurement and the choice).
 - Interfaces: consumes CS6 (the live workflow) and CS2b (the trace); it also reports whether `strace -f` is worth its cost on `ubuntu-latest`, which CS2b's flag then follows.
 - Tests: none; the check is the test.
 - Command: the owner runs the check's one command.
@@ -192,7 +192,7 @@ Each of CS1, CS2a, CS3 and CS4 owns the types it declares; CS4 composes the othe
 
 **Critical path (as `fugaro plan graph` reads it, 5 tasks): CS1, CS4, CS6, CS6b, CS8 (CS2a ties CS1).** Sequential because: the selector composes the real graph, map and packer, the workflow text needs a working selector and a gate that accepts its titles, and the tests that pin the workflow's permissions and matrix change with it, and the documents describe the workflow.
 
-**Shared files.** No level holds two writers of one file. `scripts/release_test.go` is written by CS7 (level 0) and CS7b (level 1); `internal/cli/docs_desktop_console_test.go` by CS7 (level 0) and CS6b (level 3); `docs/ci-affected-tests/README.md` by this plan's pull request, CS2b (level 1, the measurement note) and CS8 (level 3); `docs/pending-workflows/README.md` by CS6 alone.
+**Shared files.** No level holds two writers of one file. `scripts/release_test.go` is written by CS7 (level 0) and CS7b (level 1); `internal/cli/docs_desktop_console_test.go` by CS7 (level 0) and CS6b (level 3); `docs/ci-affected-tests/README.md` by this plan's pull request, CS9 (level 3, the measurement note) and CS8 (level 4); `docs/pending-workflows/README.md` by CS6 alone.
 
 ## 6. The dependencies the plan broke and kept
 
