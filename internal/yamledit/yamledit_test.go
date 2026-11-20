@@ -971,6 +971,184 @@ func TestRemoveSeqItemByKey(t *testing.T) {
 	}
 }
 
+// catalogDoc is the shape the image catalog is written in: a sequence of
+// mappings keyed by name, one of them with its source in block style and the
+// other in flow, which is what a hand-written config holds.
+const catalogDoc = `# The images this project's jobs run.
+image_catalog:
+  entries:
+    - name: server
+      # Where its Dockerfile is.
+      source:
+        kind: dockerfile
+        repo: acme/app
+        path: images/server.Dockerfile
+        branch: fugaro/2026-11-01-abc
+    - name: worker
+      source: { kind: dockerfile, repo: acme/sandbox, path: images/worker.Dockerfile, branch: release/1.0 }
+    - name: plain
+      source:
+        kind: inline
+        inline: FROM alpine:3.20
+other: 1
+`
+
+// TestRemoveSeqItemFieldByKeyRemovesANestedField is the edit `fugaro update`
+// makes when an entry pins a branch its repository no longer has: the pin goes,
+// the entry keeps its place and its other fields, and every other byte of the
+// file — the comment above the source, the comment block at the top, the flow
+// spelling of the other entry — stays where it was.
+func TestRemoveSeqItemFieldByKeyRemovesANestedField(t *testing.T) {
+	got, err := yamledit.RemoveSeqItemFieldByKey([]byte(catalogDoc), []string{"image_catalog", "entries"},
+		"name", "server", []string{"source", "branch"})
+	if err != nil {
+		t.Fatalf("RemoveSeqItemFieldByKey: %v", err)
+	}
+	want := `# The images this project's jobs run.
+image_catalog:
+  entries:
+    - name: server
+      # Where its Dockerfile is.
+      source:
+        kind: dockerfile
+        repo: acme/app
+        path: images/server.Dockerfile
+    - name: worker
+      source: { kind: dockerfile, repo: acme/sandbox, path: images/worker.Dockerfile, branch: release/1.0 }
+    - name: plain
+      source:
+        kind: inline
+        inline: FROM alpine:3.20
+other: 1
+`
+	if string(got) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	// The bytes say the field is gone; the reader agrees.
+	entries := at(t, got, "image_catalog", "entries").([]any)
+	src := entries[0].(map[string]any)["source"].(map[string]any)
+	if _, ok := src["branch"]; ok {
+		t.Fatalf("the entry still reads as pinned: %v", src)
+	}
+
+	// The same edit on the entry whose source is written in flow style: the
+	// member goes with one of the commas around it, and the line keeps its shape.
+	got, err = yamledit.RemoveSeqItemFieldByKey([]byte(catalogDoc), []string{"image_catalog", "entries"},
+		"name", "worker", []string{"source", "branch"})
+	if err != nil {
+		t.Fatalf("RemoveSeqItemFieldByKey: %v", err)
+	}
+	if want := "      source: { kind: dockerfile, repo: acme/sandbox, path: images/worker.Dockerfile }\n"; !strings.Contains(string(got), want) {
+		t.Fatalf("the flow member was not removed with its separator:\n%s\nwant %q in it", got, want)
+	}
+
+	// And on the entry that does not carry the field at all: nothing is written.
+	got, err = yamledit.RemoveSeqItemFieldByKey([]byte(catalogDoc), []string{"image_catalog", "entries"},
+		"name", "plain", []string{"source", "branch"})
+	if err != nil {
+		t.Fatalf("RemoveSeqItemFieldByKey: %v", err)
+	}
+	if !bytes.Equal(got, []byte(catalogDoc)) {
+		t.Fatalf("removing a field that is not there changed the document:\n%s", got)
+	}
+}
+
+// TestRemoveSeqItemFieldByKeyLeavesWhatItCannotName is the other half of the
+// promise: an item, a field or a sequence this edit does not find is a no-op and
+// not a refusal, so a caller that applies it to a whole catalog has nothing to
+// treat as a failure.
+func TestRemoveSeqItemFieldByKeyLeavesWhatItCannotName(t *testing.T) {
+	for _, tc := range []struct{ name, doc string }{
+		{"no such item", catalogDoc},
+		{"no such nested key", "k:\n  - name: one\n    source:\n      kind: inline\n"},
+		{"a nested key that is not a mapping", "k:\n  - name: one\n    source: inline\n"},
+		{"no such sequence", "k:\n  - name: one\n"},
+		{"an empty document", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key := "one"
+			if tc.name == "no such item" {
+				key = "gone"
+			}
+			got, err := yamledit.RemoveSeqItemFieldByKey([]byte(tc.doc), []string{"image_catalog", "entries"},
+				"name", key, []string{"source", "branch"})
+			if tc.name == "no such sequence" {
+				got, err = yamledit.RemoveSeqItemFieldByKey([]byte(tc.doc), []string{"k"}, "name", key, []string{"source", "branch"})
+			}
+			if err != nil {
+				t.Fatalf("RemoveSeqItemFieldByKey: %v", err)
+			}
+			if !bytes.Equal(got, []byte(tc.doc)) {
+				t.Fatalf("an edit that found nothing changed the document:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestRemoveSeqItemFieldByKeyTakesOneOfADuplicateField is the keyed removal's own
+// promise, one level down: a field written twice is refused rather than guessed
+// at, because which of the two the edit changed would be invisible in the result.
+func TestRemoveSeqItemFieldByKeyTakesOneOfADuplicateField(t *testing.T) {
+	const doc = "k:\n  - name: one\n    source:\n      branch: a\n      branch: b\n"
+	got, err := yamledit.RemoveSeqItemFieldByKey([]byte(doc), []string{"k"}, "name", "one", []string{"source", "branch"})
+	if r := yamledit.ReasonOf(err); r != yamledit.ReasonDuplicateKey {
+		t.Fatalf("reason = %q, want %q (got %q, %v)", r, yamledit.ReasonDuplicateKey, got, err)
+	}
+	if !bytes.Equal(got, []byte(doc)) {
+		t.Fatalf("a refusal returned changed bytes: %q", got)
+	}
+}
+
+// TestRemoveSeqItemFieldByKeyRefusesWhatItCannotSplice pins the refusals, and
+// that each of them is the class of the reason rather than a half-applied edit:
+// a caller that meets one has a file it must leave alone.
+func TestRemoveSeqItemFieldByKeyRefusesWhatItCannotSplice(t *testing.T) {
+	for _, tc := range []struct {
+		name, doc string
+		path      []string
+		keyField  string
+		field     []string
+		reason    yamledit.Reason
+	}{
+		{"no path at all", "a: 1\n", nil, "name", []string{"source", "branch"}, yamledit.ReasonEmptyPath},
+		{"no field at all", "a: 1\n", []string{"a"}, "name", nil, yamledit.ReasonEmptyPath},
+		{"no key field", "a: 1\n", []string{"a"}, "", []string{"source", "branch"}, yamledit.ReasonEmptyField},
+		{"a document that is not YAML", "a: [1\n", []string{"a"}, "name", []string{"source", "branch"}, yamledit.ReasonMalformed},
+		{"a path that crosses a scalar", "a: 1\n", []string{"a", "b"}, "name", []string{"source", "branch"}, yamledit.ReasonNotAMapping},
+		{"a leaf that is not a sequence", "a: 1\n", []string{"a"}, "name", []string{"source", "branch"}, yamledit.ReasonNotASequence},
+		{"a flow sequence", "a: [1]\n", []string{"a"}, "name", []string{"source", "branch"}, yamledit.ReasonFlowCollection},
+		{"a merge key on the field's mapping", "base: &base { x: 1 }\nk:\n  - name: one\n    source:\n      <<: *base\n      branch: a\n",
+			[]string{"k"}, "name", []string{"source", "branch"}, yamledit.ReasonMergeKey},
+		{"a tag on the field", "k:\n  - name: one\n    source:\n      branch: !!str a\n",
+			[]string{"k"}, "name", []string{"source", "branch"}, yamledit.ReasonAnchorOrAlias},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := yamledit.RemoveSeqItemFieldByKey([]byte(tc.doc), tc.path, tc.keyField, "one", tc.field)
+			if r := yamledit.ReasonOf(err); r != tc.reason {
+				t.Fatalf("reason = %q, want %q (got %q, %v)", r, tc.reason, got, err)
+			}
+			if !bytes.Equal(got, []byte(tc.doc)) {
+				t.Fatalf("a refusal returned changed bytes: %q", got)
+			}
+		})
+	}
+}
+
+// TestRemoveSeqItemFieldByKeyKeepsTheLineEndings: the field goes, and the file's
+// own line ending is what the rest of it keeps.
+func TestRemoveSeqItemFieldByKeyKeepsTheLineEndings(t *testing.T) {
+	lf := "k:\n  - name: one\n    source:\n      repo: acme/app\n      branch: gone\nother: 1\n"
+	crlf := []byte(strings.ReplaceAll(lf, "\n", "\r\n"))
+	got, err := yamledit.RemoveSeqItemFieldByKey(crlf, []string{"k"}, "name", "one", []string{"source", "branch"})
+	if err != nil {
+		t.Fatalf("RemoveSeqItemFieldByKey: %v", err)
+	}
+	assertCRLF(t, got)
+	if want := "k:\r\n  - name: one\r\n    source:\r\n      repo: acme/app\r\nother: 1\r\n"; string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 func TestLineEndingsArePreserved(t *testing.T) {
 	lf := "project: workspace-a\nallow_data_to:\n  - owner/repo-a\n# note\nbudget:\n  max_runs: 5\n"
 	crlf := []byte(strings.ReplaceAll(lf, "\n", "\r\n"))

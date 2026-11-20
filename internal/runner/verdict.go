@@ -22,7 +22,9 @@ import (
 //
 // A finding's score is three anchored 1–5 axes and a class (D1, D3). All four
 // are optional, so a verdict written before them still validates and still
-// parses, and severity stays the free-form label it is (D2).
+// parses, and severity stays the free-form label it is (D2). Its scope --
+// unmet, beyond or differs -- is optional too, and it is the one axis that is
+// about the task rather than about the code (D2930, issuescope.go).
 //
 // A summary is the one thing a finding must carry, and it is a sentence: the
 // key is required and it may not be empty. The model is constrained by this
@@ -31,7 +33,7 @@ import (
 // reader does not enforce the schema (decodeVerdict), so the runner stores a
 // decision with a sentence of its own when a verdict reaches it without one
 // (ownerDecision).
-const VerdictSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["ship","changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string"},"likelihood":{"type":"integer","minimum":1,"maximum":5},"impact":{"type":"integer","minimum":1,"maximum":5},"fix_cost":{"type":"integer","minimum":1,"maximum":5},"class":{"type":"string","enum":["correctness","performance","security","data_loss","maintainability","cosmetic"]},"needs_owner":{"type":"boolean"},"file":{"type":"string"},"summary":{"type":"string","minLength":1}},"required":["summary"]}},"keep":{"type":"integer"}},"required":["verdict","findings"]}`
+const VerdictSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["ship","changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string"},"likelihood":{"type":"integer","minimum":1,"maximum":5},"impact":{"type":"integer","minimum":1,"maximum":5},"fix_cost":{"type":"integer","minimum":1,"maximum":5},"class":{"type":"string","enum":["correctness","performance","security","data_loss","maintainability","cosmetic"]},"scope":{"type":"string","enum":["unmet","beyond","differs"]},"needs_owner":{"type":"boolean"},"file":{"type":"string"},"summary":{"type":"string","minLength":1}},"required":["summary"]}},"keep":{"type":"integer"}},"required":["verdict","findings"]}`
 
 // Finding is one issue a review asks to fix.
 type Finding struct {
@@ -44,6 +46,21 @@ type Finding struct {
 	Impact     int    `json:"impact,omitempty"`
 	FixCost    int    `json:"fix_cost,omitempty"`
 	Class      string `json:"class,omitempty"`
+	// Scope is whether the finding is about the task the pull request was
+	// written for: unmet (the task asks for something the diff does not do),
+	// beyond (the diff does something the task did not ask for) or differs
+	// (the task asked for Y and the diff does X instead). It is one of
+	// D2930's three words and absent on a finding about the code alone,
+	// which is every verdict written before the field existed -- so an old
+	// transcript still reads, and an unscored one is still written back with
+	// its own fields alone.
+	//
+	// This reader reads the word as given rather than closing the vocabulary
+	// the way the artifact's reader does: what an in-run finding blocks on is
+	// its score and the mode's table (internal/rigor, D2), so an unknown word
+	// can turn nothing down here, and the schema below is what constrains the
+	// model.
+	Scope string `json:"scope,omitempty"`
 	// NeedsOwner marks a finding whose ONLY remedies are a decision that is
 	// not this run's to make (OD1): a licence or legal clearance, a product or
 	// policy choice, an owner-run step, or a spec that says the pull request

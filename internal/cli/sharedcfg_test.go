@@ -1027,6 +1027,7 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 		{"image_map", "image_map:\n    acme/app: tools\n"},
 		{"bake_repos", "bake_repos: false\n"},
 		{"triage", "triage: false\n"},
+		{"review_against_task", "review_against_task: false\n"},
 		{"rigor_pending", "rigor_pending: critical\n"},
 		{"backend", "backend: cloud-batch\n"},
 		{"clone_urls", "clone_urls:\n    github/acme/app: https://github.com/acme/app\n"},
@@ -1035,6 +1036,7 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 		{"model_grades", "model_grades:\n    strong: {model: anthropic/claude-sonnet-5.5, access: acme-main}\n"},
 		{"node_removals", "node_removals:\n    pools: [acme-pool]\n"},
 		{"reports_commit", "reports_commit: {repo: acme/reports}\n"},
+		{"workspace_shared", "workspace_shared:\n    anthropic-api-key: {kind: model, projects: [aurora]}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := localcfg.Parse([]byte(validShared() + tc.yaml))
@@ -1060,5 +1062,68 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 	}
 	if sharedNeverPublished(c) {
 		t.Error("a shared config carrying none of the forbidden sections is called unpublishable")
+	}
+}
+
+// TestSharedNeverPublishesReviewAgainstTask: the review-against-task switch is
+// the triage switch's own case one key over (R7 of docs/review-against-task/,
+// D2935) and the reason is the sharper one of the two — the switch is what
+// turns off the check every review stage makes of a run's own work, so a
+// launcher who could write it into the runs bucket's shared file would be
+// having every teammate's pull requests reviewed against nothing, from a file
+// it can write. The key is refused by name before the file is parsed, the way
+// the triage switch beside it is, and again on the decoded value, so a config
+// that arrived some other way cannot publish it either.
+//
+// The local config keeps its own copy: the switch is the owner's answer for the
+// whole project, published through the policy node, so dropping it from the
+// shared file must not touch the answer on the machine that wrote it.
+func TestSharedNeverPublishesReviewAgainstTask(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "review_against_task") {
+		t.Fatal("sharedForbidden does not name review_against_task, so a published switch would be read")
+	}
+	_, err := ParseShared([]byte(validShared()+"review_against_task: false\n"), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying review_against_task: was accepted")
+	}
+	for _, want := range []string{"review_against_task", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	off := false
+	c, err := localcfg.Parse([]byte(validShared() + "review_against_task: false\n"))
+	if err != nil {
+		t.Fatalf("the fixture does not read back: %v", err)
+	}
+	if !sharedNeverPublished(c) {
+		t.Error("a decoded config carrying review_against_task: is called publishable, so a shared file could carry the switch")
+	}
+	// The switch alone, so the arm that answered is the one this test is about
+	// and not another key the fixture happens to carry, and the control that
+	// keeps the predicate from being one that refuses everything.
+	if !sharedNeverPublished(&localcfg.Config{ReviewAgainstTask: &off}) {
+		t.Error("only the review-against-task switch is set, and the config is called publishable")
+	}
+	if sharedNeverPublished(&localcfg.Config{}) {
+		t.Error("a config carrying no section at all is called unpublishable, so the check is not the sections it names")
+	}
+	// The layer the shared file is written from, and the merge a launcher's
+	// copy is read through: both drop the switch and neither touches the
+	// config they were given.
+	for name, got := range map[string]*localcfg.Config{"shared": c.Shared(), "merged": localcfg.MergeShared(nil, c)} {
+		if got.ReviewAgainstTask != nil {
+			t.Errorf("%s: review_against_task = %v, want it dropped: a launcher may not write the project's check", name, got.ReviewAgainstTask)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "review_against_task") {
+			t.Errorf("%s: the marshalled config carries the switch:\n%s", name, out)
+		}
+	}
+	if c.ReviewAgainstTask == nil || *c.ReviewAgainstTask {
+		t.Error("Shared/MergeShared cleared the switch on the config they were given")
 	}
 }

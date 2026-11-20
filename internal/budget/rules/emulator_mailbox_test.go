@@ -412,11 +412,12 @@ func TestMailboxClaimMismatchIsAdmittedNowhere(t *testing.T) {
 }
 
 // TestMailboxReadsAreTheGrantedSet: D112's answer is direct reads, and the
-// grant is exactly tension (b1)'s set — config/caps/**, spend/$day/**,
-// config/kill/** and the phone's own outbox and heartbeat. A rules test that
-// proved only the writes are fenced would leave the reads open, so every
-// family the grant does not name has its own denial here, and the families it
-// does name have the read beside it.
+// grant is tension (b1)'s set — config/caps/**, spend/$day/**, config/kill/**
+// and the phone's own outbox and heartbeat — plus, since J1 (mobile
+// identity-pairing, F30, D2797, O3), the one outcome node the running-jobs view
+// names a run by. A rules test that proved only the writes are fenced would
+// leave the reads open, so every family the grant does not name has its own
+// denial here, and the families it does name have the read beside it.
 func TestMailboxReadsAreTheGrantedSet(t *testing.T) {
 	h := newHarness(t)
 	w := leased(2 * usd)
@@ -436,12 +437,15 @@ func TestMailboxReadsAreTheGrantedSet(t *testing.T) {
 	})
 
 	alice := h.phone(mbAlice)
-	// The four granted families: the eight expressions that carried a run's
-	// read now carry `|| USER`, and the mailbox's two carry MAILBOX.
+	// The granted set: the eight expressions that carried a run's read now carry
+	// `|| USER`, the mailbox's two carry MAILBOX, and — since J1 (mobile
+	// identity-pairing, F30, D2797, O3) — the outcome node carries USER alone,
+	// one location rather than a family.
 	for _, p := range []string{
 		budget.PathCapsGlobal, budget.PathCapsDefaults, budget.PathCapsRepo(slug),
 		budget.PathKillGlobal, budget.PathKillRepo(slug),
 		budget.PathSpendGlobal(day), budget.PathSpendRepo(day, slug), budget.PathSpendRun(day, slug, run),
+		budget.PathOutcome(day, slug, run),
 		"mailbox/" + mbAlice + "/outbox", outbox(mbAlice, "c1"), outbox(mbAlice, "c1") + "/acked",
 		beat(mbAlice),
 	} {
@@ -449,15 +453,18 @@ func TestMailboxReadsAreTheGrantedSet(t *testing.T) {
 	}
 
 	// Every family the grant does not name, one explicit case each. The run's
-	// slices (`agents/$slug/$run`, `outcomes/$day/$slug/$run`, `runs/**`) are
-	// what tension (b1) struck; the rest of config is beside the granted part;
-	// `fugaro/**` is the project's own mark; the parents of the granted nodes
-	// are not granted (an RTDB read grant is on the location it sits at, and
-	// only cascades down); and the inbox is the phone's write, not its read —
-	// the consumer, not the phone, collects what the phone wrote (§6.4).
+	// slices (`agents/$slug/$run`, `runs/**`) are what tension (b1) struck, and
+	// the two parents of the outcome node J1 opened are the same row one
+	// generation later — the grant is on the location it sits at and not on the
+	// days above it, so the app reads the run it names and no list of runs; the
+	// rest of config is beside the granted part; `fugaro/**` is the project's
+	// own mark; the parents of the granted nodes are not granted (an RTDB read
+	// grant is on the location it sits at, and only cascades down); and the
+	// inbox is the phone's write, not its read — the consumer, not the phone,
+	// collects what the phone wrote (§6.4).
 	for _, p := range []string{
 		budget.PathAgent(slug, run), "agents", "agents/" + slug,
-		budget.PathOutcome(day, slug, run), "outcomes", "outcomes/" + budget.DayKey(day),
+		"outcomes", "outcomes/" + budget.DayKey(day),
 		"runs", budget.PathRun(slug, run),
 		budget.PathLimits, budget.PathMode, "config", "config/caps", "config/caps/repos",
 		"config/kill", "config/kill/repos", projectpolicy.PathShared(), projectpolicy.PathRepo(slug),
@@ -493,6 +500,14 @@ func TestMailboxReadsAreTheGrantedSet(t *testing.T) {
 	h.set(other+"/counted", 5)
 	h.mustRead(alice, other)
 	h.mustRead(alice, budget.PathSpendGlobal(day+1))
+
+	// And the outcome node J1 opens is one location rather than one project's:
+	// its grant is the claim's, as the families' are, so the day and the
+	// repository a run is in are the reader's choice. What the phone reads is
+	// still a run it could already see the spend of.
+	outcome := budget.PathOutcome(day-1, "another-repo", "r9")
+	h.set(outcome, map[string]any{"status": "succeeded", "requestedBy": "alice@example.invalid"})
+	h.mustRead(alice, outcome)
 }
 
 // TestMailboxResidualMintedTokenNeedsTheDeviceNode is the residual P2.2

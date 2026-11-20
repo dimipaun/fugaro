@@ -336,3 +336,31 @@ func TestAnEntryPastTheReadCapIsNotServed(t *testing.T) {
 		t.Errorf("an object past the read cap = %v, want ErrTooLarge", err)
 	}
 }
+
+// TestListSkipsPRIndex: the pull-request index lives under the same
+// runs/<slug>/ prefix as the runs, so the cache's flat listing meets its
+// objects. None of them is one of a run's three objects, so none may enter
+// the index, and a repository that holds only index objects has no index at
+// all — the caller then reads the bucket, which is the fallback and never an
+// empty listing (F7).
+func TestListSkipsPRIndex(t *testing.T) {
+	ctx := context.Background()
+	g, bucket := testBucketWith(t, testRunIDs...)
+	g.Put(testBucket, "runs/"+testSlug+"/pr-index/42/"+testRunIDs[0]+".json", []byte(`{"version":1}`))
+
+	want := []string{
+		objectKey(testRunIDs[0], "result.json"), objectKey(testRunIDs[0], "task.json"),
+		objectKey(testRunIDs[1], "result.json"), objectKey(testRunIDs[1], "task.json"),
+		objectKey(testRunIDs[2], "result.json"), objectKey(testRunIDs[2], "task.json"),
+	}
+	slices.Sort(want)
+	if got := slices.Sorted(maps.Keys(List(ctx, bucket, testSlug, ""))); !slices.Equal(got, want) {
+		t.Fatalf("the listing named %v, want the runs' own objects %v", got, want)
+	}
+
+	g2 := gcpfake.NewGCS(t)
+	g2.Put(testBucket, "runs/"+testSlug+"/pr-index/42/"+testRunIDs[0]+".json", []byte(`{"version":1}`))
+	if index := List(ctx, g2.Bucket(t, testBucket), testSlug, ""); index != nil {
+		t.Fatalf("a listing of index objects only answered an index of %v, want none", index)
+	}
+}

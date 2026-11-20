@@ -107,13 +107,14 @@ variable "log_bucket_description" {
 }
 
 variable "bucket_lifecycle" {
-  description = "The runs bucket's lifecycle, in days: the three rules the bootstrap set, the one the bucket's versioning adds (a noncurrent version under runs/, cache/, locks/, tokens/ or issues/ is purged this many days after it stops being current), and the one the stored reports get (reports/ is deleted this many days after an object is created, which is E3's 18 months held in whole days, as the other members are)."
+  description = "The runs bucket's lifecycle, in days: the three rules the bootstrap set, the one the bucket's versioning adds (a noncurrent version under runs/, cache/, locks/, tokens/ or issues/ is purged this many days after it stops being current), the one the stored reports get (reports/ is deleted this many days after an object is created, which is E3's 18 months held in whole days, as the other members are), and the one a person's message to a running run gets (tokens/…/messages/NNNN.msg.json is deleted this many days after it is written, F11's 7, which is the owner's answer O1)."
   type = object({
     runs_days              = optional(number, 90)
     cache_custom_time_days = optional(number, 30)
     cache_age_days         = optional(number, 180)
     noncurrent_days        = optional(number, 7)
     reports_days           = optional(number, 548)
+    messages_days          = optional(number, 7)
   })
   default  = {}
   nullable = false
