@@ -2118,6 +2118,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneRigorSpellingImage(ctx, env, spec, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The members and the per-repo map of that same block, on the newer
+		// rigorMembersSince and in the layer alone: a repository's file
+		// refuses members: and has no repos: key. See
+		// checkRigorMembersImage.
+		if err := checkCloneRigorMembersImage(ctx, env, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The governance: gate, judged the same way and for the same
 		// reason: see checkGovernanceImage.
 		if err := checkCloneGovernanceImage(ctx, env, spec, warn); err != nil {
@@ -2358,6 +2365,12 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		}
 		// The spelling gate on that same file: see checkRigorSpellingImage.
 		if err := checkRigorSpellingImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The members and the per-repo map of that same block, on the newer
+		// rigorMembersSince and in the layer alone: see
+		// checkRigorMembersImage.
+		if err := checkRigorMembersImage(ctx, env, slug, spec, kind, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The governance: gate, the same shape as the clone branch's
