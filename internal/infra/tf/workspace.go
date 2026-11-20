@@ -61,8 +61,8 @@ const (
 	// else.
 	WorkspaceServiceAccountID = "fugaro-workspace"
 	// WorkspaceIAMAccountID is the account id of the workspace IAM account:
-	// the service-account fallback's identity (D2803, WU3), which WU20's Link
-	// has a member's owner grant `roles/owner` on their project and their
+	// the service-account fallback's identity (D2803, WU3), over which WU20's
+	// Link has a member's owner grant `roles/owner` on their project and their
 	// Firebase project, and which is only ever IMPERSONATED — a workspace
 	// admin holds the account's token-creator binding and assumes it, where
 	// the folder mechanism moves the project instead.
@@ -93,8 +93,10 @@ const (
 	// closes the second (WU11's `status` takes both up).
 	WorkspaceIAMAccountID = "fugaro-workspace-iam"
 	// workspaceRoleType, workspaceAccountType and workspaceGrantType are the
-	// root's three resource types: the role, the account, and the member
-	// resource that binds them. A type outside them is refused by name below.
+	// root's three resource types, over its four resources: the role, the TWO
+	// accounts (the workspace's own service above and the IAM account) and the
+	// member resource that binds the role to the service. A type outside them
+	// is refused by name below.
 	workspaceRoleType    = "google_project_iam_custom_role"
 	workspaceAccountType = "google_service_account"
 	workspaceGrantType   = "google_project_iam_member"
