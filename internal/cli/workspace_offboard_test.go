@@ -235,6 +235,78 @@ func wu9Names(grants []accesslib.Grant, member string) bool {
 	return false
 }
 
+// TestOffboardMemberNeedsAStoredProjectAdmin: a caller who is not a
+// PROJECT-scope admin of the member's own roster is refused, and refused
+// before anything on the member is touched — this check stands in front of a
+// write to another project's roster and a deletion of a person's credentials,
+// so what a caller it refuses finds is a member exactly as it was: no write,
+// no entry in its trail, no sweep, and not even the comparison against its
+// derived admin list, which is asked of a caller the roster places (F17.3,
+// D1940).
+//
+// The four callers are the ones a plausible mistake would admit. An admin
+// grant scoped to one repository, or one at all-repos, holds no project-level
+// thing whatever its role says (F19), and a viewer at project scope is a
+// project role below admin: none of them is an admin of the installation, and
+// the member's own intake refuses them the same way.
+func TestOffboardMemberNeedsAStoredProjectAdmin(t *testing.T) {
+	const (
+		wu9Stranger      = "stranger@example.com"
+		wu9RepoAdmin     = "repoadmin@example.com"
+		wu9AllRepos      = "allreposadmin@example.com"
+		wu9ProjectViewer = "viewer@example.com"
+	)
+	cases := []struct {
+		name   string
+		caller string
+		// role and scope are the caller's grant of the member's roster, both
+		// empty for a caller its roster does not name at all.
+		role, scope string
+	}{
+		{"no grant at all", wu9Stranger, "", ""},
+		{"an admin scoped to one repository", wu9RepoAdmin, "admin", "github/acme/app"},
+		{"an admin at all-repos", wu9AllRepos, "admin", "all-repos"},
+		{"a viewer at project scope", wu9ProjectViewer, "viewer", "project"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var mine []accesslib.Grant
+			if c.role != "" {
+				mine = append(mine, wu9Grant(t, c.caller, c.role, c.scope))
+			}
+			ops := &wu9FakeMemberOps{t: t, doc: workspace.MemberDoc{
+				Raw: wu9Roster(t, append(mine,
+					wu9Grant(t, wu9Person, "operator", "project"),
+					wu9Grant(t, wu9Person, "viewer", "all-repos"))...),
+				ETag:  "etag-1",
+				Found: true,
+			}}
+			sweep := &wu9FakeSweeper{deleted: []string{"fugaro_u_4242_github-token"}}
+			o := wu9Offboarder(t, c.caller, ops, sweep)
+
+			err := o.Offboard(context.Background(), wu9Member, wu9Person)
+			if err == nil {
+				t.Fatalf("%s took %s off %s while holding no project-scope admin grant of that member's roster", c.caller, wu9Person, wu9Member.Project)
+			}
+			for _, want := range []string{wu9Member.Project, "user:" + c.caller, "project-scope admin", accesslib.PathNode} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name %q, so the caller cannot tell what would admit them:\n%v", want, err)
+				}
+			}
+			if len(ops.writes) != 0 || len(ops.audits) != 0 || len(sweep.calls) != 0 {
+				t.Errorf("the refused offboarding acted on the member anyway: %d writes, %d audit entries, %d sweeps — the caller's own authority is asked before any of them",
+					len(ops.writes), len(ops.audits), len(sweep.calls))
+			}
+			if len(ops.wants) != 0 {
+				t.Errorf("the member's derived admin list was compared %d times for a caller its roster does not place as an admin: that comparison is about a grant the caller holds, and the check that they hold one comes first", len(ops.wants))
+			}
+			if !wu9Names(wu9Stored(t, ops), "user:"+wu9Person) {
+				t.Error("the refused offboarding took the person off the member's roster anyway")
+			}
+		})
+	}
+}
+
 // TestOffboardMemberSweepsPrefix: the core acts on the member it is NAMED and
 // on no other. The member travels as its GCP project and its Firebase project,
 // which are one project only sometimes (F2, R10), and both halves of the act
