@@ -124,9 +124,9 @@ us-west4
 
 https://cloud.google.com/logging/docs/region-support (last updated 2026-11-20). A new
 installation's run log bucket goes in its own region where this page names it. Where it does not,
-the place's multi-region takes it — `us` for the United States, `eu` for the European Union — and a
-region in neither place gets `global`; each is printed with its reason before anything is created
-(D3082, D3093).
+the place's multi-region takes it — `us` for the United States, `eu` for the European Union —
+and a region in neither place gets `global`; each is printed with its reason before anything is
+created (D3082, D3093).
 
 ```
 asia-east1
@@ -179,8 +179,8 @@ correct (O4).
 
 ## What these lists are not
 
-They are not the scheduler's. Cloud Scheduler's own locations — a different set, with a fixed nearby
-location per region Google does not offer it in — are `gcp.SchedulerRegions` and
+They are not the scheduler's. Cloud Scheduler's own locations — a different set, with a fixed
+nearby location per region Google does not offer it in — are `gcp.SchedulerRegions` and
 `gcp.nearestSchedulerRegion` (`internal/backend/gcp/names.go`), read from
 https://cloud.google.com/scheduler/docs/locations. Nor are they the secret containers' replication:
 a container created from now on is user-managed in the installation's region, so there is nothing to
