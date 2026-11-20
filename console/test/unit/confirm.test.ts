@@ -2398,6 +2398,36 @@ describe('the entry form behind the same window', () => {
     }
   })
 
+  it('refuses a value the operation’s own gate refuses, and spawns nothing at all', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const source = settingsEditSource()
+    const editor = createSettingsEditor({ ...source.deps, confirmer })
+    const edited = editor.open({ key: SETTINGS_KEY })
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    // U+202E, the right-to-left override: a value that reads as one string and
+    // is another. The entry form's own rule is a pre-check for its button -- text
+    // is text to it -- and `spawn.ts` holds a value only to being non-empty,
+    // NUL-free and bounded, so this is the value the operation's own gate is here
+    // for. Without it the dry run would be spawned, its diff shown, and the
+    // string written on the second click.
+    const submitted = ask(ipcMain, confirmChannel('answer'), fromWindow(window), {
+      answer: 'submit',
+      value: `30${'\u202e'}gnirts`,
+    })
+    await untilSettled()
+    expect(await submitted).toStrictEqual({ ok: false, reason: CONFIRM_NOT_SETTLED })
+    expect(await edited).toStrictEqual({
+      ok: false,
+      sentence: 'value carries an invisible format character (U+202E)',
+    })
+    expect(window.closeRequested()).toBe(true)
+    expect(source.spawns).toStrictEqual([])
+  })
+
   it('closes the form, and writes nothing, when the installation moves while it is open', async () => {
     const { confirmer, windows } = confirmOver()
     const source = settingsEditSource()

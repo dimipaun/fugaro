@@ -67,6 +67,7 @@
 // the window exists, and it is why the shown argv travels with the request
 // rather than being rebuilt at the write.
 
+import { validateArguments } from './ipc'
 import type { ValidatedArguments } from './ipc'
 import type { LaunchConfirmer, SettingsConfirmView } from './launch'
 import type { SettingsEntryDefault, SettingsEntryMeta, SettingsEntryRow, SettingsEntryView, SettingsView } from './settingsview'
@@ -788,7 +789,23 @@ export function createSettingsEditor(deps: SettingsEditorDeps): SettingsEditorRu
       // are composed here, from the answer the window's own top frame delivered.
       const fields: Record<string, string> = { op: first.value === null ? 'unset' : 'set', key: asked }
       if (first.value !== null) fields['value'] = first.value
-      const request: ValidatedArguments = Object.freeze(fields)
+      // **The composed request goes through the operation's own gate, exactly as
+      // a renderer's payload did when `settings.edit` was the only door.** The
+      // value is checked rather than assumed, because nothing else on this path
+      // checks it: the renderer's own payload is `{key}` and nothing else (C-OPS)
+      // so `validateArguments` had no value to look at when the request came in,
+      // the entry form's rule (`settingsEntryError`) is a **pre-check for the
+      // button** and knows a key's type and bounds rather than what is hidden in
+      // a string, and what `spawn.ts` holds a value to is only that it is
+      // non-empty, carries no NUL and is not absurdly long. So a value carrying a
+      // bidi override, a zero-width space or a control character would otherwise
+      // be spawned, shown in the diff as one string and **written on the second
+      // click** as another. It is refused here, before the first child: nothing is
+      // spawned, the form closes, and the sentence is the gate's own -- the one
+      // the older flow answered with, word for word.
+      const decision = validateArguments('settings.edit', fields)
+      if (!decision.ok) return giveUp(window, decision.reason)
+      const request: ValidatedArguments = decision.args
       const dryArgv = await deps.argvForEdit(request, 'dry-run', layer)
       const dry = await deps.spawnEdit(request, 'dry-run', layer, dryArgv)
       if (dry.refusal !== null) return giveUp(window, dry.refusal)
