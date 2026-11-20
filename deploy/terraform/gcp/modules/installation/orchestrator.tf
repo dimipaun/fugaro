@@ -151,12 +151,22 @@ resource "google_secret_manager_secret" "pairing_key" {
     fugaro_project = var.fugaro_project
   }
 
+  # Replicated in the installation's region, and the replication of one that
+  # exists ignored (secrets.tf's own declaration and the whole of its
+  # reasoning). The pairing keys are versions of this container and no path
+  # recovers them, so a replacement is the one plan this resource may not
+  # produce.
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [replication]
   }
 
   depends_on = [google_project_service.this]

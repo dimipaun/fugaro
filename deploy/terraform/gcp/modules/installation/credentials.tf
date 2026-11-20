@@ -181,12 +181,21 @@ resource "google_secret_manager_secret" "credentials_bundle" {
     fugaro_project = var.fugaro_project
   }
 
+  # Replicated in the installation's region, and the replication of one that
+  # exists ignored (secrets.tf's own declaration and the whole of its
+  # reasoning): the bundle is written by the owner's own `fugaro creds set` and
+  # a replacement deletes every version of it.
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [replication]
   }
 
   depends_on = [google_project_service.this]

@@ -1912,13 +1912,16 @@ var credentialsServiceEnv = []string{
 // intake.tf writes for the secrets intake's container, and nothing else is
 // admitted on it: the released image's `intake serve` subcommand (the image is
 // the credentials service's own, whose default command serves the other
-// service), and the four names internal/cli/intake_serve.go reads — the
+// service), and the five names the process's configuration is made of: the
 // project, the service's own URL (the audience a caller's ID token is minted
-// for), the runs bucket holding the derived admin list, and the launcher class
-// the process admits.
+// for), the runs bucket holding the derived admin list and the launcher class
+// the process admits — the four internal/cli/intake_serve.go reads — and the
+// region a container it creates is replicated in, which the intake is told from
+// its deployment because it runs in the cloud with no project config and no
+// installation record it may read (D3082; LP5c reads it).
 var (
 	intakeServiceArgs = []string{"intake", "serve"}
-	intakeServiceEnv  = []string{"FUGARO_GCP_PROJECT", "FUGARO_INTAKE_URL", "FUGARO_RUNS_BUCKET", "FUGARO_LAUNCHER_ACCOUNTS"}
+	intakeServiceEnv  = []string{"FUGARO_GCP_PROJECT", "FUGARO_REGION", "FUGARO_INTAKE_URL", "FUGARO_RUNS_BUCKET", "FUGARO_LAUNCHER_ACCOUNTS"}
 )
 
 // voiceServiceArgs and voiceServiceEnv are the argv and the environment
@@ -4848,7 +4851,7 @@ func (c Cover) accountFrom(a map[string]any, unk any, pre string, plan accountPl
 //     credential in the bundle — the read its own two roles deliberately do not
 //     hold (R3, F30).
 //
-// The environment is the four names the process reads (intakeServiceEnv), held
+// The environment is the five names the process reads (intakeServiceEnv), held
 // to literal values and no value_source for the credentials service's reason:
 // an environment is the one path a value could reach this process without a
 // Secret Manager read, and this process writes containers it never reads.

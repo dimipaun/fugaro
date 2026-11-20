@@ -19,14 +19,31 @@ resource "google_secret_manager_secret" "project" {
     fugaro_secret  = each.key
   }
 
-  # The adopted secrets are replicated automatically; any other replication
-  # would replace them, which deletes every version first.
+  # The container is replicated in the installation's region, and the
+  # replication of one that exists is IGNORED: a container's replication
+  # cannot be changed after it is created (Secret Manager refuses the update),
+  # and any other declaration would replace the container, which deletes every
+  # version in it first — the adoption of a container that exists is what that
+  # would hit, since every container created before this declaration is
+  # replicated automatically, wherever Google chose. ignore_changes is the
+  # mechanism the module already uses for a field a plan must not touch (every
+  # Cloud Run service's client and client version, history.tf's paused), read
+  # here as: the container is
+  # created in var.region, and whatever it already has is left alone —
+  # automatic ones from an older installation stay automatic, and an adopted
+  # one keeps its own replication too, so the installation a container has been
+  # created on is never told to move it (D3082, F9, R5).
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [replication]
   }
 }
 
@@ -106,12 +123,22 @@ resource "google_secret_manager_secret" "voice_provider_keys" {
     fugaro_project = var.fugaro_project
   }
 
+  # Replicated in the installation's region, and the replication of one that
+  # exists ignored: the container above states the whole of that reasoning, and
+  # this is the same declaration for the same reason (the provider keys every
+  # remote utterance is credentialed by have no path back if a plan replaces
+  # this container).
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [replication]
   }
 
   depends_on = [google_project_service.this]

@@ -101,12 +101,21 @@ resource "google_secret_manager_secret" "licence_renewal" {
     fugaro_project = var.fugaro_project
   }
 
+  # Replicated in the installation's region, and the replication of one that
+  # exists ignored (secrets.tf's own declaration and the whole of its
+  # reasoning): a licensed installation's renewal key cannot be re-created, so
+  # a plan must never replace this container.
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [replication]
   }
 }
 

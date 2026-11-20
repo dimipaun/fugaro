@@ -12,14 +12,26 @@ resource "google_secret_manager_secret" "this" {
     fugaro_secret = each.key
   }
 
-  # The adopted secrets are replicated automatically; any other replication
-  # would replace them, which deletes every version first.
+  # Replicated in the installation's region, and the replication of one that
+  # exists ignored: a container's replication cannot be changed after it is
+  # created (Secret Manager refuses the update), and any other declaration would
+  # replace the container, which deletes every version in it first — which is
+  # what an adopted container, replicated automatically like every container
+  # created before this declaration, would meet. modules/installation's
+  # secrets.tf states the whole of the reasoning; this is the repository's own
+  # containers carrying the same declaration for the same reason (D3082, F9,
+  # R5).
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [replication]
   }
 }
 
