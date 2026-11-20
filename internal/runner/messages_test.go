@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"context"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -294,7 +295,7 @@ func TestNoMessagesNoChange(t *testing.T) {
 		t.Fatalf("the run made %d stages with the channel on and %d with it off", len(on.agent.calls), len(plain.agent.calls))
 	}
 	for i := range plain.agent.calls {
-		if plain.agent.calls[i].Prompt != on.agent.calls[i].Prompt {
+		if sameNonce(plain.agent.calls[i].Prompt) != sameNonce(on.agent.calls[i].Prompt) {
 			t.Fatalf("stage %d's prompt changed when nothing was sent:\nwith: %q\nwithout: %q",
 				i+1, on.agent.calls[i].Prompt, plain.agent.calls[i].Prompt)
 		}
@@ -315,6 +316,13 @@ func TestNoMessagesNoChange(t *testing.T) {
 		t.Errorf("the pull request body changed when nothing was sent:\nwith: %s\nwithout: %s", b, a)
 	}
 }
+
+// promptNonceRE is a fence nonce as followup.NewNonce draws it: a review
+// prompt carries one for the task block, fresh in every run, so two runs'
+// prompts agree only once it is blanked.
+var promptNonceRE = regexp.MustCompile(`[0-9a-f]{16}`)
+
+func sameNonce(prompt string) string { return promptNonceRE.ReplaceAllString(prompt, "NONCE") }
 
 // messageStatusBegin is where the report's own words stop and the status block
 // the runner rewrites every round begins.
