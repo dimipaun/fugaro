@@ -3177,7 +3177,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// route a run reads is new to it (workspace-service task WS22).
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
-		case gen >= rulesRouteGeneration:
+		case gen >= rulesOutcomeGeneration:
 			adds = "the credential route a run reads"
 		case gen >= rulesSpendLeavesGeneration:
 			adds = "the paired device's read of a run's outcome"

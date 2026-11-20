@@ -511,16 +511,19 @@ const PolicyRulesVersion = 1
 // repository (`TOKEN && auth.token.fs == $slug`, exactly the grant
 // `config/policy/repos/$slug` and `config/policy/voice/repos/$slug` already
 // carry) and to no other identity at all. A run under the older document is
-// refused that read outright rather than shown a degraded one, and since the
-// run reads its route before its first call — the read is what tells it which
-// service a kind is served from — such a run would halt on a record it cannot
-// read, which is the drift the marker exists to report. Nothing writes the leaf
-// but the member's own `fugaro update`, over IAM: `.write` is false on it, as on
-// the policy nodes beside it, so a run token, a device, a launcher, a pairing
-// session and every other client the rules bind are refused a write there. The
-// parent `config/policy/route` carries no grant of its own, for
-// `config/policy`'s reason: a read granted on it would cascade to every
-// repository's record.
+// refused that read outright rather than shown a degraded one, and such a run
+// does not halt for it: the read is made by the run side of the feature (WS11,
+// the run routing each kind to the holder its record names) and not by these
+// rules, and no runner code reads the leaf yet, so a run under these rules reads
+// no route and is served by the project's own credential, the behaviour a run
+// of the release behind has today. What the marker reports is the read the
+// deployed document cannot serve; the deploy is what puts the node there.
+// Nothing writes the leaf but the member's own `fugaro update`, over IAM:
+// `.write` is false on it, as on the policy nodes beside it, so a run token, a
+// device, a launcher, a pairing session and every other client the rules bind
+// are refused a write there. The parent `config/policy/route` carries no grant
+// of its own, for `config/policy`'s reason: a read granted on it would cascade
+// to every repository's record.
 //
 // What the bump does to an existing installation is what every bump does, and
 // it is met the same way: `fugaro doctor` reports policy-rules-skew until the

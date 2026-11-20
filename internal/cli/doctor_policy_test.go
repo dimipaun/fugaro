@@ -897,20 +897,20 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// read in — and the state a member that pinned a workspace meets: a run
 		// under those rules reads no route, so it is served by the project's own
 		// credential until the deploy.
-		if rulesRouteGeneration >= projectpolicy.RulesVersion {
-			t.Fatalf("rulesRouteGeneration = %d and RulesVersion = %d: this case is about a marker between them", rulesRouteGeneration, projectpolicy.RulesVersion)
+		if rulesOutcomeGeneration >= projectpolicy.RulesVersion {
+			t.Fatalf("rulesOutcomeGeneration = %d and RulesVersion = %d: this case is about a marker between them", rulesOutcomeGeneration, projectpolicy.RulesVersion)
 		}
 		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
-		db.Set(projectpolicy.PathRulesMarker(), rulesRouteGeneration)
+		db.Set(projectpolicy.PathRulesMarker(), rulesOutcomeGeneration)
 		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
 		c, ok := doctorChecksByID(t)["policy-rules-skew"]
 		if !ok || c.Severity != "warning" {
 			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
 		}
-		if c.Problem != rulesMarkerOlderText(rulesRouteGeneration) {
-			t.Errorf("the body is not rulesMarkerOlderText:\n got %q\nwant %q", c.Problem, rulesMarkerOlderText(rulesRouteGeneration))
+		if c.Problem != rulesMarkerOlderText(rulesOutcomeGeneration) {
+			t.Errorf("the body is not rulesMarkerOlderText:\n got %q\nwant %q", c.Problem, rulesMarkerOlderText(rulesOutcomeGeneration))
 		}
-		for _, want := range []string{fmt.Sprintf("generation %d", rulesRouteGeneration), "config/policy/route/$slug", fmt.Sprintf("generation %d or newer", projectpolicy.RulesVersion)} {
+		for _, want := range []string{fmt.Sprintf("generation %d", rulesOutcomeGeneration), "config/policy/route/$slug", fmt.Sprintf("generation %d or newer", projectpolicy.RulesVersion)} {
 			if !strings.Contains(c.Problem, want) {
 				t.Errorf("the body does not carry %q: %q", want, c.Problem)
 			}
@@ -920,17 +920,17 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// one thing 9 adds: the credential route.
 		for _, bad := range []string{"fugaro pair", "by hand", "no run reads a published policy", coordpath.PathRoot + "/"} {
 			if strings.Contains(c.Problem, bad) {
-				t.Errorf("the body for a generation-%d marker carries %q, which is about rules it already has: %q", rulesRouteGeneration, bad, c.Problem)
+				t.Errorf("the body for a generation-%d marker carries %q, which is about rules it already has: %q", rulesOutcomeGeneration, bad, c.Problem)
 			}
 		}
 		if !strings.Contains(c.Problem, "which adds the credential route") {
-			t.Errorf("the body for a generation-%d marker does not name what the redeploy adds (the credential route a run reads): %q", rulesRouteGeneration, c.Problem)
+			t.Errorf("the body for a generation-%d marker does not name what the redeploy adds (the credential route a run reads): %q", rulesOutcomeGeneration, c.Problem)
 		}
 		if !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "--firebase-project") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
 		if !strings.Contains(c.Fix, "credential route") || strings.Contains(c.Fix, "run's outcome") || strings.Contains(c.Fix, "stage report") || strings.Contains(c.Fix, "registration") || strings.Contains(c.Fix, "voice") || strings.Contains(c.Fix, "coordinator") {
-			t.Errorf("the fix for a generation-%d marker does not name what the redeploy adds (the credential route a run reads): %q", rulesRouteGeneration, c.Fix)
+			t.Errorf("the fix for a generation-%d marker does not name what the redeploy adds (the credential route a run reads): %q", rulesOutcomeGeneration, c.Fix)
 		}
 	})
 
