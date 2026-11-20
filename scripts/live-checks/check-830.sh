@@ -808,6 +808,11 @@ try:
 except OSError:
     pass
 
+# The fields a second job can be made to carry: a launcher writes its own job's
+# labels, the labels Batch puts on its VMs and the task's variables, so every
+# such field that carries the other side's identity on either object is a key
+# the forge attempt has to try — the job's own object included, because a link
+# resting on a field there would rest on a field the launcher wrote too.
 for path, value in leaves(vm):
     if not any(n in value for n in needles):
         continue
@@ -815,6 +820,13 @@ for path, value in leaves(vm):
         print("forge\t%s\t%s" % (path[len("metadata.items."):], redact(value)))
     elif path.startswith("labels."):
         print("forge\t%s\t%s" % (path[len("labels."):], redact(value)))
+
+for path, value in leaves(job):
+    if not path.startswith("labels."):
+        continue
+    if not ((vmname and vmname in value) or (vmid and vmid == value)):
+        continue
+    print("forge\t%s\t%s" % (path[len("labels."):], redact(value)))
 C830LINKS
 }
 
@@ -917,27 +929,32 @@ print("skipped\t" + ",".join(skipped))
 C830FORGEARGS
 }
 
-# forge_compare.py is the judgement: for every field that carries the probe's
-# identity on its own VM, did the second job's VM (or the plain VM) end up
-# carrying the same thing in the same place? It also reports, per avenue, how
-# many of the keys this check wrote on the job reached the VM at all — the
-# control that says whether the attempt was live or whether Batch copies a
-# launcher's labels nowhere.
+# forge_compare.py is the judgement: for every field that carries one side's
+# identity into the other, did this avenue end up carrying the probe's identity
+# in the same place? Each candidate is compared against the artifact its own
+# home belongs to — a field of the instance's object against that avenue's VM, a
+# field of the job's object against its own job's object, a field the container
+# reports against that avenue's container lines — so a link on the job's own
+# object, or one only visible inside the VM, is judged rather than silently
+# passing with nothing compared. It also reports, per avenue, how many of the
+# keys this check wrote on the job reached the VM at all — the control that says
+# whether the attempt was live or whether Batch copies a launcher's labels
+# nowhere.
 write_compare_py() {
   cat >"$SCRATCH/forge_compare.py" <<'C830COMPARE'
-import json, sys
+import json, re, sys
 
-uid, jobname = sys.argv[1:3]
-links_path, keys_path = sys.argv[3:5]
-specs = sys.argv[5:]
-needles = [n for n in (uid, jobname) if n]
+uid, jobname, vmname, vmid = sys.argv[1:5]
+links_path, keys_path = sys.argv[5:7]
+specs = sys.argv[7:]
+needles = [n for n in (uid, jobname, vmname, vmid) if n]
 
 candidates = []
 with open(links_path) as fh:
     for line in fh:
         parts = line.rstrip("\n").split("\t")
-        if len(parts) >= 4 and parts[0] == "link" and parts[1] == "instance":
-            candidates.append((parts[2], parts[3]))
+        if len(parts) >= 4 and parts[0] == "link":
+            candidates.append((parts[1], parts[2]))
 
 keys = []
 with open(keys_path) as fh:
@@ -947,6 +964,36 @@ with open(keys_path) as fh:
             keys.append(parts[0])
 
 
+def at(obj, path):
+    """The value at a path like `status.instances[0].name`, or None when that
+    object carries no such field at all."""
+    cur = obj
+    for part in path.split("."):
+        m = re.match(r"^(.*)\[([0-9]+)\]$", part)
+        if m:
+            key, idx = m.group(1), int(m.group(2))
+            if key:
+                cur = cur.get(key) if isinstance(cur, dict) else None
+            if not isinstance(cur, list) or idx >= len(cur):
+                return None
+            cur = cur[idx]
+        else:
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(part)
+        if cur is None:
+            return None
+    if isinstance(cur, str):
+        return cur
+    if isinstance(cur, (int, float)):
+        return str(cur)
+    return None
+
+
+def carries(value):
+    return any(n in value for n in needles)
+
+
 def metadata_value(obj, key):
     for item in ((obj or {}).get("metadata") or {}).get("items") or []:
         if isinstance(item, dict) and item.get("key") == key:
@@ -954,44 +1001,93 @@ def metadata_value(obj, key):
     return None
 
 
-def verdict(path, obj):
-    """True: the probe's identity is there. False: that field is there without
-    it. None: that field cannot be written by a launcher at all."""
-    if path in ("name", "hostname"):
-        return jobname in (obj.get(path) or "")
-    if path.startswith("labels."):
-        value = (obj.get("labels") or {}).get(path[len("labels."):])
-        return None if value is None else any(n in value for n in needles)
+def in_object(path, obj):
+    """True: the probe's identity is in that field of this object. False: the
+    field is not there, or is there without the identity — either way this
+    avenue did not get the probe's identity into it."""
     if path.startswith("metadata.items."):
         value = metadata_value(obj, path[len("metadata.items."):])
-        return None if value is None else any(n in value for n in needles)
-    return None
+    else:
+        value = at(obj, path)
+    return False if value is None else carries(value)
+
+
+def in_lines(path, lines):
+    """None when this avenue's container reported no such key: the report keys
+    are the VM's own, so another VM's keys are a different set and there is
+    nothing here to compare."""
+    if path not in lines:
+        return None
+    return carries(lines[path])
 
 
 def present(key, obj):
-    if key in (obj.get("labels") or {}):
+    if key in ((obj or {}).get("labels") or {}):
         return True
     return metadata_value(obj, key) is not None
 
 
 for spec in specs:
-    avenue, path = spec.split("\t", 1)
-    try:
-        with open(path) as fh:
-            obj = json.load(fh)
-    except Exception:
-        print("result\t%s\t<unreadable>\t%s" % (avenue, "the object could not be read"))
-        continue
-    for candidate, _ in candidates:
-        v = verdict(candidate, obj)
-        print("result\t%s\t%s\t%s" % (avenue, candidate, {True: "reproduced", False: "not", None: "n/a"}[v]))
+    fields = spec.split("\t")
+    avenue, artifacts = fields[0], {}
+    for field in fields[1:]:
+        kind, _, path = field.partition("=")
+        if path:
+            artifacts[kind] = path
+    instances, jobs, lines, unreadable = None, None, {}, []
+    for kind, path in sorted(artifacts.items()):
+        try:
+            with open(path) as fh:
+                if kind == "lines":
+                    for line in fh:
+                        line = line.strip()
+                        if line.startswith("C830 "):
+                            body = line[5:]
+                            lines[body.split("=", 1)[0]] = body
+                else:
+                    obj = json.load(fh)
+                    if kind == "instance":
+                        instances = obj
+                    else:
+                        jobs = obj
+        except Exception:
+            unreadable.append(path)
+    for path in unreadable:
+        print("result\t%s\t%s\t%s" % (avenue, path.split("/")[-1], "unreadable"))
+    compared = 0
+    for home, path in candidates:
+        shown = "%s.%s" % (home, path)
+        if home == "job":
+            v = None if jobs is None else in_object(path, jobs)
+        elif home == "inside":
+            v = None if not lines else in_lines(path, lines)
+        else:
+            v = None if instances is None else in_object(path, instances)
+        if v is None:
+            print("result\t%s\t%s\t%s" % (avenue, shown, "n/a"))
+            continue
+        compared += 1
+        print("result\t%s\t%s\t%s" % (avenue, shown, "reproduced" if v else "not"))
+    print("judged\t%s\t%s\t%s" % (avenue, "yes" if compared else "no",
+                                  "%d of %d fields compared" % (compared, len(candidates))))
     for key in keys:
-        print("control\t%s\t%s\t%s" % (avenue, key, "present" if present(key, obj) else "absent"))
+        print("control\t%s\t%s\t%s" % (avenue, key, "present" if present(key, instances) else "absent"))
 C830COMPARE
 }
 
 forge_rows() { # forge_rows AVENUE VERDICT
   awk -F'\t' -v a="$1" -v v="$2" '$1 == "result" && $2 == a && $4 == v { printf "%s ", $3 }' "$SCRATCH/compare" 2>/dev/null
+}
+
+# forge_judged: whether this avenue compared anything at all. A row that PASSes
+# because its candidates were all unreadable or all belonged to an artifact the
+# avenue does not have is a PASS it did not earn, so the caller requires this.
+forge_judged() { # forge_judged AVENUE
+  awk -F'\t' -v a="$1" '$1 == "judged" && $2 == a && $3 == "yes" { print "yes" }' "$SCRATCH/compare" 2>/dev/null | tail -n 1
+}
+
+forge_compared() { # forge_compared AVENUE — for the row's own text
+  awk -F'\t' -v a="$1" '$1 == "judged" && $2 == a { print $4 }' "$SCRATCH/compare" 2>/dev/null | tail -n 1
 }
 
 forge_control() { # forge_control AVENUE
@@ -1057,6 +1153,17 @@ step_forge() {
     fact u1-handmade INFO "not taken: the probe's VM was never read (see vm-a above), so there is no zone to make O8's plain VM in beside it"
     return 0
   fi
+  # A forge attempt is only worth making against a link: with no candidate field
+  # there is nothing for the comparison to compare, and a row printed from an
+  # empty comparison is a PASS the attempt did not earn. u1-link has failed in
+  # that case anyway.
+  local candidates
+  candidates=$(awk -F'\t' '$1 == "link"' "$SCRATCH/links" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "${candidates:-0}" = 0 ]; then
+    fact u1-forge INFO "not taken: u1-link found no field of the probe's VM, the job's own object or the container's own readings that carries the other side's identity, so there is no link a second job would have to reproduce (see u1-link above)"
+    fact u1-handmade INFO "not taken: no link means no field for a plain VM to carry (see u1-link above), and this row is answered when u1-link passes"
+    return 0
+  fi
   awk -F'\t' '$1 == "forge" { printf "%s\t%s\n", $2, $3 }' "$SCRATCH/links" >"$SCRATCH/forge.keys" 2>/dev/null || : >"$SCRATCH/forge.keys"
   printf 'job_uid\t%s\njob_name\t%s\ninstance_name\t%s\ninstance_id\t%s\n' "$A_UID" "$JOB_A" "$A_VM_NAME" "$A_VM_ID" >>"$SCRATCH/forge.keys"
   sort -u -o "$SCRATCH/forge.keys" "$SCRATCH/forge.keys"
@@ -1099,20 +1206,29 @@ print(json.dumps(d))' "$labels_json" "$(json_obj "$CHK_LABEL=$CHK_VALUE")")
   B_UID=$(job_uid "$JOB_B")
   [ -n "$B_UID" ] || B_UID="$JOB_B"
   wait_for_lines "$B_UID" '^C830 read$' "$SCRATCH/lines-b" "${CHK830_WAIT_LINES_B:-180}" || true
+  # The job's own object is read beside its VM: a link that rests on a field of
+  # the job's object is a field this launcher wrote too, and the candidate for it
+  # is only judged if the object it would be forged on is read.
+  gcloud batch jobs describe "$JOB_B" --project="${P:?}" --location="${L:?}" --format=json >"$SCRATCH/job-b-own.json" 2>/dev/null || rm -f "$SCRATCH/job-b-own.json"
   if ! vm_of_job "$SCRATCH/lines-b"; then
     fact u1-forge FAIL "${VM_PROBLEM}, so the forging job's VM was not read and this run does not show the link cannot be forged. The forging job carried the probe's uid and name in ${keys_tried} keys; its own object is at $SCRATCH/job-b.json in this run's scratch, which is gone when the run ends — read gcloud batch jobs describe ${JOB_B} --project=${P} --location=${L} if you want to see it"
   elif ! gcloud compute instances describe "$VM_NAME" --project="${P:?}" --zone="${VM_ZONE:?}" --format=json >"$SCRATCH/vm-b.json" 2>"$SCRATCH/err"; then
     fact u1-forge FAIL "the forging job's VM ${VM_NAME} in ${VM_ZONE} could not be read ($(oneline <"$SCRATCH/err")), so the forge attempt was not judged"
   else
-    python3 "$SCRATCH/forge_compare.py" "$A_UID" "$JOB_A" "$SCRATCH/links" "$SCRATCH/forge.keys" \
-      "job-b"$'\t'"$SCRATCH/vm-b.json" >"$SCRATCH/compare" 2>/dev/null || true
-    local forged control
+    python3 "$SCRATCH/forge_compare.py" "$A_UID" "$JOB_A" "$A_VM_NAME" "$A_VM_ID" "$SCRATCH/links" "$SCRATCH/forge.keys" \
+      "job-b"$'\t'"instance=$SCRATCH/vm-b.json"$'\t'"job=$SCRATCH/job-b-own.json"$'\t'"lines=$SCRATCH/lines-b" >"$SCRATCH/compare" 2>/dev/null || true
+    local forged control compared unjudged unreadable
     forged=$(forge_rows job-b reproduced)
     control=$(forge_control job-b)
+    compared=$(forge_compared job-b)
     if [ -n "$forged" ]; then
-      fact u1-forge FAIL "a second job CAN forge the link: ${JOB_B} put the probe job's identity into $(printf '%s' "$forged" | oneline) on its own VM, through fields a launcher controls — a label, a variable or both. The credentials service must not decide the link from that field: a launcher who can name another job's UID there would be handed that job's release (R1, D3108). Record which field it was; BR3 cannot be built on it"
+      fact u1-forge FAIL "a second job CAN forge the link: ${JOB_B} carries the probe job's identity in $(printf '%s' "$forged" | oneline) — a field a launcher's own submit carries, so it is not Google's own record of which VM belongs to which job. The credentials service must not decide the link from it: a launcher who can name another job's UID there would be handed that job's release (R1, D3108). Record which field it was; BR3 cannot be built on it"
+    elif [ -z "$(forge_judged job-b)" ]; then
+      unjudged=$(forge_rows job-b n/a)
+      unreadable=$(forge_rows job-b unreadable)
+      fact u1-forge FAIL "the forge attempt was not judged: ${JOB_B} carried the probe job's uid (${A_UID}) and name (${JOB_A}) in ${keys_tried} launcher-controlled keys — Job.labels, AllocationPolicy.labels and the task's variables — and ${compared}, so none of the fields u1-link named was read off this avenue to compare with them${unjudged:+: $(printf '%s' "$unjudged" | oneline) could not be read off it}${unreadable:+, and $(printf '%s' "$unreadable" | oneline) could not be read at all}. Control: ${control} of those keys are on that VM at all. This sitting therefore does not show the link cannot be forged: give the forging job's container longer (CHK830_WAIT_LINES_B=<seconds>), or read the fields u1-link named and compare them by hand"
     else
-      fact u1-forge PASS "a second job cannot forge the link: ${JOB_B} carried the probe job's uid (${A_UID}) and name (${JOB_A}) in ${keys_tried} launcher-controlled keys — Job.labels, AllocationPolicy.labels and the task's variables — and none of them reached its VM in a field the probe's VM carries the probe's identity in. Control: ${control} of those keys are on that VM at all${skipped:+, and $(printf '%s' "$skipped" | oneline) could not be written as a label}. The fields the probe's VM carries are Batch's own"
+      fact u1-forge PASS "a second job cannot forge the link: ${JOB_B} carried the probe job's uid (${A_UID}) and name (${JOB_A}) in ${keys_tried} launcher-controlled keys — Job.labels, AllocationPolicy.labels and the task's variables — and neither its VM nor its own job object carries the probe's identity in any of the fields the probe's own readings carry it in (${compared}). Control: ${control} of those keys are on that VM at all${skipped:+, and $(printf '%s' "$skipped" | oneline) could not be written as a label}"
     fi
   fi
   gcloud batch jobs delete "$JOB_B" --project="${P:?}" --location="${L:?}" --quiet >/dev/null 2>&1 || true
@@ -1131,6 +1247,7 @@ print(json.dumps(d))' "$labels_json" "$(json_obj "$CHK_LABEL=$CHK_VALUE")")
 # been read, so it is alive for seconds.
 step_handmade() { # step_handmade LABELS META KEYS_TRIED
   local labels=$1 metadata=$2 keys_tried=$3
+  local note=""
   say "creating a plain VM named after the probe job (${HANDMADE_VM}) for O8"
   if ! gcloud compute instances create "$HANDMADE_VM" --project="${P:?}" --zone="${A_VM_ZONE:?}" \
     --machine-type="$MT" --image-family=debian-12 --image-project=debian-cloud --no-address \
@@ -1140,7 +1257,10 @@ step_handmade() { # step_handmade LABELS META KEYS_TRIED
     if gcloud compute instances create "$HANDMADE_VM" --project="${P:?}" --zone="${A_VM_ZONE:?}" \
       --machine-type="$MT" --image-family=debian-12 --image-project=debian-cloud --no-address \
       --labels="${CHK_LABEL}=${CHK_VALUE},job_uid=${A_UID}" --metadata="job_uid=${A_UID}" >"$SCRATCH/err" 2>&1; then
-      fact u1-handmade INFO "O8's plain VM was created, but not with every key: the first attempt was refused by Compute (${msg}), which is itself part of the answer — a field Compute will not let a hand-made VM carry cannot be forged that way. The VM was created with only job_uid and read with that set"
+      # The refusal is part of this row's answer, so it belongs in the row's own
+      # sentence: a fact recorded beside the verdict would be what a reader of
+      # the block sees instead of the verdict.
+      note="the first attempt, carrying every one of the ${keys_tried} keys, was refused by Compute (${msg}) — a field Compute will not let a hand-made VM carry cannot be forged that way — and the VM this row is about was then created with only job_uid and read with that set; "
     else
       fact u1-handmade INFO "O8's plain VM could not be created in ${A_VM_ZONE} (${msg}), so this sitting does not say whether a hand-made VM can carry the link's field. The keys it would have carried were ${keys_tried}; a quota or a default-network problem in ${A_VM_ZONE} is the innocent reading, and the run of this check on a quiet project answers it"
       return 0
@@ -1148,17 +1268,21 @@ step_handmade() { # step_handmade LABELS META KEYS_TRIED
   fi
   HANDMADE_MADE=$HANDMADE_VM
   if ! gcloud compute instances describe "$HANDMADE_VM" --project="${P:?}" --zone="${A_VM_ZONE:?}" --format=json >"$SCRATCH/vm-handmade.json" 2>"$SCRATCH/err"; then
-    fact u1-handmade FAIL "O8's plain VM was created but could not be read ($(oneline <"$SCRATCH/err")): the row the plan asked this check for is unmeasured"
+    fact u1-handmade FAIL "${note}O8's plain VM was created but could not be read ($(oneline <"$SCRATCH/err")): the row the plan asked this check for is unmeasured"
   else
-    python3 "$SCRATCH/forge_compare.py" "$A_UID" "$JOB_A" "$SCRATCH/links" "$SCRATCH/forge.keys" \
-      "handmade"$'\t'"$SCRATCH/vm-handmade.json" >>"$SCRATCH/compare" 2>/dev/null || true
-    local forged control
+    python3 "$SCRATCH/forge_compare.py" "$A_UID" "$JOB_A" "$A_VM_NAME" "$A_VM_ID" "$SCRATCH/links" "$SCRATCH/forge.keys" \
+      "handmade"$'\t'"instance=$SCRATCH/vm-handmade.json" >>"$SCRATCH/compare" 2>/dev/null || true
+    local forged control compared unjudged
     forged=$(forge_rows handmade reproduced)
     control=$(forge_control handmade)
+    compared=$(forge_compared handmade)
     if [ -n "$forged" ]; then
-      fact u1-handmade FAIL "a hand-made VM CAN carry the link's field: a plain instance named after the probe job, with the probe job's identity in $(printf '%s' "$forged" | oneline), is indistinguishable from the probe's own VM in those fields. Anyone holding compute.instances.create and actAs on a run account (O8) makes one by hand; the link must not rest on a field a launcher can write, whatever the job it names"
+      fact u1-handmade FAIL "${note}a hand-made VM CAN carry the link's field: a plain instance named after the probe job carries the probe job's identity in $(printf '%s' "$forged" | oneline), a field the probe's own VM carries it in — so that field is written by whoever creates the machine and not by Batch's control plane. Anyone holding compute.instances.create and actAs on a run account (O8) makes one by hand, and the link must not rest on it, whatever the job it names"
+    elif [ -z "$(forge_judged handmade)" ]; then
+      unjudged=$(forge_rows handmade n/a)
+      fact u1-handmade FAIL "${note}O8's plain VM was made and read, but the attempt was not judged: ${compared}${unjudged:+ — $(printf '%s' "$unjudged" | oneline) could not be read off a plain VM, since the link u1-link named lives on another side of it}. What a plain VM carries is its own object alone, so this sitting does not answer O8 for the fields u1-link named: read them against a VM made by hand if they are the fields BR3 is to rest on"
     else
-      fact u1-handmade PASS "a hand-made VM cannot carry the link's field: a plain instance named after the probe job, with the probe job's identity in the same ${keys_tried} keys, carries none of the fields the probe's VM carries the probe's identity in (control: ${control} of those keys are on it at all). What the link can rest on is therefore written by Batch's own control plane, not by whoever creates the machine"
+      fact u1-handmade PASS "${note}a hand-made VM cannot carry the link's field: a plain instance named after the probe job carries none of the fields the probe's VM carries the probe's identity in (${compared}; control: ${control} of those keys are on it at all). What the link can rest on is therefore written by Batch's own control plane, not by whoever creates the machine"
     fi
   fi
   gcloud compute instances delete "$HANDMADE_VM" --project="${P:?}" --zone="${A_VM_ZONE:?}" --quiet >/dev/null 2>&1 || true
@@ -1294,7 +1418,11 @@ print_block() {
   printf '\nCHECK 830 RESULT\n' >&3
   for key in "${BLOCK_KEYS[@]}"; do
     local line
-    line=$(printf '%s\n' "$facts" | grep -m1 "^$key|" || true)
+    # A key's FAIL is what the block's own last line is read from, so a key that
+    # recorded a FAIL beside anything else is printed as that FAIL: the first
+    # fact of a key wins only where it is not hiding a FAIL behind it.
+    line=$(printf '%s\n' "$facts" | grep -m1 "^$key|FAIL|" || true)
+    [ -n "$line" ] || line=$(printf '%s\n' "$facts" | grep -m1 "^$key|" || true)
     if [ -n "$line" ]; then
       printf 'FACT %s: %s — %s\n' "$key" \
         "$(printf '%s' "$line" | cut -d'|' -f2)" \

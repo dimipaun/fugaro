@@ -353,11 +353,33 @@ if argv[:2] == ["batch", "jobs"]:
     if op == "describe":
         fmt = flag("--format")
         if fmt == "json":
+            obj = {}
             try:
                 with open(os.path.join(state, "jobjson", name + ".json")) as fh:
-                    sys.stdout.write(fh.read().replace("@MARKER@", marker_value()))
-            except OSError:
-                print("{}")
+                    obj = json.loads(fh.read().replace("@MARKER@", marker_value()))
+            except (OSError, ValueError):
+                obj = {}
+            # A job's own labels are the launcher's: Compute and Batch both
+            # report back what the submit carried, so the object this answers
+            # with carries the labels of the config that was submitted for that
+            # job. Without that, the fields a launcher writes on the job's own
+            # object could not be judged by anything.
+            d = os.path.join(state, "submits")
+            if os.path.isdir(d):
+                for f in sorted(os.listdir(d)):
+                    if not f.endswith("-" + name + ".json"):
+                        continue
+                    try:
+                        with open(os.path.join(d, f)) as fh:
+                            cfg_job = json.load(fh)
+                    except (OSError, ValueError):
+                        continue
+                    labels = cfg_job.get("labels") or {}
+                    if labels:
+                        merged = dict(obj.get("labels") or {})
+                        merged.update(labels)
+                        obj["labels"] = merged
+            sys.stdout.write(json.dumps(obj) + "\n")
             sys.exit(0)
         if "uid" in fmt:
             print(lookup("uid.map", name, "uid-" + name))
@@ -692,6 +714,17 @@ write_default_case() { # write_default_case DIR [bend...]
     handmade-accepted)
       write_cfg "$d" "job_a=$job_a" "zone=$zone"
       ;;
+    handmade-forges)
+      # The probe's VM carries its identity in two labels: the reserved one
+      # Compute refuses, and one a hand-made VM will happily take. The first
+      # attempt is turned away for the reserved key, and the VM that comes out of
+      # the check's second attempt — carrying job_uid alone — already carries the
+      # field the link is on.
+      write_vm "$d/state/vm-a.json" "$vm_a" "$instance_id" "$zone" \
+        "fugaro=managed,fugaro_chk=830,batch-job-uid=$uid_a,job_uid=$uid_a" ""
+      write_vm "$d/state/vm-b.json" "$vm_b" 9900112234 "$zone" \
+        "fugaro=managed,fugaro_chk=830,batch-job-uid=$uid_b,job_uid=$uid_b" ""
+      ;;
     no-link)
       write_vm "$d/state/vm-a.json" "vm-plain01" "$instance_id" "$zone" "fugaro_chk=830" ""
       write_log "$d/state/log-$uid_a.json" "$uid_a" "vm-plain01" "$zone" "$instance_id" present "nothing=here" full
@@ -707,6 +740,17 @@ write_default_case() { # write_default_case DIR [bend...]
       write_log "$d/state/log-$uid_a.json" "$uid_a" "vm-plain01" "$zone" "$instance_id" present "nothing=here" full
       vm_a_is "$d" vm-plain01 vm-a.json
       printf '{"name": "%s", "uid": "%s", "status": {"instances": [{"name": "vm-plain01"}]}}\n' \
+        "$job_a" "$uid_a" >"$d/state/jobjson/$job_a.json"
+      ;;
+    job-forges)
+      # The link sits in a label of the job's own object — a field the launcher
+      # writes — and the forging job's own object ends up carrying it, because
+      # Batch reports back the labels a submit carried. Only a comparison that
+      # reads that object can see it.
+      write_vm "$d/state/vm-a.json" "vm-plain01" "$instance_id" "$zone" "fugaro_chk=830" ""
+      write_log "$d/state/log-$uid_a.json" "$uid_a" "vm-plain01" "$zone" "$instance_id" present "nothing=here" full
+      vm_a_is "$d" vm-plain01 vm-a.json
+      printf '{"name": "%s", "uid": "%s", "labels": {"vm_name": "vm-plain01"}, "status": {"state": "RUNNING"}}\n' \
         "$job_a" "$uid_a" >"$d/state/jobjson/$job_a.json"
       ;;
     noclaims)
@@ -832,8 +876,10 @@ test_happy_path() {
   expect_row u1-link "compute.instances.get" "happy: the read the field costs (O1)"
   expect_verdict u1-forge PASS "happy: a second job cannot forge the link"
   expect_row u1-forge "Control: 5/5 of those keys" "happy: the attempt was live — the keys did reach that VM"
-  expect_verdict u1-handmade INFO "happy: O8's plain VM is reported, not judged"
-  expect_row u1-handmade "refused by Compute" "happy: Compute refuses the key, which is the report"
+  expect_row u1-forge "fields compared" "happy: the attempt was judged, not passed over"
+  expect_verdict u1-handmade PASS "happy: O8's plain VM is judged, not only reported"
+  expect_row u1-handmade "refused by Compute" "happy: the refusal that led to the fallback is inside the row"
+  expect_row u1-handmade "created with only job_uid" "happy: and so is which attempt made the VM"
   expect_verdict u2-token PASS "happy: the identity token"
   expect_row u2-token "instance_id=${instance_id}, instance_name=${vm_a}, project_id=fugaro-dev, zone=${zone}" "happy: the four claims"
   expect_verdict u3-marker PASS "happy: where a job's variables reach"
@@ -899,7 +945,7 @@ test_a_second_job_that_reproduces_the_field_fails_u1_forge() {
   expect_status "$status" 1 "a forgeable link"
   expect_verdict u1-forge FAIL "a forgeable link: the row"
   expect_row u1-forge "CAN forge the link" "a forgeable link: it says which side won"
-  expect_row u1-forge "into labels.batch-job-uid on its own VM" "a forgeable link: the field it was forged through"
+  expect_row u1-forge "instance.labels.batch-job-uid" "a forgeable link: the field it was forged through, named with the object it is on"
   expect_row u1-forge "BR3 cannot be built on it" "a forgeable link: what that means for the work"
   # The link itself is a PASS: a Google-made fact exists, and the finding is
   # that a launcher can write it too.
@@ -916,22 +962,41 @@ test_a_handmade_vm_that_carries_the_field_fails_u1_handmade() {
   run_check
   expect_status "$status" 1 "a hand-made VM"
   expect_verdict u1-handmade FAIL "a hand-made VM: the row"
-  expect_row u1-handmade "in labels.batch-job-uid" "a hand-made VM: the field it was written into"
+  expect_row u1-handmade "instance.labels.batch-job-uid" "a hand-made VM: the field it was written into, named with the object it is on"
   expect_row u1-handmade "compute.instances.create" "a hand-made VM: who could do it (O8)"
   expect_row u1-handmade "whatever the job it names" "a hand-made VM: what that means for the link"
   expect_verdict u1-forge PASS "a hand-made VM: the jobs' own avenues still hold"
   nothing_left "a hand-made VM"
 }
 
-# The same attempt against a platform that refuses the key: the row is a report
-# rather than a verdict, and it says which attempt was refused and what the plain
-# VM was left carrying.
+# The refusal and the finding at once: Compute turns the first attempt away, the
+# fallback VM is made carrying job_uid alone — and job_uid is the field the link
+# rests on, so the row is a FAIL. The refusal is inside that FAIL rather than a
+# row of its own before it, which is what used to hide the finding.
+test_a_handmade_vm_that_carries_the_fallback_key_fails_the_row() {
+  setup_case handmade-forges
+  write_default_case "$dir" handmade-forges
+  run_check
+  expect_status "$status" 1 "a hand-made VM that carries the fallback key"
+  expect_verdict u1-handmade FAIL "a hand-made VM that carries the fallback key: the row"
+  expect_row u1-handmade "refused by Compute" "a hand-made VM that carries the fallback key: the refusal is inside the verdict"
+  expect_row u1-handmade "created with only job_uid" "a hand-made VM that carries the fallback key: which attempt made it"
+  expect_row u1-handmade "instance.labels.job_uid" "a hand-made VM that carries the fallback key: the field it carries"
+  expect_verdict u1-link PASS "a hand-made VM that carries the fallback key: the link itself exists"
+  expect_last_line "CHECK 830 RESULT: FAIL" "a hand-made VM that carries the fallback key"
+  nothing_left "a hand-made VM that carries the fallback key"
+}
+
+# The same attempt against a platform that refuses the key: the row is a verdict
+# like any other — the refusal is not a row of its own beside it, where a reader
+# would see it instead of the verdict — and it says which attempt was refused and
+# what the plain VM was left carrying.
 test_a_plain_vm_compute_refuses_the_key_on_is_recorded() {
   setup_case handmade-refused
   write_default_case "$dir"
   run_check
-  expect_verdict u1-handmade INFO "a refused key: the row is a report, not a verdict"
-  expect_row u1-handmade "refused by Compute" "a refused key: the refusal is the finding"
+  expect_verdict u1-handmade PASS "a refused key: the row is a verdict, and the refusal is inside it"
+  expect_row u1-handmade "refused by Compute" "a refused key: the refusal is in the row"
   expect_row u1-handmade "the key is reserved" "a refused key: the platform's own words"
   expect_row u1-handmade "created with only job_uid" "a refused key: the fallback is named"
   [ "$(count_calls "compute instances create ${handmade}")" = 2 ] \
@@ -947,17 +1012,32 @@ test_no_google_made_link_at_all_fails_u1_link() {
   expect_verdict u1-link FAIL "no link: the row"
   expect_row u1-link "no Google-made fact links this VM to its job" "no link: what was not found"
   expect_row u1-link "R4 says the work returns to you" "no link: what happens next"
+  # There is no link for a second job to reproduce and none for a plain VM to
+  # carry, and no forge job is submitted against nothing.
+  expect_verdict u1-forge INFO "no link: the forge attempt is not made against nothing"
+  expect_row u1-forge "there is no link a second job would have to reproduce" "no link: why the attempt is not made"
+  expect_verdict u1-handmade INFO "no link: there is no field for a plain VM to carry"
+  expect_no_call "batch jobs submit ${job_b}"
   nothing_left "no link"
 }
 
+# The container's own readings are what this link lives on, and the forging
+# job's container reports a different set of keys: nothing of the field u1-link
+# named can be read off that avenue, so neither row may pass — the run says the
+# attempt was not judged rather than printing a PASS the comparison never earned.
 test_a_link_inside_the_vm_only_is_reported_as_such() {
   setup_case inside-only
   write_default_case "$dir" link-inside-only
   run_check
+  expect_status "$status" 1 "a link inside the VM"
   expect_verdict u1-link PASS "a link inside the VM"
   expect_row u1-link "the link is inside the VM only" "a link inside the VM: where it is"
   expect_row u1-link "not in the instance's object" "a link inside the VM: what it costs a reader outside"
   expect_row u1-link "the token's claims" "a link inside the VM: what it would have to rest on instead"
+  expect_verdict u1-forge FAIL "a link inside the VM: the forge row does not pass on a comparison that did not run"
+  expect_row u1-forge "the forge attempt was not judged" "a link inside the VM: the forge row says so"
+  expect_verdict u1-handmade FAIL "a link inside the VM: nor does the plain VM's row"
+  expect_row u1-handmade "was made and read, but the attempt was not judged" "a link inside the VM: the plain VM's row says so"
 }
 
 test_a_link_on_the_job_object_is_reported_as_such() {
@@ -968,6 +1048,27 @@ test_a_link_on_the_job_object_is_reported_as_such() {
   expect_row u1-link "the link is the job's own object" "a link on the job: where it is"
   expect_row u1-link "batch.jobs.get" "a link on the job: the read the service already holds (F26)"
   expect_row u1-link "O1's question does not arise" "a link on the job: no second read is needed"
+  # The field is a label of the job's object, so it is the forging job's own
+  # object that has to be read for it — a comparison against its VM alone would
+  # leave the candidate unjudged.
+  expect_verdict u1-forge PASS "a link on the job: the forge row"
+  expect_row u1-forge "1 of 1 fields compared" "a link on the job: the forging job's own object was the artifact read"
+}
+
+# A link that lives on the job's own object is a field the launcher writes, and
+# the forging job's own object reproduces it — Batch reports back the labels a
+# submit carried. Reading only the VM would report the link unforgeable.
+test_a_second_job_that_reproduces_a_job_home_link_fails_u1_forge() {
+  setup_case job-forges
+  write_default_case "$dir" job-forges
+  run_check
+  expect_status "$status" 1 "a job-home link that is forgeable"
+  expect_verdict u1-link PASS "a job-home link that is forgeable: the link exists"
+  expect_row u1-link "the link is the job's own object" "a job-home link that is forgeable: where it is"
+  expect_verdict u1-forge FAIL "a job-home link that is forgeable: the row"
+  expect_row u1-forge "job.labels.vm_name" "a job-home link that is forgeable: the forging job's own object is where it reproduced it"
+  expect_row u1-forge "BR3 cannot be built on it" "a job-home link that is forgeable: what that means for the work"
+  nothing_left "a job-home link that is forgeable"
 }
 
 test_a_token_without_the_instance_claims_fails_u2() {
@@ -1200,10 +1301,12 @@ t test_happy_path
 t test_the_forge_attempt_is_what_makes_the_row
 t test_a_second_job_that_reproduces_the_field_fails_u1_forge
 t test_a_handmade_vm_that_carries_the_field_fails_u1_handmade
+t test_a_handmade_vm_that_carries_the_fallback_key_fails_the_row
 t test_a_plain_vm_compute_refuses_the_key_on_is_recorded
 t test_no_google_made_link_at_all_fails_u1_link
 t test_a_link_inside_the_vm_only_is_reported_as_such
 t test_a_link_on_the_job_object_is_reported_as_such
+t test_a_second_job_that_reproduces_a_job_home_link_fails_u1_forge
 t test_a_token_without_the_instance_claims_fails_u2
 t test_a_token_that_could_not_be_minted_fails_u2
 t test_a_container_that_cannot_name_its_vm_falls_back_to_the_list
