@@ -464,10 +464,16 @@ func TestJobDefinitionIsTheDesignsJob(t *testing.T) {
 // rewrite: a helper that stops contributing shows up as a difference here
 // rather than in a reviewer's head. Hand mutation, one per helper: empty
 // jobVariables' map (or drop its reservation of the launch's own entries),
-// return nil from secretVariables, return "" from jobAccount, or have
-// sealedVars carry an entry instead of refusing it -- the last one shows as a
-// fourth variable in the "no daemon" golden, and TestLaunchRefusesASecretEnv
-// fails on it too.
+// return nil from secretVariables, or return "" from jobAccount -- each
+// changes a golden and fails here. sealedVars contributes no variable to
+// either golden, because a launch carrying a secret entry is what it refuses
+// today: emptying it shows up instead as a launch that is no longer refused,
+// which is TestLaunchRefusesASecretEnv's pin and not this one's.
+//
+// A later task that changes what a run's job carries -- BR8's variables, BR10's
+// account, BR11's removal of the mounted secrets -- changes a golden in the
+// same change, on purpose: the golden's diff is then the change to the job, and
+// a change nobody meant to make is the one that has no diff to explain.
 func TestTheSplitBuildsTheSameJob(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -689,8 +695,8 @@ const (
 // that fails if someone later resolves one.
 //
 // Hand mutation: in secrets.go, write the secrets into the task's plain
-// Variables as well (`vars[k] = v` beside the SecretVariables the helper
-// returns, or `b.o.Secrets` in the variables' place). It is the mutation the review
+// Variables as well (`env.Variables[k] = v` beside `env.SecretVariables =
+// b.o.Secrets`, or `b.o.Secrets` in the variables' place). It is the mutation the review
 // called M4, and it stayed green against the earlier version of this test:
 // that one searched for a value the backend was never given, so nothing could
 // make it fail. This one passes a recognisable value through the API surface
