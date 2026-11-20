@@ -73,6 +73,21 @@
 // instance change — which for a service whose whole point is being woken is
 // every tick.
 //
+// THE TWO HALVES OF THAT PASS ARE TWO IDENTITIES, AND NO ONE CLIENT IS BOTH.
+// The `mc` claim is what the rules fence the WRITE with, and CONSUMER grants no
+// read at all — "in particular it may read no mailbox, its own or another's" —
+// so the inbox, the heartbeat and the outbox this pass reads are read by the
+// deployment's own service-account client (the `rtdb.New(rawURL,
+// rtdb.Auth{Source: ts})` below), which the rules never see, while the two
+// writes go through a client built from the exchanged consumer token. That is
+// why orchestrator's Consume takes a ConsumerReader and, per mailbox, a
+// ConsumerWriter (a `*rtdb.Client` satisfies the first and cannot satisfy the
+// second): handing this client to both halves would be a consumer whose every
+// write bypasses CONSUMER, which is the unfenced writer D113b describes and the
+// thing the mailbox half exists to replace. What holds across the two is the
+// ETag: it is the database's answer about the value at a location, so the ETag
+// this process reads under IAM is the one the `mc` write presents as If-Match.
+//
 // WHAT THIS DEPLOYMENT STILL LACKS TO SERVE ONE, named rather than left to a
 // tick that refuses: the pairing keys (the container is the module's, the grant
 // is the secret row P5.1e added and the reader is keychain.Cloud.Keys, but this
@@ -332,19 +347,23 @@ type orchestratorConfig struct {
 
 // orchestratorConsumer is the mailbox half of a tick as a deployment holds it:
 // the identity the lease is taken under, the pairings this installation has a
-// key for, and the store the pass reads and writes through.
+// key for, and the reader every read of the pass is made through.
 //
-// The store is a ConsumerStore and not this file's orchestratorStore, because
-// the half needs less than the node does: the two nodes it writes (the
-// heartbeat and the outbox) and the inbox it reads, all under paths the mailbox
-// module builds, and the database's clock. It is the same *rtdb.Client in
-// production — orchestratorStore's three methods are a superset — and it is
-// declared as what the pass uses so that a test standing in for the database
-// cannot hand the consumer a store wider than its own work.
+// The reader is a ConsumerReader and not this file's orchestratorStore, because
+// the half reads and only reads: the inbox, the ETag a compare-and-swap needs
+// on the heartbeat and on the outbox, and the database's clock — the same
+// *rtdb.Client in production (the one the builder below opens), declared as
+// what the pass uses so that a test standing in for the database cannot hand
+// the consumer a store wider than its own work. **The writes are not here at
+// all**: each mailbox carries its own ConsumerWriter, built from the exchanged
+// `mc` token of that phone's pairing, because a write made with this client
+// would be a write the rules never fence (the header's paragraph). This
+// deployment builds no writer, which is one of the facts that leave the
+// consumer nil.
 type orchestratorConsumer struct {
 	holder    string
 	mailboxes []orchestrator.ConsumerMailbox
-	db        orchestrator.ConsumerStore
+	reader    orchestrator.ConsumerReader
 }
 
 // orchestratorConsumerHolder is the name this service holds a mailbox lease
@@ -525,6 +544,13 @@ func orchestratorServiceConfig(ctx context.Context, getenv func(string) string, 
 	if err != nil {
 		return orchestratorConfig{}, remote(fmt.Errorf("no credentials for the installation's database: %w", err))
 	}
+	// One client, and it is the READ half of everything below: the node's two
+	// reads and — when this deployment has a consumer — the consumer's inbox,
+	// heartbeat and outbox reads, all over this revision's own service account
+	// and therefore past the rules. A mailbox's WRITES are not this client's and
+	// must never be: a service-account bearer is invisible to CONSUMER, so the
+	// two nodes it wrote would be written unfenced (the header's paragraph on
+	// the two identities, and orchestrator.ConsumerWriter).
 	db, err := rtdb.New(rawURL, rtdb.Auth{Source: ts})
 	if err != nil {
 		// Unreachable past ValidateURL, and deliberately not reported with the
@@ -706,11 +732,15 @@ func newResidentOrchestrator(cfg orchestratorConfig) (*residentOrchestrator, err
 		return nil, fmt.Errorf("no log for this process's one line per pass")
 	}
 	// The consumer is NOT refused when it is absent — see orchestratorConfig —
-	// and it is refused when it is half-built, because a consumer with no store
+	// and it is refused when it is half-built, because a consumer with no reader
 	// or no holder is one whose every mailbox pass would fail on a nil the
-	// deployment could have told apart from no consumer at all.
-	if cfg.consumer != nil && (cfg.consumer.db == nil || cfg.consumer.holder == "") {
-		return nil, fmt.Errorf("a mailbox consumer with no holder or no store: a deployment either has a consumer it can run or none at all")
+	// deployment could have told apart from no consumer at all. A mailbox's own
+	// writer is checked where it is used (orchestrator's consumeMailbox refuses
+	// one that names another mailbox or is missing), because it is per pairing
+	// and not per deployment, and that refusal is a mailbox's rather than the
+	// whole tick's.
+	if cfg.consumer != nil && (cfg.consumer.reader == nil || cfg.consumer.holder == "") {
+		return nil, fmt.Errorf("a mailbox consumer with no holder or no reader: a deployment either has a consumer it can run or none at all")
 	}
 	return &residentOrchestrator{id: cfg.id, db: cfg.db, launch: cfg.launch, consumer: cfg.consumer, log: cfg.log}, nil
 }
@@ -998,7 +1028,7 @@ func (s *residentOrchestrator) consume(ctx context.Context, pass *orchestratorPa
 		s.log.Warn(orchestratorNoConsumer, "process", orchestratorProcessName, "orchestrator", s.id)
 		return
 	}
-	out, err := orchestrator.Consume(ctx, s.consumer.db, orchestrator.ConsumerOptions{
+	out, err := orchestrator.Consume(ctx, s.consumer.reader, orchestrator.ConsumerOptions{
 		Holder:    s.consumer.holder,
 		Mailboxes: s.consumer.mailboxes,
 	})

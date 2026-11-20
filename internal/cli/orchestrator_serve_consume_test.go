@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -64,9 +65,12 @@ func orchestratorConsumeOutboxPath(id string) string {
 const orchestratorConsumeHeartbeatPath = "mailbox/" + orchestratorConsumeUID + "/heartbeat"
 
 // orchestratorConsumeFixture is a database fake with a real client over it. The
-// client is the same one the service is built with in production and it is the
-// store BOTH halves are served with — the node's reads and the mailbox's writes
-// are one database, which is the deployment's own shape.
+// client is the same one the service is built with in production — a client the
+// fake database cannot tell one credential from another on — and here it serves
+// BOTH halves: the node's reads and, in these tests, the mailbox's reads and
+// writes. What production does not do is serve a mailbox's WRITES with it (the
+// header's paragraph on the two identities): that is a service-account bearer,
+// and the rules never fence one.
 func orchestratorConsumeFixture(t *testing.T) (*gcpfake.RTDB, *rtdb.Client) {
 	t.Helper()
 	f := gcpfake.NewRTDB(t)
@@ -78,15 +82,37 @@ func orchestratorConsumeFixture(t *testing.T) (*gcpfake.RTDB, *rtdb.Client) {
 	return f, db
 }
 
+// orchestratorConsumeWriter is the write half these tests give a mailbox: the
+// real client over the fake, writing under the mailbox the pass serves, which
+// is what a production writer's claim names. Production builds that writer out
+// of a consumer token exchanged for an ID token (orchestrator.ConsumerWriter's
+// own paragraph); a test holds no such token and no web API key, and what it
+// does hold is the client — which is the point of the type: the pass is handed
+// the reader and the writer apart, and it is `Mailbox` that says which mailbox
+// a writer belongs to.
+type orchestratorConsumeWriter struct {
+	db      *rtdb.Client
+	mailbox string
+}
+
+func (w orchestratorConsumeWriter) Mailbox() string { return w.mailbox }
+
+func (w orchestratorConsumeWriter) PutIfMatch(ctx context.Context, path, etag string, v any) error {
+	return w.db.PutIfMatch(ctx, path, etag, v)
+}
+
 // orchestratorConsumerOn is the consumer the tick is wired with: this
-// installation's one paired phone, under the holder production uses.
-func orchestratorConsumerOn(db orchestrator.ConsumerStore) *orchestratorConsumer {
+// installation's one paired phone, under the holder production uses. The reader
+// is the client every read goes through and each mailbox carries its own writer
+// (the split production's two credentials force).
+func orchestratorConsumerOn(db *rtdb.Client) *orchestratorConsumer {
 	return &orchestratorConsumer{
 		holder: orchestratorConsumerHolder,
-		db:     db,
+		reader: db,
 		mailboxes: []orchestrator.ConsumerMailbox{{
 			Mailbox: orchestratorConsumeUID,
 			Key:     keychain.NewKey([]byte(orchestratorConsumeKey)),
+			Writer:  orchestratorConsumeWriter{db: db, mailbox: orchestratorConsumeUID},
 		}},
 	}
 }
@@ -279,16 +305,18 @@ func TestOrchestratorTickServesTheNodeWhenAMailboxIsRefused(t *testing.T) {
 
 // TestOrchestratorServeRefusesAHalfBuiltConsumer is the configuration fence: no
 // consumer at all is a deployment (the test above), and a consumer with no
-// holder or no store is not — every one of its mailbox passes would fail on a
-// nil the deployment could have told apart from an absent consumer.
+// holder or no reader is not — every one of its mailbox passes would fail on a
+// nil the deployment could have told apart from an absent consumer. A mailbox's
+// own writer is not here: it is per pairing, and orchestrator's own tests pin
+// that the pass refuses a missing one and one minted for another mailbox.
 func TestOrchestratorServeRefusesAHalfBuiltConsumer(t *testing.T) {
 	store := &fakeOrchestratorStore{docs: map[string]string{}, at: orchestratorConsumeAt}
 	for _, tc := range []struct {
 		name     string
 		consumer *orchestratorConsumer
 	}{
-		{"no store", &orchestratorConsumer{holder: orchestratorConsumerHolder}},
-		{"no holder", &orchestratorConsumer{db: store}},
+		{"no reader", &orchestratorConsumer{holder: orchestratorConsumerHolder}},
+		{"no holder", &orchestratorConsumer{reader: store}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := orchestratorConfig{id: "aurora", db: store, launch: &fakeResidentLauncher{},

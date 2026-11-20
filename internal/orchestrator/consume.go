@@ -26,8 +26,11 @@
 // CONSUMER (`auth.token.mc == $mb`) to write either node at all — so this is
 // the first mailbox writer the rules can hold to "the outbox and the heartbeat
 // and nothing else" (section 4.3). The mint that claim comes from is
-// internal/budget/token's `MintConsumer`, and the store this pass is handed is
-// built from its session.
+// internal/budget/token's `MintConsumer`, which the caller exchanges for an ID
+// token and builds the writer below with; the read is the deployment's own
+// client. The pass is handed those two credentials apart (ConsumerReader and
+// ConsumerWriter) because they cannot be one: the rules let the consumer write
+// and read nothing.
 //
 // **What it does not act on, and why the phone is still owed an answer.**
 // Section 4.2's fourth step — "acts" — is the launcher's and the envelope's,
@@ -76,8 +79,8 @@
 // and the laptop waking while this one ticks).
 //
 // **The clock is the database's.** Every instant here — the lease's `at`, the
-// reply's `at`, the gate's future tolerance — is read from the store's own
-// clock (`ServerNow`, D117), and a store that cannot answer one reads nothing
+// reply's `at`, the gate's future tolerance — is read from the reader's own
+// clock (`ServerNow`, D117), and a reader that cannot answer one reads nothing
 // at all rather than deciding against a container's clock (D1230's rule, which
 // the resident pass beside this file holds to as well).
 package orchestrator
@@ -101,36 +104,105 @@ import (
 // no text of the message it answers.
 const consumerNotCarried = "nothing was performed: the resident orchestrator read the message and carried nothing out"
 
-// ConsumerStore is the part of the database one consumer pass reaches, and it
-// is narrower than the resident pass' own store in nothing but kind: the inbox
-// read (a reader's read — over IAM, because the rules grant the consumer no
-// read of any mailbox: CONSUMER's own comment says so), the heartbeat's and the
-// outbox's compare-and-swap writes (the two nodes CONSUMER admits), and the
-// database's clock. `*rtdb.Client` is one, and so is the orchestratorStore the
-// service already reads its node through — the same methods, because the same
-// client is behind both.
-type ConsumerStore interface {
+// ConsumerReader is every read one consumer pass makes, and it is the
+// deployment's own database client — the service-account one, `rtdb.Auth{Source:
+// ...}`, which is the client the resident service already reads its node
+// through. It reads the inbox, the ETag a compare-and-swap needs on the
+// heartbeat and on the outbox, and the database's clock.
+//
+// **Every one of those reads is an IAM read, and that is not a shortcut.** The
+// rules grant the consumer no read at all under any mailbox — CONSUMER's own
+// comment is that it "is what may write the outbox and the heartbeat, and
+// nothing else — in particular it may read no mailbox, its own or another's" —
+// so the inbox (which has no `.read` clause in the rules at all) and the two
+// nodes whose `.read` is `MAILBOX`-only are all unreadable to the `mc` ID token
+// the writes below use, and a pass that read with it would read nothing. What
+// makes the read possible is an identity the rules do not see: section 4.3's
+// table owes the `orch` account that permission and does not carry the row yet
+// (the P5.1c review's finding A), which is one of the three facts the service's
+// own header names as this release's reason to wire no consumer.
+//
+// It is deliberately NOT the `mc` credential and not a store that can write:
+// this half reads, and a wiring that could write through what it reads with is
+// the unfenced writer ConsumerWriter's own paragraph is about.
+type ConsumerReader interface {
 	Get(ctx context.Context, path string, out any) (bool, error)
-	mailbox.HeartbeatStore
-	mailbox.OutboxStore
+	GetETag(ctx context.Context, path string, out any) (string, bool, error)
 	ServerNow() (time.Time, bool)
+}
+
+// ConsumerWriter is one mailbox's write half: the compare-and-swap write the
+// two nodes CONSUMER admits are written with, and the mailbox the credential
+// making it is minted for.
+//
+// **It is not a database client, and a `*rtdb.Client` is not one.** The write
+// is fenced by CONSUMER, `auth.token.mc != null && auth.token.mc == $mb`, and
+// that claim is carried by nothing but the ID token a minted consumer token is
+// exchanged into (`token.MintConsumer`, then `Exchange` with the project's web
+// API key — the caller's step, because the key is a fact of the deployment).
+// The client the service reads its node through is a **service-account
+// bearer**, which the rules never see and therefore never fence: wiring it here
+// literally would give a mailbox a writer whose every write bypasses CONSUMER,
+// which is the laptop consumer's shape (D113b's honesty note) and the whole of
+// what this pass exists to replace.
+//
+// Mailbox is how a caller states that claim, and the pass refuses a mailbox its
+// writer does not name (consumeMailbox): a wiring that handed one phone's
+// writer to another phone's mailbox is then a recorded refusal rather than a
+// write CONSUMER turns into a 401 the pass cannot tell from an outage — and it
+// is the one thing about the credential a caller can be held to in code.
+type ConsumerWriter interface {
+	PutIfMatch(ctx context.Context, path, etag string, v any) error
+	Mailbox() string
+}
+
+// consumerCAS is the mailbox module's own two-method store (HeartbeatStore,
+// OutboxStore) over this pass' two credentials: the compare-and-swap's read is
+// the reader's and its write is the writer's. The module hands a caller one
+// store because its other caller — the phase-1 command, P4.1 — holds one
+// credential that may do both; here the rules force the split (CONSUMER admits
+// the write and no read), so the two halves meet at this adapter and nowhere
+// else.
+//
+// The fence holds across the two because an ETag is the database's answer about
+// the value at a location (`X-Firebase-ETag` on the read, `If-Match` on the
+// write) and not about the caller: the ETag a service-account read answers is
+// the one an `mc`-authenticated write presents, and a value that moved in
+// between refuses the write with ErrPrecondition — which is the whole of what
+// the compare-and-swap promises.
+type consumerCAS struct {
+	reader ConsumerReader
+	writer ConsumerWriter
+}
+
+func (c consumerCAS) GetETag(ctx context.Context, path string, out any) (string, bool, error) {
+	return c.reader.GetETag(ctx, path, out)
+}
+
+func (c consumerCAS) PutIfMatch(ctx context.Context, path, etag string, v any) error {
+	return c.writer.PutIfMatch(ctx, path, etag, v)
 }
 
 // ConsumerMailbox is one phone this pass may serve: the mailbox — the phone's
 // own `m~` uid, which is the node the inbox, the outbox and the heartbeat all
-// live under, and the name CONSUMER's `$mb` compares against — and the
-// pairing's MAC key, which is section 4.2's third copy of it (P5.1e's Secret
-// Manager container, read as a set by keychain.Cloud.Keys and handed in here).
+// live under, and the name CONSUMER's `$mb` compares against — the pairing's
+// MAC key, which is section 4.2's third copy of it (P5.1e's Secret Manager
+// container, read as a set by keychain.Cloud.Keys and handed in here), and the
+// writer whose credential is minted for exactly this mailbox.
 //
-// The two travel together because neither is any use alone: a key with no
-// mailbox verifies nothing, and a mailbox with no key is a phone whose messages
-// this pass would have to refuse.
+// The three travel together because none is any use alone: a key with no
+// mailbox verifies nothing, a mailbox with no key is a phone whose messages
+// this pass would have to refuse, and a mailbox with no writer is one this pass
+// could read and answer nothing in. The writer is per mailbox and not per pass
+// because the claim it carries names one mailbox (`mc == $mb`), so a
+// deployment serving two phones holds two of them.
 type ConsumerMailbox struct {
 	Mailbox string
 	Key     keychain.Key
+	Writer  ConsumerWriter
 }
 
-// ConsumerOptions is what one pass is told beside the store: who it is, and
+// ConsumerOptions is what one pass is told beside the reader: who it is, and
 // which mailboxes it serves.
 type ConsumerOptions struct {
 	// Holder is this consumer's name in the heartbeat — the identity the lease
@@ -170,8 +242,9 @@ type ConsumerOutcome struct {
 	// over — and Lost is how many it did not. The two are the whole of the
 	// first decision a pass makes, they add up to Mailboxes, and a mailbox in
 	// the second half was read and written in no way at all: whether the lease
-	// was another consumer's, the store refused the heartbeat, or the mailbox
-	// name is one this package will not build a path from.
+	// was another consumer's, the reader or the writer refused the heartbeat, the
+	// writer is minted for another mailbox, or the mailbox name is one this
+	// package will not build a path from.
 	Leases int
 	Lost   int
 	Read   int
@@ -196,16 +269,23 @@ type ConsumerOutcome struct {
 // Consume is one pass: the lease, the inbox, the tag, and the two writes —
 // once per mailbox, in the order it is given them.
 //
-// A store that cannot answer the clock is the one error it returns, and nothing
+// The two credentials arrive apart because they are two identities: `reader` is
+// the deployment's own client, which makes every read (the rules grant the
+// consumer none), and each mailbox's ConsumerWriter is the `mc` credential its
+// two writes are made with. Nothing here can be handed one client for both,
+// because a writer must name the mailbox its claim serves and a plain database
+// client cannot.
+//
+// A reader that cannot answer the clock is the one error it returns, and nothing
 // is attempted behind it: every instant below (the lease's, the reply's, the
 // gate's tolerance) is that clock's, and a pass that fell back to a container's
-// would be judging a phone's `at` against the wrong now. A store failure on one
-// mailbox — an unreachable node, a refused read — is that mailbox's own
-// refusal, collected in the outcome and not fatal: the next mailbox is a
-// different phone with a different key, and its message has nothing to do with
-// the failure of the first.
-func Consume(ctx context.Context, st ConsumerStore, o ConsumerOptions) (ConsumerOutcome, error) {
-	now, ok := st.ServerNow()
+// would be judging a phone's `at` against the wrong now. A failure on one
+// mailbox — an unreachable node, a refused read, a writer minted for another
+// phone — is that mailbox's own refusal, collected in the outcome and not
+// fatal: the next mailbox is a different phone with a different key, and its
+// message has nothing to do with the failure of the first.
+func Consume(ctx context.Context, reader ConsumerReader, o ConsumerOptions) (ConsumerOutcome, error) {
+	now, ok := reader.ServerNow()
 	if !ok {
 		return ConsumerOutcome{}, errors.New("the database's clock could not be read, so no message is read or written: a consumer that judged a phone against its own container's clock would take a lease the database disagrees with")
 	}
@@ -213,7 +293,7 @@ func Consume(ctx context.Context, st ConsumerStore, o ConsumerOptions) (Consumer
 	var out ConsumerOutcome
 	for _, m := range o.Mailboxes {
 		out.Mailboxes++
-		run, err := consumeMailbox(ctx, st, m, o.Holder, at)
+		run, err := consumeMailbox(ctx, reader, m, o.Holder, at)
 		if err != nil {
 			// A mailbox this pass could not even reach is a mailbox it holds no
 			// lease on, so it is counted as lost as well as recorded: the two
@@ -257,8 +337,25 @@ type consumerRun struct {
 // inbox, verify each record, and answer the ones that verified. A mailbox whose
 // lease this pass does not hold is returned with leased false and reads
 // nothing — the inbox read below is behind that verdict and not in front of it.
-func consumeMailbox(ctx context.Context, st ConsumerStore, m ConsumerMailbox, holder string, at time.Time) (consumerRun, error) {
+//
+// The first thing it asks is the writer's own name for its credential, and it
+// asks before any read and any write: a mailbox whose writer is minted for
+// another one is a wiring whose every write the rules would refuse — and whose
+// reads would still be this phone's, which is the shape that must not be usable
+// at all. It is a refusal like any other (recorded, counted lost, nothing
+// attempted), not a panic and not a silent substitution.
+func consumeMailbox(ctx context.Context, reader ConsumerReader, m ConsumerMailbox, holder string, at time.Time) (consumerRun, error) {
 	var run consumerRun
+	if m.Writer == nil {
+		return run, fmt.Errorf("mailbox %s has no writer, and the two nodes CONSUMER admits can be written with nothing else", m.Mailbox)
+	}
+	if claimed := m.Writer.Mailbox(); claimed != m.Mailbox {
+		return run, fmt.Errorf("the writer for mailbox %s is minted for %s, and CONSUMER (`mc == $mb`) admits a write only into the mailbox its own claim names", m.Mailbox, claimed)
+	}
+	// What the module's two-method stores are handed is the pair, never one
+	// client: the compare-and-swap's read is the reader's and its write the
+	// writer's (consumerCAS, and the rules are why).
+	st := consumerCAS{reader: reader, writer: m.Writer}
 	opts := mailbox.LeaseOptions{
 		Mailbox: m.Mailbox,
 		Holder:  holder,
@@ -297,7 +394,7 @@ func consumeMailbox(ctx context.Context, st ConsumerStore, m ConsumerMailbox, ho
 	// record, not how one is read: the order, the strict decode, the absent-node
 	// reading and the code an unreadable child is refused with are the module's
 	// and are one answer for both.
-	items, err := mailbox.ReadInbox(ctx, st, m.Mailbox)
+	items, err := mailbox.ReadInbox(ctx, reader, m.Mailbox)
 	if err != nil {
 		return run, fmt.Errorf("the inbox of mailbox %s could not be read: %w", m.Mailbox, err)
 	}

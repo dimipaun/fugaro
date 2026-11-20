@@ -70,6 +70,21 @@ type consumeStoreWithoutAClock struct{ *consumeStore }
 
 func (s *consumeStoreWithoutAClock) ServerNow() (time.Time, bool) { return time.Time{}, false }
 
+// consumeWriter is the write half as these tests hand it to a pass: the same
+// fake database behind the same client, writing under the mailbox the pass
+// serves, which is what the claim of a real one names. These tests hold no
+// consumer token and no web API key, so they cannot build what production
+// builds (orchestrator.ConsumerWriter's own paragraph says why that credential
+// is the point); what they build has the writer's one write and its one
+// statement of the claim, and a test that gives it ANOTHER mailbox' name is a
+// wiring the pass must refuse.
+type consumeWriter struct {
+	*consumeStore
+	mailbox string
+}
+
+func (w consumeWriter) Mailbox() string { return w.mailbox }
+
 func (s *consumeStore) Get(ctx context.Context, path string, out any) (bool, error) {
 	s.reads = append(s.reads, path)
 	return s.Client.Get(ctx, path, out)
@@ -91,8 +106,21 @@ func consumeFixture(t *testing.T) (*gcpfake.RTDB, *consumeStore) {
 	return f, &consumeStore{Client: rtdbClient(t, f), at: consumeAt}
 }
 
-func consumeMailboxFixture() orchestrator.ConsumerMailbox {
-	return orchestrator.ConsumerMailbox{Mailbox: consumeMailboxUID, Key: keychain.NewKey([]byte(consumeKeyMaterial))}
+// consumeMailboxFixture is one phone as the pass is given it: the mailbox, the
+// pairing's key, and the writer whose credential is minted for that mailbox.
+func consumeMailboxFixture(st *consumeStore) orchestrator.ConsumerMailbox {
+	return consumeMailboxOf(st, consumeMailboxUID)
+}
+
+// consumeMailboxOf is the same fixture under a mailbox the caller names, which
+// is how the writer's own fence is tested: a writer minted for one mailbox
+// handed to a pass serving another.
+func consumeMailboxOf(st *consumeStore, mailbox string) orchestrator.ConsumerMailbox {
+	return orchestrator.ConsumerMailbox{
+		Mailbox: mailbox,
+		Key:     keychain.NewKey([]byte(consumeKeyMaterial)),
+		Writer:  consumeWriter{consumeStore: st, mailbox: mailbox},
+	}
 }
 
 func consumeOptions(mailboxes ...orchestrator.ConsumerMailbox) orchestrator.ConsumerOptions {
@@ -198,7 +226,7 @@ func TestConsumerPassReadsVerifiesLeasesAndAnswers(t *testing.T) {
 	f, st := consumeFixture(t)
 	f.Set(consumeInboxPath("msg-1"), consumeSigned(t, "msg-1", nil, consumeAt.UnixMilli(), consumeKeyMaterial))
 
-	got, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture()))
+	got, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture(st)))
 	if err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
@@ -279,7 +307,7 @@ func TestConsumerPassTakesTheLeaseItFindsNobodyHolding(t *testing.T) {
 	f, st := consumeFixture(t)
 	f.Set(consumeInboxPath("msg-1"), consumeSigned(t, "msg-1", nil, consumeAt.UnixMilli(), consumeKeyMaterial))
 
-	first, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture()))
+	first, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture(st)))
 	if err != nil {
 		t.Fatalf("the first pass: %v", err)
 	}
@@ -291,7 +319,7 @@ func TestConsumerPassTakesTheLeaseItFindsNobodyHolding(t *testing.T) {
 	// The next tick: the same holder, a fresh heartbeat it wrote itself.
 	later := consumeAt.Add(time.Minute)
 	st.at = later
-	second, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture()))
+	second, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture(st)))
 	if err != nil {
 		t.Fatalf("the second pass: %v", err)
 	}
@@ -323,7 +351,7 @@ func TestConsumerPassWritesNothingUnderAnotherConsumersFreshClaim(t *testing.T) 
 	f.Set(consumeHeartbeatPath, consumeHeartbeat(t, "laptop-2", consumeAt.UnixMilli()))
 	f.Set(consumeInboxPath("msg-1"), consumeSigned(t, "msg-1", nil, consumeAt.UnixMilli(), consumeKeyMaterial))
 
-	got, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture()))
+	got, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture(st)))
 	if err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
@@ -365,7 +393,7 @@ func TestConsumerPassAnswersOnlyWhatTheGateAccepted(t *testing.T) {
 			f, st := consumeFixture(t)
 			f.Set(consumeInboxPath("msg-1"), tc.child)
 
-			got, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture()))
+			got, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture(st)))
 			if err != nil {
 				t.Fatalf("Consume: %v", err)
 			}
@@ -398,7 +426,7 @@ func TestConsumerPassAnswersNoPromptAndNoUnknownKind(t *testing.T) {
 	f.Set(consumeInboxPath("p-1"), consumeSigned(t, "p-1", map[string]any{"kind": "prompt"}, consumeAt.UnixMilli(), consumeKeyMaterial))
 	f.Set(consumeInboxPath("m-1"), consumeSigned(t, "m-1", nil, consumeAt.UnixMilli(), consumeKeyMaterial))
 
-	got, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture()))
+	got, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture(st)))
 	if err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
@@ -427,7 +455,7 @@ func TestConsumerPassReportsARefusedWriteAndOwesTheAnswer(t *testing.T) {
 	f.Set(consumeInboxPath("msg-1"), consumeSigned(t, "msg-1", nil, consumeAt.UnixMilli(), consumeKeyMaterial))
 	f.Deny("mailbox/" + consumeMailboxUID + "/outbox")
 
-	got, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture()))
+	got, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture(st)))
 	if err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
@@ -456,7 +484,7 @@ func TestConsumerPassTakesNoLeaseWhenTheHeartbeatWriteIsDenied(t *testing.T) {
 	f.Set(consumeInboxPath("msg-1"), consumeSigned(t, "msg-1", nil, consumeAt.UnixMilli(), consumeKeyMaterial))
 	f.Deny("mailbox/" + consumeMailboxUID + "/heartbeat")
 
-	got, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture()))
+	got, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture(st)))
 	if err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
@@ -480,9 +508,9 @@ func TestConsumerPassKeepsOnePhonesFailureFromStoppingAnother(t *testing.T) {
 	ctx := context.Background()
 	f, st := consumeFixture(t)
 	f.Set(consumeInboxPath("msg-1"), consumeSigned(t, "msg-1", nil, consumeAt.UnixMilli(), consumeKeyMaterial))
-	broken := orchestrator.ConsumerMailbox{Mailbox: "a mailbox/with a separator", Key: keychain.NewKey([]byte(consumeKeyMaterial))}
+	broken := consumeMailboxOf(st, "a mailbox/with a separator")
 
-	got, err := orchestrator.Consume(ctx, st, consumeOptions(broken, consumeMailboxFixture()))
+	got, err := orchestrator.Consume(ctx, st, consumeOptions(broken, consumeMailboxFixture(st)))
 	if err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
@@ -497,6 +525,52 @@ func TestConsumerPassKeepsOnePhonesFailureFromStoppingAnother(t *testing.T) {
 	}
 }
 
+// TestConsumerPassRefusesAWriterItCannotWriteWith is the fence on the write
+// credential, which is the one thing about it a caller can be held to in code
+// (ConsumerWriter's own paragraph): the `mc` claim names ONE mailbox, so a pass
+// handed this phone's mailbox with a writer minted for another one would read
+// this phone's inbox and have every write refused by the rules — CONSUMER is
+// `auth.token.mc == $mb` — and a pass with no writer at all has nothing to
+// write the two nodes with. Both are the same verdict: refused before the lease
+// and before the inbox, recorded, counted lost, and nothing attempted.
+func TestConsumerPassRefusesAWriterItCannotWriteWith(t *testing.T) {
+	const other = "m~BBBBBBBBBBBBBBBBBBBBBB"
+	for _, tc := range []struct {
+		name     string
+		writerOf func(st *consumeStore) orchestrator.ConsumerWriter
+	}{
+		{"a writer minted for another mailbox", func(st *consumeStore) orchestrator.ConsumerWriter {
+			return consumeWriter{consumeStore: st, mailbox: other}
+		}},
+		{"no writer at all", func(*consumeStore) orchestrator.ConsumerWriter { return nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			f, st := consumeFixture(t)
+			f.Set(consumeInboxPath("msg-1"), consumeSigned(t, "msg-1", nil, consumeAt.UnixMilli(), consumeKeyMaterial))
+			m := consumeMailboxFixture(st)
+			m.Writer = tc.writerOf(st)
+
+			got, err := orchestrator.Consume(ctx, st, consumeOptions(m))
+			if err != nil {
+				t.Fatalf("Consume: %v", err)
+			}
+			if got.Mailboxes != 1 || got.Leases != 0 || got.Lost != 1 || len(got.Refusals) != 1 {
+				t.Errorf("mailboxes/leases/lost/refusals = %d/%d/%d/%d, want 1/0/1/1: a mailbox this pass cannot write with is a mailbox it could not consume", got.Mailboxes, got.Leases, got.Lost, len(got.Refusals))
+			}
+			if len(st.reads) != 0 {
+				t.Errorf("the pass read %v, and a mailbox it cannot write with is read in no way at all: the inbox it read would be this phone's and the answer another credential's", st.reads)
+			}
+			if hb := consumeNode(t, f, consumeHeartbeatPath); hb != nil {
+				t.Errorf("the pass took a lease it cannot write with: %#v", hb)
+			}
+			if reply := consumeNode(t, f, consumeOutboxPath(consumeOutboxID("msg-1"))); reply != nil {
+				t.Errorf("the pass answered with a writer that is not this mailbox' own: %#v", reply)
+			}
+		})
+	}
+}
+
 // TestConsumerPassReadsNothingWithoutTheDatabasesClock: every instant this pass
 // judges — the lease's, the reply's, the gate's tolerance — is one
 // authoritative clock's (D117), so a store that cannot answer one is the pass'
@@ -506,7 +580,7 @@ func TestConsumerPassReadsNothingWithoutTheDatabasesClock(t *testing.T) {
 	f, st := consumeFixture(t)
 	f.Set(consumeInboxPath("msg-1"), consumeSigned(t, "msg-1", nil, consumeAt.UnixMilli(), consumeKeyMaterial))
 
-	got, err := orchestrator.Consume(ctx, &consumeStoreWithoutAClock{st}, consumeOptions(consumeMailboxFixture()))
+	got, err := orchestrator.Consume(ctx, &consumeStoreWithoutAClock{st}, consumeOptions(consumeMailboxFixture(st)))
 	if err == nil {
 		t.Fatal("Consume judged messages against a clock its store never gave it")
 	}
@@ -536,7 +610,7 @@ func TestConsumerPassWritesOnlyTheOutboxAndTheHeartbeat(t *testing.T) {
 	other := consumeNode(t, f, consumeOutboxPath("other"))
 	sent := consumeNode(t, f, "mailbox/"+consumeMailboxUID+"/sent/1")
 
-	if _, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture())); err != nil {
+	if _, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture(st))); err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
 	if now := consumeNode(t, f, consumeInboxPath("msg-1")); !reflect.DeepEqual(inbox, now) {
