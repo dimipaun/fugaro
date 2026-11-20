@@ -18,12 +18,20 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
-// newFolderFake is a Resource Manager fake and the folder surface over it,
+// The folder surface is what the folder authority takes (WU2's Folders
+// interface): the satisfaction is pinned here, in a test, because the two
+// packages are kept apart in production — the dependency between them would run
+// through internal/projectpolicy, which imports internal/workspace — and the
+// interface is what lets I1 hand *Folders in with no adapter.
+var _ workspace.Folders = (*Folders)(nil)
+
+// wu2FolderFake is a Resource Manager fake and the folder surface over it,
 // built on the clients and the short wait the project tests already wire (the
 // caller's own credentials against a fake root).
-func newFolderFake(t *testing.T) (*gcpfake.CRM, *Folders) {
+func wu2FolderFake(t *testing.T) (*gcpfake.CRM, *Folders) {
 	t.Helper()
 	f := newProjectFakes(t)
 	return f.crm, NewFolders(f.pc.CRM)
@@ -36,7 +44,7 @@ func newFolderFake(t *testing.T) (*gcpfake.CRM, *Folders) {
 // folder at all).
 func TestFoldersCreateGetAndOrganizations(t *testing.T) {
 	ctx := context.Background()
-	f, fs := newFolderFake(t)
+	f, fs := wu2FolderFake(t)
 	f.AddOrganization("123")
 	f.PendingPolls = 2
 
@@ -85,7 +93,7 @@ func TestFoldersCreateGetAndOrganizations(t *testing.T) {
 // untouched. A member Google marks deleted is no longer an owner.
 func TestFoldersOwnersAddedAndRemoved(t *testing.T) {
 	ctx := context.Background()
-	f, fs := newFolderFake(t)
+	f, fs := wu2FolderFake(t)
 	f.AddFolder("9", "fugaro-workspace-aurora", "organizations/123")
 	f.SetFolderPolicy("9",
 		gcpfake.Binding{Role: "roles/viewer", Members: []string{"user:viewer@example.com"}},
@@ -131,7 +139,7 @@ func TestFoldersOwnersAddedAndRemoved(t *testing.T) {
 // would refuse is refused before any call is made.
 func TestFoldersParentAndMove(t *testing.T) {
 	ctx := context.Background()
-	f, fs := newFolderFake(t)
+	f, fs := wu2FolderFake(t)
 	f.AddFolder("9", "fugaro-workspace-aurora", "organizations/123")
 	f.AddProject("member-a", 900000000123)
 	f.SetParent("member-a", "organizations/123")
@@ -170,7 +178,7 @@ func TestFoldersParentAndMove(t *testing.T) {
 // folder a refused create had made is gone.
 func TestFoldersOperationError(t *testing.T) {
 	ctx := context.Background()
-	f, fs := newFolderFake(t)
+	f, fs := wu2FolderFake(t)
 	f.FailOperation(9, "the organization policy forbids this folder here")
 
 	_, err := fs.Create(ctx, "fugaro-workspace-aurora", "organizations/123")
@@ -193,7 +201,7 @@ func TestFoldersOperationError(t *testing.T) {
 // surface another level leans on is exercised by the task that added it.
 func TestFolderFakeServesTheProjectPolicyWrite(t *testing.T) {
 	ctx := context.Background()
-	f, _ := newFolderFake(t)
+	f, _ := wu2FolderFake(t)
 	f.AddProject("member-a", 900000000123)
 	svc, err := crm.NewService(ctx, option.WithEndpoint(f.URL+"/"), option.WithoutAuthentication())
 	if err != nil {
