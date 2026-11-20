@@ -298,26 +298,23 @@ func yieldFlag(m runmsg.Message) string {
 	}
 }
 
-// claimYield takes the messages a stop was for out of the queue and records
-// each delivered into stage, with reason when the stop did not find a quiet
-// point (rules 2 and 3). It returns what it took, and nothing when the queue
-// holds no flagged message — a boundary that drained it first has delivered
-// them already, and a stop with no message to carry is the stage's last word.
+// claimYield takes the messages waiting for a coder stage out of the queue and
+// records each delivered into stage, with reason when the stop did not find a
+// quiet point (rules 2 and 3). Every pending message goes, not just the flagged
+// one the stop was for: the turn this resumes is one of rule 1's delivery
+// points, so a message already waiting when the stop fired rides into it too,
+// in number order, rather than waiting for a boundary the stage may never
+// reach. It returns what it took, and nothing when nothing is waiting — a
+// boundary that drained the queue first has delivered those already, and a
+// stop with no message to carry is the stage's last word.
 func (r *run) claimYield(stage, reason string) []runmsg.Message {
 	r.msgs.mu.Lock()
 	defer r.msgs.mu.Unlock()
-	var out, kept []runmsg.Message
-	for _, m := range r.msgs.pending {
-		if yieldFlag(m) == "" {
-			kept = append(kept, m)
-			continue
-		}
-		out = append(out, m)
-	}
-	if len(out) == 0 {
+	if len(r.msgs.pending) == 0 {
 		return nil
 	}
-	r.msgs.pending = kept
+	out := r.msgs.pending
+	r.msgs.pending = nil
 	at := r.d.Now().UTC()
 	for _, m := range out {
 		r.deliverReason(m.Seq, stage, reason, at)

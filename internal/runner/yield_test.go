@@ -118,6 +118,50 @@ func TestNowResumesSameSession(t *testing.T) {
 	}
 }
 
+// TestNowCarriesPendingMessages: the turn a `now` resumes is one of rule 1's
+// delivery points, so a message already waiting when the stop fires is carried
+// into it too, in number order behind nothing and ahead of no one — the stop's
+// own message last, not first. It would otherwise wait for a boundary a stage
+// that ends on its next stop may never reach, and be recorded undelivered
+// although a coder turn resumed after it arrived.
+func TestNowCarriesPendingMessages(t *testing.T) {
+	const (
+		first  = "the fixture's build.sh wants a --strict flag"
+		second = "use the existing helper in internal/foo"
+	)
+	h := newHarness(t, "", nil)
+	h.messagesOn()
+	var resumed string
+	rec, err := h.run(t,
+		func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			h.tell(t, runID, first)
+			return h.stoppedAt(runID, second, agent.YieldAtQuietPoint, runmsg.FlagNow)(t, ctx, req)
+		},
+		func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			resumed = req.Prompt
+			return implement("feature")(t, ctx, req)
+		},
+		review("ship", 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustReady(t, rec, err)
+	i, j := strings.Index(resumed, first), strings.Index(resumed, second)
+	if i < 0 || j < 0 {
+		t.Fatalf("the resumed prompt carries messages at %d and %d, want both the waiting one and the stop's:\n%s",
+			i, j, resumed)
+	}
+	if i > j {
+		t.Errorf("the resumed prompt puts the stop's message ahead of the one that was already waiting:\n%s", resumed)
+	}
+	delivered(t, rec, 1, "implement")
+	delivered(t, rec, 2, "implement")
+	if !eq(stageNames(rec), "implement", "implement", "review") {
+		t.Fatalf("the run's stages are %v, want the stopped segment and its resume", stageNames(rec))
+	}
+}
+
 // TestNowDuringReviewWaits: a `now` message that arrives while a stage that
 // carries no messages runs — a review — waits for the next coder stage, which
 // is what makes the flag a request and not an interrupt (rule 2). The review
