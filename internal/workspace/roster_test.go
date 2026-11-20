@@ -263,6 +263,114 @@ func TestRosterDecodeRefusesUnknownField(t *testing.T) {
 	}
 }
 
+// TestRosterDecodeRefusesASecondSpellingOfAField is the half of the closed
+// objects the reader has to carry on its own: encoding/json matches an object
+// key to a struct field case-insensitively and lets the LATER of two spellings
+// of one key win, so a document that spells a field in another case, or writes
+// it twice, is read as whatever the hidden spelling says while the spelling a
+// person reads says something else -- the admin list swapped, a grant raised
+// from viewer to admin, a machine's expected roles emptied. DisallowUnknownFields
+// says nothing about either: "Admins" IS the admins field as far as it is
+// concerned, and a repeated key is one key with two values to it.
+//
+// The node is written by hand as well as by this program -- five accounts of the
+// workspace's project hold write on it (D2817) -- so the reader walks the
+// document and refuses a name that is not the one it writes, spelled exactly,
+// written once (refuseRosterSpellings, refuseEventSpellings, the refusal
+// internal/access/store.go makes for the member roster).
+//
+// These cases are raw documents rather than maps, and the reason is the exploit
+// itself: two spellings of one key collapse in a Go map, and json.Marshal writes
+// a map's keys in byte order -- an upper-case variant ahead of the lower-case
+// name it hides -- so a map cannot put the hidden spelling where it wins. Here
+// it is written last, and what it steals is a value the roster would otherwise
+// accept -- a person of the roster, a role of the closed set -- so a reader
+// without the walk takes the document and says nothing about it.
+func TestRosterDecodeRefusesASecondSpellingOfAField(t *testing.T) {
+	sch := c1Schema(t, c1RosterSchemaFile)
+
+	for _, tc := range []struct {
+		name      string
+		old, new  string
+		schemaToo bool
+	}{
+		{"the admin list swapped under another spelling",
+			`"admins":["alice@example.com"]`,
+			`"admins":["alice@example.com"],"Admins":["bob@outside.test"]`, true},
+		{"the admin list written twice",
+			`"admins":["alice@example.com"]`,
+			`"admins":["alice@example.com"],"admins":["bob@outside.test"]`, false},
+		{"a person's external mark swapped under another spelling",
+			`"address":"alice@example.com","kind":"human","external":false`,
+			`"address":"alice@example.com","kind":"human","external":false,"External":true`, true},
+		{"a person's external mark written twice",
+			`"address":"alice@example.com","kind":"human","external":false`,
+			`"address":"alice@example.com","kind":"human","external":false,"external":true`, false},
+		{"a machine's expected roles emptied under another spelling",
+			`"roles":[{"project":"acme-app","role":"operator"}]`,
+			`"roles":[{"project":"acme-app","role":"operator"}],"Roles":[]`, true},
+		{"a machine's expected role raised under another spelling",
+			`"role":"operator"`,
+			`"role":"operator","Role":"admin"`, true},
+		{"a grant raised under another spelling",
+			`"user":"bob@outside.test","role":"viewer"`,
+			`"user":"bob@outside.test","role":"viewer","Role":"admin"`, true},
+		{"a grant's role written twice",
+			`"user":"bob@outside.test","role":"viewer"`,
+			`"user":"bob@outside.test","role":"viewer","role":"admin"`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := c1Patched(t, c1RosterBytes(t), tc.old, tc.new)
+			// A key spelled in another case is a key the schema does not know,
+			// and it is closed at every level -- so an editor completing a node
+			// from the schema cannot write one. A key written twice is not the
+			// schema's: a validator reads one value per name, the last, and the
+			// repetition is gone before the rule is asked.
+			schemaErr := c1Validate(t, sch, raw)
+			switch {
+			case tc.schemaToo && schemaErr == nil:
+				t.Errorf("schemas/%s accepts %s, and a schema closed at every level refuses a key it does not know", c1RosterSchemaFile, tc.name)
+			case !tc.schemaToo && schemaErr != nil:
+				t.Errorf("schemas/%s refuses %s, and a key written twice is not something it can see: %v", c1RosterSchemaFile, tc.name, schemaErr)
+			}
+			if _, err := workspace.DecodeRoster(raw); err == nil {
+				t.Errorf("DecodeRoster accepts %s:\n%s", tc.name, raw)
+			}
+		})
+	}
+
+	// The audit event is one object, and the same walk over it. The trail is
+	// create-only, so an entry read as something other than what it says is a
+	// statement about the past nobody can correct.
+	eventSch := c1Schema(t, c1AuditSchemaFile)
+	for _, tc := range []struct {
+		name      string
+		old, new  string
+		schemaToo bool
+	}{
+		{"the action swapped under another spelling",
+			`"action":"user.add"`, `"action":"user.add","Action":"user.remove"`, true},
+		{"the action written twice",
+			`"action":"user.add"`, `"action":"user.add","action":"user.remove"`, false},
+		{"the actor swapped under another spelling",
+			`"actor":"alice@example.com"`, `"actor":"alice@example.com","Actor":"bob@outside.test"`, true},
+	} {
+		t.Run("event: "+tc.name, func(t *testing.T) {
+			raw := c1Patched(t, c1EventBytes(t), tc.old, tc.new)
+			schemaErr := c1Validate(t, eventSch, raw)
+			switch {
+			case tc.schemaToo && schemaErr == nil:
+				t.Errorf("schemas/%s accepts %s, and a schema closed at every level refuses a key it does not know", c1AuditSchemaFile, tc.name)
+			case !tc.schemaToo && schemaErr != nil:
+				t.Errorf("schemas/%s refuses %s, and a key written twice is not something it can see: %v", c1AuditSchemaFile, tc.name, schemaErr)
+			}
+			if _, err := workspace.DecodeAuditEvent(raw); err == nil {
+				t.Errorf("DecodeAuditEvent accepts %s:\n%s", tc.name, raw)
+			}
+		})
+	}
+}
+
 // TestRosterRefuses is the refusal corpus. Each case is a document that differs
 // from the fixture in one way, and the two columns say what the contract says
 // about it: every one of them is refused by the reader, and the ones the schema
@@ -784,6 +892,38 @@ func c1Remarshal(t *testing.T, doc map[string]any) []byte {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func c1RosterBytes(t *testing.T) []byte {
+	t.Helper()
+	raw, err := workspace.EncodeRoster(c1RosterFixture())
+	if err != nil {
+		t.Fatalf("EncodeRoster refuses the fixture: %v", err)
+	}
+	return raw
+}
+
+func c1EventBytes(t *testing.T) []byte {
+	t.Helper()
+	raw, err := workspace.EncodeAuditEvent(c1AuditFixture())
+	if err != nil {
+		t.Fatalf("EncodeAuditEvent refuses the fixture: %v", err)
+	}
+	return raw
+}
+
+// c1Patched is the fixture's document with one stretch of its bytes written
+// differently. A key spelled in another case, or written twice, is what a
+// document built from a Go map cannot carry -- two spellings of one key
+// collapse in it -- so those cases are the encoded fixture, patched as text,
+// and a patch that matched nothing is a failed test rather than a document
+// nobody changed.
+func c1Patched(t *testing.T, base []byte, old, new string) []byte {
+	t.Helper()
+	if !bytes.Contains(base, []byte(old)) {
+		t.Fatalf("the fixture's document does not carry %q, so the patch would change nothing:\n%s", old, base)
+	}
+	return bytes.Replace(base, []byte(old), []byte(new), 1)
 }
 
 func c1Person(t *testing.T, doc map[string]any, i int) map[string]any {

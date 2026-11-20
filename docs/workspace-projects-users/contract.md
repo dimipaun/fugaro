@@ -134,6 +134,7 @@ this repository — so what it can state, it states, and the rest is the reader'
 | Closed objects, required keys, `version` const, enums, the address/domain/project/folder grammars | yes | yes |
 | `folder_id` exactly when the mechanism is `folder` | yes (`if`/`then`/`else`) | yes |
 | A machine is never external; a human carries no roles | yes | yes |
+| A field spelled in another case, or written twice | the case, by the closed objects | both — a validator reads one value per name, the last, so the repetition is gone before it is asked |
 | `people` and `admins` are never empty | yes (`minItems`) | yes |
 | Every list is SORTED and holds no duplicate | no — the reader alone | yes |
 | An admin is a person of this roster, and a human | no — reaches across two lists | yes |

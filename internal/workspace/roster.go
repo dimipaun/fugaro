@@ -635,6 +635,9 @@ type rosterGrant struct {
 // what the database's pruning leaves of them: a workspace that lists no domain
 // and has written no grant carries neither key.
 func DecodeRoster(raw []byte) (*Roster, error) {
+	if err := refuseRosterSpellings(raw); err != nil {
+		return nil, err
+	}
 	var doc rosterDoc
 	if err := decodeStrict(raw, &doc); err != nil {
 		return nil, fmt.Errorf("the roster: %w", err)
@@ -790,6 +793,9 @@ type auditEventDoc struct {
 // create-only (D2811) -- so the empty spelling is never produced by this
 // program, and the schema refuses it where an editor would be the one writing.
 func DecodeAuditEvent(raw []byte) (AuditEvent, error) {
+	if err := refuseEventSpellings(raw); err != nil {
+		return AuditEvent{}, err
+	}
 	var doc auditEventDoc
 	if err := decodeStrict(raw, &doc); err != nil {
 		return AuditEvent{}, fmt.Errorf("the audit event: %w", err)
@@ -881,12 +887,162 @@ func NewAuditEventID(now time.Time, r io.Reader) (string, error) {
 	return now.UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(suffix[:]), nil
 }
 
+// refuseRosterSpellings walks a roster document and refuses a field that is not
+// one this reader reads, spelled exactly, written once -- at the roster's own
+// level, at a person's, at one of a machine's roles and at a grant's. It is the
+// half of strictness the typed decode cannot have, and the reason the contract
+// document's "closed objects" line says reader as well as schema.
+//
+// encoding/json matches an object key to a struct field case-insensitively and
+// lets the LATER of two spellings of a key win, and the node is a document five
+// accounts of the workspace's project may write with the rules bypassed
+// (D2817): {"admins":["alice@example.com"],"Admins":["mallory@example.com"]} is
+// a document the typed decode reads as one admin list, the wrong one, while
+// DisallowUnknownFields stays quiet -- "Admins" is a field of rosterDoc as far
+// as it is concerned -- and a grant carrying "role":"viewer","Role":"admin" is
+// read as an admin grant the visible spelling does not say anywhere. The same
+// refusal the member roster's own reader makes for the same reason
+// (internal/access/store.go refuseOtherSpellings), and the schema states it
+// too: a document this reader cannot read byte for byte is one it refuses.
+func refuseRosterSpellings(raw []byte) error {
+	fields, err := objectFields(json.NewDecoder(bytes.NewReader(raw)))
+	if err != nil {
+		return fmt.Errorf("the roster: %w", err)
+	}
+	if err := spelledOnce(fields, "the roster", "version", "mechanism", "folder_id", "people", "admins", "domains", "grants"); err != nil {
+		return err
+	}
+	for _, f := range fields {
+		switch f.name {
+		case "people":
+			if err := eachEntryOf(f.value, func(person []field) error {
+				if err := spelledOnce(person, "a person", "address", "kind", "external", "roles"); err != nil {
+					return err
+				}
+				for _, g := range person {
+					if g.name != "roles" {
+						continue
+					}
+					if err := eachEntryOf(g.value, func(role []field) error {
+						return spelledOnce(role, "a project role", "project", "role")
+					}); err != nil {
+						return err
+					}
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+		case "grants":
+			if err := eachEntryOf(f.value, func(grant []field) error {
+				return spelledOnce(grant, "a grant", "project", "user", "role")
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// refuseEventSpellings is the same walk for an audit event, which is one object
+// and one level. An event is created once and never updated (D2811), so a
+// document that read back as something other than what it says is a statement
+// about the past nobody can correct.
+func refuseEventSpellings(raw []byte) error {
+	fields, err := objectFields(json.NewDecoder(bytes.NewReader(raw)))
+	if err != nil {
+		return fmt.Errorf("the audit event: %w", err)
+	}
+	return spelledOnce(fields, "the audit event", "version", "id", "time", "actor", "action", "project", "subject", "role")
+}
+
+// field is one member of a JSON object as it is written: its name, and its value
+// as the bytes it occupied. A name written twice is NOT collapsed here -- the
+// walk above asks precisely because encoding/json would collapse it -- so every
+// field comes back, and it is the caller that refuses the repetition.
+type field struct {
+	name  string
+	value json.RawMessage
+}
+
+// objectFields reads one JSON object and returns its fields in the order they
+// are written, repetition and all.
+func objectFields(dec *json.Decoder) ([]field, error) {
+	t, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := t.(json.Delim); !ok || d != '{' {
+		return nil, errors.New("it is not one JSON object")
+	}
+	var fields []field
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		name, ok := t.(string)
+		if !ok {
+			return nil, errors.New("a field name is not a string")
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, err
+		}
+		fields = append(fields, field{name: name, value: value})
+	}
+	if _, err := dec.Token(); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
+// spelledOnce refuses a field of an object that is not one of names, spelled
+// exactly, and a field written twice.
+func spelledOnce(fields []field, at string, names ...string) error {
+	seen := map[string]bool{}
+	for _, f := range fields {
+		if !slices.Contains(names, f.name) {
+			return fmt.Errorf("%s carries the field %q: its fields are %s, each spelled exactly and written once", at, f.name, strings.Join(names, ", "))
+		}
+		if seen[f.name] {
+			return fmt.Errorf("%s carries the field %q twice: a field is written once", at, f.name)
+		}
+		seen[f.name] = true
+	}
+	return nil
+}
+
+// eachEntryOf calls fn with the fields of every object of a JSON list. A value
+// that is not a list of objects is skipped rather than refused here: this walk
+// is about names, and what a value of the wrong type is is the typed decode's
+// answer, which states it better than a walk could.
+func eachEntryOf(raw json.RawMessage, fn func(fields []field) error) error {
+	var entries []json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		fields, err := objectFields(json.NewDecoder(bytes.NewReader(entry)))
+		if err != nil {
+			continue
+		}
+		if err := fn(fields); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // decodeStrict reads one JSON document into v: an unknown field anywhere is an
 // error, and so is a second JSON value after the first. Every stored document
 // of this package decodes this way (DecodeFolderLink is the other), because a
 // key nobody decided is a shape two writers disagree about -- the one that put
 // it there and the reader with no rule for it -- and a document with a second
 // value under it is a document that means two things.
+//
+// A field spelled in another case, or written twice, is not an unknown field to
+// this decoder and so is refused by the walks above and not here, before it.
 func decodeStrict(raw []byte, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
