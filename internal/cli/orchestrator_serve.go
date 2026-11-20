@@ -979,6 +979,14 @@ func (s *residentOrchestrator) tick(ctx context.Context) (orchestratorPass, erro
 // mailbox is the reading itself: a mailbox that was simply empty is a count in
 // the pass line, because there is nothing a person could do about it.
 //
+// THE BUDGET SWITCH DOES NOT STOP THIS HALF, deliberately: `fugaro budget kill`
+// stops what SPENDS (carry, above, and the runs it would start), and a consumer
+// that carries nothing spends nothing — it reads a phone's message and answers
+// it with "nothing was performed", which is what the phone is owed whether the
+// switch is on or not. The day the acting half lands (P5.1g) that changes, and
+// that half is the one that has to read the switch: it is the half that starts
+// a run.
+//
 // A deployment with no consumer is the third case and is said in one line rather
 // than passed over in silence: the counts of an unwired tick and of an empty
 // inbox are the same counts, and orchestratorNoConsumer says the rest. The

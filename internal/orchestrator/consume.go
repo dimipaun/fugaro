@@ -138,9 +138,11 @@ type ConsumerOptions struct {
 	// consumer's presence. It is stable across ticks on purpose: a holder id
 	// that changed every pass would take the lease over every pass (a take of
 	// another holder's fresh claim is refused) and the phone would see a
-	// consumer appear and vanish once a minute. The resident service passes its
-	// own orchestrator id, which is the name the node and the phone's messages
-	// already call this installation.
+	// consumer appear and vanish once a minute. The resident service passes the
+	// installation's own orchestrator account, which is the identity that really
+	// writes these nodes — not the id of the instance a tick landed on, and not
+	// independently the node's own id, because two installations of one owner
+	// each have their own account and a phone reads the holder for presence.
 	Holder string
 	// Mailboxes are the pairings this deployment holds a key for, in the order
 	// the passes are made. An empty list is a pass that reaches no mailbox and
