@@ -132,6 +132,12 @@ func (f *Folders) Get(ctx context.Context, folder string) (displayName, parent s
 // A member marked deleted (Google's "deleted:user:..." spelling, which a policy
 // keeps until the principal's grants are cleaned up) is not listed: it is no
 // longer a person who holds anything.
+//
+// A member a conditional roles/owner binding names is listed: it does hold the
+// role, on every project in the folder, and a reader asking who the folder's
+// owners are is owed that. RemoveOwner refuses such a member rather than
+// reporting a removal it did not make (it writes the unconditional binding
+// only).
 func (f *Folders) Owners(ctx context.Context, folder string) ([]string, error) {
 	pol, err := f.iamPolicy(ctx, folder)
 	if err != nil {
@@ -156,7 +162,7 @@ func (f *Folders) Owners(ctx context.Context, folder string) ([]string, error) {
 // written back whole, under the etag of the read, so no other binding of the
 // folder is disturbed and two writers cannot both act on one stale picture.
 func (f *Folders) AddOwner(ctx context.Context, folder, member string) error {
-	return f.changeOwners(ctx, folder, func(owners []string) []string {
+	return f.changeOwners(ctx, folder, "", func(owners []string) []string {
 		if slices.Contains(owners, member) {
 			return owners
 		}
@@ -165,8 +171,12 @@ func (f *Folders) AddOwner(ctx context.Context, folder, member string) error {
 }
 
 // RemoveOwner drops member's roles/owner binding on folder, on the same terms.
+// A conditional roles/owner binding naming member is refused rather than left
+// as it is: this call does not write it, so the member keeps roles/owner on the
+// folder — and so on every project in it — and reporting a removal that did not
+// happen is worse than refusing.
 func (f *Folders) RemoveOwner(ctx context.Context, folder, member string) error {
-	return f.changeOwners(ctx, folder, func(owners []string) []string {
+	return f.changeOwners(ctx, folder, member, func(owners []string) []string {
 		return slices.DeleteFunc(owners, func(o string) bool { return o == member })
 	})
 }
@@ -180,23 +190,32 @@ func (f *Folders) RemoveOwner(ctx context.Context, folder, member string) error 
 // it into the unconditional binding would widen a grant that was meant to hold
 // only under its condition, and dropping it, as a policy rebuilt from the
 // owners alone does, would delete it outright.
-func (f *Folders) changeOwners(ctx context.Context, folder string, change func([]string) []string) error {
+func (f *Folders) changeOwners(ctx context.Context, folder, removing string, change func([]string) []string) error {
 	pol, err := f.iamPolicy(ctx, folder)
 	if err != nil {
 		return err
 	}
 	var (
-		owners   []string
-		rest     []*crm3.Binding
-		replaced bool
+		owners      []string
+		conditioned []string
+		rest        []*crm3.Binding
+		replaced    bool
 	)
 	for _, b := range pol.Bindings {
-		if b.Role != FolderOwnerRole || b.Condition != nil {
+		if b.Role != FolderOwnerRole {
+			rest = append(rest, b)
+			continue
+		}
+		if b.Condition != nil {
+			conditioned = append(conditioned, b.Members...)
 			rest = append(rest, b)
 			continue
 		}
 		owners = append(owners, b.Members...)
 		replaced = true
+	}
+	if removing != "" && slices.Contains(conditioned, removing) {
+		return fmt.Errorf("removing %s from folder %s: it is also bound to %s there under a condition, which is another writer's binding and not one this call can drop — dropping the unconditional one would leave the role on every project in the folder; remove that binding in the Cloud Console first", removing, folder, FolderOwnerRole)
 	}
 	members := change(owners)
 	if slices.Equal(members, owners) {

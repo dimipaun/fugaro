@@ -175,6 +175,50 @@ func TestFoldersOwnerWriteKeepsWhatItDoesNotChange(t *testing.T) {
 	}
 }
 
+// TestFoldersRemoveOwnerRefusesAConditionedGrant: a member a conditional
+// roles/owner binding names is listed by Owners — it does hold the role — and
+// RemoveOwner refuses it rather than reporting a removal it did not make. The
+// conditional binding is another writer's and stays; the member keeps the role
+// on every project in the folder until that writer drops it. A member the
+// unconditional binding holds is still removable alongside it.
+func TestFoldersRemoveOwnerRefusesAConditionedGrant(t *testing.T) {
+	ctx := context.Background()
+	f, fs := wu2FolderFake(t)
+	condition := &gcpfake.IAMCondition{Title: "on call", Expression: "request.time < timestamp('2026-12-01T00:00:00Z')"}
+	f.AddFolder("9", "fugaro-workspace-aurora", "organizations/123")
+	f.SetFolderPolicy("9",
+		gcpfake.Binding{Role: FolderOwnerRole, Members: []string{"user:founder@example.com"}},
+		gcpfake.Binding{Role: FolderOwnerRole, Members: []string{"user:oncall@example.com"}, Condition: condition})
+
+	owners, err := fs.Owners(ctx, "folders/9")
+	if err != nil {
+		t.Fatalf("Owners: %v", err)
+	}
+	if want := []string{"user:founder@example.com", "user:oncall@example.com"}; !slices.Equal(owners, want) {
+		t.Errorf("Owners = %v, want %v: a member a condition binds to the role holds it", owners, want)
+	}
+	err = fs.RemoveOwner(ctx, "folders/9", "user:oncall@example.com")
+	if err == nil {
+		t.Fatal("RemoveOwner of a member a conditional binding holds = nil, want a refusal")
+	}
+	for _, want := range []string{"user:oncall@example.com", "folders/9", "condition"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+	if got := f.FolderPolicy("9"); len(got) != 2 || !reflect.DeepEqual(got[1].Condition, condition) ||
+		!slices.Equal(got[1].Members, []string{"user:oncall@example.com"}) {
+		t.Errorf("the folder's policy is %+v after the refusal, want it untouched", got)
+	}
+
+	if err := fs.RemoveOwner(ctx, "folders/9", "user:founder@example.com"); err != nil {
+		t.Fatalf("RemoveOwner of a member the unconditional binding holds: %v", err)
+	}
+	if got := f.FolderPolicy("9"); len(got) != 1 || got[0].Condition == nil {
+		t.Errorf("the folder's policy is %+v, want the unconditional owner binding dropped and the conditional one kept", got)
+	}
+}
+
 // TestFoldersParentAndMove: a project's parent is read, a move is polled to its
 // end and the read after it answers the destination, and a destination the API
 // would refuse is refused before any call is made.

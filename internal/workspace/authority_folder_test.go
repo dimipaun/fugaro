@@ -266,6 +266,19 @@ func TestFolderLinkMovesTheFirebaseProjectToo(t *testing.T) {
 	if rec, _ := wu2Record(t, db); rec.Firebase != "" || rec.FirebaseParent != "" {
 		t.Errorf("the record is %+v, want no Firebase project named for a member whose Firebase project is its own", rec)
 	}
+	// And that member unlinks: the record names no Firebase project where the
+	// member named one that is its own project, the two spell the same thing,
+	// and reading it as a record naming another member would leave the project
+	// in the folder with no way out.
+	if err := a.Unlink(ctx, FolderMember{Project: "member-b", Firebase: "member-b"}); err != nil {
+		t.Fatalf("Unlink of a member whose Firebase project is its own: %v", err)
+	}
+	if got := cloud.parents["member-b"]; got != "organizations/123" {
+		t.Errorf("member-b is at %q after the unlink, want organizations/123", got)
+	}
+	if _, found := wu2Record(t, db); found {
+		t.Errorf("%s still holds a record after the unlink that used it", PathWorkspaceLink)
+	}
 }
 
 // TestFolderLinkRefusesOtherWorkspaceFolder: R2 — a project belongs to at most

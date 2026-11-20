@@ -105,6 +105,18 @@ type FolderMember struct {
 	Firebase string
 }
 
+// canonical is the member with the Firebase project it names dropped when that
+// is its GCP project: the two spell one project, and the record Link writes
+// keeps the Firebase of its own empty for it (R10). Every comparison against a
+// record goes through this, so a member whose Firebase project is its own is
+// not read as one the record names differently.
+func (m FolderMember) canonical() FolderMember {
+	if m.Firebase == m.Project {
+		m.Firebase = ""
+	}
+	return m
+}
+
 // projects is the member's projects, in the order they are moved and restored:
 // the GCP project first.
 func (m FolderMember) projects() []string {
@@ -356,10 +368,17 @@ func (a *FolderAuthority) Link(ctx context.Context, m FolderMember) error {
 // called for, and a record that cannot be read at all: every one of those is a
 // record no more trustworthy than a rewrite, and the answer to all of them is
 // the same refusal rather than a move.
+//
+// The member is canonicalised before any of that: a member whose Firebase
+// project is its GCP project is recorded with no Firebase of its own (R10), so
+// comparing the record against the name as it was typed would read the record
+// Link itself wrote as one naming another project, and the member would be
+// stuck in the folder with no way out.
 func (a *FolderAuthority) Unlink(ctx context.Context, m FolderMember) error {
 	if err := a.check(m); err != nil {
 		return err
 	}
+	m = m.canonical()
 	rec, etag, found, err := a.readLink(ctx)
 	if err != nil {
 		return err
