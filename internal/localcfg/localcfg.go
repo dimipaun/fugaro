@@ -1884,6 +1884,19 @@ type Batch struct {
 	// a live run: the sweeper's bound would be shorter than the config's, and
 	// a job that is legitimately running would read as stuck.
 	TaskTimeout config.Duration `yaml:"task_timeout,omitempty"`
+	// OptIn is the opt-in fact (R2, D3110 as amended, D3111): whether this
+	// installation's operator has asked for the compute root that creates the
+	// seal key. Absent, `in` and `withdrawn` are its three states, and it is
+	// written by the operator's own command and by `fugaro update` alone — a
+	// machine that merely selects Cloud Run again does not withdraw it (R16).
+	// See batch_sealkey.go.
+	OptIn string `yaml:"opt_in,omitempty"`
+	// SealKey is the key fact (R13): the Cloud KMS key version a launcher wraps
+	// the seal key to and that version's public key, both written by `fugaro
+	// update` from the compute root's outputs. Absent on an installation whose
+	// root has never been applied, which is the state the launch refusal names.
+	// See batch_sealkey.go.
+	SealKey *BatchSealKey `yaml:"seal_key,omitempty"`
 }
 
 // ValidBatchImage reports whether ref is a reference a batch block's image may
@@ -1956,6 +1969,7 @@ func validateBatch(bad func(string, ...any), c *Config) {
 		// a live run has ended, and that disagreement deletes a running job.
 		bad("batch.task_timeout %v is longer than %v, the longest a run may be given (--total-timeout is capped there): a job sized past it is headroom no run can use, and the reaper of an installation whose config it cannot read derives its own bound from that ceiling, so the two would disagree about when a live run has ended", b.TaskTimeout.Duration, backend.MaxRunTime)
 	}
+	validateBatchSealKey(bad, b)
 	// Each entry is named by its position in the sorted map, and never by its
 	// key: neither side of the map is printed, because **either** side can hold
 	// a secret's value. The value slot is the one a value is usually written
