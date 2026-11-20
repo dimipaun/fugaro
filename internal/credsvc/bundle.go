@@ -253,15 +253,18 @@ func BundleRefusal(err error) string {
 // consumer's name to share.
 const BitbucketReadConsumerSecret = "bitbucket-read-consumer"
 
-// Kind is what a bundle entry is for. The bundle holds six kinds of thing:
+// Kind is what a bundle entry is for. The bundle holds seven kinds of thing:
 // the model credentials the cascade selects, each with a tier, the GitHub
 // App's private key, which the mint signs with, the upstream Bitbucket
 // credential the git proxy forwards with (D506), the per-account
 // review-signing keys the verdict routes compute a MAC with (D1069), the
-// Bitbucket read consumer the read mint exchanges for a token (F21) and the
+// Bitbucket read consumer the read mint exchanges for a token (F21), the
 // project's provider key, which a call to a third-party provider is forwarded
-// with (AK6b, F15) — the last five are candidates for nothing on a coding
-// caller's path (C2.1, B1.2).
+// with (AK6b, F15), and one repository's own named credentials (R2, D3008) —
+// the first is what a coding caller's cascade is offered, and the last six are
+// candidates for nothing (C2.1, B1.2): each is reached by a path that names it
+// — the mint, the git proxy, a verdict route, the read mint, the provider
+// forward — and the seventh is read by name through C1's accessor alone.
 type Kind string
 
 const (
@@ -329,6 +332,46 @@ const (
 	// candidate list: a tier-C entry in it would refuse the whole call) nor a
 	// probe.
 	KindProvider Kind = "provider"
+	// KindRepoCredential is one repository's own named credentials (R2, D3008):
+	// the family of document keys RepoCredentialKey builds out of the
+	// repository's slug and the credential's name — a provider's key for that
+	// repository, or the repository's own Anthropic key
+	// (config.AnthropicKeyAccount). It exists BESIDE the project-wide entries
+	// rather than in place of them: a key several repositories share is entered
+	// once per repository (D3008), while the project's provider key
+	// (KindProvider) and the project's paid key (KindModel) stay where they are
+	// for the repositories that share them.
+	//
+	// Its value is the third kind that is a mapping rather than a string (the
+	// read consumer's is the first and the provider key's is the second): the
+	// entry's key and the two routing facts providerFacts names, plus the copy's
+	// source marker (D3014) — the container and the version the copy read the
+	// value out of, which is what tells a later copy whether the entry is one it
+	// wrote (KS12).
+	//
+	// Its TIER is read off the credential half and never written beside it: a
+	// provider's key is spent on a route this release does not serve, so its
+	// tier is the reserved creds.TierC, and the repository's own Anthropic key
+	// is that repository's paid key and carries the creds.TierB of one. That is
+	// the one fact of this kind that is not the entry's own text, and it is the
+	// one a caller sees: the two credentials are the same three routing facts.
+	//
+	// It is NOT in byName, for AppKey's reason read one step further: two
+	// repositories' entries for one provider name resolve to the same
+	// credential's name, so a map keyed by the name could hold one of them and
+	// the two would be indistinguishable — the wrong repository's key served is
+	// exactly what R2's name carrying its repository exists to prevent. The
+	// index is keyed by the DOCUMENT KEY instead (repoCredentials), which is the
+	// one spelling of a pair the repository and the credential define, and the
+	// accessor derives that key from the run's verified slug and the credential
+	// a call names (ReadProviderKey).
+	//
+	// It is in NEITHER Credentials — a coding caller's candidate list, whose
+	// entries are what a selection speaks about, and where a tier-C entry would
+	// refuse that caller's whole call (checkCandidates names Check 50) — nor a
+	// probe. What a coding caller is served of this family it is served through
+	// the accessor, by name, and never as a candidate (KS3).
+	KindRepoCredential Kind = "repo-credential"
 )
 
 // readConsumer is the value of the read consumer's entry (F21, D361): the
@@ -374,27 +417,43 @@ type Entry struct {
 	// config.ProviderKeySecret: the credential's own logical name, which the
 	// account axis spells as its own value (config.ProviderKeyAccount) and which
 	// the answer's credential header carries when it is the one that served a
-	// call.
+	// call. A named entry's is its own DOCUMENT KEY (RepoCredentialKey), which
+	// carries the repository and the credential both: the credential's bare name
+	// is a name another repository's entry of the family carries too, and one
+	// name meaning two entries is what the audit line cannot survive (R5, the
+	// rule the named Bitbucket tokens and the review-signing entries keep).
 	Name string
 	// Tier is the cost class (creds.TierA, creds.TierB, creds.TierC). It is
 	// empty for an entry that is not a credential a call is spent on: the App
 	// key, the upstream Bitbucket credential, a review-signing key and the read
 	// consumer are spent nowhere, so none of them has a tier to settle a call
-	// against. The provider key is the one non-model kind that has one
-	// (creds.TierC): a call routed to a provider is settled against it.
+	// against. Two non-model kinds have one: the project's provider key
+	// (creds.TierC, a call routed to a provider is settled against it) and a
+	// named entry, whose tier is read off its credential half — TierC for a
+	// provider's key, TierB for the repository's own Anthropic key.
 	Tier creds.Tier
 	// Key is the document's own key for this credential
 	// (config.ClaudeAccountSecret for a named account). It is not a value.
 	Key string
-	// baseURL and auth are the provider key's two routing facts (KindProvider):
-	// where a call with it goes and how it is sent (providerValue). They are
-	// empty on every other kind's entry, and they are facts and not credentials
-	// — a URL and one of two words (D1418) — which is why they are held as plain
+	// baseURL and auth are the two routing facts of the kinds a provider call
+	// is served from (KindProvider and KindRepoCredential): where a call with
+	// the credential goes and how it is sent (providerValue). They are empty on
+	// every other kind's entry, and they are facts and not credentials — a URL
+	// and one of two words (D1418) — which is why they are held as plain
 	// strings: nothing redacts them, and a scrub that did would be redacting the
 	// ends of ordinary prose. They are read by the one path that forwards to a
 	// provider (forward.go) and by nothing else.
 	baseURL string
 	auth    string
+	// source is the copy's marker on a named entry (KindRepoCredential, D3014):
+	// the container and the version the value was copied out of, or the zero
+	// ProviderKeySource for an entry the copy did not write — a hand-written
+	// one, or one written by `fugaro creds set` at the owner's terminal. It is
+	// empty on every other kind's entry, and it is two names rather than a
+	// credential, which is why it is not held as `secret`. The copy reads it to
+	// decide whether an entry is one it may overwrite (KS12) and the accessor
+	// hands it to the caller in ProviderKeyEntry.Source.
+	source ProviderKeySource
 	// value is the credential. It is unexported, there is no accessor that
 	// renders it, and its type prints as a redaction through every verb —
 	// so an Entry logged, printed or panicked on carries a name and a
@@ -491,6 +550,13 @@ type Bundle struct {
 	// entries of one account differ only by the rotation suffix, and a map
 	// keyed by the account could hold one of them.
 	reviewSigning map[string]int
+	// repoCredentials indexes the named entries (KindRepoCredential) by their
+	// DOCUMENT KEY (RepoCredentialKey), which is what the accessor builds from
+	// the run's verified slug and the credential's name (ReadProviderKey) — a
+	// key, not a name: the credential's bare name is a name the entries of two
+	// repositories carry the same, so a map keyed by it could hold one of them
+	// (KindRepoCredential).
+	repoCredentials map[string]int
 }
 
 // Len is how many credentials the document holds.
@@ -510,6 +576,17 @@ func (b *Bundle) Entries() []Entry { return slices.Clone(b.entries) }
 // (checkCandidates names Check 50) rather than be skipped quietly. A review
 // caller's list is the review half's own (reviewOfferings), which is where the
 // provider key is offered.
+//
+// A named entry (KindRepoCredential) is excluded for the provider key's reason
+// read one step harder: it is not a model credential, it carries a tier, and
+// what a coding caller is served of this family it is served by name through
+// C1's accessor (ReadProviderKey) and never from this list — which is what
+// KS1's acceptance means by offering a coding caller the entries of its own
+// repository. The list is built from the bundle alone while an entry of this
+// family is one repository's, so offering them here could not tell two
+// repositories' entries apiece without a slug this accessor does not take, and
+// a tier-C entry in it would refuse the whole call it appeared in
+// (checkCandidates names Check 50) rather than be skipped quietly.
 func (b *Bundle) Credentials() []creds.Credential {
 	out := make([]creds.Credential, 0, len(b.entries))
 	for _, e := range b.entries {
@@ -681,6 +758,75 @@ func (b *Bundle) ProviderKey() (Entry, bool) {
 	return b.entries[b.providerKey], true
 }
 
+// repoCredential answers the named entry one repository's credential is held
+// under (KindRepoCredential): the entry whose document key RepoCredentialKey
+// builds from slug and credential. found=false is a name the document holds no
+// entry for, and it is the answer for a half that could not be part of such a
+// key at all — the same answer, because a caller cannot do anything different
+// with the two (C1's accessor has two answers and not three, and the caller
+// that gets false answers ErrorProviderNotServed).
+//
+// It is read by C1's accessor (readProviderKey) and by nothing else: the
+// document key is derived from the run's VERIFIED repository and the
+// credential's name, so no caller can reach another repository's entry by
+// naming it (R2, HG1's reach rule).
+func (b *Bundle) repoCredential(slug, credential string) (Entry, bool) {
+	if b == nil {
+		return Entry{}, false
+	}
+	key, err := RepoCredentialKey(slug, credential)
+	if err != nil {
+		return Entry{}, false
+	}
+	i, ok := b.repoCredentials[key]
+	if !ok {
+		return Entry{}, false
+	}
+	return b.entries[i], true
+}
+
+// readProviderKey is C1's accessor read against a parsed bundle: the entry one
+// repository's named credential is held under (R2, D3008), which the service's
+// provider route and the offering KS3 builds both go through. It is the real
+// reader provider_wire_stub.go's stub stands in for, and the init below is what
+// puts it in the accessor's place.
+//
+// The two halves are the ARGUMENTS and never the entry's own name: the name is
+// the document key, which carries both, and reading the halves back out of it
+// would be this function's caller being told what it just said. Both are facts
+// the service already has — the repository's slug is the verified identity's
+// and the credential's name is the one a call named, held to ValidProviderName
+// before it arrives — so the answer is one repository's entry or none, and
+// never another repository's.
+//
+// What it hands out is the entry's value AND its three facts (the base URL, the
+// auth shape and the copy's marker), which is ProviderKeyEntry's whole content.
+// The value is held as `secret`, so a caller that logs what it was served logs
+// where the key came from and never the key.
+func readProviderKey(b *Bundle, slug, credential string) (ProviderKeyEntry, bool) {
+	e, ok := b.repoCredential(slug, credential)
+	if !ok {
+		return ProviderKeyEntry{}, false
+	}
+	return ProviderKeyEntry{
+		Slug:       slug,
+		Credential: credential,
+		BaseURL:    e.baseURL,
+		Auth:       e.auth,
+		Source:     e.source,
+		value:      e.value,
+	}, true
+}
+
+// The real reader takes the stub's place, which is the whole of what this task
+// owes C1's accessor: the contract ships with a stub (provider_wire_stub.go)
+// so its three consumers compile and test before the bundle holds a named
+// entry, and the stub is deleted by I1 once nothing needs it. A file's init
+// runs in the toolchain's name order, so bundle.go's runs before that file's,
+// and the stub's own guard (it assigns only while the accessor is nil) makes
+// the order irrelevant either way.
+func init() { ReadProviderKey = readProviderKey }
+
 // BitbucketReadConsumer answers the bundle's Bitbucket read consumer (F21,
 // D361), which is the entry whose document key is BitbucketReadConsumerSecret:
 // the OAuth consumer's key, its secret and the workspace the token it mints
@@ -785,17 +931,21 @@ func (b *Bundle) LogValue() slog.Value { return slog.StringValue(b.String()) }
 // (config.GitHubAppKeySecret, C2.1), the upstream Bitbucket credential
 // (config.BitbucketSecret, D506), the Bitbucket read consumer
 // (BitbucketReadConsumerSecret, F21), the project's provider key
-// (config.ProviderKeySecret, AK6b) and the per-account review-signing keys
-// (config.ReviewSigningKeySecret's family, D1069) — the last five are the keys
-// that are not model credentials: their kinds are KindGitHubApp, KindGit,
-// KindBitbucketReadConsumer, KindProvider and KindReviewSigning, because the
-// mint signs a JWT with one, the proxy forwards another, the read mint
-// exchanges the third for a token, a provider's endpoint is reached with the
-// fourth and the sign route computes a MAC with the fifth, rather than any of
-// them being offered to a coding caller's cascade. Four of the five have no
-// tier — none of them is spent on an Anthropic call — and the provider key is
-// the exception: it is spent, on a route this release does not serve, so its
-// tier is the reserved creds.TierC rather than a name.
+// (config.ProviderKeySecret, AK6b), the per-account review-signing keys
+// (config.ReviewSigningKeySecret's family, D1069) and one repository's own
+// named credentials (RepoCredentialPrefix's family, R2, D3008) — the last six
+// are the keys that are not model credentials: their kinds are KindGitHubApp,
+// KindGit, KindBitbucketReadConsumer, KindProvider, KindReviewSigning and
+// KindRepoCredential, because the mint signs a JWT with one, the proxy forwards
+// another, the read mint exchanges the third for a token, a provider's endpoint
+// is reached with the fourth, the sign route computes a MAC with the fifth and
+// the sixth is the credential of the repository a verified run belongs to,
+// rather than any of them being offered to a coding caller's cascade. Four of
+// the six have no tier — none of them is spent on an Anthropic call — and the
+// two that do are the ones a provider call is spent with: the project's provider
+// key is creds.TierC (a route this release does not serve), and a named entry's
+// tier is read off its credential half — TierC for a provider's key, TierB for
+// the repository's own Anthropic key.
 func CredentialKey(key string) (name string, kind Kind, tier creds.Tier, ok bool) {
 	switch {
 	case key == config.GitHubAppKeySecret:
@@ -832,6 +982,45 @@ func CredentialKey(key string) (name string, kind Kind, tier creds.Tier, ok bool
 		// account, and the bundle holds the two without either hiding the other
 		// (ProviderKey, byName).
 		return config.ProviderKeySecret, KindProvider, creds.TierC, true
+	case strings.HasPrefix(key, RepoCredentialPrefix):
+		// One repository's own named credential (KindRepoCredential, R2, D3008):
+		// the family C1 declares, read back with RepoCredentialByKey so that the
+		// loader and the naming rule cannot drift into disagreeing about which
+		// key is which entry. Both halves are held to the shapes that rule builds
+		// from, so a document holding a member whose slug is not a slug this tree
+		// derives, or whose credential is neither a provider's name nor the
+		// project key's own spelling, is refused whole rather than loaded under a
+		// name no run can ask for.
+		//
+		// The length a reader applies is the NAME's and not the slug's, and the
+		// published schema carries the same number (MaxRepoCredentialBytes, its
+		// branch for this family): RepoCredentialByKey checks the slug's SHAPE
+		// while task.ValidSlug puts no bound on its length, so a slug over
+		// maxSlugBytes passes the rule — and JSON Schema could not state a bound
+		// on a middle field whose own length varies with the credential's, which
+		// is why neither reader states one. What both refuse is a name longer
+		// than the family's longest — which a hand-written key over the bound is,
+		// and which no writer of this family can build.
+		_, credential, ok := RepoCredentialByKey(key)
+		if !ok || len(key) > MaxRepoCredentialBytes {
+			return "", "", "", false
+		}
+		// The name is the DOCUMENT KEY and not the credential, for the named
+		// families' reason (R5): the credential's own name is a name another
+		// repository's entry of this family carries too, and one name meaning two
+		// entries is what the audit line cannot survive.
+		if credential == config.AnthropicKeyAccount {
+			// The repository's own Anthropic key (D3008): that repository's paid
+			// key, at the tier of a paid key, exactly as the project's own is
+			// (config.AnthropicSecret). D3015 keeps an ACCOUNT's OAuth token out
+			// of this family — a token is shared by design and stays entered once
+			// under the account's name, which is the account family's arm below.
+			return key, KindRepoCredential, creds.TierB, true
+		}
+		// A provider's key for that repository: spent on a route this release
+		// does not serve, so the reserved third-party tier the project's provider
+		// key carries too (KindProvider).
+		return key, KindRepoCredential, creds.TierC, true
 	case key == config.AnthropicSecret:
 		return config.AnthropicSecret, KindModel, creds.TierB, true
 	case config.KeyCredentialSecret(key):
@@ -976,7 +1165,7 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 	if n := len(root.Content) / 2; n > MaxBundleCredentials {
 		return nil, bundleErr(ErrBundleTooMany, "")
 	}
-	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2), appKey: -1, gitToken: -1, bitbucketTokens: make(map[string]int, 1), providerKey: -1, reviewSigning: make(map[string]int, 1)}
+	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2), appKey: -1, gitToken: -1, bitbucketTokens: make(map[string]int, 1), providerKey: -1, reviewSigning: make(map[string]int, 1), repoCredentials: make(map[string]int, 1)}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		k, v := root.Content[i], root.Content[i+1]
 		if k.Kind != yaml.ScalarNode || k.Tag != "!!str" {
@@ -1039,6 +1228,17 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 			if _, dup := b.reviewSigning[k.Value]; dup {
 				return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 			}
+		} else if kind == KindRepoCredential {
+			// A named entry is one DOCUMENT KEY, and the key IS the pair: the
+			// family's read-back splits it at the first separator, so two
+			// spellings of one (slug, credential) pair cannot exist and the key
+			// alone is what a duplicate is read off. What is NOT a duplicate is
+			// the same provider name for two repositories: those are two keys,
+			// two entries and two credentials (D3008), which is the whole point
+			// of the repository half.
+			if _, dup := b.repoCredentials[k.Value]; dup {
+				return nil, bundleErr(ErrBundleUnknownKey, k.Value)
+			}
 		} else if _, dup := b.byName[name]; dup {
 			return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 		}
@@ -1048,6 +1248,7 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 		// the field of the three that is a credential.
 		value := v.Value
 		baseURL, auth := "", ""
+		source := ProviderKeySource{}
 		if kind == KindBitbucketReadConsumer {
 			rc, err := readConsumerValue(k.Value, v)
 			if err != nil {
@@ -1066,6 +1267,19 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 				return nil, err
 			}
 			value, baseURL, auth = pv.key.value, pv.baseURL, pv.auth
+		} else if kind == KindRepoCredential {
+			// A named entry's value is a mapping of the same three fields, plus
+			// the copy's source marker (D3014). repoCredentialValue reads it, and
+			// it holds the base URL and the auth shape to the same rules
+			// providerValue does — the two kinds are one provider call's facts
+			// and the config check is the platform's, so a named entry whose
+			// address a provider call's own rules would refuse is a bundle this
+			// loader refuses too.
+			rv, err := repoCredentialValue(k.Value, v)
+			if err != nil {
+				return nil, err
+			}
+			value, baseURL, auth, source = rv.key.value, rv.baseURL, rv.auth, rv.source
 		} else {
 			if v.Kind != yaml.ScalarNode || v.Tag != "!!str" {
 				// A number, a bool, a list or a nested map: the published schema
@@ -1099,10 +1313,15 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 			// (checkCandidates) rather than be skipped. The review half reaches
 			// the entry by its kind (reviewOfferings).
 			b.providerKey = len(b.entries)
+		case KindRepoCredential:
+			// The family's own index, keyed by the document key, for the reason
+			// KindRepoCredential gives: the credential's bare name is a name two
+			// repositories' entries carry, so byName could hold one of them.
+			b.repoCredentials[k.Value] = len(b.entries)
 		default:
 			b.byName[name] = len(b.entries)
 		}
-		b.entries = append(b.entries, Entry{Kind: kind, Name: name, Tier: tier, Key: k.Value, baseURL: baseURL, auth: auth, value: secret{value: value}})
+		b.entries = append(b.entries, Entry{Kind: kind, Name: name, Tier: tier, Key: k.Value, baseURL: baseURL, auth: auth, source: source, value: secret{value: value}})
 	}
 	if len(b.entries) == 0 {
 		return nil, bundleErr(ErrBundleEmpty, "")
@@ -1194,17 +1413,26 @@ const (
 	providerAuthXAPIKey = "x-api-key"
 )
 
-// providerFacts is a provider key's entry value (AK6b, F15, D1418): the
-// credential and the two routing facts a call to that provider needs — where it
-// goes and how the key is sent. Only key is a credential; baseURL is a URL a
-// person typed into the document and auth is one of two words of the
-// platform's. They are held together because a provider call needs all three:
-// a key with no destination is a call this service would have to invent a host
-// for, and one with no auth shape is a key it would have to guess a header for.
+// providerFacts is the value of the two kinds a call to a provider is spent
+// with — the project's provider key (KindProvider, AK6b, F15, D1418) and one
+// repository's named entry (KindRepoCredential, R2): the credential and the two
+// routing facts a call to that provider needs — where it goes and how the key is
+// sent. Only key is a credential; baseURL is a URL a person typed into the
+// document and auth is one of two words of the platform's. They are held
+// together because a provider call needs all three: a key with no destination is
+// a call this service would have to invent a host for, and one with no auth
+// shape is a key it would have to guess a header for.
+//
+// source is the named family's alone (D3014): the container and the version the
+// copy read the value out of. It is the zero ProviderKeySource for the project's
+// own key, which no copy writes — the project's key is the entry the copy READS,
+// and a named entry the one it writes — and a reader of a named entry that finds
+// no marker knows the entry is one the copy did not write (KS12).
 type providerFacts struct {
 	key     secret
 	baseURL string
 	auth    string
+	source  ProviderKeySource
 }
 
 // providerValue reads a provider key's entry value: a mapping of exactly the
@@ -1222,11 +1450,44 @@ type providerFacts struct {
 // wrapped, and the loader answers in its own words instead. Nothing is defaulted
 // and nothing is dropped: an entry missing either fact is refused whole.
 func providerValue(entryKey string, v *yaml.Node) (*providerFacts, error) {
+	return providerFactsFrom(entryKey, v, false)
+}
+
+// repoCredentialValue reads a named entry's value (KindRepoCredential, R2,
+// D3008): the same three fields providerValue reads, as the same routing facts a
+// provider call needs, plus the copy's source marker (D3014) — the container and
+// the version the value was copied out of, both names of secrets and never a
+// value.
+//
+// The marker is OPTIONAL and half of one is not: an entry the copy wrote carries
+// it, and an entry it did not — a hand-written one, or one `fugaro creds set`
+// wrote at the owner's terminal — carries none, which ProviderKeySource's zero
+// value is the whole of. A container with no version names no value a copy could
+// have read, so it is refused rather than carried: a reader that found half a
+// marker could not tell an entry the copy wrote from one nobody did, and that is
+// the one question the marker exists to answer (KS12).
+func repoCredentialValue(entryKey string, v *yaml.Node) (*providerFacts, error) {
+	return providerFactsFrom(entryKey, v, true)
+}
+
+// providerFactsFrom reads the mapping the two kinds above share. withSource says
+// whether this kind is one the copy writes (the named family) and so may carry
+// the marker; the project's own key may not, and a document that spells one into
+// it is refused as an unknown field rather than read with a fact nothing of that
+// kind can have.
+//
+// Both kinds are held to the SAME two rules for the facts they share — the
+// platform's provider-URL check and the closed set of two auth shapes — because
+// the rules belong to the call a credential is spent on and not to the kind the
+// entry happens to be: a named entry whose address the gateway's routes would
+// refuse is a bundle this loader refuses too, so the two cannot drift into
+// disagreeing about where a credential may be sent (F45, D1418).
+func providerFactsFrom(entryKey string, v *yaml.Node, withSource bool) (*providerFacts, error) {
 	if v.Kind != yaml.MappingNode {
 		return nil, bundleErr(ErrBundleBadValue, entryKey)
 	}
 	pf := &providerFacts{}
-	var seenKey, seenBaseURL, seenAuth bool
+	var seenKey, seenBaseURL, seenAuth, seenSource bool
 	for i := 0; i+1 < len(v.Content); i += 2 {
 		f, fv := v.Content[i], v.Content[i+1]
 		// readConsumerValue's order: the field's NAME is read before its value,
@@ -1237,8 +1498,26 @@ func providerValue(entryKey string, v *yaml.Node) (*providerFacts, error) {
 		}
 		switch f.Value {
 		case "key", "base_url", "auth":
+		case "source":
+			if !withSource {
+				return nil, bundleErr(ErrBundleUnknownField, entryKey)
+			}
 		default:
 			return nil, bundleErr(ErrBundleUnknownField, entryKey)
+		}
+		if f.Value == "source" {
+			// The one field whose value is a mapping rather than a string, so it
+			// is read before the string check below rather than by it.
+			if seenSource {
+				return nil, bundleErr(ErrBundleBadValue, entryKey)
+			}
+			seenSource = true
+			src, err := providerSourceValue(entryKey, fv)
+			if err != nil {
+				return nil, err
+			}
+			pf.source = src
+			continue
 		}
 		if fv.Kind != yaml.ScalarNode || fv.Tag != "!!str" || fv.Value == "" || len(fv.Value) > MaxBundleValueBytes {
 			return nil, bundleErr(ErrBundleBadValue, entryKey)
@@ -1279,6 +1558,57 @@ func providerValue(entryKey string, v *yaml.Node) (*providerFacts, error) {
 		return nil, bundleErr(ErrBundleBadValue, entryKey)
 	}
 	return pf, nil
+}
+
+// providerSourceValue reads a named entry's source marker (D3014): a mapping of
+// exactly the two fields ProviderKeySource names — the container and the version
+// — each a non-empty string within the per-credential bound. Neither is a
+// credential: a container's logical name and a version's number are names of
+// secrets, so an error about one may name the ENTRY and never a field's content,
+// as every refusal in this file does.
+//
+// A marker with a field missing is refused rather than read as half an answer.
+// ProviderKeySource.IsZero is what a reader asks, and half a marker answers
+// neither "the copy wrote this" nor "it did not" — so the document that could
+// not be read that way is refused whole.
+func providerSourceValue(entryKey string, v *yaml.Node) (ProviderKeySource, error) {
+	if v.Kind != yaml.MappingNode {
+		return ProviderKeySource{}, bundleErr(ErrBundleBadValue, entryKey)
+	}
+	var src ProviderKeySource
+	var seenContainer, seenVersion bool
+	for i := 0; i+1 < len(v.Content); i += 2 {
+		f, fv := v.Content[i], v.Content[i+1]
+		if f.Kind != yaml.ScalarNode || f.Tag != "!!str" {
+			return ProviderKeySource{}, bundleErr(ErrBundleUnknownField, entryKey)
+		}
+		switch f.Value {
+		case "container", "version":
+		default:
+			return ProviderKeySource{}, bundleErr(ErrBundleUnknownField, entryKey)
+		}
+		if fv.Kind != yaml.ScalarNode || fv.Tag != "!!str" || fv.Value == "" || len(fv.Value) > MaxBundleValueBytes {
+			return ProviderKeySource{}, bundleErr(ErrBundleBadValue, entryKey)
+		}
+		switch f.Value {
+		case "container":
+			if seenContainer {
+				return ProviderKeySource{}, bundleErr(ErrBundleBadValue, entryKey)
+			}
+			seenContainer = true
+			src.Container = fv.Value
+		case "version":
+			if seenVersion {
+				return ProviderKeySource{}, bundleErr(ErrBundleBadValue, entryKey)
+			}
+			seenVersion = true
+			src.Version = fv.Value
+		}
+	}
+	if !seenContainer || !seenVersion {
+		return ProviderKeySource{}, bundleErr(ErrBundleBadValue, entryKey)
+	}
+	return src, nil
 }
 
 // BundleSource reads the bundle document. It is an interface so a test can

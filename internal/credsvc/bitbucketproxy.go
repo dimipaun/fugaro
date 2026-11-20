@@ -21,6 +21,15 @@ package credsvc
 //     operator's stop switches are read next, so a stopped service proxies
 //     nothing (G8): the kill switches stop this exactly as they stop a model
 //     call.
+//   - What is per CALLER comes from the scope (C1, WS16) and not from this
+//     route's configuration: the policy the rules decide against, the token
+//     store a request is served with, the coverage of the repository it is
+//     served for, the reactions taken through that store, and — for a build's
+//     pairing — the table the call's slug is resolved through. One deployment's
+//     code therefore serves an installation's run against the project's
+//     policy, the installation's store and the installation's own table, and a
+//     workspace's run against the member's policy, the workspace's store and
+//     the workspace owner's coverage (D2978, D2979, R5).
 //   - The call itself is named by internal/gitproxy (B1.4) and by nothing here:
 //     Classify reads the path and the method, Decide answers for the run and
 //     the published block. This file owns no rule about what a run may fetch,
@@ -149,6 +158,21 @@ const maxLFSBatchBodyBytes = 1 << 20
 // stream). It joins the same vocabulary in the service's own log line (G7).
 const refusalEncodedBody = "body_encoded"
 
+// refusalNotDeclared is this route's own refusal class for a call whose
+// repository the deployment declares no coverage of (R19, D2978): it is not one
+// of gitproxy's classes either, and for a reason of the same kind — the rules
+// decide what a RUN may do with a repository it can reach, while this is the
+// deployment saying which repositories it holds a credential for at all. Under
+// a workspace it is the workspace owner's own declaration that answers it,
+// which is why the sentence names that owner's `fugaro update` (WS16).
+//
+// It is deliberately not the token store's token_not_covered, which is the
+// other half of the same story and a different fix: that one is a store that
+// holds no token covering a repository the deployment DOES declare, and this one
+// is a repository nothing declared. A class the operator's grep cannot tell
+// from the other would send them to the wrong one of the two.
+const refusalNotDeclared = "not_declared"
+
 // proxyUnaudited is what a run is told when a call this route would have
 // forwarded could not be recorded: a refusal it halts on (D143, the model
 // path's answerUnaudited).
@@ -227,8 +251,7 @@ const (
 )
 
 // pairingCovers reports whether a build's pairing reaches the repository a
-// classified call names, and answers the installation's own key for it when it
-// does.
+// classified call names, and answers the CALLER's own key for it when it does.
 //
 // The two spellings are the two the repository already has everywhere else: the
 // record holds the names the grant answered and the published image map keys a
@@ -236,14 +259,21 @@ const (
 // one canonically and provider-qualified (projectpolicy.Canonical,
 // gitproxy.Request.Repo). The comparison is made with the one function that
 // relates the two rather than with a second spelling of it here, and the slug
-// comes out of the installation's own table — the relation buildEntryRepos
+// comes out of the call's own table — the relation buildEntryRepos
 // checked when it wrote the pairing, read again from the table rather than
 // stored beside it.
+//
+// The table is the one the scope answers for this call (Scope.Repos, C1) and
+// never a table of this route's own: it holds the repositories of the CALLING
+// job account, which for a workspace is the set the workspace owner declared for
+// that account and not the workspace's whole coverage — so a pairing that names
+// a repository of another account has no slug here and the call is refused
+// rather than keyed by a repository the caller is not bound to (D2992, WS16).
 //
 // Anything the comparison cannot make is false and not an error: a record this
 // release cannot read is one no call is served for (fail closed), and the caller
 // is answered the rules' own class either way.
-func (s *Server) pairingCovers(repos []string, repo string) (string, bool) {
+func pairingCovers(repos []string, repo string, table map[string]string) (string, bool) {
 	if repo == "" {
 		return "", false
 	}
@@ -252,7 +282,7 @@ func (s *Server) pairingCovers(repos []string, repo string) (string, bool) {
 		if err != nil || canonical != repo {
 			continue
 		}
-		for slug, held := range s.cfg.Repos {
+		for slug, held := range table {
 			if held == repo {
 				return slug, true
 			}
@@ -297,15 +327,23 @@ func proxyIdentity(id Identity) gitproxy.Identity {
 //
 // It is asked only AFTER Decide admitted the call, and with the snapshot the
 // decision was made from: the rules decide whether the run may reach the
-// repository at all, and the selection only decides which of the
-// installation's tokens serves a call they allowed — so no choice made here can
+// repository at all, and the selection only decides which of the deployment's
+// tokens serves a call they allowed — so no choice made here can
 // widen what a run reaches (D2354). A request the rules refuse never reaches
 // this, and the refusal it gets is the rules' own class rather than one of the
 // token store's.
-func (s *Server) chooseBitbucketToken(ctx context.Context, snap bbtokens.Snapshot, canonical string, write bool) (bbtokens.Name, string, error) {
-	sel := s.cfg.Selector
+//
+// The store is the scope's own answer (ForgeReader.Bitbucket, WS16) and NOT a
+// field of this route's: an installation's scope answers its configured store,
+// or the legacy selector explicitly where it wired none, and a workspace's
+// answers the store the workspace's own bundle is served from. A nil store is
+// therefore a refusal in BOTH modes and not the legacy entry: the fallback this
+// function used to make is what C1 takes away, because a workspace whose store
+// answered nil would otherwise be served a token out of the workspace bundle
+// that nothing chose (D143, D2355).
+func (s *Server) chooseBitbucketToken(ctx context.Context, sel bbtokens.Selector, snap bbtokens.Snapshot, canonical string, write bool) (bbtokens.Name, string, error) {
 	if sel == nil {
-		sel = legacySelector{}
+		return "", "", &bbtokens.Refusal{Class: bbtokens.ClassNoToken}
 	}
 	choice, err := sel.Select(ctx, snap, canonical, write)
 	if err != nil {
@@ -330,6 +368,11 @@ func (s *Server) chooseBitbucketToken(ctx context.Context, snap bbtokens.Snapsho
 // — and it answers the contract's no_bitbucket_token class when the bundle
 // holds no Bitbucket token at all, which is the one case in which a proxied run
 // must be refused rather than served (D143).
+//
+// It is the INSTALLATION's scope that answers it, explicitly, where the
+// configuration wired no store (installationForge.Bitbucket, WS1): the route
+// reads nil as a refusal in both modes and makes no fallback of its own, so a
+// workspace's nil is never this (C1's own account of the two modes' answers).
 //
 // It ranks nothing and reads nothing. The legacy record's coverage IS the
 // node's bitbucket_token.allow_repos list (R3), and Decide has already held the
@@ -615,6 +658,16 @@ func (s *Server) refuseBuildProxy(ctx context.Context, w http.ResponseWriter, id
 }
 
 func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity, canonical string) {
+	// The three things this route reads that are per CALLER come from the scope
+	// (C1, WS16) and never from the configuration: the policy the rules decide
+	// against, the token store the request is served from, and the coverage a
+	// repository has to be in. The table the pairing used is the scope's too
+	// (ServeHTTP's own read, and pairingCovers below for a build). So one
+	// deployment's code serves an installation's run, whose scope answers the
+	// project's policy, the installation's store and the installation's own
+	// table, and a workspace's run, whose scope answers the MEMBER's policy, the
+	// workspace's store and the workspace owner's coverage (D2978, D2979, R5).
+	sc := scopeOfCall(ctx, s)
 	req, err := classifyProxy(r)
 	if err != nil {
 		reason := gitproxy.ReasonCallNotAllowed
@@ -673,7 +726,7 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 		// build was never paired for. The class is the rules' own
 		// (gitproxy.ReasonOtherRepository), which is what Decide answers the
 		// same request with for a run.
-		slug, paired := s.pairingCovers(id.BuildRepositories, req.Repo)
+		slug, paired := pairingCovers(id.BuildRepositories, req.Repo, sc.Repos())
 		if !paired {
 			s.refuseProxy(ctx, w, id, purpose, credential, gitproxy.ReasonOtherRepository)
 			return
@@ -742,9 +795,36 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 		lfsBody = consumed
 	}
 
-	shared, found, err := s.cfg.Policy.Shared(ctx)
+	shared, found, err := sc.Policy().Shared(ctx)
 	if err != nil || !found {
 		s.refuseUnavailable(ctx, w, id, purpose, credential, "the project's policy could not be read")
+		return
+	}
+	// The two fences a call under a workspace has to pass beside the rules, and
+	// the one place either is read: the workspace owner's coverage of this
+	// repository and, below, the member's own admission of it (R5, D1298,
+	// D2978). The coverage is asked BESIDE the member's policy and never instead
+	// of it — the two are different fences and a call has to pass both — so a
+	// repository the member's administrator admitted and the workspace owner did
+	// not declare is refused here with the class that names the fix (R19), and
+	// one the owner declared and the member did not admit is refused by the
+	// rules below.
+	//
+	// For an installation it decides nothing and is not a second rule: the
+	// canonical repository it asks about came out of the same table the
+	// installation's forge reader answers the coverage from (ServeHTTP's
+	// pairing, and the build's own binding above), so the answer is true for
+	// every call that reaches this point — which is what "an installation's
+	// behaviour is unchanged" means here. An error is a refusal and never a
+	// repository nothing covers: a coverage this deployment could not read is
+	// one it cannot serve a call out of (C1's ForgeReader).
+	covered, err := sc.Forge().Covers(ctx, canonical)
+	if err != nil {
+		s.refuseUnavailable(ctx, w, id, purpose, credential, "the coverage of this deployment's forge credential could not be read")
+		return
+	}
+	if !covered {
+		s.refuseProxyCoverage(ctx, w, id, purpose, credential)
 		return
 	}
 	// The binding, and the one place it is made (G3, G21). canonical is the
@@ -828,7 +908,7 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 	// policy other than the one that admitted the call and a policy published
 	// between two reads of this request is never half-applied.
 	snap := bbtokens.Snapshot{Policy: shared, Bundle: bundleTokensOf(b)}
-	name, token, err := s.chooseBitbucketToken(ctx, snap, canonical, proxyWrite(req))
+	name, token, err := s.chooseBitbucketToken(ctx, sc.Forge().Bitbucket(), snap, canonical, proxyWrite(req))
 	if err != nil {
 		var refusal *bbtokens.Refusal
 		if errors.As(err, &refusal) {
@@ -1112,21 +1192,24 @@ type reactions interface {
 // reactionStore answers the store this route's reactions are taken through, and
 // false for a service that has none.
 //
-// The Selector is the one value this service holds that answers the contract:
-// the contract's own stub answers all three interfaces (T9's tests are written
-// against it), and I1 wires the real selector, resolver and status store behind
-// one value. Asking it for the two side handles is therefore the seam this task
-// can build against without a Config field of its own — a field would be a
-// second place a deployment wires a store into, and the two could then disagree
-// about which tokens exist, which is the one thing a reaction must not do.
+// The store is the scope's own token store (ForgeReader.Bitbucket, WS16) — the
+// same value the selection was made through — and asking it for the two side
+// handles is the seam this route takes its reactions through without a Config
+// field of its own: a field would be a second place a deployment wires a store
+// into, and the two could then disagree about which tokens exist, which is the
+// one thing a reaction must not do. It is read from the scope rather than from
+// the configuration because a workspace's reactions are the workspace's store's:
+// a member's run must mark, hold and evict in the store its own requests are
+// served from and in no other (C1, R2, R4).
 //
-// false is the state of a service whose store is not wired: the legacy
-// single-token installation, whose Selector is nil (Config.Selector), or one
-// between this task and I1. Such a service reacts to nothing — what it answers
-// is what it answered before this task, passed through with its status, and each
-// request still writes its own one line.
-func (s *Server) reactionStore() (reactions, bool) {
-	r, ok := s.cfg.Selector.(reactions)
+// false is the state of a service whose store answers neither handle: the
+// legacy single-token installation, whose scope answers legacySelector (which
+// is a Selector and nothing else), or a deployment that wired none. Such a
+// service reacts to nothing — what it answers is what it answered before this
+// seam existed, passed through with its status, and each request still writes
+// its own one line.
+func (s *Server) reactionStore(ctx context.Context) (reactions, bool) {
+	r, ok := scopeOfCall(ctx, s).Forge().Bitbucket().(reactions)
 	return r, ok
 }
 
@@ -1196,7 +1279,7 @@ type bitbucketReaction struct {
 // route's forward, which writes one line and takes what is answered here as its
 // status.
 func (s *Server) reactToBitbucket(ctx context.Context, resp *http.Response, req gitproxy.Request, snap bbtokens.Snapshot, name bbtokens.Name, canonical, token string) bitbucketReaction {
-	if _, ok := s.reactionStore(); !ok {
+	if _, ok := s.reactionStore(ctx); !ok {
 		return bitbucketReaction{status: StatusOK}
 	}
 	switch resp.StatusCode {
@@ -1367,7 +1450,7 @@ func heldStatus(state bbtokens.State, until time.Time) *bbtokens.Status {
 // broken while the store, and every listing read off it, said available. The
 // eviction beside it takes no context at all.
 func (s *Server) applyBitbucketReaction(ctx context.Context, react bitbucketReaction, id Identity, purpose string, name bbtokens.Name, canonical string) {
-	st, ok := s.reactionStore()
+	st, ok := s.reactionStore(ctx)
 	if !ok {
 		return
 	}
@@ -1405,7 +1488,7 @@ func (s *Server) applyBitbucketReaction(ctx context.Context, react bitbucketReac
 // (bitbucketCountBudget, T6's own budget for it), so an unreachable database
 // cannot hold this goroutine.
 func (s *Server) countBitbucketRequest(ctx context.Context, name bbtokens.Name) {
-	st, ok := s.reactionStore()
+	st, ok := s.reactionStore(ctx)
 	if !ok {
 		return
 	}
@@ -1453,7 +1536,7 @@ func (s *Server) refuseThrottled(ctx context.Context, w http.ResponseWriter, id 
 // nothing: only a hold that is still on says anything about when the next
 // request may be served.
 func (s *Server) throttledHold(ctx context.Context, snap bbtokens.Snapshot) (time.Duration, bool) {
-	st, ok := s.reactionStore()
+	st, ok := s.reactionStore(ctx)
 	if !ok || snap.Bundle == nil {
 		return 0, false
 	}
@@ -1745,6 +1828,29 @@ func (s *Server) refuseProxyRepository(ctx context.Context, w http.ResponseWrite
 	s.logRefusal(ctx, id, ErrorRequestRefused, StatusRequestRefused, requestRefused+class, nil, nil)
 	s.refuse(w, StatusRequestRefused, ErrorRequestRefused,
 		requestRefused+class+": the call names "+requested+", and this run reaches "+paired+" alone")
+}
+
+// refuseProxyCoverage answers a call for a repository this deployment holds no
+// credential for: the workspace owner did not declare it for the forge entry
+// that serves the calling job account, so the workspace's own store has nothing
+// to serve the call with and no rule about the REQUEST could change that (R19,
+// C1's ForgeReader).
+//
+// The sentence is the fix and not the fact: what the run's owner can do about
+// it is ask the workspace owner to declare the repository, and the command that
+// publishes a credential's coverage is that owner's `fugaro update` — the same
+// shape R16 gives a missing invoke grant. The repository itself is not named in
+// it: the run halts on this and knows which repository it was working in, and a
+// sentence that echoed the call's own spelling would be caller text, which no
+// refusal of this route carries but the nested fetch's (refuseProxyRepository).
+//
+// The class still travels on the operator's own line, which names the run and
+// the repository the call was served for, and the refusal is recorded exactly
+// as every other refusal of the route is (one audit line, and this one).
+func (s *Server) refuseProxyCoverage(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential string) {
+	s.logProxyRefusal(id, purpose, refusalNotDeclared, nil)
+	s.refuseCall(ctx, w, id, purpose, credential, "", StatusRequestRefused, ErrorRequestRefused,
+		requestRefused+refusalNotDeclared+": this deployment declares no credential covering the repository this call is served for, and the workspace owner's fugaro update is what declares a credential's coverage")
 }
 
 // logProxyRefusal writes this route's own line for a refusal: the class, which
