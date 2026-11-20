@@ -336,7 +336,6 @@ type routeRow struct {
 // this project no longer serves a route for, or every record of a project that
 // left its workspace.
 type routeStale struct {
-	leaf string // the child name as the database holds it
 	path string
 	etag string
 	// route is the record as it was published, and read is whether this Fugaro
@@ -566,7 +565,7 @@ func (p *routePublication) readStale(ctx context.Context, lc *localcfg.Config, b
 		if !found {
 			continue
 		}
-		s := routeStale{leaf: leaf, path: path, etag: etag}
+		s := routeStale{path: path, etag: etag}
 		if s.route, s.read, _ = creds.DecodeRoute(raw); !s.read {
 			// A record this binary cannot read is removed like any other: this
 			// run publishes no route for it, and a record nothing publishes is
