@@ -329,6 +329,15 @@ func initStages(e *initEngine) []initflow.Stage {
 	// database to publish the record in.
 	e.r.workspaceStage = workspace
 	stages = append(stages, workspace)
+	// The credential route right after the workspace record and before the
+	// layer: it is the MEMBER's own published document, derived from the policy
+	// node the run has just published (which accounts and forge credentials the
+	// member's own policy admits) and from the membership key and pin the
+	// workspace stage's own subjects declare (update_route.go, WS9). A project
+	// in no workspace registers it and publishes nothing, removing whatever a
+	// former membership left behind — which is what makes leaving a workspace
+	// converge with no step of its own.
+	stages = append(stages, newCredentialsRouteStage(e))
 	// The layer stage after the policy one: the project layer this run would
 	// publish is read under the node the policy stage just moved in place, so a
 	// layer whose claims the older node could not carry is judged by the same

@@ -236,7 +236,10 @@ func (r *initRun) readCredentialsBundle(ctx context.Context, lc *localcfg.Config
 	// served under — the account's for tier A, config.AnthropicSecret for the
 	// paid key — and the GitHub App's private key, which a repository on
 	// GitHub needs the service to mint with and which is no model credential
-	// at all.
+	// at all. The provider key is read beside them and kept apart (credsProviderKey):
+	// it IS a model credential, but it is reached under the account name
+	// config.ProviderKeyAccount rather than its own, so it is not one of
+	// `names` and a caller that needs it reads the flag.
 	// The same reading answers the gate on the flip's drop: whether the bundle
 	// holds the upstream Bitbucket token, which is a question about the document
 	// just parsed and not a second read of the secret (bundleBitbucketToken,
@@ -252,6 +255,7 @@ func (r *initRun) readCredentialsBundle(ctx context.Context, lc *localcfg.Config
 		names[c.Name] = true
 	}
 	_, r.credsAppKey = b.AppKey()
+	_, r.credsProviderKey = b.ProviderKey()
 	return answer(names)
 }
 
