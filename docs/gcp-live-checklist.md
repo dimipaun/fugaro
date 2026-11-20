@@ -7584,7 +7584,7 @@ minutes) — the holder re-reads the lease before it acts and stops acting when 
 fences that make acting at most once (the ledger, the lease, then the run's own claim).
 
 **What the pass reports, and one bound on this check.** A `--json` pass prints one document per pairing carrying `pass` (`read`, `delivered`, `duplicates`, `refused`), the `acted` array and the `refused` array: a duplicate is refused with the
-module's own code **`duplicate`** (`mailboxCodeDuplicate`) and counted in `pass.duplicates`, and a record the strict reader cannot decode is `unreadable-record` (`mailboxCodeUnreadable`). The correct exit code for a pass whose only reading was a
+module's own code **`duplicate`** (`mailboxCodeDuplicate`) and counted in `pass.duplicates`, and a record the strict reader cannot decode is `unreadable-record` (`mailbox.CodeUnreadableRecord`, the reader's own code — the reader is `mailbox.ReadInbox`'s, and both consumers of one mailbox read through it). The correct exit code for a pass whose only reading was a
 duplicate is **0**, not 1: `mailboxExit` answers 1 only when the pass read at least one message, performed nothing, refused **every** message it read, and at least one of those refusals was an **action** refusal; exit 2 is a database that could not
 be reached or written. **The bound**: nothing here drives a record to eviction, because `mailbox.Ledger.Ack` — the step that makes a record `acked`, the only status that may be evicted — has **no caller** in `fugaro mailbox` today, and no phone
 `acked` is read either, so every re-read here is a `duplicate` and the watermark's `replay` refusal is not reachable from this check.
