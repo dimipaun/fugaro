@@ -1,0 +1,347 @@
+{
+  "schema_version": 3,
+  "plan": "docs/ci-affected-tests/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the selector's contract",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/types.go",
+          "internal/ciselect/select_stub.go",
+          "docs/ci-affected-tests/contract-select.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/ciselect/select_stub.go"
+      ]
+    },
+    {
+      "id": "CS1",
+      "title": "the reverse import graph",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/graph.go",
+          "internal/ciselect/graph_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CS2a",
+      "title": "the read-map: static scan of what tests open",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/scan.go",
+          "internal/ciselect/scan_test.go",
+          "scripts/ci-readmap/main.go",
+          "docs/ci-affected-tests/read-map.json"
+        ]
+      }
+    },
+    {
+      "id": "CS2b",
+      "title": "the read-map: runtime trace on the full run",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/trace.go",
+          "internal/ciselect/trace_test.go",
+          "scripts/ci-readmap/trace.go"
+        ]
+      }
+    },
+    {
+      "id": "CS3",
+      "title": "timings and the packer",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/pack.go",
+          "internal/ciselect/pack_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CS4",
+      "title": "the selector program",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/ci-select/main.go",
+          "internal/ciselect/select.go",
+          "internal/ciselect/select_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CS5",
+      "title": "the map cannot rot: the staleness test",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/readmap_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CS7",
+      "title": "the release gate reads that the run was full",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/release-gate.sh",
+          "scripts/release_gate_test.go"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "integration: the real graph, map and packer behind the selector",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/select.go",
+          "internal/ciselect/select_stub.go",
+          "internal/ciselect/integration_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "CS6",
+      "title": "ci.yml: select job, full input, nightly schedule (owner copy)",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/pending-workflows/README.md"
+        ]
+      }
+    },
+    {
+      "id": "CS8",
+      "title": "docs: CONTRIBUTING, release.md, the ruling",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "CONTRIBUTING.md",
+          "docs/release.md",
+          "docs/ci-affected-tests/README.md"
+        ]
+      }
+    },
+    {
+      "id": "CS9",
+      "title": "Check 780: measure and break one on purpose",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/ci-affected-tests/check-780.md"
+        ]
+      }
+    },
+    {
+      "id": "R-leg-shape",
+      "title": "amend the selector's contract: the leg shape",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/types.go",
+          "docs/ci-affected-tests/contract-select.md"
+        ]
+      },
+      "kind": "contract_change"
+    },
+    {
+      "id": "R-map-format",
+      "title": "amend the selector's contract: the read-map format",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/types.go",
+          "docs/ci-affected-tests/contract-select.md"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "CS4",
+      "needs": "C1",
+      "reason": "the input, output and map shapes it reads and prints"
+    },
+    {
+      "task": "CS2b",
+      "needs": "CS2a",
+      "reason": "the trace refines the scan's map: same file, same format, run after the scan exists"
+    },
+    {
+      "task": "CS5",
+      "needs": "CS2a",
+      "reason": "the scan it re-runs against the committed map"
+    },
+    {
+      "task": "I1",
+      "needs": "CS1",
+      "reason": "behaviour: the real graph replaces the stub"
+    },
+    {
+      "task": "I1",
+      "needs": "CS2a",
+      "reason": "behaviour: the real map replaces the stub"
+    },
+    {
+      "task": "I1",
+      "needs": "CS3",
+      "reason": "behaviour: the real packer replaces the stub"
+    },
+    {
+      "task": "I1",
+      "needs": "CS4",
+      "reason": "the program it wires"
+    },
+    {
+      "task": "CS6",
+      "needs": "I1",
+      "reason": "behaviour: ci.yml calls a selector that works end to end"
+    },
+    {
+      "task": "CS6",
+      "needs": "CS7",
+      "reason": "one sweep: the gate must accept what ci.yml names before it is copied in"
+    },
+    {
+      "task": "CS8",
+      "needs": "CS6",
+      "reason": "documents what ci.yml does"
+    },
+    {
+      "task": "CS8",
+      "needs": "CS7",
+      "reason": "documents what the gate requires"
+    },
+    {
+      "task": "CS9",
+      "needs": "CS6",
+      "reason": "measures the live workflow"
+    },
+    {
+      "task": "CS9",
+      "needs": "CS2b",
+      "reason": "the trace it breaks on purpose"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CS4",
+        "needs": "CS1"
+      },
+      "integration": "I1",
+      "reason": "the selector needs the graph's signature, not its code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CS4",
+        "needs": "CS2a"
+      },
+      "integration": "I1",
+      "reason": "the selector reads the map's format, not the scan that writes it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CS4",
+        "needs": "CS3"
+      },
+      "integration": "I1",
+      "reason": "the selector calls the packer's signature, not its algorithm"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-leg-shape",
+      "contract": "C1",
+      "raised_by": "CS6",
+      "reason": "if ci.yml's matrix needs a field the leg shape lacks",
+      "affects": [
+        "CS3",
+        "CS4"
+      ]
+    },
+    {
+      "change": "R-map-format",
+      "contract": "C1",
+      "raised_by": "CS2b",
+      "reason": "if a traced read needs a field the map format lacks",
+      "affects": [
+        "CS2a",
+        "CS4",
+        "CS5"
+      ]
+    }
+  ]
+}
