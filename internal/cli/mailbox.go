@@ -1206,20 +1206,17 @@ type mailboxInbox struct {
 	at      int64
 }
 
-// readInbox reads `mailbox/<uid>/inbox` and decodes each child with the strict
-// decoder §8.1 requires — never encoding/json into a struct, which would fold a
-// `Text` field into `text` and drop the unknown fields the tag covers.
-//
-// The order is oldest first, which is §7's: the ledger's act step acts on the
+// readInbox reads `mailbox/<uid>/inbox` as this pass' own item type. What the
+// read IS — the node, the strict decoder §8.1 requires (never encoding/json into
+// a struct, which would fold a `Text` field into `text` and drop the unknown
+// fields the tag covers), the two codes a child that cannot be read is refused
+// with, and the oldest-first order §7 needs (the ledger's act step acts on the
 // **oldest** accepted record, so a pass that handed it a newer one first would
-// commit a record whose action belongs to another message. A child whose `at`
-// cannot be read is sorted first and refused by the checks that follow it.
+// commit a record whose action belongs to another message) — is the module's,
+// and it is one function for the two consumers of a mailbox rather than one per
+// process: the resident orchestrator's consumer (P5.1f) reads this same node
+// through it. What is added here is the reporting type, and nothing else.
 func (c *mailboxConsumer) readInbox(ctx context.Context, uid string) ([]mailboxInbox, error) {
-	// The read itself is the module's, and so are the strict decode, the refusal
-	// vocabulary for a child that cannot be read and the oldest-first order: the
-	// resident orchestrator's consumer (P5.1f) reads the same node through the
-	// same function, and two consumers of one mailbox whose readers differed
-	// would be two answers to "which children does this inbox hold".
 	read, err := mailbox.ReadInbox(ctx, c.db, uid)
 	if err != nil {
 		return nil, dbErr(c.lc, err, false)
