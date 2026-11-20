@@ -205,6 +205,25 @@ func TestPersonaPOCKeepsTheTwoGuardrails(t *testing.T) {
 	}
 }
 
+// TestPersonaPOCReviewerStillReportsTheCatastrophicClass: POC tolerates what a
+// prototype may (spec §2.1, §5), with one exception no level gives up — the
+// spec's severity override, "rare but catastrophic findings (data loss,
+// security) block even in Startup mode", which the shipped table asks before
+// the level's own row, so a `security` or `data_loss` class blocks in every
+// level including POC (table.go's Blocks; docs/rigor-modes.md's POC row,
+// "nothing but a finding the spec calls catastrophic"). The reviewer's
+// findings are the only findings there are: a reviewer text that told its
+// reviewer to report the happy path's blockers and the guardrails would leave
+// that override nothing to fire on.
+func TestPersonaPOCReviewerStillReportsTheCatastrophicClass(t *testing.T) {
+	text := Persona(POC, Reviewer)
+	for _, want := range []string{"Do not report missing error handling", "`security`", "`data_loss`", "block at every level"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the POC reviewer text does not carry %q, so the level's catastrophic override can never fire:\n%s", want, text)
+		}
+	}
+}
+
 // TestPersonaStartupKeepsTheDeadlineLine: the spec's "on the critical path for
 // a deadline, cut harder" is persona wording, not a rule anything acts on — no
 // task carries a deadline — and a reworded file would quietly drop it.
