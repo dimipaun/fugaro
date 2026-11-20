@@ -23,13 +23,12 @@
 # reads them on a sandbox repository, row by row:
 #
 #   premise       the mode in force for the repository is `observe`: the
-#                 published policy (or the local config where no policy is
-#                 published) is read, and a mode that is not observe makes the
-#                 two refusals below rows about another mode. A mode that cannot
-#                 be read is UNVERIFIED, never a PASS.
-#   unpriced      `fugaro validate` on the checkout must REFUSE, and its refusal
-#                 must name `model_prices` (D3020). The model it names is the one
-#                 the repository's own file carries.
+#                 published policy is read and a mode that is not observe makes
+#                 the two refusals below rows about another mode. A mode that
+#                 cannot be read is UNVERIFIED, never a PASS.
+#   unpriced      `fugaro validate fugaro.yaml` on the checkout must REFUSE, and
+#                 its refusal must name `model_prices` (D3020). The model it
+#                 names is the one the repository's own file carries.
 #   mode-off      the repository's COMMITTED `fugaro.yaml` is read with `git show
 #                 HEAD:fugaro.yaml`: when it says `budget.mode: off`, a launch
 #                 from that checkout must be refused, at once, with the word
@@ -315,7 +314,7 @@ finish() {
     if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then status=2; fi
   fi
   if [ "$SCRATCH_REMOVED" = yes ]; then
-    facts="${facts}"$'\n'"restore|PASS|the scratch directory is gone (its documents: the committed fugaro.yaml, the published policy, the validate refusal and the launch refusal). Nothing else was created and nothing was changed"
+    facts="${facts}"$'\n'"restore|PASS|the scratch directory is gone (its documents: the committed fugaro.yaml, the published policy, the validate refusal and the launch's own answer). Nothing else was created and nothing was changed"
   else
     facts="${facts}"$'\n'"restore|FAIL|the scratch directory is STILL THERE, at ${SCRATCH} — remove it yourself"
   fi
@@ -435,7 +434,7 @@ step_unpriced() {
   local model vstatus=0
   model=$(model_of "$SCRATCH/committed.yaml")
   say "validating the checkout: a model with no price must be refused, naming model_prices"
-  (cd "$SANDBOX" && fugaro validate "$SANDBOX") >"$SCRATCH/validate.out" 2>&1 || vstatus=$?
+  (cd "$SANDBOX" && fugaro validate fugaro.yaml) >"$SCRATCH/validate.out" 2>&1 || vstatus=$?
   # The exit status is what says whether the validation REFUSED: a warning that
   # names the fix and exits 0 is exactly the reading this row exists to tell
   # apart from the refusal D3020 writes.

@@ -22410,8 +22410,8 @@ person can perform: an entry to add to `model_prices`, and a key to remove from 
 Nothing offline can settle that the refusal a **real** installation prints is the one the plan wrote, that the
 fix it names is the fix that clears it, or that the refusal really happens under a mode that refuses nothing:
 
-- **`unpriced` — D3020.** `fugaro validate <the checkout>` must **refuse**, and its refusal must name
-  `model_prices`. The model it is about is the one the repository's own committed file carries (the first
+- **`unpriced` — D3020.** `fugaro validate fugaro.yaml`, run in the checkout, must **refuse**, and its refusal
+  must name `model_prices`. The model it is about is the one the repository's own committed file carries (the first
   `model:` under `agent:`, or the top-level one a file may carry). The **exit status** is what says the
   validation refused: a message that names the fix and exits **0** is a warning, and the row reads **FAIL** —
   a run that goes on to spend a model nobody priced. A checkout whose model **is** priced has no subject for
@@ -22429,7 +22429,7 @@ fix it names is the fix that clears it, or that the refusal really happens under
 
 **The premise it reads first.** Both rows are statements about what happens under **`observe`**, so the mode
 in force is read first, from the published policy (`fugaro project policy show --project <installation>
---json`, or the local config where no policy is published). A mode of `observe` is the premise and the two
+--json`). A mode of `observe` is the premise and the two
 rows follow. A mode that is **not** observe is a FAIL: a refusal read under another mode measures a different
 thing. A policy read that did not answer with a mode is **UNVERIFIED, never a PASS** — a refusal read under an
 unknown mode is a refusal about nothing. The same step reads the committed file and refuses to go on when the
@@ -22481,7 +22481,7 @@ of a document the repository or the installation already wrote — its committed
 tree, the published policy, and the refusals themselves. **No secret is read**, so none can be printed.
 
 **Restore.** The scratch directory — the committed `fugaro.yaml`, the published policy, the validation's
-output, the launch's refusal and the task file the check wrote — is removed on the way out, from the exit trap
+output, the launch's own answer and the task file the check wrote — is removed on the way out, from the exit trap
 on a Ctrl-C as well, and the `restore` row is that reading (a FAILed row names the directory to remove by
 hand). Nothing else was created and nothing was changed: the checkout, its branches and the installation are
 exactly as they were. **OWNER-RUN, NOT RUN: no agent runs any step of it.**

@@ -53,6 +53,14 @@ project)
   exit "${FAKE791_POLICY_STATUS:-0}"
   ;;
 validate)
+  # The real `fugaro validate [path]` reads a FILE (`readFugaroYAML`), so a
+  # directory here is the mistake a fake that answers anything would hide: the
+  # real CLI answers "is not a regular file" and the check would read that as a
+  # refusal that never names model_prices.
+  if [ -n "${2:-}" ] && [ ! -f "${2:-}" ]; then
+    printf 'fake fugaro: validate was given %s, which is not a file (the real CLI reads a fugaro.yaml, never a directory)\n' "$2" >&2
+    exit 64
+  fi
   if [ -f "${FAKE791_DIR:?}/validate.txt" ]; then cat "$FAKE791_DIR/validate.txt"; fi
   exit "${FAKE791_VALIDATE_STATUS:-0}"
   ;;
