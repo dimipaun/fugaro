@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -245,6 +246,20 @@ type ReviewSummary struct {
 	// for the cheap loop after the first one, and so on. Always 0 on a
 	// senior (tier "" or "senior") review.
 	Bounce int `json:"bounce,omitempty"`
+	// Against is what this round was checked against: the task the pull
+	// request was written for, or the spec a launcher wrote (spec §2, R8).
+	// It is the same record the independent review job's artifact carries
+	// (Against, review.json's against), so a reader that wants to know
+	// whether a verdict judged the change against a brief reads one object
+	// in both — and, as there, it is a CLAIM and never evidence (R16).
+	//
+	// Every round carries one: a round with no brief to check against
+	// records source none with the reason, so a code-only review says so in
+	// its own record rather than leaving a reader to guess. Absent on a
+	// round written before the field existed, which is every record an
+	// older release wrote; the field is additive, so such a record stays
+	// valid and version stays 1.
+	Against *Against `json:"against,omitempty"`
 }
 
 // Review tiers (ReviewSummary.Tier).
@@ -1994,6 +2009,17 @@ type Record struct {
 	// written before this field existed, so an old reader sees the record it
 	// always saw.
 	ConflictPaths []string `json:"conflict_paths,omitempty"`
+	// Messages is the run's part in the message channel
+	// (docs/run-messages, F13, F24, F25): whether this run reads messages at
+	// all, the format and the flags its runner knows, and what became of each
+	// message it saw. The block is written at bootstrap, so a sender can tell
+	// a run whose runner predates the feature from one that will read the
+	// message, and it carries no message text: the record is writable by the
+	// run's own agent, so it is an audit trail and never the message. Absent —
+	// never an empty block — for a run written before this field existed, so
+	// an old reader sees the record it always saw: the field is additive, and
+	// the format's version stays 1.
+	Messages *runmsg.Record `json:"messages,omitempty"`
 }
 
 // PatchName is a run's patch object under its own prefix:

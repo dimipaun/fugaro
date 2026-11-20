@@ -47,12 +47,17 @@ func TestOrchestratorServeIsHidden(t *testing.T) {
 }
 
 // TestOrchestratorServiceEnvIsTheDeploymentsOwn holds the two spellings of this
-// service's environment to each other, in both directions: the three names this
-// process reads are the three orchestrator.tf sets on the container, and the
+// service's environment to each other, in both directions: the six names this
+// process reads are the six orchestrator.tf sets on the container, and the
 // module sets nothing beside them. The direction that matters is the module
 // setting a name this command does not read — a fact an operator would believe
 // was in effect — and the other is a name this command reads that nothing sets,
 // which is a service that refuses to start on a deployment that is right.
+//
+// Three of the six are P5.1c's and three are P5.1d's (the launch's: the GCP
+// project, the region and the runs bucket), and the test holds the same line
+// over both: a name the launch needs that the module does not set is a service
+// that serves its node and refuses every attempt it reads.
 //
 // internal/infra/tf's orchestratorServiceEnv is the third side of the triangle,
 // and it is held to the module by that package's own test (the cover's
@@ -77,11 +82,29 @@ func TestOrchestratorServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 
 // orchestratorServeEnv is a complete, valid environment: the names
 // orchestrator.tf sets on the service's container, with the golden fixtures'
-// shapes.
-var orchestratorServeEnv = map[string]string{
-	envProject:    "aurora",
-	envFirebaseFP: "aurora",
-	envRTDBURL:    "https://aurora-default-rtdb.firebaseio.com",
+// shapes. The launch's three are here as well, because a configuration built
+// from this map is the one the tests below hand a launcher, and a launch with
+// no region or no bucket is a refusal rather than a launch.
+var orchestratorServeEnv = orchestratorLaunchEnv(nil)
+
+// orchestratorLaunchEnv is a complete environment with the cases above it held
+// fixed and one override applied: the launch's three are read after the three
+// that come before them, so a case about one of them has to hand in the rest.
+// An override with an empty value is how a MISSING name is spelled, which is the
+// shape orchestrator.tf would leave behind if a block were dropped.
+func orchestratorLaunchEnv(over map[string]string) map[string]string {
+	env := map[string]string{
+		envProject:    "aurora",
+		envFirebaseFP: "aurora",
+		envRTDBURL:    "https://aurora-default-rtdb.firebaseio.com",
+		envGCPProject: "aurora",
+		envRegion:     "europe-west4",
+		envBucket:     "gs://aurora-runs",
+	}
+	for k, v := range over {
+		env[k] = v
+	}
+	return env
 }
 
 // TestOrchestratorServiceConfigRefusesWhatItCannotKnow is the fail-closed half
@@ -116,6 +139,39 @@ func TestOrchestratorServiceConfigRefusesWhatItCannotKnow(t *testing.T) {
 			name: "a database URL that is not one",
 			env:  map[string]string{envProject: "aurora", envFirebaseFP: "aurora", envRTDBURL: "http://aurora-default-rtdb.firebaseio.com/state"},
 			want: envRTDBURL,
+		},
+		// The launch's three (P5.1d), each reached past the three above and
+		// each refused on its own: a deployment that is missing one of them is
+		// told which, at start-up, rather than at the first tick's launch.
+		{
+			name: "no GCP project",
+			env:  orchestratorLaunchEnv(map[string]string{envGCPProject: ""}),
+			want: envGCPProject,
+		},
+		{
+			name: "a GCP project that is not a project ID",
+			env:  orchestratorLaunchEnv(map[string]string{envGCPProject: "Aurora"}),
+			want: envGCPProject,
+		},
+		{
+			name: "no region",
+			env:  orchestratorLaunchEnv(map[string]string{envRegion: ""}),
+			want: envRegion,
+		},
+		{
+			name: "no runs bucket",
+			env:  orchestratorLaunchEnv(map[string]string{envBucket: ""}),
+			want: envBucket,
+		},
+		{
+			name: "a runs bucket that is not a URL",
+			env:  orchestratorLaunchEnv(map[string]string{envBucket: "aurora-runs"}),
+			want: envBucket,
+		},
+		{
+			name: "a bucket URL that names an object of it",
+			env:  orchestratorLaunchEnv(map[string]string{envBucket: "gs://aurora-runs/runs/20261117-050000-abcd"}),
+			want: envBucket,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -313,12 +369,13 @@ func (f *fakeOrchestratorStore) PutIfMatch(_ context.Context, path, _ string, _ 
 // what the pass logged. It goes through ServeHTTP and not through tick, because
 // the route is part of what is pinned: a pass that wrote nothing but answered
 // the wrong request would still be a service. P5.1d's half of the pass — the
-// launch requests the node holds, which this deployment reads and starts none of
-// — is driven in orchestrator_serve_launch_test.go.
-func tickForTest(t *testing.T, store *fakeOrchestratorStore, id string) (*httptest.ResponseRecorder, string) {
+// launch requests the node holds, which this pass carries through the launcher
+// it is built with — is driven in orchestrator_serve_launch_test.go, whose
+// fakeResidentLauncher is what the callers here hand in.
+func tickForTest(t *testing.T, store *fakeOrchestratorStore, id string, launch orchestrator.Launcher) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 	var log bytes.Buffer
-	srv, err := newResidentOrchestrator(orchestratorConfig{id: id, db: store, log: runner.NewLogger(&log)})
+	srv, err := newResidentOrchestrator(orchestratorConfig{id: id, db: store, launch: launch, log: runner.NewLogger(&log)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +423,7 @@ func TestOrchestratorTickReadsTheNodeThePreviousPassLeft(t *testing.T) {
 		},
 		at: at,
 	}
-	rec, logged := tickForTest(t, store, "aurora")
+	rec, logged := tickForTest(t, store, "aurora", &fakeResidentLauncher{})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the tick answered %d (%s), and the node it read is this installation's: %s", rec.Code, rec.Body.String(), logged)
 	}
@@ -380,8 +437,8 @@ func TestOrchestratorTickReadsTheNodeThePreviousPassLeft(t *testing.T) {
 	if pass.LeaseHolder != "daemon-abc" || pass.LeaseAt != "2026-11-17T05:00:00Z" {
 		t.Errorf("the pass read the lease as %q at %q, and the store holds daemon-abc at 05:00:00Z: the lease is read from the store and not remembered", pass.LeaseHolder, pass.LeaseAt)
 	}
-	if !strings.Contains(logged, "tick read the node and ran no step") {
-		t.Errorf("the pass logged %q, and the line an operator reads to see a tick is the one naming that it ran no step", logged)
+	if !strings.Contains(logged, orchestratorPassLine) {
+		t.Errorf("the pass logged %q, and the line an operator reads to see a tick is %q", logged, orchestratorPassLine)
 	}
 }
 
@@ -392,7 +449,7 @@ func TestOrchestratorTickReadsTheNodeThePreviousPassLeft(t *testing.T) {
 // nobody holds, and starts nothing.
 func TestOrchestratorTickOnAnEmptyInstallationIsAPass(t *testing.T) {
 	store := &fakeOrchestratorStore{docs: map[string]string{}, at: time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)}
-	rec, _ := tickForTest(t, store, "aurora")
+	rec, _ := tickForTest(t, store, "aurora", &fakeResidentLauncher{})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("an empty installation answered %d (%s): a node nobody has written yet is an empty state, not a failure", rec.Code, rec.Body.String())
 	}
@@ -422,7 +479,7 @@ func TestOrchestratorTickRefusesAnotherLoopsDocument(t *testing.T) {
 		strings.Replace(residentStateDoc, `"role": "orchestrator"`, `"role": "coordinator"`, 1),
 	} {
 		store := &fakeOrchestratorStore{docs: map[string]string{statePath: doc}, at: time.Now()}
-		rec, _ := tickForTest(t, store, "aurora")
+		rec, _ := tickForTest(t, store, "aurora", &fakeResidentLauncher{})
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("a document of another loop answered %d (%s): the pass must not read somebody else's node as its own", rec.Code, rec.Body.String())
 		}
@@ -436,7 +493,7 @@ func TestOrchestratorTickRefusesAnotherLoopsDocument(t *testing.T) {
 // text into.
 func TestOrchestratorTickAnswersOnlyItsOwnRoute(t *testing.T) {
 	store := &fakeOrchestratorStore{docs: map[string]string{}, at: time.Now()}
-	srv, err := newResidentOrchestrator(orchestratorConfig{id: "aurora", db: store, log: runner.NewLogger(io.Discard)})
+	srv, err := newResidentOrchestrator(orchestratorConfig{id: "aurora", db: store, launch: &fakeResidentLauncher{}, log: runner.NewLogger(io.Discard)})
 	if err != nil {
 		t.Fatal(err)
 	}

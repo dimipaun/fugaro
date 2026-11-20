@@ -32,3 +32,69 @@ variable "names" {
     error_message = "names.workspace_account_id must be a service account ID: 6-30 characters of a-z, 0-9 and -, starting with a letter."
   }
 }
+
+variable "members" {
+  description = "The workspace owner's own member table, as the invoke grants are made from: one entry per member, keyed by the member's Fugaro project name, each carrying the member's job service accounts — the identities the workspace's service resolves a caller by. An empty map (the default) makes no invoke grant, and the owner's `fugaro update` is what converges a member added or removed."
+  type = map(object({
+    job_service_accounts = list(string)
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for m in values(var.members) : alltrue([
+        for sa in m.job_service_accounts : can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", sa))
+      ])
+    ])
+    error_message = "members.*.job_service_accounts must be IAM service account addresses (<id>@<project>.iam.gserviceaccount.com): the invoke grant is bound to the address itself, so an entry that is not one would grant roles/run.invoker on the workspace's own service to whatever was written there."
+  }
+}
+
+variable "credentials_service" {
+  description = "The workspace's own credentials service (D2980): the same image an installation's service runs, in the workspace's own project, told what it is by its environment. Null — the default — creates no service, no bundle accessor and no invoke grant, which is the state of a workspace whose owner has not deployed it yet. The image's host, project and repository are checked against region, project and the remote repository below."
+  type = object({
+    service          = string
+    image            = string
+    region           = string
+    bundle_secret    = string
+    firebase_project = string
+    rtdb_url         = string
+    url              = optional(string)
+  })
+  default = null
+
+  validation {
+    condition     = var.credentials_service == null || can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.credentials_service.service))
+    error_message = "credentials_service.service must be a Cloud Run service name: 6-30 characters of a-z, 0-9 and -, starting with a letter."
+  }
+
+  # The image is held to the shape an installation's own credentials service is
+  # deployed with, because it is that same image running the same code (D2980)
+  # and every instance of it reads every model credential the workspace holds:
+  #
+  #   <region>-docker.pkg.dev/<project>/fugaro-ghcr/<owner>/fugaro-<kind>:<version>@sha256:<64 hex>
+  #
+  # The ONE part this root cannot state is the owner: it is a fact of the
+  # machine's recorded config (localcfg's image_source), no variable here carries
+  # it, and internal/infra/tf's credentialsImageOK — the rule the root's cover
+  # applies to the plan before this file is ever read — is where it is checked.
+  # Everything a tfvars could otherwise choose is stated here: another project's
+  # registry, another registry host, the project's own writable repositories
+  # (fugaro-base, which every operator holds artifactregistry.writer on, so a
+  # digest they pushed and named there is theirs to choose), a bare tag or a
+  # namespace that is not a fugaro-<kind> release. See
+  # modules/compute/variables.tf's base_image, which is the same rule for the
+  # preload pin and the same reason for the same variables.
+  validation {
+    condition = var.credentials_service == null || can(regex(
+      "^${var.credentials_service.region}-docker\\.pkg\\.dev/${var.project}/fugaro-ghcr/[^/]+/fugaro-[a-z0-9]+(?:-[a-z0-9]+)*:[0-9]+\\.[0-9]+\\.[0-9]+@sha256:[0-9a-f]{64}$",
+      var.credentials_service.image,
+    ))
+    error_message = "credentials_service.image must be this installation's released pin served through the remote repository: <region>-docker.pkg.dev/<project>/fugaro-ghcr/<owner>/fugaro-<kind>:<version>@sha256:<64 lower-case hex digits>, with the host and project this root's own region and project. A tag is mutable, another registry or another repository means the image is somebody else's or an operator's own push, and every instance of this service reads every model credential the workspace holds."
+  }
+
+  validation {
+    condition     = var.credentials_service == null || can(regex("^[a-z]+-[a-z]+[0-9]+$", var.credentials_service.region))
+    error_message = "credentials_service.region must be a region name such as us-east5."
+  }
+}

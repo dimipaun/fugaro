@@ -130,6 +130,11 @@ func init() {
 	// built from comes from, so that field is held to the document it prints.
 	add("orchestrator state", orchestratorStateDoc{}, "rev")
 	add("watch --once", watch.BuildJSON("p", watch.View{}), "project")
+	// The working skill's troubleshoot reference reads which tier answered a
+	// diagnosis, the cloud run it launched and the cost its record holds, so
+	// the three additive fields the tier arrived with (D2410) are held to the
+	// document they are encoded from.
+	add("troubleshoot", troubleshootDoc{}, "tier", "cloud_run", "cloud_cost_usd")
 }
 
 // hasJSONField reports whether the JSON encoding of t has the dotted path.

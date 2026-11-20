@@ -719,6 +719,37 @@ const reviewJobSince = "0.20.0"
 // the class.
 const reviewAdmissionSince = "0.21.0"
 
+// reviewSpecSince is the first fugaro release whose runner reads a review's
+// spec off the task it was handed (task.Spec.ReviewSpec, FromFindings and
+// OwnText; docs/review-against-task R2): the task a pull request was written
+// for, the follow-up's text beside it, and the person's own words on a
+// findings follow-up. task.Parse decodes with DisallowUnknownFields, so an
+// older runner refuses the WHOLE spec at bootstrap — bytes in the bucket
+// under a run that never starts — which is why the launcher judges the image
+// before it writes one.
+//
+// It is judged twice, and the two are the two halves of D2933:
+//
+//   - The FIELDS are omitted, never refused: a review whose job image
+//     predates this release runs code-only, and the launcher says so in one
+//     line naming `fugaro update` (and in `--json`, D2933 as amended). The
+//     run is worth more than the check, so the launch proceeds — the
+//     direction baseBranchSkew and authorSkew take for their own fields.
+//   - The repository's own KEY (agent.review_against_task, S-KNOB) is
+//     refused at launch instead, as triageSince's key is: its holder asked
+//     for the check, and a job that cannot run it would answer a request
+//     nobody could honor. `fugaro validate` warns where a launch would
+//     refuse.
+//
+// It gates the field and never the flag, exactly as contextReposSince does: a
+// launch that carries none of the three fields is never judged, and a --retry
+// of a task that carries them is judged the way the launch that wrote it was.
+// It names 0.27.0, the release this work ships in, which is not tagged yet:
+// docs/release.md's ("Before you tag") list verifies the number against the
+// tag actually cut, the way digestSince's and reviewLevelsSince's bullets
+// record.
+const reviewSpecSince = "0.27.0"
+
 // providerEntrySince is the first fugaro release whose credentials service
 // reads the bundle's provider entry (config.ProviderKeySecret, AK6b of
 // docs/api-key-review): the project's provider credential, whose value is the

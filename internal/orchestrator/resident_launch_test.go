@@ -22,6 +22,11 @@ import (
 // carries.
 const residentRun = "20261117-050000-abcd"
 
+// residentRunB is a second attempt's run id, for the tests that need two
+// re-issues on one node: the shape is the same one, and the two differ so that a
+// launcher can refuse one of them.
+const residentRunB = "20261117-051500-ef01"
+
 // TestResidentRequestsCarryOutANodesOwnReissue is the read end to end and the
 // half of the design that says what it is for: the attempt is already on the
 // node — a person's patch committed it — and what is left is to start it. The
@@ -146,5 +151,81 @@ func TestResidentRequestsAreTheAttemptsThePlanCannotSeeStarted(t *testing.T) {
 	}
 	if len(requests) != 0 {
 		t.Fatalf("the pass read %+v as a launch request, and nothing may start under the abandoned intent", requests)
+	}
+}
+
+// residentRefusingLauncher refuses the run ids a test names and answers every
+// other one with the id it was handed: the shape of a launcher that cannot start
+// one attempt of a node — its task is not in the runs bucket, its repository's
+// document cannot be read — while every other attempt is startable.
+type residentRefusingLauncher struct {
+	refuse map[string]error
+	asked  []string
+}
+
+func (l *residentRefusingLauncher) Launch(_ context.Context, _ orchestrator.Spec, runID string) (string, error) {
+	l.asked = append(l.asked, runID)
+	if err := l.refuse[runID]; err != nil {
+		return "", err
+	}
+	return runID, nil
+}
+
+// TestResidentCarryStartsEveryReissueAndCollectsTheRefusals is the whole of what
+// a resident pass does besides reading: every re-issue the plan read goes to the
+// launcher, and ONE refusal does not stop the rest. The daemon's cycle stops at
+// the first failure because a daemon writes — an attempt nothing can start is
+// eventually abandoned or the breaker pauses the node — and a resident pass has
+// none of those (no abandon, no breaker, no pause: all writes), so a node whose
+// first request a launcher refuses for good would never make progress again if
+// the carrying stopped there.
+//
+// What a refusal comes back as is a collected error and not a failure of the
+// pass: the caller reports each one, which is a thing a person can act on, and
+// the counts say what was read, what was carried and what was left beside them.
+func TestResidentCarryStartsEveryReissueAndCollectsTheRefusals(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	past := now.Add(-orchestrator.ClaimTTL - time.Minute)
+	first, firstIntent := o6OpenItem("wi-1", residentRun, approvedAt, past)
+	second, secondIntent := o6OpenItem("wi-2", residentRunB, approvedAt, past)
+	s := o6Node(t, now, first, second)
+	s.Intents = []orchestrator.Intent{firstIntent, secondIntent}
+
+	refused := errors.New("the runs bucket holds no task for this run")
+	l := &residentRefusingLauncher{refuse: map[string]error{residentRun: refused}}
+	out := orchestrator.ResidentCarry(context.Background(), orchestrator.Starter{Launcher: l}, s, orchestrator.RunView{}, o6Caps(), now)
+
+	if out.Read != 2 || out.Carried != 1 || out.Left != 0 {
+		t.Fatalf("the pass read %d, carried %d and left %d, and the node holds two attempts past their window with one launcher refusing one of them: %+v", out.Read, out.Carried, out.Left, out)
+	}
+	if len(out.Refused) != 1 || !errors.Is(out.Refused[0], refused) {
+		t.Fatalf("the pass reports %v refused, and the launcher refused exactly one attempt with %v: a refusal that is swallowed reads as a pass with nothing to do", out.Refused, refused)
+	}
+	if !slices.Equal(l.asked, []string{residentRun, residentRunB}) {
+		t.Errorf("the launcher was asked for %v, and BOTH attempts were the pass's to carry — the refused one first, then the one behind it", l.asked)
+	}
+}
+
+// TestResidentCarryRefusesEveryRequestWithoutALauncher: the starter a resident
+// pass holds carries a launcher and nothing else (the file's header). One built
+// with no launcher at all — the shape a deployment would fall into if the
+// configuration ever stopped building one — refuses every request with the
+// starter's own sentence rather than panicking or, worse, counting a start it
+// never made: what a pass must never report is a carried attempt no launcher was
+// asked for.
+func TestResidentCarryRefusesEveryRequestWithoutALauncher(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	w, it := o6OpenItem("wi-1", residentRun, approvedAt, now.Add(-orchestrator.ClaimTTL-time.Minute))
+	s := o6Node(t, now, w)
+	s.Intents = []orchestrator.Intent{it}
+
+	out := orchestrator.ResidentCarry(context.Background(), orchestrator.Starter{}, s, orchestrator.RunView{}, o6Caps(), now)
+	if out.Read != 1 || out.Carried != 0 || out.Left != 0 {
+		t.Fatalf("the pass read %d, carried %d and left %d, and a starter with no launcher can carry nothing: %+v", out.Read, out.Carried, out.Left, out)
+	}
+	if len(out.Refused) != 1 || out.Refused[0] == nil {
+		t.Fatalf("the pass reports %v refused, and a re-issue with no launcher to carry it is a refusal a person has to see", out.Refused)
 	}
 }
