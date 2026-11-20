@@ -18,7 +18,10 @@
           "internal/credsvc/sealkey_stub.go",
           "internal/localcfg/localcfg.go",
           "internal/localcfg/batch_sealkey.go",
-          "docs/batch-run-identity/contract-key-release.md"
+          "docs/batch-run-identity/contract-key-release.md",
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json",
+          "internal/localcfg/testdata/shared.golden.yaml"
         ]
       },
       "kind": "contract",
@@ -42,7 +45,8 @@
           "internal/backend/batch/seal.go",
           "internal/backend/batch/account.go",
           "internal/backend/batch/secrets.go",
-          "internal/backend/deployedjob.go"
+          "internal/backend/deployedjob.go",
+          "internal/cli/docs_budget_token_channel_test.go"
         ]
       }
     },
@@ -58,7 +62,8 @@
         "paths": [
           "scripts/live-checks/check-810.sh",
           "scripts/live-checks/check-810_test.sh",
-          "docs/gcp-live-checklist.md"
+          "docs/gcp-live-checklist.md",
+          "scripts/live_checks_test.go"
         ]
       }
     },
@@ -75,7 +80,10 @@
           "internal/budget/token/wrap.go",
           "internal/budget/token/wrap_test.go",
           "internal/backend/batch/seal.go",
-          "internal/backend/batch/seal_test.go"
+          "internal/backend/batch/seal_test.go",
+          "internal/cli/docs_budget_token_channel_test.go",
+          "docs/design/budget-token-channel.md",
+          "docs/design/compute-backend.md"
         ]
       }
     },
@@ -144,7 +152,8 @@
           "deploy/terraform/gcp/modules/compute/**",
           "deploy/terraform/gcp/roots/compute/**",
           "internal/infra/tf/cover.go",
-          "internal/infra/tf/testdata/golden/**"
+          "internal/infra/tf/testdata/golden/**",
+          ".claude/rules/credentials-service.md"
         ]
       }
     },
@@ -181,7 +190,8 @@
           "internal/cli/doctor_batch.go",
           "internal/cli/doctor_batch_test.go",
           "internal/cli/validate_batch.go",
-          "internal/cli/validate_batch_test.go"
+          "internal/cli/validate_batch_test.go",
+          "internal/cli/backends_use_test.go"
         ]
       }
     },
@@ -197,7 +207,9 @@
         "paths": [
           "internal/backend/batch/env.go",
           "internal/backend/batch/env_test.go",
-          "internal/backend/launchenv.go"
+          "internal/backend/launchenv.go",
+          "internal/infra/spec.go",
+          "internal/infra/spec_batch_test.go"
         ]
       }
     },
@@ -262,9 +274,7 @@
         "paths": [
           "SECURITY.md",
           "website/content/security.md",
-          "docs/backends.md",
-          "docs/design/budget-token-channel.md",
-          ".claude/rules/credentials-service.md"
+          "docs/backends.md"
         ]
       }
     },
@@ -280,7 +290,23 @@
         "paths": [
           "scripts/live-checks/check-811.sh",
           "scripts/live-checks/check-811_test.sh",
-          "docs/gcp-live-checklist.md"
+          "docs/gcp-live-checklist.md",
+          "scripts/live_checks_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR14",
+      "title": "the reaper ends a sealed run at its token's life",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/batch/reap.go",
+          "internal/backend/batch/reap_sealed_test.go"
         ]
       }
     },
@@ -367,11 +393,6 @@
       "reason": "the route's shapes and the marker's name"
     },
     {
-      "task": "BR5",
-      "needs": "C1",
-      "reason": "the root's output and input names"
-    },
-    {
       "task": "BR6",
       "needs": "C1",
       "reason": "the block's key fact and the root's names"
@@ -419,7 +440,7 @@
     {
       "task": "BR13",
       "needs": "BR0",
-      "reason": "one file: the checklist"
+      "reason": "two files: the checklist and the scripts' list"
     },
     {
       "task": "I1",
@@ -515,18 +536,24 @@
       "task": "R-C1-project-job-account",
       "needs": "C1",
       "reason": "amends a file C1 creates"
+    },
+    {
+      "task": "BR5",
+      "needs": "BR0",
+      "reason": "data: the owner's result of Check 810 and his confirmation of O1 decide the role"
+    },
+    {
+      "task": "BR14",
+      "needs": "C1",
+      "reason": "the marker's name"
+    },
+    {
+      "task": "I1",
+      "needs": "BR14",
+      "reason": "it wires the real sides and proves them together"
     }
   ],
   "decoupling": [
-    {
-      "contract": "C1",
-      "was": {
-        "task": "BR5",
-        "needs": "BR0"
-      },
-      "integration": "I1",
-      "reason": "the role is written against the permission the contract states; if Check 810 says otherwise the contract change amends it"
-    },
     {
       "contract": "C1",
       "was": {
@@ -598,6 +625,15 @@
       },
       "integration": "I1",
       "reason": "the script reads the marker's and the route's names, not the runner"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR14",
+        "needs": "BR1"
+      },
+      "integration": "I1",
+      "reason": "the reaper needs the marker's name, not the code that writes it"
     }
   ],
   "contract_changes": [
@@ -605,7 +641,7 @@
       "change": "R-C1-link-permission",
       "contract": "C1",
       "raised_by": "BR3",
-      "reason": "if Check 810 shows the link needs compute.instances.get as well, and the owner agrees (O1)",
+      "reason": "once Check 810 has named the link's read and the owner has confirmed O1, it writes that permission into the contract",
       "affects": [
         "BR3",
         "BR5"
