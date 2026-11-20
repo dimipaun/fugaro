@@ -1201,13 +1201,21 @@ test.describe('the Projects view in the dashboard', () => {
   /** openSettingsGroup opens one accordion section of the settings panel: every
    * group is collapsed when the panel paints (spec section 4), so a row is behind
    * a click on its own heading -- and a click on a row's pencil needs the row on
-   * screen. */
+   * screen. A click on a `<summary>` is a toggle, though, and a group another
+   * case already opened stays open: the panel is redrawn by its own read and not
+   * by a settings write, so a second case in this file meets the Runs section as
+   * the first one left it, and a blind second click would put it away again --
+   * a row inside a closed `<details>` has no client rects, so Playwright calls it
+   * invisible and the pencil click behind it times out. The click happens only
+   * when the group is really closed. */
   async function openSettingsGroup(name: string): Promise<void> {
-    await page
+    const group = page
       .locator(`${THE_PROJECTS} details.projects-settings-group`)
       .filter({ hasText: name })
-      .locator('summary.projects-settings-group-title')
-      .click()
+    const opened = await group.evaluate((node) => (node as HTMLDetailsElement).open)
+    if (!opened) {
+      await group.locator('summary.projects-settings-group-title').click()
+    }
   }
 
   test('answers the tab in the frame it was opened in, and reads one command', async () => {
