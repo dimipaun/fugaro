@@ -116,8 +116,10 @@ type Scope interface {
 	// a workspace that read it here would find nothing, and narrowToRepoAuth
 	// reads an absent record as the cascade unchanged (cascade.go, D2070 (a)),
 	// which would serve a member's run the whole of the workspace's pool. The
-	// type carries that and not only the comment — StateStore is creds.Store
-	// without the method, so a route cannot reach the wrong database by habit.
+	// type carries that and not only the comment — StateStore is
+	// creds.CascadeState, creds.Store without the method and the very interface
+	// creds.Selector.Store is typed as, so a route hands this straight to a
+	// selection and cannot reach the wrong database by habit.
 	State() StateStore
 	// RepoAuth is the record of what ONE repository's runs go out on
 	// (creds/repoauth/<slug>, D2070 (a), R7), read from the CALLER's database:
@@ -210,26 +212,24 @@ type Scope interface {
 	AcceptsSlip() bool
 }
 
-// StateStore is the cascade state a Scope answers: creds.Store without the
-// per-repository auth record, which is a fact about a MEMBER's repository and
-// not about the workspace's pool, so it is read from the caller's database
-// through RepoAuthReader instead (Scope.RepoAuth).
+// StateStore is the cascade state a Scope answers: creds.CascadeState, which is
+// creds.Store without the per-repository auth record, because that record is a
+// fact about a MEMBER's repository and not about the workspace's pool, so it is
+// read from the caller's database through RepoAuthReader instead
+// (Scope.RepoAuth).
 //
-// It is spelled out rather than taken as creds.Store because Go cannot subtract
-// a method from an interface, and the subtraction is the point: a workspace's
-// state store is over the workspace's OWN database, so a route that read a
-// member's auth record through it would find nothing and treat the repository
-// as unrestricted (narrowToRepoAuth, D2070 (a)). creds.Store satisfies this
-// interface, so a side answers it with the store it already holds; the methods
-// are creds.Store's own and are documented there.
-type StateStore interface {
-	Marks(ctx context.Context) (map[string]creds.Mark, error)
-	UpdateMark(ctx context.Context, name string, f func(prev creds.Mark, found bool) (creds.Mark, error)) (creds.Mark, error)
-	Leases(ctx context.Context, now time.Time) ([]creds.Lease, error)
-	SetPlacement(ctx context.Context, run creds.Run, name string, l creds.Lease) error
-	Current(ctx context.Context, run creds.Run) (name string, found bool, err error)
-	RoundRobin(ctx context.Context) (int64, error)
-}
+// **It is creds.CascadeState by alias, and that is the whole of why it works.**
+// A route does not only read the state — it hands it to the cascade's one
+// consumer, `creds.Selector.Store`, which is typed as CascadeState for the same
+// reason: the six methods a selection uses are the six a selection may reach.
+// Because the two are the same type, `&creds.Selector{Store: scope.State()}`
+// compiles as it stands. A split that needed an adapter — or a cast back to
+// creds.Store — would be undone by the first route that wrote one, and a
+// workspace adapter answering RepoAuth out of the workspace's own database would
+// read as "no record, the cascade unchanged" (D2070 (a)) and serve a member's
+// run the whole of the workspace's pool. There is nothing to adapt: the store a
+// side already holds satisfies this and RepoAuthReader both.
+type StateStore = creds.CascadeState
 
 // RepoAuthReader reads one repository's auth record — what its own fugaro.yaml
 // says its runs go out on (creds/repoauth/<slug>, D2070 (a), R7) — out of the

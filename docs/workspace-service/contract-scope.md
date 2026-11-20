@@ -33,7 +33,7 @@ may be served from.
 | `Caller() Identity` | the resolver's verification | the run identity the call's token proved; the zero `Identity` on a route answered ahead of the shared parse (a person, a daemon, a launcher or a build holds none) |
 | `Policy() PolicyReader` | the installation's one node, or the member's own published policy | the project's shared node and one repository's own admission node, for **this** caller |
 | `Kills() KillReader` | the installation's database, or whatever the workspace's resolver chooses | the operator's stop switches the call is held to, read before the bundle |
-| `State() StateStore` | the installation's database, or the **workspace's own** | the marks, the leases, a run's placement and the tie-breaker — the cascade's own state, and **never** the per-repository auth record |
+| `State() StateStore` | the installation's database, or the **workspace's own** | the marks, the leases, a run's placement and the tie-breaker — the cascade's own state, and **never** the per-repository auth record. `StateStore` is `creds.CascadeState`, the very interface `creds.Selector.Store` is typed as, so `&creds.Selector{Store: scope.State()}` compiles as it stands: no adapter and no cast back to `creds.Store` (rule 2) |
 | `RepoAuth() RepoAuthReader` | the installation's database, or the **member's** | what one repository's own configuration says its runs go out on (`creds/repoauth/<slug>`, D2070 (a)) — written by that repository's own `fugaro update`, so it is read where it was written and not out of the workspace's state |
 | `Outcomes() OutcomeReader` | the installation's database, or the member's | whether a run of this caller's repository has already ended (W2) |
 | `Repos() map[string]string` | the installation's repository table, or the **calling job account's** repositories | the slug a run identity carries to the canonical name the policy speaks; a slug it does not hold is refused at the pairing, never guessed (D1066) |
@@ -86,8 +86,13 @@ constructor and gets either the workspace's resolver or a refusal, never a nil.
    pool. The **state is not** the member's: a cooldown, a rotation position and a spend figure for a
    workspace credential are facts about the workspace's pool, so they live in the workspace's own
    database — which is why `State()` is `StateStore`, `creds.Store` without the auth-record method, so
-   that the wrong database cannot be reached by habit. The service holds no write on any member at
-   all, which is a property of this split and not a promise about it.
+   that the wrong database cannot be reached by habit. **The split has to hold where the state is
+   used, and it does**: `creds.CascadeState` is declared in `internal/creds` and `creds.Selector.Store`
+   is typed as it — a selection reads the six methods and never the record — so a route passes
+   `scope.State()` straight to a selection, and an implementation that has to cast back to `creds.Store`
+   or write an adapter supplying `RepoAuth` is a change request against this contract and not a local
+   workaround. The service holds no write on any member at all, which is a property of this split and
+   not a promise about it.
 
 3. **The repository table is the caller's, and it is where R19 lands (R6, D2992, R19, F28).** An
    installation's table is every repository it serves. A workspace's holds the repositories of the
