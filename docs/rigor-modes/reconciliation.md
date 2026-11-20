@@ -979,7 +979,12 @@ row is named here for the reason above: a reader who finds the figure stale shou
 `defaults.rigor.repos` map — added the `rigor.repos` row to `internal/config/scope.go`, which moved
 the *Config scope rows* row from 117 to 118. The row is not an accident of the shape: the layer's
 scope walker asks that table about every `defaults.*` key and refuses the ones it does not carry, so
-a project layer stating a per-repo level needs the row whatever the key's reader is.)
+a project layer stating a per-repo level needs the row whatever the key's reader is. The same task
+added `rigorMembersSince` to `internal/cli/recipes_skew.go` — the two keys are the layer's alone and
+are decoded with `KnownFields`, so a job image older than the release that knows them dies at
+bootstrap on every repository of the project — which moved the *Image-skew `Since` constants* row
+from 59 to 60. The two keys ship in one release and one constant, one judge and one gate serve both,
+which is why the row moved by one and not by two.)
 
 | Construct | Count | Command |
 | --- | --- | --- |
@@ -993,7 +998,7 @@ a project layer stating a per-repo level needs the row whatever the key's reader
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 1 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 59 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 60 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 153 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
