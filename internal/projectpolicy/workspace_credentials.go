@@ -59,7 +59,16 @@ const pathWorkspaceCredentials = "workspace_credentials"
 // WorkspaceVersion is: the nodes are read by different readers (this one by the
 // workspace's service, the record by the owner's CLI and the service's member
 // list) and a bump of one says nothing about the other.
-const WorkspaceCredentialsVersion = 1
+//
+// **It is 2 because the columns are new ones**: a member row's job accounts each
+// carry the concrete repositories they are a job of, and a pool entry carries
+// the kind of credential it is and, for a forge entry, the repositories it
+// covers (R6, R7, U2 — the shape and its reasoning are in
+// workspace_credentials_v2.go). Version 1 is still read by this reader, because
+// a workspace whose owner has not run its `fugaro update` yet holds one, and
+// what it decodes to is what it says: no repositories for an account and the
+// model kind for a pool entry.
+const WorkspaceCredentialsVersion = 2
 
 // PathWorkspaceCredentials is one workspace's credentials node, relative to the
 // workspace's own database root and without a leading slash. The caller passes
@@ -80,8 +89,11 @@ func PathWorkspaceCredentialsParent() string { return pathWorkspaceCredentials }
 // per-member table and the shared pool's allow-lists.
 type WorkspaceCredentials struct {
 	// Version is the node's version. It is WorkspaceCredentialsVersion for
-	// every node DecodeWorkspaceCredentials reads: a node this reader does not
-	// understand is refused rather than half-read (P8).
+	// every node this Fugaro wrote, and 1 for a node the release before it
+	// wrote, which DecodeWorkspaceCredentials still reads (the repositories of
+	// a job account are version 2's column and a version-1 row declares none).
+	// A version this reader does not understand is refused rather than
+	// half-read (P8).
 	Version int
 	// Name is the workspace's name, which is the project name of the
 	// installation that publishes it and the last segment of its path.
@@ -147,6 +159,14 @@ type WorkspaceCredentialMember struct {
 	// workspace: an address two rows name would be a caller whose member
 	// depends on which row the lookup happened to read.
 	JobAccounts []string
+	// JobAccountRepos are the concrete repositories those accounts are jobs
+	// of, one entry per account and in the same order, adding version 2's
+	// column to the addresses above (R6, D2992; WorkspaceJobAccount carries the
+	// reasoning, and a pattern is refused). It is empty for a row that declares
+	// none — which is what a version-1 node's row decodes to, and what the
+	// scope refuses a run on with the reason that names the owner's update
+	// (R19) — and a list that declares some of them is refused by Validate.
+	JobAccountRepos []WorkspaceJobAccount
 	// ExchangeURL is the member's exchange endpoint, where the workspace's
 	// signer mints a member-bound assertion for (spec.md §3, D1293). It is the
 	// owner's declaration of where the member is reached, and it is not a
@@ -154,34 +174,69 @@ type WorkspaceCredentialMember struct {
 	ExchangeURL string
 }
 
-// WorkspaceShared is one credential of the workspace's pool and the projects it
-// may be served to: D1298's per-project allow-list.
+// WorkspaceShared is one credential of the workspace's pool, the kind it is and
+// the reach it is offered with: D1298's per-project allow-list, and version 2's
+// columns beside it.
 type WorkspaceShared struct {
 	// Name is the credential's name, which is the name the bundle's entry and
 	// the cascade both speak. It is a name and never a value: no node of a
 	// database carries a credential (rule 2 of spec.md §4).
 	Name string
+	// Kind is the kind of credential this entry is: SharedKindModel, or a kind
+	// a repository's git.provider may be (config.Providers) for a forge entry
+	// — which is also the first segment of every repository Covers names (U2,
+	// D2978, F15). It is what tells the service which route may serve the
+	// entry, and Validate refuses an entry that names none.
+	Kind string
+	// AllMembers is version 2's key for a pool entry that is offered to every
+	// member of the workspace (R7, D2977). It is EXCLUSIVE with Projects, and
+	// the two are written by one encoder: an entry carries the projects it is
+	// offered to, or it carries all_members, never both — Validate refuses a
+	// pair, because a reader handed both would have to invent which one the
+	// owner meant.
+	//
+	// The workspace owner's writer publishes it only for a workspace with a cap
+	// set and only once the cap meter is wired (D2977): the allow-list is the
+	// owner's fence over their own money, and without the meter nothing bounds a
+	// member that joins later. That rule is the writer's — the node carries no
+	// cap, so the node's own reader cannot ask it.
+	AllMembers bool
 	// Projects are the member projects the workspace offers this credential
 	// to, sorted and each once. An empty list is refused by Validate rather
 	// than read as "everybody" or as "nobody": a written shared credential
-	// that names no project is a half-written declaration, and the two
-	// readings of it are the one mistake that would either widen the pool to
-	// every member or hide the mistake behind a list that serves no one.
+	// that names no project — and carries no AllMembers — is a half-written
+	// declaration, and the two readings of it are the one mistake that would
+	// either widen the pool to every member or hide the mistake behind a list
+	// that serves no one.
 	Projects []string
+	// Covers are the concrete repositories a forge entry reaches, canonical
+	// and each sorted and once, whose provider segment is the entry's own Kind
+	// (U2, the owner's declaration — the plan's constraint that a forge entry's
+	// coverage is the workspace's list and never the member's). A pattern is
+	// refused where it is written, for the reason JobAccountRepos refuses one:
+	// F42's coverage is a list of repositories the owner declared, and a
+	// pattern is a declaration about repositories nobody has declared.
+	//
+	// It is empty for a model entry, which reaches no repository of its own
+	// (the repositories a model call may be made for are the member's own
+	// policy's business), and Validate refuses both mismatches: a model entry
+	// that covers repositories and a forge entry that covers none.
+	Covers []string
 }
 
-// workspaceCredentialsNode is the node as this Fugaro writes it: the shape the
-// JSON of `workspace_credentials/<name>` has, and the version this file's
-// reader reads. It is a struct with json tags rather than a map, so the
-// encoding is one order and one spelling every time.
-type workspaceCredentialsNode struct {
-	Version int                             `json:"version"`
-	Name    string                          `json:"name"`
-	Members []workspaceCredentialMemberNode `json:"members"`
-	Shared  []workspaceSharedNode           `json:"shared"`
+// The version-1 node's own shape: what a node written by the release before
+// this one holds, and what this reader still reads. The version-2 shape this
+// Fugaro now writes is in workspace_credentials_v2.go, beside the columns it
+// adds; these structs exist for the reader that reads the older document, and
+// nothing writes them.
+type workspaceCredentialsNodeV1 struct {
+	Version int                               `json:"version"`
+	Name    string                            `json:"name"`
+	Members []workspaceCredentialMemberNodeV1 `json:"members"`
+	Shared  []workspaceSharedNodeV1           `json:"shared"`
 }
 
-type workspaceCredentialMemberNode struct {
+type workspaceCredentialMemberNodeV1 struct {
 	Project         string   `json:"project"`
 	FirebaseProject string   `json:"firebase_project"`
 	DatabaseRegion  string   `json:"database_region"`
@@ -190,7 +245,7 @@ type workspaceCredentialMemberNode struct {
 	ExchangeURL     string   `json:"exchange_url"`
 }
 
-type workspaceSharedNode struct {
+type workspaceSharedNodeV1 struct {
 	Name     string   `json:"name"`
 	Projects []string `json:"projects"`
 }
@@ -214,24 +269,34 @@ func WorkspaceCredentialsNode(w *WorkspaceCredentials) ([]byte, error) {
 	if err := w.Validate(); err != nil {
 		return nil, fmt.Errorf("projectpolicy: the workspace credentials node is not one this Fugaro publishes: %w", err)
 	}
-	n := workspaceCredentialsNode{
+	n := workspaceCredentialsNodeV2{
 		Version: WorkspaceCredentialsVersion,
 		Name:    w.Name,
-		Members: make([]workspaceCredentialMemberNode, 0, len(w.Members)),
-		Shared:  make([]workspaceSharedNode, 0, len(w.Shared)),
+		Members: make([]workspaceCredentialMemberNodeV2, 0, len(w.Members)),
+		Shared:  make([]workspaceSharedNodeV2, 0, len(w.Shared)),
 	}
 	for _, m := range w.Members {
 		accounts := make([]string, 0, len(m.JobAccounts))
 		accounts = append(accounts, m.JobAccounts...)
-		n.Members = append(n.Members, workspaceCredentialMemberNode{
+		repos := make([]workspaceJobAccountNode, 0, len(m.JobAccountRepos))
+		for _, e := range m.JobAccountRepos {
+			entryRepos := make([]string, 0, len(e.Repos))
+			entryRepos = append(entryRepos, e.Repos...)
+			repos = append(repos, workspaceJobAccountNode{Account: e.Account, Repos: entryRepos})
+		}
+		n.Members = append(n.Members, workspaceCredentialMemberNodeV2{
 			Project: m.Project, FirebaseProject: m.FirebaseProject, DatabaseRegion: m.DatabaseRegion, FP: m.FP,
-			JobAccounts: accounts, ExchangeURL: m.ExchangeURL,
+			JobAccounts: accounts, JobAccountRepos: repos, ExchangeURL: m.ExchangeURL,
 		})
 	}
 	for _, s := range w.Shared {
 		projects := make([]string, 0, len(s.Projects))
 		projects = append(projects, s.Projects...)
-		n.Shared = append(n.Shared, workspaceSharedNode{Name: s.Name, Projects: projects})
+		covers := make([]string, 0, len(s.Covers))
+		covers = append(covers, s.Covers...)
+		n.Shared = append(n.Shared, workspaceSharedNodeV2{
+			Name: s.Name, Kind: s.Kind, AllMembers: s.AllMembers, Projects: projects, Covers: covers,
+		})
 	}
 	out, err := json.Marshal(n)
 	if err != nil {
@@ -240,9 +305,22 @@ func WorkspaceCredentialsNode(w *WorkspaceCredentials) ([]byte, error) {
 	return out, nil
 }
 
-// DecodeWorkspaceCredentials reads the node this Fugaro writes. found is false
-// for a node that is not there at all (null, or nothing), which is the state
-// before the first publish and not a refusal.
+// DecodeWorkspaceCredentials reads the node this Fugaro writes, and the one the
+// release before it wrote. found is false for a node that is not there at all
+// (null, or nothing), which is the state before the first publish and not a
+// refusal.
+//
+// **The version is read first, and the document is read by that version's own
+// row reader.** Version 2 is the shape this Fugaro writes
+// (workspace_credentials_v2.go); version 1 is the shape the release before it
+// wrote, and the reader reads it rather than refusing it because a workspace
+// whose owner has not run `fugaro update` yet holds one — the service must
+// still place that workspace's callers after the release, and the node's own
+// writer migrates the document in place (WS4). What version 1 does not say is
+// not invented: a job account of a version-1 row carries an empty repository
+// list, and a version-1 pool entry is the model credential the pool held before
+// version 2 (F15). A version no release wrote is refused with
+// *WorkspaceVersionError rather than read as the nearest one.
 //
 // An unknown top-level key is tolerated and listed (UnknownKeys) and an unknown
 // key *inside a row is refused*: the top-level tolerance is forward
@@ -266,20 +344,53 @@ func DecodeWorkspaceCredentials(raw []byte) (*WorkspaceCredentials, bool, error)
 	if err := checkMemberNames("the workspace credentials node", names, workspaceCredentialsKeys); err != nil {
 		return nil, true, &WorkspaceNodeError{Why: "one of its top-level keys is written twice, or is a key this Fugaro writes spelled in another case", Err: err}
 	}
-	var n workspaceCredentialsNode
-	if err := decodeStrictRows(raw, &n); err != nil {
+	version, err := workspaceCredentialsNodeVersion(raw)
+	if err != nil {
+		return nil, true, &WorkspaceNodeError{Why: err.Error()}
+	}
+	var w *WorkspaceCredentials
+	switch version {
+	case 1:
+		w, err = decodeWorkspaceCredentialsV1(raw)
+	case WorkspaceCredentialsVersion:
+		w, err = decodeWorkspaceCredentialsV2(raw)
+	default:
+		return nil, true, &WorkspaceVersionError{Found: version, Understood: WorkspaceCredentialsVersion}
+	}
+	if err != nil {
 		return nil, true, &WorkspaceNodeError{Why: "it is not the shape a workspace credentials node has, or one of its rows carries a key this Fugaro does not write", Err: err}
 	}
-	if n.Version != WorkspaceCredentialsVersion {
-		return nil, true, &WorkspaceVersionError{Found: n.Version, Understood: WorkspaceCredentialsVersion}
-	}
-	w := &WorkspaceCredentials{Version: n.Version, Name: n.Name}
 	for _, k := range names {
 		if !slices.Contains(workspaceCredentialsKeys, k) {
 			w.UnknownKeys = append(w.UnknownKeys, k)
 		}
 	}
 	slices.Sort(w.UnknownKeys)
+	if err := w.Validate(); err != nil {
+		return nil, true, &WorkspaceNodeError{Why: "it is not a node this Fugaro could have written", Err: err}
+	}
+	return w, true, nil
+}
+
+// decodeWorkspaceCredentialsV1 reads the version-1 shape: the node the release
+// before this one wrote, which says how the workspace reaches each member and
+// which projects a pool entry is offered to, and nothing about the repositories
+// an account is a job of or the kind a credential is.
+//
+// The two columns version 2 adds are read as the version's own silence rather
+// than filled in: an account carries an empty repository list (a reader that
+// invented them would publish a declaration nobody made, and the scope refuses
+// a run on such an account with the reason that names the owner's update, R19),
+// and a pool entry is a model credential, which is the only kind the pool held
+// before version 2 (F15) — a version-1 bundle's entries are Claude tokens and
+// the project's Anthropic key, and a forge credential could not have been
+// offered by a node that had no way to say which forge it was.
+func decodeWorkspaceCredentialsV1(raw []byte) (*WorkspaceCredentials, error) {
+	var n workspaceCredentialsNodeV1
+	if err := decodeStrictRows(raw, &n, workspaceCredentialsRowsV1); err != nil {
+		return nil, err
+	}
+	w := &WorkspaceCredentials{Version: n.Version, Name: n.Name}
 	for _, m := range n.Members {
 		accounts := make([]string, 0, len(m.JobAccounts))
 		accounts = append(accounts, m.JobAccounts...)
@@ -291,38 +402,58 @@ func DecodeWorkspaceCredentials(raw []byte) (*WorkspaceCredentials, bool, error)
 	for _, s := range n.Shared {
 		projects := make([]string, 0, len(s.Projects))
 		projects = append(projects, s.Projects...)
-		w.Shared = append(w.Shared, WorkspaceShared{Name: s.Name, Projects: projects})
+		w.Shared = append(w.Shared, WorkspaceShared{Name: s.Name, Kind: SharedKindModel, Projects: projects})
 	}
-	if err := w.Validate(); err != nil {
-		return nil, true, &WorkspaceNodeError{Why: "it is not a node this Fugaro could have written", Err: err}
-	}
-	return w, true, nil
+	return w, nil
 }
 
-// decodeStrictRows decodes the node and refuses an unknown key inside any of
-// its rows: the top-level shape is read tolerantly (the columns above), and
-// every row is read with DisallowUnknownFields, which is the one place a
-// security-bearing declaration may not grow a field nobody decided.
-func decodeStrictRows(raw []byte, out *workspaceCredentialsNode) error {
+// workspaceCredentialsRows is one version's row shapes, for the strict reader:
+// the keys each kind of row may carry, and what such a row names, so that a
+// refusal of an unknown key says what the shape it refused was. The versions
+// differ (version 2's member row carries the repositories of each job account,
+// and its shared entry the kind, the all_members key and the covers of a forge
+// entry), so the lists and the sentences are passed in rather than written once
+// and read for both: a version read with the other version's row keys would
+// refuse the columns it exists to carry.
+type workspaceCredentialsRows struct {
+	members    []string
+	shared     []string
+	memberWhat string
+	sharedWhat string
+}
+
+// workspaceCredentialsRowsV1 is the version-1 shape's rows, and the sentences a
+// refusal of one is made with.
+var workspaceCredentialsRowsV1 = workspaceCredentialsRows{
+	members:    []string{"project", "firebase_project", "database_region", "fp", "job_accounts", "exchange_url"},
+	shared:     []string{"name", "projects"},
+	memberWhat: "a member's row names the member's project, its Firebase project, the region its database is in when it is not the default one, its fp, its job service accounts and its exchange URL, and nothing else — the database the service reads is derived from the verified iss and no bucket is bound",
+	sharedWhat: "a shared entry names the credential and the member projects it is offered to, and nothing else — the credential's value is nowhere in the node (rule 2 of spec.md §4)",
+}
+
+// decodeStrictRows decodes the node in one version's shape and refuses an
+// unknown key inside any of its rows: the top-level shape is read tolerantly
+// (the columns above), and every row is read against the keys its version's
+// shape has, which is the one place a security-bearing declaration may not grow
+// a field nobody decided.
+func decodeStrictRows(raw []byte, out any, rows workspaceCredentialsRows) error {
 	if err := json.Unmarshal(raw, out); err != nil {
 		return err
 	}
-	var rows struct {
+	var lists struct {
 		Members []json.RawMessage `json:"members"`
 		Shared  []json.RawMessage `json:"shared"`
 	}
-	if err := json.Unmarshal(raw, &rows); err != nil {
+	if err := json.Unmarshal(raw, &lists); err != nil {
 		return err
 	}
-	members := []string{"project", "firebase_project", "database_region", "fp", "job_accounts", "exchange_url"}
-	shared := []string{"name", "projects"}
-	for _, r := range rows.Members {
-		if err := decodeRow(r, members); err != nil {
+	for _, r := range lists.Members {
+		if err := decodeRow(r, rows.members, rows.memberWhat); err != nil {
 			return err
 		}
 	}
-	for _, r := range rows.Shared {
-		if err := decodeRow(r, shared); err != nil {
+	for _, r := range lists.Shared {
+		if err := decodeRow(r, rows.shared, rows.sharedWhat); err != nil {
 			return err
 		}
 	}
@@ -332,8 +463,10 @@ func decodeStrictRows(raw []byte, out *workspaceCredentialsNode) error {
 // decodeRow refuses a row carrying a key outside known, and names the key: a
 // field this Fugaro does not write is either a mistake or an older design's
 // field, and both are refusals rather than something to ignore. The name is the
-// *key* and never its value, which is the reader's own rule above.
-func decodeRow(raw json.RawMessage, known []string) error {
+// *key* and never its value, which is the reader's own rule above, and what the
+// row is a row *of* is the caller's sentence, so a shared entry's refusal
+// describes a shared entry rather than repeating a member's row.
+func decodeRow(raw json.RawMessage, known []string, what string) error {
 	names, err := objectMemberNames(raw)
 	if err != nil {
 		return err
@@ -343,7 +476,7 @@ func decodeRow(raw json.RawMessage, known []string) error {
 	}
 	for _, n := range names {
 		if !slices.Contains(known, n) {
-			return fmt.Errorf("it carries the key %q, which this Fugaro does not write in a row: a member's row names the member's project, its Firebase project, the region its database is in when it is not the default one, its fp, its job service accounts and its exchange URL, and nothing else — the database the service reads is derived from the verified iss and no bucket is bound", n)
+			return fmt.Errorf("it carries the key %q, which this Fugaro does not write in a row: %s", n, what)
 		}
 	}
 	return nil
@@ -404,6 +537,13 @@ func (w *WorkspaceCredentials) Validate() error {
 			}
 			seenAccount[folded] = true
 		}
+		// The repositories of the row's accounts are version 2's column and the
+		// rules only it has, and they are asked after the row's own fields: a row
+		// whose account is not an address is refused for the address, not for the
+		// repositories that name it.
+		if err := validateJobAccountRepos(i, m); err != nil {
+			return err
+		}
 	}
 	if !slices.IsSortedFunc(w.Members, func(a, b WorkspaceCredentialMember) int {
 		return strings.Compare(a.Project, b.Project)
@@ -419,8 +559,12 @@ func (w *WorkspaceCredentials) Validate() error {
 			return fmt.Errorf("shared[%d] names the credential %q twice: one credential carries one allow-list, and two entries would make the effective set depend on which one was read", i, s.Name)
 		}
 		seenShared[s.Name] = true
-		if len(s.Projects) == 0 {
-			return fmt.Errorf("shared[%d] offers %q to no project: a shared credential with an empty allow-list is a half-written declaration, and writing the projects out is the only way to say who may be served it", i, s.Name)
+		// The entry's kind, its all_members key and the repositories a forge
+		// entry covers are version 2's columns, and their rules are the
+		// version's own file's (workspace_credentials_v2.go); the allow-list's
+		// are asked here beside them, in the order the entry's fields are read.
+		if err := validateSharedEntryV2(i, s); err != nil {
+			return err
 		}
 		if !slices.IsSorted(s.Projects) {
 			return fmt.Errorf("shared[%d].projects is not sorted", i)
