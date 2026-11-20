@@ -780,6 +780,79 @@ func VaultFetchesClass(class string) bool {
 	return slices.Contains(VaultFetchedSecretClasses, class)
 }
 
+// BuildSecretClassGit and BuildSecretClassBuild name the two classes of secret
+// a repository's BUILDS read (B4.9, the S4 flip; D2076, D2077).
+//
+// A build is the one reader that is not a job: it runs in Cloud Build, as the
+// repository's build account, and Cloud Build hands it its secrets through the
+// request's own availableSecrets rather than through a Cloud Run mount. The
+// two classes are what that request carries — the git credential a build
+// clones and asks for an installation token with, and each workflow's own
+// `secrets:`, which the build step mounts as BuildKit file secrets — and the
+// daily image check, which runs as the same build account, reads the git
+// credential too.
+const (
+	// BuildSecretClassGit is the class of the repository's git credential:
+	// the provider credential a build's clone reads, the one the check job
+	// mounts, and the one the credentials service mints an installation token
+	// from (D2076).
+	BuildSecretClassGit = "git"
+	// BuildSecretClassBuild is the class of a workflow's OWN build secrets
+	// (`secrets:`, the class VaultSecretClassWorkflow names for a job's
+	// mounts), the ones a build mounts for its build step (D2077).
+	BuildSecretClassBuild = "build"
+)
+
+// BuildServedSecretClasses are the classes of secret the credentials service
+// SERVES to a repository's builds (B4.9, the S4 flip; D2076, D2077): a class
+// listed here is served, so a switched repository's build request names none
+// of that class's secrets (internal/backend/gcp's BuildRequest), Cloud Build's
+// request carries no availableSecrets for them, and the build account keeps no
+// secretAccessor (modules/repo/build.tf) — the credential step asks the
+// installation's credentials service for the git credential, and for the
+// workflow's own build secrets with it (B4.5's fetch), which is where they come
+// from instead.
+//
+// G22's shape, one list at a time, exactly as VaultFetchedSecretClasses is: it
+// says nothing about ServiceHeldSecretNames, ProxiedGitSecretNames,
+// ServiceServedAuths or VaultFetchedSecretClasses, and which repositories are
+// switched at all is infra.CredentialsServiceServes' answer, read where the
+// drop happens (internal/infra's spec, and the build paths in internal/cli
+// that hand a build its service address).
+//
+// The class list is a list rather than a boolean so a class can be added or
+// held back one at a time, and it carries both classes since the flip's second
+// commit filled it — the state this release ships, with B4.5's fetch (which is
+// what reads from the service) a release behind it. The inert state is the
+// empty list: with it empty no build
+// names a service, every request mounts exactly what it mounted before, and
+// the tree plans and runs what the release before this one did (D147's "with
+// it off nothing changes"). Filled, what it moves is one build account's
+// accessor list and one check job's mount per SWITCHED repository, and it
+// moves nothing on its own — a repository the switch holds off keeps every
+// accessor, every mount and every requested secret, before and after (G9,
+// G17).
+//
+// Terraform cannot ask Go, so the same classes are a literal in
+// modules/repo/build.tf's build_served_secret_classes, held to this list by
+// deploy/terraform's TestBuildServedClassesMatchTheModule, and the two are
+// filled in one commit.
+//
+// What keeps the fill from stranding a build is the order `fugaro update`
+// takes: the repository root that drops the accessor and the mount is applied
+// only for a repository whose own switch is on (so the build account may
+// invoke the service and the service is deployed), and the request names the
+// service's address in the same tfvars answer.
+var BuildServedSecretClasses = []string{BuildSecretClassGit, BuildSecretClassBuild}
+
+// BuildServesClass reports whether the credentials service serves the secrets
+// of this class to a repository's builds. A class this release does not know
+// answers false, which is the same answer an empty list gives: the request
+// mounts the secret and the build account keeps the accessor.
+func BuildServesClass(class string) bool {
+	return slices.Contains(BuildServedSecretClasses, class)
+}
+
 // ProxiedGitSecretNames are the git credential logical names a job gives up
 // once its repository is a PROXIED one: the published node's block admits the
 // repository with `proxy: true`, the credentials service fetches the

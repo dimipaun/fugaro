@@ -5768,12 +5768,14 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			// ordinary path — the one a project that is not managed takes —
 			// may not owe the user a flag or a second command for it (the
 			// proxied token's is infra.ProxiedTokenAccessorAllowDelete, the
-			// fetched class's is infra.VaultAccessorAllowDelete; CLAUDE.md's
-			// HARD RULE, and the switch in init_retire.go's retireManaged is
-			// the managed path's own). Every other change in this plan is
-			// judged exactly as it was.
+			// fetched class's is infra.VaultAccessorAllowDelete, the S4
+			// flip's are infra.BuildAccessorAllowDelete; CLAUDE.md's HARD
+			// RULE, and the switch in init_retire.go's retireManaged is the
+			// managed path's own). Every other change in this plan is judged
+			// exactly as it was.
 			allowed := append(slices.Clone(r.o.allowDelete), infra.ProxiedTokenAccessorAllowDelete(plan, spec)...)
 			allowed = append(allowed, infra.VaultAccessorAllowDelete(plan, spec)...)
+			allowed = append(allowed, infra.BuildAccessorAllowDelete(plan, spec)...)
 			if err := r.guard(ctx, c, plan, allowed); err != nil {
 				return plan, err
 			}
@@ -5910,6 +5912,24 @@ func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcf
 	if err != nil {
 		return "", false, err
 	}
+	// A repository the credentials service serves (B4.9, D2076): the build's
+	// credential step fetches the git credential and the workflow's own build
+	// secrets there instead of reading the mounts the apply took away, and the
+	// address is what tells it to. The ID above is the caller's, read back out
+	// of the apply's own spec or resolved live, and a served request names no
+	// secret at all — so it is carried and unused, never looked up here.
+	//
+	// The switch is the SPEC's own answer, which is the document this run is
+	// about to apply and the one modules/repo/build.tf's
+	// local.build_mounts_served reads: the accessor list and this address are
+	// then one answer about one plan, and the build this converge submits
+	// cannot name a secret the same plan's account has just been denied
+	// (D2077).
+	serviceURL, err := buildServiceURL(lc, spec.Name, spec.BuildMountsServed())
+	if err != nil {
+		return "", false, err
+	}
+	bs.CredentialsServiceURL = serviceURL
 	if cfg.Layer != nil {
 		rb, err := openRecordBucket(ctx, lc.RecordBucketURL())
 		if err != nil {

@@ -7160,6 +7160,83 @@ func TestVaultFetchedClassesMatchTheModule(t *testing.T) {
 	}
 }
 
+// TestBuildServedClassesMatchTheModule pins the S4 flip's class list to the
+// module that has to spell it out — config.BuildServedSecretClasses and
+// modules/repo/build.tf's build_served_secret_classes — and the two clauses it
+// drives to the halves they are made of (B4.9, D2076, D2077).
+//
+// It is TestVaultFetchedClassesMatchTheModule for a second flip, and the drift
+// it refuses is the same in both directions: a class filled in Go and not in
+// the module leaves a build naming no secret whose accessor its account still
+// holds (a grant nothing reads), and a class the module names and Go does not
+// is a repository whose build account loses the accessor its request still
+// mounts the secret under — Cloud Build fails that build at its first clone,
+// long after it was billed.
+//
+// The empty list is a state of its own and it is asserted as one: with it
+// empty both gates below are false, so the two clauses read exactly the
+// variables they read before this file knew about the service — that is the
+// inertness the release before the flip plans, and the reason a reader may
+// apply this module before the flip's second commit.
+func TestBuildServedClassesMatchTheModule(t *testing.T) {
+	const path = "gcp/modules/repo/build.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+
+	m := regexp.MustCompile(`build_served_secret_classes\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(code)
+	if m == nil {
+		t.Fatalf("%s declares no build_served_secret_classes list: the classes the credentials service serves to a switched repository's builds are Go's config.BuildServedSecretClasses, and this is the module's only account of them", path)
+	}
+	var got []string
+	for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+		got = append(got, q[1])
+	}
+	want := slices.Clone(config.BuildServedSecretClasses)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s: build_served_secret_classes = %v, config.BuildServedSecretClasses = %v: the two are filled in one commit, and a list on one side an empty one on the other plans a drop the other does not produce", path, got, config.BuildServedSecretClasses)
+	}
+
+	// The build account's accessor list goes whole with the class "build"
+	// (D2077), and only for a repository the service serves: the module reads
+	// the list through its own gate rather than off var.repo.build_secrets,
+	// which Go has already emptied of it — so a class filled in Go alone would
+	// leave a plan whose accessor list the module still declares.
+	local := func(name string) string {
+		t.Helper()
+		re := regexp.MustCompile(`(?s)\b` + name + `\s*=\s*(var\.installation\.credentials_service[^\n]+)`)
+		found := re.FindStringSubmatch(code)
+		if found == nil {
+			t.Fatalf("%s declares no %s local of the served-repository shape", path, name)
+		}
+		return squash(found[1])
+	}
+	if got, want := local("build_mounts_served"), `var.installation.credentials_service != null && contains(local.build_served_secret_classes, "build")`; got != want {
+		t.Errorf("%s: build_mounts_served = %s, want %s: the accessor list leaves with the class \"build\" (D2077), for a repository the service serves alone (G9, D147)", path, got, want)
+	}
+	if got, want := local("check_mount_served"), `var.installation.credentials_service != null && length(local.build_served_secret_classes) > 0`; got != want {
+		t.Errorf("%s: check_mount_served = %s, want %s: the check job's mount leaves with either class — it mounts the git credential, whose accessor is the build account's own — and for a repository the service serves alone (C2.3, G9)", path, got, want)
+	}
+
+	// Both clauses, and each is read through one of those gates: the accessor
+	// resource drops the list whole, and the check job's mount is the one
+	// resource in the module that mounts a secret by secret_key_ref.
+	check, err := fs.ReadFile(FS, "gcp/modules/repo/check.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(code, "for_each = toset(local.build_mounts_served ? [] : var.repo.build_secrets)") {
+		t.Errorf("%s: google_secret_manager_secret_iam_member.build does not read local.build_mounts_served: the build account keeps an accessor on every secret the served request no longer names (D2076, D2077):\n%s", path, code)
+	}
+	if !strings.Contains(stripComments(string(check)), "for_each = local.check_mount_served ? {} : var.repo.check.secret_env") {
+		t.Errorf("gcp/modules/repo/check.tf: the check job's secret_key_ref mounts do not read local.check_mount_served: a repository the service serves would keep a mount whose credential nothing reads, and the accessor it goes with is the build account's own (B4.9, C2.3)")
+	}
+}
+
 // TestProxiedGitDropIsKeyedOnTheFactAndOffByDefault pins the wiring that
 // decides when the flip can bite, now that the list carries the token (B1.13
 // part two, D500). It is the other half of the flip's guard —
