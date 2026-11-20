@@ -1,6 +1,13 @@
 package localcfg
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -136,6 +143,60 @@ func TestAHalfWrittenKeyFactAndAForeignOneAreRefused(t *testing.T) {
 			t.Fatalf("%s: the refusal repeated the public key: %v", tc.name, err)
 		}
 	}
+
+	// Two shapes a literal cannot carry honestly: a key of the right algorithm
+	// and another size, which the envelope is not sized for and Wrap refuses,
+	// and a key of another algorithm entirely. Both are generated here (no key
+	// literal, and a private half is never written anywhere), both are refused
+	// where the block is written rather than at the launch, and neither is
+	// echoed by its refusal.
+	smaller, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatalf("generating a smaller key: %v", err)
+	}
+	larger, err := rsa.GenerateKey(rand.Reader, 3072)
+	if err != nil {
+		t.Fatalf("generating a larger key: %v", err)
+	}
+	foreign, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating a key of another algorithm: %v", err)
+	}
+	for _, tc := range []struct{ name, publicKey string }{
+		{"a 1024-bit RSA key", publicKeyPEM(t, &smaller.PublicKey)},
+		{"a 3072-bit RSA key", publicKeyPEM(t, &larger.PublicKey)},
+		{"an ECDSA key", publicKeyPEM(t, &foreign.PublicKey)},
+	} {
+		_, err := batchWith("  seal_key:\n    version: " + sealKeyVersion + "\n    public_key: |\n" + indent(tc.publicKey, "      "))
+		if err == nil {
+			t.Fatalf("%s: accepted", tc.name)
+		}
+		// The block's own refusal names the parse's, which is the sentinel every
+		// reader of a key fact matches on.
+		if !strings.Contains(err.Error(), ErrSealKeyPublicKey.Error()) {
+			t.Fatalf("%s: refused with %v, which does not name %v", tc.name, err, ErrSealKeyPublicKey)
+		}
+		_, parseErr := ParseSealKeyPublicKey(tc.publicKey)
+		if !errors.Is(parseErr, ErrSealKeyPublicKey) {
+			t.Fatalf("%s: ParseSealKeyPublicKey refused it with %v, which is not ErrSealKeyPublicKey", tc.name, parseErr)
+		}
+		if body := strings.Split(strings.TrimSpace(tc.publicKey), "\n"); len(body) > 1 && strings.Contains(parseErr.Error(), body[1]) {
+			t.Fatalf("%s: the refusal repeated the public key: %v", tc.name, parseErr)
+		}
+	}
+}
+
+// publicKeyPEM is a key's one PEM spelling in the form Cloud KMS publishes a
+// version's public key in: a PUBLIC KEY block holding the PKIX
+// SubjectPublicKeyInfo, which is what the compute root's output carries into
+// the block.
+func publicKeyPEM(t *testing.T, key any) string {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		t.Fatalf("spelling a generated public key: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
 }
 
 // indent indents every non-empty line of s, for a YAML block scalar holding a

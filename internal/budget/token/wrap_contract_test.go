@@ -126,6 +126,54 @@ func TestWrappedEnvelopeRoundTrips(t *testing.T) {
 	}
 }
 
+// TestWrapRefusesAKeyOrASealKeyOfAnotherSize: the two shapes Wrap's own guard
+// names are refusals HERE and not a hope that something downstream says so. A
+// key that is not the installation's 2048-bit asymmetric decryption key is one
+// the service's KMS could not open the blob with, and a seal key of another
+// length is an envelope of another size: both would be found out at release,
+// after the VM is up and the launch is paid for, so both stop the wrap.
+func TestWrapRefusesAKeyOrASealKeyOfAnotherSize(t *testing.T) {
+	digest := token.JobDigest(wrappedJobName)
+	key := wrappedKey()
+	priv, err := rsa.GenerateKey(rand.Reader, token.WrappedRSAKeyBits)
+	if err != nil {
+		t.Fatalf("generating the installation's key: %v", err)
+	}
+	small, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatalf("generating a smaller key: %v", err)
+	}
+	large, err := rsa.GenerateKey(rand.Reader, 3072)
+	if err != nil {
+		t.Fatalf("generating a larger key: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		pub  *rsa.PublicKey
+	}{
+		{"no key at all", nil},
+		{"a 1024-bit key", &small.PublicKey},
+		{"a 3072-bit key", &large.PublicKey},
+	} {
+		if _, err := token.Wrap(tc.pub, digest, wrappedClock, key); !errors.Is(err, token.ErrWrapped) {
+			t.Errorf("%s was wrapped to: %v", tc.name, err)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		seal []byte
+	}{
+		{"no seal key", nil},
+		{"a seal key one byte short", key[:token.KeySize-1]},
+		{"a seal key one byte long", append(append([]byte(nil), key...), 0x00)},
+	} {
+		if _, err := token.Wrap(&priv.PublicKey, digest, wrappedClock, tc.seal); !errors.Is(err, token.ErrWrapped) {
+			t.Errorf("%s was wrapped: %v", tc.name, err)
+		}
+	}
+}
+
 // TestWrappedEnvelopeRefusesAForeignVersion is the envelope's first byte read
 // as what it is: a version. A blob of a later format is refused rather than
 // misread as this one, which is seal.go's own rule for its own envelope — and
