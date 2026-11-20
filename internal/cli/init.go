@@ -2005,8 +2005,14 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 		return nil, "", nil, err
 	}
 	if lc != nil {
-		// A config to be created is announced once it exists, below.
+		// A config to be created is announced once it exists, below. The
+		// installation's own region is read before the announcement, which
+		// applies the typed one: it is what the typed one is refused against.
+		own := lc.Region
 		if err := announce(o.cloud, sel, lc); err != nil {
+			return nil, "", nil, err
+		}
+		if err := refuseAnotherRegion(o, own); err != nil {
 			return nil, "", nil, err
 		}
 	}
@@ -2018,6 +2024,7 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 		}
 		return nil, "", nil, userErr("%s selects project %s; --name says %s (renaming a project isn't supported)", sel.From, name, o.name)
 	}
+	created := false // this run starts the config, so its region is not written anywhere yet
 	if lc != nil {
 		path = sel.Path
 		if old, err = os.ReadFile(path); err != nil {
@@ -2039,8 +2046,9 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 			if o.runsBucket != "" {
 				lc.RunsBucket = o.runsBucket
 			}
-			return lc, "", nil, nil
+			return lc, "", nil, checkNewRegion(ctx, o, lc)
 		}
+		created = true
 		switch {
 		case name == "":
 			return nil, "", nil, userErr("there is no project config yet: pass --name <name> (the project's name), --gcp-project and --region to create one")
@@ -2066,6 +2074,12 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 		lc.RunsBucket = o.runsBucket
 		if lc.Bucket != "" && lc.Bucket != "gs://"+o.runsBucket {
 			return nil, "", nil, userErr("--runs-bucket %s is not the local config's bucket_url %s", o.runsBucket, lc.Bucket)
+		}
+	}
+	if created {
+		// After --runs-bucket, which says which bucket this installation's is.
+		if err := checkNewRegion(ctx, o, lc); err != nil {
+			return nil, "", nil, err
 		}
 	}
 	return lc, path, old, nil
@@ -5483,7 +5497,14 @@ func loadRepoConfig(ctx context.Context, o *initOptions, dir string) (lc *localc
 	if err := refuseSharedWrite(sel); err != nil {
 		return nil, "", nil, err
 	}
+	// The installation's own region, read before the announcement applies the
+	// typed one: --repo converges a repository of an installation that exists,
+	// so the config's region is the one a typed region is refused against.
+	own := lc.Region
 	if err := announce(o.cloud, sel, lc); err != nil {
+		return nil, "", nil, err
+	}
+	if err := refuseAnotherRegion(o, own); err != nil {
 		return nil, "", nil, err
 	}
 	if o.name != "" && o.name != lc.Name {
