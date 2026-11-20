@@ -2,8 +2,8 @@
 
 Checked against `origin/main` at `fb0aeb9aa` on 2026-11-20. **Where this file disagrees with
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
-**D3020–D3026**, all answered by the owner on 2026-11-20 (D3023–D3025 were added by review
-round 1, D3026 by round 2). It carries out **D3009, D3010 and
+**D3020–D3028**, all answered by the owner on 2026-11-20 (D3023–D3025 were added by review
+round 1, D3026 by round 2, D3027 and D3028 after round 3, on its open items O10 and O6). It carries out **D3009, D3010 and
 D3011** of [every model key through the credentials service](../keys-through-service/reconciliation.md),
 and it reverses the part of **D2071** that guards a mode that no longer exists.
 
@@ -52,11 +52,14 @@ checks that the project is active and has billing (`infra.CheckFirebaseProject`)
 project's owners and editors as the budget's admins, applies the Firebase root (a database fixed
 in `us-central1`, a web key, a signer account, a custom role and project IAM grants), writes the
 rules and the mode over REST, and records the result in the local config (`localcfg.Budget`).
-Nothing links billing. The Firestore location is confirmed only by a person at a terminal, and a
-run with no terminal leaves that step undone. *(Corrected by review round 3.)* That confirmation
-comes before the database's own write (`confirmLocation` in `deployDatabase`), so with no
-terminal, in a pipe or in an agent's session, the database is not written at all.
-Consequence: R2, O10.
+Nothing links billing. *(Corrected by review round 3, and again when O10 was put to the owner.)*
+The stage has two confirmations before it writes. The ordinary one (`confirmOrdinary`) is
+answered by a person at their terminal or by a run that carries `--yes`. The second
+(`confirmLocation`) is for the Firestore database, the run history's, whose location is permanent
+by the owner's ruling of 2026-10-20: at a terminal the person reads a note and is asked nothing;
+through `update` a carried answer covers it; through `setup` no carried answer ever does. Both
+come before the budget database's own write (`db.Apply` in `deployDatabase`), so where the second
+is left for a person the budget database is not written either. Consequence: D3027.
 
 **F5 — Rule: creating it takes more than an operator holds.** The Firebase root creates a custom
 role, project IAM grants and service accounts. No code gates the stage on ownership today, and the
@@ -280,6 +283,14 @@ one-line removal for a person to commit, and D3023 an update that only a project
 complete. The owner chose each against the recommendation that would have kept the rule. The
 update still does everything it can and names the rest.
 
+| **D3027** | The Firestore location's confirmation comes before the budget database's write (F4). What changes? | The stage writes the budget database first. The ruling on the permanent location stands, and where that confirmation is left for a person only the history database waits | answered after review round 3, on O10; as recommended |
+| **D3028** | On a managed project, does creating the budget database happen under the managed gate, once the stage needs no flag (F25)? | **Yes: it is created under the gate**, like any converging step | answered after review round 3, on O6; **not the recommendation** (adopt under the gate, create outside it) |
+
+**What D3028 means.** On a managed project `fugaro update` creates the budget database, with its
+custom role and project IAM grants, with no confirmation, and from a coding agent's session too,
+because that is what the gate allows a converging step. The gate's own conditions still decide
+whether the run may proceed at all.
+
 **What D3020 and D3022 cost, stated once.** The brief's line 7 says nobody starts being refused by
 a cap they did not choose. That still holds: no cap refuses anyone. But two things that ran under
 off stop after the upgrade until a person acts: a run whose model has no price, and a run whose
@@ -308,12 +319,15 @@ it (D3022).
   no flag, in the installation's own project. It first probes for a database that exists and is
   only unknown on this machine, and adopts it (F6). Where there is none, it probes whether the
   person can make the project's IAM changes (`testIamPermissions`). If they can, it creates the
-  database, in `observe`. If they cannot, or the project has no billing, or the run has no
-  terminal for the stage's existing location confirmation (F4), the update skips that stage, says in one line that a project owner must run `fugaro update` once (or that billing must
+  database, in `observe`. If they cannot, or the project has no billing, or nothing answers the
+  stage's ordinary confirmation (a run with no terminal that carries no answer, F4), the update
+  skips that stage, says in one line that a project owner must run `fugaro update` once (or that billing must
   be linked), and carries on with the rest. The cloud side is left as it was; the new CLI's
   launches are refused with that fix until the database exists (D3023). Adoption is pinned to the
   installation's own project (F24), and the stage lists the project's databases before it creates
-  one (F32). The stages that follow the database, and were skipped with it, run with it (F29).
+  one (F32). The budget database is written before the Firestore location's note is reached, so a
+  location left for a person holds back only the run history (D3027). The stages that follow the
+  database, and were skipped with it, run with it (F29).
   It asks nothing new. `--firebase-project` stays accepted with
   the one value it could already take.
 - **R3. Unset means `observe`.** In the local config, the launcher, the job's environment (always
@@ -349,9 +363,10 @@ it (D3022).
   `docs/design/update-in-flight.md`, `SECURITY.md` and `internal/cli/recipes_skew.go`, and its
   KS14 and KS15 wait on this plan's I1. A task of this plan is not launched while a task of that plan that edits the
   same file is live, and whichever lands second rebases.
-- **R11. A managed project.** Under the managed gate the database stage only adopts. Creating a
-  database is a change that shapes the installation, and it stays the act of the person the gate
-  already lets shape it; anyone else gets R2's one line (F25, U5).
+- **R11. A managed project** (D3028). The database stage runs under the managed gate with no
+  flag, and creates the database there as it adopts one: with no confirmation, and from a coding
+  agent's session where the gate admits the run. R2's probe still applies: a person who cannot
+  make the project's IAM changes gets its one line.
 - **R12. Auth is not this plan's subject** (D3026). Retiring a repository's auth mode, so that a
   key or a subscription belongs to the models that use it, is a spec of its own, the third of this
   series. Until it lands an `oauth` run the credentials service does not serve has no gateway
@@ -370,16 +385,16 @@ No two answers pull against each other.
 - **O5.** The database costs about two dollars a month at the design's own estimate and needs
   billing on the project (F18). An installation with no billing gets R2's line with that fix, and
   launches nothing until it is linked.
-- **O6.** How the managed gate treats the database stage run with no flag is unverified (U5). If
-  AB7 finds the gate refuses it for the manager too, that is a question for the owner before AB7
-  merges.
+- **O6.** *Answered by D3028.* What remains is the security review of AB7: a coding agent's
+  session on a managed project creates a custom role and project IAM grants with nobody
+  confirming, by the owner's choice.
 - **O7.** R1's freeze on releases is a rule for whoever cuts them; nothing in the repository
   enforces it.
 - **O8.** "Every run has a gateway" waits on the spec R12 names for `oauth` runs the credentials
   service does not serve.
-- **O10.** The database stage keeps its existing confirmation of a permanent location, so an
-  update with no terminal cannot create the database (F4). Whether that confirmation goes, now
-  that the location is fixed and the database is no longer a choice, is the owner's.
+- **O10.** *Answered by D3027.* What remains: a run with no terminal that carries no answer still
+  writes nothing, because the stage's ordinary confirmation is unanswered (F4). D3027 helps where
+  that one is answered and the location's is not.
 - **O11.** Review round 3's fixes are the last commit and were not reviewed again; three rounds is
   the cap.
 - **O12.** The graph cannot say that AB2, AB8a and AB8b wait for C1. A launcher follows the plan's
@@ -394,8 +409,8 @@ No two answers pull against each other.
 - **U3.** *Settled by review round 2 (F17):* two sentences are pinned.
 - **U4.** That an older runner under an explicit `observe` on a database created minutes earlier
   behaves as any observe run. Check 790.
-- **U5.** What the managed gate does with the Firebase stage's IAM changes when no flag is given
-  (F25). Settled by AB7's first test.
+- **U5.** Whether the managed gate's rule on added members admits the Firebase stage's IAM grants
+  as it stands, or needs them named (F25, D3028). Settled by AB7's first test.
 - **U6.** Which record says a repository's job was applied before the database existed (R6). The
   local config's repository entry is the candidate; settled by AB4.
 - **U7.** The exact entry points of the runner's and the CLI's test harnesses that AB0 changes.

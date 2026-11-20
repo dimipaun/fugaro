@@ -11,7 +11,8 @@ recommendation); every Cloud Batch launch is refused with a stated reason (D3021
 the stop it brings accepted (D3023, not the recommendation); a database's own mode stands (D3024);
 the policy node keeps its version (D3025, not the recommendation); no rule is written in terms of
 a repository's auth, and retiring that setting is a spec of its own (D3026, the owner's own
-answer). **AB6 is dropped** (F28); its number is not reused.
+answer); the budget database is written before the Firestore location's note (D3027); a managed
+project creates its database under the managed gate (D3028, not the recommendation). **AB6 is dropped** (F28); its number is not reused.
 
 **It ships in one release** (R1). No CLI release, a hotfix included, is cut from `main` between the
 merge of AB7 and I1.
@@ -52,6 +53,7 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/terraform.md` (AB5, AB7, AB15)
 | No run puts an API key in the agent's own environment for want of a gateway. An `oauth` run the credentials service does not serve is unchanged (D3026, R12) | AB1b `TestNoAPIKeyRunPutsTheKeyInTheAgentsEnvironment`, `TestAnOAuthRunIsUnchanged` |
 | Unset means observe in the local config, the job and the run | AB2 `TestUnsetModeIsObserve`; AB5 `TestTheJobAlwaysNamesItsMode`; AB1a `TestTheRunReadsUnsetAsObserve` |
 | `off` is accepted nowhere, and each refusal names the fix | AB2 `TestOffIsRefusedWithTheFix`; AB3 `TestBudgetModeOffFlagIsRefused` |
+| A location left for a person never holds back the budget database | AB7 `TestTheBudgetDatabaseIsWrittenBeforeTheLocationNote` |
 | An update never builds a second database, and never adopts one outside the installation's own project | AB7 `TestADatabaseUnknownHereIsAdopted`, `TestAStateNamingAForeignProjectIsNotAdopted` |
 | An update that cannot create the database leaves the cloud as it was and says who must run it | AB7 `TestAnUpdateThatCannotCreateTheDatabaseSaysWhoMust` |
 | A launch by this release's CLI that cannot have an identity is refused by the launcher, with the fix, never by a runner | AB4 `TestALaunchWithNoDatabaseIsRefusedWithTheFix`, `TestALaunchOnAJobThatPredatesTheDatabaseIsRefused` |
@@ -233,10 +235,12 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
   Firebase state and never by the history account (F23), and adopts it only if it is in the
   installation's own project (F24); where there is none it probes whether the person can make the
   project's IAM changes; if so it creates the database in observe and records it; if not, or the
-  project has no billing, or the run has no terminal for the stage's existing location
-  confirmation (F4, O10), the stage is skipped with one line saying who must run `fugaro update`
-  or that billing must be linked, and the rest of the update carries on (R2); under the managed
-  gate the stage only adopts (R11, U5); before it creates, it lists the project's databases, so a
+  project has no billing, or nothing answers the stage's ordinary confirmation (F4), the stage is
+  skipped with one line saying who must run `fugaro update` or that billing must be linked, and
+  the rest of the update carries on (R2); the budget database is written before the Firestore
+  location's note is reached, so a location left for a person holds back only the run history
+  (D3027); on a managed project the stage runs under the managed gate and creates the database
+  there, with no confirmation (D3028, R11, U5); before it creates, it lists the project's databases, so a
   deleted state never leads to a second one (F32); the stages that were skipped with the flag run
   with the database: the second installation stage, which deploys the history job and the shared
   project jobs, the history image's mirror and the budget admins' review (F29); the variable
@@ -250,11 +254,12 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 - Interfaces: none new.
 - Tests: `TestUpdateCreatesTheDatabaseWithNoFlag`, `TestADatabaseUnknownHereIsAdopted`,
   `TestAStateNamingAForeignProjectIsNotAdopted`,
-  `TestAnUpdateThatCannotCreateTheDatabaseSaysWhoMust`, `TestAManagedProjectOnlyAdopts`,
+  `TestAnUpdateThatCannotCreateTheDatabaseSaysWhoMust`, `TestAManagedProjectCreatesItsDatabaseUnderTheGate`,
   `TestTheNewDatabaseStartsInObserve`, `TestADeletedStateDoesNotLeadToASecondDatabase`,
   `TestTheStagesBehindTheFlagRunWithTheDatabase`, `TestAKnownDatabaseSkipsTheStageAsToday`,
-  `TestWithNoTerminalTheStageIsSkippedWithItsLine`.
-- Command: `go test ./internal/cli/ -run 'UpdateCreatesTheDatabase|ADatabaseUnknownHere|AStateNamingAForeignProject|AnUpdateThatCannotCreate|AManagedProjectOnlyAdopts|TheNewDatabaseStarts|ADeletedStateDoesNotLead|TheStagesBehindTheFlag|AKnownDatabaseSkips|WithNoTerminalTheStage|RefusalMatrix|CliReferenceNames' -count=1 && go test ./ee/clidoc/ -run CliReferenceIsCurrent -count=1 && go test -timeout 40m ./internal/cli/ -count=1`.
+  `TestWithNothingToAnswerTheStageIsSkippedWithItsLine`,
+  `TestTheBudgetDatabaseIsWrittenBeforeTheLocationNote`.
+- Command: `go test ./internal/cli/ -run 'UpdateCreatesTheDatabase|ADatabaseUnknownHere|AStateNamingAForeignProject|AnUpdateThatCannotCreate|AManagedProjectCreatesItsDatabase|TheBudgetDatabaseIsWrittenBefore|TheNewDatabaseStarts|ADeletedStateDoesNotLead|TheStagesBehindTheFlag|AKnownDatabaseSkips|WithNothingToAnswerTheStage|RefusalMatrix|CliReferenceNames' -count=1 && go test ./ee/clidoc/ -run CliReferenceIsCurrent -count=1 && go test -timeout 40m ./internal/cli/ -count=1`.
 - Red step: an update with no flag skips the stage with "no --firebase-project given".
 - Depends on: AB0 (kept, behaviour: its probe needs the fake project's permission test, and the
   other update tests need the harness's database).
@@ -567,6 +572,10 @@ AB12's release notes say what the update prints.
   owner chose rejection at once.
 - **A carrier for the token on Cloud Batch, or removing the Batch backend** (D3021's other
   options).
+- **Dropping the Firestore location's confirmation, or leaving the stage's order as it is**
+  (D3027's other options).
+- **Adopting under the managed gate and creating outside it** (the recommendation of D3028): the
+  owner chose creation under the gate.
 - **Keeping budget mode off** (D3009's other option, the plan as it stood before the owner's
   answer).
 - **Removing the Terraform switch for the budget backend** (AB6, dropped): it would create project

@@ -13,11 +13,11 @@ whose tasks KS14 and KS15 wait on this plan's I1.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's rulings, quoting his words; no typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A4, findings F1–F34, decisions D3020–D3026 with the owner's answers, resolutions R1–R12, open items O1–O12 (O9 withdrawn), UNVERIFIED U1–U7. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A4, findings F1–F34, decisions D3020–D3028 with the owner's answers, resolutions R1–R12, open items O1–O12 (O9 withdrawn), UNVERIFIED U1–U7. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Contract C1, tasks AB0 to AB15 (AB6 dropped, its number not reused), integration I1 (19 runs in one release, and one contract change that runs only if raised); levels, critical path, shared files; Checks 790 and 791 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
-**Numbers reserved:** decisions **D3020–D3039** (D3020–D3026 used), checks **790–799** (790 and
+**Numbers reserved:** decisions **D3020–D3039** (D3020–D3028 used), checks **790–799** (790 and
 791 used). Read on 2026-11-20: the highest decision on `main` was D2999 (reserved), with
 D3000–D3019 held by the keys plan's open pull request; the highest check was 773, with 774–779
 reserved and 780–789 held by the same pull request.
@@ -43,8 +43,13 @@ was dropped.
 **Review round 3** changed no answer. It added AB0 (the test harnesses get a budget database
 before any task refuses a run without one), corrected the shared project job and the stage on an
 installation that already has its database, and stated that D3020, D3022 and D3023 set the hard
-rule about `fugaro update` aside by the owner's choice. Its fixes are the last commit and were not
-reviewed again.
+rule about `fugaro update` aside by the owner's choice. Its fixes were not reviewed again.
+
+**After round 3** the owner answered its two open items the same day. D3027, as recommended: the
+budget database is written before the Firestore location's note, so a location left for a person
+holds back only the run history. **D3028 is not the recommendation**: a managed project creates
+its budget database under the managed gate, with no confirmation and from a coding agent's
+session too, where adopting under the gate and creating outside it was recommended.
 
 **What a reader should not take from here:** no task is approved; each needs the owner's go by name.
 No release, a hotfix included, is cut from `main` between the merge of AB7 and I1. Checks 790 and 791 are owner-run after the release.
