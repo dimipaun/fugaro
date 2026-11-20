@@ -2749,24 +2749,31 @@ func TestWorkspaceMemberEntryValidation(t *testing.T) {
 	entry := func(fields string) string {
 		return sample + "workspace_members:\n  aurora:\n" + fields
 	}
-	whole := entry("    job_service_accounts: [\"marker-job@aurora-gcp.iam.gserviceaccount.com\"]\n    firebase_project: aurora-fb\n    fp: aurora\n    exchange_url: https://exchange.example.com/v1\n")
+	account := func(fields string) string {
+		return entry("    job_service_accounts:\n      - account: marker-job@aurora-gcp.iam.gserviceaccount.com\n" + fields)
+	}
+	whole := account("        repos: [marker-org/aurora]\n    database_region: europe-west1\n    firebase_project: aurora-fb\n    fp: aurora\n    exchange_url: https://exchange.example.com/v1\n")
 	if _, err := Parse([]byte(whole)); err != nil {
 		t.Fatalf("a whole entry was refused: %v", err)
 	}
 	for name, tc := range map[string]struct{ yaml, msg string }{
-		"nothing at all":       {entry(""), "declares nothing"},
-		"a list twice":         {entry("    repos: [owner/repo-a, owner/repo-a]\n"), "lists owner/repo-a twice"},
-		"a bad repo":           {entry("    repos: [nope]\n"), "must look like owner/name"},
-		"a bad account":        {entry("    job_service_accounts: [marker-job]\n"), "is not a service account address"},
-		"an account twice":     {entry("    job_service_accounts: [\"a@b.iam.gserviceaccount.com\", \"a@b.iam.gserviceaccount.com\"]\n"), "lists a@b.iam.gserviceaccount.com twice"},
-		"a bad firebase":       {entry("    firebase_project: Aurora_FB\n"), "is not a GCP project ID"},
-		"a GCP project as fp":  {entry("    fp: aurora-gcp\n"), ""},
-		"a bad fp":             {entry("    fp: Aurora\n"), "is not a project name"},
-		"a plain http url":     {entry("    exchange_url: http://exchange.example.com/v1\n"), "must be an https URL"},
-		"a url with userinfo":  {entry("    exchange_url: https://person-1@exchange.example.com/v1\n"), "must be an https URL"},
-		"a url with no host":   {entry("    exchange_url: https:///v1\n"), "must be an https URL"},
-		"a bad member name":    {sample + "workspace_members:\n  Aurora:\n    fp: aurora\n", "is not a project name"},
-		"a localhost exchange": {entry("    exchange_url: https://localhost:8080/v1\n"), ""},
+		"nothing at all":           {entry(""), "declares nothing"},
+		"a list twice":             {entry("    repos: [owner/repo-a, owner/repo-a]\n"), "lists owner/repo-a twice"},
+		"a bad repo":               {entry("    repos: [nope]\n"), "must look like owner/name"},
+		"a bad account":            {entry("    job_service_accounts:\n      - account: marker-job\n        repos: [marker-org/aurora]\n"), "is not a service account address"},
+		"an account twice":         {entry("    job_service_accounts:\n      - account: a@b.iam.gserviceaccount.com\n        repos: [marker-org/aurora]\n      - account: a@b.iam.gserviceaccount.com\n        repos: [marker-org/aurora]\n"), "lists a@b.iam.gserviceaccount.com twice"},
+		"an account with no repos": {account(""), "names no repos"},
+		"a repo that is a pattern": {account("        repos: [marker-org/*]\n"), "must look like owner/name"},
+		"a repo twice":             {account("        repos: [marker-org/aurora, marker-org/aurora]\n"), "lists marker-org/aurora twice"},
+		"a bad region":             {account("        repos: [marker-org/aurora]\n    database_region: Europe-West1\n"), "is not a region name"},
+		"a bad firebase":           {entry("    firebase_project: Aurora_FB\n"), "is not a GCP project ID"},
+		"a GCP project as fp":      {entry("    fp: aurora-gcp\n"), ""},
+		"a bad fp":                 {entry("    fp: Aurora\n"), "is not a project name"},
+		"a plain http url":         {entry("    exchange_url: http://exchange.example.com/v1\n"), "must be an https URL"},
+		"a url with userinfo":      {entry("    exchange_url: https://person-1@exchange.example.com/v1\n"), "must be an https URL"},
+		"a url with no host":       {entry("    exchange_url: https:///v1\n"), "must be an https URL"},
+		"a bad member name":        {sample + "workspace_members:\n  Aurora:\n    fp: aurora\n", "is not a project name"},
+		"a localhost exchange":     {entry("    exchange_url: https://localhost:8080/v1\n"), ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(tc.yaml))

@@ -33,15 +33,19 @@ import (
 //   - `workspace add` and `workspace rm` edit the SELECTED project's config: the
 //     membership key and, beside it, the pin — the one place a member decides
 //     what it trusts (spec §2).
-//   - `workspace member add`, `member rm` and `cap set` edit the config of the
-//     project the workspace is NAMED AFTER, which is the workspace's own
-//     project: its config holds the owner's member table and the workspace's cap
+//   - `workspace member add`, `member rm`, `cap set`, `share` and `unshare`
+//     edit the config of the project the workspace is NAMED AFTER, which is the
+//     workspace's own project: its config holds the owner's member table, the
+//     workspace's cap and the credentials the workspace offers its members
 //     (spec §5, D1300), because the owner is the side that declares how the
 //     workspace reaches a member.
 //
 // Neither half is ever taken from the other, and no command here reaches the
-// cloud: the record the owner publishes is W2's `fugaro update` stage, so every
-// write ends by printing `next: fugaro update`.
+// cloud. What makes a write live differs by half and both are said out loud:
+// the owner's half owes the workspace's own project and the record published
+// from it, which the write chains (AP6), and the member's half owes this
+// project's own `fugaro update`, which publishes the record its runs read
+// (R3, R4) and which no command of this machine can run for that file.
 
 func newWorkspaceCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -72,6 +76,8 @@ command that converges the installation: fugaro update.`,
 		newWorkspaceRmCmd(),
 		newWorkspaceMemberCmd(),
 		newWorkspaceCapCmd(),
+		newWorkspaceShareCmd(),
+		newWorkspaceUnshareCmd(),
 	)
 	return cmd
 }
@@ -170,10 +176,15 @@ func workspaceEditResult(path string, out []byte, err error) ([]byte, error) {
 // nothing, and `next: fugaro update` beside a `no change` would be a promise
 // about a write that did not happen.
 //
-// The writes of the workspace family itself no longer call it (AP6: they run
-// their own steps, or declare none). The commands of the other families that
-// still hand off — accounts allow, the project profile and routing writes — are
-// AP7's audit, and they keep this helper until then.
+// The owner's half of this family no longer calls it (AP6: those writes run
+// their own steps, or declare none and are live once the file is written, and
+// chainApply is what ends them). The member's half does: `workspace add` and
+// `workspace rm` edit the pin and the membership, and this project's own
+// `fugaro update` is what carries them into the record its runs read (R3, R4),
+// which no step of this machine's apply can do for another project's file. The
+// commands of the other families that still hand off — accounts allow, the
+// project profile and routing writes — are AP7's audit, and they keep this
+// helper until then.
 func workspaceHandoff(cmd *cobra.Command, old, next []byte) {
 	if yamledit.Changed(old, next) {
 		fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
@@ -495,7 +506,15 @@ func runWorkspaceRm(cmd *cobra.Command, name string, o *workspaceRmOptions) erro
 	}); err != nil {
 		return err
 	}
-	return workspaceChain(cmd, lc, sel.Path, old, next, workspaceDoor("rm"), nil, false)
+	if err := workspaceChain(cmd, lc, sel.Path, old, next, workspaceDoor("rm"), nil, false); err != nil {
+		return err
+	}
+	// The removal owes no apply step for the member's reason and it is not live
+	// either: this project's own `fugaro update` is what republishes the record
+	// its runs read, and until it runs they carry the membership this file no
+	// longer states (R3, R4).
+	workspaceHandoff(cmd, old, next)
+	return nil
 }
 
 func newWorkspaceMemberCmd() *cobra.Command {

@@ -1738,6 +1738,9 @@
         "workspace_cap.monthly": {
           "default": "unset = the workspace states no cap"
         },
+        "workspace_members.*.database_region": {
+          "default": "unset = the member's database lives in its project's default region"
+        },
         "workspace_members.*.exchange_url": {
           "default": "unset = none"
         },
@@ -1747,8 +1750,11 @@
         "workspace_members.*.fp": {
           "default": "unset = none"
         },
-        "workspace_members.*.job_service_accounts": {
+        "workspace_members.*.job_service_accounts.*.account": {
           "default": "unset = no job service account is declared for the member"
+        },
+        "workspace_members.*.job_service_accounts.*.repos": {
+          "default": "unset = the account is a job of no repository"
         },
         "workspace_members.*.repos": {
           "default": "unset = the member contributes no repository"
@@ -1764,6 +1770,18 @@
         },
         "workspace_pin.service_account": {
           "default": "unset = no workspace is pinned"
+        },
+        "workspace_pin.service_address": {
+          "default": "unset = this project takes no workspace credential"
+        },
+        "workspace_shared.*.covers": {
+          "default": "unset = the credential covers no repository"
+        },
+        "workspace_shared.*.kind": {
+          "default": "unset = the workspace offers no credential"
+        },
+        "workspace_shared.*.projects": {
+          "default": "unset = the credential is offered to no member"
         }
       }
     }
