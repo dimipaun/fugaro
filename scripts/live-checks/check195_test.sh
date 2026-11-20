@@ -57,6 +57,8 @@ printf 'fugaro %s\n' "$*" >>"$FAKE_LOG_DIR/fugaro.calls"
 case "${1:-}" in
 version) echo "fugaro 0.13.0 (test)" ;;
 doctor)
+  # The project: line is printed by --all only (internal/cli/doctor.go, view.all).
+  case " $* " in *" --all "*) ;; *) exit 0 ;; esac
   # Faithful to internal/cli/doctor.go's emitDoctor: the checks first, then the
   # project: line -- on stdout -- and exit 1 as soon as any check of its own
   # failed, whatever that line said. The check must read the line and not the
