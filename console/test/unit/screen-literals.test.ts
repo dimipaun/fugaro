@@ -1826,6 +1826,8 @@ describe('no module under src/renderer writes an inline style', () => {
       'installations.ts',
       'manage/command.ts',
       'manage/kinds/images.ts',
+      'manage/kinds/keys.ts',
+      'manage/kinds/models.ts',
       'manage/kinds/read.ts',
       'manage/kinds/recipes.ts',
       'manage/kinds/repos.ts',
