@@ -703,6 +703,17 @@ type Config struct {
 	Log *slog.Logger
 	// Now is the clock. nil is time.Now.
 	Now func() time.Time
+	// Resolver is the front door's scope resolver (C1, R1): the scope every
+	// call of this deployment is served under. nil is the installation's own,
+	// which NewServer builds over this configuration (scope_installation.go) —
+	// one database, one bundle, one table, every route.
+	//
+	// A deployment that sets one still configures the readers above, because
+	// NewServer validates them: they are what an installation's scope answers,
+	// and a workspace's scope answers its own for the routes it serves
+	// (scope_workspace.go, WS2). The field is how a workspace's deployment is
+	// built without a second Server (WS5).
+	Resolver ScopeResolver
 }
 
 // Verifier is the part of C1.10's authenticator the service calls.
@@ -910,6 +921,11 @@ type Server struct {
 	// repository and App — one cache keyed by those two facts alone would serve
 	// one route's act with the other's token (F39).
 	issues *issueState
+	// resolver is the front door's scope resolver (C1, R1): the one seam
+	// between this service's two deployments, asked once per request by
+	// ServeHTTP. It is built here and not read per call, because it is the
+	// deployment's shape and not the call's.
+	resolver ScopeResolver
 }
 
 // NewServer validates cfg and returns the service.
@@ -1031,6 +1047,15 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), shared: make(map[string]SharedJobAccount, len(cfg.SharedAccounts)), audit: audit, slips: newSlipCache(), mergeMints: newMergeMintRate(cfg.Now), labels: newLabelState(cfg.Now), issues: newIssueState(cfg.Now)}
+	// The scope resolver (C1): the deployment's own, unless the configuration
+	// named one. An installation's is built from this same Config — the one
+	// database, the one table, the bundle — so that the front door and the
+	// model path read a caller through the seam rather than through the
+	// configuration, and a workspace's deployment hands in its own (WS5).
+	s.resolver = cfg.Resolver
+	if s.resolver == nil {
+		s.resolver = installationResolver{s: s}
+	}
 	for _, ja := range cfg.JobAccounts {
 		if ja.Email == "" || ja.Slug == "" || ja.Repo == "" {
 			return nil, errors.New("credsvc: a job account with no email, slug or repository binds nothing")
@@ -1157,6 +1182,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
 			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+" and "+BuildCredentialsPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+		return
+	}
+	// The scope this call is served under (R1, C1), asked once and before any
+	// handler is dispatched: the resolver owns the reads that come before the
+	// route — the two identities, the pairing — and answers the refusal itself
+	// when one of them fails, so that no handler reads the deployment's
+	// configuration for a caller. Everything below this line reads the scope,
+	// and the scope travels to every handler through the request's context
+	// (withScope), which is what keeps a handler's signature a handler's own.
+	sc, ok := s.resolver.Resolve(w, r)
+	if !ok {
+		return
+	}
+	ctx = withScope(ctx, sc)
+	if !sc.Serves(r.URL.Path) {
+		// The route this scope does not serve (R14): a workspace serves the
+		// model routes, a run's forge routes and its keep-warm route, and
+		// refuses every other route — the review signing and verification, the
+		// slips, the workflow secrets, the build tokens, the read mints, the
+		// merge, the label and the issue routes — so that a member's run keeps
+		// calling its own project's service for them (A2, D2988). It is asked
+		// here rather than inside each handler, because a route that is refused
+		// must reach no handler at all.
+		s.refuseNotServed(ctx, w, r, sc)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -1288,18 +1337,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.slipGrant(ctx, w, r)
 		return
 	}
-	req, err := RequestFromHTTP(r)
-	if err != nil {
-		// The contract's own reading of the headers, never this server's
-		// (review finding m7). Its errors name a header and never a value.
-		s.refuse(w, StatusUnverified, ErrorUnverifiedRunIdentity, err.Error())
+	// The caller this call was resolved as (the resolver's own work: the two
+	// identities verified, the pairing made), and the request they were read
+	// from — which the claim route and the sign route read for the claims
+	// beside the tokens. A route below this line is one the shared parse
+	// answers, so a scope that brought no caller here is a resolver
+	// disagreeing with the front door, and it is refused rather than served an
+	// empty identity: a service that paired nobody and served the call anyway
+	// would be a service that admitted nobody in particular.
+	call, called := sc.Caller()
+	if !called {
+		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the call reached a route with no caller")
 		return
 	}
-	id, err := s.cfg.Auth.Verify(ctx, req)
-	if err != nil {
-		s.refuseIdentity(ctx, w, r, err)
-		return
-	}
+	id, req, canonical, ja := call.Identity, call.Request, call.Canonical, call.Job
 	// The purpose the call asks for and the credential a line for it names, and
 	// what every refusal below is recorded as (C1.13): the route decides both
 	// (routeAct, the one rule), and they are read here because every refusal
@@ -1314,69 +1365,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// name for it, not a value read out of a bundle, which is why the mint
 	// itself (auditMint, refuseMint) takes both from the same rule.
 	purpose, credential := routeAct(r.URL.Path)
-	// The pairing, which is where the two classes differ (spec §3.2), and the
-	// canonical repository every check below is made against.
-	//
-	// A per-repository job's account names a repository, so the pairing is one
-	// comparison: a run identity is honoured only by the job whose repository
-	// it belongs to, which is what stops an admitted job account from
-	// presenting a run token of another repository (review finding N1). A
-	// review job's account names none, so that comparison cannot be made and
-	// must not be replaced by "trust the run token": the repository is the run
-	// identity's own slug, resolved through the installation's table and
-	// admitted to by the calling account (pairReview). Either way the call
-	// below reads the repository from the pairing and not from the job
-	// account, because a review caller has no job account to read it from.
-	var (
-		ja        JobAccount
-		canonical string
-	)
-	switch id.JobClass {
-	case ClassReview:
-		repo, err := s.pairReview(ctx, id)
-		if err != nil {
-			s.refusePairing(ctx, w, id, purpose, credential, err)
-			return
-		}
-		canonical = repo
-		// What the mint is handed in place of a job account: the same account,
-		// the run identity's slug and the repository the pairing resolved. The
-		// mint's own shape is unchanged — C3.9b is the task that chooses its
-		// permission set from the class — and what it is scoped to is already
-		// the pairing's answer here.
-		ja = JobAccount{Email: id.JobAccount, Slug: id.Slug, Repo: canonical}
-	case ClassShared:
-		// The shared class's pairing (G21, F40): the repository is the run
-		// identity's own slug and the job's row says which profile's
-		// repositories that may be, so the comparison the per-repository class
-		// makes against its one repository is made here against the profile's
-		// list. What is handed to the mint is spelled the way a review
-		// caller's is, and for the same reason: the account names no
-		// repository, so the pairing's answer is the repository.
-		repo, err := s.pairShared(ctx, id)
-		if err != nil {
-			s.refusePairing(ctx, w, id, purpose, credential, err)
-			return
-		}
-		canonical = repo
-		ja = JobAccount{Email: id.JobAccount, Slug: id.Slug, Repo: canonical}
-	default:
-		bound := false
-		ja, bound = s.jobs[id.JobAccount]
-		if !bound || ja.Slug != id.Slug {
-			// The refusal is recorded like the ones below it: the identity
-			// Verify returned is whole, so the line names the run, the
-			// repository the run belongs to, the job and the account — and the
-			// route's credential and no other, which for a model call is none
-			// (the bundle has not been read) and for a mint is the App key's
-			// name.
-			s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
-				"the run identity is not a run of the calling job's repository")
-			return
-		}
-		canonical = ja.Repo
-	}
-	on, which, err := s.cfg.Kills.Stop(ctx, id.Slug)
+	// The operator's stop switches this scope's callers are held to: the
+	// installation's own pair for an installation, and the workspace's for a
+	// workspace (R8's neighbour — a member's own stop switches are its own
+	// service's business, and the workspace's are the workspace's).
+	on, which, err := sc.Kills().Stop(ctx, id.Slug)
 	if err != nil {
 		// An unreadable switch is not an off switch (budget's own rule), so
 		// the call is refused rather than served. The read is named on the
@@ -1398,16 +1391,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path != SlipClaimPath {
-		// The slip the call presents, if it presents one (DS1.6, G3, G4, G12).
-		// It is read after the stop switches — a stopped service reads no slip
-		// either — and on every route but the claim's: a claim is not a call
-		// that carries a slip, it is the call that TAKES one, and its own read
-		// of the two headers is the once-only fence of D1941 (slipClaim). A
-		// call that presents neither header is the slip-less path, which is
+		// The slip the call presents, if it presents one (DS1.6, G3, G4, G12),
+		// and only a scope that accepts one reads it (R18): a workspace's
+		// callers present none — a member's call carries the job's identity and
+		// the run's token and nothing else of the member's — so a call that
+		// presents one is refused rather than served slip-less, which is what
+		// "the workspace's upstream carries no member secret" means for the one
+		// secret a call could carry.
+		//
+		// The slip is read after the stop switches — a stopped service reads no
+		// slip either — and on every route but the claim's: a claim is not a
+		// call that carries a slip, it is the call that TAKES one, and its own
+		// read of the two headers is the once-only fence of D1941 (slipClaim).
+		// A call that presents neither header is the slip-less path, which is
 		// what this service served before the slips existed and what it goes on
 		// serving (R9).
-		binding, refused := s.verifyCallSlip(ctx, r, id)
-		if refused != nil {
+		if !sc.AcceptsSlip() {
+			if presentsSlip(r) {
+				s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
+					"a call to this service carries no slip, and this one presented one")
+				return
+			}
+		} else if binding, refused := s.verifyCallSlip(ctx, r, id); refused != nil {
 			// The refusal names the read it was taken on when it was taken on
 			// one (slipRefusal.cause): the slip's own record could not be read
 			// is the one of these that is a failed read rather than an answer
@@ -1415,8 +1420,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// to the run.
 			s.refuseCallCause(ctx, w, id, purpose, credential, "", refused.status, refused.typ, refused.message, refused.cause)
 			return
-		}
-		if binding != nil {
+		} else if binding != nil {
 			// The rest of the call is answered under the slip it was admitted
 			// by: the audit line reads the two fields from here (Auditor.Write,
 			// R5), the offering is fenced by it (slipOffering, G12) and the
@@ -1555,7 +1559,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the request's check needs the policy's allow-list, and neither is a
 	// credential. A request the gateway's own rules refuse is answered here —
 	// before the one document that holds every credential is read at all.
-	shared, found, err := s.cfg.Policy.Shared(ctx)
+	shared, found, err := sc.Policy().Shared(ctx)
 	if err != nil || !found {
 		// A node that is not there is not a read that failed, and labelRead
 		// answers a nil err as nil: the two share one sentence and the line
@@ -1664,7 +1668,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// placement names, and the retry leaves it only when the attempt that just
 	// failed was that same credential — the one case where staying would spend
 	// the retry on the mark that was just written.
-	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now, Strategy: strategy}
+	// The selector is built over the SCOPE's state and not the deployment's
+	// (R1, R8): every mark this call writes — the placement, the cooldown, the
+	// repository's recorded auth — lands in the database of the scope that
+	// answered the caller, which for a workspace's member is the workspace's
+	// own and never the member's machine or the installation's.
+	sel := &creds.Selector{Store: sc.State(), Settings: settingsOf(shared), Now: s.now, Strategy: strategy}
 	s.forward(ctx, w, cl, sel, id, b, cands, notAdmitted)
 }
 
@@ -1680,6 +1689,48 @@ const requestRefused = "the request is refused before any credential is read: "
 // switches on and a sentence that names no credential value.
 func (s *Server) refuse(w http.ResponseWriter, status int, typ, message string) {
 	WriteWireError(w, status, WireError{Error: typ, Message: message})
+}
+
+// refuseNotServed is the front door's refusal of a route the scope does not
+// serve (R14): a workspace serves the model routes, a run's forge routes and
+// its keep-warm route, and refuses every other route, which is what tells a
+// member's run to keep calling its own project's service for them.
+//
+// It is answered before any handler is dispatched, and it is the one refusal of
+// this service that can be written with or without a caller: a route answered
+// before the shared parse has no verified identity, so its refusal is the
+// service's own and writes no audit line (refuse, the 404's own spelling), and
+// a route of the shared parse — the sign route is one a workspace refuses — has
+// one, so its refusal is written through refuseCall like every other refusal of
+// a verified caller and the operator's line names the route, the caller and the
+// purpose it asked for.
+//
+// The type is unverified_job_identity rather than one of its own, and that is
+// the wire's rule and not a shortcut: a run's gateway halts on a refusal type it
+// does not know (internal/gateway's serviceAnswer), so a type this release
+// invented would halt a member's run with "the service answered something this
+// gateway cannot read" where the fact is that the run called a service that
+// does not serve its route. The sentence says which refusal this is, and the
+// caller of a route a workspace refuses is a caller that workspace does not
+// admit to that route — which is what the type says.
+func (s *Server) refuseNotServed(ctx context.Context, w http.ResponseWriter, r *http.Request, sc Scope) {
+	const message = "this service does not serve this route: a run calls its own project's service for the routes its workspace does not serve"
+	call, called := sc.Caller()
+	if !called {
+		s.refuse(w, StatusUnverified, ErrorUnverifiedJobIdentity, message)
+		return
+	}
+	purpose, credential := routeAct(r.URL.Path)
+	s.refuseCall(ctx, w, call.Identity, purpose, credential, "", StatusUnverified, ErrorUnverifiedJobIdentity, message)
+}
+
+// presentsSlip answers whether the call carries either of the slip's two
+// headers. It reads the headers and nothing else: what it is asked is whether
+// this is a call the scope must not serve at all (R18), and that is answered
+// before the slip's own content is read — a scope that accepts no slip refuses
+// the call rather than parsing what it presented.
+func presentsSlip(r *http.Request) bool {
+	return r.Header.Get(HeaderSlip) != "" || r.Header.Get(HeaderSlipClaim) != ""
 }
 
 // refuseIdentity answers a Verify refusal, and does the one piece of work a
