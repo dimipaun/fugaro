@@ -204,8 +204,8 @@ Consequence: BR7.
 deleted by the bucket's lifecycle rule after one day (`modules/installation/bucket.tf`, suffix
 `/budget-token`); a rejected launch drops it at once (`dropBudgetToken`). K3 creates no cloud
 resource per run: the blob lives in the job and goes when the job does. The registration of D3068
-is two fields on the budget record the run already has, which is kept or swept as that record is
-today. Requirement 5 holds with no new cleanup, and the ruling against deleting secrets is not
+is one small entry per launch attempt on the budget record the run already has, which is kept or
+swept as that record is today. Requirement 5 holds with no new cleanup, and the ruling against deleting secrets is not
 touched.
 
 ### Rules and the other plans
@@ -276,7 +276,7 @@ Consequence: BR14's acceptance says so.
 ## Decisions
 
 All answered by the owner on 2026-11-20 with `AskUserQuestion`. None departs from the
-recommendation. D3061 was asked twice, D3062 three times, D3065 and D3066 were added by review round 1, and D3067
+recommendation. D3061 and D3062 were each asked twice (D3062 was amended in between, after review round 1), D3065 and D3066 were added by review round 1, and D3067
 and D3068 by review round 2.
 
 | # | Module | Question | Recommendation and why | Alternatives and their cost | Answer |
@@ -323,6 +323,14 @@ One defensible answer each; stated, not asked.
   them to every token holder. A launcher that dies between the two calls leaves a run that stops
   at release, which is the safe side. The bound on creation time allows for the launcher's clock
   being off by a stated tolerance.
+  Review round 3 fixed how it is stored, because the guarantee depends on it. The record holds
+  one entry per digest, written once and never overwritten or removed while the run's record
+  lives; the job's id is written once per entry. A `--retry`, or the relaunch D3066 leads to,
+  mints again under a new key, so it has a new digest and adds an entry beside the old one. An
+  entry another launcher adds for a digest of their own blocks nothing and opens nothing. The
+  calls are admitted for the launcher class alone (`VerifyLauncher`, `internal/credsvc/auth.go`);
+  the job, review and every other class are refused. The run's own agent can read the entries
+  and cannot write them.
 - **R2 (`update-converge`). `fugaro update` applies the compute root** for an installation that
   already carries a `batch:` block, and records the key in the block. First provisioning stays
   `fugaro setup --provision-batch`. This is the hard rule's own answer (F13).
@@ -397,6 +405,19 @@ his earlier D2075 (F29, D3067).
 - **O8.** The link must also refuse a plain Compute Engine VM that someone with
   `compute.instances.create` and `actAs` on a run account made by hand. Check 810 tries it; no
   Fugaro role holds that pair today.
+- **O11. To decide: a launcher that is a service account.** The service's launcher class admits
+  people only and is empty until the owner fills it, so under D3068 a CI or coordinator service
+  account could not launch on Batch, and a person not on that roster could not either. Whether
+  that is acceptable, or the class widens, is the owner's. BR17 builds for the class as it is.
+- **O12.** The launcher's identity token is a bearer token for an audience wider than this
+  service, valid for an hour. The registration proves the caller is on the launcher roster, not
+  that the caller minted this run. A launcher can mint anyway (F24); stated, not fixed.
+- **O13. To decide: O7 is a product decision nobody was asked.** The alternative to R2 as
+  written is to apply the compute root only where the backend is selected, which needs the
+  selection's own gate (doctor's seal check) to stop asking for the key first. Left as R2 until
+  the owner says.
+- **O14.** "No CLI release between the merge of BR1 or BR16 and I1" is a rule for whoever cuts
+  releases. Nothing enforces it.
 - **O9.** BR2 and BR4 rest on U2 and are built before Check 810 runs. If the check fails U2, R4
   applies and their work is at risk.
 - **O10.** The `secrets` and `service_account` fields stay in `localcfg.Batch` so an old file
@@ -415,8 +436,8 @@ his earlier D2075 (F29, D3067).
   Compute Engine documentation says the full format does on a VM; not fetched for Batch. Check 810.
 - **U3.** Whether Batch writes a job's variables to Cloud Logging, to instance metadata or to the
   `CreateJob` audit record (F3). Check 810 reads all three for the wrapped value.
-- **U8.** How soon Batch lets a deleted job's name be used again. Check 810 measures it; R1's
-  release-once guard does not depend on the answer.
+- **U8.** How soon Batch lets a deleted job's name be used again. Check 810 measures it; the
+  registration of D3068 does not depend on the answer.
 - **U4.** Who decrypts `encryptedVariables` (F2). Not needed by K3; not pursued.
 - **U5.** Secret Manager's price per version and the 60-day deletion of finished Batch jobs: read
   from search summaries only. Neither is relied on.

@@ -14,7 +14,7 @@ adds; that plan was read on branch `docs/always-a-budget` at `8bf13231f` and has
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's rulings; no typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: the module map, assumptions A1–A5, findings F1–F31, the threat model of each carrier, decisions D3060–D3068 with the owner's answers, resolutions R1–R13, open items O1–O10, UNVERIFIED U1–U8. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | The amended spec: the module map, assumptions A1–A5, findings F1–F31, the threat model of each carrier, decisions D3060–D3068 with the owner's answers, resolutions R1–R13, open items O1–O14, UNVERIFIED U1–U8. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Contract C1, tasks BRS and BR0 to BR17, the contract change that carries the owner's answer after Check 810, integration I1 (22 runs), and one contract change that runs only if raised; levels, critical path, shared files; Checks 810 and 811 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
@@ -43,9 +43,17 @@ BR5 behind Check 810.
 and no Batch caller class in the service), which D3064 and D3061 reverse. Asked, the owner ruled
 that **D3064 supersedes D2075** (D3067, as recommended). It found that a second launcher could
 replace a queued job and receive its key; the owner chose to close it by having the launcher
-register the job (D3068, as recommended). **D3062 was asked a third time**: the second read is
+register the job (D3068, as recommended). **D3062 was asked again**: the second read is
 decided after Check 810 (as recommended). The round split BR6, added BR15 to BR17, made the
 contract change a task that always runs, and rebased onto a `main` that had moved.
+
+**Review round 3** changed no answer and was the last. It fixed how the registration is stored
+(one entry per digest, written once), named the launcher class as its only caller, and added the
+pinned tests and tables three tasks would have broken. Its fixes are the last commit and were
+not reviewed again. It left two questions for the owner that nobody has asked him: O11 (a
+service-account launcher cannot register, so it cannot launch on Batch) and O13 (`fugaro update`
+creates a key ring that can never be deleted on an installation that carries a `batch:` block
+and never selected the backend).
 
 **What the reconciliation found that the brief did not know:** the token's carrier is one of seven
 gaps (F7 to F13); any carrier the run's service account opens can be replayed by a second

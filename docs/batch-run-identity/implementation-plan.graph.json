@@ -46,7 +46,8 @@
           "internal/backend/batch/account.go",
           "internal/backend/batch/secrets.go",
           "internal/backend/deployedjob.go",
-          "internal/cli/docs_budget_token_channel_test.go"
+          "internal/cli/docs_budget_token_channel_test.go",
+          "deploy/terraform/secret_readers_test.go"
         ]
       }
     },
@@ -155,7 +156,8 @@
           "deploy/terraform/gcp/roots/compute/**",
           "internal/infra/tf/cover.go",
           "internal/infra/tf/testdata/golden/**",
-          ".claude/rules/credentials-service.md"
+          ".claude/rules/credentials-service.md",
+          "deploy/terraform/terraform_test.go"
         ]
       }
     },
@@ -260,7 +262,9 @@
           "internal/cli/launch_batch.go",
           "internal/cli/launch_batch_test.go",
           "internal/cli/run.go",
-          "internal/cli/cloud_openers_test.go"
+          "internal/cli/cloud_openers_test.go",
+          "deploy/terraform/secret_readers_test.go",
+          "docs/secrets-brokering/secret-readers.md"
         ]
       }
     },
@@ -276,7 +280,8 @@
         "paths": [
           "SECURITY.md",
           "website/content/security.md",
-          "docs/backends.md"
+          "docs/backends.md",
+          "internal/cli/docs_security_test.go"
         ]
       }
     },
@@ -328,7 +333,9 @@
           "docs/secrets-brokering/secret-readers.md",
           "docs/secrets-brokering/reconciliation.md",
           "SECURITY.md",
-          "website/content/security.md"
+          "website/content/security.md",
+          "deploy/terraform/secret_readers_test.go",
+          "internal/cli/docs_security_test.go"
         ]
       }
     },
