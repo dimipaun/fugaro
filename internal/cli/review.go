@@ -106,6 +106,15 @@ func newReviewCmd() *cobra.Command {
 			"reaches the pull request is the owner's and the coordinator's to decide.\n\n" +
 			"The account is picked as everywhere else: --token, else agent.oauth_token in\n" +
 			"fugaro.yaml at the run's ref, else the project's default_claude_account.\n\n" +
+			"A review judges the pull request against the task the run that opened it was\n" +
+			"given, found through the runs bucket alone, and says what it judged against\n" +
+			"in its artifact and in the against line of fugaro review show RUN. Two flags\n" +
+			"ask for something else: --code-only asks for the code alone, with no task at\n" +
+			"all, and --spec FILE asks for FILE's own text as the task — the way a pull\n" +
+			"request no run produced is reviewed against something, redacted like every\n" +
+			"other text a launcher adds and refused over " + fmt.Sprint(task.MaxReviewSpecBytes) + " bytes with its size. The\n" +
+			"two are refused together. Both are on fugaro run --recipe review-only --pr N\n" +
+			"as well, with the same default.\n\n" +
 			"--mutate FILE:TEST asks for one mutation check: the reviewer flips a boolean\n" +
 			"literal in FILE, which must be Go source in the head under review, and TEST —\n" +
 			"a Go test name — must then fail. The artifact carries what was observed; it is\n" +
