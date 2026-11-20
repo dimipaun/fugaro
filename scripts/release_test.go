@@ -3079,6 +3079,19 @@ func TestReleaseGateAcceptsAPatchOnItsMaintenanceBranch(t *testing.T) {
 	}
 	runGate(t, r, g, git("rev-parse", "main"), "v1.2.1").requireSuccess(t)
 
+	// A patch whose only `ci` run is a selected one is refused at once, and the
+	// command it prints names the branch the commit is on rather than main: a
+	// dispatch is by ref, and release/1.2 is the ref that points at the fix.
+	sel := newGHState(t, r, greenChecks())
+	ciRuns(t, sel, fix+"\tci (selected)\t"+fix+"-selected")
+	selected := runGate(t, r, sel, fix, "v1.2.1")
+	if selected.err == nil {
+		t.Fatalf("the gate accepted a patch whose only ci run is a selected one:\n%s", selected.out)
+	}
+	if want := "gh workflow run ci --ref release/1.2 -f full=true"; !strings.Contains(selected.out, want) {
+		t.Errorf("want %q in:\n%s", want, selected.out)
+	}
+
 	// A commit on a branch that is not the line's own, cut from the same tag.
 	git("checkout", "--quiet", "-b", "scratch", "v1.2.0")
 	git("commit", "--quiet", "--allow-empty", "-m", "unrelated work")
