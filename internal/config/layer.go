@@ -321,6 +321,32 @@ func (l *ProjectLayer) SetsRigorLevel() bool {
 	return rigorAreaLevelWritten(d["rigor"])
 }
 
+// SetsRigorMembers reports whether the layer's text writes what LD4 adds to
+// its rigor block: a `members:` key of one of its defaults.rigor.areas rules,
+// or a key of the per-repository `defaults.rigor.repos` map beside them, at any
+// value. It is SetsRigorLevel's question asked of the two keys that ship with
+// the same release, and it is read from the tree for that method's reason:
+// rigor.Area.UnmarshalYAML folds `members` into the parsed rule, so the parsed
+// areas cannot say whether the key was written, while a runner older than
+// rigorMembersSince (internal/cli, the constant its gates judge the job image
+// against) refuses it as a field it does not know, in a layer it decodes with
+// KnownFields — and both keys reach every repository of the project at once,
+// because the layer is.
+//
+// The map's empty spelling counts, as it does for SetsJobs: `repos: {}` is a
+// line an older runner's decoder refuses exactly as a populated one, and the
+// parsed map cannot tell the two apart. An area's empty members list does not
+// reach this question: an area that names no member is refused at load
+// (Area.ValidateProject), so a layer a gate ever sees writes members with a
+// repository in it or writes no members at all.
+func (l *ProjectLayer) SetsRigorMembers() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	return rigorMembersWritten(d["rigor"])
+}
+
 // SetsLevelsNoneModel reports whether the layer's text names a review level's
 // model with the literal none (NoneModel), the level's own switch written the
 // other way. It reads the tree and not the parsed defaults.agent.levels, which

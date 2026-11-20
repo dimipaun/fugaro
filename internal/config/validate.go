@@ -212,9 +212,28 @@ func Validate(c *Config) []Problem {
 	ps = append(ps, validateBudget(c.Budget)...)
 	ps = append(ps, validateFollowup(c.Git.Provider, c.Followup)...)
 	if c.Rigor != nil {
-		// The repository's own block, by the same rules the project layer's
-		// is judged by: one function, two prefixes.
-		ps = append(ps, validateRigor("rigor", c.Rigor.Default, c.Rigor.Areas, nil, false)...)
+		// Whose rules the list here is decides which of the two rules judges
+		// it, because the two differ on one key: a project layer's rule may
+		// name the members it is made of, and a repository's own rule may not
+		// (LD4, Area.Validate). The block on a resolved Config is the merged
+		// one — the project layer's defaults.rigor with the file's own keys
+		// over it (resolve.go) — and a list is replaced whole rather than
+		// merged, so the rules of one layer are never mixed into the other's:
+		// RepoRigor carries the file's own block whenever the file wrote one,
+		// and where it wrote none the list that reached here is the project
+		// layer's, which validateLayer already judged by the project's rules
+		// where the layer is read (layer.go). A Config that is no resolution —
+		// a hand-built one, or the file read on its own by Parse — has no
+		// RepoRigor and no Layer, and is judged as it always was: the
+		// repository's own rules, by the repository's rules.
+		def, areas, project := c.Rigor.Default, c.Rigor.Areas, false
+		switch {
+		case c.RepoRigor != nil:
+			def, areas = c.RepoRigor.Default, c.RepoRigor.Areas
+		case c.Layer != nil:
+			project = true
+		}
+		ps = append(ps, validateRigor("rigor", def, areas, nil, project)...)
 	}
 	if c.Security != nil {
 		// The repository's own list, by the rules the project layer's is

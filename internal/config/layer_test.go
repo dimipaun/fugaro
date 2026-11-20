@@ -948,6 +948,52 @@ defaults:
 	}
 }
 
+// TestResolvedRigorRulesAreJudgedByTheirOwnLayer is LD4's members seen from a
+// resolved config: a file that resolves over a layer whose area names members
+// is valid.
+//
+// The rigor: block of a resolved Config is the merged one — the project
+// layer's defaults.rigor with the file's own keys over it (resolve.go) — and a
+// rule list is replaced whole rather than merged, so the rules of one layer
+// are never mixed into the other's. Whose list it is decides which rule judges
+// it, because the two differ on exactly this key: Area.ValidateProject lets a
+// project rule name members, and Area.Validate refuses them on a repository's
+// own rule. Judging the merged list by the repository's rules refused every
+// project area made of members, as a problem on the repository's file: the CLI
+// test that found it is TestValidateWarnsWhenTheProjectLayerSetsRigorMembers,
+// and this is its config-level half.
+func TestResolvedRigorRulesAreJudgedByTheirOwnLayer(t *testing.T) {
+	layer := mustLayer(t, strings.Replace(testLayer, "defaults:\n", `defaults:
+  rigor:
+    areas:
+      - name: console
+        members:
+          - { repo: acme/app }
+        level: pro
+`, 1))
+	// The file writes no rule of its own — neither a block at all, nor one
+	// that carries only a default, which leaves the layer's list in place.
+	for _, repo := range []string{minimalRepo, minimalRepo + "rigor: { default: startup }\n"} {
+		c, _, ps := Resolve([]byte(repo), layer)
+		if len(ps) > 0 {
+			t.Errorf("%q: resolving over a layer whose area names members is valid: %s", repo, problemsText(ps))
+			continue
+		}
+		if len(c.Rigor.Areas) != 1 || c.Rigor.Areas[0].Name != "console" || len(c.Rigor.Areas[0].Members) != 1 {
+			t.Errorf("%q: the merged areas = %+v; want the layer's console area", repo, c.Rigor.Areas)
+		}
+	}
+	// The file's own rule, in the same block: the repository's rules judge it,
+	// and members are what a repository's own rule may not write.
+	_, _, ps := Resolve([]byte(minimalRepo+"rigor:\n  areas:\n    - { name: mine, members: [{ repo: acme/app }], level: pro }\n"), layer)
+	if len(ps) != 1 || ps[0].Path != "rigor.areas[0]" {
+		t.Fatalf("problems = %s; want one at rigor.areas[0]", problemsText(ps))
+	}
+	if !strings.Contains(ps[0].Message, "takes no members") {
+		t.Errorf("the file's own rule is not refused for its members: %q", ps[0].Message)
+	}
+}
+
 // TestLayerRigorRepoNamesAreEveryNameItStates pins what the layer's rigor
 // block names, which is what `fugaro doctor` judges against the published
 // allow-list (LD4): every member of every area and every key of the per-repo
@@ -1355,6 +1401,46 @@ func TestProjectLayerJobsIsTopLevel(t *testing.T) {
 	}
 	if (*ProjectLayer)(nil).SetsJobs() {
 		t.Error("SetsJobs = true for no layer at all")
+	}
+}
+
+// TestProjectLayerRigorMembersAreReadFromTheText: the two keys LD4 adds to the
+// layer's rigor block — an area rule's members: and the per-repository repos:
+// map — are what a runner older than rigorMembersSince (internal/cli) refuses
+// as fields it does not know, so SetsRigorMembers has to answer for the text
+// and not for the parsed block. The parsed half cannot: Area.UnmarshalYAML
+// folds members into the rule, so a rule holding none parses exactly like one
+// the key was never written on, and an empty `repos: {}` parses like no map at
+// all. The released shape of a project area — a match: rule — is silence here,
+// because every release reads it.
+func TestProjectLayerRigorMembersAreReadFromTheText(t *testing.T) {
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\ndefaults:\n"
+	for _, c := range []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"an area with members", "  rigor:\n    areas:\n      - name: ui\n        members:\n          - {repo: acme/app, paths: [\"ui/**\"]}\n        level: pro\n", true},
+		{"a member with no paths", "  rigor:\n    areas:\n      - {name: ui, members: [{repo: acme/app}], level: pro}\n", true},
+		{"the per-repo map", "  rigor:\n    repos: { acme/app: pro }\n", true},
+		// The map's empty spelling counts, where an area's empty members list
+		// cannot reach a gate: an area that names no member is refused at load
+		// ("must say what the area is made of"), so every layer a gate sees
+		// either writes members with a repository in it or none at all.
+		{"an empty per-repo map", "  rigor: { repos: {} }\n", true},
+		{"the released shape, a match", "  rigor:\n    areas:\n      - {name: docs, match: \"docs/**\", level: pro}\n", false},
+		{"a default alone", "  rigor: { default: critical }\n", false},
+		{"no rigor block", "  git: { provider: github }\n", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			l := mustLayer(t, head+c.text)
+			if got := l.SetsRigorMembers(); got != c.want {
+				t.Errorf("SetsRigorMembers = %v, want %v for\n%s", got, c.want, c.text)
+			}
+		})
+	}
+	if (*ProjectLayer)(nil).SetsRigorMembers() {
+		t.Error("SetsRigorMembers = true for no layer at all")
 	}
 }
 
