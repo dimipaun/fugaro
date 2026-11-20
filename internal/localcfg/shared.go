@@ -318,12 +318,16 @@ func (c *Config) Shared() *Config {
 	// verifies against — at a party of its choosing. The membership key and
 	// the owner's member table are dropped with it: a shared file that could
 	// name a workspace would be one that could join this project to a group
-	// nobody here chose, and ParseShared refuses all four keys besides,
+	// nobody here chose, and the owner's shared list goes with the member table
+	// for its reason once more — a launcher who could write it would be
+	// choosing what the workspace's credentials service offers, which is the
+	// owner's act and no one else's. ParseShared refuses all five keys besides,
 	// because a shared config carrying one was not written by the converge.
 	s.Workspace = ""
 	s.WorkspacePin = WorkspacePin{}
 	s.WorkspaceMembers = nil
 	s.WorkspaceCap = nil
+	s.WorkspaceShared = nil
 	s.Repos = withoutRepoLocalKeys(c.Repos)
 	s.ModelPrices = withoutCacheSpellings(s.ModelPrices)
 	return &s

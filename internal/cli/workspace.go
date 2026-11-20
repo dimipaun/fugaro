@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -133,6 +134,16 @@ func workspaceAddItem(path string, src []byte, at []string, value string) ([]byt
 	return workspaceEditResult(path, out, err)
 }
 
+// workspaceUpsertJobAccount writes one job service account of a member and the
+// repositories it is a job of as one sequence item. The two are one statement,
+// so they are one operation: an item written with its list, replaced where it
+// stands, keeps its place in the table and its comment beside the account name
+// (UpsertSeqItemListByKey's own rule).
+func workspaceUpsertJobAccount(path string, src []byte, project, account string, repos []string) ([]byte, error) {
+	out, err := yamledit.UpsertSeqItemListByKey(src, []string{"workspace_members", project, "job_service_accounts"}, "account", account, "repos", repos)
+	return workspaceEditResult(path, out, err)
+}
+
 func workspaceRemoveKey(path string, src []byte, at []string) ([]byte, error) {
 	// DropEmptyParents, so removing the last member takes the now-empty
 	// workspace_members block with it and a member added and removed leaves the
@@ -209,6 +220,7 @@ type workspaceAddOptions struct {
 	issuer          string
 	assertionKey    string
 	serviceAccount  string
+	serviceAddress  string
 	yes             bool
 }
 
@@ -227,15 +239,27 @@ workspace's record, which carries none of them: a record that could supply them
 would aim this project's exchange and this project's database grant at a party
 of its choosing.
 
+--service-address is the address of the workspace's own credentials service, and
+it is optional: a pin without one is valid, and means this project takes no
+workspace credential. With it, this project's runs call that service for a
+credential the workspace holds and the project does not. It is this project's own
+value and never the workspace's, so nothing the workspace publishes can move
+where this project's calls go; it is https, with no query and no fragment.
+
 The issuer must be exactly https://securetoken.google.com/<firebase-project>.
 The signature is verified against Google's one published set of Firebase signing
 keys, the same document for every project, so the aud/iss pair is the whole of
 what tells one project's tokens from another's; a mistyped half is refused here
 and refused again at the load.
 
+The values given are the whole statement: an address this invocation does not
+name is dropped from the pin, so re-pinning without one is how a project stops
+taking a workspace credential.
+
 Only the keys it writes are rewritten: every comment and every other key of the
-file is kept. The write is local, and it reaches the installation through
-fugaro update.`,
+file is kept. The write is local, and this project's own fugaro update is what
+carries it to the runs, which publish the membership and the address inside the
+policy-side record they read at bootstrap.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runWorkspaceAdd(cmd, args[0], &o) },
 	}
@@ -244,6 +268,7 @@ fugaro update.`,
 	f.StringVar(&o.issuer, "issuer", "", "the issuer the exchange requires; must be https://securetoken.google.com/<firebase-project>")
 	f.StringVar(&o.assertionKey, "assertion-key", "", "the key this project verifies a member-bound assertion against")
 	f.StringVar(&o.serviceAccount, "service-account", "", "the workspace service account this project's grant binds to")
+	f.StringVar(&o.serviceAddress, "service-address", "", "the workspace's own credentials service, https with no query or fragment; omit it for a project that takes no workspace credential")
 	return cmd
 }
 
@@ -278,6 +303,20 @@ func runWorkspaceAdd(cmd *cobra.Command, name string, o *workspaceAddOptions) er
 			return err
 		}
 	}
+	// The address is optional and it is still part of the statement: the values
+	// this invocation names are the whole pin, so an address it does not name
+	// goes. It is the removal and not an empty scalar, because a written
+	// `service_address: ""` is a value the loader would have to hold to the URL
+	// rule to learn is the absence it already reads an unwritten key as, and the
+	// write after the four required keys is what keeps the removal from taking a
+	// workspace_pin the scalars above have just filled with it.
+	if o.serviceAddress == "" {
+		if next, err = workspaceRemoveKey(sel.Path, next, []string{"workspace_pin", "service_address"}); err != nil {
+			return err
+		}
+	} else if next, err = workspaceSetScalar(sel.Path, next, []string{"workspace_pin", "service_address"}, o.serviceAddress); err != nil {
+		return err
+	}
 
 	edit := settingsEdit{
 		Old:     old,
@@ -299,7 +338,17 @@ func runWorkspaceAdd(cmd *cobra.Command, name string, o *workspaceAddOptions) er
 	if err := workspaceEditLocal(cmd, lc, sel.Path, edit); err != nil {
 		return err
 	}
-	return workspaceChain(cmd, lc, sel.Path, old, next, workspaceDoor("add"), nil, false)
+	if err := workspaceChain(cmd, lc, sel.Path, old, next, workspaceDoor("add"), nil, false); err != nil {
+		return err
+	}
+	// The member's half owes no apply step and it is not live either: the run
+	// reads this project's membership, its grant and the address from the
+	// policy-side record this project's own `fugaro update` publishes (R3, R4),
+	// so the one command left is that update and this is where the person is
+	// told. A write that changed nothing converges nothing and says so by
+	// saying nothing (workspaceHandoff's own rule).
+	workspaceHandoff(cmd, old, next)
+	return nil
 }
 
 // workspaceOrNone is a config's membership key as a sentence names it.
@@ -333,8 +382,12 @@ func workspacePinValue(name string, o *workspaceAddOptions, at string) string {
 // membership this project is joining. The assertion key is a key, so the
 // sentence says there is one and does not print it.
 func workspaceAddWhat(project, name string, o *workspaceAddOptions) string {
-	return fmt.Sprintf("join project %s to workspace %s: pin its Firebase project %s, its issuer %s, an assertion key, and the workspace service account %s",
+	what := fmt.Sprintf("join project %s to workspace %s: pin its Firebase project %s, its issuer %s, an assertion key, and the workspace service account %s",
 		project, name, o.firebaseProject, o.issuer, o.serviceAccount)
+	if o.serviceAddress == "" {
+		return what + ", and take no workspace credential (no service address)"
+	}
+	return what + ", and call the workspace's credentials service at " + o.serviceAddress
 }
 
 // workspacePinFlags holds the four pin values to what `workspace add` writes:
@@ -361,6 +414,12 @@ func workspacePinFlags(o *workspaceAddOptions) error {
 		return userErr("--issuer %s must be %s, the issuer of Firebase project %s: the signature is verified against Google's one published set of Firebase signing keys, the same document for every project, so the aud/iss pair is what tells one project's tokens from another's",
 			o.issuer, want, o.firebaseProject)
 	}
+	if o.serviceAddress != "" {
+		u, err := url.Parse(o.serviceAddress)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return userErr("--service-address %s must be an https URL with a host and no userinfo, query or fragment: it is where this project's runs call the workspace's own credentials service, so a signed POST to a URL with a query or a fragment would reach a resource this pin does not name", o.serviceAddress)
+		}
+	}
 	return nil
 }
 
@@ -369,8 +428,12 @@ func workspacePinFlags(o *workspaceAddOptions) error {
 // nothing of what this command decided is left for them to reconstruct. The
 // assertion key is the one value it does not spell, because it is a key.
 func workspaceAddCommand(name string, o *workspaceAddOptions) string {
-	return fmt.Sprintf("fugaro workspace add %s --firebase-project %s --issuer %s --assertion-key <key> --service-account %s",
+	cmd := fmt.Sprintf("fugaro workspace add %s --firebase-project %s --issuer %s --assertion-key <key> --service-account %s",
 		name, o.firebaseProject, o.issuer, o.serviceAccount)
+	if o.serviceAddress != "" {
+		cmd += " --service-address " + o.serviceAddress
+	}
+	return cmd
 }
 
 type workspaceRmOptions struct {
@@ -458,6 +521,8 @@ config of the project the workspace is named after.`,
 
 type workspaceMemberAddOptions struct {
 	jobServiceAccounts []string
+	jobRepos           []string
+	databaseRegion     string
 	firebaseProject    string
 	fp                 string
 	exchangeURL        string
@@ -483,8 +548,25 @@ exchange URL (where the workspace's signer mints a member-bound assertion for).
 --repo names a repository the member contributes to the workspace, and is
 repeatable.
 
+Every job service account carries the repositories it is a job of, one
+--job-repos <account>=<owner/name> per repository, at least one per account: the
+workspace's service holds a run's verified repository to the calling account's
+own list, so an account whose jobs the table cannot state is a caller no run of
+it could be served for. One repository is the ordinary case — a repository's own
+job is a job of that repository — and a shared project job serving several
+repositories names all of them. A pattern is refused where a repository is
+asked for, because a pattern is a promise about what the account may be a job of
+rather than the jobs it is.
+
+--database-region is where the member's Realtime Database lives, and it is
+optional: a database in the project's default region needs none. It is never
+whose database it is — that is derived from the Firebase project the verified
+iss names, so an owner cannot pair one member's accounts with another's
+database — and this says only where in that project it lives.
+
 A member the table already declares is replaced whole: the entry ends up
-holding the four values given and the repositories named, and nothing else. A
+holding the four values given, the accounts with their repositories, the
+database region and the repositories named, and nothing else. A
 re-declaration is therefore how a retired or compromised job service account
 leaves the table, and it asks for the workspace's own project name because what
 it removes is what the workspace trusted. Use fugaro workspace member rm to drop
@@ -514,6 +596,8 @@ builds.`,
 	})
 	f := cmd.Flags()
 	f.StringArrayVar(&o.jobServiceAccounts, "job-service-account", nil, "a job service account of the member, which the workspace's service resolves a caller by (repeatable)")
+	f.StringArrayVar(&o.jobRepos, "job-repos", nil, "a repository a job service account is a job of, as <account>=<owner/name> (repeatable; every account needs at least one)")
+	f.StringVar(&o.databaseRegion, "database-region", "", "the region of the member's Realtime Database; omit it for a database in the project's default region")
 	f.StringVar(&o.firebaseProject, "firebase-project", "", "the member's Firebase project ID, which the caller's token is issued under")
 	f.StringVar(&o.fp, "fp", "", "the member's Fugaro project name, which the token's fp claim must be")
 	f.StringVar(&o.exchangeURL, "exchange-url", "", "the member's exchange endpoint, where the workspace's signer mints a member-bound assertion for")
@@ -559,9 +643,11 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 	}
 	// The lists first, then the scalars: AddListItem creates the sequence and
 	// the mapping chain it hangs under, and SetScalar then finds the entry
-	// already there rather than creating a second one.
-	for _, sa := range o.jobServiceAccounts {
-		if next, err = workspaceAddItem(path, next, []string{"workspace_members", project, "job_service_accounts"}, sa); err != nil {
+	// already there rather than creating a second one. Each account is written
+	// as one keyed item with its repositories, so the two halves of "this
+	// account is the job of these repositories" reach the file as one statement.
+	for _, a := range o.jobAccountRepos() {
+		if next, err = workspaceUpsertJobAccount(path, next, project, a.account, a.repos); err != nil {
 			return err
 		}
 	}
@@ -576,6 +662,16 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 		{"exchange_url", o.exchangeURL},
 	} {
 		if next, err = workspaceSetScalar(path, next, []string{"workspace_members", project, f.key}, f.value); err != nil {
+			return err
+		}
+	}
+	// The region is optional and it is written only when it is named: an entry
+	// with no database_region is a member whose database is in its project's
+	// default region, which is what an unwritten key says, where a written empty
+	// scalar would be a value the loader holds to the region rule to learn the
+	// same thing.
+	if o.databaseRegion != "" {
+		if next, err = workspaceSetScalar(path, next, []string{"workspace_members", project, "database_region"}, o.databaseRegion); err != nil {
 			return err
 		}
 	}
@@ -613,7 +709,10 @@ func workspaceMemberAddWhat(workspace, project string, o *workspaceMemberAddOpti
 		verb = "replace the entry for member"
 	}
 	what := fmt.Sprintf("%s %s in workspace %s: job service accounts %s, Firebase project %s, fp %s, exchange URL %s",
-		verb, project, workspace, strings.Join(o.jobServiceAccounts, ", "), o.firebaseProject, o.fp, o.exchangeURL)
+		verb, project, workspace, workspaceJobAccountsPhrase(o), o.firebaseProject, o.fp, o.exchangeURL)
+	if o.databaseRegion != "" {
+		what += ", database region " + o.databaseRegion
+	}
 	if len(o.repos) > 0 {
 		what += ", repositories " + strings.Join(o.repos, ", ")
 	}
@@ -623,9 +722,48 @@ func workspaceMemberAddWhat(workspace, project string, o *workspaceMemberAddOpti
 	return what
 }
 
-// workspaceMemberFlags holds the four values a member entry is built from: all
-// four, because the service resolves a caller by each of them and an entry with
-// one missing is a member the workspace cannot reach at all.
+// workspaceJobAccount is one job service account of a member with the
+// repositories it is a job of: the two halves the table writes as one item.
+type workspaceJobAccount struct {
+	account string
+	repos   []string
+}
+
+// jobAccountRepos pairs each --job-service-account with the repositories its
+// --job-repos entries name, in the order the accounts were given: the account
+// list is the table's own order, and an account the flags name nothing for
+// comes out with no repository, which workspaceMemberFlags refuses before
+// anything is written.
+func (o *workspaceMemberAddOptions) jobAccountRepos() []workspaceJobAccount {
+	byAccount := map[string][]string{}
+	for _, r := range o.jobRepos {
+		account, repo, _ := strings.Cut(r, "=")
+		byAccount[account] = append(byAccount[account], repo)
+	}
+	out := make([]workspaceJobAccount, 0, len(o.jobServiceAccounts))
+	for _, sa := range o.jobServiceAccounts {
+		out = append(out, workspaceJobAccount{account: sa, repos: byAccount[sa]})
+	}
+	return out
+}
+
+// workspaceJobAccountsPhrase is a member entry's accounts as the write's own
+// sentence says them: each account with the repositories it is a job of, because
+// the two are written as one entry and a sentence naming the accounts alone
+// would not say which repositories the table is about to hold them to.
+func workspaceJobAccountsPhrase(o *workspaceMemberAddOptions) string {
+	parts := make([]string, 0, len(o.jobServiceAccounts))
+	for _, a := range o.jobAccountRepos() {
+		parts = append(parts, fmt.Sprintf("%s (a job of %s)", a.account, strings.Join(a.repos, ", ")))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// workspaceMemberFlags holds the values a member entry is built from: all four
+// the service resolves a caller by, because an entry with one missing is a
+// member the workspace cannot reach at all, and at least one repository for each
+// job service account, because the service holds a run's repository to the
+// calling account's own list (R6, D2992).
 func workspaceMemberFlags(o *workspaceMemberAddOptions) error {
 	missing := []string{}
 	if len(o.jobServiceAccounts) == 0 {
@@ -646,15 +784,49 @@ func workspaceMemberFlags(o *workspaceMemberAddOptions) error {
 	if !config.ProjectNameRE.MatchString(o.fp) {
 		return userErr("--fp %s is not a project name: the token's fp claim is the member's Fugaro project, not its GCP project", o.fp)
 	}
+	// The accounts are held to the ones this declaration names first, so a
+	// repository written for an account that is not in the table — a typo, or an
+	// account dropped from the invocation — is refused by name rather than
+	// written beside the table where no caller would ever reach it.
+	accounts := make(map[string]bool, len(o.jobServiceAccounts))
+	for _, sa := range o.jobServiceAccounts {
+		accounts[sa] = true
+	}
+	for _, r := range o.jobRepos {
+		account, repo, ok := strings.Cut(r, "=")
+		switch {
+		case !ok || account == "" || repo == "":
+			return userErr("--job-repos %s must be <account>=<owner/name>: it states which job service account is a job of which repository, and the two are written as one entry", r)
+		case !accounts[account]:
+			return userErr("--job-repos %s names %s, which is not one of this declaration's job service accounts (%s): an account's repositories are the jobs the workspace's service holds that account's runs to, so a repository written for an account the entry does not carry is one nothing reaches",
+				r, account, strings.Join(o.jobServiceAccounts, ", "))
+		}
+	}
+	bare := []string{}
+	for _, a := range o.jobAccountRepos() {
+		if len(a.repos) == 0 {
+			bare = append(bare, a.account)
+		}
+	}
+	if len(bare) > 0 {
+		return userErr("no --job-repos is given for %s: every job service account carries the repositories it is a job of — one for a repository's own job, several for a shared project job — so name them as --job-repos <account>=<owner/name>",
+			strings.Join(bare, ", "))
+	}
 	return nil
 }
 
 func workspaceMemberAddCommand(workspace, project string, o *workspaceMemberAddOptions) string {
 	cmd := fmt.Sprintf("fugaro workspace member add %s %s", workspace, project)
-	for _, sa := range o.jobServiceAccounts {
-		cmd += " --job-service-account " + sa
+	for _, a := range o.jobAccountRepos() {
+		cmd += " --job-service-account " + a.account
+		for _, repo := range a.repos {
+			cmd += " --job-repos " + a.account + "=" + repo
+		}
 	}
 	cmd += fmt.Sprintf(" --firebase-project %s --fp %s --exchange-url %s", o.firebaseProject, o.fp, o.exchangeURL)
+	if o.databaseRegion != "" {
+		cmd += " --database-region " + o.databaseRegion
+	}
 	for _, repo := range o.repos {
 		cmd += " --repo " + repo
 	}
@@ -974,10 +1146,26 @@ func runWorkspaceShow(cmd *cobra.Command, name string, o *workspaceShowOptions) 
 		for _, p := range slices.Sorted(maps.Keys(table)) {
 			mm := table[p]
 			fmt.Fprintf(out, "  %s\n", oneLine(p))
-			fmt.Fprintf(out, "    job service accounts: %s\n", oneLine(listOrNone(mm.JobServiceAccounts)))
+			fmt.Fprintf(out, "    job service accounts: %s\n", multiLine(workspaceJobAccountLines(mm.JobAccounts)))
+			if mm.DatabaseRegion != "" {
+				fmt.Fprintf(out, "    database region: %s\n", oneLine(mm.DatabaseRegion))
+			}
 			fmt.Fprintf(out, "    firebase project: %s\tfp: %s\n", oneLine(mm.FirebaseProject), oneLine(mm.FP))
 			fmt.Fprintf(out, "    exchange url: %s\n", oneLine(mm.ExchangeURL))
 			fmt.Fprintf(out, "    repositories: %s\n", oneLine(listOrNone(mm.Repos)))
+		}
+		shared := workspaceShared(row.owner)
+		if len(shared) > 0 {
+			fmt.Fprintln(out)
+			fmt.Fprintln(out, "SHARED (what the workspace's credentials service may offer)")
+			for _, name := range slices.Sorted(maps.Keys(shared)) {
+				sh := shared[name]
+				fmt.Fprintf(out, "  %s (%s)\n", oneLine(name), oneLine(sh.Kind))
+				fmt.Fprintf(out, "    projects: %s\n", oneLine(listOrNone(sh.Projects)))
+				if sh.Kind != localcfg.WorkspaceSharedModel {
+					fmt.Fprintf(out, "    covers: %s\n", oneLine(listOrNone(sh.Covers)))
+				}
+			}
 		}
 	}
 	fmt.Fprintln(out)
@@ -990,6 +1178,11 @@ func runWorkspaceShow(cmd *cobra.Command, name string, o *workspaceShowOptions) 
 		fmt.Fprintf(out, "    firebase project: %s\n", oneLine(mem.pin.FirebaseProject))
 		fmt.Fprintf(out, "    issuer: %s\n", oneLine(mem.pin.Issuer))
 		fmt.Fprintf(out, "    service account: %s\n", oneLine(mem.pin.ServiceAccount))
+		if mem.pin.ServiceAddress == "" {
+			fmt.Fprintln(out, "    service address: none — this project takes no workspace credential")
+		} else {
+			fmt.Fprintf(out, "    service address: %s\n", oneLine(mem.pin.ServiceAddress))
+		}
 		fmt.Fprintln(out, "    assertion key: set")
 	}
 	if row.owner == nil {
@@ -998,6 +1191,21 @@ func runWorkspaceShow(cmd *cobra.Command, name string, o *workspaceShowOptions) 
 	}
 	workspacePrintProblems(out, workspaceDoc{Workspaces: []workspaceDocRow{docRow}})
 	return nil
+}
+
+// workspaceJobAccountLines is a member's job service accounts as `workspace
+// show` prints them: each account with the repositories it is a job of on its
+// own line, because the two are one statement and a line naming the accounts
+// alone would not say what the table holds them to.
+func workspaceJobAccountLines(accounts []localcfg.WorkspaceJobAccount) string {
+	if len(accounts) == 0 {
+		return "none"
+	}
+	lines := make([]string, 0, len(accounts))
+	for _, a := range accounts {
+		lines = append(lines, fmt.Sprintf("%s (a job of %s)", a.Account, listOrNone(a.Repos)))
+	}
+	return strings.Join(lines, "\n      ")
 }
 
 // listOrNone is a list as a line names it: "none" when it holds nothing, so an
@@ -1063,7 +1271,7 @@ func workspaceReadMachine() (*workspaceMachine, error) {
 	// AFTER, which is the file `member add` and `cap set` write: keying the row
 	// by the config's own name is what makes this read and those writes agree.
 	for _, name := range slices.Sorted(maps.Keys(m.held)) {
-		if lc := m.held[name]; lc.WorkspaceMembers != nil || lc.WorkspaceCap != nil {
+		if lc := m.held[name]; lc.WorkspaceMembers != nil || lc.WorkspaceCap != nil || lc.WorkspaceShared != nil {
 			m.row(name).owner = lc
 		}
 	}
