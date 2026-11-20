@@ -598,8 +598,8 @@ func runReviewShow(cmd *cobra.Command, o *reviewShowOptions, run string) error {
 //
 // An artifact written before the field existed carries none, and none is what
 // this prints for it: nothing is better than inventing what an older review was
-// checked against. The line never reaches --json, whose bytes are the ones the
-// installation's credentials service signed.
+// checked against. The line never reaches --json, whose bytes are the job's own
+// and are printed as they stand.
 func reviewAgainstLine(data []byte) string {
 	var doc struct {
 		Against *runstore.Against `json:"against"`

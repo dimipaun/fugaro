@@ -862,9 +862,10 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	// for different things, and on a launch that resolved no mode: review
 	// recipe (an ordinary recipe, a follow-up, a retry) neither has a review to
 	// switch. Made here, where the recipe's mode is known and before any spec
-	// builder runs, so a launch refused over the flags leaves nothing behind.
-	// --attempts and --change-set leave above this: neither takes a review, and
-	// a batch's own refusals are its own (runAttempts).
+	// builder runs, so a launch refused over the flags leaves nothing behind —
+	// and before --attempts and --change-set return below, because neither of
+	// those takes a review either, and a batch's own refusals are its own
+	// (runAttempts).
 	mode := ""
 	if reviewRecipe != nil {
 		mode = recipe.ModeReview
