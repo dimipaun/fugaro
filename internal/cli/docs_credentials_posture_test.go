@@ -58,6 +58,7 @@ var postureScanRoots = []string{
 // live documents in the same folders — `docs/gcp-live-checklist.md`,
 // `docs/release.md`, the terms — are NOT exempt, and the scan covers them.
 var postureRecordRoots = []string{
+	"docs/batch-run-identity/",
 	"docs/bitbucket-credentials/",
 	"docs/c39-review-identity/",
 	"docs/cloud-senior-review/",
