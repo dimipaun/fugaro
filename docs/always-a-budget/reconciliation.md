@@ -2,7 +2,8 @@
 
 Checked against `origin/main` at `fb0aeb9aa` on 2026-11-20. **Where this file disagrees with
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
-**D3020–D3022**, all answered by the owner on 2026-11-20. It carries out **D3009, D3010 and
+**D3020–D3025**, all answered by the owner on 2026-11-20 (D3023–D3025 were added by review
+round 1). It carries out **D3009, D3010 and
 D3011** of [every model key through the credentials service](../keys-through-service/reconciliation.md),
 and it reverses the part of **D2071** that guards a mode that no longer exists.
 
@@ -10,7 +11,7 @@ and it reverses the part of **D2071** that guards a mode that no longer exists.
 
 | The spec's concept | What the repository has |
 | --- | --- |
-| "Budget mode off" | `policy.ModeOff`, with the aliases `config.BudgetOff` and `localcfg.BudgetOff`. About 32 Go files outside tests read it |
+| "Budget mode off" | `policy.ModeOff`, with the aliases `config.BudgetOff` and `localcfg.BudgetOff`. 19 Go files outside tests name the constants, more read the mode as a string, and 21 test files name them |
 | "Unset" | Read as off by the runner and the local config, and as observe by the settings registry and the console (F2) |
 | "The budget database" | A Firebase Realtime Database in the installation's own project, built only when `--firebase-project` is given (F3) |
 | "A run's identity" | A token the launcher mints and a session the run opens in the database (`internal/cli/launch_budget.go`, `internal/runner/budget_session.go`) |
@@ -25,7 +26,7 @@ and it reverses the part of **D2071** that guards a mode that no longer exists.
 - **A3.** `fugaro troubleshoot` on the developer's machine starts no gateway and reads no mode, and
   is unchanged. `fugaro exec` is the container's entry point, not a local command, and follows the
   run.
-- **A4.** The work ships in one CLI release (R1).
+- **A4.** The work ships in one CLI release (D3023, R1).
 
 ## 3. Findings
 
@@ -141,6 +142,54 @@ the pay-as-you-go plan is required. Consequence: stated in the release notes (AB
 check, and `ee/coordinator/cli/declare.go` skips declaring when the mode is off or there is no
 database. Consequence: AB10.
 
+**F20 — Wrong (review round 1), corrects F13 and R6.** Two kinds of job do not get their mode
+from `budgetEnv`. A shared project job's environment (`projectJobEnv`,
+`internal/infra/projectjobs.go`) never names a mode; it rides the execution. And a repository's
+job is re-applied only by `fugaro update` run for that repository, so a job applied before the
+database existed carries no database address, and a minted launch on it is refused by the runner
+(`strayTokenNoBackend`, `internal/runner/budget_session.go`). Consequence: AB5 covers the shared
+job, and AB4 refuses such a launch itself, with the fix.
+
+**F21 — Rule (review round 1): the database has a mode of its own.** A run's effective mode is the
+stricter of the database's `config/mode` and the repository's (`internal/budget/evaluate.go`).
+`--budget-mode off` leaves the database's mode as it was, and `raiseBudgetMode` raises a managed
+project that has caps to enforce. So an installation with a database and a local off does not
+land on observe: it lands on whatever its database says. Consequence: D3024.
+
+**F22 — Wrong (review round 1), corrects F16.** `projectpolicy.Migrate` keys on the version, so
+for a node already at version 10 the existing migration does nothing. And both decoders call
+`ValidMode` (`validateBudget` in `internal/localcfg/localcfg.go`; the node's decoder in
+`internal/projectpolicy/policy.go`), so once off is refused, a local config or a node that says
+off no longer loads, and nothing could rewrite it. Consequence: AB8a and AB8b read the old word
+before validation, and AB2 follows them.
+
+**F23 — Gap (review round 1): readers the plan did not own.** `infra.CredentialsServiceServes` is
+also called from `internal/cli/run.go`. `enable_budget` is also set in
+`roots/installation/main.tf` and declared in its `variables.tf`, and tested in
+`tests/installation.tftest.hcl` and `licence.tftest.hcl`; dropping a `count` moves a resource's
+address, which destroys and recreates it unless a `moved` block says otherwise.
+`newMachineBudget` reads `HistoryServiceAccount`, which becomes always set. Four live-check
+scripts assert facts about a published mode of off (`check-580.sh`, `check197.sh`, `check610.sh`,
+`check611.sh`). `internal/cli/exec.go` (`checkTestHooks`) and `settings_cloud.go` read the mode.
+21 test files name the constants. Consequence: AB15, AB6, AB7, AB14, AB3 and I1 as amended.
+
+**F24 — Rule (review round 1): the adoption probe reads state anyone with the state bucket can
+write.** `CheckFirebaseOutputsFor` accepts whatever project the Firebase state's outputs name.
+Run on every update, an unpinned probe would let a write to the state bucket point every run's
+session at a foreign database. Consequence: AB7 adopts only a database in the installation's own
+project.
+
+**F25 — Gap (review round 1): managed projects.** Today the Firebase stage runs only with
+`--firebase-project`, a flag that takes the run out of the managed gate (`shapesTheInstallation`).
+What the gate does with the stage's IAM changes when no flag is given is UNVERIFIED (U5).
+Consequence: R11, O6.
+
+**F26 — Rule (review round 1): the switch widens.** With the mode argument gone, an `api-key` or
+`oauth` repository that was in mode off passes `CredentialsServiceServes` where its bundle is
+ready, and its next apply drops its model key from the job (`internal/cli/doctor_brokering.go`).
+That is the credentials service's existing behaviour for every other repository. Consequence:
+AB15 states it and R8's listing names it.
+
 ## 4. Decisions
 
 Inherited from the keys plan: **D3009** (budget mode off is removed; the owner's words are in
@@ -155,64 +204,97 @@ Answered by the owner on 2026-11-20:
 | **D3021** | What happens to the Cloud Batch backend (F9)? | Every Batch launch is refused with one stated reason; `doctor` and the docs say so; a carrier for the token is a design of its own | as recommended |
 | **D3022** | What does the release do with a repository's `fugaro.yaml` that says `off` (F12)? | **It is rejected at once**, with the fix | **not the recommendation** (which was to read it as unset for one release) |
 
+| **D3023** | With one release, a no-database installation launches nothing after the upgrade until a project owner runs `fugaro update`. Ship it in two releases? | **No: one release, and the stop is accepted** | added by review round 1; **not the recommendation** (two releases) |
+| **D3024** | An installation whose database says `enforce` while a machine's local config says off comes under the database's caps (F21). What does the migration do? | The database's mode stands. `fugaro update` names the installation's mode and caps in one line before it changes anything | added by review round 1; as recommended |
+| **D3025** | Does the published policy get a new version, now that off leaves its vocabulary? | **No: it keeps its version** | added by review round 1; **not the recommendation** (a bump, which would fence an older CLI from publishing off) |
+
 **What D3020 and D3022 cost, stated once.** The brief's line 7 says nobody starts being refused by
 a cap they did not choose. That still holds: no cap refuses anyone. But two things that ran under
 off stop after the upgrade until a person acts: a run whose model has no price, and a run whose
 committed `fugaro.yaml` says off. `fugaro update` names each such repository and the one-line fix
 before it changes anything (R8).
 
+**What D3023, D3024 and D3025 cost, stated once.** After `brew upgrade`, an installation with no
+budget database launches nothing until a person who can make the project's IAM changes, on a
+project with billing, runs `fugaro update`; a second machine launches nothing until its own
+`fugaro update` has adopted the database; and a repository whose job was applied before the
+database existed launches nothing until `fugaro update` is run for it. Each refusal names that
+fix. A machine that relied on local off to stay outside the database's caps comes under them
+(D3024). A teammate on an older CLI can still publish a policy that says off, and every new run
+is then refused, with the fix, until the policy is published again (D3025).
+
 ## 5. Resolutions
 
-- **R1. One release, and no release in the middle.** A no-database installation has no safe
-  half-way state, so the work is not split across releases. No CLI release is cut while this plan
-  is merged past its level 1 and I1 has not merged.
+- **R1. One release, and no release in the middle** (D3023). No CLI release, a hotfix included, is
+  cut from `main` between the first merge of a level 1 task and I1. A hotfix needed in that window
+  is cut from the last release's tag. Level 0 changes nothing a user meets: the database stage
+  only becomes able to run without its flag.
 - **R2. `fugaro update` creates the database, and only where it can.** The Firebase stage runs with
   no flag, in the installation's own project. It first probes for a database that exists and is
   only unknown on this machine, and adopts it (F6). Where there is none, it probes whether the
   person can make the project's IAM changes (`testIamPermissions`). If they can, it creates the
-  database, in `observe`. If they cannot, the update stops before it changes anything and says
-  that a project owner must run `fugaro update` once; the installation keeps running as it was,
-  on the release it was applied at. It asks nothing new. `--firebase-project` stays accepted with
+  database, in `observe`. If they cannot, or the project has no billing, the update skips that
+  stage, says in one line that a project owner must run `fugaro update` once (or that billing must
+  be linked), and carries on with the rest. The cloud side is left as it was; the new CLI's
+  launches are refused with that fix until the database exists (D3023). Adoption is pinned to the
+  installation's own project (F24). It asks nothing new. `--firebase-project` stays accepted with
   the one value it could already take.
 - **R3. Unset means `observe`.** In the local config, the launcher, the job's environment (always
   written, F13) and the run.
-- **R4. The policy node keeps its version.** `fugaro update` rewrites a published `off` to
-  `observe` in place. Every node the new release writes is a valid version 10 node, so no reader
-  of version 10 breaks. A new run that meets a node that still says off, because the update has
-  not run, is refused with the fix. This is O1, for the owner to confirm against the rule that a
-  removed value bumps a format's version.
+- **R4. The policy node keeps its version** (D3025). `fugaro update` rewrites a published `off` to
+  `observe` in place, in a same-version step that is new code (F22). Every node the new release
+  writes is a valid version 10 node, so no reader of version 10 breaks and no image is rebuilt for
+  it. A new run that meets a node that still says off, because the update has not run or an older
+  CLI published it, is refused with the fix, and `doctor` names it.
 - **R5. Runs in flight.** A run that started with the budget off has no session and holds its key
   already; nothing the update does reaches it, and it finishes. `fugaro update` says so in one
   line when runs are running.
-- **R6. An older job image needs no gate.** The job's environment names `observe` explicitly, and
-  an older runner has that path. A job whose root was not re-applied still has no entry and still
-  runs as off on an older image, with the key it still mounts.
+- **R6. An older job image needs no gate.** *(Amended by review round 1, F20.)* A re-applied
+  job's environment names `observe` explicitly, a shared project job's execution carries it, and
+  an older runner has that path. A repository's job that was applied before the database existed
+  is refused at launch with the fix, `fugaro update` run for that repository, instead of reaching
+  a runner that would refuse it less clearly.
 - **R7. Old records keep the word.** `schemas/result.schema.json` keeps `off` in
   `policy.effective.mode` for the records old runs wrote, and its description says nothing writes
   it any more.
-- **R8. The update says what will stop before it changes anything.** One line per repository whose
-  pinned model has no price (with the `model_prices` fix), per repository whose `fugaro.yaml` says
-  off (with the removal offered as a diff, by the anchor's precedent), and one line if the
-  installation's backend is Cloud Batch. `doctor` reports the same.
+- **R8. The update says what will change before it changes anything.** For the repository it is
+  run for, read from its checkout: one line if a pinned model has no price (with the
+  `model_prices` fix), one if its `fugaro.yaml` says off (with the removal offered as a diff, by
+  the anchor's precedent), and one if its model key will move to the credentials service at this
+  apply (F26). For the installation: one line naming the database's mode and caps where a local
+  off is being removed (D3024), and one if the backend is Cloud Batch. `doctor` reports the same,
+  from one helper.
 - **R9. The guards of the removed mode are deleted, not kept as dead code** (F15), and D2071's
   refusal with them.
 - **R10. Other plans, same files.** The keys plan's KS19 and KS13 edit
-  `internal/cli/init_credentials.go` and `internal/infra/spec.go`, and its KS14 and KS15 wait on
-  this plan's I1. A task of this plan is not launched while a task of that plan that edits the
+  `internal/cli/init_credentials.go`, `internal/infra/spec.go` and `readiness.go`,
+  `internal/localcfg/localcfg.go`, `internal/cli/update_in_flight.go` with
+  `docs/design/update-in-flight.md`, `SECURITY.md` and `internal/cli/recipes_skew.go`, and its
+  KS14 and KS15 wait on this plan's I1. A task of this plan is not launched while a task of that plan that edits the
   same file is live, and whichever lands second rebases.
+
+- **R11. A managed project.** Under the managed gate the database stage only adopts. Creating a
+  database is a change that shapes the installation, and it stays the act of the person the gate
+  already lets shape it; anyone else gets R2's one line (F25, U5).
 
 ## 6. Open tensions and open items
 
 No two answers pull against each other.
 
-- **O1.** R4 keeps the policy node at version 10 while a value leaves its vocabulary. For the owner
-  to confirm.
+- **O1.** D3025 leaves an older CLI able to publish off into a version 10 node, which stops every
+  new run until the policy is published again. Accepted by the owner; `doctor` names it.
+- **O6.** How the managed gate treats the database stage run with no flag is unverified (U5). If
+  AB7 finds the gate refuses it for the manager too, that is a question for the owner before AB7
+  merges.
+- **O7.** R1's freeze on releases is a rule for whoever cuts them; nothing in the repository
+  enforces it.
 - **O2.** Every run now halts if the budget database stays unreachable past its grace, in observe
   too (F8). Today only installations that chose a budget carry that dependency.
-- **O3.** D3020 and D3022 stop some runs that work today until a person acts (§4).
+- **O3.** D3020, D3022 and D3023 stop some runs that work today until a person acts (§4).
 - **O4.** Cloud Batch can launch nothing after this work, until a design of its own (D3021).
 - **O5.** The database costs about two dollars a month at the design's own estimate and needs
-  billing on the project (F18). An installation with no billing gets R2's refusal with that fix.
+  billing on the project (F18). An installation with no billing gets R2's line with that fix, and
+  launches nothing until it is linked.
 
 ## 7. UNVERIFIED
 
@@ -222,5 +304,9 @@ No two answers pull against each other.
   underneath it. It holds no session, so nothing is expected; Check 790 runs one.
 - **U3.** That no documents test pins a sentence of F17. Settled by AB12's first run of the Docs
   filter.
+- **U5.** What the managed gate does with the Firebase stage's IAM changes when no flag is given
+  (F25). Settled by AB7's first test.
+- **U6.** Which record says a repository's job was applied before the database existed (R6). The
+  local config's repository entry is the candidate; settled by AB4.
 - **U4.** That an older runner under an explicit `observe` on a database created minutes earlier
   behaves as any observe run. Check 790.

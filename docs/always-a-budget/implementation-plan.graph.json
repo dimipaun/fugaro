@@ -55,7 +55,8 @@
           "internal/runner/triage_stage.go",
           "internal/agent/env.go",
           "internal/runner/agentenv.go",
-          "internal/runner/gateway_always_test.go"
+          "internal/runner/gateway_always_test.go",
+          "internal/agent/env_always_test.go"
         ]
       }
     },
@@ -93,6 +94,9 @@
           "internal/cli/doctor.go",
           "internal/cli/doctor_brokering.go",
           "internal/cli/budget.go",
+          "internal/cli/init.go",
+          "internal/cli/exec.go",
+          "internal/cli/settings_cloud.go",
           "internal/cli/budget_always_cli_test.go"
         ]
       }
@@ -127,6 +131,7 @@
         "paths": [
           "internal/infra/spec.go",
           "internal/infra/readiness.go",
+          "internal/infra/projectjobs.go",
           "internal/infra/spec_budget_env_test.go"
         ]
       }
@@ -142,6 +147,9 @@
         "prediction": true,
         "paths": [
           "deploy/terraform/gcp/modules/installation/*.tf",
+          "deploy/terraform/gcp/roots/installation/main.tf",
+          "deploy/terraform/gcp/roots/installation/variables.tf",
+          "deploy/terraform/gcp/roots/installation/tests/*.tftest.hcl",
           "internal/infra/tfvars.go",
           "deploy/terraform/terraform_test.go"
         ]
@@ -162,6 +170,7 @@
           "internal/cli/init.go",
           "internal/cli/init_new_machine.go",
           "internal/cli/setup.go",
+          "internal/infra/firebase.go",
           "internal/cli/setup_refusals_test.go",
           "internal/cli/init_firebase_always_test.go",
           "website/content/cli-reference.md"
@@ -196,8 +205,10 @@
       "footprint": {
         "prediction": true,
         "paths": [
+          "internal/cli/budget_stops.go",
           "internal/cli/update_budget_off.go",
           "internal/cli/update_budget_off_test.go",
+          "internal/localcfg/load_removed_mode.go",
           "internal/cli/init_fugaroyaml.go",
           "internal/cli/init_stages.go",
           "internal/cli/update_in_flight.go",
@@ -305,6 +316,10 @@
         "paths": [
           "scripts/live-checks/check790*.sh",
           "scripts/live-checks/check791*.sh",
+          "scripts/live-checks/check-580.sh",
+          "scripts/live-checks/check197.sh",
+          "scripts/live-checks/check610.sh",
+          "scripts/live-checks/check611.sh",
           "scripts/live_checks_test.go",
           "docs/gcp-live-checklist.md"
         ]
@@ -322,9 +337,11 @@
         "paths": [
           "internal/infra/readiness.go",
           "internal/infra/spec.go",
+          "internal/infra/spec_test.go",
           "internal/cli/init_credentials.go",
           "internal/cli/doctor_brokering.go",
-          "internal/infra/readiness_test.go"
+          "internal/cli/run.go",
+          "internal/infra/readiness_switch_test.go"
         ]
       }
     },
@@ -385,16 +402,6 @@
       "reason": "what a mode string means"
     },
     {
-      "task": "AB8a",
-      "needs": "C1",
-      "reason": "what a mode string means"
-    },
-    {
-      "task": "AB8b",
-      "needs": "C1",
-      "reason": "what a mode string means"
-    },
-    {
       "task": "AB10",
       "needs": "C1",
       "reason": "what a mode string means"
@@ -406,8 +413,28 @@
     },
     {
       "task": "AB2",
+      "needs": "AB8a",
+      "reason": "validation may refuse the old word only once the update can load and rewrite a node that says it"
+    },
+    {
+      "task": "AB2",
+      "needs": "AB8b",
+      "reason": "validation may refuse the old word only once the update can load and rewrite a config that says it"
+    },
+    {
+      "task": "AB3",
       "needs": "AB7",
-      "reason": "an unset mode may mean observe only once the update builds the database"
+      "reason": "both edit init.go"
+    },
+    {
+      "task": "AB3",
+      "needs": "AB8b",
+      "reason": "doctor prints the helper AB8b writes"
+    },
+    {
+      "task": "AB9",
+      "needs": "AB4",
+      "reason": "Batch may refuse every launch only once every launch is sealed"
     },
     {
       "task": "AB4",
@@ -491,16 +518,6 @@
     },
     {
       "task": "I1",
-      "needs": "AB8a",
-      "reason": "it is a side of an edge the contract broke, re-joined here"
-    },
-    {
-      "task": "I1",
-      "needs": "AB8b",
-      "reason": "it is a side of an edge the contract broke, re-joined here"
-    },
-    {
-      "task": "I1",
       "needs": "AB10",
       "reason": "it is a side of an edge the contract broke, re-joined here"
     },
@@ -532,6 +549,16 @@
     {
       "task": "I1",
       "needs": "AB15",
+      "reason": "the end-to-end test needs it"
+    },
+    {
+      "task": "I1",
+      "needs": "AB8a",
+      "reason": "the end-to-end test needs it"
+    },
+    {
+      "task": "I1",
+      "needs": "AB8b",
       "reason": "the end-to-end test needs it"
     },
     {
@@ -572,24 +599,6 @@
       "contract": "C1",
       "was": {
         "task": "AB5",
-        "needs": "AB2"
-      },
-      "integration": "I1",
-      "reason": "it needs to know what a mode string means, not the validation's code"
-    },
-    {
-      "contract": "C1",
-      "was": {
-        "task": "AB8a",
-        "needs": "AB2"
-      },
-      "integration": "I1",
-      "reason": "it needs to know what a mode string means, not the validation's code"
-    },
-    {
-      "contract": "C1",
-      "was": {
-        "task": "AB8b",
         "needs": "AB2"
       },
       "integration": "I1",
