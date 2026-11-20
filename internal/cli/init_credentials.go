@@ -101,13 +101,43 @@ const credsServiceSince = "0.10.0"
 // exists for.
 //
 // It names 0.27.0, the release this work ships in, which is not tagged yet
-// (docs/release-streams.yaml has 0.26.1 current and Xerus 0.27.0 next):
-// docs/release.md's ("Before you tag") list verifies the number against the
-// tag actually cut, as it does for reviewSpecSince's 0.27.0 beside it. It is
-// the release that ships the entry, so it must not RISE later: a value above
-// it withholds C1's first fact from installations whose deployed service
-// already reads the entry.
+// (docs/release-streams.yaml has 0.26.1 current and Xerus 0.27.0 next), and
+// the name is a claim this tree can be held to rather than one to trust: the
+// service a release ships is built from that release's own loader, so a tree
+// whose loader has no arm for the family cannot build the service this
+// constant names — providerEntriesLoaderShipped below is that loader's own
+// answer, readCredentialsBundle refuses the whole reading while it is false,
+// and TestProviderEntriesSinceIsTheLoaderThisTreeBuilds ties the two together.
+// It is the release that ships the entry, so it must not RISE once that
+// release is tagged: a value above it withholds C1's first fact from
+// installations whose deployed service already reads the entry.
 const providerEntriesSince = "0.27.0"
+
+// providerEntriesLoaderShipped is whether the loader this tree's service is
+// built with knows C1's named-provider family — the arm KS1 adds to
+// credsvc.CredentialKey, the key rule internal/credsvc/bundle.go reads every
+// document key with. It is FALSE in this tree, and that is this tree's state
+// rather than a placeholder: the family is KS1's to add and that task has not
+// landed, so a document carrying a key of it is one this loader refuses WHOLE
+// (credsvc.ErrBundleUnknownKey answers the document and not the entry alone),
+// and the service a release of this tree deploys would answer every call of
+// the installation with that refusal.
+//
+// It is what readCredentialsBundle gates the whole reading on. It is a
+// variable so that a test can put the tree in the state the release that lands
+// KS1 leaves it in — config.ServiceHeldSecretNames' own lever, set and
+// restored by a helper — while TestProviderEntriesSinceIsTheLoaderThisTreeBuilds
+// holds it to the loader's own key rule, so that flipping it without the arm,
+// or landing the arm without flipping it, fails there instead of in a release.
+var providerEntriesLoaderShipped = false
+
+// errProviderEntriesUnreadable is what a bundle holding a key of that family
+// is answered with while providerEntriesLoaderShipped is false: the reading is
+// refused whole, the way every read that could not be made is (unreadable),
+// and not taken around the family. What the refusal states is a fact about the
+// document — the service the same run deploys cannot read it — which is the
+// kind of fact the switch is read from, and not a read that failed at a store.
+var errProviderEntriesUnreadable = fmt.Errorf("the document holds an entry of %s (C1's named-provider family) and the loader this release's service is built with knows no key of that family, so that service answers the whole document with credsvc.ErrBundleUnknownKey rather than serving the entries around it", credsvc.RepoCredentialPrefix)
 
 // stageAccountServedSince is the first fugaro release whose credentials
 // service serves a mixed stage account — the release KS9 lands in — and it is
@@ -271,19 +301,27 @@ func (r *initRun) readCredentialsBundle(ctx context.Context, lc *localcfg.Config
 	if err != nil {
 		return unreadable(err)
 	}
-	// C1's named-provider entries are read off the document's OWN keys and
-	// taken out of the bytes the loader parses, and that is a state of the two
-	// sides of this plan rather than a preference: the family is KS1's to add
-	// to credsvc's loader, which has not landed in this release's tree, and the
-	// loader refuses a document carrying a key it does not know — so a bundle
-	// that holds an entry this fact is ABOUT would be answered "unreadable" and
-	// the fact could never be recorded, in either direction, for the one
-	// document the fact is about. What is handed to credsvc.ParseBundle is the
-	// document as the deployed service reads it minus the family
-	// (withoutRepoCredentials), so every other rule of the loader — the
-	// unknown-key refusal included — is still the loader's own and this
-	// reading cannot disagree with the service about any other key.
+	// C1's named-provider entries are read off the document's OWN keys — they
+	// are what R12's first fact is over — and taken out of the bytes the loader
+	// parses (withoutRepoCredentials), so that every other rule of the loader
+	// is still the loader's own and this reading cannot disagree with the
+	// service about any other key.
+	//
+	// The family is also why this reading can be refused whole, and it is
+	// refused: the loader answers a document carrying a key it does not know
+	// with ErrBundleUnknownKey, and the loader that matters is the one the
+	// service is built with — the service of every release, by the constant
+	// above. A tree whose own loader has no arm for the family (KS1, unmerged)
+	// is a tree whose service would answer every call of this installation with
+	// that refusal, so a bundle holding one of the family's keys is not read
+	// around: it is not read at all — the state it was in before this reading
+	// learned to take the family out. Reading it anyway would record the switch
+	// and both facts true — the plan drops the job's model mounts on the switch
+	// — while the service the same run deploys refuses every call of it.
 	held, stripped := withoutRepoCredentials(doc.raw)
+	if len(held) > 0 && !providerEntriesLoaderShipped {
+		return unreadable(errProviderEntriesUnreadable)
+	}
 	b, err := credsvc.ParseBundle(stripped)
 	if err != nil {
 		return unreadable(err)
@@ -319,13 +357,15 @@ func (r *initRun) readCredentialsBundle(ctx context.Context, lc *localcfg.Config
 // document's own top-level keys through C1's own naming rule.
 //
 // It is the same node walk bundleHoldsKey takes (creds.go), for the same
-// reason — the question is about keys the loader of this tree does not know —
-// and it differs in one thing: the keys are REMOVED, because the loader must
-// not be handed a document it refuses whole. What comes back is the document
-// the deployed service at providerEntriesSince reads, so the two readers see
-// one document and the loader's other rules (an unknown key, a duplicate, a
-// value that is not a scalar) still refuse this reading exactly as they refuse
-// the service's.
+// reason — the question is about keys of C1's own naming rule — and it differs
+// in one thing: the keys are REMOVED, so that what the loader is handed is a
+// document it reads, with the family judged by the fact over the keys this
+// function answers (credentialsProviderEntries). The loader's other rules are
+// untouched by the removal — an unknown key, a duplicate, a value that is not
+// a scalar still refuse this reading exactly as they refuse the service's —
+// and a document holding a member of the family is refused WHOLE before this
+// point wherever the loader this tree builds cannot read one
+// (readCredentialsBundle, providerEntriesLoaderShipped).
 //
 // A document holding no member of the family — every bundle a release before
 // this one wrote — comes back unchanged, byte for byte: the loader's own
