@@ -3,16 +3,18 @@
 # an installation or a run: every case builds a REAL local git repository in a
 # temporary directory and drives the check against a fake `gcloud` and a fake
 # `fugaro` on PATH whose answers the case owns — the job's own describe, the
-# published policy, two launches' answers, the runs listing, the update's output
-# and the second installation's config. No case can spend anything, because the
-# only thing that spends is `fugaro run`, and here that is a script in $work.
+# installation's own refusal, two launches' answers, the runs listing, the
+# post-update run's record out of the runs bucket, the update's output and the
+# second installation's config. No case can spend anything, because the only
+# thing that spends is `fugaro run`, and here that is a script in $work.
 #
 # The readings are the point. Check 790 watches ONE upgrade across a run that is
 # already in flight, and the cases that matter are the ones where a reading is
 # bent: an installation already migrated (a premise that must STOP the check), an
 # update that fails, an in-flight run the database's rules killed, an execution
-# that still holds a model key, a pre-release image that records another mode, an
-# operator's update that changes something.
+# that still holds a model key, a pre-release runner whose own record names
+# another mode (or names none, or cannot be read), a job the update re-applied
+# without a mode, an operator's update that changes something.
 #
 # Usage: bash scripts/live-checks/check790_test.sh
 set -euo pipefail
@@ -73,6 +75,20 @@ case "${1:-} ${2:-}" in
     ;;
   esac
   ;;
+"storage cat")
+  # The record of the post-update run, read the way check-500.sh reads one: the
+  # key is built from the runs bucket and the row's own ref. It must be exactly
+  # the SECOND launch's: a fake that answered any key would hide a check that read
+  # the wrong run's record, which is the reading this row exists for.
+  key=${3:-}
+  want=gs://fugaro-runs-test-project/runs/acme-app/20261120-120002-abcd/result.json
+  if [ "$key" != "$want" ]; then
+    printf 'fake gcloud: storage cat was given %s; the record of the post-update run (the second launch) is %s\n' "$key" "$want" >&2
+    exit 64
+  fi
+  cat "$dir/record.json"
+  exit "${FAKE790_RECORD_STATUS:-0}"
+  ;;
 *)
   printf 'fake gcloud: unexpected verb %s %s\n' "${1:-<none>}" "${2:-<none>}" >&2
   exit 64
@@ -90,14 +106,23 @@ first=${1:-}
 second=${2:-}
 case "$first" in
 project)
-  cat "$dir/policy.json"
-  exit "${FAKE790_POLICY_STATUS:-0}"
+  # `fugaro project policy show --project <name> --json`: an installation with no
+  # Firebase backend refuses, and that refusal is the premise. A case that wants
+  # the answer of an installation already migrated sets FAKE790_POLICY_STATUS=0,
+  # and one that wants a refusal naming nothing writes its own policy.txt.
+  if [ -f "$dir/policy.txt" ]; then cat "$dir/policy.txt" >&2; fi
+  status=${FAKE790_POLICY_STATUS:-1}
+  if [ "$status" -eq 0 ] && [ -f "$dir/policy.json" ]; then cat "$dir/policy.json"; fi
+  exit "$status"
   ;;
 run)
+  # fugaro run --json, in the shape the CLI really prints it: run_id is the bare
+  # id, and `run` is the row's ref (slug/run-id), which is the key the record is
+  # read under.
   n=$(cat "$dir/launches" 2>/dev/null || printf 0)
   n=$((n + 1))
   printf '%s' "$n" >"$dir/launches"
-  printf '{"run_id":"acme-app/20261120-1200%02d-abcd"}\n' "$n"
+  printf '{"run_id":"20261120-1200%02d-abcd","run":"acme-app/20261120-1200%02d-abcd"}\n' "$n" "$n"
   exit "${FAKE790_RUN_STATUS:-0}"
   ;;
 runs)
@@ -106,21 +131,21 @@ runs)
   # the first read and terminal at the second is a state a case can build. The
   # runs the check launched itself are appended to whatever the case wrote: a
   # real `fugaro runs ls` on this repository lists them too, and the row that
-  # reads a pre-release runner's mode looks the post-update run up by its id.
+  # reads a pre-release runner's record looks the post-update run up by its own
+  # id.
   n=$(cat "$dir/polls" 2>/dev/null || printf 0)
   n=$((n + 1))
   printf '%s' "$n" >"$dir/polls"
   if [ "$n" -ge 2 ] && [ -f "$dir/runs2.json" ]; then src="$dir/runs2.json"; else src="$dir/runs.json"; fi
-  python3 - "$src" "$(cat "$dir/launches" 2>/dev/null || printf 0)" \
-    "$(cat "$dir/new-mode" 2>/dev/null || printf observe)" <<'PY'
+  python3 - "$src" "$(cat "$dir/launches" 2>/dev/null || printf 0)" <<'PY'
 import json, sys
 doc = json.load(open(sys.argv[1]))
-launches, mode = int(sys.argv[2]), sys.argv[3]
+launches = int(sys.argv[2])
 
 rows = doc.get("runs", []) if isinstance(doc, dict) else doc
 for i in range(2, launches + 1):
-    rid = "acme-app/20261120-1200%02d-abcd" % i
-    rows.append({"id": rid, "run_id": rid, "status": "running", "budget": {"mode": mode}})
+    rid = "20261120-1200%02d-abcd" % i
+    rows.append({"run": "acme-app/" + rid, "run_id": rid, "status": "running"})
 print(json.dumps({"runs": rows}))
 PY
   exit 0
@@ -218,14 +243,30 @@ open(out, "w").write(json.dumps(doc))
 PY
 }
 
-runs_json() { # runs_json <outfile> <run-id> <outcome> <mode>
-  python3 - "$1" "$2" "$3" "$4" <<'PY'
+runs_json() { # runs_json <outfile> <run-id> <outcome>
+  python3 - "$1" "$2" "$3" <<'PY'
 import json, sys
-out, rid, outcome, mode = sys.argv[1:5]
-row = {"id": rid, "run_id": rid, "status": "running" if not outcome else "done", "budget": {"mode": mode}}
+out, rid, outcome = sys.argv[1:4]
+row = {"run": "acme-app/" + rid, "run_id": rid, "status": "running" if not outcome else "done"}
 if outcome:
     row["outcome"] = outcome
 open(out, "w").write(json.dumps({"runs": [row]}))
+PY
+}
+
+# record_json writes the record of the post-update run in the shape the runner
+# writes it: the budget session it opened and the policy it resolved. Both are
+# read by the row that asks what mode a pre-release runner ran under.
+record_json() { # record_json <outfile> <budget-mode> <policy-mode>
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, sys
+out, bmode, pmode = sys.argv[1:4]
+doc = {"run_id": "20261120-120002-abcd", "status": "running"}
+if bmode:
+    doc["budget"] = {"day": 1, "mode": bmode, "backend": "rtdb"}
+if pmode:
+    doc["policy"] = {"effective": {"mode": pmode}}
+open(out, "w").write(json.dumps(doc))
 PY
 }
 
@@ -242,20 +283,23 @@ case_dir() { # case_dir <name>
   printf 0 >"$answers/polls"
   make_sandbox "$sandbox"
   job_json "$answers/job-before.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b"
-  job_json "$answers/job-after.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid"
+  job_json "$answers/job-after.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid" "FUGARO_BUDGET_MODE=observe"
   jobs_json "$answers/operator-jobs.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b"
   exec_json "$answers/exec.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid"
-  printf '{"budget":{"mode":"observe"}}' >"$answers/policy.json"
+  printf '{"project":"test","policy":null}' >"$answers/policy.json"
+  printf 'error: project test has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project test --name test\n' >"$answers/policy.txt"
   printf 'fugaro update: created the budget database at https://db.invalid and re-applied the jobs\n' >"$answers/update.out"
   printf "fugaro update: this installation has no budget database yet, and only a project owner can create it: ask a project owner to run 'fugaro update'\n" >"$answers/operator.out"
   printf 'name: second-install\ngcp_project: second-project\nregion: us-test2\n' >"$answers/operator-config.yaml"
-  runs_json "$answers/runs.json" "acme-app/20261120-120001-abcd" "" observe
-  runs_json "$answers/runs2.json" "acme-app/20261120-120001-abcd" succeeded observe
+  runs_json "$answers/runs.json" "20261120-120001-abcd" ""
+  runs_json "$answers/runs2.json" "20261120-120001-abcd" succeeded
+  record_json "$answers/record.json" observe observe
   FAKE790_UPDATE_STATUS=0
   FAKE790_UPDATE_REPO_STATUS=0
   FAKE790_OPERATOR_STATUS=0
   FAKE790_RUN_STATUS=0
-  FAKE790_POLICY_STATUS=0
+  FAKE790_POLICY_STATUS=1
+  FAKE790_RECORD_STATUS=0
 }
 
 run790() {
@@ -269,6 +313,7 @@ run790() {
     FAKE790_OPERATOR_STATUS="${FAKE790_OPERATOR_STATUS:-0}" \
     FAKE790_RUN_STATUS="${FAKE790_RUN_STATUS:-0}" \
     FAKE790_POLICY_STATUS="${FAKE790_POLICY_STATUS:-0}" \
+    FAKE790_RECORD_STATUS="${FAKE790_RECORD_STATUS:-0}" \
     CHECK790_POLL_SECONDS=0 \
     ${RUN790_ENV[@]+"${RUN790_ENV[@]}"} \
     bash "$script" --installation test --sandbox "$sandbox" --job "$(basename "$work")-job" \
@@ -317,6 +362,10 @@ test_the_happy_path_reads_every_row() {
   *"update --repo --project test"*) ;;
   *) fail "the repository's own re-apply ('fugaro update --repo') was not run: $(cat "$CALLS")" ;;
   esac
+  case "$(cat "$CALLS")" in
+  *"storage cat gs://fugaro-runs-test-project/runs/acme-app/20261120-120002-abcd/result.json"*) ;;
+  *) fail "the post-update run's own record was not read out of the runs bucket under its row's ref: $(cat "$CALLS")" ;;
+  esac
 }
 
 test_an_installation_already_migrated_stops_the_check() {
@@ -331,12 +380,30 @@ test_an_installation_already_migrated_stops_the_check() {
   esac
 }
 
-test_a_policy_that_already_names_a_database_stops_the_check() {
+test_an_installation_whose_policy_read_answers_stops_the_check() {
   case_dir policy-migrated
-  printf '{"budget":{"mode":"observe","rtdb_url":"https://db.invalid"}}' >"$answers/policy.json"
+  # The installation has a backend, so the command that reads its published node
+  # answers instead of refusing: the release has already been here.
+  FAKE790_POLICY_STATUS=0
   run790
-  expect_status "$status" 2 "a published policy that names a database is the release having arrived"
-  expect_contains "$out" "published policy carries a budget database URL" "the premise names what it read"
+  expect_status "$status" 2 "a published policy that can be read is the release having arrived"
+  expect_contains "$out" "already has a budget backend" "the premise names what it read"
+  case "$(cat "$CALLS")" in
+  *"fugaro run"*) fail "a run was launched on an installation the premise had already refused" ;;
+  esac
+}
+
+test_an_installation_whose_refusal_names_nothing_stops_the_check() {
+  case_dir policy-other-error
+  # A premise nobody settled must not be spent on: the refusal is there, but it is
+  # not the one an installation with no budget backend prints.
+  printf 'error: project test could not be reached (network unreachable)\n' >"$answers/policy.txt"
+  run790
+  expect_status "$status" 2 "nothing is launched on an installation nobody settled"
+  expect_contains "$out" "without naming a missing budget backend" "the premise says what it could not read"
+  case "$(cat "$CALLS")" in
+  *"fugaro run"*) fail "a run was launched on an unsettled installation" ;;
+  esac
 }
 
 test_a_repository_update_that_fails_is_a_finding() {
@@ -369,8 +436,9 @@ test_an_update_that_fails_is_a_finding() {
 
 test_a_job_that_never_learned_its_database_is_a_finding() {
   case_dir no-database
-  # The update exits 0 but leaves the job without a database address.
-  job_json "$answers/job-after.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b"
+  # The update exits 0 but leaves the job without a database address. The job
+  # still names its mode, so this case has exactly one finding.
+  job_json "$answers/job-after.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b" "FUGARO_BUDGET_MODE=observe"
   run790
   expect_status "$status" 1 "a job that was not re-applied is what this row catches"
   expect_contains "$out" "still carries no database address" "the finding says what is wrong"
@@ -379,8 +447,8 @@ test_a_job_that_never_learned_its_database_is_a_finding() {
 
 test_an_in_flight_run_that_dies_is_a_finding() {
   case_dir inflight-dies
-  runs_json "$answers/runs.json" "acme-app/20261120-120001-abcd" failed observe
-  runs_json "$answers/runs2.json" "acme-app/20261120-120001-abcd" failed observe
+  runs_json "$answers/runs.json" "20261120-120001-abcd" failed
+  runs_json "$answers/runs2.json" "20261120-120001-abcd" failed
   run790
   expect_status "$status" 1 "the database's rules must not kill a run already going"
   expect_contains "$out" "in-flight-2" "the row is the finding"
@@ -404,16 +472,58 @@ test_an_execution_that_still_mounts_a_model_key_is_a_finding() {
   expect_contains "$out" "WITHOUT the gateway" "the finding says why it matters"
 }
 
-test_a_pre_release_image_that_records_another_mode_is_a_finding() {
+test_a_pre_release_runner_whose_record_names_another_mode_is_a_finding() {
   case_dir wrong-mode
-  # The post-update run is the one that landed on the pre-release image, and its
-  # own record says enforce: the run before it is left alone, so the finding can
-  # only come from the row that reads the post-update run.
-  printf 'enforce' >"$answers/new-mode"
+  # The job was re-applied with observe, but the run that landed on the
+  # pre-release image recorded enforce of its own: a runner resolving a mode its
+  # own way is what U4 says cannot happen under an explicit observe.
+  record_json "$answers/record.json" enforce enforce
   run790
-  expect_status "$status" 1 "an unset mode IS observe"
+  expect_status "$status" 1 "a runner resolving a mode of its own is the finding"
   expect_contains "$out" "old-image" "the row is the finding"
-  expect_contains "$out" "not 'observe'" "the finding names what it read"
+  expect_contains "$out" "not the 'observe' U4 is about" "the finding names what it read"
+  expect_contains "$out" "budget.mode" "the finding names the field the mode was read from"
+}
+
+test_a_pre_release_runner_whose_record_names_no_mode_has_no_subject() {
+  case_dir record-no-mode
+  record_json "$answers/record.json" "" ""
+  run790
+  expect_status "$status" 3 "a record that names no mode is not a reading of observe"
+  expect_contains "$out" "carries no mode at all" "the row says what it could not read"
+}
+
+test_a_record_that_cannot_be_read_has_no_subject() {
+  case_dir record-unreadable
+  FAKE790_RECORD_STATUS=1
+  run790
+  expect_status "$status" 3 "a record nobody read is not a reading of observe"
+  expect_contains "$out" "could not be read" "the row says what it could not read"
+}
+
+test_a_job_the_update_left_without_a_mode_is_a_finding() {
+  case_dir no-mode
+  # The re-applied job carries its database but names no mode: a runner from
+  # before the release reads its mode from FUGARO_BUDGET_MODE, so this one runs
+  # with the off the release removed.
+  job_json "$answers/job-after.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" \
+    "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid"
+  run790
+  expect_status "$status" 1 "an installation that now has a database must hand its job a mode"
+  expect_contains "$out" "old-image" "the row is the finding"
+  expect_contains "$out" "names NO FUGARO_BUDGET_MODE" "the finding says what is missing"
+}
+
+test_a_job_that_names_another_mode_has_no_subject() {
+  case_dir job-enforce
+  # An installation deliberately in enforce is not the one U4 is about: the row
+  # names that rather than calling it a finding.
+  job_json "$answers/job-after.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" \
+    "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid" "FUGARO_BUDGET_MODE=enforce"
+  record_json "$answers/record.json" enforce enforce
+  run790
+  expect_status "$status" 3 "U4 is about a run under an explicit observe"
+  expect_contains "$out" "this installation is not in it" "the row says why it has no subject"
 }
 
 test_an_image_that_carries_the_checkout_head_is_not_a_pre_release_image() {
@@ -499,14 +609,19 @@ t test_help
 t test_a_dry_run_calls_nothing
 t test_the_happy_path_reads_every_row
 t test_an_installation_already_migrated_stops_the_check
-t test_a_policy_that_already_names_a_database_stops_the_check
+t test_an_installation_whose_policy_read_answers_stops_the_check
+t test_an_installation_whose_refusal_names_nothing_stops_the_check
 t test_an_update_that_fails_is_a_finding
 t test_a_repository_update_that_fails_is_a_finding
 t test_a_job_that_never_learned_its_database_is_a_finding
 t test_an_in_flight_run_that_dies_is_a_finding
 t test_an_in_flight_run_that_never_ends_leaves_the_row_unverified
 t test_an_execution_that_still_mounts_a_model_key_is_a_finding
-t test_a_pre_release_image_that_records_another_mode_is_a_finding
+t test_a_pre_release_runner_whose_record_names_another_mode_is_a_finding
+t test_a_pre_release_runner_whose_record_names_no_mode_has_no_subject
+t test_a_record_that_cannot_be_read_has_no_subject
+t test_a_job_the_update_left_without_a_mode_is_a_finding
+t test_a_job_that_names_another_mode_has_no_subject
 t test_an_image_that_carries_the_checkout_head_is_not_a_pre_release_image
 t test_an_operator_update_that_changes_things_is_a_finding
 t test_an_operator_update_that_says_nothing_is_a_finding

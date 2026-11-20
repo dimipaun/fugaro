@@ -23,11 +23,13 @@
 # So the check does its own setup and teardown and reads, row by row:
 #
 #   premise     the installation is one this release has not reached: the
-#               repository's job carries no database address, and the published
-#               policy carries no database URL. A failure here is a STOP (exit
-#               2), not a finding — this check is about an installation at the
-#               PREVIOUS release, and on one already migrated every row below
-#               would be a row about nothing.
+#               repository's job carries no database address, and the
+#               installation's own state refuses as one with no budget backend
+#               ('fugaro project policy show --project <name> --json', which
+#               answers exit 0 on one that has a backend). A failure here is a
+#               STOP (exit 2), not a finding — this check is about an
+#               installation at the PREVIOUS release, and on one already
+#               migrated every row below would be a row about nothing.
 #   in-flight   a run is launched BEFORE the update and its id recorded.
 #   update      `fugaro update` is run as the project owner, TWICE as the
 #               after-deploy steps name it: for the installation (which creates
@@ -43,8 +45,9 @@
 #               key: the agent's environment holds no API key for want of a
 #               gateway (AB1b, D3009).
 #   old-image   the job's image is read for its revision; when it still predates
-#               the release, the post-update run's record must read mode
-#               `observe` — an unset mode is observe (C1, U4).
+#               the release, the mode the re-applied JOB names must be `observe`
+#               and the post-update run's OWN RECORD, read from the runs bucket,
+#               must read mode `observe` — an unset mode is observe (C1, U4).
 #   operator    a SECOND installation, at the previous release too, is updated
 #               with the operator's own credential: the command must change
 #               nothing (no job of ITS OWN project, read from its local config,
@@ -75,9 +78,11 @@
 #                             half; without it that row is UNVERIFIED rather
 #                             than skipped silently.
 # Needs:      bash, mktemp, python3 (every document is read by one python3
-#             reader), gcloud (authenticated as the project owner for the update
-#             half; the operator half uses your own default credential),
-#             fugaro, git. Nothing is installed and nothing is fetched.
+#             reader), gcloud (authenticated as the project owner: the update
+#             half, and the `gcloud storage cat` that reads the post-update run's
+#             record out of the runs bucket; the operator half uses your own
+#             default credential), fugaro, git. Nothing is installed and nothing
+#             is fetched.
 # Where:      the installation, project and region you name, and NOWHERE else —
 #             every call carries them explicitly and the script never reads
 #             `gcloud config get-value project`. Run it on an installation you
@@ -110,9 +115,9 @@
 #             ONLY an all-PASS block is a PASS.
 #
 # No secret is read, so none can be printed: this check reads a job's
-# environment NAMES (never a value that could be one), a policy document, a
-# run's own record and an update's output. The one value it writes is a task
-# file of its own making, in its scratch directory.
+# environment NAMES (never a value that could be one), the installation's own
+# refusal, a run's own record, a listing's rows and an update's output. The one
+# value it writes is a task file of its own making, in its scratch directory.
 set -euo pipefail
 
 PROG=${0##*/}
@@ -404,9 +409,10 @@ Check 790 plan (nothing is called: no gcloud, no fugaro, no run, no update)
 What it would do, in order:
 
   premise      gcloud run jobs describe ${JOB:-<job>} --project ${GCP_PROJECT:-<project>} --region ${REGION:-<region>}
-               read the first container's environment NAMES: FUGARO_RTDB_URL must be ABSENT, and
-               'fugaro project policy show --json' must carry no budget database URL. A premise that
-               does not hold STOPS the check (exit 2).
+               read the first container's environment NAMES: FUGARO_RTDB_URL must be ABSENT; and
+               fugaro project policy show --project ${INSTALLATION:-<installation>} --json   (in ${SANDBOX:-<sandbox>})
+               must REFUSE as an installation with no budget backend. A premise that does not hold
+               STOPS the check (exit 2).
   in-flight    fugaro run --task-file <a task the check writes> --json   (in ${SANDBOX:-<sandbox>})
                -> the FIRST paid run, launched before the update.
   update       fugaro update --project ${INSTALLATION:-<installation>}
@@ -420,7 +426,10 @@ What it would do, in order:
                gcloud run jobs executions list --job ${JOB:-<job>} --limit 1
                -> its execution's environment must carry FUGARO_RTDB_URL and must mount no model key.
   old-image    the job's image revision is compared with ${SANDBOX:-<sandbox>}'s HEAD; when the image
-               still predates the release, the second run's record must read budget mode 'observe' (U4).
+               still predates the release: the re-applied job must name FUGARO_BUDGET_MODE 'observe',
+               and the SECOND run's own record, read from the runs bucket
+               (gcloud storage cat gs://fugaro-runs-${GCP_PROJECT:-<project>}/runs/<the row's run>/result.json),
+               must read budget mode 'observe' (U4).
   operator     fugaro update --config <operator config>
                -> a second installation at the previous release: it must change NOTHING and must say a
                project owner has to run it (U1).
@@ -508,7 +517,7 @@ finish() {
     if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then status=2; fi
   fi
   if [ "$SCRATCH_REMOVED" = yes ]; then
-    facts="${facts}"$'\n'"restore|PASS|the scratch directory is gone (its documents: a job's describe before and after, the published policy, two runs' rows, the two updates' own outputs, the second installation's job list and the task file this check wrote). The two runs it launched are left to end on their own"
+    facts="${facts}"$'\n'"restore|PASS|the scratch directory is gone (its documents: a job's describe before and after, the installation's own refusal, two runs' rows, the two launches' answers, the runs listing the post-update run's record key is read from, that run's record, the newest execution, the two updates' own outputs, the second installation's job list and the task file this check wrote). The two runs it launched are left to end on their own"
   else
     facts="${facts}"$'\n'"restore|FAIL|the scratch directory is STILL THERE, at ${SCRATCH} — remove it yourself"
   fi
@@ -546,14 +555,24 @@ step_premise() {
     fact premise FAIL "the job '${JOB}' already carries a database address (FUGARO_RTDB_URL), so this installation has already been reached by the release: Check 790 is about an installation at the PREVIOUS release with NO budget database, and every row below would be a row about nothing. Run the check on such an installation, or read the register's section for what to do with one already migrated"
     stop "the installation already has a budget database — this check is about the release before it"
   fi
-  (cd "$SANDBOX" && fugaro project policy show --project "$INSTALLATION" --json) >"$SCRATCH/policy.json" 2>"$SCRATCH/policy.json.err" || true
-  local url
-  url=$(jget "$SCRATCH/policy.json" budget.rtdb_url)
-  if [ -n "$url" ]; then
-    fact premise FAIL "the published policy carries a budget database URL, so this installation has already been reached by the release: Check 790 is about an installation at the PREVIOUS release. Raise a clean one and run again"
-    stop "the published policy already names a database — this check is about the release before it"
+  # The second reading is the installation's own config, through the one command
+  # that reads the published node: an installation with no Firebase backend has
+  # no node to read, so the command refuses and names it. An exit 0 means the
+  # release has already been here. Any OTHER failure leaves the row UNVERIFIED
+  # and stops the check, deliberately: the check launches two paid runs, and a
+  # premise nobody settled is not a state to spend on. A changed wording of the
+  # refusal, then, costs a person nothing but the run of this check.
+  local status=0
+  (cd "$SANDBOX" && fugaro project policy show --project "$INSTALLATION" --json) >"$SCRATCH/policy.json" 2>"$SCRATCH/policy.json.err" || status=$?
+  if [ "$status" -eq 0 ]; then
+    fact premise FAIL "the published policy of ${INSTALLATION} was read and answered (exit 0), so this installation already has a budget backend: Check 790 is about an installation at the PREVIOUS release with NO budget database, and every row below would be a row about nothing. Run the check on such an installation, or read the register's section for what to do with one already migrated"
+    stop "the installation already has a budget database — this check is about the release before it"
   fi
-  fact premise PASS "the job '${JOB}' of ${GCP_PROJECT}/${REGION} carries no FUGARO_RTDB_URL and the published policy carries no database URL: this installation is at the previous release, which is the state Check 790 is about"
+  if ! grep -qiE 'no firebase budget backend|budget\.rtdb_url' "$SCRATCH/policy.json.err" "$SCRATCH/policy.json" 2>/dev/null; then
+    fact premise UNVERIFIED "'fugaro project policy show --project ${INSTALLATION} --json' exited ${status} without naming a missing budget backend, so whether this installation is at the previous release is NOT measured: $(head -c 300 "$SCRATCH/policy.json.err" 2>/dev/null). Read that command yourself, and run the check again on an installation whose refusal says it has no backend"
+    stop "the installation's own state could not be read — nothing is launched on an installation nobody settled"
+  fi
+  fact premise PASS "the job '${JOB}' of ${GCP_PROJECT}/${REGION} carries no FUGARO_RTDB_URL, and 'fugaro project policy show --project ${INSTALLATION} --json' refused because the installation has no budget backend (exit ${status}): this installation is at the previous release, which is the state Check 790 is about"
 }
 
 step_inflight() {
@@ -689,6 +708,77 @@ TASK
   fact gateway PASS "the execution of '${JOB}' that the post-update run ${NEW_ID:-<id not read>} landed on carries FUGARO_RTDB_URL and mounts no model credential: the run has a gateway, and the agent's environment holds no API key for want of one (image ${image:-<not read>})"
 }
 
+# record_ref prints the ref (slug/run-id) `fugaro runs ls --json` gives the run
+# this check launched after the update, or nothing. It is the key of the run's
+# record under the runs bucket, and it is read from the listing rather than
+# built: the slug is a name this check does not know and must not guess.
+record_ref() {
+  (cd "$SANDBOX" && fugaro runs ls --json) >"$SCRATCH/runs-after.json" 2>"$SCRATCH/runs-after.json.err" || true
+  python3 - "$SCRATCH/runs-after.json" "$NEW_ID" <<'PY'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+rows = doc if isinstance(doc, list) else doc.get("runs", []) or []
+for r in rows:
+    if not isinstance(r, dict) or not sys.argv[2]:
+        continue
+    ref = r.get("run", "")
+    if r.get("run_id") == sys.argv[2] or ref.endswith("/" + sys.argv[2]):
+        print(ref)
+        break
+PY
+}
+
+# record_read fetches the record of the ref into $SCRATCH/record.json. It is the
+# read a person makes themselves ('gcloud storage cat gs://fugaro-runs-<project>/
+# runs/<slug>/<run-id>/result.json'), with the installation's own project, and
+# the same shape check-500.sh reads a record with.
+record_read() { # record_read <ref>
+  gcloud storage cat "gs://fugaro-runs-${GCP_PROJECT}/runs/$1/result.json" --project="$GCP_PROJECT" \
+    >"$SCRATCH/record.json" 2>"$SCRATCH/record.json.err"
+}
+
+# record_mode prints the budget mode the post-update run's own record carries, or
+# nothing. The record's budget block is the session the run opened (its mode is
+# what the run resolved), and its policy block's effective mode is the same
+# reading one layer up: a record that carries the two reads its budget block,
+# and one that carries only the policy block still names a mode.
+record_mode() {
+  python3 - "$SCRATCH/record.json" <<'PY'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+mode = (doc.get("budget") or {}).get("mode", "") or ""
+if not mode:
+    mode = ((doc.get("policy") or {}).get("effective") or {}).get("mode", "") or ""
+print(mode)
+PY
+}
+
+# record_mode_field names the field record_mode read the mode from, so the row
+# says where its reading lives: a record that carries the mode exactly once, and
+# a reader who wants to see it.
+record_mode_field() {
+  python3 - "$SCRATCH/record.json" <<'PY'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    print("record")
+    sys.exit(0)
+if (doc.get("budget") or {}).get("mode", ""):
+    print("budget.mode")
+elif ((doc.get("policy") or {}).get("effective") or {}).get("mode", ""):
+    print("policy.effective.mode")
+else:
+    print("record")
+PY
+}
+
 step_old_image() {
   local image head
   image=$(job_image "$SCRATCH/job-after.json")
@@ -705,34 +795,48 @@ step_old_image() {
       ;;
     esac
   fi
-  local mode
-  (cd "$SANDBOX" && fugaro runs ls --json) >"$SCRATCH/runs2.json" 2>/dev/null || true
-  mode=$(python3 - "$SCRATCH/runs2.json" "$NEW_ID" <<'PY'
-import json, sys
-try:
-    doc = json.load(open(sys.argv[1]))
-except Exception:
-    sys.exit(0)
-rows = doc if isinstance(doc, list) else doc.get("runs", []) or []
-for r in rows:
-    if not isinstance(r, dict):
-        continue
-    if sys.argv[2] and (r.get("id") == sys.argv[2] or r.get("run_id") == sys.argv[2]):
-        b = r.get("budget") or {}
-        print(b.get("mode", ""))
-        break
-PY
-)
-  if [ -z "$mode" ]; then
-    fact old-image UNVERIFIED "the post-update run's own record carries no budget mode, so whether a pre-release runner lands on observe is NOT measured"
+  # Two readings, and the second is U4's own. First the mode the JOB names: a
+  # runner from before the release is handed its mode in FUGARO_BUDGET_MODE (the
+  # repository's own apply writes it onto every job, v1.md §5.4 and §12), and the
+  # upgrade re-applies the repository's job "so its job names its mode and its
+  # database" (plan §9). A job the release re-applied and that still names no
+  # mode is a finding, not a subject: the runner on it reads a mode from nowhere
+  # and runs with the off the release removed (v1.md §10.1, D3009).
+  local jobmode
+  jobmode=$(job_env "$SCRATCH/job-after.json" | sed -n 's/^FUGARO_BUDGET_MODE=//p')
+  # Then the run's OWN record, read from the runs bucket as you would read it:
+  # the record is where a run writes the mode it resolved and the session it
+  # opened (runstore.Record.Budget, and the policy block's effective mode), and
+  # no JSON view of the CLI carries either — `runs ls --json` prints a row, and a
+  # row has no budget block. The key is the one `runs ls` names: the row's own
+  # `run` (slug/run-id) under the installation's runs bucket.
+  local ref rmode field
+  ref=$(record_ref)
+  if [ -z "$ref" ]; then
+    fact old-image UNVERIFIED "the job's image (${image}) predates this checkout, but the listing of runs names no ref (slug/run-id) for the post-update run ${NEW_ID:-<id not read>}, so its record was NOT read: the row that reads a pre-release runner's mode reads the run's own record, and the key of that record is the ref the listing carries"
     return 0
   fi
-  case "$mode" in
-  observe)
-    fact old-image PASS "the job's image (${image}) predates this checkout and the run launched on it recorded budget mode 'observe': an unset mode IS observe, and a runner from before the release behaves as any observe run (C1, U4)"
+  if ! record_read "$ref"; then
+    fact old-image UNVERIFIED "the job's image (${image}) predates this checkout, but gs://fugaro-runs-${GCP_PROJECT}/runs/${ref}/result.json could not be read, so the mode the post-update run resolved is NOT measured: $(head -c 300 "$SCRATCH/record.json.err" 2>/dev/null). A project whose config sets runs_bucket to another name is the one case where that is not this run's record; read the record yourself and record the row in the register's section"
+    return 0
+  fi
+  rmode=$(record_mode)
+  field=$(record_mode_field)
+  case "$jobmode|$rmode" in
+  \|*)
+    fact old-image FAIL "the job '${JOB}', which the update re-applied (it now carries the database address), names NO FUGARO_BUDGET_MODE: a runner from before the release reads its mode from that variable, and a job that names none leaves it resolving none — the off the release removed (D3009) — on a job of an installation that now has a database. The upgrade re-applies a repository's job so its job names its mode and its database (plan §9, F20); the run's own record at runs/${ref}/result.json reads mode '${rmode:-<no mode>}'"
+    ;;
+  observe\|observe)
+    fact old-image PASS "the job's image (${image}) predates this checkout, the re-applied job names FUGARO_BUDGET_MODE 'observe', and the run launched on it recorded budget mode 'observe' (its record's own ${field}, at runs/${ref}/result.json): a runner from before the release under an explicit observe behaves as any observe run (C1, U4)"
+    ;;
+  *\|)
+    fact old-image UNVERIFIED "the image (${image}) predates this checkout and the re-applied job names FUGARO_BUDGET_MODE '${jobmode}', but the post-update run's own record carries no mode at all — neither its budget block nor its policy block names one — so whether a pre-release runner runs as observe is NOT measured. Read runs/${ref}/result.json yourself and record the row in the register's section"
+    ;;
+  observe\|*)
+    fact old-image FAIL "the post-update run recorded budget mode '${rmode}' (its record's own ${field}, at runs/${ref}/result.json), not the 'observe' U4 is about, under a job whose FUGARO_BUDGET_MODE is 'observe': a runner resolving a mode of its own, which C1 does not allow. An installation whose mode is deliberately '${rmode}' is not the installation this check is about — the mode it lands on is the one the upgrade wrote ('off' becomes 'observe', the plan's after-deploy steps)"
     ;;
   *)
-    fact old-image FAIL "the run launched on a pre-release image recorded budget mode '${mode}', not 'observe': an unset mode is observe (C1), and any other reading is a runner resolving a mode of its own"
+    fact old-image UNVERIFIED "the image (${image}) predates this checkout and the run launched on it recorded budget mode '${rmode}' (its record's own ${field}, at runs/${ref}/result.json), but the job names FUGARO_BUDGET_MODE '${jobmode}': U4 is the reading that a runner from before the release, under an explicit 'observe', behaves as any observe run, and this installation is not in it — run the check on one whose mode is observe, which is what the upgrade writes for an installation that had none"
     ;;
   esac
 }
