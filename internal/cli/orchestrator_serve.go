@@ -33,16 +33,63 @@
 // state document, and the lease node beside it — from the store and never from
 // memory, and then reads the plan that record derives: the attempts it cannot
 // see a start for (P5.1d's ResidentRequests) and the actions that are a write's
-// — a first launch, a retry, an abandon. It writes no node and reads no message:
-// a node's writes stay with `fugaro orchestrator patch` and the owner's own
-// credential (D1223, D1241) and the consumer half is P5.1f. What it does with
-// the re-issues is start them, through the command's own launch (the paragraph
-// below): each one is one job execution under the run id the node already
-// recorded, and the pass reports how many it carried, how many it refused and
-// how many steps it left. What the tick buys is what the owner-run Check 660
-// measures: the service exists, its autoscaling floor is 0, the scheduler job
-// that wakes it is enabled, and a forced tick reads the store and starts nothing
-// the node's own record did not already hold.
+// — a first launch, a retry, an abandon. It writes no node of its own: a node's
+// writes stay with `fugaro orchestrator patch` and the owner's own credential
+// (D1223, D1241). What it does with the re-issues is start them, through the
+// command's own launch (the paragraph below): each one is one job execution
+// under the run id the node already recorded, and the pass reports how many it
+// carried, how many it refused and how many steps it left. What the tick buys is
+// what the owner-run Check 660 measures: the service exists, its autoscaling
+// floor is 0, the scheduler job that wakes it is enabled, and a forced tick
+// reads the store and starts nothing the node's own record did not already hold.
+//
+// THE SAME ONE TICK IS THE MAILBOX HALF (P5.1f). The pass that reads this
+// installation's node also consumes its mailboxes: internal/orchestrator's
+// Consume — the phase-1 consumer of `fugaro mailbox` (P4.1) run by this process
+// instead of by a laptop, one pass per paired phone — takes or renews the lease
+// on each phone's heartbeat, reads its inbox, verifies every record with the
+// pairing's key, and answers the records it accepted into the outbox
+// (consume.go's own header is the whole of it; the reader, the tag and the
+// create-only write are the module's, so this is one pass in two places rather
+// than two implementations of one). It carries nothing: the acting half is
+// P5.1g's, so an accepted message is answered with this file's own sentence and
+// no work is started for it — which is also why no ledger stands under the pass
+// (an instance's /tmp is not a fence a tick that may land elsewhere can rest on,
+// and the rules grant CONSUMER exactly two writes).
+//
+// THE CLAIM IT WRITES UNDER IS `mc`, and that is the whole difference between
+// this consumer and the laptop's. `fugaro mailbox` writes as the operator's own
+// admin credential, which bypasses the rules (D113b says so out loud); this
+// process writes as a service account, so the only way it may write those two
+// nodes at all is the rules' CONSUMER macro (`auth.token.mc == $mb`), minted by
+// internal/budget/token's MintConsumer — which makes this the first mailbox
+// writer the rules can hold to "the outbox and the heartbeat and nothing else"
+// (the design's section 4.3). The holder it takes the lease under is the
+// installation's own orchestrator account and NOT a per-instance boot id, and
+// the reason is the lease's own arithmetic: a holder that changed with every
+// instance would renew nothing (Renew answers lost when the claim it reads names
+// somebody else) and its take of that claim is refused to everyone while it is
+// fresh, so a mailbox would go unconsumed for up to the lease TTL after every
+// instance change — which for a service whose whole point is being woken is
+// every tick.
+//
+// WHAT THIS DEPLOYMENT STILL LACKS TO SERVE ONE, named rather than left to a
+// tick that refuses: the pairing keys (the container is the module's, and the
+// grant is the secret row P5.1e added, but this process builds no Secret
+// Manager client and reads no version); the Firebase web API key, which the
+// minted custom token must be exchanged with before it is an identity the rules
+// know — the service's own environment does not carry it (orchestrator.tf's six
+// names are three of the node's and three of the launch's, and
+// TestOrchestratorServiceEnvIsTheDeploymentsOwn holds that list in both
+// directions); and the database read the inbox itself needs, which is an IAM
+// read from an account section 4.3's table grants no firebasedatabase role —
+// the P5.1c review's finding A, still open, and it fences the read half of this
+// pass exactly as it fences the node read. So the consumer the tick is given is
+// nil on this deployment, and orchestratorNoConsumer below is the line it says
+// so in, once per tick, naming the missing half rather than reporting a mailbox
+// pass that read nothing as if there had been nothing to read. A deployment that
+// has those three facts wires one through orchestratorConfig, which is where
+// every test of this file drives the mailbox half from.
 //
 // AND WHAT IT READS IS AN UPPER BOUND, NOT A LIST OF LAUNCHES OWED. The plan is
 // read with an empty RunView (carry): this process reads no run records to
@@ -123,6 +170,13 @@
 // orchestratorTest below). All three are the deployment's, and all three are
 // reported with this task rather than papered over: every one of them is a
 // refusal, written to the log as such, and none of them starts the wrong run.
+//
+// THE CONSUMER'S THREE ARE NOT IN THAT LIST, and deliberately: this process
+// serves a tick with a nil consumer rather than one that refuses (the `mc`
+// paragraph above has the whole argument), so there is no refusal here to name —
+// the line is orchestratorNoConsumer, and the three facts a deployment would
+// need to serve a mailbox are the pairing key container, the Firebase web API
+// key and a database read this account may make.
 
 package cli
 
@@ -250,8 +304,8 @@ var orchestratorTest *orchestratorWiring
 
 // orchestratorConfig is one deployment's facts, as the builder below reads
 // them: the orchestrator id this revision serves, the store it reads the node
-// through, the launcher a re-issue is carried out by, and the log its lines go
-// to.
+// through, the launcher a re-issue is carried out by, the mailbox consumer the
+// tick's other half runs as, and the log its lines go to.
 //
 // The launcher is orchestrator_launcher.go's residentLauncher and never a
 // launcher of this file's making: a route here that took a claim, minted a token
@@ -264,8 +318,59 @@ type orchestratorConfig struct {
 	id     string
 	db     orchestratorStore
 	launch orchestrator.Launcher
-	log    *slog.Logger
+	// consumer is the tick's mailbox half (P5.1f), and it is the ONE optional
+	// field here: the node half is the service's reason to exist and a
+	// deployment without it serves nothing, while a mailbox half stands on three
+	// facts the module does not put on this service yet (the header names them).
+	// A nil consumer is therefore a real deployment and not a broken
+	// configuration, and the tick says so in one line rather than consuming an
+	// inbox it cannot reach (orchestratorNoConsumer).
+	consumer *orchestratorConsumer
+	log      *slog.Logger
 }
+
+// orchestratorConsumer is the mailbox half of a tick as a deployment holds it:
+// the identity the lease is taken under, the pairings this installation has a
+// key for, and the store the pass reads and writes through.
+//
+// The store is a ConsumerStore and not this file's orchestratorStore, because
+// the half needs less than the node does: the two nodes it writes (the
+// heartbeat and the outbox) and the inbox it reads, all under paths the mailbox
+// module builds, and the database's clock. It is the same *rtdb.Client in
+// production — orchestratorStore's three methods are a superset — and it is
+// declared as what the pass uses so that a test standing in for the database
+// cannot hand the consumer a store wider than its own work.
+type orchestratorConsumer struct {
+	holder    string
+	mailboxes []orchestrator.ConsumerMailbox
+	db        orchestrator.ConsumerStore
+}
+
+// orchestratorConsumerHolder is the name this service holds a mailbox lease
+// under: the installation's own orchestrator account, which is the identity that
+// really writes these nodes.
+//
+// It is deliberately NOT a per-instance boot id, and the lease's own arithmetic
+// is why: Renew answers lost when the claim it reads names another holder, and a
+// take of a claim that is still fresh is refused to everyone (mailbox.LeaseTaken
+// on a contender, AlreadyClaimed on a fresh one), so a holder that changed with
+// every Cloud Run instance would leave every phone's mailbox unconsumed for up to
+// ClaimTTL after each instance change — which, for a service the scheduler wakes,
+// is every tick. The laptop's consumer is a daemon and may use its boot id; this
+// one is the installation.
+const orchestratorConsumerHolder = infra.OrchestratorAccountID
+
+// orchestratorNoConsumer is the line a tick says when this deployment was wired
+// with no mailbox consumer at all, and it names the three facts the deployment
+// would need (the header's paragraph).
+//
+// It is said per tick rather than once at start-up because it is a fact about
+// the tick: the numbers a pass reports — no mailbox read, no lease taken, no
+// answer written — are the same numbers an empty inbox reports, so without this
+// line an operator cannot tell "this phone had nothing to say" from "nothing on
+// this deployment reads a phone at all", which is the same distinction carry
+// makes its switch visible for.
+const orchestratorNoConsumer = "tick consumed no mailbox: this deployment has no mailbox consumer (no pairing key container read, no Firebase web API key in its environment, and no database read the account may make), so a phone's message is read by no one here"
 
 // orchestratorServiceConfig builds the resident orchestrator's configuration
 // out of the deployment's environment, and it is the whole of this task's
@@ -484,6 +589,13 @@ func orchestratorServiceConfig(ctx context.Context, getenv func(string) string, 
 		open = orchestratorTest.open
 	}
 	launch := &residentLauncher{open: open}
+	// No consumer, and it is the environment that says so rather than this
+	// line's taste: none of the six names is a pairing key, a Firebase web API
+	// key or anything a database read could be taken with, so there is nothing
+	// here to build one out of (the header names the three facts). The field is
+	// left at its zero value and the tick reports it — a builder that filled it
+	// with a consumer reading a key nobody loaded would be the same deployment
+	// with a line that could not say why nothing was read.
 	return orchestratorConfig{id: id, db: db, launch: launch, log: runner.NewLogger(errw)}, nil
 }
 
@@ -569,7 +681,10 @@ type residentOrchestrator struct {
 	// and the command's): this file hands a plan's re-issue to it and writes
 	// no step of its own — no claim, no mint, no jobs.run.
 	launch orchestrator.Launcher
-	log    *slog.Logger
+	// consumer is the tick's mailbox half, nil when this deployment has none
+	// (orchestratorConfig says why that is a deployment and not a mistake).
+	consumer *orchestratorConsumer
+	log      *slog.Logger
 }
 
 // newResidentOrchestrator is the service the host serves with. It refuses a
@@ -589,7 +704,14 @@ func newResidentOrchestrator(cfg orchestratorConfig) (*residentOrchestrator, err
 	if cfg.log == nil {
 		return nil, fmt.Errorf("no log for this process's one line per pass")
 	}
-	return &residentOrchestrator{id: cfg.id, db: cfg.db, launch: cfg.launch, log: cfg.log}, nil
+	// The consumer is NOT refused when it is absent — see orchestratorConfig —
+	// and it is refused when it is half-built, because a consumer with no store
+	// or no holder is one whose every mailbox pass would fail on a nil the
+	// deployment could have told apart from no consumer at all.
+	if cfg.consumer != nil && (cfg.consumer.db == nil || cfg.consumer.holder == "") {
+		return nil, fmt.Errorf("a mailbox consumer with no holder or no store: a deployment either has a consumer it can run or none at all")
+	}
+	return &residentOrchestrator{id: cfg.id, db: cfg.db, launch: cfg.launch, consumer: cfg.consumer, log: cfg.log}, nil
 }
 
 // ServeHTTP is the whole of what this service answers.
@@ -622,11 +744,23 @@ func (s *residentOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "the tick could not read this installation's node; see the service's log", http.StatusServiceUnavailable)
 		return
 	}
-	s.log.Info(orchestratorPassLine,
+	attrs := []any{
 		"process", orchestratorProcessName, "orchestrator", pass.Orchestrator,
 		"rev", pass.Rev, "items", pass.Items, "intents", pass.Intents,
 		"lease_holder", pass.LeaseHolder, "lease_at", pass.LeaseAt,
-		"unreported", pass.Unreported, "carried", pass.Carried, "left", pass.Left)
+		"unreported", pass.Unreported, "carried", pass.Carried, "left", pass.Left,
+	}
+	// The mailbox half's counts ride this same line when the deployment has one:
+	// an operator reading a tick wants one line per tick and not two, and the
+	// attributes are absent — rather than zero, which is what an empty inbox
+	// reports — when there is no consumer to have read one.
+	if m := pass.Mailbox; m != nil {
+		attrs = append(attrs,
+			"mailboxes", m.Mailboxes, "mail_leases", m.Leases, "mail_lost", m.Lost,
+			"mail_read", m.Read, "mail_verified", m.Verified, "mail_refused", m.Refused,
+			"mail_answered", m.Answered, "mail_present", m.Present, "mail_refusals", m.Refusals)
+	}
+	s.log.Info(orchestratorPassLine, attrs...)
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(pass); err != nil {
 		// The body is a convenience for whoever forced the tick by hand; the
@@ -696,6 +830,45 @@ type orchestratorPass struct {
 	Unreported int `json:"unreported"`
 	Carried    int `json:"carried"`
 	Left       int `json:"left"`
+	// Mailbox is the tick's other half (P5.1f): what the pass over this
+	// installation's paired phones came to, and nil when this deployment was
+	// wired with no consumer at all. It is a pointer for exactly that
+	// distinction — an absent half and a half that read nothing are the same
+	// counts, and the tick's warning line is not the only place a person reads a
+	// pass (orchestratorNoConsumer says the rest).
+	Mailbox *orchestratorMailboxPass `json:"mailbox,omitempty"`
+}
+
+// orchestratorMailboxPass is what the tick's mailbox half came to: one pass per
+// paired phone, and the counts internal/orchestrator's ConsumerOutcome reports,
+// named the same so a reader moves between the two without translating.
+//
+// The refusals themselves are LINES and not this field: an error names the
+// mailbox or quotes a path, which is what a person needs to know which phone is
+// stuck, and a log line is where this process's own carry puts them too. What
+// the field carries is that there was one, so a pass line with a refusal in it
+// does not look like a pass that read nothing.
+type orchestratorMailboxPass struct {
+	Mailboxes int `json:"mailboxes"`
+	// Leases is the mailboxes this pass holds after it, and Lost is the ones it
+	// does not; the two add up to Mailboxes, which is the whole of the first
+	// decision a pass makes about a phone.
+	Leases int `json:"leases"`
+	Lost   int `json:"lost"`
+	// Read is the records the inbox held, Verified the ones the pairing's tag
+	// accepted, Refused the ones it did not (which are answered in no way at all
+	// — consume.go says why), Answered the replies this pass wrote, and Present
+	// the ones a previous pass had already written and this one found in place.
+	// Consume carries nothing, so a record it verified is answered and no attempt
+	// is started for it.
+	Read     int `json:"read"`
+	Verified int `json:"verified"`
+	Refused  int `json:"refused"`
+	Answered int `json:"answered"`
+	Present  int `json:"present"`
+	// Refusals is how many lines this pass wrote below its own, which are the
+	// only thing about a refusal that is not visible in the counts above.
+	Refusals int `json:"refusals"`
 }
 
 // orchestratorPassLine is the one line an operator reads to see what a tick came
@@ -736,12 +909,26 @@ const orchestratorPassLine = "tick read the node and carried the re-issues it re
 // while the re-issues still come back, an attempt that was committed and counted
 // spending nothing a cap is there to bound.
 //
+// AND THEN THE SAME TICK IS THE MAILBOX HALF (P5.1f): consume reads this
+// installation's paired mailboxes — the lease, the inbox, the tag, the answer —
+// through internal/orchestrator's Consume, which is the phase-1 consumer this
+// command already runs on a laptop. It comes AFTER the node's half and not
+// before: the node is what this service exists for, a launch the plan owed is
+// already going by the time a mailbox is read, and a phone's message changes no
+// node here (the acting half is P5.1g's). The two halves share one store and one
+// line, and neither can stop the other: a mailbox pass that refuses is a warning
+// line and a nil Mailbox in the pass, while the node half has already been read
+// and carried.
+//
 // WHAT IT DOES NOT DO is the rest of section 6's list as this step can hold it:
-// no write to any node (there is no PutIfMatch on this path), no message read or
-// written (P5.1f), no secret, no IAM and no deploy — the header's paragraph says
-// why the one launch path is built where it is. The test beside this file holds
-// the first of those the only way it can be held: the store it serves with
-// refuses a write, so a pass that reached for one fails rather than passes.
+// no write to any NODE of the orchestrator subtree (there is no PutIfMatch on
+// this path) and no message carried out — a mailbox write goes through the
+// mailbox module's own signer and create-only reply, and an accepted record is
+// answered and not acted on — plus no secret, no IAM and no deploy: the header's
+// paragraph says why the one launch path is built where it is. The test beside
+// this file holds the first of those the only way it can be held: the store it
+// serves with refuses a write, so a pass that reached for one fails rather than
+// passes.
 func (s *residentOrchestrator) tick(ctx context.Context) (orchestratorPass, error) {
 	state, err := orchestrator.ReadState(ctx, s.db, s.id, orchestrator.RoleOrchestrator)
 	if err != nil {
@@ -766,7 +953,72 @@ func (s *residentOrchestrator) tick(ctx context.Context) (orchestratorPass, erro
 		pass.LeaseAt = claim.At.UTC().Format(time.RFC3339)
 	}
 	s.carry(ctx, state, &pass)
+	s.consume(ctx, &pass)
 	return pass, nil
+}
+
+// consume is the tick's mailbox half (P5.1f): the phase-1 consumer of `fugaro
+// mailbox` (internal/orchestrator's Consume, which is P4.1's pass and this
+// process's — one pass in two places rather than two implementations of one),
+// run once per tick over every mailbox this installation has a pairing key for.
+//
+// What it does per mailbox is the module's and is not repeated here: it takes or
+// renews the lease under the holder, reads the inbox, verifies every record with
+// the pairing's key and answers the ones it accepted — under the minted `mc`
+// claim, which is the whole difference between this consumer and the laptop's
+// (the header's paragraph). What it carries is nothing, because the acting half
+// of the consumer is P5.1g's: an accepted message is answered with the pass's
+// own sentence saying it was read and carried nothing out, so a phone learns
+// that the message arrived and is not presented as though something had happened.
+//
+// A REFUSAL IS ONE WARNING LINE AND THE PASS GOES ON, which is carry's own rule
+// for its own half: a mailbox this pass could not read — the store refused the
+// heartbeat, the name is not one the module will build a path from, the
+// database's clock could not be read — is a phone whose messages are going
+// nowhere until a person looks, and the pass names it. What is NOT one line per
+// mailbox is the reading itself: a mailbox that was simply empty is a count in
+// the pass line, because there is nothing a person could do about it.
+//
+// A deployment with no consumer is the third case and is said in one line rather
+// than passed over in silence: the counts of an unwired tick and of an empty
+// inbox are the same counts, and orchestratorNoConsumer says the rest. The
+// Mailbox field stays nil there and on a refusal, so a pass line an operator
+// reads never shows a consumer's numbers that no consumer reported.
+func (s *residentOrchestrator) consume(ctx context.Context, pass *orchestratorPass) {
+	if s.consumer == nil {
+		s.log.Warn(orchestratorNoConsumer, "process", orchestratorProcessName, "orchestrator", s.id)
+		return
+	}
+	out, err := orchestrator.Consume(ctx, s.consumer.db, orchestrator.ConsumerOptions{
+		Holder:    s.consumer.holder,
+		Mailboxes: s.consumer.mailboxes,
+	})
+	if err != nil {
+		// Consume answers this way before it reads or writes anything at all —
+		// the database's clock, which no judgment in this subtree is made
+		// against a container's clock without (D1230) — so nothing is owed to a
+		// phone behind this line and the pass reports no mailbox.
+		s.log.Warn("the tick read no mailbox", "process", orchestratorProcessName, "orchestrator", s.id, "error", oneLine(err.Error()))
+		return
+	}
+	pass.Mailbox = &orchestratorMailboxPass{
+		Mailboxes: out.Mailboxes,
+		Leases:    out.Leases,
+		Lost:      out.Lost,
+		Read:      out.Read,
+		Verified:  out.Verified,
+		Refused:   out.Refused,
+		Answered:  out.Replied,
+		Present:   out.Present,
+		Refusals:  len(out.Refusals),
+	}
+	for _, err := range out.Refusals {
+		// One line per mailbox this pass could not consume. The error's own
+		// words name the mailbox or the node the store refused (oneLine because
+		// an rtdb error quotes the path it read, and this log is Cloud Logging).
+		s.log.Warn("the tick could not consume a mailbox",
+			"process", orchestratorProcessName, "orchestrator", s.id, "error", oneLine(err.Error()))
+	}
 }
 
 // carry reads what the node's own record derives — the attempts this pass
