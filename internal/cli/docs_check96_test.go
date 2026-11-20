@@ -271,12 +271,21 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	if !strings.Contains(apptoken, "func RunTokenPermissions(") {
 		t.Errorf("Check 96 says the minted token's reach is the run's own set because the service signs with `github.RunTokenPermissions`, and internal/gitprov/github/apptoken.go no longer spells that set out")
 	}
+	// The pairing is the deployment's scope resolver's now (WS1, C1, R1):
+	// ServeHTTP asks the resolver for the call's caller and its readers before
+	// it dispatches any route, so the two identities and the pairing live in
+	// the installation's resolver while the front door keeps the dispatch. The
+	// facts below are one path spread across the two files, which is why both
+	// are read — and the check's own sentences about the order (the identity
+	// verification's read first, the stop switches after it) are held to the
+	// two functions that order now runs through.
 	server := readDoc(t, "internal/credsvc/server.go")
-	if !strings.Contains(server, "ja.Slug != id.Slug") {
-		t.Errorf("internal/credsvc/server.go no longer pairs the run identity with the calling job's account (`ja.Slug != id.Slug`): Check 96 states that pairing as the reason a run identity for X cannot mint for Y, and the check's step 4 is written against it")
+	pairing := readDoc(t, "internal/credsvc/scope_installation.go")
+	if !strings.Contains(pairing, "ja.Slug != id.Slug") {
+		t.Errorf("internal/credsvc/scope_installation.go no longer pairs the run identity with the calling job's account (`ja.Slug != id.Slug`): Check 96 states that pairing as the reason a run identity for X cannot mint for Y, and the check's step 4 is written against it")
 	}
-	if !strings.Contains(server, "the run identity is not a run of the calling job's repository") {
-		t.Errorf("internal/credsvc/server.go no longer answers `the run identity is not a run of the calling job's repository`: Check 96 records that sentence as the refusal's own body")
+	if !strings.Contains(pairing, "the run identity is not a run of the calling job's repository") {
+		t.Errorf("internal/credsvc/scope_installation.go no longer answers `the run identity is not a run of the calling job's repository`: Check 96 records that sentence as the refusal's own body")
 	}
 	// Step 4's audit expectation, held to the code on the other side: the pairing
 	// refusal is answered by `refuseCall` (cascade.go), which writes one line
@@ -287,8 +296,8 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	// (`refuseIdentity`), which is what the check says about (b). If either half of
 	// that pair moves, the check's expectation is the thing that has to move with
 	// it.
-	if !strings.Contains(server, "s.refuseCall(ctx, w, id, purpose, credential, \"\", StatusUnverified, ErrorUnverifiedRunIdentity,") {
-		t.Errorf("internal/credsvc/server.go no longer answers the pairing refusal through `refuseCall`: Check 96's step 4 expects exactly one audit line for it — an answer through `refuse` would leave a refusal this service made unrecorded — so the check and the code have moved apart")
+	if !strings.Contains(pairing, "s.refuseCall(ctx, w, id, purpose, credential, \"\", StatusUnverified, ErrorUnverifiedRunIdentity,") {
+		t.Errorf("internal/credsvc/scope_installation.go no longer answers the pairing refusal through `refuseCall`: Check 96's step 4 expects exactly one audit line for it — an answer through `refuse` would leave a refusal this service made unrecorded — so the check and the code have moved apart")
 	}
 	if !strings.Contains(server, "func (s *Server) refuseIdentity(ctx context.Context, w http.ResponseWriter") {
 		t.Errorf("internal/credsvc/server.go no longer has `refuseIdentity`: Check 96 states the identity refusal as the one refusal on this path that is answered before an identity is verified, and so the one that writes no audit line")
@@ -637,10 +646,22 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 			t.Errorf("Check 96 still carries %q: the two halves of step 4 do not fail together — (a) needs a verified identity, and this tree's service verifies one now that its account holds a database role, while (b) is refused out of the configured account table before any read — so a sentence that lumps them or denies (a) is false about one of them", notWant)
 		}
 	}
-	if body := check96FuncBody(t, readDoc(t, "internal/credsvc/server.go"), "func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request)"); !strings.Contains(body, "id, err := s.cfg.Auth.Verify(ctx, req)") || !strings.Contains(body, "s.cfg.Kills.Stop(ctx, id.Slug)") {
-		t.Errorf("internal/credsvc/server.go's ServeHTTP no longer verifies the identities before it reads the stop switches (%q): Check 96 states that order — the identity verification's own database read comes first — and that is what it is read out of", strings.TrimSpace(body))
-	} else if strings.Index(body, "s.cfg.Auth.Verify(ctx, req)") > strings.Index(body, "s.cfg.Kills.Stop(ctx, id.Slug)") {
-		t.Errorf("internal/credsvc/server.go's ServeHTTP now reads the stop switches before it verifies the identities: Check 96 states the opposite order (the identity verification's database read is the first read of a call), so the check and the code have moved apart")
+	// The order the check states is now an order across two functions (WS1,
+	// C1, R1): the resolver verifies the two identities and makes the pairing,
+	// and ServeHTTP asks the resolver before it reads anything of its own —
+	// the stop switches included. So the verification is held to the resolver
+	// and the front door is held to asking it first, which is the same fact
+	// said where the code now puts it: the identity verification's own database
+	// read is the first read of a call.
+	resolve := check96FuncBody(t, readDoc(t, "internal/credsvc/scope_installation.go"), "func (res installationResolver) Resolve(ctx context.Context, r *http.Request) (Scope, error)")
+	body := check96FuncBody(t, readDoc(t, "internal/credsvc/server.go"), "func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request)")
+	if !strings.Contains(resolve, "s.cfg.Auth.Verify(ctx, req)") {
+		t.Errorf("internal/credsvc/scope_installation.go's Resolve no longer verifies the identities (%q): Check 96 states the identity verification as the first read of a call, and the resolver is where the front door asks for it", strings.TrimSpace(resolve))
+	}
+	if !strings.Contains(body, "s.resolver.Resolve(ctx, r)") || !strings.Contains(body, "sc.Kills().Stop(ctx, id.Slug)") {
+		t.Errorf("internal/credsvc/server.go's ServeHTTP no longer resolves the call's scope before it reads the stop switches (%q): Check 96 states that order — the identity verification's own database read comes first — and the scope's resolver is what now makes it", strings.TrimSpace(body))
+	} else if strings.Index(body, "s.resolver.Resolve(ctx, r)") > strings.Index(body, "sc.Kills().Stop(ctx, id.Slug)") {
+		t.Errorf("internal/credsvc/server.go's ServeHTTP now reads the stop switches before it resolves the call's scope: Check 96 states the opposite order (the identity verification's database read is the first read of a call), so the check and the code have moved apart")
 	}
 	// The same order inside the verifier: checkLive's outcome read is what
 	// Auth.Verify reaches, and it is a database read (RTDBOutcomes.OutcomeExists).
