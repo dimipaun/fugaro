@@ -2366,24 +2366,29 @@ func TestProjectJobDeletesAreRefusedUntilRetirementExists(t *testing.T) {
 // function that composes the jobs must call it: a mount written anywhere else is
 // a second carrier the swap would leave behind.
 //
-// That function is projectJobs, which is where the composition lives and what
+// The composition is projectJobs, which is where the jobs are built and what
 // the exported ProjectJobs delegates to (it is the form that carries a
 // profile's job, init_policy_migrate.go's installSpec): the seam is the
-// composition, not the name of the wrapper around it.
+// composition, not the name of the wrapper around it. The call need not be
+// direct — B5.7's fill moved it one function along, into projectJobMounts,
+// which is the one place the mounts and the drop are decided together — so what
+// is asserted is that a path of local calls reaches projectAccountMount from
+// projectJobs, which is the same claim the direct call made: no other carrier
+// exists on the way the jobs are composed.
 //
 // Mutation (run, restore): inline the mount in projectJobs' loop (the same
 // secret_env, by another path) — every behavioural test still passes, and this
-// one fails naming projectJobs.
+// one fails naming the path.
 func TestProjectAccountMountIsTheOneSeam(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "projectjobs.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls := false
+	calls := map[string][]string{}
 	for _, d := range f.Decls {
 		fn, ok := d.(*ast.FuncDecl)
-		if !ok {
+		if !ok || fn.Body == nil {
 			continue
 		}
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -2394,15 +2399,29 @@ func TestProjectAccountMountIsTheOneSeam(t *testing.T) {
 					t.Errorf("%s: %s names config.%s: the Claude token's mount belongs to projectAccountMount alone", fset.Position(x.Pos()), fn.Name.Name, x.Sel.Name)
 				}
 			case *ast.CallExpr:
-				if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "projectAccountMount" && fn.Name.Name == "projectJobs" {
-					calls = true
+				if id, ok := x.Fun.(*ast.Ident); ok && id.Name != fn.Name.Name {
+					calls[fn.Name.Name] = append(calls[fn.Name.Name], id.Name)
 				}
 			}
 			return true
 		})
 	}
-	if !calls {
-		t.Error("projectJobs does not call projectAccountMount: the account jobs' token reaches them by some other path")
+	seen := map[string]bool{"projectJobs": true}
+	for frontier := []string{"projectJobs"}; len(frontier) > 0; {
+		var next []string
+		for _, fn := range frontier {
+			for _, callee := range calls[fn] {
+				if seen[callee] {
+					continue
+				}
+				seen[callee] = true
+				next = append(next, callee)
+			}
+		}
+		frontier = next
+	}
+	if !seen["projectAccountMount"] {
+		t.Error("no path of calls from projectJobs reaches projectAccountMount: the account jobs' token reaches them by some other path")
 	}
 }
 

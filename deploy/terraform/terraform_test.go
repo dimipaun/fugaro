@@ -4722,9 +4722,19 @@ func TestJobTokenGrantIsReadOnlyOnTokens(t *testing.T) {
 // removes its member with it and moves nothing else — not the job's name, not
 // its account, not its profile.
 //
-// Mutation (run, restore): iterate anything but var.job.secret_env in the
-// member's for_each (a literal set, var.secrets, another variable) — the
-// member and the mount then describe different secrets, and this fails.
+// Since B5.7 the list is one step removed from var.job.secret_env on both
+// sides: each side reads its own local (local.job_secret_names here,
+// local.job_mounts in job.tf), and both locals are the same comprehension over
+// var.job.secret_env — every entry except a model credential a profile the
+// service serves gives up — so the two still describe one set and cannot drift
+// apart. That derivation and the class list it reads are pinned where they live
+// (TestSharedJobServedClassesMatchTheModule): this test is the pair of
+// for_eaches, and a side that read anything else — a literal, var.secrets,
+// another variable, or the other local's shape — is the failure it is here for.
+//
+// Mutation (run, restore): iterate anything but the local in either for_each, or
+// give one side its own comprehension of var.job.secret_env — the member and
+// the mount then describe different secrets, and this fails.
 func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
 	path := "gcp/modules/project/sa.tf"
 	b, err := os.ReadFile(path)
@@ -4738,9 +4748,9 @@ func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
 	body := blocks[0].body
 	for _, want := range []string{
 		// One member per secret this job mounts, and none for a secret it
-		// does not: the list is the job's own secret_env, not the
-		// installation's secrets and not another job's.
-		"for_each = toset(values(var.job.secret_env))",
+		// does not: the list is the job's own secret_env less the served
+		// class, not the installation's secrets and not another job's.
+		"for_each = local.job_secret_names",
 		// The secret's own ID, at the secret level: never the project.
 		"secret_id = var.secrets[each.value]",
 		"role      = \"roles/secretmanager.secretAccessor\"",
@@ -4769,7 +4779,7 @@ func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
 		t.Fatalf("%s has %d jobs, want the one shared project job", jobPath, len(jobs))
 	}
 	for _, want := range []string{
-		"for_each = var.job.secret_env",
+		"for_each = local.job_mounts",
 		"secret  = var.secrets[env.value]",
 		`version = "latest"`,
 	} {
@@ -4789,10 +4799,11 @@ func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
 // job account's roles/run.invoker on the installation's credentials service,
 // one member, no condition, and the resource behind the job's own switch
 // (var.job.credentials_service, null for a profile the service does not serve).
-// The grant alone moves nothing else about the job: the mounts every run holds
-// are pinned by the tftest's own two runs and by internal/infra's
-// TestEmptySharedJobListChangesNothing, and the model mounts a profile the
-// service serves gives up are B5.7's own flip (G17).
+// The grant alone moves nothing else about the job — the mounts a profile the
+// switch holds off keeps are pinned by the tftest's own run and by
+// internal/infra's TestEmptySharedJobListChangesNothing — and the model mounts
+// a profile the service serves gives up left with B5.7's own flip, which is
+// TestFilledSharedJobListDropsTheModelMounts and the tftest run beside it.
 //
 // The switch reaches this module through ONE object attribute, so the two
 // documents that carry the object — the module's variable and both maps of the
