@@ -241,7 +241,7 @@ type Diagnosis struct {
 // is a round a judge really answered.
 type TriageRound struct {
 	Round int          `json:"round"`
-	Mode  rigor.Mode   `json:"mode"`
+	Mode  rigor.Rigor  `json:"mode"`
 	Level policy.Level `json:"level"`
 	Model string       `json:"model,omitempty"`
 	// Account is the Claude account that served the round, empty for a round
@@ -702,7 +702,7 @@ func triageRoundsOf(t *runstore.TriageRecord, red func(string) string) []TriageR
 		}
 		tr := TriageRound{
 			Round:   r.Round,
-			Mode:    rigor.Mode(red(string(r.Mode))),
+			Mode:    rigor.Rigor(red(string(r.Mode))),
 			Level:   policy.Level(red(string(r.Level))),
 			Model:   red(r.Model),
 			Account: red(r.Account),
@@ -745,7 +745,7 @@ func toleratedOf(t *runstore.ToleratedFindings, red func(string) string) *runsto
 			break
 		}
 		f.Title = red(f.Title)
-		f.Mode, f.Label, f.Class = rigor.Mode(red(string(f.Mode))), rigor.Label(red(string(f.Label))), rigor.Class(red(string(f.Class)))
+		f.Mode, f.Label, f.Class = rigor.Rigor(red(string(f.Mode))), rigor.Label(red(string(f.Label))), rigor.Class(red(string(f.Class)))
 		out.Findings = append(out.Findings, f)
 	}
 	// The block's total is how many findings the mode really tolerated, and a

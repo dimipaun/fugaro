@@ -2,9 +2,13 @@ package rigor
 
 import "fmt"
 
-// The review levels a mode runs by default (L2.2, D722): the bottom of the
-// precedence the level resolver starts from, before the project layer, the
+// The review levels a rigor level runs by default (L2.2, D722): the bottom of
+// the precedence the level resolver starts from, before the project layer, the
 // repository, the task or the owner's floor is read.
+//
+// The two axes meet in this file: a *rigor* level (poc, startup, pro,
+// critical, hotfix) names which *review* levels (l1, l2, l3) run, so the
+// table's key is a Rigor and its value a Levels.
 //
 // Level 1 is the first-line review, level 2 the senior review that decides
 // readiness, level 3 the adversarial pass after it (docs/recipes.md §2).
@@ -38,16 +42,16 @@ type Levels struct {
 	L3 LevelState
 }
 
-// defaultLevels is the mode's own answer, one row per mode, and what
+// defaultLevels is the rigor level's own answer, one row per level, and what
 // DefaultLevels reads.
 //
-// L1 is left unset everywhere except POC, because it is not the mode's to
-// set: it follows `agent.first_line_review` (config.Agent.FirstLineOn), and
-// this package may not read internal/config — the mode names a level on or
-// off, it does not know about the providers that decide `auto`. POC turns L2
-// off, the spec's "level 1 only", so without L1 the run would carry no review
-// at all and D723 makes L1 run and decide readiness instead.
-var defaultLevels = map[Mode]Levels{
+// L1 is left unset everywhere except POC, because it is not the rigor level's
+// to set: it follows `agent.first_line_review` (config.Agent.FirstLineOn), and
+// this package may not read internal/config — the rigor level names a review
+// level on or off, it does not know about the providers that decide `auto`.
+// POC turns L2 off, the spec's "level 1 only", so without L1 the run would
+// carry no review at all and D723 makes L1 run and decide readiness instead.
+var defaultLevels = map[Rigor]Levels{
 	POC:      {L1: LevelOn, L2: LevelOff},
 	Startup:  {L2: LevelOn},
 	Pro:      {L2: LevelOn},
@@ -55,18 +59,19 @@ var defaultLevels = map[Mode]Levels{
 	Hotfix:   {L2: LevelOn},
 }
 
-// DefaultLevels is the levels mode m runs when no layer sets any: POC level 1
-// only, Startup and Pro level 2, Critical level 2 and level 3, and Hotfix
-// Pro's set (O10, 2026-10-30 — the spec gives it no row of its own).
+// DefaultLevels is the review levels the rigor level m runs when no layer
+// sets any: POC level 1 only, Startup and Pro level 2, Critical level 2 and
+// level 3, and Hotfix Pro's set (O10, 2026-10-30 — the spec gives it no row
+// of its own).
 //
-// A mode outside the vocabulary is an error rather than a silent default. The
-// two answers this code could guess at are opposite and both wrong: the
+// A level outside the vocabulary is an error rather than a silent default.
+// The two answers this code could guess at are opposite and both wrong: the
 // strictest row would run a review a typo never asked for, the loosest would
 // be the fail-open direction D722 exists to close.
-func DefaultLevels(mode Mode) (Levels, error) {
-	ls, ok := defaultLevels[mode]
+func DefaultLevels(m Rigor) (Levels, error) {
+	ls, ok := defaultLevels[m]
 	if !ok {
-		return Levels{}, fmt.Errorf("rigor: no default levels for mode %q", string(mode))
+		return Levels{}, fmt.Errorf("rigor: no default review levels for %q", string(m))
 	}
 	return ls, nil
 }

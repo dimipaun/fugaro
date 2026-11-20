@@ -228,6 +228,22 @@ var secretReaderExceptions = []struct {
 			"deploy/terraform/gcp/modules/installation/secrets.tf google_secret_manager_secret_iam_member.voice_provider_keys",
 		},
 	},
+	// The workspace's own credentials service (WS6, D2980): the same image, the
+	// same code and the same bundle read E7 audits, deployed into a workspace's
+	// OWN project as that project's own account, told what it is by
+	// FUGARO_WORKSPACE_MODE (var.workspace) and invoked by the members' job
+	// accounts alone. It is a row of its own rather than a key under E7 because
+	// the reader is a different account class in a different project: the
+	// installation's account reads a job's mounts and the dynamic-delivery
+	// containers besides, and this one reads the workspace's own bundle and
+	// nothing else -- its project holds no job and no repository, so there is no
+	// mount and no grammar container for it to reach, and no secret ID is an
+	// environment value of its revision (the service derives the container's
+	// name from the workspace's own name).
+	{
+		id:   "E32",
+		keys: []string{"deploy/terraform/gcp/roots/workspace/main.tf google_secret_manager_secret_iam_member.workspace_bundle"},
+	},
 }
 
 // A key under this prefix names a rule the scan enforces rather than a hit it

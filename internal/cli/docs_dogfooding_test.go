@@ -50,7 +50,7 @@ const dogfoodingDoc = "docs/dogfooding.md"
 // pin.
 var dogfoodingPractices = []struct {
 	sentence string
-	mode     rigor.Mode
+	mode     rigor.Rigor
 }{
 	// The batch practice: a base lands before its dependents launch, and what
 	// says a base is done is the readiness answer — Pro's, the mode every
@@ -100,7 +100,7 @@ func TestDocsDogfoodingNamesTheModeBesideEachPractice(t *testing.T) {
 
 	for _, p := range dogfoodingPractices {
 		if !rigor.Known(p.mode) {
-			t.Errorf("%s: this guard reads %q as the mode automating %q, and internal/rigor.Modes does not hold it: the vocabulary moved, and the page and this list move with it", dogfoodingDoc, p.mode, p.sentence)
+			t.Errorf("%s: this guard reads %q as the mode automating %q, and internal/rigor.Rigors does not hold it: the vocabulary moved, and the page and this list move with it", dogfoodingDoc, p.mode, p.sentence)
 			continue
 		}
 		line, at, ok := dogfoodingPracticeLine(lines, p.sentence)

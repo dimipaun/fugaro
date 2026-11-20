@@ -85,7 +85,7 @@ defaults:
     areas:
       - name: docs
         match: docs/**
-        mode: pro
+        level: pro
 `)
 	for _, tc := range []struct {
 		key  string
@@ -868,8 +868,8 @@ gcp_project: acme-fugaro
 defaults:
   rigor:
     areas:
-      - { name: payments, match: "payments/**", mode: hotfix }
-      - { name: payments-again, match: "payments/**", mode: pro }
+      - { name: payments, match: "payments/**", level: hotfix }
+      - { name: payments-again, match: "payments/**", level: pro }
 `
 	_, ps := ParseProjectLayer([]byte(text), testAnchor)
 	if len(ps) != 1 || ps[0].Path != "defaults.rigor.areas[1]" {

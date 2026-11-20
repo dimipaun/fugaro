@@ -979,7 +979,7 @@ func TestR3VetoRaisesDecision(t *testing.T) {
 // merges a change to the gateway.
 func TestR3NonRoutineWaitsInEveryMode(t *testing.T) {
 	now := o6Now()
-	for _, mode := range []rigor.Mode{rigor.POC, rigor.Pro, rigor.Hotfix} {
+	for _, mode := range []rigor.Rigor{rigor.POC, rigor.Pro, rigor.Hotfix} {
 		t.Run(string(mode), func(t *testing.T) {
 			m := landable(t, now)
 			read := m.reader.reads["wi-1"]

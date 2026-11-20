@@ -32,7 +32,7 @@ func TestRegistryEntryRecipe(t *testing.T) {
 // (rigor-modes plan T1.7, F40).
 func TestRegistryEntryMode(t *testing.T) {
 	r := &run{spec: &task.Spec{Repo: "acme/app", Task: "x"}, cfg: &config.Config{},
-		rec: &runstore.Record{Rigor: &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea}}}
+		rec: &runstore.Record{Rigor: &runstore.RigorRecord{Level: rigor.Critical, From: rigor.FromArea}}}
 	if e := r.registryEntry(); e.Mode != "critical" || e.From != "area" {
 		t.Fatalf("entry = %+v", e)
 	}

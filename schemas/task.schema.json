@@ -220,6 +220,24 @@
         }
       }
     },
+    "reports": {
+      "type": "array",
+      "description": "The project's stored reports the launching CLI handed this run (fugaro run --commit-reports, plan task R16, D2754), in the order the launcher read them: each one is stored under runs/<slug>/<run>/reports/<name>, where <name> is the report's name in the mirror (<slug>/<YYYY>/<key>.md for a repository's report, <YYYY>/<key>.md for the project's aggregate), and the commit_reports step downloads it, verifies it against the size and the sha256 here, and commits it into the checkout's mirror folder. Absent for every launch that handed none in, and for every run whose recipe has no commit_reports step. The name's own shape is checked where it becomes a path in the repository (the commit step, through digest.ParseMirrorPath), never here. Needs a 0.27.0 runner: an older runner's task.Parse decodes with DisallowUnknownFields and refuses the field outright, which is why a --commit-reports launch at an older job image is refused at launch.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "bytes", "sha256"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "The report's mirror-relative name, which is also the object's leaf under the run's reports/ prefix. A name of nothing but whitespace is no name, the same rule task.InputNameBlank applies in Spec.Validate." },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "The sha256 of the bytes the launcher uploaded, hashed in the same pass that wrote them. The runner verifies each downloaded object against it and against its size, so a mismatch leaves nothing at the destination."
+          }
+        }
+      }
+    },
     "recipe": {
       "type": "object",
       "additionalProperties": false,

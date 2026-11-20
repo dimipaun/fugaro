@@ -17,8 +17,8 @@ defaults:
   rigor:
     default: critical
     areas:
-      - { name: project-payments, match: "internal/payments/**", mode: critical }
-      - { name: project-docs, match: "docs/**", mode: poc }
+      - { name: project-payments, match: "internal/payments/**", level: critical }
+      - { name: project-docs, match: "docs/**", level: poc }
 profiles:
   java-service:
     description: Gradle service with Postgres

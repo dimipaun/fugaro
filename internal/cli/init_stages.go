@@ -597,6 +597,17 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// this run leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
+	// And D2965's, the seventh: the runs that opened, followed or reviewed a
+	// pull request before this release wrote an entry as it came to be on one,
+	// so `runs ls --pr N` finds them in the index instead of scanning the
+	// repository
+	// (update_prindex.go). It is here for the reason the six above are — the
+	// converge applied everything it had, so the runs it walks are the ones this
+	// run leaves behind — and it is beside writeAdminList because it is the
+	// other object of this run's that a later read of the installation takes:
+	// both are derived from what the installation holds and neither fails an
+	// update (the HARD RULE).
+	e.backfillPRIndex(ctx)
 	// And D2716's: the checkout's docs/backlog/ folder, folded into the
 	// project's standing backlog once (update_backlog.go). It is here for the
 	// reason the four above are — the converge has applied everything it had, so

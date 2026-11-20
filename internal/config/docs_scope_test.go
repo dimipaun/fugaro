@@ -102,19 +102,19 @@ func TestProjectLayerDocStatesTheRigorOrder(t *testing.T) {
 			want = rigor.Default
 		}
 		got := rigor.Resolve(cfg, req)
-		if got.From != r.from || got.Mode != want {
-			t.Errorf("§2 says %q wins over the wider layers, but rigor.Resolve answers %q from %q", r.phrase, got.Mode, got.From)
+		if got.From != r.from || got.Level != want {
+			t.Errorf("§2 says %q wins over the wider layers, but rigor.Resolve answers %q from %q", r.phrase, got.Level, got.From)
 		}
 	}
 
 	// The two claims the same sentence makes about a run's own input: a
 	// request may raise and never lower, and a mode a run reached never
 	// falls.
-	if got := rigor.Resolve(rigor.Config{Repo: rigor.Critical}, rigor.Request{Mode: rigor.POC}); got.Mode != rigor.Critical {
-		t.Errorf("§2 says a run's own request may raise and never lower it, but a request for %q answered %q", rigor.POC, got.Mode)
+	if got := rigor.Resolve(rigor.Config{Repo: rigor.Critical}, rigor.Request{Level: rigor.POC}); got.Level != rigor.Critical {
+		t.Errorf("§2 says a run's own request may raise and never lower it, but a request for %q answered %q", rigor.POC, got.Level)
 	}
-	if got := rigor.Resolve(rigor.Config{Repo: rigor.Pro}, rigor.Request{Reached: rigor.Critical}); got.Mode != rigor.Critical {
-		t.Errorf("§2 says a mode a run has reached never falls, but a reached %q answered %q", rigor.Critical, got.Mode)
+	if got := rigor.Resolve(rigor.Config{Repo: rigor.Pro}, rigor.Request{Reached: rigor.Critical}); got.Level != rigor.Critical {
+		t.Errorf("§2 says a mode a run has reached never falls, but a reached %q answered %q", rigor.Critical, got.Level)
 	}
 }
 
@@ -127,7 +127,7 @@ func rigorOrderSetup(narrowest rigor.Layer) (rigor.Config, rigor.Request) {
 	switch narrowest {
 	case rigor.FromArea:
 		cfg.Project, cfg.Repo = rigor.POC, rigor.Startup
-		cfg.RepoAreas = []rigor.Area{{Name: "area", Match: "area/**", Mode: rigor.Critical}}
+		cfg.RepoAreas = []rigor.Area{{Name: "area", Match: "area/**", Level: rigor.Critical}}
 		req.Paths = []string{"area/x"}
 	case rigor.FromRepo:
 		cfg.Project, cfg.Repo = rigor.POC, rigor.Critical

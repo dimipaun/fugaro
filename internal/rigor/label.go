@@ -9,7 +9,7 @@ import "slices"
 // than a word a model chose freely.
 //
 // A label is what a person reads: the pull request body names each finding a
-// mode left open with its label (T3.3), and `fugaro diagnose` prints it. It is
+// level left open with its label (T3.3), and `fugaro diagnose` prints it. It is
 // not stored on the finding — `severity` stays the free-form string it is
 // (D3), and the label is computed from the score, so the two cannot drift.
 
@@ -20,20 +20,20 @@ type Label string
 const (
 	// Blocker is a finding of the severity the spec calls catastrophic: the
 	// class it names or the top of the impact scale, and — fail closed, like
-	// the table — a finding whose score cannot be read at all (D4). Every mode
+	// the table — a finding whose score cannot be read at all (D4). Every level
 	// but Hotfix blocks one; Hotfix's row keeps the security gate alone (owner
 	// ruling 2026-10-26), so a data loss finding and an impact of 5 are
 	// tolerated there while the word stays the same.
 	Blocker Label = "blocker"
-	// High is a finding above the floor of every mode that has one: Startup,
+	// High is a finding above the floor of every level that has one: Startup,
 	// Pro and Critical all block it, and only POC and Hotfix, which block
 	// nothing but the catastrophic, tolerate it.
 	High Label = "high"
 	// Medium is the band Startup's floor starts at: the mildest finding that
-	// mode blocks, and one Pro and Critical block as well.
+	// level blocks, and one Pro and Critical block as well.
 	Medium Label = "medium"
 	// Low is the band Pro's floor starts at: the mildest finding the default
-	// mode blocks, and the only band its fix-cost escape can reach — the
+	// level blocks, and the only band its fix-cost escape can reach — the
 	// escape's likelihood of 1 caps it at a risk of 4.
 	Low Label = "low"
 	// Nit is below every floor there is: POC, Hotfix, Startup and Pro all
@@ -49,8 +49,8 @@ var Labels = []Label{Blocker, High, Medium, Low, Nit}
 func KnownLabel(l Label) bool { return slices.Contains(Labels, l) }
 
 // Label is the word a person reads for a finding: the severity of the score
-// itself, which is the same word whatever mode the finding met, because the
-// mode decides what happens to a finding and not how bad it is.
+// itself, which is the same word whatever level the finding met, because the
+// level decides what happens to a finding and not how bad it is.
 //
 // Two of the bands' lower edges are floors of the table read back (table.go):
 // the low band starts where Pro's floor is and the medium band where
@@ -59,9 +59,9 @@ func KnownLabel(l Label) bool { return slices.Contains(Labels, l) }
 // score, and what TestTheLabelAndTheTableAgree holds.
 //
 // The other three bands start at no floor, and the five of them are not five
-// modes' thresholds: the blocker band is the spec's override, which no threshold
-// reaches however low a mode sets one; the high band is the risk above
-// Startup's floor, which no floor starts because the mode above Startup needs
+// levels' thresholds: the blocker band is the spec's override, which no threshold
+// reaches however low a level sets one; the high band is the risk above
+// Startup's floor, which no floor starts because the level above Startup needs
 // none — Critical blocks everything, so its floor is the bottom of the scale
 // rather than a rung higher up; and a nit is below every floor there is. So a
 // band is where a floor happens to fall, never the reason a floor is where it

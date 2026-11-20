@@ -98,7 +98,7 @@ type Brief struct {
 	MaxRunning int
 	// Mode is the rigor mode the tasks are estimated at. A mode the history
 	// carries no group for falls back to the tier's own answer.
-	Mode rigor.Mode
+	Mode rigor.Rigor
 	// Now is the caller's clock, stamped on the estimate.
 	Now time.Time
 }

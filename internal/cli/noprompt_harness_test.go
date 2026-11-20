@@ -414,6 +414,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro budget history":       {args: []string{"--sweep"}},
 	"fugaro budget reconcile":     {args: []string{"--from", "2026-10-12", "--to", "2026-11-16", "--all"}},
 	"fugaro cancel":               {args: []string{"run-1"}},
+	"fugaro tell":                 {args: []string{"run-1", "check the flaky test"}},
 	"fugaro creds set":            {args: []string{"NAME"}},
 	"fugaro diagnose":             {args: []string{"run-1"}},
 	"fugaro estimate":             {args: []string{"--run", "run-1", "--model", "claude-opus-5-5"}},
@@ -541,7 +542,9 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro workspace member add": {args: []string{"ws", "acme/app"}},
 	"fugaro workspace member rm":  {args: []string{"ws", "acme/app"}},
 	"fugaro workspace rm":         {args: []string{"ws"}},
+	"fugaro workspace share":      {args: []string{"anthropic-api-key", "--workspace", "ws", "--projects", "acme"}},
 	"fugaro workspace show":       {args: []string{"ws"}},
+	"fugaro workspace unshare":    {args: []string{"anthropic-api-key", "--workspace", "ws"}},
 }
 
 // closedStdinNoFixture is the other half of the classification, and the reason

@@ -124,6 +124,13 @@ type launchResult struct {
 	// block wherever the read could answer one at all, even with nothing but an
 	// empty chain in it.
 	*ChainLimits
+	// ReviewSpecReason is why this launch's review spec was dropped: the job
+	// image predates reviewSpecSince and cannot read review_spec, from_findings
+	// or own_text, so the launcher leaves them out and the review judges the
+	// code alone (D2933, reviewSpecSkew). It is the same reason the one warning
+	// line on stderr carries, so a caller reading only the document is told
+	// what the person read; empty for every launch whose spec was not dropped.
+	ReviewSpecReason string `json:"review_spec_reason,omitempty"`
 	// Error is the refusal this launch is answered with, nil for a launch
 	// that was not refused: a --retry of a run that already started starts
 	// nothing, and the document carries the refusal the command exits with,
@@ -234,6 +241,21 @@ type runOptions struct {
 	// fact; the release that owns that file documents it (reconciliation
 	// F22/E4).
 	reviewRun string
+	// codeOnly is --code-only: review the pull request's code alone. It is one
+	// of the two flags `fugaro review` and `fugaro run --recipe <a mode: review
+	// recipe>` share (R11, D2934), and it is the per-launch switch beside the
+	// repository's and the project's setting (spec §3): the launcher resolves a
+	// spec of no spec, reason --code-only, so the review job records that it
+	// judged the code alone. Refused with --spec, and refused on a recipe that
+	// is not mode: review, which is a launch that has no review to switch.
+	codeOnly bool
+	// specFile is --spec: the FILE whose text is the task this review judges
+	// the pull request's diff against, overriding the task of the run that
+	// opened it (spec §4). It is the way an orphan pull request — one no run
+	// produced — is reviewed against something, and its text is redacted like
+	// any other a launcher adds (R13). A file over MaxReviewSpecBytes is
+	// refused with its size rather than clipped (R4).
+	specFile string
 	// ownerRuled is --owner-ruled: the repository owner's answer to the
 	// findings a run on this PR left for them (OD1). A follow-up whose
 	// previous run stopped waiting on owner decisions is refused without it
@@ -249,7 +271,16 @@ type runOptions struct {
 	// that already holds a task, refused unless the launch resolves to an
 	// artifact recipe, and refused over any of the workflow's three
 	// inputs caps before the first byte is uploaded.
-	attach        []string
+	attach []string
+	// commitReports is --commit-reports: hand the project's stored reports to
+	// the run this launch starts (R16, D2754). It is refused on a run id that
+	// already holds a task, refused together with --attach (a report object is
+	// never a recipe input), refused unless the run's recipe carries the
+	// commit_reports step, and refused on a job image whose runner does not
+	// read the reports a task hands in — all before the first byte, which is
+	// read from the store with this launcher's own credential and uploaded
+	// under the run's own prefix.
+	commitReports bool
 	asJSON        bool
 	noBudgetCheck bool
 	recipe        string
@@ -299,6 +330,14 @@ type runOptions struct {
 	// display fact and reaches no other reader: the task is the record, and
 	// it carries the resolved account alone (F4).
 	account launchAccount
+	// reviewSpecReason is why this launch's review spec was dropped, set by
+	// the gate that drops it (reviewSpecSkew) where the launch begins
+	// (finishLaunch) and read there into the reply (launchResult.
+	// ReviewSpecReason), so the one reason reaches both the warning line on
+	// stderr and the launch's --json document. Empty is every launch whose
+	// spec was not dropped, and the field is cleared before the gates run, so
+	// one attempt's drop never lands in the next attempt's document.
+	reviewSpecReason string
 	// allowDuplicate is --allow-duplicate: the launcher's own word that a
 	// second run of the plan task above is deliberate, and the one way past
 	// the duplicate refusal (planTaskDuplicate). False (the default) is the
@@ -477,7 +516,7 @@ func newRunCmd() *cobra.Command {
 			"overriding its fugaro.yaml. There is no --compression flag: turning compression\n" +
 			"on is a reviewed fugaro.yaml change. A follow-up (--pr) keeps its run's choice,\n" +
 			"and --retry takes none (the stored task keeps its own).\n\n" +
-			"--mode MODE asks for a rigor mode for this run: " + rigor.ModeList() + ".\n" +
+			"--mode MODE asks for a rigor mode for this run: " + rigor.RigorList() + ".\n" +
 			"It may raise the mode the run resolves from its own configuration\n" +
 			"(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)\n" +
 			"and never lower it, so a launch that asks for less cannot outvote a repository\n" +
@@ -516,7 +555,8 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
-	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
+	f.BoolVar(&o.commitReports, "commit-reports", false, "hand the project's stored reports (reports/ of the runs bucket) to the run this launch starts: reads them with your own account, uploads every one the checkout's mirror folder does not already hold byte for byte into the run's own reports/, and names them in the task for the commit_reports step to commit. Needs --recipe commit-reports (the step is what reads them), is refused together with --attach, and is refused on a run ID that already has a task")
+	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.RigorList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
 	f.StringArrayVar(&o.contextRepos, "context", nil, "a repository this run reads and never writes, as owner/name: repeatable, at most "+fmt.Sprint(task.MaxContextRepos)+", each admitted by the project's allow_repos. The list goes into the task and into the run's own identity, and the run clones each one read-only, outside its working tree, as reference the prompt points it at: nothing in one is committed or pushed, and the read-only token a context repository is cloned with is the installation's credentials service's, which needs the GitHub App installed on it. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository")
 	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
@@ -525,6 +565,8 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.reviewRun, "review-run", "", "carry the findings of review RUN (<repo-slug>/<run-id> or a run ID) into this fix round's brief; needs --pr, and refused with a mode: review recipe")
 	_ = f.MarkHidden("review-run")
 	f.StringVar(&o.ownerRuled, "owner-ruled", "", "the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run")
+	f.BoolVar(&o.codeOnly, "code-only", false, "review the pull request's code alone: the reviewer is given no task and judges the diff on its own merits (the per-launch switch beside the repository's agent.review_against_task and the project's published key). Needs a mode: review recipe and --pr, and refused with --spec")
+	f.StringVar(&o.specFile, "spec", "", "review against the task in this FILE instead of the task of the run that opened the pull request: the way to review a pull request no run produced. Its text is redacted like any other a launcher adds, and a file over "+fmt.Sprint(task.MaxReviewSpecBytes)+" bytes is refused with its size. Needs a mode: review recipe and --pr, and refused with --code-only")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
 	f.BoolVar(&o.security, "security", false, "ask for the strongest review this run can get: it turns review level 3 on for the run whatever paths it changed, over the repository's own security: rows and the project layer's always_level_3. It only ever turns the level on — there is no way to ask for less — as --mode raises a mode and never lowers one, and a run that says nothing resolves its levels from its configuration alone")
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
@@ -535,7 +577,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "change-set", "ref", "workflow", "run-id", "batch", "title", "plan-task", "allow-duplicate", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "context", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
+var taskFlags = []string{"repo", "change-set", "ref", "workflow", "run-id", "batch", "title", "plan-task", "allow-duplicate", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "commit-reports", "mode", "path", "context", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -825,6 +867,21 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 				return userErr("--pr continues the PR's base branch and workflow; it takes no --%s", name)
 			}
 		}
+	}
+	// --code-only and --spec, R11's two refusals: together they ask a review
+	// for different things, and on a launch that resolved no mode: review
+	// recipe (an ordinary recipe, a follow-up, a retry) neither has a review to
+	// switch. Made here, where the recipe's mode is known and before any spec
+	// builder runs, so a launch refused over the flags leaves nothing behind —
+	// and before --attempts and --change-set return below, because neither of
+	// those takes a review either, and a batch's own refusals are its own
+	// (runAttempts).
+	mode := ""
+	if reviewRecipe != nil {
+		mode = recipe.ModeReview
+	}
+	if err := reviewSpecFlagsRefusal(o.codeOnly, o.specFile, mode); err != nil {
+		return err
 	}
 	if attemptsSet {
 		// The batch opens its own reporter once its own refusals are behind
@@ -1161,6 +1218,15 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			return launchResult{}, err
 		}
 	}
+	// The same check for --commit-reports, and for the same reason: the
+	// reports a launch hands in are create-only writes under the run's own
+	// prefix, so a run id that already holds a task is refused here rather
+	// than after a report of a finished run was written over.
+	if o.commitReports {
+		if err := commitReportsRefusesStoredRun(ctx, s, spec.RunID); err != nil {
+			return launchResult{}, err
+		}
+	}
 	prior, err := existingLaunch(ctx, env, s, spec)
 	if err != nil {
 		return launchResult{}, err
@@ -1176,6 +1242,14 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// went: it started with the task it started with.
 	if prior != nil && len(o.attach) > 0 {
 		return launchResult{}, userErr("run ID %s has already launched; --attach uploads a run's files before it starts, so it never adds attachments to a run that already went — use a new run ID", spec.RunID)
+	}
+	// And the other half for the reports: every --commit-reports step lives
+	// inside the prior == nil block below — the recipe refusal, the image
+	// gate, the upload — so a launch that found a prior would write a task
+	// naming no reports while the reports the person asked for went nowhere.
+	// A run commits the reports it started with.
+	if prior != nil && o.commitReports {
+		return launchResult{}, userErr("run ID %s has already launched; --commit-reports hands the stored reports in before the run starts, so it never adds them to a run that already went — use a new run ID", spec.RunID)
 	}
 	// The check is the pull request link's, and IsFollowUp is the stored task's
 	// own branch: a reused --retry or a reused --pr follow-up carries one, while
@@ -1231,6 +1305,10 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			skipBudget = true
 		}
 	}
+	// This attempt's own reasons, cleared before the gates below fill them: the
+	// options are the caller's and a batch runs this once per attempt, so a
+	// line kept from one attempt must not be reported as the next one's.
+	o.reviewSpecReason = ""
 	if prior == nil {
 		caps, err := freshLaunchGates(ctx, env, o, slug, s, spec, compressionGate, warn, skipBudget)
 		if err != nil {
@@ -1244,6 +1322,16 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// exactly the bytes that are in the bucket.
 		if err := attachUpload(ctx, env, spec, s.Prefix(), o.attach, caps); err != nil {
 			return launchResult{}, err
+		}
+		// The stored reports, by the same rule and in the same place: read
+		// from reports/ with this launcher's own credential, uploaded one
+		// object each under the run's own prefix, and named in the task
+		// createTask writes next. A launch without --commit-reports does
+		// nothing here — not even a listing of the store.
+		if o.commitReports {
+			if err := commitReportsUpload(ctx, env, spec, s.Prefix(), warn); err != nil {
+				return launchResult{}, err
+			}
 		}
 		// The manifest a mode: evaluate launch leaves for its own recipe's step
 		// (A5.2), by the same rule as the attachments above: after every
@@ -1276,6 +1364,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// path would be a second telling of it on a launch that never happened.
 	res.Project = env.lc.Name
 	res.Recipe = launchRecipeOf(spec, chooses)
+	res.ReviewSpecReason = o.reviewSpecReason
 	if spec.ProjectLayer != nil {
 		res.ProjectLayer = &launchProjectLayer{SHA256: spec.ProjectLayer.SHA256, Generation: spec.ProjectLayer.Generation}
 	}
@@ -1410,6 +1499,18 @@ func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string,
 	// be, and a task file that names inputs has the same shape.
 	if len(o.attach) > 0 || len(spec.Inputs) > 0 {
 		why := "the launch attaches files, and a challenger would read them under its own run id, where they are not"
+		pairSkip(warn, why)
+		return nil, why
+	}
+	// A launch that hands stored reports in samples nothing either, and for
+	// the reason the attachments above give: the objects are under THIS run's
+	// prefix, and the challenger is a run id of its own (launchChallenger
+	// clones the champion's task after the upload filled in spec.Reports), so
+	// its task would name report objects that are not in its bucket and the
+	// commit step would refuse at bootstrap. The two arms cannot be the one
+	// run a pair needs them to be.
+	if o.commitReports || len(spec.Reports) > 0 {
+		why := "the launch hands the stored reports in, and a challenger would read them under its own run id, where they are not"
 		pairSkip(warn, why)
 		return nil, why
 	}
@@ -1860,6 +1961,16 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if co != nil {
 		agentRecipe = co.Agent.Recipe
 	}
+	// --commit-reports, ahead of --attach: its pair refusal is the one that
+	// must fire when both flags are given, and it is the sentence that names
+	// both of them (commitReportsLaunch). It uploads nothing here either —
+	// commitReportsUpload does that below, with attachUpload, after the last
+	// gate that can still refuse this launch.
+	if o.commitReports {
+		if err := commitReportsLaunch(ctx, env, slug, spec, kind, clone, len(o.attach) > 0, warn); err != nil {
+			return config.Inputs{}, err
+		}
+	}
 	// --attach, before the gates below: its recipe refusal, its caps,
 	// D9's line and its image gate (design §4, plan P7/P9). It uploads
 	// nothing here — attachUpload does that below, after the last gate
@@ -1882,7 +1993,7 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// than the launch, with one line naming `fugaro update` (reviewSpecSkew,
 	// D2933). Here, and not with the gates below, because it decides what the
 	// task createTask writes.
-	reviewSpecSkew(ctx, env, slug, spec, mode, warn)
+	o.reviewSpecReason = reviewSpecSkew(ctx, env, slug, spec, mode, warn)
 	// What this launch asks of its job image's runner about review
 	// levels, resolved once for the two branches below (a derived image
 	// and a checkout: clone workflow), the way compressionGate is: a
@@ -1998,6 +2109,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// than on a task field: see checkRigorImage. Unconditional, since
 		// the repository's file alone can carry the key.
 		if err := checkCloneRigorImage(ctx, env, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The spelling gate on that same file, judged the same way: the
+		// key above passes on any image newer than 0.11.0, and an area
+		// rule's `level:` or the scalar shorthand still dies at bootstrap
+		// on one older than this release: see checkRigorSpellingImage.
+		if err := checkCloneRigorSpellingImage(ctx, env, spec, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The governance: gate, judged the same way and for the same
@@ -2228,6 +2346,10 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// than on a task field: see checkRigorImage. Unconditional, since
 		// the repository's file alone can carry the key.
 		if err := checkRigorImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The spelling gate on that same file: see checkRigorSpellingImage.
+		if err := checkRigorSpellingImage(ctx, env, slug, spec, kind, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The governance: gate, the same shape as the clone branch's
@@ -2782,7 +2904,7 @@ func planTaskFlag(cmd *cobra.Command, o *runOptions) error {
 
 // rigorFlags is the run's own rigor request, validated once for every launch
 // shape that accepts it (a first run, a best-of-N batch, a review, a
-// follow-up): the mode against the closed vocabulary (rigor.Modes, D20), and
+// follow-up): the mode against the closed vocabulary (rigor.Rigors, D20), and
 // the declared paths against the two bounds a task spec carries
 // (task.MaxDeclaredPaths, task.MaxDeclaredPathBytes).
 //
@@ -2793,8 +2915,8 @@ func planTaskFlag(cmd *cobra.Command, o *runOptions) error {
 // same rules are applied again by task.Spec.Validate to whatever a task
 // carries, so a hand-written task.json cannot smuggle one past a launcher.
 func rigorFlags(o *runOptions) error {
-	if o.rigor != "" && !rigor.Known(rigor.Mode(o.rigor)) {
-		return userErr("--mode %q: use %s, or leave it off to resolve the mode from the run's own configuration", o.rigor, rigor.ModeList())
+	if o.rigor != "" && !rigor.Known(rigor.Rigor(o.rigor)) {
+		return userErr("--mode %q: use %s, or leave it off to resolve the mode from the run's own configuration", o.rigor, rigor.RigorList())
 	}
 	if len(o.paths) > task.MaxDeclaredPaths {
 		return userErr("--path: at most %d paths may be declared, got %d", task.MaxDeclaredPaths, len(o.paths))
@@ -2904,7 +3026,7 @@ var changeSetExcludes = []struct{ name, why string }{
 // the layers already meet: the request may raise and never lower (D6), so such
 // a request is recorded as asked and changes nothing, and a launcher that typed
 // it would otherwise believe it took effect. Hotfix is not one of those cases:
-// it is the mode a request takes whole (rigor.Mode.PerRun), so a resolution
+// it is the mode a request takes whole (rigor.Rigor.PerRun), so a resolution
 // that names the request as the layer that decided it — which is what this
 // reads — is the request that did take effect. It reads the checkout's
 // fugaro.yaml with the project layer, the closest thing to the base branch the
@@ -2919,10 +3041,10 @@ func noteRigorRequest(ctx context.Context, o *runOptions, repo string, warn io.W
 		return
 	}
 	cfg := c.RigorConfig()
-	if rigor.Resolve(cfg, rigor.Request{Mode: rigor.Mode(o.rigor), Paths: o.paths}).From == rigor.FromRequest {
+	if rigor.Resolve(cfg, rigor.Request{Level: rigor.Rigor(o.rigor), Paths: o.paths}).From == rigor.FromRequest {
 		return
 	}
-	resolved := rigor.Resolve(cfg, rigor.Request{Paths: o.paths}).Mode
+	resolved := rigor.Resolve(cfg, rigor.Request{Paths: o.paths}).Level
 	fmt.Fprintf(warn, "--mode %s is not higher than the repository's resolved mode %s: it has no effect\n", o.rigor, resolved)
 }
 
@@ -3073,7 +3195,7 @@ func buildAttemptSpec(plan *attemptPlan, o *runOptions, text string) (string, *t
 	}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, BaseBranch: plan.base, Workflow: plan.workflow, Task: text, Title: o.title,
 		PlanTask: o.planTask, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode,
-		Rigor: rigor.Mode(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier), DigestRuns: plan.digestRuns}
+		Rigor: rigor.Rigor(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier), DigestRuns: plan.digestRuns}
 	if plan.totalOverride != "" {
 		spec.Overrides.TotalTimeout = plan.totalOverride
 	}
@@ -3543,7 +3665,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	printRecipeNote(warn, rr, true)
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, BaseBranch: base, Workflow: workflow, Task: text, Title: o.title, PlanTask: o.planTask,
 		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...),
-		Rigor: rigor.Mode(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier)}
+		Rigor: rigor.Rigor(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier)}
 	// The task the pull request was written for, resolved here rather than by
 	// the job: the launcher is the only side that reads the runs bucket, and
 	// the review job is handed the answer (R1, D2934). A review of a pull
@@ -3551,7 +3673,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	// carries a none with the reason instead of no block at all — the review
 	// says so in its artifact, and the person reads why it judged the code
 	// alone.
-	ask := launchSpecAsk{PRs: o.pr}
+	ask := launchSpecAsk{PRs: o.pr, CodeOnly: o.codeOnly, SpecFile: o.specFile}
 	if spec.ReviewSpec, err = resolveLaunchSpec(ctx, env, slug, ask, warn); err != nil {
 		return "", nil, err
 	}

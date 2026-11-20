@@ -1011,6 +1011,44 @@ func (c *repoCtx) resolveBitbucketProxied() error {
 // could read one and Repo is a pure function of its Inputs).
 func (c *repoCtx) sharedRepo() bool { return SharedRepo(c.in.Policy, c.provider, c.in.Repo) }
 
+// buildServes is whether the credentials service serves the secrets of class
+// to this repository's BUILDS (B4.9, the S4 flip; D2076, D2077): the class
+// list says which classes are served at all (config.BuildServedSecretClasses)
+// and credentialsServiceOn says whether this repository is one the switch
+// serves — the same two halves every other flip here reads, and the same
+// answer modules/repo/build.tf's local.build_mounts_served and
+// local.check_mount_served compute from the class list it spells out and the
+// per-repository block Go writes into the tfvars.
+//
+// Go's half of the flip is the tfvars: the build account's accessor list
+// (WorkflowSpec.BuildSecrets, which RepoSpec gathers) empties with the class
+// "build", and the check job's mount empties with either class — the job runs
+// as the build account, so the accessor its mount is read under is the one
+// the class "build" takes away (C2.3). internal/backend/gcp's BuildRequest
+// reads the same list for the request's own mounts, beside the service
+// address the build paths in internal/cli put on the spec.
+func (c *repoCtx) buildServes(class string) bool {
+	return c.credentialsServiceOn && config.BuildServesClass(class)
+}
+
+// buildMountsServed is buildServes for the one answer both of the build's own
+// clauses read: whether the build's mounts — the request's availableSecrets,
+// the account's accessor list and the build step's own secretEnv — leave this
+// repository. They go with the class "build" alone, the class of a workflow's
+// own build secrets, because a request that kept any of them would need the
+// accessor the class list takes away (D2077).
+func (c *repoCtx) buildMountsServed() bool { return c.buildServes(config.BuildSecretClassBuild) }
+
+// checkMountServed is whether the daily check job gives its own mount up: it
+// runs as the build account and mounts the repository's git credential (the
+// class "git"), and that credential's accessor is the build account's, so
+// either class takes the mount away (C2.3) — the job then fetches the
+// credential there instead, which is what the service's address in its
+// environment is for (B4.5, checkGitCredential).
+func (c *repoCtx) checkMountServed() bool {
+	return c.buildServes(config.BuildSecretClassGit) || c.buildServes(config.BuildSecretClassBuild)
+}
+
 // SharedRepo is RepoSpec.Shared's answer for a repository whose spec a caller
 // does not build: whether a deployed profile of the published node admits it.
 // RepoSpec.Shared's own doc comment is the whole rule; this is that walk for
@@ -1763,12 +1801,21 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 			return ok
 		})
 	}
-	ws.BuildSecrets = []string{c.gitSecret}
-	for _, s := range w.Secrets {
-		ws.BuildSecrets = append(ws.BuildSecrets, s.Name)
+	// The build account's accessor list goes with the service (B4.9, D2076,
+	// D2077): a build of a served repository names none of these secrets — its
+	// credential step fetches the git credential and the workflow's own build
+	// secrets there instead (B4.5) — so the list is empty and
+	// modules/repo/build.tf drops the accessor with it. It is the same list
+	// modules/repo/build.tf reads through local.build_mounts_served, and
+	// internal/backend/gcp's BuildRequest reads the same class for the request.
+	if !c.buildMountsServed() {
+		ws.BuildSecrets = []string{c.gitSecret}
+		for _, s := range w.Secrets {
+			ws.BuildSecrets = append(ws.BuildSecrets, s.Name)
+		}
+		slices.Sort(ws.BuildSecrets)
+		ws.BuildSecrets = slices.Compact(ws.BuildSecrets)
 	}
-	slices.Sort(ws.BuildSecrets)
-	ws.BuildSecrets = slices.Compact(ws.BuildSecrets)
 	// Every variable a secret is mounted as, so the runner can register
 	// them all for redaction before bootstrap.
 	ws.Env[runner.SecretEnvsVar] = redactionEnvs(ws.SecretEnv)
@@ -2290,6 +2337,28 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 		env[providers.EnvGitHubAppID] = c.appID
 	}
 	env[runner.SecretEnvsVar] = gitEnv
+	// A repository the service serves gives the mount up (B4.9, D2076): the
+	// job runs as the build account, whose accessor on the credential goes
+	// with the build's own mounts, and it fetches the credential from the
+	// service instead (B4.5's checkGitCredential, which reads exactly this
+	// address off its environment) — so the environment names the service,
+	// because a job that mounts nothing and names no service holds no
+	// credential at all, and it mounts nothing, so it has no variable to
+	// register for redaction either.
+	//
+	// The address is the local config's own, the same one every job of a
+	// switched repository is launched with (internal/cli's
+	// credentialsServiceLaunchEnv) and the same block the module's
+	// run.invoker grant is planned from: an installation that deploys the
+	// service records its address when it does.
+	secretEnv := map[string]string{gitEnv: c.gitSecret}
+	if c.checkMountServed() {
+		secretEnv = map[string]string{}
+		if cs := lc.CredentialsService; cs != nil && cs.URL != "" {
+			env[providers.EnvCredentialsServiceURL] = cs.URL
+		}
+		env[runner.SecretEnvsVar] = redactionEnvs(secretEnv)
+	}
 	return &CheckSpec{
 		Job:             gcp.CheckJobName(c.slug),
 		Image:           bases[c.in.Cfg.Workflows[checked[0]].BaseKind()],
@@ -2309,7 +2378,7 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 		// so about the cloud.
 		DeployJob: true,
 		Env:       env,
-		SecretEnv: map[string]string{gitEnv: c.gitSecret},
+		SecretEnv: secretEnv,
 		Workflows: checked,
 	}, nil
 }
@@ -2569,6 +2638,30 @@ func mountsServiceHeldSecret(ws WorkflowSpec, name string, proxied bool, served 
 func (rs RepoSpec) DropsBitbucketToken() bool {
 	return rs.Installation.CredentialsService != nil && rs.BitbucketProxied &&
 		slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret)
+}
+
+// BuildMountsServed reports whether this root's plan takes the BUILD's own
+// mounts away: the build account's accessor list (RepoSpec.BuildSecrets, which
+// Addresses turns into one google_secret_manager_secret_iam_member.build per
+// name, and modules/repo/build.tf's for_each reads beside it) and, with it, the
+// request's availableSecrets and the build step's own secrets
+// (internal/backend/gcp's BuildRequest, D2077).
+//
+// It is buildServes(config.BuildSecretClassBuild) for a caller that has to
+// decide from the finished spec rather than while building it — the guard's own
+// allowance for the flip's accessor deletes (BuildAccessorAllowDelete) — and it
+// is stated from the tfvars' side of the same switch: Installation's
+// credentials_service block is null for every repository the switch holds off
+// (repoCredentialsService), which is what modules/repo/build.tf's
+// local.build_mounts_served reads out of var.installation, so this answer and
+// the module's for_each are one answer about one plan.
+//
+// It is the class "build" alone and not either class: the check job's own mount
+// leaves with the class "git" as well (check.tf's local.check_mount_served), and
+// that mount is a container's secret_key_ref and no IAM member, so no plan
+// carries a delete of it for a guard to weigh.
+func (rs RepoSpec) BuildMountsServed() bool {
+	return rs.Installation.CredentialsService != nil && config.BuildServesClass(config.BuildSecretClassBuild)
 }
 
 // serviceReadsSecret reports whether the credentials service's own account is

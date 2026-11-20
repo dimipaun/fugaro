@@ -80,7 +80,7 @@ type Row struct {
 // here would be the fail-open direction (G5).
 type Thresholds struct {
 	// Rows is the per-mode table. A mode with no row refuses.
-	Rows map[rigor.Mode]Row
+	Rows map[rigor.Rigor]Row
 	// CriticalPathFactor scales every time threshold of an item that blocks
 	// other work: 0.5 by the spec ("Critical-path PRs halve all times",
 	// escalation.critical_path_factor). A value outside (0, 1] refuses,
@@ -109,7 +109,7 @@ type Thresholds struct {
 // local keys do, one row at a time — cannot change what the next caller reads.
 func DefaultThresholds() Thresholds {
 	return Thresholds{
-		Rows: map[rigor.Mode]Row{
+		Rows: map[rigor.Rigor]Row{
 			rigor.POC:      {RunsBeforeR2: 1, R2Hours: 3, Grade: Strong, CeilingHours: 5, AtCeiling: CeilingAutoMerge},
 			rigor.Startup:  {RunsBeforeR2: 2, R2Hours: 6, Grade: Strong, CeilingHours: 9, AtCeiling: CeilingAutoMerge},
 			rigor.Pro:      {RunsBeforeR2: 3, R2Hours: 9, Grade: Strong, CeilingHours: 12, AtCeiling: CeilingAutoMergeNotify},

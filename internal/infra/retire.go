@@ -694,6 +694,63 @@ func VaultAccessorAllowDelete(p *tf.Plan, spec RepoSpec) []string {
 	})
 }
 
+// BuildAccessorAllowDelete is the guard's allow-list for p when this
+// repository's BUILD account gives up its accessor on the secrets a served
+// build no longer mounts (B4.9, S4; D2076, D2077): one address per secret the
+// build's own list named before the drop — the provider credential and the
+// workflows' own build secrets (RepoSpec.BuildSecrets, and
+// WorkflowSpec.BuildSecrets before it emptied).
+//
+// It is B1.13's rule and B3.8's for a third class of principal, and it exists
+// for the same reason (CLAUDE.md's HARD RULE, the review finding
+// ProxiedTokenAccessorAllowDelete above carries): the plan that lands the flip
+// deletes accessors the state holds and this tree's spec no longer produces — a
+// managed project's own retirement converges them (init's retireManaged, whose
+// guard is RetireAllowDelete) and a project that is not managed takes the
+// ordinary plan, where the run would stop with `--retire`'s two typed
+// confirmations or `--allow-delete` as the only ways past a delete fugaro
+// itself decided. One plain `fugaro update --repo` applies it instead.
+//
+// The filter is the drop's own gate and the repository's own declarations,
+// because a served spec records no build list at all: RepoSpec.BuildMountsServed
+// is the same answer modules/repo/build.tf's local.build_mounts_served computes
+// (the class "build" of config.BuildServedSecretClasses, on a repository the
+// service serves — G9), and under it the module declares no accessor of this
+// resource, so every delete of one the plan carries is the flip's. spec.Secrets
+// is what says the name is still this repository's: it holds every logical name
+// the root still declares (the mounts SecretMounts produced before the flips
+// took them off the spec), so the accessor of a secret the configuration has
+// left behind is not admitted and stops the run as it always has — that
+// retirement is what --retire is for. Nothing else a plan does to any address
+// is touched, and the check job's own mount is not this list's business: it is
+// no IAM member (modules/repo/check.tf's secret_key_ref), so the flip's plan
+// carries no delete under any guard for it.
+func BuildAccessorAllowDelete(p *tf.Plan, spec RepoSpec) []string {
+	if p == nil || !spec.BuildMountsServed() {
+		return nil
+	}
+	var out []string
+	for _, rc := range p.ResourceChanges {
+		if !slices.Contains(rc.Change.Actions, "delete") {
+			continue
+		}
+		segs := addressSegments(rc.Address)
+		if len(segs) != 4 || segs[0] != "module" || segs[1] != "repo" {
+			continue
+		}
+		typ, name, key := resourceOf(segs)
+		if typ != "google_secret_manager_secret_iam_member" || name != "build" {
+			continue
+		}
+		if _, declared := spec.Secrets[key]; !declared {
+			continue
+		}
+		out = append(out, rc.Address)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // jobAccessorAllowDelete is the walk both flips' allow-lists share: every
 // delete in p of a job account's own accessor in one of this repository root's
 // workflows, admitted when admits says this spec does not produce it. The

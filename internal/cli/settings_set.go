@@ -292,8 +292,9 @@ var settingsGenericKeys = map[string]bool{
 	// TestSettingsOwnerStringsAreAClosedVocabulary is what fails on it.
 	//
 	// The orchestrator block and the two nudge thresholds are the machine's own
-	// config, `triage`, `verifier_accounts` and the two schedules are local and
-	// project keys this path already writes the file of, and
+	// config, `triage`, `review_against_task`, `verifier_accounts` and the two
+	// schedules are local and project keys this path already writes the file
+	// of, and
 	// `planning.decoupling` is the fifth of the four file-carrier rows G12 left
 	// with the layer file's token while its repository half was never in that
 	// file. Every one of them is named rather than reached by a prefix: a
@@ -308,6 +309,7 @@ var settingsGenericKeys = map[string]bool{
 	"issues.nudge_after_days":               true,
 	"issues.nudge_recurrence":               true,
 	"triage":                                true,
+	"review_against_task":                   true,
 	"verifier_accounts":                     true,
 	"layer.jobs.reports.paused":             true,
 	"layer.jobs.catalog_check.paused":       true,
@@ -2243,7 +2245,7 @@ func settingsEscalationBase(doc []byte, key, raw string) string {
 		return settingsEscalationFigure(doc, shipped, mode, leaf, raw)
 	}
 	best, bestN := "", 0.0
-	for _, m := range rigor.Modes {
+	for _, m := range rigor.Rigors {
 		figure := settingsEscalationFigure(doc, shipped, string(m), leaf, raw)
 		n, err := strconv.ParseFloat(figure, 64)
 		if err != nil {
@@ -2275,7 +2277,7 @@ func settingsEscalationFigure(doc []byte, shipped escalation.Thresholds, mode, l
 // block states once) answers "", which the callers read as no figure to
 // compare against.
 func settingsEscalationShipped(t escalation.Thresholds, mode, leaf string) string {
-	row, ok := t.Rows[rigor.Mode(mode)]
+	row, ok := t.Rows[rigor.Rigor(mode)]
 	if !ok {
 		return ""
 	}
@@ -2341,14 +2343,14 @@ func settingsRigorFloorKey(key string) bool {
 }
 
 // settingsLowersRigorFloor reports whether newValue leaves a weaker floor than
-// oldValue, by the order the run itself resolves modes with (rigor.Mode.Rank,
+// oldValue, by the order the run itself resolves modes with (rigor.Rigor.Rank,
 // the comparison layerRigorRules makes over the same pair of values). A mode
 // this binary does not know ranks 0, below every real one, which is the
 // fail-closed reading: an edit nobody can prove raises the floor takes the
 // typed name. A block the file holds no floor in ranks 0 and any mode is above
 // it, so adding one is admitted — the direction layerRigorRules admits too.
 func settingsLowersRigorFloor(oldValue, newValue string) bool {
-	return rigor.Mode(newValue).Rank() < rigor.Mode(oldValue).Rank()
+	return rigor.Rigor(newValue).Rank() < rigor.Rigor(oldValue).Rank()
 }
 
 // settingsRigorBlockKey is the block every member of which is a floor: the

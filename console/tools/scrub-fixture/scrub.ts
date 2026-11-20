@@ -133,7 +133,7 @@ export const VOCAB = {
   // (internal/watch/build.go's View.Mode, `$.mode`). A runs[] row's own mode
   // is `rigorMode` below, which is a different vocabulary and a different key.
   mode: ['enforce', 'observe'],
-  // internal/rigor/mode.go's `Modes`: the five modes the rigor resolver can
+  // internal/rigor/mode.go's `Rigors`: the five levels the rigor resolver can
   // answer a run with, plus the `-` internal/watch/build.go's `dash` writes
   // when the run's registry entry carries none (a run under rules that predate
   // the children, which internal/budget/registry.go's Start then drops).

@@ -10,12 +10,14 @@ import (
 // --pr N` finds the runs of a pull request without scanning the repository
 // (docs/runs-ls-speed, D2962).
 //
-// It is called at the two moments a run comes to be on a pull request: the
+// It is called at the three moments a run comes to be on a pull request: the
 // run that opens one writes PRIndexOpened the instant its number is known —
 // the early draft a checkpoint pushes as much as the pull request finalize
-// opens, both of which go through notePR — and a follow-up writes
+// opens, both of which go through notePR — a follow-up writes
 // PRIndexFollowed at bootstrap, where the provider confirms the pull request
-// is the one its task names (checkPullRequest).
+// is the one its task names (checkPullRequest), and a review writes
+// PRIndexReviewed at its artifact stage, which is the only place a review
+// names a pull request at all (writeReviewArtifact).
 //
 // The object is the run's own, and the write is create-if-absent, so a
 // retry, a second finalize or the launcher's own write of the same run
