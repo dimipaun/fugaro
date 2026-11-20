@@ -643,14 +643,20 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 	if err != nil {
 		return err
 	}
-	// The region is the flag's when it is given, and the member's own database's
-	// otherwise: what everything downstream states — the write, the sentence and
-	// the command line — is the value the entry ends up carrying.
-	if o.databaseRegion, err = workspaceMemberRegion(project, o.databaseRegion); err != nil {
-		return err
-	}
 	old, err := settingsReadDocument(settingsTarget{kind: settingsDocLocal, path: path})
 	if err != nil {
+		return err
+	}
+	declared := lc.WorkspaceMembers != nil && !(*lc.WorkspaceMembers)[project].IsZero()
+	// The region is the flag's when it is given, the member's own database's when
+	// this machine holds its config, and the entry's own otherwise: what
+	// everything downstream states — the write, the sentence and the command
+	// line — is the value the entry ends up carrying.
+	current := ""
+	if declared {
+		current = (*lc.WorkspaceMembers)[project].DatabaseRegion
+	}
+	if o.databaseRegion, err = workspaceMemberRegion(project, o.databaseRegion, current); err != nil {
 		return err
 	}
 
@@ -663,7 +669,6 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 	// sentence named only the new one. The removal comes first because the
 	// entry is rebuilt from the values given, which is the only reading of the
 	// command's own sentence.
-	declared := lc.WorkspaceMembers != nil && !(*lc.WorkspaceMembers)[project].IsZero()
 	next := old
 	if declared {
 		if next, err = workspaceRemoveKey(path, next, []string{"workspace_members", project}); err != nil {
@@ -790,25 +795,30 @@ func workspaceJobAccountsPhrase(o *workspaceMemberAddOptions) string {
 
 // workspaceMemberRegion is the region an entry records for a member: the flag's
 // when it is given, and otherwise the region of the member's own Realtime
-// Database, read out of its own config's budget.rtdb_url (F14, D3084).
+// Database, read out of its own config's budget.rtdb_url (F14, D3084). current
+// is the region the entry carries today, "" when the table declares no member
+// yet.
 //
 // A member's installation is never read from the cloud here and never changed:
 // what this reads is the URL the installation already has, so a member that
 // chose EU is linked at its own host with no flag and its database stays where it
-// is. A member whose config this machine does not hold, or one that has no
-// database yet, records no region — an absent database_region is already the
-// project's default database, which is what today's entries carry — and the flag
-// is there for the owner who knows where the member's database is.
-func workspaceMemberRegion(member, flag string) (string, error) {
+// is. A member whose config this machine does not hold keeps the region its entry
+// already records: nothing here says where that database is, and a
+// re-declaration — a job account added, a repository dropped — is no reason for
+// the workspace to read that member's database at another host. The flag is the
+// owner's own word, for a member the table declared before this change or one
+// whose config this machine never held. A member whose config is here and names
+// no database records none, because that is what its own installation says.
+func workspaceMemberRegion(member, flag, current string) (string, error) {
 	if flag != "" {
 		return flag, nil
 	}
 	lc, _, err := localcfg.LoadProject(os.Getenv, member)
 	if errors.Is(err, localcfg.ErrMissing) {
-		return "", nil
+		return current, nil
 	}
 	if err != nil {
-		return "", userErr("member %s's own config could not be read, so where its database is cannot be told from it: %v; pass --database-region to record the region without reading that file", member, err)
+		return "", userErr("member %s's own config could not be read, so where its database is cannot be told from it: %v; fix that file, or pass --database-region to record the region without reading it", member, err)
 	}
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return "", nil

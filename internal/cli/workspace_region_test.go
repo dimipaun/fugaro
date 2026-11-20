@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -58,6 +59,16 @@ func TestAMembersDatabaseRegionIsReadFromTheMember(t *testing.T) {
 			if !strings.Contains(out, "database region "+region) {
 				t.Errorf("the sentence does not say the region the entry now carries:\n%s", out)
 			}
+			// A member already linked is left as it is (D3084): declaring it
+			// again reads the same region out of the same config, so the entry
+			// is what it was and the file is not rewritten.
+			before := readFileString(t, owner)
+			if again, _, _ := execute(t, workspaceMemberAddArgs()...); !strings.Contains(again, "no change") {
+				t.Errorf("a repeated declaration is not a no-op:\n%s", again)
+			}
+			if readFileString(t, owner) != before {
+				t.Errorf("a repeated declaration rewrote the member's entry:\n%s", readFileString(t, owner))
+			}
 			workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
 		})
 	}
@@ -103,6 +114,59 @@ func TestARegionThatIsNoDatabaseLocationIsRefused(t *testing.T) {
 		t.Errorf("database region = %q, want the one the flag gave", got)
 	}
 	workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+}
+
+// TestAMemberWhoseConfigIsNotHereRecordsNoRegion: a member's config is another
+// machine's file. A member this machine holds no config for and the table does
+// not declare yet is linked with no region — what is read is a file that happens
+// to be here — and one the table already declares keeps the region it records: a
+// workspace owner adding a job account must not have the member's database read
+// at another host because this machine cannot see where it is (D3084).
+func TestAMemberWhoseConfigIsNotHereRecordsNoRegion(t *testing.T) {
+	t.Run("a member the table does not declare", func(t *testing.T) {
+		_, aurora, owner := workspaceOwnerHome(t)
+		if err := os.Remove(aurora); err != nil {
+			t.Fatal(err)
+		}
+
+		out, _, chainErr := execute(t, workspaceMemberAddArgs()...)
+		if got := workspaceOwnerRegion(t, owner); got != "" {
+			t.Errorf("database region = %q, want none: this machine holds no config for the member, so its database URL was not read", got)
+		}
+		if strings.Contains(readFileString(t, owner), "database_region") {
+			t.Errorf("the write spelled an absent region as a key:\n%s", readFileString(t, owner))
+		}
+		workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+	})
+
+	t.Run("a member already linked", func(t *testing.T) {
+		_, aurora, owner := workspaceOwnerHome(t)
+		workspaceAppend(t, owner, `workspace_members:
+  aurora:
+    job_service_accounts:
+      - account: marker-old@aurora-gcp.iam.gserviceaccount.com
+        repos:
+          - marker-org/aurora
+    database_region: europe-west1
+    firebase_project: aurora-fb
+    fp: aurora
+    exchange_url: https://exchange.example.com/v1
+`)
+		if err := os.Remove(aurora); err != nil {
+			t.Fatal(err)
+		}
+
+		out, _, chainErr := execute(t, workspaceMemberAddArgs()...)
+		if got := workspaceOwnerRegion(t, owner); got != "europe-west1" {
+			t.Errorf("database region = %q, want europe-west1: the entry already records where the member's database is, and this declaration cannot read it", got)
+		}
+		// And the flag is how the owner says otherwise.
+		out, _, chainErr = execute(t, workspaceMemberAddArgs("--database-region", "asia-southeast1")...)
+		if got := workspaceOwnerRegion(t, owner); got != "asia-southeast1" {
+			t.Errorf("database region = %q, want asia-southeast1, the value the flag gave", got)
+		}
+		workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+	})
 }
 
 // TestALegacyHostRecordsNoRegion: a member whose database URL names no region —
