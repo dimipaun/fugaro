@@ -2738,6 +2738,14 @@ registry (D1102).
 | `owner` | string | never | never | the command that writes the key (`settingsOwnerCommands`, `internal/cli/settings_read.go`, D1178): `fugaro settings set` on a row the generic path writes, the family that writes one it does not (`fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`, `fugaro workspace`, `fugaro image map`), and, for a key no command edits, a sentence naming the command that carries its file — `fugaro setup` and `fugaro update` for the installation's own keys, `fugaro config publish` for a key the layer file states and `fugaro config init` for one the repository's own file is opened with. **A `writable: false` row never spells the generic writer**: the write is what decides (D1102), and a row whose owner were `fugaro settings set` would say a command writes a key it has just refused. **`""` is a row no command writes** — the literal `*` of a wildcard row, which `settings set` writes only in its concrete spellings — and it is also what a CLI that predates D1178 wrote on every row it did not name, so a consumer treats the empty and the absent member the same way, and the screen draws this member only on a row `writable: false` — which is the one member a screen's drawing turns on |
 | `target_layer` | string | never | never | the layer a write with **no** `--layer` lands in: the narrowest of `repo`, `project` and `local` the key may be set in (`settingsDefaultLayer`, `internal/cli/settings_set.go`), and the layer the console passes back as `--layer` — what the window showed is what is spawned (D1105). **It is a fact about the key and not about the generic path's allowlist**, so it is **non-empty on a row the generic path refuses**: `mailbox.keychain_item` is `writable: false` with `owner: fugaro secrets` and `target_layer: "local"`. `""` is a key none of the three layers holds, which is a row no edit may target — a document from a CLI older than D1102 carries no such member at all, and it reads the same — and **empty is not a layer a screen can pass**: such a row gains no pencil, whatever `writable` says |
 | `levels` | array of level rows | **yes** | never | one row per layer that sets the key, for `--why`. Absent when the read did not compute them |
+| `label` | string | **yes** | never | the setting's human-readable name, at most six words (`settings.Meta.Label`, D2908) |
+| `description` | string | **yes** | never | one sentence saying what the setting does (`settings.Meta.Description`) |
+| `group` | string | **yes** | never | the accordion group the setting is filed under, one of `settings.MetaGroups` in the order the console draws the panels: `Runs`, `Budget`, `Repositories`, `Workflows`, `Profiles`, `Credentials`, `Reviews`, `Follow-ups`, `Watching`, `This machine` |
+| `type` | string | **yes** | never | the control the value calls for (`settings.MetaTypes`): `string`, `bool`, `int`, `float`, `duration` or `enum` |
+| `enum` | array of string | **yes** | never | the closed set of values a `type: enum` row accepts, in the order a select draws them. Absent on every other type |
+| `min` | string | **yes** | never | the low bound of an `int`, `float` or `duration` value, in the value's own spelling (`0`, `0.5`, `5m`). Absent when the key has no bound on that side, and on every other type |
+| `max` | string | **yes** | never | the high bound, spelled as `min` is |
+| `format` | string | **yes** | never | the shape the CLI already validates for a string value (`settings.MetaFormats`, less its empty member): `duration`, `repo` (`owner/name`), `email`, `url` (an https clone URL), `memory` (`512Mi`) or `branch` |
 
 **The default block is the built-in default, and exactly one of its two
 spellings is set:**
@@ -2755,6 +2763,24 @@ spellings is set:**
 | `layer` | string | never | never | the layer's own name |
 | `value` | string | never | never | what that layer gives the key |
 | `outcome` | string | never | never | that layer's part in the result (`wins`, and the tightening or union rules of the keys whose layers combine) |
+
+**The eight metadata members describe the setting to a person, and all eight are
+optional** (D2908): `label`, `description`, `group` and `type` are what
+`internal/settings`' metadata table answers for the key, `enum` is the closed set
+a `type: enum` row accepts, `min` and `max` bound an `int`, `float` or `duration`
+value, and `format` names the shape the CLI already validates for a string. They
+are members **added within version 1** (D848) — a document an older CLI wrote
+carries none of them and is the same document — and the table behind them is
+deliberately sparse: only the keys that have metadata write them, and a key
+without metadata writes none of the eight. **A missing member means the console
+falls back to the key and a text control**: the raw key drawn under the console's
+own "Other" group, and a plain text field for a value whose `type` the CLI never
+named (SU1 of the console-improvements plan). The four a control branches on are
+written together or not at all — `settings.Register` refuses an entry missing its
+label, its description, its group or its type — while `enum` is written on a
+`type: enum` row alone and `min`/`max` on a bounded `int`, `float` or `duration`
+row alone, each in the value's own spelling because that is the spelling
+`settings set -- <VALUE>` takes.
 
 **The three writability members are the whole point of the console's half**
 (D1102), and they are the reason no list of the generic path's keys is kept in
