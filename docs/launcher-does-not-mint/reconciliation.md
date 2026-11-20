@@ -30,7 +30,8 @@ role" is `google_project_iam_custom_role.token_minter` (`fugaroTokenMinter`, one
   optional (`docs/workspaces/README.md`) and is not assumed.
 - **A6.** The claims a run's identity carries stay what the launcher asks for its own run (branch,
   pull requests, context repositories). The spec puts them out of scope; the issuer checks only
-  the claims in R4.
+  the claims in R4. Review round 3 contradicted this for the context repositories, which the CLI
+  gate judges today: F31.
 
 ## What the spec names, and what the repository has
 
@@ -102,7 +103,11 @@ Every launch goes through one function. `launchRun` (`internal/cli/run.go`) hold
 **F1 (Exists). The issuer's front half is already built.** The credentials service verifies a
 launcher by a Google ID token against the roster (`VerifyLauncher`), every `user:` launcher and
 operator already holds `run.invoker` on it (`credentials_invoker`, `modules/installation/iam.tf`),
-and the CLI already asks it for something at launch (`slipGrantOverService`). Consequence: D3121.
+and the CLI already asks it for something at launch (`slipGrantOverService`). That something, the
+slip (`internal/credsvc/slip.go`), is the same mechanism in small: a launcher-class grant for a
+slug, a run and an account, a claim made once by the run, and a stored hash of a secret; and
+`slipRouteAbsent` (`internal/cli/run.go`) is already a bridge for a service that does not serve
+a route. The contract says what of it the identity routes reuse. Consequence: D3121.
 
 **F2 (Wrong). The coordinator holds no signer grant and launches nothing.** The brief says the
 orchestrator and the coordinator have signer grants of their own. Only
@@ -164,7 +169,8 @@ boundary" and keeps a launcher out of scope because "a launcher can already mint
 launcher cannot mint, that exemption is gone and the copy is the remaining way to ask 3's
 "obtain". Consequence: D3122.
 
-**F10 (Gap). Nothing server-side binds a run to the person who launched it.** The launcher chooses
+**F10 (Gap). Nothing server-side binds a run's identity to the person who launched it.** (A slip,
+where one is granted, records its launcher; the identity does not read it.) The launcher chooses
 the run id (`task.NewRunID`, or `--run-id`); the `rb` claim is `localcfg.Config.Me`, and the
 code's own comment says "attribution only, nothing in the rules trusts it"; `mintBudgetToken`
 deletes the token object before it writes one, so a re-mint replaces it. Every guard against
@@ -219,8 +225,9 @@ Their **C1** is not only a wire. It holds the wrapped blob's envelope, the relea
 registration, the published opt-in fact, and the `batch:` block's key fact with its settings
 entry and schema. Read on main, the tasks built on the key or on that C1 are **C1**, **BR1**,
 **BR2**, **BR3**, **BR4**, **BR5**, **BR6** (it depends on C1 for the opt-in fact), **BR7**,
-**BR12**, **BR13**, **BR14**, **BR16**, **BR17**, **BR18**, **BR19**, **BR20**, **BR21**,
-**BR22**, their change request and their I1. Free of both: **BRS**, **BR0** (Check 830) and
+**BR12**, **BR13**, **BR14**, **BR15** (through BR7 and BR12), **BR16**, **BR17**, **BR18**,
+**BR19**, **BR20**, **BR21**, **BR22**, their two change requests (`R-C1-link-permission`,
+`R-C1-project-job-account`) and their I1. Free of both: **BRS**, **BR0** (Check 830) and
 **BR8** to **BR11**. Two earlier versions of this finding listed fewer; the list is now read
 from that plan's own Depends lines, and LM19 is what settles it task by task. Decisions of theirs this touches:
 D3101 and D3108 keep their intent and change their object (from the seal key to the claim);
@@ -319,6 +326,25 @@ job. With `run.executions.get` it also reads a peer's ticket. So the claim race 
 every launcher of the same job, or of a shared job, not to a special few. Consequence: the
 trust-boundary table and R5 say so.
 
+**F31 (Gap, round 3). The CLI gate also judges the context repositories.** `launchPolicyGates`
+(`internal/cli/run_allowlist.go`) calls `requireAccess` a second time, with `ActionViewRepo`, for
+each of the run's context repositories, and then `projectpolicy.AdmitRepo`; its comment says why:
+the launcher signs the list into the run's identity, and a reader of that identity holds a
+signature and not a role. `mintBudgetToken` puts the list in the claims. An issuer that checked
+the launch scope alone would sign a list the gate refuses. Consequence: R16's fourth arm; A6
+holds for the branch and the pull requests, not for the context repositories.
+
+**F32 (Gap, round 3). The Firebase root is planned and guarded in its own file.**
+`internal/cli/init_firebase.go` builds the root's inputs (`infra.Firebase`, `FirebaseInputs`) and
+runs its guard with the update's allow-list. `HardeningAllowDelete`, F25's precedent, is wired
+for the installation root only. The people's row is in the Firebase root. Consequence: LM13 and
+LM14 name that file.
+
+**F33 (Gap, round 3). A ticket route that answers proves nothing about signing.** Issuing a
+ticket signs nothing; the signature happens at the claim. A wrong signer account or a missing
+issuer row would pass a probe of the ticket route, the rows would go, and every run would halt
+at its claim. Consequence: R8's probe signs.
+
 ## What each option does to the trust boundary
 
 Before: every launcher, every operator and `fugaro-orch` can sign **any claims for any uid** of
@@ -340,7 +366,7 @@ Numbers D3120–D3131 are used; the block is D3120–D3139 (see the README for t
 | # | Question | Answer (owner, 2026-11-20) |
 | --- | --- | --- |
 | **D3120** | The spec's ruling section is a placeholder. Is the coordinator's reading right: no launcher or operator holds the grant that signs a run's identity, and a run gets its identity at launch from something off the launcher's machine that checks who launches, which repository and which run? | **Yes, as written.** As recommended. Why: the reading is the spec's six asks. `spec.md` keeps the placeholder; this cell is the confirmation. |
-| **D3121** | What issues the identity? Recommended: the credentials service, on new routes for the launcher class. Alternatives: a second service of the same image with its own account (about 3 more tasks, one more service; the rule in F7 untouched); the workspace service (no answer for an installation without one); the job's platform (C4, rejected). | **The credentials service.** As recommended. Why: its launcher class, its roster and the launch-time call exist (F1). **This amends the rule that the service account's only grant is its database role** (F7, F8): it gains the minter role on the runs' signer account. |
+| **D3121** | What issues the identity? Recommended: the credentials service, on new routes for the launcher class. Alternatives: a second service of the same image with its own account (about 3 more tasks, one more service; the rule in F7 untouched); the workspace service (no answer for an installation without one); the job's platform (C4, rejected). | **The credentials service.** As recommended. Why: its launcher class, its roster and the launch-time call exist (F1). Costs accepted as shown: it becomes the one minter and a single point of every launch, and whoever compromises it can sign any uid. **This amends the rule that the service account's only grant is its database role** (F7, F8): it gains the minter role on the runs' signer account. |
 | **D3122** | What does the launcher get back? Recommended: a one-time ticket the run redeems, so the launcher never holds the identity. Alternative: the token itself on today's sealed channel (runner and images untouched; a second launcher can still copy it silently, F9). | **A one-time ticket.** As recommended. Why: ask 3 says "obtain", and a copy becomes a race whose loser reports it. Cost accepted: the runner and the image contract change, every run start depends on the issuer, and on Cloud Run a peer launcher who also runs code as the job account can still win the race, detected and not prevented (R5). |
 | **D3123** | What happens to roster entries that are not a person? Recommended: a `serviceAccount:` entry becomes its own class at the issuer; a `group:` entry cannot be issued to, and `update` names each before it removes the grant. Alternatives: people only (matches batch-run-identity's D3109; a pipeline's service account stops); both, with groups resolved through a directory (a grant outside the managed project). | **Service accounts yes, groups no.** As recommended. Why: a service account's ID token names it exactly; a group needs a lookup the installation does not have. |
 | **D3124** | How does the removal reach a teammate's older CLI? Recommended: one release; `update` removes the people's grant only after the issuer answers, and the published policy's version moves so an older CLI refuses with the upgrade sentence. Alternatives: two releases (batch-run-identity's F24 open one more release); one release with no lever (IAM's 403 and the wrong fix). | **One release, with the policy version bump.** As recommended. Why: pre-1.0, and the older CLI's own refusal names the fix. Costs accepted as shown: every launcher upgrades before their next launch after the operator's update; a policy migration inside `update`; an installation with no published policy shows the older CLI IAM's own error (O4). A cost not shown then is D3131. |
@@ -374,9 +400,10 @@ One defensible answer each; stated, not asked.
   caller holds no run identity yet. A claim carries a nonce the runner draws and keeps in memory:
   the same nonce again gets the same answer, so a retry after a lost response is not a second
   claim; another nonce after a success is. The record keeps the nonce's digest, never the nonce;
-the nonce is written to no log and no audit line; and the same-nonce answer holds only for the
-ticket's own life. Stated: a ticket, its nonce and the job's identity token together are a token
-for that long, and all three exist only inside the run's own container.
+  the nonce is written to no log and no audit line; and the same-nonce answer holds only for the
+  ticket's own life. Stated: a ticket, its nonce and the job's identity token together are a
+  token for that long. Of the three only the nonce is confined to the run's own process: a
+  launcher can read the ticket and can obtain the job's token (F30).
 - **R3. The issuance record.** The issuer writes, once per slug and run, who asked (the verified
   address and class), when, the claims it will sign, the account the claim must come from, a
   digest of the ticket and whether it was claimed. The ticket itself is never stored. The record
@@ -419,8 +446,9 @@ for that long, and all three exist only inside the run's own container.
   service does not serve the route (an installation not yet updated, F15) it signs locally as
   before, which works exactly as long as the people's row is still there. The bridge keys on
   three things only: the contract's "not served" answer, which the service also gives while it
-  has no signer configured; the 404 a release-behind service gives a path it does not know
-  (pinned in C1, F27); and no service configured. It is no
+  has no signer configured; the answer a release-behind service gives a path it does not know,
+  which C1 pins to what `slipRouteAbsent` already reads as an absent route (F27); and no service
+  configured. It is no
   downgrade: local signing needs the row, and once LM14 has removed the row the bridge has
   nothing to sign with; there the launch refuses with the fix (run `fugaro update`), not with
   IAM's error. The runner of this
@@ -428,9 +456,11 @@ for that long, and all three exist only inside the run's own container.
   the old marker. An execution created before the update that has bootstrapped finishes; one
   that has not is F24's case (R9). Both old paths, the seal and
   the `tokens/` prefix are deleted in the release after (plan task LM18, with its own go).
-- **R8. `update` moves the grant late, and only once the issuer answers.** The Firebase root gains
+- **R8. `update` moves the grant late, and only once the issuer answers and can sign.** The Firebase root gains
   the issuer's row at its usual stage and keeps the people's row behind a switch that is still
-  on. A stage after the credentials service's own probes the ticket route; when it answers, the
+  on. A stage after the credentials service's own probes the service; the probe makes the
+  service sign a fixed payload as the runs' signer and discard it, so an answer means the row
+  and the account are right (F33). When it answers, the
   stage applies both roots with the switch off, which removes the people's row and the
   orchestrator's; the two deletes are on the update's own allow-list, for an ordinary and for a
   managed project (F25). The orchestrator's row goes only once the resident service runs this
@@ -467,12 +497,16 @@ for that long, and all three exist only inside the run's own container.
 - **R15. Check 840 does not gate.** If it finds that an execution's identity token carries
   something of the execution, a contract change (R-C1-execution) binds the claim to it and the
   residual in R5 closes for Cloud Run.
-- **R16. The issuer's scope check gives the CLI gate's answer, arm by arm** (F29). The implicit
-  admins the gate reads from the local configuration are rendered to the service by `update`,
-  as a third environment entry beside the two of LM22, so an owner is not refused. A roster
-  service account is admitted without a scope judgement, as the gate admits it today. Where the
-  roles records cannot be read the issuer refuses: it cannot write its own record there either,
-  so nothing that could have launched is stopped by this arm alone.
+- **R16. The issuer's scope check gives the CLI gate's answer, arm by arm** (F29, F31). (1) The
+  implicit admins the gate reads from the local configuration are rendered to the service by
+  `update`, as a third environment entry beside the two of LM22, so an owner is not refused. (2)
+  A roster service account is admitted without a scope judgement, as the gate admits it today.
+  (3) An installation with no roles to judge by is allowed, as the gate allows it. (4) Each
+  context repository the launch names is judged for the view action and for the policy's
+  allow-list, as the gate judges it, before the list is signed. (5) Roles records that do not
+  decode refuse, as at the gate. (6) **The one deliberate difference:** when the records cannot
+  be reached the gate does not judge and the launch goes on; the issuer refuses, because it
+  cannot write its own record there either.
 
 ## Answers to what the brief did not know
 
@@ -507,8 +541,8 @@ None. No two answers pull against each other.
   (accepted under D1939 and D1944), replayable for about an hour by any service that received it.
   A replay obtains a ticket as that person, on the record, and the same holds for the pairing
   routes. Stated, not fixed; it is batch-run-identity's O12.
-- **O6. The launcher's other statements about a run** (branch, pull requests, context
-  repositories, and #3315's access entry) stay the launcher's. The issuer signs what a roster
+- **O6. The launcher's other statements about a run** (branch, pull requests, and #3315's access
+  entry) stay the launcher's; the context repositories are judged (F31, R16). The issuer signs what a roster
   caller asks for its own run (A6, F19).
 - **O7. A roster change waits for an update** to reach the issuer. A launcher removed from the
   roster keeps the class until then, as they keep the invoker grant today.
@@ -536,6 +570,16 @@ None. No two answers pull against each other.
 - **O16. Two approvals in another plan are on hold by D3129:** batch-run-identity's C1 and BR6.
   That plan's README and status row still say four tasks are approved; LM19 corrects the folder,
   and this pull request adds the hold to its status row only.
+- **O17. A launch from a phone reaches the issuer as the orchestrator.** The mobile app writes a
+  mailbox and the resident orchestrator launches under its own class, which D3125 leaves
+  unscoped. Whether the orchestrator checks the device's role for that repository before it
+  launches was not traced; if it does not, D3130's enforcement does not reach a launch made from
+  a phone, and a compromised resident orchestrator launches on any repository (D3125's stated
+  cost). For the owner: accept, or scope the orchestrator's asks by the person behind them.
+- **O18. Round 3's findings were fixed and not reviewed again.** The cap is three rounds. What
+  round 3 found and this document then changed: F31 to F33, R16's arms 4 to 6, the signing
+  probe in R8, F18's list (BR15), F1 and F10 on the slip, and LM13, LM14 and LM21's order in the
+  plan. A reader should treat those as unreviewed.
 
 ## UNVERIFIED
 

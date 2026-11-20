@@ -39,7 +39,8 @@
     "paths": [
      "scripts/live-checks/check-840.sh",
      "scripts/live-checks/check-840_test.sh",
-     "docs/gcp-live-checklist.md"
+     "docs/gcp-live-checklist.md",
+     "scripts/live_checks_test.go"
     ]
    }
   },
@@ -88,7 +89,8 @@
     "paths": [
      "internal/credsvc/identity_callers.go",
      "internal/credsvc/auth.go",
-     "internal/credsvc/identity_callers_test.go"
+     "internal/credsvc/identity_callers_test.go",
+     "internal/credsvc/launchers.go"
     ]
    }
   },
@@ -245,7 +247,8 @@
      "internal/infra/launchers.go",
      "internal/infra/tf/cover.go",
      "internal/infra/tf/cover_grants_test.go",
-     "internal/infra/tf/testdata/golden/**"
+     "internal/infra/tf/testdata/golden/**",
+     "internal/cli/init_firebase.go"
     ]
    }
   },
@@ -282,7 +285,8 @@
      "internal/cli/init_identity_test.go",
      "internal/cli/init_stages.go",
      "internal/cli/update_in_flight.go",
-     "internal/cli/update_in_flight_test.go"
+     "internal/cli/update_in_flight_test.go",
+     "internal/cli/init_firebase.go"
     ]
    }
   },
@@ -334,7 +338,8 @@
     "paths": [
      "scripts/live-checks/check-841.sh",
      "scripts/live-checks/check-841_test.sh",
-     "docs/gcp-live-checklist.md"
+     "docs/gcp-live-checklist.md",
+     "scripts/live_checks_test.go"
     ]
    }
   },
@@ -614,6 +619,11 @@
    "task": "LM14",
    "needs": "LM21",
    "reason": "the move never ships without the lever, and the convergence test needs the bump"
+  },
+  {
+   "task": "LM21",
+   "needs": "I1",
+   "reason": "the lever ships with what it levers"
   }
  ],
  "decoupling": [
