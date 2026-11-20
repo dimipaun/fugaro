@@ -108,6 +108,9 @@ BB_SLUG = "acme-bb-sandbox-fedcba9876543210"
 GH_ACCT = "fugaro-b-0123456789abcdef@fugaro-dev.iam.gserviceaccount.com"
 BB_ACCT = "fugaro-b-fedcba9876543210@fugaro-dev.iam.gserviceaccount.com"
 SVC_URL = "https://fugaro-credentials-fake-ue.a.run.app"
+# The variable the check job's own mount of the git credential lands in
+# (config.ReservedSecrets, read off the provider's git secret).
+GIT_ENV = {"github": "FUGARO_GITHUB_APP_PRIVATE_KEY", "bitbucket": "FUGARO_BITBUCKET_TOKEN"}
 
 
 def flag(name, default=""):
@@ -212,15 +215,28 @@ def builds():
 
 
 def job(repo, provider):
+    """The repository's daily check job, as `gcloud run jobs list --format=json`
+    reports it. Its own credential shape is the one internal/infra/spec.go writes
+    (checkMountServed): a repository the service does not yet serve for its BUILDS
+    keeps the mount of its git credential and carries NO service address, and one
+    it serves mounts nothing and is handed the address instead. The two never
+    appear together — the address is written in the same breath as the mount's
+    removal — so the default shapes are those two and nothing else."""
     env = [{"name": "FUGARO_REMOTE", "value": clone_url(repo, provider)}]
-    if mode != "check-job-no-url":
-        env.append({"name": "FUGARO_CREDENTIALS_SERVICE_URL", "value": SVC_URL})
-    mounts = 0 if FLIP else 1
+    mounts, url = (0, True) if FLIP else (1, False)
     if mode == "flip-job-mounts" and provider == "github":
         mounts = 1
+    if mode == "check-job-url" and provider == "github":
+        mounts, url = 0, True
+    if mode == "check-job-mount-and-url" and provider == "github":
+        mounts, url = 1, True
+    if mode in ("check-job-no-credential", "flip-job-no-credential") and provider == "github":
+        mounts, url = 0, False
+    if url:
+        env.append({"name": "FUGARO_CREDENTIALS_SERVICE_URL", "value": SVC_URL})
     if mounts:
-        env.append({"name": "GITHUB_TOKEN",
-                    "valueSource": {"secretKeyRef": {"secret": slug(provider), "name": "GITHUB_TOKEN"}}})
+        env.append({"name": GIT_ENV[provider],
+                    "valueSource": {"secretKeyRef": {"secret": slug(provider), "name": GIT_ENV[provider]}}})
     return {
         "metadata": {"name": "fugarochk-%s-%s" % (slug(provider), provider),
                      "labels": {"fugaro_repo": slug(provider)}},
@@ -542,13 +558,43 @@ test_a_missing_check_job_is_unmeasured() {
   expect_contains "$out" "FACT check-bitbucket: PASS" "no check job: the other repository"
 }
 
-test_a_check_job_without_the_service_is_a_failure() {
-  local dir=$work/jobnourl
+# Before the flip the check job keeps its own mount and carries NO service
+# address (internal/infra/spec.go writes the address only where the mount has
+# gone), so a job with neither the mount nor the address holds no credential at
+# all and can only fail.
+test_a_check_job_that_holds_no_credential_is_a_failure() {
+  local dir=$work/jobnocred
   prepare "$dir"
-  run196 "$dir" check-job-no-url
-  expect_status "$status" 1 "check job without the service: the verdict"
-  expect_contains "$out" "FACT check-github: FAIL" "check job without the service: the row"
-  expect_contains "$out" "carries no FUGARO_CREDENTIALS_SERVICE_URL" "check job without the service: the reason"
+  run196 "$dir" check-job-no-credential
+  expect_status "$status" 1 "check job with no credential: the verdict"
+  expect_contains "$out" "FACT check-github: FAIL" "check job with no credential: the row"
+  expect_contains "$out" "neither a mount nor a service" "check job with no credential: the reason"
+}
+
+# The switch mode reads the pre-flip shape, so a job that already carries the
+# address reads INFO — the flip has landed and --after-flip is the mode for it —
+# and never as a failure of a correct installation.
+test_a_check_job_that_already_names_the_service_reads_info() {
+  local dir=$work/joburl
+  prepare "$dir"
+  run196 "$dir" check-job-url
+  expect_status "$status" 0 "check job naming the service: the verdict"
+  expect_contains "$out" "FACT check-github: INFO" "check job naming the service: the row"
+  expect_contains "$out" "post-flip installation" "check job naming the service: the reason"
+  expect_contains "$out" "FACT check-bitbucket: PASS" "check job naming the service: the other repository"
+  expect_absent "$out" "FACT check-github: FAIL" "check job naming the service: not a failure"
+}
+
+# A mount beside the address is a shape internal/infra/spec.go never writes: the
+# address arrives with the mount's removal, so the two together are the
+# deployment and the spec having drifted apart.
+test_a_check_job_that_mounts_beside_the_address_is_a_failure() {
+  local dir=$work/jobboth
+  prepare "$dir"
+  run196 "$dir" check-job-mount-and-url
+  expect_status "$status" 1 "check job with both: the verdict"
+  expect_contains "$out" "FACT check-github: FAIL" "check job with both: the row"
+  expect_contains "$out" "AND mounts 1 Secret Manager container" "check job with both: the reason"
 }
 
 test_a_check_execution_that_failed_is_a_failure() {
@@ -622,6 +668,19 @@ test_the_flip_with_the_check_job_mount_left_is_a_failure() {
   expect_status "$status" 1 "flip with a job mount: the verdict"
   expect_contains "$out" "FACT noaccessor-github: FAIL" "flip with a job mount: the row"
   expect_contains "$out" "still mounts 1 Secret Manager container" "flip with a job mount: the reason"
+}
+
+# The flip drops the mount AND hands the job the address in the same breath
+# (internal/infra/spec.go): a job that mounts nothing and names no service holds
+# no credential at all, so the flip's own half has not landed on it.
+test_the_flip_with_a_check_job_that_names_no_service_is_a_failure() {
+  local dir=$work/flipjobnocred
+  prepare "$dir"
+  run_args=(--after-flip)
+  run196 "$dir" flip-job-no-credential
+  expect_status "$status" 1 "flip with no credential: the verdict"
+  expect_contains "$out" "FACT noaccessor-github: FAIL" "flip with no credential: the row"
+  expect_contains "$out" "mounts no Secret Manager container but carries no FUGARO_CREDENTIALS_SERVICE_URL" "flip with no credential: the reason"
 }
 
 test_keep_scratch_keeps_the_directory() {
@@ -720,7 +779,9 @@ t test_an_audit_line_for_another_caller_is_a_failure
 t test_the_other_providers_credential_is_a_failure
 t test_a_refusal_line_is_reported_redacted
 t test_a_missing_check_job_is_unmeasured
-t test_a_check_job_without_the_service_is_a_failure
+t test_a_check_job_that_holds_no_credential_is_a_failure
+t test_a_check_job_that_already_names_the_service_reads_info
+t test_a_check_job_that_mounts_beside_the_address_is_a_failure
 t test_a_check_execution_that_failed_is_a_failure
 t test_a_public_service_policy_is_a_failure
 t test_a_builds_list_that_cannot_be_read_stops_the_run
@@ -728,6 +789,7 @@ t test_a_jobs_list_that_cannot_be_read_stops_the_run
 t test_the_flip_happy_path
 t test_the_flip_with_a_mount_left_is_a_failure
 t test_the_flip_with_the_check_job_mount_left_is_a_failure
+t test_the_flip_with_a_check_job_that_names_no_service_is_a_failure
 t test_keep_scratch_keeps_the_directory
 t test_every_advertised_knob_is_read
 t test_never_belong

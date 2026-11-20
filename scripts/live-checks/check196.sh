@@ -772,6 +772,22 @@ is_build_account() {
   return 1
 }
 
+# git_env_name PROVIDER — the variable the daily check job's OWN mount of the
+# repository's git credential lands in. A repository the service does not yet
+# serve for its BUILDS keeps that mount: the job runs as the build account, and
+# the accessor the mount needs is that account's, so the mount leaves only with
+# the flip (check.tf's check_mount_served, B4.9). The variable is the platform's
+# reserved name for the provider's git secret (config.ReservedSecrets), and
+# whether it is among the job's Secret Manager mounts is what says the job still
+# holds the credential itself.
+git_env_name() { # git_env_name PROVIDER
+  case "$1" in
+  github) printf '%s\n' FUGARO_GITHUB_APP_PRIVATE_KEY ;;
+  bitbucket) printf '%s\n' FUGARO_BITBUCKET_TOKEN ;;
+  *) return 1 ;;
+  esac
+}
+
 # audit_read SLUG — the service's own `credsvc: audit` and `credsvc: refused`
 # lines for ONE repository, retried while Cloud Logging catches up. Ingestion
 # lags the call by seconds, and a reading taken immediately is an empty answer
@@ -947,56 +963,91 @@ step_served() {
 # slug its own newest build carries. A repository whose build was not read has
 # no slug to find its job by, and the row says that rather than "this
 # installation deploys no check job", which is a different fact.
-step_check_repo() { # step_check_repo LABEL REPO
-  local label=$1 repo=$2 ans
+step_check_repo() { # step_check_repo LABEL REPO PROVIDER
+  local label=$1 repo=$2 provider=$3 ans
   ans=$(build_read "$repo" "$label")
   if [ "$(field_of found "$ans")" != yes ]; then
     unmeasured "check-$label" "no build of ${repo} was read, so the repository's slug — the key its daily check job is found by — could not be read either"
     return 0
   fi
-  step_check "$label" "$repo" "$(field_of slug "$ans")" "$(field_of account "$ans")"
+  step_check "$label" "$repo" "$provider" "$(field_of slug "$ans")" "$(field_of account "$ans")"
 }
 
-# step_check LABEL REPO SLUG ACCOUNT — the daily image check: the repository's
-# own check job runs as the build account and is handed the service's address
-# (B4.5's imagecheck half), and its newest execution succeeded.
-step_check() { # step_check LABEL REPO SLUG ACCOUNT
-  local label=$1 repo=$2 slug=$3 account=$4 ans
+# step_check LABEL REPO PROVIDER SLUG ACCOUNT — the daily image check in the
+# switch mode, which is the shape the installation plans before the flip: the
+# repository's own check job runs as the build account and still mounts the
+# repository's git credential, and it carries NO service address — the address
+# arrives with the mount's removal, because a job that mounted nothing and named
+# no service would hold no credential at all (internal/infra/spec.go's
+# checkMountServed, which both this environment and the job's own mount read).
+# Its newest execution succeeded.
+step_check() { # step_check LABEL REPO PROVIDER SLUG ACCOUNT
+  local label=$1 repo=$2 provider=$3 slug=$4 account=$5 ans
   ans=$(reader job "$JOBS_FILE" "$slug" 2>"$SCRATCH/job-$label.err") \
     || { unmeasured "check-$label" "the installation's Cloud Run jobs could not be read: $(last_lines "$SCRATCH/job-$label.err")"; return 0; }
   if [ "$(field_of found "$ans")" != yes ]; then
     unmeasured "check-$label" "this installation deploys no daily check job (a job named ${CHECK_JOB_PREFIX}…) for ${repo} (slug ${slug}): the image check is what re-bakes the repository daily, and no job of this repository could be read. Deploy it with 'fugaro update --repo' in a checkout of ${repo}"
     return 0
   fi
-  local name sa url mounts
+  local name sa url mounts m gitenv
   name=$(field_of name "$ans")
   sa=$(field_of account "$ans")
   url=$(field_of url "$ans")
   mounts=$(field_of mounts "$ans")
-  if [ "$url" != present ]; then
-    fact "check-$label" FAIL "the daily check job ${name} of ${repo} carries no FUGARO_CREDENTIALS_SERVICE_URL: the check's own rebuild fetches its credential in-job rather than from the service, so B4.5 has not reached this repository's check job. Re-apply the root ('fugaro update --repo')"
-  elif [ "$sa" != "$account" ]; then
-    fact "check-$label" FAIL "the daily check job ${name} of ${repo} runs as ${sa:-nobody}, not as the repository's build account ${account}: the check that reads the service is not the account the service admits"
-  else
-    local m note=""
-    case "$mounts" in
-    "" | *[!0-9]*) note=" (how many secret mounts it carries could not be read)" ;;
-    *) note=" and mounts ${mounts} Secret Manager container(s)" ;;
-    esac
-    # The newest execution: the daily check succeeded through the service.
-    local ex
-    if ex=$(gcloud run jobs executions list --project="${P:?}" --region="${L:?}" --job="$name" --limit=1 --format=json 2>"$SCRATCH/exec-$label.err"); then
-      ex=$(printf '%s' "$ex" | reader exec /dev/stdin)
-      local est
-      est=$(field_of state "$ex")
-      if [ "$est" = True ] || [ "$est" = true ]; then
-        fact "check-$label" PASS "the daily check job ${name} of ${repo} runs as the repository's build account ${account}, carries FUGARO_CREDENTIALS_SERVICE_URL${note}, and its newest execution ended completed: the image check fetches from the service and succeeds"
-      else
-        fact "check-$label" FAIL "the daily check job ${name} of ${repo} carries the service's address and runs as ${account}, but its newest execution's Completed condition reads ${est:-nothing}: the image check did not succeed. Read it with 'gcloud run jobs executions list --job=${name} --region=${L} --project=${P}'"
-      fi
+  gitenv=$(git_env_name "$provider")
+  # Each count is held to being a number on its own: a `case` over "$url:$mounts"
+  # would read the separator as a non-digit and call every answer unmeasured.
+  case "$mounts" in "" | *[!0-9]*) m=unreadable ;; *) m=$mounts ;; esac
+  case "$url:$m" in
+  present:0)
+    # The post-flip job read in the switch mode: the mount is gone and the
+    # address is there. Not a failure — the mode that reads this shape is
+    # --after-flip, exactly as mounts-LABEL reads a post-flip BUILD.
+    fact "check-$label" INFO "the daily check job ${name} of ${repo} carries FUGARO_CREDENTIALS_SERVICE_URL and mounts no Secret Manager container: the S4 flip (B4.9) has already landed for it, so this mode is reading a post-flip installation. The --after-flip mode is the one to run"
+    return 0
+    ;;
+  present:*)
+    if [ "$m" = unreadable ]; then
+      unmeasured "check-$label" "how many Secret Manager containers the check job ${name} mounts could not be read, so its shape — a post-flip job, or a mount beside an address — could not be told"
     else
-      unmeasured "check-$label" "the check job ${name} carries the service's address and runs as ${account}${note}, but its executions could not be read: $(last_lines "$SCRATCH/exec-$label.err")"
+      fact "check-$label" FAIL "the daily check job ${name} of ${repo} carries FUGARO_CREDENTIALS_SERVICE_URL AND mounts ${m} Secret Manager container(s): the address is written only where the mount has been taken away (internal/infra/spec.go's checkMountServed, B4.9), so this job's shape is one the installation never plans. Re-apply the root ('fugaro update --repo')"
     fi
+    return 0
+    ;;
+  absent:0)
+    fact "check-$label" FAIL "the daily check job ${name} of ${repo} mounts no Secret Manager container and carries no FUGARO_CREDENTIALS_SERVICE_URL: a job with neither a mount nor a service holds no credential at all, so the image check can only fail. Re-apply the root ('fugaro update --repo')"
+    return 0
+    ;;
+  absent:unreadable)
+    unmeasured "check-$label" "how many Secret Manager containers the check job ${name} mounts could not be read, so whether it holds a credential of its own at all is unmeasured"
+    return 0
+    ;;
+  esac
+  # absent:N (N > 0): the shape this mode reads. The job must run as the build
+  # account — the mount's accessor is that account's — and the repository's own
+  # git credential must be among what it mounts.
+  if [ "$sa" != "$account" ]; then
+    fact "check-$label" FAIL "the daily check job ${name} of ${repo} runs as ${sa:-nobody}, not as the repository's build account ${account}: the mount the check reads its git credential from is one that account's accessor alone opens"
+    return 0
+  fi
+  if ! printf '%s\n' "$ans" | grep -q "^mount=${gitenv}|"; then
+    fact "check-$label" FAIL "the daily check job ${name} of ${repo} mounts ${m} Secret Manager container(s) and none of them is the repository's git credential (${gitenv}): the credential the check clones with is not the one its own job mounts. Re-apply the root ('fugaro update --repo')"
+    return 0
+  fi
+  # The newest execution: the daily check succeeded with the credential its own
+  # job mounts, before the flip takes the mount away.
+  local ex
+  if ex=$(gcloud run jobs executions list --project="${P:?}" --region="${L:?}" --job="$name" --limit=1 --format=json 2>"$SCRATCH/exec-$label.err"); then
+    ex=$(printf '%s' "$ex" | reader exec /dev/stdin)
+    local est
+    est=$(field_of state "$ex")
+    if [ "$est" = True ] || [ "$est" = true ]; then
+      fact "check-$label" PASS "the daily check job ${name} of ${repo} runs as the repository's build account ${account}, mounts the repository's git credential (${gitenv}) and carries no FUGARO_CREDENTIALS_SERVICE_URL — the pre-flip shape, and the one the flip replaces with the service's address — and its newest execution ended completed: the image check still succeeds with the mount, so the flip is the only thing left to read"
+    else
+      fact "check-$label" FAIL "the daily check job ${name} of ${repo} runs as ${account} and mounts the repository's git credential, but its newest execution's Completed condition reads ${est:-nothing}: the image check did not succeed. Read it with 'gcloud run jobs executions list --job=${name} --region=${L} --project=${P}'"
+    fi
+  else
+    unmeasured "check-$label" "the check job ${name} of ${repo} mounts the repository's git credential (${gitenv}) and runs as ${account}, but its executions could not be read: $(last_lines "$SCRATCH/exec-$label.err")"
   fi
 }
 
@@ -1102,10 +1153,12 @@ step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
     step_served "served-$label-flip" "$repo" "$slug" "$account" "$provider"
   fi
 
-  # noaccessor-LABEL: the daily check job mounts nothing, which is the flip's
-  # other half (B4.9 drops the check job's secret_key_ref mounts). The build
-  # account's own accessor leaves the containers with them; what is read here is
-  # the mount the job carries, which is where the address used to be.
+  # noaccessor-LABEL: the daily check job mounts nothing AND is handed the
+  # service's address, which are the flip's other half (B4.9 drops the check
+  # job's secret_key_ref mounts, and internal/infra/spec.go writes the address in
+  # the same breath). The two go together: with the build account's accessor gone
+  # a job that mounted nothing and named no service would hold no credential at
+  # all, so both are read here.
   local jans
   if [ -z "$slug" ] || [ "$slug" = "-" ]; then
     unmeasured "noaccessor-$label" "the newest build of ${repo} carries no _SLUG substitution, so the repository's check job cannot be found"
@@ -1113,11 +1166,18 @@ step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
     if [ "$(field_of found "$jans")" != yes ]; then
       unmeasured "noaccessor-$label" "no daily check job of ${repo} (slug ${slug}) could be read, so whether it still mounts a secret is unmeasured"
     else
-      local jm
+      local jm ju
       jm=$(field_of mounts "$jans")
+      ju=$(field_of url "$jans")
       case "$jm" in
       "" | *[!0-9]*) unmeasured "noaccessor-$label" "how many secret mounts the check job ${slug} carries could not be read" ;;
-      0) fact "noaccessor-$label" PASS "the daily check job of ${repo} carries 0 Secret Manager mounts: with the build account's accessor gone (B4.9) the check's own rebuild reads its credential, like the repository's builds, from the service" ;;
+      0)
+        if [ "$ju" != present ]; then
+          fact "noaccessor-$label" FAIL "the daily check job of ${repo} mounts no Secret Manager container but carries no FUGARO_CREDENTIALS_SERVICE_URL either: with the build account's accessor gone (B4.9) the job holds no credential at all, so its check can only fail. The mount and the address go together — re-apply the root ('fugaro update --repo')"
+        else
+          fact "noaccessor-$label" PASS "the daily check job of ${repo} carries 0 Secret Manager mounts and names the credentials service: with the build account's accessor gone (B4.9) the check's own clone and its rebuilds read their credentials, like the repository's builds, from the service"
+        fi
+        ;;
       *) fact "noaccessor-$label" FAIL "the daily check job of ${repo} still mounts ${jm} Secret Manager container(s): the flip has not dropped the check job's secret_key_ref mounts (B4.9, check.tf), so the build account still needs an accessor on them. Re-apply the root" ;;
       esac
     fi
@@ -1137,9 +1197,9 @@ print_plan() {
   say "  [network] gcloud run jobs executions list --job=<the check job> --project=${P} --region=${L} --format=json  (the daily check's newest execution)"
   say "  [network] gcloud run services get-iam-policy ${SVC} --project=${P} --region=${L} --format=json  (who may invoke the service: B4.4's grant to the build accounts, and no public member)"
   if [ "$MODE" = flip ]; then
-    say "and, for each repository, it would read its NEWEST build's request for the two things the flip takes away: that it carries no availableSecrets and no secretEnv, that its check job mounts nothing, and that the build still ended SUCCESS with the service named."
+    say "and, for each repository, it would read its NEWEST build's request for the two things the flip takes away: that it carries no availableSecrets and no secretEnv, that its check job mounts nothing AND names the service's address instead, and that the build still ended SUCCESS with the service named."
   else
-    say "and, for each repository, it would read its newest build (status, the account it ran as, its _CREDENTIALS_SERVICE_URL, and the availableSecrets it still carries) and the service's own lines for it."
+    say "and, for each repository, it would read its newest build (status, the account it ran as, its _CREDENTIALS_SERVICE_URL, and the availableSecrets it still carries), the service's own lines for it, and its daily check job (that it runs as the build account, mounts the repository's git credential and carries NO service address — the pre-flip shape) with that job's newest execution."
   fi
   say "This check creates nothing, submits no build and deletes nothing: its Restore removes the scratch directory and nothing else. The builds it reads are the ones YOU submitted with 'fugaro image refresh'."
 }
@@ -1168,8 +1228,8 @@ main() {
     step_service
     step_repo github "$REPO" github
     step_repo bitbucket "$BB_REPO" bitbucket
-    step_check_repo github "$REPO"
-    step_check_repo bitbucket "$BB_REPO"
+    step_check_repo github "$REPO" github
+    step_check_repo bitbucket "$BB_REPO" bitbucket
     step_boundary
   fi
 }

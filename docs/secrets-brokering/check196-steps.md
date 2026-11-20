@@ -96,7 +96,13 @@ start. This file is the three commands and what each row means.
   credential (the App key for GitHub, a `bitbucket-token…` for Bitbucket) and the repository's own
   slug. **No line at all is a FAIL**: the build's credential was answered by something else.
 - **`check-github`**, **`check-bitbucket`** — the repository's own daily check job runs as its build
-  account, carries `FUGARO_CREDENTIALS_SERVICE_URL`, and its **newest execution** ended completed.
+  account, still **mounts** the repository's git credential (the platform's own reserved variable for the
+  provider's git secret, `FUGARO_GITHUB_APP_PRIVATE_KEY` or `FUGARO_BITBUCKET_TOKEN`) and carries **no**
+  `FUGARO_CREDENTIALS_SERVICE_URL` — the shape before the flip, because the address is written only
+  where the mount has been taken away — and its **newest execution** ended completed. A job that already
+  carries the address reads **INFO** (the flip has landed; run `--after-flip`), a job that carries it
+  *beside* a mount is a shape the installation never plans and a **FAIL**, and a job with neither a
+  mount nor an address holds no credential at all and is a **FAIL**.
 - **`boundary`** — the service's own IAM policy admits repository build accounts and names **no**
   `allUsers` and **no** `allAuthenticatedUsers`. That, read beside the `served-*` rows — each build
   served its own repository's credential and record — is how the route's boundary is read from the
@@ -121,8 +127,11 @@ start. This file is the three commands and what each row means.
 - **`served-github-flip`**, **`served-bitbucket-flip`** — the service's own line for that build, read
   exactly as the switch mode reads it.
 - **`noaccessor-github`**, **`noaccessor-bitbucket`** — the repository's daily check job mounts **0**
-  Secret Manager containers: the flip drops the check job's `secret_key_ref` mounts too, and the
-  check's own rebuild reads its credential from the service like the repository's builds.
+  Secret Manager containers **and is handed `FUGARO_CREDENTIALS_SERVICE_URL` instead**: the flip drops
+  the check job's `secret_key_ref` mounts and writes the address in the same breath, so the check's own
+  clone and its rebuilds read their credentials from the service like the repository's builds. The two
+  go together — a job that mounts nothing and names no service holds no credential at all, and reads
+  **FAIL**.
 
 ## If it stops before the end
 
