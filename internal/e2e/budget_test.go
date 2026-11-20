@@ -32,7 +32,6 @@ import (
 
 const (
 	e2eSigner = "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"
-	e2eAPIKey = "AIzaSyFakeWebApiKeyForTests000000000"
 	e2eSonnet = "claude-sonnet-5-5"
 	e2eHaiku  = "claude-haiku-4-5"
 )
@@ -84,10 +83,11 @@ func runBudget(t *testing.T, auth, mode, script string, onStart func(r *budgetRi
 	if err := os.MkdirAll(r.bucket, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r.db = gcpfake.NewRTDB(t)
+	budgetDB := testutil.NewBudget(t)
+	r.db = budgetDB.DB
 	r.iam = gcpfake.NewIAMCredentials(t)
 	r.iam.AddSigner(e2eSigner)
-	r.itk = gcpfake.NewIdentityToolkit(t, r.iam, e2eAPIKey, "aurora-fp")
+	r.itk = gcpfake.NewIdentityToolkit(t, r.iam, testutil.BudgetAPIKey, "aurora-fp")
 	var up *httptest.Server
 	r.upstr, up = anthropicfake.New(t, replies...)
 	m := func(v budget.Micros) *budget.Micros { return &v }
@@ -142,12 +142,12 @@ func runBudget(t *testing.T, auth, mode, script string, onStart func(r *budgetRi
 		args = append(args, "--gateway-upstream", up.URL, "--managed-settings", filepath.Join(managed, "managed-settings.json"))
 	}
 	cmd := exec.CommandContext(ctx, fugaro, args...)
-	env := []string{
+	env := append([]string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + tmp, "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
-		"FUGARO_BUDGET_MODE=" + mode, "FUGARO_RTDB_URL=" + r.db.URL, "FUGARO_FIREBASE_API_KEY=" + e2eAPIKey, "FUGARO_BUDGET_GRACE=5s",
+		"FUGARO_BUDGET_MODE=" + mode, "FUGARO_BUDGET_GRACE=5s",
 		"FIXTURE_FAILS_FILE=" + filepath.Join(tmp, "fails"),
 		"FUGARO_BUDGET_TOKEN=" + token.EncodeKey(key),
-	}
+	}, budgetDB.Env()...)
 	if auth == "oauth" {
 		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN=oauth-e2e-token-abcdef")
 	} else {
@@ -249,7 +249,7 @@ func TestCloudBudgetRunWithFakes(t *testing.T) {
 			return err
 		}
 		data, _ := os.ReadFile(p)
-		if strings.Contains(string(data), e2eAPIKey) || strings.Contains(string(data), "eyJ") || strings.Contains(string(data), enc) {
+		if strings.Contains(string(data), testutil.BudgetAPIKey) || strings.Contains(string(data), "eyJ") || strings.Contains(string(data), enc) {
 			t.Errorf("%s holds a Firebase credential or the seal key", p)
 		}
 		return nil
@@ -257,7 +257,7 @@ func TestCloudBudgetRunWithFakes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(r.out, e2eAPIKey) || strings.Contains(r.out, enc) {
+	if strings.Contains(r.out, testutil.BudgetAPIKey) || strings.Contains(r.out, enc) {
 		t.Fatal("the API key or the seal key is in the run's output")
 	}
 }

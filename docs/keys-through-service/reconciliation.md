@@ -10,6 +10,11 @@ a spec of its own. It reverses **D1634** and **D1670**
 ([model crafts](../model-crafts/reconciliation.md)) and narrows the code behind **D150**
 ([credentials service](../credentials-service/reconciliation.md)); each is marked where it bites.
 
+**Amended 2026-11-20 by [credentials belong to models](../credentials-belong-to-models/README.md)**
+(findings F48–F51, open item O13): KS6, KS9 and KS10 are withdrawn and their work is that plan's,
+KS13 waits on that plan's I1, C1's second fact is not needed, and KS3's "under every auth" clause
+is that plan's CM6. The entries they touch are marked in place.
+
 ## 1. What the spec asks for, and what the repository already has
 
 | The spec's concept | What the repository has |
@@ -80,7 +85,8 @@ a non-Claude model. Consequence: D3000, KS3.
   `internal/cli/run.go`; `TestSwitchedMixedRepositoryKeepsItsStageAccountToken`).
 - Every shared project job mounts its account's token (`projectAccountMount`,
   `internal/infra/projectjobs.go`), which is secrets brokering's B5.7, not started.
-Consequence: D3009 for the budget mode, KS9 and KS10 for the stage account, and KS16 follows B5.7.
+Consequence: D3009 for the budget mode, KS9 and KS10 for the stage account — withdrawn on
+2026-11-20, F48 — and KS16 follows B5.7.
 
 **F7 — Gap: budget mode off has no path to the service.** With the budget off the run has no
 gateway, and `agent.BuildEnv` (`internal/agent/env.go`) puts the key in the agent's own
@@ -174,7 +180,8 @@ uses the guard, and the copy runs after the stage that deploys the service.
 `narrowToRepoAuth` (`internal/credsvc/cascade.go`) keeps the paid tier only for an `api-key`
 record and refuses an account declared beside it; the gateway's `Upstream` carries one auth mode
 and one account, not one per stage; and `agent.BuildEnv` hands the stage's token to the agent
-outside the gateway. Consequence: two tasks, KS9 and KS10.
+outside the gateway. Consequence: two tasks, KS9 and KS10 — withdrawn on 2026-11-20, F48: the stage account is the
+access of that stage's craft, which credentials belong to models' CM6 and CM9 serve.
 
 **F24 — Gap (review round 1).** `config.CredentialServingPath`
 (`internal/config/stage_accounts.go`) still answers `runner` for `openrouter`, and it is read by
@@ -215,20 +222,22 @@ names every reader.
 **F30 — Wrong (review round 2), corrects R10.** Requiring the named provider entries in `ready`
 during release A would turn the switch off for a repository already switched whose bundle lacks
 one. A `cascade` repository has no mount to return to, so its runs would stop. Consequence: R12
-keeps release A's `ready` as it is and adds a second fact; `ready` widens in KS13.
+keeps release A's `ready` as it is and adds a fact; `ready` widens in KS13.
 
 **F31 — Gap (review round 2).** R12 said "a run whose image and bundle are ready" and named nothing
 that carries that to a run. Today's switch is read by the owner's own `fugaro update`
 (`credentialsBundleServes` reads the bundle's entry names), recorded on the repository's entry in
 the local config (`CredentialsServiceReady`), and planned into the job from there. Consequence:
-the second fact takes the same road (C1 names it, KS19 records and plans it, KS5 reads it).
+the fact takes the same road (C1 names it, KS19 records and plans it, KS5 reads it).
 
 **F32 — Gap (review round 2).** `narrowToRepoAuth` (`internal/credsvc/cascade.go`) keeps the paid
 tier only for an `api-key` record, so an `oauth` repository is never offered a provider credential,
 whatever KS6 admits. `requestNoAllowListRefusal` (`internal/credsvc/request.go`) refuses every call
 of a project that publishes no `budget.allowed_models`. Consequence: KS3 offers a named provider
-credential under every served auth; the second fact is true only where the project publishes an
-allow-list; KS6 refuses a provider pin whose keys are not served, at launch, with the fix.
+credential wherever the repository's access record names it (that clause is credentials belong to
+models' CM6, F51); the fact is true only where the project publishes an
+allow-list; the refusal of a craft whose credential is not served is CM15's (KS6 is withdrawn,
+F48).
 
 **F33 — Wrong (review round 2), corrects R2.** The bundle loads `credential-<name>-key` as a tier B
 Anthropic key. Entering a provider's key under that name would change what the field means for the
@@ -266,9 +275,11 @@ subject. D3010 and D3011, and R13.
 
 **F39 — Gap (review round 2): files and filters the plan missed.** KS14 also needs
 `modules/repo/workflows.tf`, `modules/repo/variables.tf`, `roots/repo/variables.tf` and the
-constants in `internal/config/providers.go`. KS10 also needs `internal/runner/agentenv.go`. KS6
-also needs `RoutingInertReason` (`internal/runner/routing.go`, `internal/cli/validate.go`) and the
-tests that pin `CheckProviderAuth`. The refusal table's tests are `TestRefusalMatrix*`, and no
+constants in `internal/config/providers.go`. KS10 also needed `internal/runner/agentenv.go`. KS6
+also needed `RoutingInertReason` (`internal/runner/routing.go`, `internal/cli/validate.go`) and the
+tests that pin `CheckProviderAuth` — both withdrawn on 2026-11-20 (F48), and those files are
+credentials belong to models' CM9 and CM16 now. The refusal table's tests are `TestRefusalMatrix*`,
+and no
 gateway test matched `ProviderWire`. Consequence: each task as amended.
 
 **F40 — Wrong (review round 3), corrects D3000's consequence.** A Claude model routed through a
@@ -292,7 +303,8 @@ until the container is deleted, and the copy follows a newer version. Consequenc
 
 **F44 — Gap (review round 3).** KS10 took the stage token away wherever the repository was ready,
 with nothing saying the deployed service could serve a stage account. Consequence: a second fact
-in C1, recorded by KS19.
+in C1, recorded by KS19. **Both are withdrawn** (F48, F50): one fact per repository covers a
+stage's account too, so the second fact is not needed.
 
 **F45 — Rule (review round 3).** The service takes a provider's address from the bundle entry
 (`providerRoute`). Nothing said it must never come from the call. Consequence: C1's rule and
@@ -305,12 +317,47 @@ review of KS12 is asked to confirm the exception (O2).
 
 **F47 — Gap (review round 3): files and steps.** `internal/runner/poolchoice.go` reads a pool
 member's availability from the key in the environment (KS5). `CheckProviderAuth` is also called
-from `internal/cli/models_use.go` and `ee/ab/admit.go` and pinned by two documents tests (KS6).
+from `internal/cli/models_use.go` and `ee/ab/admit.go` and pinned by two documents tests (KS6 —
+withdrawn, F48; those files are credentials belong to models' CM16's now).
 The mounts' variable also lives in the repository root's tests and fixtures and in
 `deploy/terraform/proxied_git_test.go` (KS14). `scripts/live_checks_test.go` lists every check
 script (KS17). The update's in-flight lines are counted under test (KS13, KS15). A deletion after
 a state removal passes no plan check, so it needs its own audit line (KS15). The review path's
 single `provider-key` entry (`reviewOfferings`) is left as it is.
+
+### Amended by credentials belong to models, 2026-11-20
+
+**F48 — Rule: KS6, KS9 and KS10 are withdrawn.** The owner's ruling D3007, read in full, retires
+`agent.auth` as a repository's setting (O4), and the plan that carries that out —
+[credentials belong to models](../credentials-belong-to-models/README.md) — replaces what these
+three planned, because a task that admits a provider pin "under every auth the service serves", or
+serves "a stage account beside the main credential", has no auth mode left to work in (its F19,
+F20, D3068). **KS6 is replaced by that plan's CM16 and CM15**: CM16 judges a model by what reaches
+it, replacing `CheckProviderAuth`, and CM15 refuses at launch a craft whose credential is not
+served, which is the refusal KS6 planned. **KS9 is replaced by CM6**, which narrows every call by
+the repository's access record rather than by its auth. **KS10 is replaced by CM9**, which takes a
+subscription token out of the agent's environment for every subscription, not only a stage's. The
+owner stopped all three on 2026-11-20 (that plan's O11); their numbers are not reused, as KS7's and
+KS8's are not.
+
+**F49 — Rule: KS13 waits on that plan's I1.** KS13's "Depends on" named KS6 and KS10, and KS10
+named KS6 and KS9; withdrawn with nothing put in their place, KS13 would never become ready, and
+that plan's release 2, which waits on KS13, with it (that plan's F37). So KS13 waits on
+credentials belong to models' I1, its release 1 integration, where those tasks' work is in the
+tree (its F50). The wait is outside this plan's graph, like the release before KS13: the plan's §5
+names it beside the other outside waits.
+
+**F50 — Rule: C1's second fact is not needed.** C1 named R12's two facts, "provider keys are
+served" and "the stage account is served" (F44, U6). With a stage's account the access of that
+stage's craft (D3068), one fact per repository, "its credentials are served", covers both, and
+credentials belong to models' C1 declares the one (its F20). So C1's second fact, and the KS19
+half that recorded it, are not needed.
+
+**F51 — Rule: KS3's "under every auth" clause is that plan's CM6.** KS3 planned to offer a
+provider credential "under every auth the service serves and not only `api-key`" (F32). That
+clause is the service's narrowing, which credentials belong to models' CM6 owns (its F21); KS3
+keeps the narrowed Check 50 gate and the per-repository Anthropic entry. KS3, KS13 and KS19 are
+amended by that plan, not replaced (its F21).
 
 ## 4. Decisions
 
@@ -338,7 +385,7 @@ All answered by the owner on 2026-11-19, D3012 to D3015 on 2026-11-20.
 
 **What D3007 means here, and what it leaves open.** In this plan: a provider model may be pinned
 under every auth the service serves, and no check ties a provider key to a repository's auth mode
-(KS6). The answer is wider than that: read in full it says a repository should not choose an auth
+(KS6, withdrawn on 2026-11-20 — F48: credentials belong to models' CM16 and CM15 replace it). The answer is wider than that: read in full it says a repository should not choose an auth
 mode at all, and each model should authenticate the way that suits it. Retiring `agent.auth` as a
 repository's setting is a config change of its own, with its own readers, and is **not** in this
 plan. It is O4, for the owner.
@@ -400,10 +447,12 @@ plan. It is O4, for the owner.
   `deploy/terraform/terraform_test.go` and `modules/project`. No plan waits for another as a whole.
 - **R9. The stage account goes through the service.** The mixed variant's second account is
   selected by the service like any named account, through the gateway, so the runner holds no
-  token for it (F6).
+  token for it (F6). *(Amended 2026-11-20: KS9 and KS10, which carried this, are withdrawn
+  (F48); credentials belong to models' CM6 and CM9 carry it, for every subscription rather than a
+  stage's.)*
 - **R10. One switch for every auth but Vertex.** *(Amended by review rounds 1 and 2: F19, F30,
-  D3009; round 3: F41.)* In release B (KS13) `ready` comes to mean R12's facts in full, and a
-  ready repository mounts no model key.
+  D3009; round 3: F41; 2026-11-20: F50.)* In release B (KS13) `ready` comes to mean R12's fact in
+  full, and a ready repository mounts no model key.
   `CredentialsServiceServes` keeps its budget-mode argument in this plan; the plan that removes
   the mode removes the argument (R13).
 - **R11. The service checks the route itself.** The service builds the provider routes from the
@@ -417,8 +466,10 @@ plan. It is O4, for the owner.
   job is planned from the record, as the switch is. A run whose job carries the fact sends a routed
   call through the service; any other run uses its mounted key as today. Release A's `ready` does
   not change, so no switched repository is turned off. A launcher that sets the fact falsely gains
-  nothing: the service still refuses a credential it does not hold for that repository. A second
-  fact of the same kind, "the stage account is served", gates KS10 (F44).
+  nothing: the service still refuses a credential it does not hold for that repository. *(Amended
+  2026-11-20, F50: the second fact of the same kind, "the stage account is served", which gated
+  KS10 (F44), is not needed — one fact per repository, "its credentials are served", covers a
+  stage's account, which is that stage's craft's access.)*
 - **R13. A budget-off repository waits for the other plan.** *(Review round 2: D3009, D3011.)*
   Until "always a budget" lands, a repository in budget mode off, and an installation with no
   budget database, keep their mounted keys through both releases, as today, and
@@ -466,6 +517,10 @@ One tension was found and settled: D3006 (an operator's update keeps the mounts)
 - **O9.** KS14 and KS15 wait on a plan that does not exist yet (R13). If "always a budget" is not
   written or not approved, release B stops after KS13 and KS11: no ready repository mounts a model
   key, and the Terraform that could mount one stays.
+- **O13.** KS13 waits on credentials belong to models' I1, which is that plan's release 1
+  integration (F49). The wait is outside this graph, which names only this plan's nodes, so a
+  launcher follows the plan's levels table and its outside-waits list; the same holds for KS14's
+  and KS16's waits (O9, O3).
 
 ## 7. UNVERIFIED
 

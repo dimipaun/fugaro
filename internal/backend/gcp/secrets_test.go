@@ -18,7 +18,7 @@ import (
 func newTestSecrets(t *testing.T) (*Secrets, *gcpfake.Secrets) {
 	t.Helper()
 	sm := gcpfake.NewSecrets(t)
-	s, err := NewSecrets(context.Background(), Options{GCPProject: "proj-1234", Endpoints: Endpoints{SecretManager: sm.URL + "/", NoAuth: true}})
+	s, err := NewSecrets(context.Background(), Options{GCPProject: "proj-1234", Region: "europe-west1", Endpoints: Endpoints{SecretManager: sm.URL + "/", NoAuth: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,11 +56,20 @@ func TestSecretsSetSequence(t *testing.T) {
 	var sec struct {
 		Labels      map[string]string `json:"labels"`
 		Replication struct {
-			Automatic *struct{} `json:"automatic"`
+			Automatic   *struct{} `json:"automatic"`
+			UserManaged *struct {
+				Replicas []struct{ Location string } `json:"replicas"`
+			} `json:"userManaged"`
 		} `json:"replication"`
 	}
-	if err := json.Unmarshal(create.Body, &sec); err != nil || sec.Labels["fugaro_repo"] != slug || sec.Replication.Automatic == nil || !strings.Contains(create.Query, "secretId="+id) {
+	if err := json.Unmarshal(create.Body, &sec); err != nil || sec.Labels["fugaro_repo"] != slug || !strings.Contains(create.Query, "secretId="+id) {
 		t.Fatalf("create = %s?%s", create.Body, create.Query)
+	}
+	// The replication is user-managed in the installation's region: automatic
+	// is global, which an EU installation may not have (D3082, D3092).
+	if sec.Replication.Automatic != nil || sec.Replication.UserManaged == nil ||
+		len(sec.Replication.UserManaged.Replicas) != 1 || sec.Replication.UserManaged.Replicas[0].Location != "europe-west1" {
+		t.Fatalf("create replication = %s", create.Body)
 	}
 	var add struct {
 		Payload struct{ Data string } `json:"payload"`
@@ -87,6 +96,44 @@ func TestSecretsSetSequence(t *testing.T) {
 	}
 	if list, err := s.List(ctx, map[string]string{"fugaro_repo": slug}); err != nil || len(list) != 0 {
 		t.Fatalf("List after Delete = %+v, %v", list, err)
+	}
+}
+
+// TestASecretCreatedByTheCLIIsInTheRegion: the container Set creates is
+// user-managed with one replica in the installation's region, and a container
+// that already exists keeps the replication it has — Set sends a policy only
+// with a create, which is what leaves an installation's older, automatic
+// containers alone (D3082, D3092).
+func TestASecretCreatedByTheCLIIsInTheRegion(t *testing.T) {
+	ctx := context.Background()
+	s, sm := newTestSecrets(t)
+	creates := func() int {
+		n := 0
+		for _, r := range sm.Requests() {
+			if r.Method == "POST" && strings.HasSuffix(r.Path, "/secrets") {
+				n++
+			}
+		}
+		return n
+	}
+	if _, err := s.Set(ctx, "token", []byte("v1"), map[string]string{"fugaro": "managed"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := sm.Replication("token"); !slices.Equal(got, []string{"europe-west1"}) {
+		t.Fatalf("replication = %v, want the installation's region", got)
+	}
+	// An automatic container another writer made, as every container of an
+	// installation from before this work is: the version goes in and the
+	// replication does not change.
+	sm.Seed("older", map[string]string{"fugaro": "managed"}, []byte("theirs"))
+	if v, err := s.Set(ctx, "older", []byte("v2"), map[string]string{"fugaro": "managed"}); err != nil || v != "2" {
+		t.Fatalf("Set into an existing container = %q, %v", v, err)
+	}
+	if got := sm.Replication("older"); got != nil {
+		t.Fatalf("an existing container's replication changed: %v", got)
+	}
+	if n := creates(); n != 1 {
+		t.Fatalf("creates = %d, want only the one that made token", n)
 	}
 }
 

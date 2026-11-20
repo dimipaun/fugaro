@@ -879,7 +879,10 @@ func (f *fixture) bindingAttempt(organisation, subscription string) error {
 	f.t.Helper()
 	f.actsAsOwnerOf(organisation)
 	previous := probeInstallation
-	probeInstallation = projectInstallation{database: "https://%s.example", client: &http.Client{Transport: presentProject{}}}
+	probeInstallation = projectInstallation{
+		databases: []databaseHost{{location: usCentralDatabase, address: "https://%s.example"}},
+		client:    &http.Client{Transport: presentProject{}},
+	}
 	f.t.Cleanup(func() { probeInstallation = previous })
 	origin, held, err := f.svc.origin(context.Background(), subscription)
 	if err != nil || !held {

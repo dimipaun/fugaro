@@ -286,7 +286,7 @@ or BR18 and I1.
   `TestTheComputeStageUnderUpdateAsksNothing`, `TestTheComputeStageUnderUpdateIsRefusedInAnAgentSession`,
   `TestAGrantOnlyApplyStartsNoPreloadRebuild`.
 - Command: `go test ./internal/cli/ -run 'UpdateAppliesTheComputeRoot|NobodyOptedInAlone|OwnBackendDoesNotDecide|NonOperatorsUpdateSkips|NeverProvisionedIsSkipped|ABatchRunKeepsRunning|ComputeStageUnderUpdate|GrantOnlyApplyStartsNoPreload|RefusalMatrix|Docs' -count=1 && go test ./internal/apply/ -run StepsMatches -count=1`.
-- Red step: an update on an opted-in installation leaves the compute root unapplied.
+- Red step: an update on an installation whose block says "in" leaves the compute root unapplied.
 - Depends on: C1. This task was approved on 2026-11-20 as a task with no dependency that applied
   the root wherever a block exists; it changed (D3110), and the owner confirmed the approval for
   this text the same day.
