@@ -1236,6 +1236,15 @@ type websiteHostHit struct {
 // and every file is read: a host in a lockfile, a document or a built page is a
 // line of a file under website/ like any other.
 //
+// A host ends where a name does, which is the rule the site's own half of this
+// scan states (reachFailures in website/test/privacy.mjs): the app's
+// secure-store key prefix `fugaro.device-key.` (mobile-identity-pairing C1)
+// only begins with the canonical host's letters, and reading the needle as a
+// bare substring refused the file that records it. Go's regexp has no
+// lookahead, so the character after the host is consumed rather than asserted:
+// "not a name character" is the end of the line, or something that is not a
+// letter, a digit or a hyphen.
+//
 // skipBuild steps over the build output (websiteBuildDir), and the two rules
 // below disagree about it for a reason that is each rule's own. The canonical
 // host's: a built page carries the origin because the build RENDERED it from
@@ -1246,6 +1255,7 @@ type websiteHostHit struct {
 // exists for -- or of a revision that did, and both are worth failing on.
 func websiteHostHits(t *testing.T, root, host string, skipBuild bool) []websiteHostHit {
 	t.Helper()
+	needle := regexp.MustCompile(regexp.QuoteMeta(host) + `(?:$|[^A-Za-z0-9-])`)
 	var hits []websiteHostHit
 	for _, rel := range websiteBoundaryFiles(t, root) {
 		if skipBuild && (rel == websiteBuildDir || strings.HasPrefix(rel, websiteBuildDir+"/")) {
@@ -1256,7 +1266,7 @@ func websiteHostHits(t *testing.T, root, host string, skipBuild bool) []websiteH
 			t.Fatal(err)
 		}
 		for i, line := range strings.Split(string(data), "\n") {
-			if strings.Contains(line, host) {
+			if needle.MatchString(line) {
 				hits = append(hits, websiteHostHit{file: rel, line: i + 1, text: strings.TrimSpace(line)})
 			}
 		}

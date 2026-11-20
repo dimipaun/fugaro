@@ -690,6 +690,13 @@ func TestEveryOperationsActionIsAudited(t *testing.T) {
 			action: actionQueueRead, read: true},
 		{name: "the ledger", method: http.MethodGet, route: apiOpsLedgerPath, request: apiOpsLedgerPath + "?month=" + f.now.UTC().Format("2006-01"),
 			action: actionLedgerRead, read: true},
+		// The reports' month is P5.2's route and its own shape, so it is
+		// registered from its own file and not from this area's table
+		// (api_reports.go); what it shares with the table is the operations read
+		// rule and the line every operations read writes, which is what this
+		// case holds and why the row is here.
+		{name: "the reports", method: http.MethodGet, route: apiOpsReportsPath, request: apiOpsReportsPath + "?month=" + f.now.UTC().Format("2006-01"),
+			action: actionReportRead, read: true},
 		{name: "the log", method: http.MethodGet, route: apiOpsAuditPath, request: apiOpsAuditPath,
 			action: actionAuditRead, read: true},
 		{name: "the lists read", method: http.MethodGet, route: apiOpsListsPath, request: apiOpsListsPath,
