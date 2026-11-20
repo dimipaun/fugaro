@@ -242,6 +242,7 @@ function readSource(options: {
   return bundle(`
 var bridge = load('/renderer/new-bridge.js');
 var stream = load('/renderer/stream.js');
+var shortid = load('/shared/shortid.js');
 var ops = bridge.newOpsFrom(${streamRuns});
 return stream.readStream({
   stream: function () { return ops.streamRuns({ since: '24h' }); },
