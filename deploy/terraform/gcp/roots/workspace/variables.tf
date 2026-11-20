@@ -32,3 +32,49 @@ variable "names" {
     error_message = "names.workspace_account_id must be a service account ID: 6-30 characters of a-z, 0-9 and -, starting with a letter."
   }
 }
+
+variable "members" {
+  description = "The workspace owner's own member table, as the invoke grants are made from: one entry per member, keyed by the member's Fugaro project name, each carrying the member's job service accounts — the identities the workspace's service resolves a caller by. An empty map (the default) makes no invoke grant, and the owner's `fugaro update` is what converges a member added or removed."
+  type = map(object({
+    job_service_accounts = list(string)
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for m in values(var.members) : alltrue([
+        for sa in m.job_service_accounts : can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", sa))
+      ])
+    ])
+    error_message = "members.*.job_service_accounts must be IAM service account addresses (<id>@<project>.iam.gserviceaccount.com): the invoke grant is bound to the address itself, so an entry that is not one would grant roles/run.invoker on the workspace's own service to whatever was written there."
+  }
+}
+
+variable "credentials_service" {
+  description = "The workspace's own credentials service (D2980): the same image an installation's service runs, in the workspace's own project, told what it is by its environment. Null — the default — creates no service, no bundle accessor and no invoke grant, which is the state of a workspace whose owner has not deployed it yet."
+  type = object({
+    service          = string
+    image            = string
+    region           = string
+    bundle_secret    = string
+    firebase_project = string
+    rtdb_url         = string
+    url              = optional(string)
+  })
+  default = null
+
+  validation {
+    condition     = var.credentials_service == null || can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.credentials_service.service))
+    error_message = "credentials_service.service must be a Cloud Run service name: 6-30 characters of a-z, 0-9 and -, starting with a letter."
+  }
+
+  validation {
+    condition     = var.credentials_service == null || can(regex("@sha256:[0-9a-f]{64}$", var.credentials_service.image))
+    error_message = "credentials_service.image must be pinned by digest (ending in @sha256: and 64 lower-case hex digits): a tag is mutable, and every instance of this service reads every model credential the workspace holds."
+  }
+
+  validation {
+    condition     = var.credentials_service == null || can(regex("^[a-z]+-[a-z]+[0-9]+$", var.credentials_service.region))
+    error_message = "credentials_service.region must be a region name such as us-east5."
+  }
+}

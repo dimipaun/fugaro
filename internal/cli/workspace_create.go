@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -394,14 +397,43 @@ func (s *workspaceProjectStage) readPlan(ctx context.Context, guard bool) (*tf.P
 }
 
 // guard is this root's cover: the plan is the workspace's own role, its
-// service account and that account's one grant, and nothing else.
-// tf.WorkspaceNotCovered answers what of
-// the plan is not, so the message can name it rather than say "refused".
+// service account, that account's one grant on the workspace's database, the
+// workspace's own credentials service, its ONE bundle accessor and its members'
+// invoke grants, and nothing else. tf.WorkspaceNotCovered answers what of the
+// plan is not, so the message can name it rather than say "refused".
+//
+// Its two hand-written arguments are the half of the plan a reader outside it
+// has to supply, because neither is a value any plan carries: the workspace's
+// own bundle container is DERIVED from the workspace's name
+// (credsvc.WorkspaceBundleSecretID — the same container this project's own
+// installation already holds every model credential in), and the members' job
+// accounts are the owner's member table, which is this machine's config and not
+// terraform's. A rule that read either out of the plan would accept whatever the
+// plan named.
 func (s *workspaceProjectStage) guard(plan *tf.Plan) error {
-	if why := tf.WorkspaceNotCovered(plan, s.e.lc.GCPProject, tf.WorkspaceServiceAccountID); len(why) > 0 {
-		return userErr("the workspace root's plan is not the workspace's own role, its service account and that account's one grant on the workspace's database (%s); nothing was applied, and a plan that carries anything else is not this root's to apply: read it with terraform in %s", strings.Join(why, "; "), s.dir)
+	why := tf.WorkspaceNotCovered(plan, s.e.lc.GCPProject, tf.WorkspaceServiceAccountID,
+		credsvc.WorkspaceBundleSecretID(s.e.lc.Name), workspaceMemberAccounts(s.e.lc))
+	if len(why) > 0 {
+		return userErr("the workspace root's plan is not the workspace's own role, its service account and that account's one grant on the workspace's database, its own credentials service with the ONE bundle accessor and the members' invoke grants (%s); nothing was applied, and a plan that carries anything else is not this root's to apply: read it with terraform in %s", strings.Join(why, "; "), s.dir)
 	}
 	return nil
+}
+
+// workspaceMemberAccounts is the member table's job accounts, in one flat list:
+// the principals the workspace root's cover admits an invoke grant to (F17), and
+// the same set the root's own `members` variable makes a grant per. An entry
+// that names no account contributes nothing, and a config that declares no
+// workspace members at all — every installation that is not a workspace's own —
+// answers an empty list, which is a plan that may hold no invoke grant.
+func workspaceMemberAccounts(lc *localcfg.Config) []string {
+	if lc.WorkspaceMembers == nil {
+		return nil
+	}
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(*lc.WorkspaceMembers)) {
+		out = append(out, (*lc.WorkspaceMembers)[name].JobServiceAccounts...)
+	}
+	return out
 }
 
 // prepare writes the workspace workdir's tfvars and backend and inits it.
