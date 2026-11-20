@@ -113,7 +113,11 @@ type GCS struct {
 type bucketMeta struct {
 	projectNumber uint64
 	labels        map[string]string
-	policy        []Binding
+	// location is where the bucket is, in GCS's own spelling: upper case for a
+	// region ("US-EAST5"), and "US" or "EU" for a multi-region. Empty for a
+	// bucket made without one.
+	location string
+	policy   []Binding
 	// policyGen counts the policy's changes; the etag derives from it.
 	policyGen int
 	// inserted is the body of the insert that made the bucket, nil for
@@ -168,6 +172,18 @@ func (g *GCS) SetVersioning(name string, on bool) {
 	if m := g.meta[name]; m != nil {
 		m.versioning = on
 	}
+}
+
+// SetBucketLocation gives bucket name a location, as its get reports it: the
+// spelling GCS returns for a regional bucket is upper case.
+func (g *GCS) SetBucketLocation(name, location string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	m := g.meta[name]
+	if m == nil {
+		g.t.Fatalf("gcpfake: SetBucketLocation(%q): no such bucket", name)
+	}
+	m.location = location
 }
 
 // FailObjectDeletes makes the next n object deletes answer 503, deleting
@@ -528,6 +544,9 @@ func (g *GCS) bucketGet(w http.ResponseWriter, r *http.Request, bucket string, i
 	if len(m.labels) > 0 {
 		out["labels"] = maps.Clone(m.labels)
 	}
+	if m.location != "" {
+		out["location"] = m.location
+	}
 	if m.versioning {
 		out["versioning"] = map[string]any{"enabled": true}
 	}
@@ -585,7 +604,8 @@ func (g *GCS) insertBucket(w http.ResponseWriter, project string, body []byte) {
 	if v, ok := req["versioning"].(map[string]any); ok {
 		versioning, _ = v["enabled"].(bool)
 	}
-	g.meta[name] = &bucketMeta{projectNumber: num, labels: labels, policy: ConvenienceBindings(project), policyGen: 1, inserted: req, versioning: versioning}
+	location, _ := req["location"].(string)
+	g.meta[name] = &bucketMeta{projectNumber: num, labels: labels, location: location, policy: ConvenienceBindings(project), policyGen: 1, inserted: req, versioning: versioning}
 	out := maps.Clone(req)
 	out["kind"], out["id"], out["projectNumber"] = "storage#bucket", name, strconv.FormatUint(num, 10)
 	writeJSON(w, http.StatusOK, out)
