@@ -1,0 +1,436 @@
+{
+  "schema_version": 3,
+  "plan": "docs/location-preference/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "LP0",
+      "title": "the locations record",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/localcfg/locations.go",
+          "internal/localcfg/localcfg.go",
+          "internal/localcfg/shared.go",
+          "internal/settings/registry.go",
+          "docs/location-preference/contract-locations.md"
+        ]
+      }
+    },
+    {
+      "id": "LP1",
+      "title": "the mapping",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/place/*.go",
+          "docs/location-preference/locations.md"
+        ]
+      }
+    },
+    {
+      "id": "LP2",
+      "title": "a new budget database goes where the mapping says",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/firebase/firebase.tf",
+          "deploy/terraform/gcp/modules/firebase/variables.tf",
+          "deploy/terraform/gcp/roots/firebase/*.tf",
+          "deploy/terraform/gcp/roots/firebase/tests/firebase.tftest.hcl",
+          "internal/infra/firebase.go",
+          "internal/infra/discover_firebase.go",
+          "internal/infra/tf/testdata/golden/firebase*.plan.json"
+        ]
+      }
+    },
+    {
+      "id": "LP3",
+      "title": "Firestore goes where the mapping says",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/firestore.go",
+          "internal/infra/firestore_test.go",
+          "internal/cli/init_firebase.go"
+        ]
+      }
+    },
+    {
+      "id": "LP4",
+      "title": "setup asks the place",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/wizard_stage.go",
+          "internal/cli/init_inputs.go",
+          "internal/cli/init.go",
+          "internal/cli/setup_answers.go",
+          "schemas/setup-answers.schema.json",
+          "website/content/cli-reference.md",
+          "plugin/skills/setup/SKILL.md"
+        ]
+      }
+    },
+    {
+      "id": "LP5a",
+      "title": "a new installation's secrets are replicated in its region",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/installation/secrets.tf",
+          "deploy/terraform/gcp/modules/installation/licence.tf",
+          "deploy/terraform/gcp/modules/installation/orchestrator.tf",
+          "deploy/terraform/gcp/modules/installation/credentials.tf",
+          "deploy/terraform/gcp/modules/installation/variables.tf",
+          "deploy/terraform/gcp/modules/repo/secrets.tf",
+          "deploy/terraform/gcp/modules/repo/variables.tf",
+          "deploy/terraform/gcp/roots/installation/*.tf",
+          "deploy/terraform/gcp/roots/repo/*.tf",
+          "internal/infra/tfvars.go",
+          "internal/infra/tf/testdata/golden/installation*.plan.json",
+          "internal/infra/tf/testdata/golden/repo*.plan.json"
+        ]
+      }
+    },
+    {
+      "id": "LP5b",
+      "title": "secrets created outside Terraform follow the same policy",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/gcp/secrets.go",
+          "internal/intake/gcp.go",
+          "internal/gcpfake/secrets.go"
+        ]
+      }
+    },
+    {
+      "id": "LP6",
+      "title": "a new installation's run log bucket is in its region",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/installation/logging.tf",
+          "deploy/terraform/gcp/modules/installation/variables.tf",
+          "internal/infra/discover.go",
+          "internal/infra/imports.go",
+          "internal/infra/tfvars.go",
+          "internal/infra/tf/testdata/golden/installation*.plan.json"
+        ]
+      }
+    },
+    {
+      "id": "LP7",
+      "title": "the recorder",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/locations_record.go",
+          "internal/infra/locations_record_test.go",
+          "internal/gcpfake/locations.go"
+        ]
+      }
+    },
+    {
+      "id": "LP8",
+      "title": "a region that is not the installation's is refused",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/project.go",
+          "internal/cli/init_new_machine.go",
+          "internal/cli/region_refusal_test.go"
+        ]
+      }
+    },
+    {
+      "id": "LP9",
+      "title": "a workspace member's database region comes from the member",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace.go",
+          "internal/cli/workspace_region_test.go"
+        ]
+      }
+    },
+    {
+      "id": "LP10",
+      "title": "no step confirms a location",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_firebase.go",
+          "internal/cli/init.go",
+          "internal/cli/init_firebase_always_test.go",
+          "docs/no-prompt-policy/reconciliation.md"
+        ]
+      }
+    },
+    {
+      "id": "LP11",
+      "title": "the documents say where the data lives",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "SECURITY.md",
+          "website/content/security.md",
+          "docs/gcp-setup.md",
+          "docs/design/m9-budget-and-dashboard.md",
+          "internal/cli/docs_location_test.go",
+          "docs/releases/*.md"
+        ]
+      }
+    },
+    {
+      "id": "LP12",
+      "title": "doctor says where the data is",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor_locations.go",
+          "internal/cli/doctor_locations_test.go",
+          "internal/cli/doctor.go"
+        ]
+      }
+    },
+    {
+      "id": "LP13",
+      "title": "the two live checks, as scripts",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-820.sh",
+          "scripts/live-checks/check-821.sh",
+          "docs/location-preference/check820-steps.md",
+          "docs/location-preference/check821-steps.md",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "LP14",
+      "title": "the record is written by setup and update, and the whole is proven",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_stages.go",
+          "internal/infra/locations_record.go",
+          "internal/cli/locations_end_to_end_test.go",
+          "internal/infra/tf/testdata/golden/installation-eu.plan.json",
+          "internal/infra/tf/testdata/golden/firebase-eu.plan.json",
+          "scripts/gen-golden-plans.sh"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "LP2",
+      "needs": "LP1",
+      "reason": "the mapping's answers; the mapping is smaller than a contract for it"
+    },
+    {
+      "task": "LP3",
+      "needs": "LP1",
+      "reason": "the mapping's answers; the mapping is smaller than a contract for it"
+    },
+    {
+      "task": "LP4",
+      "needs": "LP1",
+      "reason": "the mapping's answers; the mapping is smaller than a contract for it"
+    },
+    {
+      "task": "LP5a",
+      "needs": "LP1",
+      "reason": "the mapping's answers; the mapping is smaller than a contract for it"
+    },
+    {
+      "task": "LP5b",
+      "needs": "LP1",
+      "reason": "the mapping's answers; the mapping is smaller than a contract for it"
+    },
+    {
+      "task": "LP12",
+      "needs": "LP1",
+      "reason": "the mapping's answers; the mapping is smaller than a contract for it"
+    },
+    {
+      "task": "LP5a",
+      "needs": "LP0",
+      "reason": "the record's shape"
+    },
+    {
+      "task": "LP5b",
+      "needs": "LP0",
+      "reason": "the record's shape"
+    },
+    {
+      "task": "LP6",
+      "needs": "LP0",
+      "reason": "the record's shape"
+    },
+    {
+      "task": "LP9",
+      "needs": "LP0",
+      "reason": "the record's shape"
+    },
+    {
+      "task": "LP12",
+      "needs": "LP0",
+      "reason": "the record's shape"
+    },
+    {
+      "task": "LP6",
+      "needs": "LP5a",
+      "reason": "shared files: modules/installation/variables.tf, internal/infra/tfvars.go and the same golden plans"
+    },
+    {
+      "task": "LP10",
+      "needs": "LP3",
+      "reason": "one file, internal/cli/init_firebase.go"
+    },
+    {
+      "task": "LP10",
+      "needs": "LP4",
+      "reason": "one file, internal/cli/init.go"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP2",
+      "reason": "it joins this side and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP3",
+      "reason": "it joins this side and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP4",
+      "reason": "it joins this side and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP5a",
+      "reason": "it joins this side and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP5b",
+      "reason": "it joins this side and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP6",
+      "reason": "it joins this side and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP7",
+      "reason": "it joins this side and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP9",
+      "reason": "it joins this side and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP12",
+      "reason": "it joins this side and proves the whole"
+    },
+    {
+      "task": "LP11",
+      "needs": "LP14",
+      "reason": "it states what ships"
+    },
+    {
+      "task": "LP11",
+      "needs": "LP10",
+      "reason": "it states that no step confirms a location"
+    },
+    {
+      "task": "LP13",
+      "needs": "LP14",
+      "reason": "the scripts run the shipped commands"
+    },
+    {
+      "task": "LP7",
+      "needs": "LP0",
+      "reason": "the recorder fills the record's type"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP0",
+      "reason": "it writes the record into the config"
+    }
+  ],
+  "decoupling": [],
+  "contract_changes": []
+}

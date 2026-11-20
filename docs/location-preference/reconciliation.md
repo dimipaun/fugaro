@@ -163,7 +163,7 @@ records what the cloud holds, key by key, and uses the mapping only for what doe
 
 **F12 — Gap: a teammate's machine types the region again.** `fugaro update` on a new machine asks
 `--gcp-project` and `--region` (`firstRunMissing`), and nothing compares the answer with the
-installation. The runs bucket's own location is the installation's region and cannot drift. LP7
+installation. The runs bucket's own location is the installation's region and cannot drift. LP8
 reads it before it trusts a typed region (R6).
 
 **F13 — Exists: every reader of a database URL already accepts a regional host.** The validators
@@ -299,7 +299,7 @@ None. No two answers pull against each other.
   continent in some cases (South America to `us-central1`). The fallback table in LP1 is the
   product's guess at "nearest" and is the owner's to correct.
 - **O5.** The workspace root (`deploy/terraform/gcp/roots/workspace`) is not in CI's Terraform
-  loop until the owner copies the staged workflow in (`.claude/rules/terraform.md`). LP5 and LP6
+  loop until the owner copies the staged workflow in (`.claude/rules/terraform.md`). LP5a and LP6
   touch modules the workspace root does not use; if that changes, the root is validated by hand.
 
 ## UNVERIFIED
