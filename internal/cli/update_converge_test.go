@@ -2102,3 +2102,60 @@ func TestUpdateConvergesAWorkspaceWhoseServiceHasNoAudience(t *testing.T) {
 		t.Errorf("after the update the workspace's service is %+v, want the URL Cloud Run assigned (%s) written into its block: a block with no audience is a revision that admits nobody, and no plan over that document ever says so", v.Service, wsServiceURL)
 	}
 }
+
+// wsPlanSeqNoAudienceAlone is wsPlanSeq for the state above once the root has
+// nothing else in it: the root is the release's own already — the image moved,
+// the members are the table — so the plan is EMPTY where it is read to decide
+// whether the stage is done, and the only plan with a change in it is the one
+// the audience write makes AFTER the tfvars are rewritten with the URL the
+// root's own output reports. Five reads, in the door's order: the plan view's
+// check, the run's own, the apply's read, the audience fill's plan, and the
+// verify behind the apply, which finds nothing again.
+func wsPlanSeqNoAudienceAlone() []map[string]any {
+	return []map[string]any{{"exit": 0}, {"exit": 0}, {"exit": 0}, {"exit": 2}, {"exit": 0}}
+}
+
+// TestUpdateConvergesAWorkspaceWhoseServiceHasNoAudienceAndPlansNothing is the
+// state the check itself has to answer Todo about, and the reason the audience
+// write cannot live on the apply path alone: an update interrupted between the
+// create apply (which put the service on the module's unassigned placeholder)
+// and the write of the URL leaves a block with no audience beside a root that
+// plans NOTHING — terraform reads the placeholder as the service's own audience
+// and has no change to make.
+//
+// So a stage that decided by the plan alone reports this stage converged for
+// ever, in the words of "its own credentials service is deployed on this
+// release's image", while the revision behind that sentence admits no member's
+// ID token — and nothing heals it until a release whose own change makes the
+// plan non-empty, which is not a step anybody can run (the one-command rule).
+// The three reads below are what it takes instead: the check is Todo on an empty
+// plan where the block carries no url, the plan view is not "No changes" there
+// (a coding agent's session records NothingToDo as the stage being done), and
+// the apply makes the one write the plan cannot show. One apply, and the
+// audience in the block.
+func TestUpdateConvergesAWorkspaceWhoseServiceHasNoAudienceAndPlansNothing(t *testing.T) {
+	r := wsOwnerConvergeRig(t, wsOwnerTable+wsOwnerCap)
+	wsSeedRecorded(t, initProjectName, r.credentialsRefAt(convergeRelease), "")
+	r.script["plan@workspace"] = wsPlanSeqNoAudienceAlone()
+	// The one plan with a change in it is the fill's: the service listed as an
+	// update, the audience moving, and nothing else in the root.
+	r.setPlanAt(t, "workspace", wsServiceAudiencePlan(r.credentialsRefAt(convergeRelease)))
+	r.script["output@workspace"] = map[string]any{
+		"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
+	r.save(t)
+
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if n := wsApplies(t, r); n != 1 {
+		t.Errorf("the update applied the workspace root %d time(s), want 1 (the audience write alone, the root having nothing else to change): %v", n, r.applies(t))
+	}
+	if v := wsRootVars(t); v.Service == nil || v.Service.URL != wsServiceURL {
+		t.Errorf("after the update the workspace's service is %+v, want the URL Cloud Run assigned (%s) written into its block: a block with no audience is a revision that admits nobody, and the plan a root like this makes says nothing about it", v.Service, wsServiceURL)
+	}
+	// The owner is told what the run is about to do where there is no plan to
+	// read, and the sentence is the state's own rather than the accounts a root
+	// with changes creates (audienceTodo).
+	if !strings.Contains(out, "unassigned audience") {
+		t.Errorf("the run's own transcript does not say the revision the workspace's service is serving carries the module's unassigned audience, so the owner confirms a write it does not name:\n%s", out)
+	}
+}

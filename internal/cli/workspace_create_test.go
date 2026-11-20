@@ -238,15 +238,33 @@ func wsServicePlan(image string) planChange {
 	}
 }
 
+// wsServicePlanWith is wsServicePlan under another action list: terraform plans
+// the service as a create on a first run, as a no-op where it is listed and not
+// moved, and as an update where the state already holds it and only one
+// environment value changes — the audience, which is the one attribute this
+// root can move in a converged state.
+func wsServicePlanWith(image string, actions ...string) planChange {
+	p := wsServicePlan(image)
+	p["change"].(planChange)["actions"] = actions
+	return p
+}
+
+// wsServiceAudiencePlan is what the audience write's own apply plans: the
+// workspace's service and nothing else, the URL moving, which is the plan a
+// converged root makes when the block it is planned with carries the audience
+// the service is served with (fillServiceURL writes the tfvars first and plans
+// that document).
+func wsServiceAudiencePlan(image string) planChange {
+	return wsServicePlanWith(image, "update")
+}
+
 // wsServiceNoOpPlan is the workspace's own service as a plan holds it on a run
 // that is not moving it: terraform lists it with no action, and it is where the
 // plan's own service name is read from (planWorkspaceServiceName) — so a plan
 // whose changes are a member's grant going away and nothing else still carries
 // the service the grant is on.
 func wsServiceNoOpPlan(image string) planChange {
-	p := wsServicePlan(image)
-	p["change"].(planChange)["actions"] = []string{"no-op"}
-	return p
+	return wsServicePlanWith(image, "no-op")
 }
 
 // wsAccessorPlan is the root's ONE bundle accessor: the workspace's own

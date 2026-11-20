@@ -283,6 +283,11 @@ func workspaceSplitFirebase(lc *localcfg.Config) string {
 // agent's session and a `--json` run would stop at this stage for the owner's
 // word they do not need, and the record stage behind it would never run.
 //
+// Empty is the stage being done only where the block the run writes carries its
+// audience (audienceMissing): the plan cannot see a block with no url, so the one
+// state the check has to answer Todo about on an empty plan is that one, and the
+// write it leads to is Apply's own (audienceTodo).
+//
 // It does NOT hold the plan to this root's cover: the cover belongs to the two
 // paths that lead to an apply (Plan and Apply), which is where a plan that is
 // not this root's is refused by name. A read that fails is not this stage's
@@ -307,17 +312,54 @@ func (s *workspaceProjectStage) Check(ctx context.Context) (initflow.Status, err
 	}
 	plan, _, err := s.readPlan(ctx, false)
 	if err == nil && plan == nil {
+		// An empty plan is the stage being done only where the block this run
+		// writes carries the audience the service is served with: a block with
+		// no url is a revision behind the module's unassigned placeholder,
+		// which terraform sees nothing to change about, so a Done here would
+		// report a service deployed that admits no member and no later update
+		// would ever look again (audienceMissing).
+		if s.audienceMissing() {
+			return initflow.Status{State: initflow.Todo, Detail: s.audienceTodo()}, nil
+		}
 		project := s.e.lc.GCPProject
 		return initflow.Status{State: initflow.Done, Detail: s.converged(project)}, nil
 	}
 	return initflow.Status{State: initflow.Todo, Detail: s.todo()}, nil
 }
 
-// converged is what a root that plans nothing says: the account and its one
-// grant, and the workspace's own service where the root's tfvars carry one. The
-// service is named only when this run's document holds a block, because a
-// workspace whose config names no database has none to deploy and a sentence
-// claiming one would tell the operator a process is serving when nothing is.
+// audienceMissing is whether the block this run writes carries no url: the state
+// a run leaves when its second apply never landed — a create that applied and
+// then failed before the URL was written back (fillServiceURL), a `--plan-only`
+// pass — and the one terraform cannot see. The URL is an environment value the
+// module falls back to its own unassigned placeholder for, so a plan over that
+// document finds the service converged while the revision serving it admits no
+// caller, and every read that decided by the plan alone would report this stage
+// done for ever.
+//
+// It is a question about the block and not about this run: a block this run
+// resolves carries the audience a previous run read back, and the carry branch
+// hands back the recorded block exactly as it stands, so what this returns is
+// the document the root is planned with.
+func (s *workspaceProjectStage) audienceMissing() bool {
+	return s.svc != nil && s.svc.URL == ""
+}
+
+// audienceTodo is what the stage says where the root plans nothing and the block
+// it writes carries no audience: the ONE write such a run makes, named as the
+// write it is rather than as the accounts a root with changes creates (todo),
+// because the sentence the owner reads before typing their name has to be about
+// what the run is going to do.
+func (s *workspaceProjectStage) audienceTodo() string {
+	return fmt.Sprintf("the workspace's own credentials service %s is deployed on the module's unassigned audience, which admits no caller: this run reads the URL Cloud Run assigned it from the root's own output and writes that back as the audience a member's run mints its Google ID token for", s.svc.Service)
+}
+
+// converged is what a root that plans nothing and whose block carries the
+// audience the service is served with says: the account and its one grant, and
+// the workspace's own service where the root's tfvars carry one. The service is
+// named only when this run's document holds a block, because a workspace whose
+// config names no database has none to deploy and a sentence claiming one would
+// tell the operator a process is serving when nothing is — and a block with no
+// url never reaches this sentence at all (audienceMissing).
 func (s *workspaceProjectStage) converged(project string) string {
 	out := fmt.Sprintf("the workspace's own service account %s holds %s on %s", workspaceAccount(project), tf.WorkspaceDatabaseRole(project), project)
 	if s.svc != nil {
@@ -361,6 +403,13 @@ func workspaceProjectSkip(lc *localcfg.Config) string {
 }
 
 // Plan shows the real plan and guards it, and changes nothing.
+//
+// A root that plans nothing is a NothingToDo plan only where the block it writes
+// carries its audience: where it carries none the run has the ONE write to make
+// (audienceTodo), and a plan view that answered "No changes" there would be this
+// stage's half of the "converged" the check may not say — a coding agent's
+// session reads NothingToDo as the stage being done and would leave the
+// workspace unreachable with nothing on the screen (loop's agentStage).
 func (s *workspaceProjectStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, error) {
 	ok, why, _, err := s.declared()
 	if err != nil {
@@ -376,12 +425,22 @@ func (s *workspaceProjectStage) Plan(ctx context.Context, _ initflow.Env) (initf
 	if plan != nil {
 		fmt.Fprint(s.e.r.w, tf.Summary(plan))
 	}
+	if plan == nil && s.audienceMissing() {
+		return initflow.Plan{Detail: s.audienceTodo()}, nil
+	}
 	return s.e.planned(counts), nil
 }
 
 // Apply is the write, and a coding agent's session never reaches it: the typed
 // confirmation cannot be given there (stepConfirmation), and what it would
 // confirm is an access grant.
+//
+// A root that plans nothing is not "nothing to do" here: it is the one state
+// whose write the plan cannot show (audienceMissing), and the run that finds it
+// is the run that heals it. Where there is a plan the screen carries its summary
+// and the word the owner types is the one above; where there is not, the state
+// itself is what the screen carries and the word is the audience sentence
+// (audienceTodo).
 //
 // Every state that is not a workspace's own answers its own reason and applies
 // nothing, which for the split installation is the same answer Check gives: a
@@ -411,12 +470,25 @@ func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (init
 	if s.svc != nil {
 		service = fmt.Sprintf(", and the workspace's own credentials service %s running as that account on this release's verified image, with one invoke grant on it per member job account", s.svc.Service)
 	}
-	if plan == nil {
+	if plan == nil && !s.audienceMissing() {
 		fmt.Fprintf(s.e.r.w, "No changes: the workspace's own service account %s holds %s on %s.\n", account, tf.WorkspaceDatabaseRole(project), project)
 		return initflow.Outcome{Detail: "the workspace's own service account, its one grant and its own credentials service are already there"}, nil
 	}
-	fmt.Fprint(s.e.r.w, tf.Summary(plan))
-	confirmed, reachable, err := s.e.r.askTyped(fmt.Sprintf("creates the workspace's own service account %s in GCP project %s and grants it %s on that project's database (%s), and creates the SA fallback's IAM account %s, which this root grants nothing: the service account is the one identity that reaches the workspace's database, because the database's rules deny every client — and it is a GRANT, so no flag confirms it%s; %s)", account, project, tf.WorkspaceDatabaseRole(project), counts.String(), iamAccount, service, initflow.AgentAdvice))
+	// The word the owner gives is the state's: a root with changes creates what
+	// the plan says, and a root that plans nothing while its block carries no
+	// audience makes the ONE write the plan cannot show (audienceTodo) — a
+	// sentence about accounts nobody is creating would be a sentence about a run
+	// that is not this one.
+	what := fmt.Sprintf("creates the workspace's own service account %s in GCP project %s and grants it %s on that project's database (%s), and creates the SA fallback's IAM account %s, which this root grants nothing: the service account is the one identity that reaches the workspace's database, because the database's rules deny every client — and it is a GRANT, so no flag confirms it%s; %s)", account, project, tf.WorkspaceDatabaseRole(project), counts.String(), iamAccount, service, initflow.AgentAdvice)
+	if plan != nil {
+		fmt.Fprint(s.e.r.w, tf.Summary(plan))
+	} else {
+		// A plan that is already empty has no summary to show, and the state it is
+		// empty in is the one thing the screen has to carry.
+		fmt.Fprintf(s.e.r.w, "%s.\n", s.audienceTodo())
+		what = fmt.Sprintf("assigns the workspace's own credentials service %s the URL Cloud Run assigned it as the audience a member's run mints its Google ID token for: the revision serving now carries the module's unassigned audience, which admits no caller, and this root has nothing else to change; %s)", s.svc.Service, initflow.AgentAdvice)
+	}
+	confirmed, reachable, err := s.e.r.askTyped(what)
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
@@ -426,12 +498,14 @@ func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (init
 	if !confirmed {
 		return initflow.Outcome{}, s.e.r.notConfirmed("nothing was applied")
 	}
-	if err := s.t.Apply(ctx, infra.PlanFile); err != nil {
-		return initflow.Outcome{}, remote(err)
+	if plan != nil {
+		if err := s.t.Apply(ctx, infra.PlanFile); err != nil {
+			return initflow.Outcome{}, remote(err)
+		}
+		fmt.Fprintf(s.e.r.w, "created the workspace root's two accounts and its one grant: the workspace's own service account %s, the SA fallback's IAM account %s, and %s on %s%s\n", account, iamAccount, tf.WorkspaceDatabaseRole(project), project, createdService(s.svc))
 	}
 	s.applied = true
 	s.e.r.res.Applied = true
-	fmt.Fprintf(s.e.r.w, "created the workspace root's two accounts and its one grant: the workspace's own service account %s, the SA fallback's IAM account %s, and %s on %s%s\n", account, iamAccount, tf.WorkspaceDatabaseRole(project), project, createdService(s.svc))
 	// The second apply is on the STATE this run leaves and not on this run's own
 	// resolve: a block written with no url — a create the apply never made, a
 	// `--plan-only` pass — is a revision whose audience is the module's
@@ -444,7 +518,11 @@ func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (init
 			return initflow.Outcome{}, err
 		}
 	}
-	return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("applied: %s (the workspace's own service account %s and the SA fallback's IAM account %s)", counts.String(), account, iamAccount)}, nil
+	detail := fmt.Sprintf("applied: %s (the workspace's own service account %s and the SA fallback's IAM account %s)", counts.String(), account, iamAccount)
+	if plan == nil {
+		detail = fmt.Sprintf("assigned the workspace's own credentials service %s the URL Cloud Run gave it as the audience a member's run mints its Google ID token for", s.svc.Service)
+	}
+	return initflow.Outcome{Changed: true, Detail: detail}, nil
 }
 
 // createdService is the clause the success line adds when the apply wrote the
@@ -868,13 +946,14 @@ func workspaceServiceFacts(lc *localcfg.Config) string {
 }
 
 // fillServiceURL is the SECOND apply of this stage: the URL Cloud Run assigned
-// the service the apply above wrote, read back from the root's own output and
-// written into credentials_service.url.
+// the service, read back from the root's own output and written into
+// credentials_service.url — the second half of the apply that created the service
+// above, and, for a root whose state already holds the service, the whole of the
+// write (Apply's empty-plan branch).
 //
-// It is called for every state whose apply wrote a block (Apply) and answers
-// from the state itself: an output that is already the block's own url is the
-// write already made, and one that differs — or a block that carries none at
-// all, which is the revision a create apply left behind with the module's
+// It answers from the state itself: an output that is already the block's own url
+// is the write already made, and one that differs — or a block that carries none
+// at all, which is the revision a create apply left behind with the module's
 // unassigned placeholder — is this apply. That is the same rule one root over
 // (fillCredentialsAudience), and the reason the gate is not "did this run
 // deploy the service": the block a run carries forward is a revision already
