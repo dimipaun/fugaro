@@ -88,9 +88,12 @@ func reportNoLine(t *testing.T, report WireReportMonth, organisationID, channel 
 	}
 }
 
-// reportLinesTotal is one channel's lines added up, which is what the month's
-// own figure has to be: a total that did not come to the customers behind it is
-// a figure nobody can check.
+// reportLinesTotal is one channel's lines added up, which is what a month's own
+// figure is whenever every one of its lines named a customer: a total that did
+// not come to the customers behind it is a figure nobody can check. A month
+// holding a line no customer was named for is the exception and not the rule —
+// the figure carries that money and the list cannot draw it
+// (TestReportCountsARefundItsEventNamesNoCustomerFor).
 func reportLinesTotal(report WireReportMonth, channel string) int64 {
 	total := int64(0)
 	for _, customer := range report.Customers {
@@ -144,12 +147,17 @@ func reportBodyAt(t *testing.T, e Event, occurredAt string) []byte {
 // buyerAddress) and a purchase whose address no licence can be sent to is
 // refused rather than booked: a name that is not one would leave this case
 // asserting over a sale the merchant never made.
+// The subscription is the merchant's own and is stated because a purchase
+// arrives under one: it is what a later renewal, and the refund or chargeback
+// that names the transaction and the subscription and no customer, are read
+// against (merchant.go's `entitlementFor`).
 func (f *fixture) reportDirectSale(t *testing.T, id, name, workspace string, at time.Time) WireOrganisation {
 	t.Helper()
 	buyer := f.seededOrganisation(id+".example", name, orgTypeCustomer, danaUID, danaEmail, roleOwner)
 	f.actsAs(danaUID, danaEmail, signInGoogle)
 	f.deliver(Event{
 		ID: id, Type: EventPurchase, OccurredAt: at,
+		Subscription: "sub-" + id,
 		Organisation: buyer.ID, WorkspaceID: workspace,
 		Email: buyerAddress(buyer.ID),
 		Seats: 5, TermDays: 365,
@@ -341,6 +349,81 @@ func TestCompedKeysAreNotRevenue(t *testing.T) {
 	}
 	if bought := reportCustomer(t, report, buyer.ID, channelDirect); bought.AmountMicros != reportSaleMicros {
 		t.Errorf("the buyer's line is %d micro-dollars, want the purchase's own %d", bought.AmountMicros, reportSaleMicros)
+	}
+}
+
+// TestReportCountsARefundItsEventNamesNoCustomerFor: a report's two figures are
+// the ledger's own lines of the month added up, and the ledger holds every line
+// of it, the refund and the chargeback included — its own sentence is that a
+// report's total is the sum of the lines. The body the merchant posts for one is
+// an adjustment, which names the transaction and the subscription and never the
+// customer's organisation (Paddle's own object, paddleevents_test.go's
+// `recordedRefund`), and such a line is the one thing a report cannot draw:
+// every customer in `reports.schema.json` carries an id and a name, and the event
+// names no customer to draw. The money is the month's all the same, so it is in
+// the figure — a figure that dropped it would overstate the month by the whole of
+// its refunds and disagree with the ledger's own read of that month.
+func TestReportCountsARefundItsEventNamesNoCustomerFor(t *testing.T) {
+	f := newFixture(t)
+	f.now = time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+
+	buyer := f.reportDirectSale(t, "acme", "Acme Ltd", "ws-acme", f.now)
+
+	// The money goes back eleven days later, on the subscription the purchase
+	// began: the refund names the licence to withdraw and no customer at all.
+	f.now = time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC)
+	f.deliver(Event{
+		ID: "evt-refund", Type: EventRefund, OccurredAt: f.now,
+		Subscription: "sub-acme", Transaction: "txn-sub-acme",
+	})
+
+	// The ledger's own May is what the report is held against, and it is read
+	// first: the two lines and the figure they come to are the case's own
+	// arithmetic, so a report that dropped one cannot agree with it by accident.
+	var refund WireLedgerEntry
+	lines, ledgerTotal := 0, int64(0)
+	for _, entry := range f.ledger(t) {
+		if entry.At.UTC().Year() != 2026 || entry.At.UTC().Month() != time.May {
+			continue
+		}
+		lines++
+		ledgerTotal += entry.AmountMicros
+		if entry.ID == "evt-refund" {
+			refund = entry
+		}
+	}
+	if lines != 2 {
+		t.Fatalf("the ledger holds %d line(s) for May, want the purchase and the refund", lines)
+	}
+	if refund.ID == "" || refund.OrganisationID != "" {
+		t.Fatalf("the fixture's refund reads %+v, want the line of the month that names no organisation: this case is about the line a report has no customer to draw", refund)
+	}
+	if ledgerTotal != 0 {
+		t.Fatalf("the ledger's own May comes to %d micro-dollars, want the purchase and the refund to cancel: this case needs both lines to be money that moved", ledgerTotal)
+	}
+
+	f.operationsOrg(roleOwner)
+	report := f.reportOf(reportMonth)
+
+	if report.DirectMicros != ledgerTotal {
+		t.Errorf("the month's direct figure is %d micro-dollars, want the ledger's own %d: a report and the ledger cannot disagree, and a figure that dropped the refund would overstate the month by the whole of it",
+			report.DirectMicros, ledgerTotal)
+	}
+	if report.ResellerMicros != 0 {
+		t.Errorf("the month's reseller figure is %d micro-dollars, want none: nothing was sold through a reseller",
+			report.ResellerMicros)
+	}
+	// Nothing is invented to draw the refund with: it is no customer's line, and
+	// the buyer's own line is the purchase's amount. What the figure shares with
+	// it is the ledger both are read out of, and the line itself is where a
+	// person sees it — in the ledger's own month read, under the event.
+	if len(report.Customers) != 1 {
+		t.Fatalf("the report holds %d customer line(s), want the buyer alone: a line no organisation was named for is not a customer: %+v",
+			len(report.Customers), report.Customers)
+	}
+	if line := reportCustomer(t, report, buyer.ID, channelDirect); line.AmountMicros != reportSaleMicros {
+		t.Errorf("the buyer's line is %d micro-dollars, want the purchase's own %d: the refund named no customer and is nobody's line",
+			line.AmountMicros, reportSaleMicros)
 	}
 }
 

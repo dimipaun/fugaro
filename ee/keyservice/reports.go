@@ -62,6 +62,24 @@ type reportLine struct {
 	granted     bool
 }
 
+// reportMonthLines is one month while it is being added up: a line for every
+// customer the month named, and the month's own two figures.
+//
+// The figures are not the sum of the lines, and that is the whole reason the
+// two are one type rather than the one being read off the other. A customer
+// line needs an organisation — `reports.schema.json` requires an id of every
+// one — where a ledger line does not: an adjustment, which is the body the
+// merchant posts for a refund or a chargeback, names the transaction and the
+// subscription and no customer at all. Such a line is the month's money, so it
+// is in the figure, and it is nobody's line, so it is not in the list (P5.2's
+// `TestReportCountsARefundItsEventNamesNoCustomerFor`). The ledger's own read is
+// where a person sees it, under the event it came from.
+type reportMonthLines struct {
+	customers map[string]*reportLine
+	direct    int64
+	reseller  int64
+}
+
 // reportWindow is the half-open window one report month covers: its first
 // instant and the first instant of the month after it, both in UTC.
 //
@@ -93,8 +111,10 @@ func inUTCmonth(at, start, end time.Time) bool {
 	return !utc.Before(start) && utc.Before(end)
 }
 
-// reportMonth is one month's report: the two channels' totals and every customer
-// behind them.
+// reportMonth is one month's report: the two channels' totals and a line for
+// every customer the month named. The two are one month read twice and not one
+// read off the other — a line that named no customer is in the total and is
+// nobody's line (reportMonthLines).
 //
 // The customers are drawn in the order of their organisation id and, for one
 // customer, of the channel — a fixed order and not the store's, so two months
@@ -113,30 +133,33 @@ func (s *Service) reportMonth(ctx context.Context, month string) (WireReportMont
 	if err != nil {
 		return WireReportMonth{}, err
 	}
-	ids := make([]string, 0, len(held))
-	for id := range held {
+	ids := make([]string, 0, len(held.customers))
+	for id := range held.customers {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 
+	// The two figures are the month's own and are not the customer lines below
+	// added up: a line no customer was named for is money the month took or gave
+	// back and is nobody's line (reportMonthLines).
 	report := WireReportMonth{
-		Month:     start.Format(statementMonthLayout),
-		Customers: make([]WireReportCustomer, 0, len(ids)),
+		Month:          start.Format(statementMonthLayout),
+		DirectMicros:   held.direct,
+		ResellerMicros: held.reseller,
+		Customers:      make([]WireReportCustomer, 0, len(ids)),
 	}
 	for _, id := range ids {
-		line := held[id]
+		line := held.customers[id]
 		name := reportName(orgs, id)
 		if line.hasDirect {
 			report.Customers = append(report.Customers, WireReportCustomer{
 				OrganisationID: id, Name: name, Channel: channelDirect, AmountMicros: line.direct,
 			})
-			report.DirectMicros += line.direct
 		}
 		if line.hasReseller {
 			report.Customers = append(report.Customers, WireReportCustomer{
 				OrganisationID: id, Name: name, Channel: channelReseller, AmountMicros: line.reseller,
 			})
-			report.ResellerMicros += line.reseller
 		}
 		if !line.hasDirect && !line.hasReseller && line.granted {
 			// A grant booked no money, so the month's sales say nothing about
@@ -157,44 +180,58 @@ func (s *Service) reportMonth(ctx context.Context, month string) (WireReportMont
 	return report, nil
 }
 
-// reportLines is one month's customers while they are being added up: the
-// ledger's lines for the direct half, the month's statements for the reseller
-// half, and the licences the month granted, which are a line and never an
-// amount.
-func (s *Service) reportLines(ctx context.Context, start, end time.Time) (map[string]*reportLine, error) {
-	held := map[string]*reportLine{}
+// reportLines is one month while it is being added up: the figures the ledger's
+// lines make, the month's statements' lines for the reseller half, and the
+// licences the month granted, which are a line and never an amount.
+func (s *Service) reportLines(ctx context.Context, start, end time.Time) (reportMonthLines, error) {
+	held := reportMonthLines{customers: map[string]*reportLine{}}
 	line := func(organisationID string) *reportLine {
-		if held[organisationID] == nil {
-			held[organisationID] = &reportLine{}
+		if held.customers[organisationID] == nil {
+			held.customers[organisationID] = &reportLine{}
 		}
-		return held[organisationID]
+		return held.customers[organisationID]
 	}
 
 	entries, err := s.ledgerEntries(ctx)
 	if err != nil {
-		return nil, err
+		return reportMonthLines{}, err
 	}
 	for _, entry := range entries {
 		if !inUTCmonth(entry.At, start, end) {
 			continue
 		}
-		// A line no customer was for cannot be drawn as one: the report is a
-		// list of customers and every line of it carries a name
-		// (reports.schema.json), where an event whose body named no organisation
-		// has no customer to be drawn under. The sale is still in the ledger,
-		// and in the month's own ledger read, for a person to see.
-		if strings.TrimSpace(entry.OrganisationID) == "" {
-			continue
-		}
+		// The month's figure is every line of the month, named or not, because
+		// that is what the ledger's own read of the same month adds up
+		// (wire_reports.go signs both figures for exactly this): an adjustment —
+		// the body Paddle posts for a refund or a chargeback — names the
+		// transaction and the subscription and no organisation at all, and a
+		// figure that dropped it would overstate the month by the whole of its
+		// refunds.
+		//
 		// The bucket is the line's own channel and not a choice made here: the
 		// ledger states it, and a report that decided it again is the second
 		// opinion the two would come apart on.
-		by := line(entry.OrganisationID)
 		if entry.Channel == channelReseller {
+			held.reseller += entry.AmountMicros
+		} else {
+			held.direct += entry.AmountMicros
+		}
+		// What such a line cannot be is a customer's line: the report is a list
+		// of customers and every line of it carries an id and a name
+		// (reports.schema.json), where an event whose body named no organisation
+		// has no customer to be drawn under. Nothing is invented to draw it —
+		// the money is in the figure above, and the ledger's own month read is
+		// where a person sees the line itself.
+		if strings.TrimSpace(entry.OrganisationID) == "" {
+			continue
+		}
+		if entry.Channel == channelReseller {
+			by := line(entry.OrganisationID)
 			by.hasReseller = true
 			by.reseller += entry.AmountMicros
 			continue
 		}
+		by := line(entry.OrganisationID)
 		by.hasDirect = true
 		by.direct += entry.AmountMicros
 	}
@@ -202,10 +239,11 @@ func (s *Service) reportLines(ctx context.Context, start, end time.Time) (map[st
 	statements, err := recordsWhere[WireStatement](ctx, s.docs, statementsCollection,
 		Where{Field: "month", Value: start.Format(statementMonthLayout)})
 	if err != nil {
-		return nil, err
+		return reportMonthLines{}, err
 	}
 	for _, statement := range statements {
 		for _, one := range statement.Lines {
+			held.reseller += one.AmountMicros
 			if strings.TrimSpace(one.OrganisationID) == "" {
 				continue
 			}
@@ -217,7 +255,7 @@ func (s *Service) reportLines(ctx context.Context, start, end time.Time) (map[st
 
 	grants, err := recordsWhere[WireEntitlement](ctx, s.docs, entitlementsCollection, Where{})
 	if err != nil {
-		return nil, err
+		return reportMonthLines{}, err
 	}
 	for _, grant := range grants {
 		if !inUTCmonth(grant.StartsAt, start, end) {
