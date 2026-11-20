@@ -28,12 +28,20 @@ import (
 // the plan's §3 have still to register. Regenerate it with
 // `go test ./internal/cli -run 'TestWriterConformanceTheOwnerWritesTheKey' -update-writers`.
 //
-// The ratchet is deliberately one-sided while the families land: a gap the
-// golden lists is not a failure, so T1 can merge before them, and a row the
-// golden lists that now passes is reported with t.Log rather than failed —
-// **I1** deletes those two exemptions and turns the file into a strict
-// comparison. What is a failure from today is a gap nobody has recorded: a new
-// row with no writer and no label, and a writer that no longer writes its key.
+// The ratchet is strict, in both directions, since I1. The file is the ledger
+// of every registry row the ratchet cannot prove a running command writes, and
+// every line of it carries the row's own state: the label the registry answers
+// it with, or a reason it is still open. A row the ratchet does not prove and
+// the file does not list fails — that is the containment T1 landed — and a line
+// whose row has come to be proven fails too, so a line is deleted by the change
+// that makes it untrue rather than left to rot and the file only ever shrinks.
+// The two tests that read it are TestWriterConformanceTheOwnerWritesTheKey,
+// which is the measurement, and TestWriterConformanceStrict, which audits the
+// ledger itself against the registry and runs no command.
+//
+// What the file is not is a list of tasks: a `label:` line is a row no command
+// writes because nothing should (D2611), and an `open:` line is one this plan
+// left for a later one, with the reason it is open.
 //
 // Every row is probed on an installation of its own. The assertion is that
 // *this* row's write changes *this* key, and two rows that spell one key — the
@@ -54,6 +62,95 @@ var updateWriterGaps = flag.Bool("update-writers", false, "rewrite testdata/writ
 // fact — a template that carries no such word fails below rather than being
 // run with a literal placeholder as its value.
 const writerValueWord = "<value>"
+
+// writerLineKind is which of the two states a golden line records: a row the
+// registry answers with a label, and a row the ratchet leaves open.
+type writerLineKind int
+
+const (
+	// writerLabelledLine is a row the registry answers with a label
+	// (writers_labels.go, L1): no command writes its key, the label says why,
+	// and the row is never run, so its line leaves the file only when a writer
+	// takes the label's place (D2611).
+	writerLabelledLine writerLineKind = iota + 1
+	// writerOpenLine is a row the ratchet cannot prove: either nothing answers
+	// for it at all, or a runnable writer does and the probe could not show it
+	// changing the key.
+	writerOpenLine
+)
+
+// The two open reasons, which are the whole vocabulary: each names a state of
+// the registry and of the measurement rather than a task, so a line either
+// states the truth about its row or fails TestWriterConformanceStrict.
+const (
+	// writerOpenNoWriter is a row no writer and no label answers for: the
+	// family its Owner token names has not registered the command that writes
+	// it (D2609, D2610).
+	writerOpenNoWriter = "no-writer"
+	// writerOpenWriterDoesNotWrite is a row a runnable writer answers for whose
+	// argv the probe could not show changing the key in the store the writer
+	// named — measured per candidate, and never a claim about the writer: the
+	// probe's own fixture and value ladder are half of it (writerProbeWrite).
+	writerOpenWriterDoesNotWrite = "writer-does-not-write-the-key"
+)
+
+// writerLine is one golden line's verdict: the kind and, for a line that has
+// one, the label or the open reason. It is comparable, which is what lets the
+// file and the measurement be compared as values rather than field by field.
+type writerLine struct {
+	kind  writerLineKind
+	value string
+}
+
+// String is the line as the file spells it: `<key>` is the caller's, and this
+// is the field beside it.
+func (l writerLine) String() string {
+	switch l.kind {
+	case writerLabelledLine:
+		return "label:" + l.value
+	case writerOpenLine:
+		return "open:" + l.value
+	}
+	return "?"
+}
+
+// writerLineFor is the line a measured state is written as.
+func writerLineFor(kind writerLineKind, value string) writerLine {
+	return writerLine{kind: kind, value: value}
+}
+
+// writerLineParse reads a line back, and refuses a verdict outside the
+// vocabulary rather than reading it as something else: the file is a ledger of
+// two states, and a third spelling is a state nobody defined.
+func writerLineParse(text string) (writerLine, error) {
+	kind, value, ok := strings.Cut(text, ":")
+	if !ok {
+		return writerLine{}, fmt.Errorf("%q is a bare word: a line is <key>, a tab, and label:<label> or open:<reason>", text)
+	}
+	switch kind {
+	case "label":
+		switch settings.Label(value) {
+		case settings.LabelPlumbing, settings.LabelFakeEndpoint, settings.LabelFile:
+			return writerLineFor(writerLabelledLine, value), nil
+		}
+		return writerLine{}, fmt.Errorf("the label %q is not one of %s, %s, %s (writers_labels.go, D2611)", value, settings.LabelPlumbing, settings.LabelFakeEndpoint, settings.LabelFile)
+	case "open":
+		switch value {
+		case writerOpenNoWriter, writerOpenWriterDoesNotWrite:
+			return writerLineFor(writerOpenLine, value), nil
+		}
+		return writerLine{}, fmt.Errorf("the reason %q is neither %s nor %s, which are the two states an open row is in", value, writerOpenNoWriter, writerOpenWriterDoesNotWrite)
+	}
+	return writerLine{}, fmt.Errorf("the verdict %q is neither label:<label> nor open:<reason>", kind)
+}
+
+// writerGoldenEntry is one non-comment line of the golden: the key, the verdict
+// beside it, and the line as the file spells it, which the shape checks read.
+type writerGoldenEntry struct {
+	key     string
+	line    writerLine
+	spelled string
+}
 
 // writerGapsPath is where today's gaps are listed, one registry key per line,
 // sorted, with # comments and blank lines allowed. It is absolute because the
@@ -523,83 +620,177 @@ func TestWriterConformanceEveryRowHasAWriterOrALabel(t *testing.T) {
 		// halves, and this test would only read a file the other test rewrites.
 		t.Skip("regenerating testdata/writer_gaps.golden")
 	}
-	known := writerGolden(t)
+	recorded := writerGolden(t)
 	for _, row := range settings.Rows() {
 		key := writerProbeKey(row.Key)
 		w, ok := settings.WriterOf(key)
 		if ok && (w.Label != "" || len(w.Argv) > 0) {
 			continue
 		}
-		if !known[key] {
+		line, ok := recorded[key]
+		if !ok {
 			t.Errorf("%s has no writer and no label: register the command that writes it in writers_table.go, or its label and reason in writers_labels.go (L1), or record it in %s",
 				key, writerGapsPath)
+			continue
+		}
+		if line != writerLineFor(writerOpenLine, writerOpenNoWriter) {
+			t.Errorf("%s answers no writer and no label and %s records it as %s: the row's line says which of the two states it is in", key, writerGapsPath, line)
 		}
 	}
 }
 
-// TestWriterConformanceTheOwnerWritesTheKey runs every row that answers with a
-// runnable writer: the registry's owner column names a writer, and this is the
-// test that the writer's own command line really writes the key (item 4,
-// D2610). A row that fails and is not in the golden is a failure; a row in the
-// golden that now passes is reported and not failed, until I1 flips the ratchet.
-func TestWriterConformanceTheOwnerWritesTheKey(t *testing.T) {
-	known := writerGolden(t)
-	gaps := map[string]string{}
+// writerMeasured is the whole measurement the golden is written from and
+// checked against: every registry row's key with the line the file must carry
+// for it, and no entry at all for a row a running command proved it writes
+// (item 4 of the owner's direction, D2610).
+//
+// The three states are the registry's own answer first — nothing answers for
+// the key, or a label does — and the probe's only where a runnable writer does.
+// A labelled row is not run: the label and its reason are the fact that stands
+// in for a writer (T5), so it can never pass and its line leaves the file only
+// when a family registers the command that writes the key.
+func writerMeasured(t *testing.T) map[string]writerLine {
+	t.Helper()
+	out := map[string]writerLine{}
 	for _, row := range settings.Rows() {
 		key := writerProbeKey(row.Key)
 		w, ok := settings.WriterOf(key)
-		if !ok {
-			gaps[key] = "no writer and no label answers for it"
-			continue
-		}
-		if w.Label != "" {
-			continue
-		}
-		if err := writerProbeWrite(t, row, key, w); err != nil {
-			gaps[key] = err.Error()
-			continue
-		}
-		if known[key] {
-			t.Logf("%s is written by `fugaro %s` today: %s may lose that line (I1 turns this into a failure)",
-				key, strings.Join(w.ArgvFor(key), " "), writerGapsPath)
+		switch {
+		case !ok:
+			out[key] = writerLineFor(writerOpenLine, writerOpenNoWriter)
+		case w.Label != "":
+			out[key] = writerLineFor(writerLabelledLine, string(w.Label))
+		default:
+			if err := writerProbeWrite(t, row, key, w); err != nil {
+				out[key] = writerLineFor(writerOpenLine, writerOpenWriterDoesNotWrite)
+			}
 		}
 	}
+	return out
+}
+
+// TestWriterConformanceTheOwnerWritesTheKey runs every row that answers with a
+// runnable writer and compares the measurement with the golden, strictly and in
+// both directions (I1): a row the ratchet does not prove and the file does not
+// list fails, a row the file lists whose line the measurement disagrees with
+// fails, and a line whose row a running command now writes fails — that last one
+// is the strictness I1 adds, and it is what makes the file shrink: a line is
+// deleted by the change that makes it untrue rather than left to rot.
+func TestWriterConformanceTheOwnerWritesTheKey(t *testing.T) {
+	measured := writerMeasured(t)
 	if *updateWriterGaps {
-		writerGoldenWrite(t, gaps)
+		writerGoldenWrite(t, measured)
 		return
 	}
-	for key, why := range gaps {
-		if !known[key] {
-			t.Errorf("%s: %s", key, why)
+	recorded := writerGolden(t)
+	for key, line := range measured {
+		got, ok := recorded[key]
+		if !ok {
+			t.Errorf("%s is not written by any command and %s does not list it: register the command that writes it in writers_table.go, label it in writers_labels.go (L1), or record the row's state in %s",
+				key, writerGapsPath, writerGapsPath)
+			continue
 		}
+		if got != line {
+			t.Errorf("%s is recorded as %s and the ratchet measures it as %s: regenerate the file with -update-writers once the change that moved it has landed",
+				key, got, line)
+		}
+	}
+	for key, line := range recorded {
+		if _, ok := measured[key]; ok {
+			continue
+		}
+		t.Errorf("%s is recorded as %s and a command writes it today: delete its line — a golden line that passes fails this test (I1)",
+			key, line)
 	}
 }
 
-// TestWriterGapsGoldenOnlyShrinks holds the golden's own shape: the file is a
-// list of registry keys, sorted and without repeats, and every key is one a
-// registry row still spells — so the file can lose a line when a family lands
-// or a row goes away, and can gain one only where a measurement put it there.
-// That a failing row is missing from it is the write test's failure, and a line
-// for a row that now passes is the log line there.
-func TestWriterGapsGoldenOnlyShrinks(t *testing.T) {
-	lines := writerGoldenLines(t)
-	if len(lines) == 0 {
-		t.Fatalf("%s lists nothing: a file that lists no gap would pass this test on a tree where every row fails", writerGapsPath)
+// TestWriterConformanceStrict audits the golden itself, and it is the half of
+// the ratchet that runs no command: the file is a ledger of the two states the
+// plan allows it to hold — a row the registry answers with a label, and a row
+// the ratchet leaves open with a reason — and every line's claim about the
+// registry is read here rather than trusted.
+//
+// Four properties, none of which needs a probe. The vocabulary: every verdict
+// is `label:<one of the three>` or `open:<one of the two reasons>`, so a third
+// spelling (the bare registry key the file was before I1) is a failure rather
+// than a line no reader knows. The shape: one line per key, sorted, and every
+// key a row of the registry still spells. The claim: a `label:` line names the
+// label the registry answers that row with, an `open:no-writer` line's key
+// answers nothing, and an `open:writer-does-not-write-the-key` line's key
+// answers a runnable writer. And the ledger's completeness over the states no
+// command decides: every labelled row and every row nothing answers for is in
+// the file, and no row a runnable writer answers for is recorded as labelled.
+//
+// What stays out of this test is the one claim only the probe can settle — that
+// a row absent from the file really is written by its command — which is
+// TestWriterConformanceTheOwnerWritesTheKey's measurement.
+func TestWriterConformanceStrict(t *testing.T) {
+	entries := writerGoldenEntries(t)
+	if len(entries) == 0 {
+		t.Fatalf("%s lists nothing: a ledger that holds no row would pass this test on a tree where every row is open", writerGapsPath)
+	}
+	labelled := map[string]settings.Label{}
+	unwritten, runnable := map[string]bool{}, map[string]bool{}
+	for _, row := range settings.Rows() {
+		key := writerProbeKey(row.Key)
+		w, ok := settings.WriterOf(key)
+		switch {
+		case !ok:
+			unwritten[key] = true
+		case w.Label != "":
+			labelled[key] = w.Label
+		default:
+			runnable[key] = true
+		}
 	}
 	seen := map[string]bool{}
-	for i, line := range lines {
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+	for i, entry := range entries {
+		if seen[entry.key] {
+			t.Errorf("%s lists %s twice in %q", writerGapsPath, entry.key, entry.spelled)
 		}
-		if seen[line] {
-			t.Errorf("%s lists %s twice", writerGapsPath, line)
+		if i > 0 && entries[i-1].key >= entry.key {
+			t.Errorf("%s is not sorted: %s comes after %s", writerGapsPath, entry.key, entries[i-1].key)
 		}
-		if i > 0 && !strings.HasPrefix(lines[i-1], "#") && lines[i-1] != "" && lines[i-1] >= line {
-			t.Errorf("%s is not sorted: %s comes after %s", writerGapsPath, line, lines[i-1])
+		seen[entry.key] = true
+		if !writerGapIsARegistryKey(entry.key) {
+			t.Errorf("%s lists %s, and no registry row spells it: a line for a row that is gone records a state no row can be in", writerGapsPath, entry.key)
 		}
-		seen[line] = true
-		if !writerGapIsARegistryKey(line) {
-			t.Errorf("%s lists %s, and no registry row spells it: a line for a row that is gone is a gap nothing can close", writerGapsPath, line)
+		switch entry.line.kind {
+		case writerLabelledLine:
+			label, ok := labelled[entry.key]
+			if !ok {
+				t.Errorf("%s records %s as %s and the registry answers the row with a runnable writer or with nothing: a labelled line stands for a row no command writes (D2611)",
+					writerGapsPath, entry.key, entry.line)
+				continue
+			}
+			if got := string(label); got != entry.line.value {
+				t.Errorf("%s records %s as %s and the registry answers it with the %s label (writers_labels.go)",
+					writerGapsPath, entry.key, entry.line, got)
+			}
+		case writerOpenLine:
+			switch entry.line.value {
+			case writerOpenNoWriter:
+				if !unwritten[entry.key] {
+					t.Errorf("%s records %s as %s and a writer or a label answers it in the registry: the reason names the state the row is in",
+						writerGapsPath, entry.key, entry.line)
+				}
+			case writerOpenWriterDoesNotWrite:
+				if !runnable[entry.key] {
+					t.Errorf("%s records %s as %s and no runnable writer answers it: an open row's reason names the state it is open in",
+						writerGapsPath, entry.key, entry.line)
+				}
+			}
+		}
+	}
+	for key := range labelled {
+		if !seen[key] {
+			t.Errorf("%s is answered with the label %s and %s holds no line for it: the file is the ledger of every row the ratchet cannot prove, labels included",
+				key, labelled[key], writerGapsPath)
+		}
+	}
+	for key := range unwritten {
+		if !seen[key] {
+			t.Errorf("%s answers no writer and no label and %s holds no line for it: the file is the ledger of every row the ratchet cannot prove", key, writerGapsPath)
 		}
 	}
 }
@@ -618,21 +809,42 @@ func writerGapIsARegistryKey(key string) bool {
 	return false
 }
 
-// writerGolden is the golden as a set of keys.
-func writerGolden(t *testing.T) map[string]bool {
+// writerGolden is the golden as a map from key to the state the file records
+// for it.
+func writerGolden(t *testing.T) map[string]writerLine {
 	t.Helper()
-	out := map[string]bool{}
-	for _, line := range writerGoldenLines(t) {
-		if line == "" || strings.HasPrefix(line, "#") {
+	out := map[string]writerLine{}
+	for _, entry := range writerGoldenEntries(t) {
+		out[entry.key] = entry.line
+	}
+	return out
+}
+
+// writerGoldenEntries reads the golden's lines in the file's own order, which
+// is what the shape checks read: a map would lose the order the sortedness is
+// about, and the text as the file spells it, which a failure quotes back.
+func writerGoldenEntries(t *testing.T) []writerGoldenEntry {
+	t.Helper()
+	var out []writerGoldenEntry
+	for _, text := range writerGoldenLines(t) {
+		if text == "" || strings.HasPrefix(text, "#") {
 			continue
 		}
-		out[line] = true
+		key, verdict, ok := strings.Cut(text, "\t")
+		if !ok {
+			t.Fatalf("%s holds the line %q, which is a key and nothing beside it: a line is <key>, a tab, and label:<label> or open:<reason> (I1)", writerGapsPath, text)
+		}
+		line, err := writerLineParse(verdict)
+		if err != nil {
+			t.Fatalf("%s holds the verdict %q for %s: %v", writerGapsPath, verdict, key, err)
+		}
+		out = append(out, writerGoldenEntry{key: key, line: line, spelled: text})
 	}
 	return out
 }
 
 // writerGoldenLines reads the golden, comments and blank lines included, so the
-// shape test can see them.
+// shape checks can see them.
 func writerGoldenLines(t *testing.T) []string {
 	t.Helper()
 	data, err := os.ReadFile(writerGapsPath)
@@ -642,31 +854,64 @@ func writerGoldenLines(t *testing.T) []string {
 	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 }
 
-// writerGoldenWrite rewrites the golden from a measurement: the keys the
-// registry answers for today, sorted, with the reason each one is a gap beside
-// it as a comment, so the file says what a family has still to register.
-func writerGoldenWrite(t *testing.T, gaps map[string]string) {
+// writerGoldenHeader is the file's own comment block: what a line is, the two
+// states it records, and the rule that keeps it honest. It is written by the
+// regeneration rather than kept beside it, so the file a run rewrites is the
+// file a reader reads.
+const writerGoldenHeader = `# Every registry row the writer conformance test cannot prove a command writes,
+# one per line and sorted by key: the key, a tab, and the state the row is in.
+#
+#   label:<plumbing|fake-endpoint|file>
+#     the registry answers the row with a label (writers_labels.go, L1): no
+#     command writes the key, the label's own line says why (D2611), and the row
+#     is never run. Such a line leaves the file when a family registers a writer
+#     for the row, which the strict ratchet then requires.
+#   open:no-writer
+#     no writer and no label answers the row: the family its Owner token names
+#     has not registered the command that writes it (D2609, D2610).
+#   open:writer-does-not-write-the-key
+#     a runnable writer answers the row and the probe could not show its argv
+#     changing the key in the store the writer named. This is a measurement of
+#     the probe as much as of the writer: its own hermetic fixture and value
+#     ladder are half of it (writerProbeWrite), so the line leaves the file when
+#     either the writer or the probe changes.
+#
+# The ratchet is strict in both directions (I1): a row the measurement does not
+# prove and this file does not list fails, and a line whose row a command writes
+# today fails too. So the file only ever shrinks, and a line is deleted by the
+# change that makes it untrue rather than left to rot.
+#
+# Generated by
+#   go test ./internal/cli -run TestWriterConformanceTheOwnerWritesTheKey -update-writers
+# and audited by TestWriterConformanceStrict, which reads every line's claim
+# against the registry.
+`
+
+// writerGoldenWrite rewrites the golden from the measurement: every row the
+// ratchet cannot prove a running command writes, sorted, with the state it is
+// in beside it.
+func writerGoldenWrite(t *testing.T, measured map[string]writerLine) {
 	t.Helper()
-	keys := make([]string, 0, len(gaps))
-	for key := range gaps {
+	keys := make([]string, 0, len(measured))
+	for key := range measured {
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
 	var b strings.Builder
-	b.WriteString("# Every registry key the writer table cannot write today, one per line,\n")
-	b.WriteString("# sorted: a row no writer and no label answers for, and a row whose writer's\n")
-	b.WriteString("# argv does not change the key in the store it named. Generated by\n")
-	b.WriteString("# `go test ./internal/cli -run TestWriterConformanceTheOwnerWritesTheKey -update-writers`.\n")
-	b.WriteString("# It only shrinks: a family that lands removes its rows' lines (I1 makes it strict).\n")
+	b.WriteString(writerGoldenHeader)
+	labelled, open := 0, 0
 	for _, key := range keys {
-		fmt.Fprintf(&b, "%s\n", key)
-		// The file lists keys and never values, and the reasons are not values
-		// either: a refusal quotes the value it was handed, so they are logged
-		// for whoever regenerates the file rather than written beside a key.
-		t.Logf("gap %s: %s", key, gaps[key])
+		line := measured[key]
+		fmt.Fprintf(&b, "%s\t%s\n", key, line)
+		switch line.kind {
+		case writerLabelledLine:
+			labelled++
+		case writerOpenLine:
+			open++
+		}
 	}
 	if err := os.WriteFile(writerGapsPath, []byte(b.String()), 0o600); err != nil {
 		t.Fatalf("writing %s: %v", writerGapsPath, err)
 	}
-	t.Logf("%s: %d gaps", writerGapsPath, len(keys))
+	t.Logf("%s: %d lines (%d labelled, %d open)", writerGapsPath, len(keys), labelled, open)
 }
