@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"slices"
@@ -10,8 +11,10 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // TestPickPromptPairsNumbersWithTheirOwnDirectory: PickPrompt writes one
@@ -621,4 +624,62 @@ func binariesPart(t *testing.T, body string) string {
 		part = part[:end+1]
 	}
 	return part
+}
+
+// TestPromptsFollowTheLevelARoundRaises: a prompt is built at the level the run
+// is at when it is built, never at the one the run started at. This run starts
+// at Startup and its own fix puts feature.txt under the area the repository
+// calls Critical, so D22's round moment raises it between round 1 and round 2:
+// the second senior round has to judge the change by Critical's reviewer
+// stance, and the fix that follows it has to carry Critical's coder stance in
+// both halves of its request — the system prompt it appends and the prompt
+// itself. A review prompt resolved once before the loop, or a system prompt
+// carried in from the implement stage, leaves round 2 and fix 2 at Startup
+// (findings 1 and 2).
+//
+// Red step: with the review prompt built once and the implement-time system
+// prompt reused by every fix, the second review round and the second fix carry
+// Startup's text.
+func TestPromptsFollowTheLevelARoundRaises(t *testing.T) {
+	base := testutil.FixtureFiles(t)["fugaro.yaml"]
+	cfg := strings.Replace(base, "  review_rounds: 2\n", "", 1)
+	if cfg == base {
+		t.Fatal("the fixture has no review_rounds: 2 to drop, so the level would not be the one supplying the number")
+	}
+	cfg = strings.Replace(cfg, "agent:\n",
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", level: critical }\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Rigor == nil || rec.Rigor.LevelOf() != rigor.Critical {
+		t.Fatalf("the record's level = %+v; want critical, or the case proves nothing", rec.Rigor)
+	}
+	if len(h.agent.calls) < 5 {
+		t.Fatalf("the run made %d agent calls; want implement, two review rounds and two fixes at the least", len(h.agent.calls))
+	}
+	startupRev, criticalRev := rigor.Persona(rigor.Startup, rigor.Reviewer), rigor.Persona(rigor.Critical, rigor.Reviewer)
+	startupCoder, criticalCoder := rigor.Persona(rigor.Startup, rigor.Coder), rigor.Persona(rigor.Critical, rigor.Coder)
+	// The calls are the run's stages in order: 0 implement, 1 the first senior
+	// round, 2 the fix that raises the level, 3 the round after the rise, 4 the
+	// fix it buys, and so on.
+	if first := h.agent.calls[1].Prompt; !strings.Contains(first, startupRev) {
+		t.Errorf("the first review round does not carry Startup's reviewer persona:\n%s", first)
+	}
+	if second := h.agent.calls[3].Prompt; !strings.Contains(second, criticalRev) || strings.Contains(second, startupRev) {
+		t.Errorf("the review round after the rise does not carry Critical's reviewer persona alone:\n%s", second)
+	}
+	f := h.agent.calls[4]
+	if !strings.Contains(f.AppendSystemPrompt, criticalCoder) || strings.Contains(f.AppendSystemPrompt, startupCoder) {
+		t.Errorf("the fix after the rise carries the wrong coder stance in the system prompt it appends:\n%s", f.AppendSystemPrompt)
+	}
+	if !strings.Contains(f.Prompt, criticalCoder) {
+		t.Errorf("the fix after the rise does not carry Critical's coder persona in its prompt:\n%s", f.Prompt)
+	}
 }

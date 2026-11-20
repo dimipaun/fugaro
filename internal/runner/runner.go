@@ -4208,7 +4208,7 @@ func (r *run) agentLoop(ctx context.Context) {
 		// one that came with a timeout or a cancel is a failed stage.
 		if rec := (recoveredError{}); !ok && errors.As(err, &rec) {
 			r.fellBackFresh(ctx)
-			req = agent.Request{Prompt: followup.ImplementPrompt(r.promptData(), r.follow.sel), SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
+			req = agent.Request{Prompt: followup.ImplementPrompt(r.promptData(), r.follow.sel), SessionID: agent.NewSessionID(), AppendSystemPrompt: SystemPrompt(r.systemPromptData(), r.instructions, r.coderPersona())}
 			if mb != "" {
 				req.Prompt += "\n\n" + mb
 			}
@@ -4258,7 +4258,16 @@ func (r *run) agentLoop(ctx context.Context) {
 	// cut from another branch than its ref is narrowed to its own commits
 	// here, once, before the prompt and every round's input read the range.
 	r.narrowReviewRange(ctx)
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable(), r.reviewerPersona())
+	// Everything the review prompt says but the level's own stance is resolved
+	// once here: the range the reviewer is pointed at, the size read off it,
+	// the task the pull request was written for and the follow-up addenda. The
+	// stance is not, and it is the one part that moves: D22's round moment
+	// raises the level after a fix, and the round that follows has to judge the
+	// change by the level the run is at then rather than by the one it started
+	// its reviews at (persona.go, reconciliation §3b item 10). reviewPrompt is
+	// therefore a builder, and every round reads it again.
+	rev, size, unread := r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable()
+	tail := ""
 	// The task the pull request was written for, quoted after the brief the
 	// levels already read (RA2, R3). It goes on the one prompt all three
 	// levels are handed — first line, senior and adversarial — so a finding of
@@ -4267,11 +4276,11 @@ func (r *run) agentLoop(ctx context.Context) {
 	// configured review may be a slash command (agent.review starting with
 	// "/"), and the reviewer's skill only loads when the prompt starts with it.
 	if block := r.reviewTaskBlock(ctx); block != "" {
-		reviewPrompt += "\n\n" + block
+		tail += "\n\n" + block
 	}
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
-			reviewPrompt += "\n\n" + add
+			tail += "\n\n" + add
 		}
 		// The ruling the run was launched with (OD1) reaches the reviewer here
 		// and not only the implement brief: the review stages read in sessions
@@ -4286,8 +4295,11 @@ func (r *run) agentLoop(ctx context.Context) {
 		// owner answered two rulings ago. All three levels are handed this one
 		// brief (reviewPromptWithFocus, AdversarialPrompt), so they all read it.
 		if add := followup.RulingAddendum(r.ownerRulings(), f.nonce, r.redactor()); add != "" {
-			reviewPrompt += "\n\n" + add
+			tail += "\n\n" + add
 		}
+	}
+	reviewPrompt := func() string {
+		return ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, rev, size, unread, r.reviewerPersona()) + tail
 	}
 	tier := ""
 	// The plan is read through the slice on every step, rather than ranged
@@ -4321,7 +4333,7 @@ func (r *run) agentLoop(ctx context.Context) {
 		case recipe.StepFirstLine:
 			tier = runstore.TierSenior
 			var ok bool
-			if sessionID, ok = r.firstLine(ctx, st.Rounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.Rounds, r.firstLinePrompt(reviewPrompt), sessionID); !ok {
 				return
 			}
 		case recipe.StepReview:
@@ -4330,11 +4342,11 @@ func (r *run) agentLoop(ctx context.Context) {
 			// could not finish — a failed stage, a cap, a closed pull request,
 			// an answer with no verdict — is where the run stops, and the
 			// levels after it are not run (checkPlan keeps the order fixed).
-			if !r.seniorLoop(ctx, st, tier, reviewPrompt, sys, sessionID) {
+			if !r.seniorLoop(ctx, st, tier, reviewPrompt, sessionID) {
 				return
 			}
 		case recipe.StepAdversarial:
-			if !r.adversarialLoop(ctx, st, reviewPrompt, sys, sessionID) {
+			if !r.adversarialLoop(ctx, st, reviewPrompt, sessionID) {
 				return
 			}
 		}
@@ -4402,11 +4414,13 @@ func (r *run) stopNow() bool {
 //
 // It reports whether the plan may go on to the step after it, which is false
 // for every way the run stops here.
-func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) bool {
+func (r *run) seniorLoop(ctx context.Context, st planStep, tier string, reviewPrompt func() string, sessionID string) bool {
 	// Level 2's own reviewer reads the level's focus quoted under the run's
 	// heading (reviewPromptWithFocus), exactly as level 3's does; the bounce's
-	// cheap loop below is level 1's and reads level 1's.
-	prompt := reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL2))
+	// cheap loop below is level 1's and reads level 1's. The prompt itself is
+	// built inside the round: the fix at the end of a round can raise the level
+	// the run is at (D22's round moment), and the round that follows is then
+	// handed the raised level's own stance rather than this level's first one.
 	for round := 1; ; round++ {
 		if r.stopNow() {
 			r.timeStop()
@@ -4427,6 +4441,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		// moves the branch, and the summary keeps the commit *this* round read
 		// (D727), so the levels can be told apart by the head they approved.
 		head := r.reviewedHead(ctx)
+		prompt := reviewPromptWithFocus(reviewPrompt(), r.levelFocus(policy.LevelL2))
 		v, parsed, ok := r.seniorRound(ctx, round, prompt)
 		if !ok {
 			return false
@@ -4533,16 +4548,26 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			r.timeStop()
 			return false
 		}
-		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sys, sessionID); !ok {
+		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sessionID); !ok {
 			return false
 		}
 		if st.Bounce && st.FirstRounds > 0 {
 			r.bounce++
-			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, r.firstLinePrompt(reviewPrompt), sessionID); !ok {
 				return false
 			}
 		}
 	}
+}
+
+// firstLinePrompt is the cheap loop's prompt builder: the brief the caller's
+// reviewPrompt builds at the moment a round is bought, with level 1's own focus
+// quoted under the run's heading (reviewPromptWithFocus). It is a builder and
+// not a string because both the focus and the stance are read at that moment,
+// whichever step bought the loop — level 1's own step, or a bounce carrying its
+// rounds into it (seniorLoop's and adversarialLoop's).
+func (r *run) firstLinePrompt(reviewPrompt func() string) func() string {
+	return func() string { return reviewPromptWithFocus(reviewPrompt(), r.levelFocus(policy.LevelL1)) }
 }
 
 // adversarialLoop is level 3's step: up to (*run).adversarialRounds adversarial
@@ -4561,8 +4586,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 // It reports whether the run may go on, which the plan does not ask of it: the
 // adversarial step is the plan's last, so the answer only decides whether the
 // loop returns early or falls out of its own bottom.
-func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sys, sessionID string) bool {
-	prompt := AdversarialPrompt(reviewPrompt, r.levelFocus(policy.LevelL3))
+func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt func() string, sessionID string) bool {
 	for round := 1; ; round++ {
 		if r.stopNow() {
 			r.timeStop()
@@ -4578,6 +4602,7 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		// (stopNow).
 		r.reviewRoundsRun++
 		head := r.reviewedHead(ctx)
+		prompt := AdversarialPrompt(reviewPrompt(), r.levelFocus(policy.LevelL3))
 		v, parsed, ok := r.adversarialRound(ctx, round, prompt)
 		if !ok {
 			return false
@@ -4642,12 +4667,12 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			r.timeStop()
 			return false
 		}
-		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sys, sessionID); !ok {
+		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sessionID); !ok {
 			return false
 		}
 		if st.Bounce && st.FirstRounds > 0 {
 			r.bounce++
-			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, r.firstLinePrompt(reviewPrompt), sessionID); !ok {
 				return false
 			}
 		}
@@ -4832,10 +4857,17 @@ func (r *run) seniorRound(ctx context.Context, round int, reviewPrompt string) (
 // findings those are — the judge's answer and the mode's table, applied inside
 // the floor (triageOutcome.fixable). A round that deferred everything never
 // reaches here at all; the loop ends on it.
-func (r *run) fix(ctx context.Context, findings []Finding, sys, sessionID string) (string, bool) {
+func (r *run) fix(ctx context.Context, findings []Finding, sessionID string) (string, bool) {
 	if r.sessionID != "" {
 		sessionID = r.sessionID
 	}
+	// The system prompt is built here, at the moment the fix runs, and never
+	// carried in from the implement stage: the level the run is at when this
+	// round's brief is built is the one its coder stance comes from
+	// (persona.go), so the two halves of one request — this and FixPrompt
+	// below — name the same level however far the run has climbed since
+	// implement (finding 2).
+	sys := SystemPrompt(r.systemPromptData(), r.instructions, r.coderPersona())
 	// Rule 1's third call site, with rule 4 in it: FixPrompt writes the
 	// widening sentence for the block, so the turn a message resumes this fix
 	// into carries it the same way the first turn did (D2943).
@@ -4888,7 +4920,7 @@ func (r *run) fix(ctx context.Context, findings []Finding, sys, sessionID string
 // loop is never the decider, and a bounce's extra rounds must not overwrite the
 // senior round the mode's findings policy is read off (outcome.go,
 // findingsPolicy).
-func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
+func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt func() string, sessionID string) (string, bool) {
 	for round := 1; round <= rounds; round++ {
 		// Read per round, not once before the loop: the fix at the end of a
 		// round can turn level 3 on (the escalation's fix seam, security.go),
@@ -4914,7 +4946,7 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		// time half read the run's review rounds, never one level's.
 		r.reviewRoundsRun++
 		head := r.reviewedHead(ctx)
-		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt()), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 		res, ok, err := r.stage(ctx, "review_first", req, stageOpts{Skippable: true})
 		r.noteReviewSession(req, res)
 		r.countTokens(res)
@@ -5009,7 +5041,7 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			return r.firstLineStop(sessionID)
 		}
 		var more bool
-		if sessionID, more = r.fix(ctx, triaged.fixable(v), sys, sessionID); !more {
+		if sessionID, more = r.fix(ctx, triaged.fixable(v), sessionID); !more {
 			return sessionID, false
 		}
 	}
