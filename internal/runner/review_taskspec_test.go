@@ -15,6 +15,7 @@ package runner_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -218,36 +219,72 @@ func TestABReplayCarriesTask(t *testing.T) {
 	}
 }
 
+// overCapBrief is a brief past R4's 16 KiB cap, with a last line the block
+// cannot reach: the block quotes part of it and says how much it dropped, and
+// the row's digest has to be of that quoted part rather than of the brief as it
+// was stored (R4, R8).
+var overCapBrief = strings.Repeat("A line of the brief that asks for something.\n", 500) + "THE LAST LINE OF THE BRIEF\n"
+
 // TestResultReviewAgainstRecorded: every review row says what its round was
 // checked against (RA2, R8): the run whose task it was, and the digest of the
 // text the reviewer was actually shown — so a reader can tell two reviews of
 // one pull request apart when the task behind them changed, and can check the
 // row against the prompt it came from.
+//
+// The digest is of the bytes the block emitted, which is the brief only while
+// the brief is short and clean: a brief over R4's cap is quoted in part with a
+// note naming what was dropped, and a brief ending in whitespace is trimmed as
+// the block trims every quoted line. Both are cases where hashing the stored
+// text instead would record a digest of something no reviewer read.
 func TestResultReviewAgainstRecorded(t *testing.T) {
-	h := newHarness(t, "", nil)
-	h.setTask(t, reviewBriefText)
-	rec, err := h.run(t, implement("feature"), review("ship", 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rec.Reviews) != 1 {
-		t.Fatalf("reviews = %+v, want the one round", rec.Reviews)
-	}
-	got := rec.Reviews[0].Against
-	if got == nil {
-		t.Fatal("the round records no against: a reader cannot say what the review judged the change against")
-	}
-	if err := got.Validate(); err != nil {
-		t.Fatalf("the recorded against is not a record a reader accepts: %v", err)
-	}
-	if got.Source != runstore.AgainstSourceRun || got.Run != runID || got.Reason != "" {
-		t.Fatalf("the round records against = %+v, want the run's own task and no reason", got)
-	}
-	// The digest is of the text the reviewer was shown and not of the task as
-	// it was stored: what the row vouches for is what the round read.
-	_, body := fencedTask(t, h.agent.calls[1].Prompt)
-	sum := sha256.Sum256([]byte(body))
-	if want := hex.EncodeToString(sum[:]); got.SHA256 != want {
-		t.Errorf("the row's digest is %q, want the SHA-256 of the text the reviewer read (%s)", got.SHA256, want)
+	for _, tc := range []struct {
+		name  string
+		brief string
+	}{
+		{"a plain brief", reviewBriefText},
+		{"a brief over R4's cap", overCapBrief},
+		{"a brief ending in whitespace", reviewBriefText + "\n\n  \n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, "", nil)
+			h.setTask(t, tc.brief)
+			rec, err := h.run(t, implement("feature"), review("ship", 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rec.Reviews) != 1 {
+				t.Fatalf("reviews = %+v, want the one round", rec.Reviews)
+			}
+			got := rec.Reviews[0].Against
+			if got == nil {
+				t.Fatal("the round records no against: a reader cannot say what the review judged the change against")
+			}
+			if err := got.Validate(); err != nil {
+				t.Fatalf("the recorded against is not a record a reader accepts: %v", err)
+			}
+			if got.Source != runstore.AgainstSourceRun || got.Run != runID || got.Reason != "" {
+				t.Fatalf("the round records against = %+v, want the run's own task and no reason", got)
+			}
+			// The digest is of the text the reviewer was shown and not of the
+			// task as it was stored: what the row vouches for is what the round
+			// read, which is the block's own bytes for the brief.
+			_, body := fencedTask(t, h.agent.calls[1].Prompt)
+			sum := sha256.Sum256([]byte(body))
+			if want := hex.EncodeToString(sum[:]); got.SHA256 != want {
+				t.Errorf("the row's digest is %q, want the SHA-256 of the text the reviewer read (%s)", got.SHA256, want)
+			}
+			if len(tc.brief) <= task.MaxReviewSpecBytes {
+				return
+			}
+			// An over-cap brief: the reviewer was shown part of it, and the
+			// note has to name the whole brief's size rather than the size of an
+			// already-clipped text (R4).
+			if strings.Contains(body, "THE LAST LINE OF THE BRIEF") {
+				t.Errorf("the block quoted a brief over R4's cap in full:\n%s", body)
+			}
+			if want := fmt.Sprintf("of %d bytes of this text were dropped", len(tc.brief)); !strings.Contains(body, want) {
+				t.Errorf("the block's note does not say %q, so it names what a clipped text lost rather than what the brief lost:\n%s", want, body)
+			}
+		})
 	}
 }
