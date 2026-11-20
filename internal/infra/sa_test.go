@@ -300,13 +300,17 @@ func TestSACloudConditionedBindings(t *testing.T) {
 		t.Fatalf("RemoveOwner of the unconditional member: %v", err)
 	}
 
-	// The same two answers on the account side.
+	// The same two answers on the account side. A conditioned member IS listed:
+	// it can impersonate the account under its condition, and AdminBindings
+	// answers who can act as the account (D2823) — the folder side's Owners
+	// lists a conditioned owner for the same reason — while the removal that
+	// would leave the condition behind is still refused.
 	listed, err := r.sap.TokenCreators(ctx, account)
 	if err != nil {
 		t.Fatalf("TokenCreators: %v", err)
 	}
-	if len(listed) != 0 {
-		t.Errorf("TokenCreators = %v, want none: a member a condition binds is not trusted as an admin (D2823)", listed)
+	if want := []string{wu20Second}; !slices.Equal(listed, want) {
+		t.Errorf("TokenCreators = %v, want %v: a member a condition binds can impersonate the account, and a list that leaves it out says the account cannot be reached through it", listed, want)
 	}
 	if err := r.sap.RemoveTokenCreator(ctx, account, wu20Second); err == nil {
 		t.Error("RemoveTokenCreator of a member a conditional binding names = nil, want a refusal")

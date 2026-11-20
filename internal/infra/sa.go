@@ -148,10 +148,23 @@ func (s *SAProjects) Owns(ctx context.Context, project, member string) (bool, er
 
 // TokenCreators lists the members bound to SATokenCreatorRole on the account.
 // AdminBindings reads it, and D2823 compares the workspace node's `Admins`
-// against it, which is why it counts the unconditional binding only (Owns says
-// why) and why a member Google marks deleted is left out: it can no longer act
-// as the account, and the policy keeps the spelling only until the principal's
-// grants are cleaned up.
+// against it, so what it lists is the answer to "who can act as the account".
+//
+// A member a CONDITIONAL token-creator binding names is listed: it can
+// impersonate the account, under its condition, and a reader asking who the
+// account's token creators are is owed that — the same answer, for the same
+// question, that the folder side's Owners gives about a conditioned owner. This
+// is deliberately NOT the rule of the reads that gate something (Owns, and
+// deployerAccess.TokenCreator): a condition cannot be evaluated here, and a gate
+// has to make the mistake that refuses rather than the one that admits, while a
+// list that leaves a member out tells the reader the account cannot be reached
+// through it. RemoveTokenCreator still refuses such a member rather than
+// reporting a removal it did not make, which is what keeps the list and the
+// writes saying the same thing.
+//
+// A member Google marks deleted is left out: it can no longer act as the
+// account, and the policy keeps the spelling only until the principal's grants
+// are cleaned up.
 func (s *SAProjects) TokenCreators(ctx context.Context, account string) ([]string, error) {
 	pol, err := s.accountPolicy(ctx, account)
 	if err != nil {
@@ -159,7 +172,7 @@ func (s *SAProjects) TokenCreators(ctx context.Context, account string) ([]strin
 	}
 	var out []string
 	for _, b := range pol.Bindings {
-		if b.Role != SATokenCreatorRole || b.Condition != nil {
+		if b.Role != SATokenCreatorRole {
 			continue
 		}
 		for _, m := range b.Members {

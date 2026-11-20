@@ -90,7 +90,10 @@ type SAProjects interface {
 	// workspace node says about a grant is not this.
 	Owns(ctx context.Context, project, member string) (bool, error)
 	// TokenCreators lists the members bound to
-	// roles/iam.serviceAccountTokenCreator on account, in the API's order.
+	// roles/iam.serviceAccountTokenCreator on account, in the API's order, a
+	// binding that carries a condition included: that member can act as the
+	// account too, and AdminBindings is what the roster's admins are compared
+	// against (D2823).
 	TokenCreators(ctx context.Context, account string) ([]string, error)
 	// AddTokenCreator binds member to roles/iam.serviceAccountTokenCreator on
 	// account: the grant that lets them impersonate the account, and the only
