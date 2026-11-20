@@ -2117,7 +2117,8 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 // O2, "we added the orchestrator subtree", whose addition is the top-level
 // /orchestrator node and nothing under it, or for its T8, "we added the build
 // lease family", whose addition is likewise its own node and nothing under it
-// (isNamedAddition).
+// (isNamedAddition) — or, for WS22, "we added the credential route", whose
+// addition is the route subtree and one repository's record under it.
 //
 // Two rules already there are allowed to move, and both are named. One is a
 // change: the outcome's status validator gains the run status 'unreviewed'
@@ -2408,7 +2409,8 @@ func withoutAttr(m map[string]any, key string) map[string]any {
 func isNamedAddition(p string) bool {
 	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth ||
 		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p) || isNewVoicePath(p) ||
-		isNewRegistrationPath(p) || isNewEscalationReadPath(p) || isNewSpendAccuracyPath(p)
+		isNewRegistrationPath(p) || isNewEscalationReadPath(p) || isNewSpendAccuracyPath(p) ||
+		isNewRoutePath(p)
 }
 
 // escalationLedgerPath is the ladder's ledger node as the rules spell it (E7,
@@ -2602,6 +2604,41 @@ func isNewVoicePath(p string) bool {
 		p == projectpolicy.PathVoiceRepos() || p == projectpolicy.PathVoiceRepo(slugForPath)
 }
 
+// isNewRoutePath reports whether p is one of the two locations the credential
+// route adds (workspace-service task WS22, decisions D2980–D2982, resolutions
+// R3 and R4): the subtree's own node and one repository's record. Both are
+// equalities and not prefixes, for isNewCredsPath's reason — the record's
+// members are the service's address and the holder of each kind, so a path
+// *under* a repository's node is a change to what a run reads, and it belongs
+// here as a diff a reviewer sees rather than as a match this function waves
+// through.
+//
+// The subtree's own node is in the list because the template spells it and
+// because it is the one path a grant on which would reach every repository's
+// record: the grants are per repository, and an RTDB read grant cascades down.
+//
+// The path is spelled here rather than taken from a constant, because the
+// contract that owns it is internal/creds (RoutePath, C2's wire contract): its
+// import allow-list admits internal/creds, internal/credsvc and internal/cli
+// and nothing else (TestCredsIsNotReachableFromARun), so this package may not
+// import it, and a second spelling of the path in this package would be a
+// second contract. The two agree because internal/creds'
+// TestRoutePathIsGrantedInTheDeployedRules walks this document's own golden at
+// creds.RoutePath and fails if the rule there is not the one this template
+// writes.
+func isNewRoutePath(p string) bool {
+	return p == routeSubtree || p == routeSubtree+"/"+slugForPath
+}
+
+// routeSubtree is the credential route's subtree as the template spells it,
+// above one repository's record. The records' own paths are creds.RoutePath's
+// (C2's wire contract) and the segment under this subtree is budget.Key of the
+// raw slug — the spelling the rule compares a token's `fs` claim with, so a
+// path keyed another way is a node no run asks for and no rule admits. It is
+// declared here rather than in the emulator test so that the path the shape
+// test names and the path the emulator drives are one spelling.
+const routeSubtree = "config/policy/route"
+
 // isNewWorkspacePath reports whether p is one of the paths the workspace family
 // adds (docs/workspaces/implementation-plan.md W3, workspace.go): the record and
 // its four children, the admitted-token hashes, and the meter and the rollup by
@@ -2703,7 +2740,13 @@ func isNewCredsPath(p string) bool {
 //     paired device's read of `outcomes/$day/$slug/$run` is a **grant**, one
 //     node a signed-in phone may read and did not before, and this time the
 //     grant is to `USER` alone — the run token's own read set does not move — so
-//     the phone's running-jobs view (J2) names a run that is still going.
+//     the phone's running-jobs view (J2) names a run that is still going. WS22
+//     (workspace-service, D2982, R3 and R4) moves it to 9 for P5.3.1's reason:
+//     the credential-route leaf (`config/policy/route/$slug`, which
+//     `creds.RoutePath` builds and `TestRoutePathIsGrantedInTheDeployedRules`
+//     holds this document to) is a **grant** to a run token too — the run reads
+//     its route before its first call, and did not read this leaf before — so a
+//     run under the document behind is refused a read the routing depends on.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -2722,8 +2765,8 @@ func isNewCredsPath(p string) bool {
 // Hand mutation this fails on: bumping any of the four (or lowering one of the
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 8 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 8: the generation that carries the paired device's read of outcomes/$day/$slug/$run (mobile identity-pairing J1, F30, D2797, O3)", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 9 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 9: the generation that carries the credential-route leaf config/policy/route/$slug and the run token's read of it (workspace-service WS22, D2982, R3, R4)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)
