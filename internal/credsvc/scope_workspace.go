@@ -370,14 +370,25 @@ type workspaceScope struct {
 	id      Identity
 	readers workspaceReaders
 	meter   *WorkspaceMeter
+	// unserved marks the scope built for a route this deployment does not serve
+	// at all, and it is a field rather than a read of the path because a served
+	// workspace scope and an unserved one are handed the SAME path: the build
+	// half of the git proxy is answered ahead of the shared parse, so the scope
+	// it gets is the unserved one, while Serves over R14's set answers true for
+	// the proxy's prefix — the gate would then dispatch the call to the build
+	// proxy, which reads the installation's own configuration and bundle around
+	// the scope this deployment exists to put in front of it. An unserved scope
+	// therefore refuses every path.
+	unserved bool
 }
 
 // unservedWorkspaceScope is the scope a call gets that the workspace does not
 // serve — a route answered before the shared parse, whose caller holds no run
 // identity at all, or a route of the shared parse the deployment refuses. Its
 // readers are the refusing ones: the gate refuses the call before a handler is
-// dispatched (Serves is false), and a scope that answered a reader here would be
-// a scope that could serve one.
+// dispatched (Serves is false for EVERY path, which is what the marker field is
+// for — see workspaceScope), and a scope that answered a reader here would be a
+// scope that could serve one.
 //
 // It still carries the caller when there is one, because the gate's refusal of
 // a route it does not serve is written with the caller's identity and purpose
@@ -386,8 +397,9 @@ type workspaceScope struct {
 func unservedWorkspaceScope(id Identity, meter *WorkspaceMeter) workspaceScope {
 	refuse := refusingWorkspace{}
 	return workspaceScope{
-		id:    id,
-		meter: meter,
+		id:       id,
+		meter:    meter,
+		unserved: true,
 		readers: workspaceReaders{
 			policy:   refuse,
 			kills:    refuse,
@@ -450,7 +462,20 @@ func (sc workspaceScope) Meter() *WorkspaceMeter { return sc.meter }
 // caller C1's fence — the calling job account's repositories — does not
 // describe (WS1's own review note). The world's route refused here is the
 // member's own service's.
-func (sc workspaceScope) Serves(path string) bool { return servesWorkspaceRoute(path) }
+//
+// **An unserved scope refuses every path, and the route set is asked only of a
+// scope that was built for a call this deployment resolved.** The two are told
+// apart by the scope and not by the path, because one path is handed to both:
+// the build half of the git proxy is answered ahead of the shared parse and gets
+// the unserved scope, while the proxy's own prefix is in R14's set — so a path
+// predicate alone would tell the gate to dispatch that call to the build proxy,
+// which reads the installation's configuration rather than the scope.
+func (sc workspaceScope) Serves(path string) bool {
+	if sc.unserved {
+		return false
+	}
+	return servesWorkspaceRoute(path)
+}
 
 // AcceptsSlip answers false: a call to the workspace's service carries the
 // job's identity and the run's token and NOTHING else of the member's — no slip

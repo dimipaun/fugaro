@@ -1185,6 +1185,43 @@ func TestWorkspaceScopeRefusesEveryReaderOfAnUnservedCall(t *testing.T) {
 	if sc.Serves(SignPath) {
 		t.Fatal("the scope serves the review signing route: R14 leaves it to the member's own service")
 	}
+	// The build half of the git proxy is the case a path predicate gets wrong:
+	// it is answered ahead of the shared parse, so the scope it is handed is the
+	// UNSERVED one — while the proxy's own prefix IS in R14's set, which is what
+	// the gate reads through Serves before dispatching a handler. An unserved
+	// scope that answered the predicate here would send the call to the build
+	// proxy, which reads the INSTALLATION's own configuration and bundle around
+	// the scope this deployment exists to put in front of it (server.go's
+	// buildProxy branch), and the route would be served where it must not be.
+	build := s.request(t, BitbucketProxyPrefix+wsRepo+".git/git-receive-pack", wsAccountA)
+	build.Header.Set(HeaderBuild, "ws2-build")
+	buildScope, err := s.res.Resolve(context.Background(), build)
+	if err != nil {
+		t.Fatalf("Resolve of a build's proxy call = %v, want the unserved scope", err)
+	}
+	if buildScope.Serves(build.URL.Path) {
+		t.Fatal("the unserved scope serves the build half of the git proxy: the call would be dispatched to the build proxy, which reads the installation's own configuration around this scope")
+	}
+	if callerNamed(buildScope.Caller()) {
+		t.Errorf("the unserved scope of a build's proxy call names a caller (%+v), and a build's call holds no run identity", buildScope.Caller())
+	}
+	// And the front door refuses such a call rather than dispatching it to the
+	// build proxy: the refusal is the gate's own, and because a build's call
+	// holds no run identity there was no verification to record, so it writes
+	// no audit line at all.
+	svc := wsService(t, s)
+	resp, body := svc.postRaw(t, http.MethodPost, BitbucketProxyPrefix+wsRepo+".git/git-receive-pack", func(r *http.Request) {
+		r.Header.Set(HeaderBuild, "ws2-build")
+	})
+	if resp.StatusCode != StatusUnverified {
+		t.Errorf("a build's proxy call = %d, want %d, the gate's refusal of a route this deployment does not serve", resp.StatusCode, StatusUnverified)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedJobIdentity {
+		t.Errorf("a build's proxy call refused with %q, want %q: the route is one this deployment does not serve", e.Error, ErrorUnverifiedJobIdentity)
+	}
+	if got := lines(svc.audit); len(got) != 0 {
+		t.Errorf("a build's proxy call wrote %d audit lines, want none: it holds no run identity, so no verification happened to record", len(got))
+	}
 	ctx := context.Background()
 	if _, _, err := sc.Policy().Shared(ctx); !errors.Is(err, ErrUnverifiedJob) {
 		t.Errorf("Policy().Shared = %v, want the unserved refusal", err)
