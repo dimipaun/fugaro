@@ -3,8 +3,8 @@
 Checked against `origin/main` at `252329076` on 2026-11-20. **Where this file disagrees with
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
 **D3080–D3091**, all answered by the owner on 2026-11-20, every one as recommended. **D3087 was
-amended after review round 1** (below), and the amended text waits for the owner's confirmation
-(O6). It carries out
+amended after review round 1 and D3088 after round 3** (below), and the amended texts wait for
+the owner's confirmation (O6, O12). It carries out
 **D3029** of [always a budget](../always-a-budget/reconciliation.md) (in that plan's open follow-up,
 pull request #3305, merged on 2026-11-20), it replaces **D4** of `docs/design/m9-budget-and-dashboard.md` for a new
 installation, and it reverses the ruling **D12 of 2026-10-20** for the Firestore location (D3090).
@@ -122,12 +122,16 @@ is a Cloud Run and Firestore region with no Scheduler and no entry, so `gcp.Sche
 refuses it and asks for `--scheduler-region`. The new mapping follows the pattern, LP1 adds the
 missing entries, and a test pins that every region of a place has a Scheduler location in it.
 
-**F4 — Rule: the region can be changed after setup, and then nothing agrees.**
-`localcfg.Config.Override` writes any `--region` into an existing project config, and no caller
-compares it with the installation. The runs bucket is regional (`upper(var.region)`), so the next
+**F4 — Rule: the region can be overridden after setup, and then nothing agrees.** `--region` is a
+flag on every cloud command (`cloudFlags`, `internal/cli/cloud.go`: "overrides the project
+config's"), and `localcfg.Config.Override`, called from `internal/cli/project.go`, applies it in
+memory for that invocation. No caller compares it with the installation. On a read command that
+is a tested use (`TestLsInAnotherRegionNamesTheRunsRegion`, doctor's and `update --check`'s). On
+`setup` and `update` it plans in the typed region. The runs bucket is regional (`upper(var.region)`), so the next
 plan replaces a bucket and is refused late by the data-bearing rule (D1551,
 `docs/no-prompt-policy/reconciliation.md`). The comment on `defaultRegion` says the region is
-"changeable on a later run"; with the place derived from it (D3080) it is not. Decided by D3088.
+"changeable on a later run"; with the place derived from it (D3080) it is not. Decided by D3088,
+whose scope review round 3 narrowed to the commands that plan.
 
 **F5 — Rule: the location's own confirmation is a ruling the spec reverses.** `confirmLocation`
 holds the Firestore location's note, and `stepConfirmation` (`internal/cli/init.go`) names "the
@@ -145,10 +149,12 @@ Firestore location "happen to hold the same value and are never derived from one
 derives one from the other. The comment goes with the constant (LP3, LP4).
 
 **F8 — Gap: changing the Realtime Database's region in Terraform replaces the instance.** The
-resource carries `prevent_destroy`, and the region is a creation-time field. So the module's region
-must be an input whose value, for an instance that exists, is that instance's own location as
-discovery read it, never the mapping's answer. LP2 holds this and tests that an existing
-installation plans no change.
+resource carries `prevent_destroy`, and the region is a creation-time field. So an instance that exists
+must never be given the mapping's answer. Discovery cannot be what guarantees it: `DiscoverFirebase`
+skips every resource already in Terraform's state, which is every installation after its first
+apply. So the resource ignores changes to its region, as LP5a's secrets ignore their replication,
+and discovery supplies the real location only for an instance not yet in state, which it imports
+there. LP2 tests a managed instance in `us-central1` under a European region: no change.
 
 **F9 — Gap: secrets replicate "without restriction".** All six Terraform secret resources and both
 Go creators use automatic replication, which Google documents as global. The comment in
@@ -157,8 +163,8 @@ deletes every version first". An EU promise that covers credentials (D3082) need
 replication on a new installation and automatic kept on an existing one, so a container that exists must keep what it has. Terraform is told to ignore the replication of
 a container it already manages or adopts, and every container created from then on is replicated
 in the region (R5). The intake service's creator runs in the cloud with no project config and is
-told the region by its environment (LP5a, LP5c); its own shape check, which holds a container to
-automatic today, accepts both.
+told the region by its environment (LP5a, LP5c); its shape check (`Shape`,
+`internal/intake/server.go`) does not read replication and is unchanged.
 
 **F10 — Gap: the run log bucket is `global`.** It holds each run's output, which is the code and
 the agent's transcript, and its location is permanent. The same shape as F9: a new installation's
@@ -170,9 +176,9 @@ bucket goes in the place, an existing one stays `global`, and the import address
 secrets are automatic and its log bucket global whatever its region. So nothing that exists is ever given the
 mapping's answer: a secret by Terraform ignoring that field, a database and the log bucket by
 discovery reading where they are (R5). One path plans with no discovery at all,
-`fugaro update --forget` (`ForgetSpec`, `internal/infra/forget.go`), and it turns log isolation
-off and keeps every secret declared, so it is safe under the same two rules and LP5a and LP6 each
-test it. `fugaro update` writes what the cloud holds down as the record (D3087, D3089).
+`fugaro update --forget` (`ForgetSpec`, `internal/infra/forget.go`). It keeps every secret
+declared, which the ignored field makes safe, and it turns log isolation off and deletes the log
+bucket, as it does today; LP5a and LP6 each test that it plans what it plans today. `fugaro update` writes what the cloud holds down as the record (D3087, D3089).
 
 **F12 — Gap: a teammate's machine types the region again.** `fugaro update` on a new machine asks
 `--gcp-project` and `--region` (`firstRunMissing`), and nothing compares the answer with the
@@ -270,7 +276,7 @@ All answered by the owner on 2026-11-20. None departs from the recommendation.
 | **D3085** | Where does a new Firestore database go? | **The installation's own region where Firestore offers it, else the place's default** | as recommended: one region for everything where it can be |
 | **D3086** | Which region does EU give with no `--region`? | **`europe-west1`** | as recommended: the Realtime Database's only EU location, so everything is in one region |
 | **D3087** | Where is "what this installation has" kept? | **A locations record in the project config, written by setup and by update from what the cloud holds; where it and the cloud disagree the cloud wins and the record is corrected.** *Amended after review:* the record is each machine's own and is not published in the shared config, and nothing reads it as an input | as recommended, then **amended after review round 1**; the original answer was "shared with teammates like the region is" |
-| **D3088** | A `--region` that differs from the installation's? | **Refused at once, with the fix**: the refusal names the installation's region and prints the command with it | as recommended: today it ends in a late Terraform refusal |
+| **D3088** | A `--region` that differs from the installation's? | **Refused at once, with the fix**: the refusal names the installation's region and prints the command with it. *Amended after review:* in `setup` and `update`, the commands that plan; every other command keeps `--region` as the per-invocation override it is | as recommended, then **amended after review round 3**: today it ends in a late Terraform refusal |
 | **D3089** | An installation made before this work, with compute in the EU and a database not yet created? | **`fugaro update` creates it in the derived place**, prints the line and asks nothing | as recommended: it is what D3029 held AB7 back for |
 | **D3090** | The Firestore location's own note (D12 of 2026-10-20)? | **Removed everywhere.** The line is printed and the database is created, in any session the stage itself may run in | as recommended: the brief's item 4; the stage's own fences still apply |
 | **D3091** | A database found outside the installation's place? | **Adopted if empty or ours, recorded where it really is, said once, and reported by `fugaro doctor` as information** | as recommended: accepted is not the same as hidden |
@@ -287,6 +293,13 @@ this machine's own, and that it is written from the cloud and never read back as
 teammate's machine writes its own on its next `fugaro update`. What is left of the record is
 small, and the owner should weigh it: its one reader is `fugaro doctor` (LP12), and a person
 whose update cannot read the cloud is told by doctor to run `fugaro update` until one can.
+
+**What changed in D3088, and why.** The question was asked as if `--region` only ever rewrote an
+installation's region. It is also a per-invocation override on every cloud command, and read
+commands use it so, with tests (F4). Refusing it everywhere would break those; the answer's
+intent, that a region which is not the installation's never reaches a plan, is kept by refusing it
+in `setup` and `update`. Whether the override should go from the read commands too is the owner's
+(O12).
 
 **What D3082 does not promise.** The documents list each of these by name: prompts and code sent
 to a model provider (D3083); the git host; Google's global control plane (IAM, service accounts,
@@ -321,14 +334,16 @@ One defensible answer each, so stated and not asked.
 - **R3.** An existing database is adopted wherever it is, under the rules that already decide
   whether it is ours: empty, or carrying our mark. A Firestore database that is not native mode is
   still refused, because that is not a location (F1).
-- **R4.** The module's region for the Realtime Database is the existing instance's location when
-  discovery finds one, and the mapping's answer only when it finds none (F8).
+- **R4.** An instance of the Realtime Database that Terraform manages keeps its region because
+  the resource ignores changes to it; one that exists outside state is imported at the location
+  discovery finds; the mapping answers only when there is none (F8).
 - **R5.** Nothing that exists is given the mapping's answer, and no rule infers a policy from
   what exists. A secret container keeps its replication because Terraform ignores that field on
   a container it manages or adopts; every container created from then on, by Terraform, by the
   CLI or by the intake service, is replicated in the region, on an old installation too. A
-  database or a log bucket that exists is found by discovery and keeps its location; the mapping
-  answers only for one that does not exist. The record (D3087) is written from a reading of the
+  log bucket that exists is found by discovery, which lists every location for its id, and keeps
+  its location; a Realtime Database keeps its region by R4 and a Firestore database by its step's
+  own read; the mapping answers only for one that does not exist. The record (D3087) is written from a reading of the
   cloud (`infra.ObserveLocations`, LP7) and is never an input, so a wrong, stale or edited record
   changes no plan (F9, F11).
 - **R6.** A typed region that differs from the runs bucket's own location is refused (F12), by the
@@ -379,9 +394,20 @@ None. No two answers pull against each other.
   answer spoke of new installations only. And the log bucket falls back to the place's
   multi-region (`us`, `eu`) where its region has no log bucket; the answer said "a regional
   location".
-- **O9.** The vendor's key service must be redeployed with LP15 before a release lets an
-  installation choose the EU. It is the owner's step, and the one step in this plan that
-  `fugaro update` does not carry, because it is not an installation's.
+- **O9.** The vendor's key service must be redeployed with LP15 before a release ships LP4. It is
+  the owner's step, and the one step in this plan that `fugaro update` does not carry, because it
+  is not an installation's. It is a line in `docs/release.md`; nothing else gates the release on
+  it.
+- **O11.** Review round 3's fixes are the last commit and were not reviewed again; three rounds
+  is the cap. They are: LP2's ignored region for a managed instance, LP8's scope, LP6's listing of
+  every location and its added files, LP10's added files, LP7 after LP5b, LP12's silence with no
+  record, and the key service's step moved to `docs/release.md`. The "plans no change" tests of
+  LP2 and LP5a run under the mock provider; what the real provider does is U9, measured by Check
+  821 only after the release. An owner's `fugaro update --plan-only` on the dogfood installation
+  from each of those two branches, before it merges, would close that sooner.
+- **O12.** D3088 was amended after review round 3: the refusal is in `setup` and `update` only.
+  The owner is asked to confirm, and to say whether `--region` should stay an override on the
+  read commands.
 - **O10.** Pull requests #3315 and #3323 both use D3060–D3079 and checks 810–819. Neither
   touches this plan's block; it is noted for whoever lands them.
 
@@ -408,8 +434,9 @@ None. No two answers pull against each other.
 - **U8.** What the legacy host and each regional host answer for a default database that lives
   at another: a redirect, a 404 or something else. LP15's read depends on it. Settled by Check
   820, which reads all three hosts for the scratch project.
-- **U9.** That `ignore_changes` on a secret's replication holds for a container Terraform adopts
-  by import, with the provider version the module pins. LP5a's `TestAnAdoptedSecretPlansNoChange`
-  runs it against the real binary.
+- **U9.** That `ignore_changes` holds, with the provider version the modules pin, for a secret's
+  replication on a container Terraform adopts by import and for a Realtime Database instance's
+  region. The tests of LP5a and LP2 run under the mock provider, which cannot say. Settled by
+  Check 821, or sooner by O11's plan-only run.
 - **U6.** Whether a user-managed secret in one region is readable by a Cloud Run job in the same
   region with no other change. Secret Manager's page implies it; Check 820 measures it.

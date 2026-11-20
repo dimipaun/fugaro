@@ -102,7 +102,8 @@
           "website/content/cli-reference.md",
           "plugin/skills/setup/SKILL.md",
           "internal/cli/init_inputs_test.go",
-          "internal/cli/testdata/region_prompts.golden"
+          "internal/cli/testdata/region_prompts.golden",
+          "internal/cli/setup_answers_test.go"
         ]
       }
     },
@@ -181,7 +182,10 @@
           "internal/cli/init.go",
           "internal/cli/doctor_batch.go",
           "internal/infra/testdata/installation*.tfvars.json",
-          "internal/infra/tf/testdata/golden/installation*.plan.json"
+          "internal/infra/tf/testdata/golden/installation*.plan.json",
+          "internal/infra/forget.go",
+          "internal/infra/forget_test.go",
+          "internal/e2e/update_test.go"
         ]
       }
     },
@@ -203,7 +207,7 @@
     },
     {
       "id": "LP8",
-      "title": "a region that is not the installation's is refused",
+      "title": "a region that is not the installation's is refused where it would plan",
       "run": null,
       "version": null,
       "tier": "small",
@@ -211,7 +215,7 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/cli/project.go",
+          "internal/cli/init.go",
           "internal/cli/init_new_machine.go",
           "internal/cli/region_refusal_test.go"
         ]
@@ -256,7 +260,11 @@
           "internal/cli/setup.go",
           "website/content/cli-reference.md",
           "internal/cli/init_firestore_test.go",
-          "internal/cli/managed_money_steps_test.go"
+          "internal/cli/managed_money_steps_test.go",
+          "internal/cli/update.go",
+          "internal/cli/init_review.go",
+          "internal/cli/testdata/init_review.golden",
+          "internal/cli/report_test.go"
         ]
       }
     },
@@ -344,7 +352,7 @@
         "paths": [
           "ee/keyservice/workspaces.go",
           "ee/keyservice/workspaces_test.go",
-          "docs/releases/*.md"
+          "docs/release.md"
         ]
       }
     }
@@ -498,12 +506,22 @@
     {
       "task": "LP11",
       "needs": "LP15",
-      "reason": "it states that the key service finds a regional installation, and shares the release notes file"
+      "reason": "it states that the key service finds a regional installation"
     },
     {
       "task": "LP13",
       "needs": "LP14",
       "reason": "the scripts run the shipped commands"
+    },
+    {
+      "task": "LP4",
+      "needs": "LP8",
+      "reason": "one file, internal/cli/init.go"
+    },
+    {
+      "task": "LP7",
+      "needs": "LP5b",
+      "reason": "the secrets fake stores a container's replication only after LP5b"
     }
   ],
   "decoupling": [],

@@ -13,7 +13,7 @@ made before this work, where its data already is, moving nothing. It carries out
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's ruling; no typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A5, the census of every location fixed in code, what each Google product offers (read 2026-11-20), findings F1–F21, the mapping, decisions D3080–D3091 with the owner's answers, resolutions R1–R10, open items O1–O10, UNVERIFIED U1–U9. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A5, the census of every location fixed in code, what each Google product offers (read 2026-11-20), findings F1–F21, the mapping, decisions D3080–D3091 with the owner's answers, resolutions R1–R10, open items O1–O12, UNVERIFIED U1–U9. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks LP0 to LP15 (LP5 is LP5a, LP5b and LP5c: 18 runs); levels, critical path, shared files; Checks 820 and 821 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
@@ -25,7 +25,8 @@ pull request #3308 (ci-affected-tests); D3060–D3079 and checks 810–819 by th
 No open pull request takes a number in D3080–D3099 or 820–829.
 
 **Owner answers of 2026-11-20:** D3080 to D3091, **every one as recommended**; none is marked
-"not the recommendation". In short: the region stays the one stored setting and the place is
+"not the recommendation". Two are marked **amended after review** and wait for confirmation:
+D3087 (round 1) and D3088 (round 3). In short: the region stays the one stored setting and the place is
 derived from it (D3080); US and EU are named, other regions work with stated fallbacks (D3081); a
 new installation's data at rest, secrets and run logs included, is in the place (D3082); model
 calls are outside the promise (D3083); a workspace's members may differ (D3084); Firestore goes in
@@ -50,6 +51,14 @@ before it plans a secret, `fugaro update --forget` included. It found that LP2 a
 file and ordered them, completed LP10's and LP6's file lists, corrected three test patterns that
 matched nothing, and added the key service's redeploy as the owner's step (O9). What it sharpened
 in D3082 is listed for the owner (O8).
+
+**Review round 3** was the last. **D3088 is amended after review**: `--region` is a tested
+per-invocation override on read commands, so the refusal is in `setup` and `update`, the
+commands that plan (O12). It also found that discovery never reads a Realtime Database already in
+Terraform's state, so LP2 has Terraform ignore a managed instance's region, or a European
+installation's existing database would have planned a replacement. It added files to LP6 and
+LP10, moved LP7 after LP5b, and moved the key service's step to `docs/release.md`. **Its fixes
+were not reviewed again** (O11).
 
 **The contract-first pass** broke no edge: the one break tried (the record as a contract) read as
 no gain and was undone. The plan says why.

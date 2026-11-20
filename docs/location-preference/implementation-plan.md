@@ -30,6 +30,13 @@ replicated in the region, on an old installation too. No policy is inferred from
 no path has to read the cloud before it plans a secret, `fugaro update --forget` included, which
 plans with no discovery (`ForgetSpec`, `internal/infra/forget.go`).
 
+**Review round 3 found two ways the plan as written would have broken something**, and both are
+fixed here; the fixes were not reviewed again, because three rounds is the cap (O11). Discovery
+skips a Realtime Database that is already in Terraform's state, which is every installation after
+its first apply, so LP2 also has Terraform ignore the region of an instance it manages. And
+`--region` is a flag on every cloud command, used and tested as an override on read commands, so
+LP8's refusal is scoped to the commands that plan (D3088, amended after review).
+
 ## Conventions every part follows
 
 `CLAUDE.md` and, for LP2, LP5a, LP6 and LP14, `.claude/rules/terraform.md`; for LP15, `.claude/rules/ee.md`; for LP11,
@@ -54,7 +61,7 @@ plans with no discovery (`ForgetSpec`, `internal/infra/forget.go`).
 | What no single task would test | The task that pins it |
 | --- | --- |
 | An installation at the previous version converges with `fugaro update` alone: no question, no other command, no destroy or replace in any root's plan | LP14 (`TestAnInstallationFromBeforeTheRecordConverges`) |
-| A thing that exists is never given the mapping's answer, at every commit of `main` between this plan's merges and on every path that plans, `fugaro update --forget` (which plans with no discovery) included: each existing secret keeps its own replication, the log bucket and both databases their own location | LP5a (`TestAnExistingSecretKeepsItsOwnReplication`, `TestForgetPlansNoSecretChange`), LP6 (`TestAGlobalLogBucketPlansNoChange`, `TestForgetPlansNoLogBucketChange`), LP2 (`TestAnExistingInstanceKeepsItsOwnRegion`) |
+| A thing that exists is never given the mapping's answer, at every commit of `main` between this plan's merges and on every path that plans, `fugaro update --forget` (which plans with no discovery) included: each existing secret keeps its own replication, the log bucket and both databases their own location | LP5a (`TestAnExistingSecretKeepsItsOwnReplication`, `TestForgetPlansNoSecretChange`), LP6 (`TestAGlobalLogBucketPlansNoChange`, `TestForgetPlansWhatItPlansToday`), LP2 (`TestAManagedInstanceOfAnEUInstallationPlansNoChange`) |
 | The record is never an input: a config whose record says anything at all plans what a config with no record plans | LP14 (`TestTheRecordIsNeverAnInput`) |
 | A mixed installation (automatic and regional secrets side by side, which every old installation becomes) plans no change | LP5a (`TestAMixedInstallationPlansNoSecretChange`) |
 | The promise is made only by LP11's documents, so a release cut between two of this plan's merges promises nothing it does not keep | LP11 |
@@ -86,7 +93,8 @@ LP5c, LP6. **Slice 4, what a person sees:** LP4, LP9, LP10, LP12. **Slice 5, joi
   `internal/backend/gcp/names.go` (the scheduler's missing entries),
   `docs/location-preference/locations.md` (new: the lists and the date they were read).
 - Interfaces: produces `place.Of`, `place.DefaultRegion`, `place.For`. Consumes
-  `gcp.SchedulerRegion` in its test only.
+  `gcp.SchedulerRegion` in its test only, which is therefore an external test package
+  (`place_test`): `internal/backend/gcp` imports `internal/place` after LP5b.
 - Tests: `TestThePlaceOfARegion`, `TestTheMappingForUSAndEU`, `TestNoFallbackLeavesItsPlace`,
   `TestARegionInNeitherPlaceStatesItsFallbacks`, `TestTheListsAreDated`,
   `TestEveryRegionOfAPlaceHasASchedulerLocationInIt`.
@@ -97,10 +105,15 @@ LP5c, LP6. **Slice 4, what a person sees:** LP4, LP9, LP10, LP12. **Slice 5, joi
 - Reviewer tier: standard.
 
 ### LP2: a new budget database goes where the mapping says
-- Acceptance: the Firebase module's Realtime Database region is an input. For an instance that
-  exists it is that instance's own location, wherever that is, and the instance is adopted under
-  the rules that already decide it is ours (R3, R4, D3091); for none it is `place.For`'s answer
-  (D3089). An installation whose instance is in `us-central1` plans no change.
+- Acceptance: the Firebase module's Realtime Database region is an input, and the resource
+  ignores changes to it. So an instance Terraform already manages keeps its region whatever the
+  input says: discovery skips a resource that is in state (`DiscoverFirebase`), which is every
+  installation after its first apply. An instance that exists and is not yet in state is found by
+  discovery wherever it is, adopted under the rules that already decide it is ours, and imported
+  at its own location (R3, R4, D3091). For none the region is `place.For`'s answer (D3089). An
+  installation in a European region whose instance is in `us-central1` plans no change.
+  `--print-vars`, which runs no discovery by design, prints the mapping's region with a line
+  saying that an instance that exists keeps its own.
 - Files: `deploy/terraform/gcp/modules/firebase/firebase.tf`,
   `deploy/terraform/gcp/modules/firebase/variables.tf`,
   `deploy/terraform/gcp/roots/firebase/variables.tf`, `deploy/terraform/gcp/roots/firebase/main.tf`,
@@ -111,9 +124,12 @@ LP5c, LP6. **Slice 4, what a person sees:** LP4, LP9, LP10, LP12. **Slice 5, joi
   `firebase*.plan.json` golden plans (generated). Past five for the root, its test and the
   generated plans.
 - Interfaces: consumes `place.For` (LP1). Produces `FirebaseSpec`'s database region.
-- Tests: `TestAnExistingInstanceKeepsItsOwnRegion`, `TestANewInstanceGoesWhereTheMappingSays`,
-  `TestAnInstanceElsewhereIsAdopted`, and the root's `terraform test`.
-- Command: `go test ./internal/infra/ -run 'AnExistingInstanceKeeps|ANewInstanceGoes|AnInstanceElsewhere|Firebase' -count=1 && go test ./internal/cli/ -run 'Firebase' -count=1 && go test -tags terraform ./internal/infra/... -run 'Firebase|Golden' -count=1 && (cd deploy/terraform/gcp/roots/firebase && terraform init -backend=false -lockfile=readonly && terraform validate && terraform test)`.
+- Tests: `TestAnExistingInstanceKeepsItsOwnRegion`, `TestAManagedInstanceOfAnEUInstallationPlansNoChange`,
+  `TestANewInstanceGoesWhereTheMappingSays`, `TestAnInstanceElsewhereIsAdopted`,
+  `TestPrintVarsSaysAnExistingInstanceKeepsItsOwn`, and the root's `terraform test`, with one
+  two-run case: apply under the mock provider with `us-central1`, then plan with `europe-west1`
+  and assert no replacement.
+- Command: `go test ./internal/infra/ -run 'AnExistingInstanceKeeps|AManagedInstance|ANewInstanceGoes|AnInstanceElsewhere|Firebase' -count=1 && go test ./internal/cli/ -run 'Firebase|PrintVars' -count=1 && go test -tags terraform ./internal/infra/... -run 'Firebase|Golden' -count=1 && (cd deploy/terraform/gcp/roots/firebase && terraform init -backend=false -lockfile=readonly && terraform validate && terraform test)`.
 - Red step: `TestAnInstanceElsewhereIsAdopted` meets today's refusal of a default instance outside
   `firebaseDBRegion`.
 - Depends on: LP1 (kept, behaviour: it needs the mapping's answer, and the mapping is smaller than
@@ -176,7 +192,8 @@ LP5c, LP6. **Slice 4, what a person sees:** LP4, LP9, LP10, LP12. **Slice 5, joi
 - Files: `internal/cli/wizard_stage.go`, `internal/cli/init_inputs.go`, `internal/cli/init.go`
   (the flag), `internal/cli/setup_answers.go`, `schemas/setup-answers.schema.json`,
   `website/content/cli-reference.md`, `plugin/skills/setup/SKILL.md`,
-  `internal/cli/init_inputs_test.go`, `internal/cli/testdata/region_prompts.golden`. Past five
+  `internal/cli/init_inputs_test.go`, `internal/cli/setup_answers_test.go`,
+  `internal/cli/testdata/region_prompts.golden`. Past five
   for the flag's censuses.
 - Interfaces: consumes `place.Of`, `place.DefaultRegion`, `place.For` (LP1).
 - Tests: `TestSetupAsksThePlace`, `TestALocationAndARegionThatDisagreeAreRefused`,
@@ -184,7 +201,7 @@ LP5c, LP6. **Slice 4, what a person sees:** LP4, LP9, LP10, LP12. **Slice 5, joi
   `TestSetupAnswersSchema`.
 - Command: `go test ./internal/cli/ -run 'SetupAsksThePlace|ALocationAndARegion|SetupWithNoTerminalNames|SetupPrintsWhere|SetupAnswers|CliReferenceNames' -count=1 && go test ./plugin/... -count=1 && go test ./ee/clidoc/ -run CliReferenceIsCurrent -count=1`.
 - Red step: `TestSetupAsksThePlace` finds the `--region` question.
-- Depends on: LP1 (kept, behaviour).
+- Depends on: LP1 (kept, behaviour); LP8 (kept: one file, `internal/cli/init.go`).
 - Commit: `setup: the first question is the place, and --location answers it (LP4, D3080, D3081, D3086)`.
 - Reviewer tier: opus, mandatory independent review (a plugin skill changes).
 
@@ -206,6 +223,10 @@ LP5c, LP6. **Slice 4, what a person sees:** LP4, LP9, LP10, LP12. **Slice 5, joi
 - Tests: `TestAnExistingSecretKeepsItsOwnReplication`, `TestAMixedInstallationPlansNoSecretChange`,
   `TestANewSecretIsInTheRegion`, `TestForgetPlansNoSecretChange`,
   `TestAnAdoptedSecretPlansNoChange`, and `terraform test` in the `installation` and `repo` roots.
+  The "plans no change" cases are two-run tests under the mock provider, since no hermetic test
+  can hold a real container: apply with automatic replication declared, then plan the new
+  declaration and assert no replacement. What the real provider does on an adopted container is
+  U9, and Check 821 measures it after the release (O11).
 - Command: `go test -tags terraform ./internal/infra/... -run 'AnExistingSecretKeeps|AMixedInstallation|ANewSecretIsInTheRegion|ForgetPlansNoSecret|AnAdoptedSecret|Golden' -count=1 && for r in installation repo; do (cd deploy/terraform/gcp/roots/$r && terraform init -backend=false -lockfile=readonly && terraform validate && terraform test); done && sh deploy/terraform/scan.sh`.
 - Red step: `TestANewSecretIsInTheRegion` finds `auto {}`.
 - Depends on: none.
@@ -229,39 +250,43 @@ LP5c, LP6. **Slice 4, what a person sees:** LP4, LP9, LP10, LP12. **Slice 5, joi
 
 ### LP5c: the intake service's secrets are replicated in the region
 - Acceptance: the deployed intake service, which has no project config, creates a container
-  replicated in the region its environment names, and its shape check accepts a container that is
-  automatic or in that region. With the variable absent (a service deployed before LP5a) it
+  replicated in the region its environment names. Its shape check (`Shape`,
+  `internal/intake/server.go`) does not read replication and is unchanged. With the variable absent (a service deployed before LP5a) it
   behaves as today.
 - Files: `internal/intake/gcp.go`, `internal/intake/gcp_test.go`, `internal/cli/intake_serve.go`.
 - Interfaces: consumes the variable LP5a's module sets.
-- Tests: `TestAnIntakeSecretIsInTheRegion`, `TestIntakeWithNoRegionIsAutomatic`,
-  `TestTheShapeCheckAcceptsBoth`.
-- Command: `go test ./internal/intake/ -run 'Intake|ShapeCheck' -count=1 && go test ./internal/cli/ -run 'IntakeServe' -count=1`.
+- Tests: `TestAnIntakeSecretIsInTheRegion`, `TestIntakeWithNoRegionIsAutomatic`.
+- Command: `go test ./internal/intake/ -run 'Intake' -count=1 && go test ./internal/cli/ -run 'IntakeServe' -count=1`.
 - Red step: `TestAnIntakeSecretIsInTheRegion` finds an automatic container.
 - Depends on: LP5a (kept, behaviour: the variable's name and the module that sets it).
 - Commit: `intake: its secrets are replicated in the region (LP5c, D3082)`.
 - Reviewer tier: opus, mandatory independent review (secrets).
 
 ### LP6: a new installation's run log bucket is in its region
-- Acceptance: the log bucket's location is an input. Discovery looks for the bucket at `global`
-  and at the mapping's location; one that exists keeps its own location, and for none it is
+- Acceptance: the log bucket's location is an input. Discovery lists the project's log
+  buckets in every location and finds Fugaro's by its id, so a later change to the mapping cannot
+  hide one; one that exists keeps its own location, and for none it is
   `place.For`'s. The import address, the log view's path and doctor's sink check are built from
   that location and stop assuming `global`. An installation whose bucket is `global` plans no
-  change, and `fugaro update --forget`, which turns log isolation off and runs no discovery,
-  plans what it plans today (F10).
+  change, and `fugaro update --forget`, which turns log isolation off, runs no discovery and deletes
+  the bucket, plans what it plans today; the undelete command it prints names the bucket's own
+  location (F10).
 - Files: `deploy/terraform/gcp/modules/installation/logging.tf`,
   `deploy/terraform/gcp/modules/installation/variables.tf`, the installation root's
   `variables.tf`, `main.tf` and `tests/installation.tftest.hcl` (which pins `global` five times),
-  `internal/infra/discover.go`, `internal/infra/imports.go`, `internal/infra/tfvars.go`,
+  `internal/infra/discover.go` (the read and its refusal text), `internal/infra/imports.go`,
+  `internal/infra/tfvars.go`, `internal/infra/forget.go` (`LogBucketUndelete`) and
+  `forget_test.go`, `internal/e2e/update_test.go` (which pins `locations/global`),
   `internal/cli/init.go` (where discovery's findings reach the spec),
   `internal/cli/doctor_batch.go` (`logBucketPath`), the tfvars fixtures, and the generated
   `installation*.plan.json`. Past five: one location through the module, its discovery and its
   one other reader.
 - Interfaces: consumes `place.For` (LP1).
 - Tests: `TestAGlobalLogBucketPlansNoChange`, `TestANewLogBucketIsInTheRegion`,
-  `TestTheLogBucketIsImportedWhereItIs`, `TestForgetPlansNoLogBucketChange`,
+  `TestTheLogBucketIsImportedWhereItIs`, `TestABucketWhereTheMappingNoLongerPointsIsFound`,
+  `TestForgetPlansWhatItPlansToday`,
   `TestDoctorReadsTheLogBucketWhereItIs`.
-- Command: `go test ./internal/infra/ -run 'LogBucket' -count=1 && go test ./internal/cli/ -run 'DoctorReadsTheLogBucket|DoctorBatch|Forget' -count=1 && go test -tags terraform ./internal/infra/... -run 'Golden|Installation|LogBucket' -count=1 && (cd deploy/terraform/gcp/roots/installation && terraform init -backend=false -lockfile=readonly && terraform validate && terraform test)`.
+- Command: `go test ./internal/infra/ -run 'LogBucket' -count=1 && go test ./internal/cli/ -run 'DoctorReadsTheLogBucket|DoctorBatch|Forget' -count=1 && go test ./internal/e2e/ -run 'Update' -count=1 && go test -tags terraform ./internal/infra/... -run 'Golden|Installation|LogBucket' -count=1 && (cd deploy/terraform/gcp/roots/installation && terraform init -backend=false -lockfile=readonly && terraform validate && terraform test)`.
 - Red step: `TestANewLogBucketIsInTheRegion` finds `global`.
 - Depends on: LP1 (kept, behaviour); LP5a (kept: the same root test file and golden plans); LP4
   (kept: one file, `internal/cli/init.go`).
@@ -277,32 +302,39 @@ LP5c, LP6. **Slice 4, what a person sees:** LP4, LP9, LP10, LP12. **Slice 5, joi
   use is the record (LP14): no plan reads it.
 - Files: `internal/infra/locations_observe.go` (new), `internal/infra/locations_observe_test.go`
   (new), and a fake it needs in a new file under `internal/gcpfake` (never
-  `internal/gcpfake/secrets.go`, which is LP5b's).
+  `internal/gcpfake/secrets.go`, which is LP5b's and which stores a container's replication only
+  after LP5b).
 - Interfaces: produces `infra.ObserveLocations` and `infra.Observed`.
 - Tests: `TestWhatAnInstallationFromBeforeThisWorkHolds`, `TestAMixOfSecretsIsReportedAsMixed`,
   `TestNothingIsReportedForWhatDoesNotExist`, `TestAnUnreadableThingIsNamedNotGuessed`.
 - Command: `go test ./internal/infra/ -run 'WhatAnInstallationFromBefore|AMixOfSecrets|NothingIsReported|AnUnreadableThing' -count=1`.
 - Red step: the function does not exist.
-- Depends on: none.
+- Depends on: LP5b (kept, behaviour: the secrets fake answers automatic for every container
+  until LP5b, so a mix cannot be tested before it).
 - Commit: `infra: what the cloud holds, by location (LP7, D3087)`.
 - Reviewer tier: standard.
 
-### LP8: a region that is not the installation's is refused
-- Acceptance: a `--region` that differs from the project config's region, or from the runs
-  bucket's own location on a machine with no config yet, is refused before anything is planned.
-  The refusal names the installation's region, says it cannot move, and prints the fix: the same
-  command with that region (D3088, R6, F4, F12). Where the bucket's location cannot be read (a
+### LP8: a region that is not the installation's is refused where it would plan
+- Acceptance: in `fugaro setup` and `fugaro update`, the commands that plan and apply, a
+  `--region` that differs from the project config's region, or from the runs bucket's own
+  location on a machine with no config yet, is refused before anything is planned. The refusal
+  names the installation's region, says it cannot move, and prints the fix: the same command with
+  that region (D3088 as amended, R6, F4, F12). Where the bucket's location cannot be read (a
   launcher may lack `storage.buckets.get`), the typed region is accepted and one line says it was
-  not checked (R10).
-- Files: `internal/cli/project.go`, `internal/cli/init_new_machine.go`,
+  not checked (R10). Every other command keeps `--region` as the per-invocation override it is
+  today (`cloudFlags`, `internal/cli/cloud.go`), and the tests that use it so
+  (`TestLsInAnotherRegionNamesTheRunsRegion`, doctor's and `update --check`'s) pass unchanged;
+  `update --check` and `--plan-only` plan nothing that is applied and keep the override too.
+- Files: `internal/cli/init.go` (`loadInitConfig`), `internal/cli/init_new_machine.go`,
   `internal/cli/region_refusal_test.go` (new).
 - Interfaces: none new.
-- Tests: `TestAChangedRegionIsRefused`, `TestANewMachinesRegionMustBeTheInstallations`,
-  `TestTheSameRegionIsAccepted`, `TestAnUnreadableBucketIsSaidNotRefused`.
-- Command: `go test ./internal/cli/ -run 'AChangedRegion|ANewMachinesRegion|TheSameRegion|AnUnreadableBucket|RefusalMatrix' -count=1`.
-- Red step: `TestAChangedRegionIsRefused` sees the config rewritten.
+- Tests: `TestAChangedRegionIsRefusedBySetupAndUpdate`, `TestANewMachinesRegionMustBeTheInstallations`,
+  `TestTheSameRegionIsAccepted`, `TestAnUnreadableBucketIsSaidNotRefused`,
+  `TestReadCommandsKeepTheRegionOverride`.
+- Command: `go test ./internal/cli/ -run 'AChangedRegion|ANewMachinesRegion|TheSameRegion|AnUnreadableBucket|ReadCommandsKeep|LsInAnotherRegion|UserAddDoesNotPersistRegion|UpdateCheck|DoctorShared|RefusalMatrix|TestManaged' -count=1`.
+- Red step: `TestAChangedRegionIsRefusedBySetupAndUpdate` sees the update go on in the typed region.
 - Depends on: none.
-- Commit: `cli: a region that is not the installation's is refused (LP8, D3088)`.
+- Commit: `init: a region that is not the installation's is refused before a plan (LP8, D3088)`.
 - Reviewer tier: standard.
 
 ### LP9: a workspace member's database region comes from the member
@@ -334,16 +366,19 @@ LP5c, LP6. **Slice 4, what a person sees:** LP4, LP9, LP10, LP12. **Slice 5, joi
   `docs/no-prompt-policy/reconciliation.md` records that D12 of 2026-10-20 no longer
   covers the location.
 - Files: `internal/cli/init_firebase.go`, `internal/cli/init.go`, `internal/cli/setup.go`,
+  `internal/cli/update.go` (its help text), `internal/cli/init_review.go` and
+  `testdata/init_review.golden` (the review's line about the location),
+  `internal/cli/report_test.go` (`TestInitHelpMentionsFirestoreStep`),
   `website/content/cli-reference.md`, the tests that pin the note (`init_confirm_test.go`,
   `init_converge_test.go`, `init_inputs_test.go`, `init_review_test.go`,
   `init_firestore_test.go`, `managed_money_steps_test.go`, `setup_refusals_test.go`,
   `update_test.go`, `testdata/region_prompts.golden`, all in `internal/cli`), AB7's `init_firebase_always_test.go` (it does not exist on `main` today; AB7
   adds it), the no-prompt lint's allow-list if it names the site, and
-  `docs/no-prompt-policy/reconciliation.md`. Past five: one note pinned in nine tests and three help texts.
+  `docs/no-prompt-policy/reconciliation.md`. Past five: one note pinned in ten tests and four help texts.
 - Interfaces: none.
 - Tests: `TestNoStepConfirmsALocation`, `TestTheLocationLineIsPrintedBeforeTheDatabase`, and the
   no-prompt lint.
-- Command: `go test ./internal/cli/ -run 'NoStepConfirmsALocation|TheLocationLine|NoPrompt|RefusalMatrix|TheTypedSteps|Confirm|Converge|Review|Firestore|TestManaged|TestUpdate|CliReferenceNames|Docs' -count=1 && go test ./ee/clidoc/ -run CliReferenceIsCurrent -count=1`.
+- Command: `go test ./internal/cli/ -run 'NoStepConfirmsALocation|TheLocationLine|NoPrompt|RefusalMatrix|TheTypedSteps|Confirm|Converge|Review|Firestore|TestManaged|TestUpdate|InitHelp|InitReview|CliReferenceNames|Docs' -count=1 && go test ./ee/clidoc/ -run CliReferenceIsCurrent -count=1`.
 - Red step: `TestNoStepConfirmsALocation` finds the note and a `NeedsYouError` with no terminal.
 - Depends on: LP3, LP4 and LP6 (kept: shared files, `init_firebase.go`, `init.go`,
   `cli-reference.md` and the tests and golden file they write). **Not launched
@@ -354,12 +389,13 @@ LP5c, LP6. **Slice 4, what a person sees:** LP4, LP9, LP10, LP12. **Slice 5, joi
 ### LP12: `fugaro doctor` says where the data is
 - Acceptance: doctor prints one row with the installation's region, its place and where each
   recorded thing is; a thing outside the place is information, never a failure (D3091); an
-  installation with no record yet is told to run `fugaro update`.
+  installation with no record yet prints its region and place and nothing about the rest, because
+  until LP14 no command writes one.
 - Files: `internal/cli/doctor_locations.go` (new), `internal/cli/doctor_locations_test.go` (new),
   `internal/cli/doctor.go` (the registration).
 - Interfaces: consumes `localcfg.Locations` (LP0), `place.Of` (LP1).
 - Tests: `TestDoctorSaysWhereTheDataIs`, `TestADatabaseOutsideThePlaceIsInformation`,
-  `TestDoctorWithNoRecordNamesUpdate`.
+  `TestDoctorWithNoRecordPrintsTheRegionAlone`.
 - Command: `go test ./internal/cli/ -run 'DoctorSaysWhere|ADatabaseOutsideThePlace|DoctorWithNoRecord' -count=1`.
 - Red step: doctor has no such row.
 - Depends on: LP0 (kept: the record's type), LP1 (kept, behaviour).
@@ -433,9 +469,10 @@ LP5c, LP6. **Slice 4, what a person sees:** LP4, LP9, LP10, LP12. **Slice 5, joi
   in `europe-west1` is found; one that exists nowhere is still not found. What each host answers
   for a database that lives at another is not known (U8); an answer the service does not
   recognise stays "unchecked, never bound", as today.
-- Files: `ee/keyservice/workspaces.go`, `ee/keyservice/workspaces_test.go`, and the release
-  notes' `### For operators` entry (the key service is deployed by the owner, not by
-  `fugaro update`).
+- Files: `ee/keyservice/workspaces.go`, `ee/keyservice/workspaces_test.go`, and `docs/release.md`
+  (one line in the owner's release steps: the key service is redeployed before a release that
+  ships LP4). It is not a `### For operators` entry, which is a customer's and says only
+  `fugaro update` (R8).
 - Interfaces: none.
 - Tests: `TestAnInstallationInEuropeIsFound`, `TestNoDatabaseAnywhereIsNoInstallation`,
   `TestTheLegacyHostIsStillReadFirst`.
@@ -453,9 +490,9 @@ The decoupling pass is on (`planning.decoupling` is `true` for this repository, 
 
 | Level | Tasks |
 | --- | --- |
-| 0 | LP0, LP1, LP5a, LP7, LP8, LP9, LP15 |
+| 0 | LP0, LP1, LP5a, LP8, LP9, LP15 |
 | 1 | LP2, LP4, LP5b, LP5c, LP12 |
-| 2 | LP3, LP6 (both after always-a-budget's AB7) |
+| 2 | LP3, LP6 (both after always-a-budget's AB7), LP7 |
 | 3 | LP10, LP14 |
 | 4 | LP11, LP13 |
 
@@ -463,7 +500,8 @@ The decoupling pass is on (`planning.decoupling` is `true` for this repository, 
 is the path AB7 waits on, and it starts at once.
 
 **What must be sequential, and why.** LP2 and LP3 follow LP8, so a mistyped region is refused
-before a region decides a permanent location. LP3 follows LP2 for one file. LP6 follows LP5a and
+before a region decides a permanent location. LP3 follows LP2 for one file, and LP4 follows LP8 for one. LP7 follows LP5b for the fake it tests
+against. LP6 follows LP5a and
 LP4 for shared files, and LP5c follows LP5a for its variable. LP10 follows LP3, LP4 and LP6 for
 shared files. LP14 follows everything it joins. LP11 and LP13 describe and exercise what ships.
 
@@ -479,8 +517,8 @@ merged. No run of this plan is live on one of those files while AB7's is.
 | File | Writers, by level |
 | --- | --- |
 | `internal/cli/init_firebase.go` | LP2 (1), then AB7, LP3 (2), LP10 (3) |
-| `internal/cli/init.go` | LP4 (1), then AB7, LP6 (2), LP10 (3) |
-| `internal/cli/setup.go` | AB7, then LP10 (3) |
+| `internal/cli/init.go` | LP8 (0), LP4 (1), then AB7, LP6 (2), LP10 (3) |
+| `internal/cli/setup.go`, `init_review.go` | AB7, then LP10 (3) |
 | `internal/cli/init_stages.go` | AB7, then LP14 (3) |
 | `internal/cli/init_new_machine.go` | LP8 (0), then AB7 |
 | `internal/infra/firebase.go` | LP2 (1), then AB7 |
@@ -496,9 +534,10 @@ merged. No run of this plan is live on one of those files while AB7's is.
 | `internal/gcpfake/firestore.go` | LP3 (2) only |
 | `internal/backend/gcp/names.go` | LP1 (0) only |
 | `internal/localcfg/localcfg.go`, `locations.go` | LP0 (0) only |
-| `internal/infra/locations_observe.go` | LP7 (0) only |
+| `internal/infra/locations_observe.go` | LP7 (2) only |
 | `internal/cli/doctor.go` | LP12 (1) only; `doctor_batch.go` is LP6's (2) |
-| The release's notes file | LP15 (0), LP11 (4) |
+| `docs/release.md` | LP15 (0) only |
+| `internal/infra/forget.go`, `internal/e2e/update_test.go` | LP6 (2) only |
 | `docs/gcp-live-checklist.md` | LP13 (4) only |
 
 No level holds two writers of one file.
@@ -517,7 +556,8 @@ No level holds two writers of one file.
 
 - LP2, LP3, LP4, LP5b, LP6 and LP12 on LP1: each needs the mapping's answers. The mapping is one
   small pure file at level 0; a contract for it would be nearly the task itself.
-- LP2 and LP3 on LP8: order, for safety.
+- LP2 and LP3 on LP8: order, for safety. LP4 on LP8: one file.
+- LP7 on LP5b: the fake's behaviour.
 - LP3 on LP2; LP6 on LP5a and LP4; LP10 on LP3, LP4 and LP6: shared files.
 - LP5c on LP5a: the variable it adds. The variable's name could be a contract, but LP5a is at
   level 0 and LP5c is small, so breaking the edge shortens nothing.
@@ -560,9 +600,9 @@ written in LP11's pull request: run `fugaro update`; it records where the instal
 already is and moves nothing.
 
 One step is the vendor's own and not an installation's: **the key service is redeployed** with
-LP15 before the release that lets an installation choose the EU, or an EU installation reads to
-it as no installation. It is written in LP15's pull request under `### For operators`, and it is
-the owner's step.
+LP15 before the release that ships LP4, or an EU installation reads to it as no installation. It
+is a line in `docs/release.md`, the owner's own release steps, written in LP15's pull request,
+and nothing but that line gates the release on it (O9).
 
 ## Considered and declined
 
@@ -575,6 +615,10 @@ the owner's step.
   round 2 read. It was one-way (one automatic container made every later one automatic), had
   three separate evaluators and an import cycle. Declined for LP5a's rule: what exists is left
   alone, what is new is regional.
+- **A place picker in the console's wizard.** It sends `region`, which stays valid and decides
+  the place (D3080; `console/src/shared/new-ops.ts`). A picker there is the console's own work.
+- **Refusing `--region` on every command.** It is a tested per-invocation override on read
+  commands; the refusal is where a plan would follow it (D3088, amended).
 - **A stated fallback for Vertex.** A region with no Claude endpoint is outside the promise
   (D3083); the model's own refusal says so.
 - **Multi-region Firestore and Artifact Registry.** Declined by D3085: a higher price for a
