@@ -245,6 +245,12 @@ type run struct {
 	// for a launched review — and never from the branch under review, which
 	// the run's own agent controls (R16).
 	reviewSpec *task.ReviewSpec
+	// reviewAgainst is what this run's review rows record they were checked
+	// against (RA2, R8). It is resolved once, where the shared review brief is
+	// built (reviewTaskBlock), from the same answer that brief's task block is
+	// built from, so the prompt a round read and the row it wrote never
+	// disagree. Nil until then, and for a run that never reaches a review.
+	reviewAgainst *runstore.Against
 	// reviewHeads is what bootstrap's checkReviewPRs resolved for a review
 	// run: one entry per spec.ReviewPRs, in order, each already past the
 	// fork and open checks. Empty for any other run.
@@ -3971,6 +3977,44 @@ func (r *run) systemPromptData() PromptData {
 	return pd
 }
 
+// reviewTaskBlock resolves what this run's reviews are judged against, keeps
+// the record every review row carries, and returns the block the review brief
+// gains (RA2).
+//
+// It is resolved once per run, where the brief the three levels share is built
+// (agentLoop), so level 1, level 2 and level 3 read one answer and their rows
+// record the one they read: a level that resolved it again could record a
+// different answer than the prompt in front of it. The block is quoted as data
+// — redacted, cleaned, nonce-fenced under a nonce minted here, which is what
+// keeps a brief from passing itself off as one more instruction of the prompt
+// (R3, R5).
+//
+// An empty return is an ordinary answer and not a failure: the run's reviews
+// judged the code alone, and reviewAgainst says why (spec §9).
+func (r *run) reviewTaskBlock(ctx context.Context) string {
+	spec := r.resolveReviewSpec(ctx)
+	r.reviewAgainst = againstRecord(spec)
+	if !spec.found() {
+		return ""
+	}
+	return taskSpecBlock(spec, r.redactor(), followup.NewNonce())
+}
+
+// againstRecord is what a review row records it was checked against (RA2, R8):
+// the source the launcher named or this run resolved, the root run when the
+// brief came out of one, the digest of the text the reviewer was shown, and —
+// for a review checked against nothing — the reason why.
+//
+// The name is the launcher's claim and is not evidence (R16). It is a record
+// of what the reviewer was given and not of what the text is worth; the text
+// itself travels in the prompt rather than here.
+func againstRecord(s reviewSpecFound) *runstore.Against {
+	if !s.found() {
+		return &runstore.Against{Source: runstore.AgainstSourceNone, Reason: s.source.reason}
+	}
+	return &runstore.Against{Source: string(s.source.source), Run: s.source.run, SHA256: s.source.sha256}
+}
+
 func (r *run) agentLoop(ctx context.Context) {
 	// A rebase run's whole work is one step, and it is not a step of this
 	// loop: no implement stage, no review level, no plan walk (rebase.go,
@@ -4175,6 +4219,16 @@ func (r *run) agentLoop(ctx context.Context) {
 	// here, once, before the prompt and every round's input read the range.
 	r.narrowReviewRange(ctx)
 	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable())
+	// The task the pull request was written for, quoted after the brief the
+	// levels already read (RA2, R3). It goes on the one prompt all three
+	// levels are handed — first line, senior and adversarial — so a finding of
+	// `unmet` or `differs` can be made at every level rather than only at the
+	// one that happened to be given the task. Appended and never prepended: a
+	// configured review may be a slash command (agent.review starting with
+	// "/"), and the reviewer's skill only loads when the prompt starts with it.
+	if block := r.reviewTaskBlock(ctx); block != "" {
+		reviewPrompt += "\n\n" + block
+	}
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add
@@ -4341,7 +4395,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			r.lastSenior = seniorRound{Round: round}
 			r.seniorLevelLast = r.lastSenior
 			model, effort := r.reviewFacts("review")
-			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none", Head: head, Model: model, Effort: effort})
+			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none", Head: head, Model: model, Effort: effort, Against: r.reviewAgainst})
 			r.save(ctx)
 			r.d.Log.Warn("the review round returned no parseable verdict after a retry; the run carries on and ends a draft", "round", round)
 			return false
@@ -4354,7 +4408,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
 		r.seniorLevelLast = r.lastSenior
 		model, effort := r.reviewFacts("review")
-		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
+		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort, Against: r.reviewAgainst})
 		r.save(ctx)
 		if r.capReached() {
 			return false
@@ -4495,14 +4549,14 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			// the same).
 			r.lastSenior = seniorRound{Round: round}
 			model, effort := r.reviewFacts(stageAdversarial)
-			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: "none", Head: head, Model: model, Effort: effort})
+			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: "none", Head: head, Model: model, Effort: effort, Against: r.reviewAgainst})
 			r.save(ctx)
 			r.d.Log.Warn("the adversarial review round returned no parseable verdict after a retry; the run carries on and ends a draft", "round", round)
 			return false
 		}
 		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
 		model, effort := r.reviewFacts(stageAdversarial)
-		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
+		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort, Against: r.reviewAgainst})
 		r.save(ctx)
 		if r.capReached() {
 			return false
@@ -4821,7 +4875,7 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		r.noteReviewSession(req, res)
 		r.countTokens(res)
 		model, effort := r.reviewFacts("review_first")
-		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Head: head, Model: model, Effort: effort, Bounce: r.bounce}
+		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Head: head, Model: model, Effort: effort, Bounce: r.bounce, Against: r.reviewAgainst}
 		var v Verdict
 		// parsed is whether this round answered a verdict at all, read by the
 		// triage step below: a round with none has nothing for a judge to weigh,

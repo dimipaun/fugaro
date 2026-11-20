@@ -259,6 +259,16 @@ func (r *run) runReviewReplay(ctx context.Context) {
 		return
 	}
 	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable())
+	// The task the champion's pull request was written for, on the prompt the
+	// challenger's reviewer reads (RA2, R15): the pair is a comparison of two
+	// readings of one change, and the champion's own round was handed the task
+	// its run carried. A challenger's task is a copy of the champion's
+	// (run.go's pair launch), so resolving it here asks the challenger the same
+	// question — an `unmet` finding the champion's reviewer could make is one
+	// this reviewer can make too.
+	if block := r.reviewTaskBlock(ctx); block != "" {
+		reviewPrompt += "\n\n" + block
+	}
 	prompt := r.replayPrompt(reviewPrompt, r.replay)
 	// Read before the round, as the loops read it: the summary keeps the commit
 	// this round read (D727).
@@ -268,7 +278,7 @@ func (r *run) runReviewReplay(ctx context.Context) {
 		return
 	}
 	model, effort := r.reviewFacts(stage.stage)
-	sum := runstore.ReviewSummary{Round: 1, Tier: replayTier(r.replay), Verdict: "none", Head: head, Model: model, Effort: effort}
+	sum := runstore.ReviewSummary{Round: 1, Tier: replayTier(r.replay), Verdict: "none", Head: head, Model: model, Effort: effort, Against: r.reviewAgainst}
 	if parsed {
 		sum.Verdict, sum.Findings = v.Verdict, len(v.Findings)
 	} else {
