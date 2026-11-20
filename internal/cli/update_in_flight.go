@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/report"
@@ -29,7 +31,7 @@ import (
 // internal/budget/rules); and no step of the update writes a run's registry
 // entry, its ledger, its day counters or its record.
 //
-// Seven steps can still reach one, and the note names every one of them this run
+// Eight steps can still reach one, and the note names every one of them this run
 // can take — naming a step, rather than either claiming a safety that is not
 // there or dropping the claim: the budget mode's raise to enforce, which a
 // session re-reads on every lease and every report while the policy node is read
@@ -45,12 +47,14 @@ import (
 // service (bitbucketProxySwitchTurns); the window between that write and the
 // credentials service's own replacement, which is the release before this one's
 // service meeting a node it cannot read for the length of one apply; the
-// creation fact, which a run of the release behind re-reads per command and
-// refuses once it is rewritten, so that run keeps the typed confirmation it
-// would have applied without; and a retirement, which deletes an orphaned Cloud
-// Run job and takes the executions running on it with it (`deleteOrphanedJob`,
-// init_retire.go). None of the seven is the update stopping a run, and none of
-// them is asked to wait.
+// workspace's own credentials service, replaced by this update where the
+// workspace's recorded image is behind, whose old revision drains as the new one
+// takes over (R11); the creation fact, which a run of the release behind
+// re-reads per command and refuses once it is rewritten, so that run keeps the
+// typed confirmation it would have applied without; and a retirement, which
+// deletes an orphaned Cloud Run job and takes the executions running on it with
+// it (`deleteOrphanedJob`, init_retire.go). None of the eight is the update
+// stopping a run, and none of them is asked to wait.
 //
 // The note is the count's own line and then ONE SHORT LINE PER STEP, because the
 // owner met it with fourteen runs in flight and could not find what they were
@@ -178,6 +182,10 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 	if e.tokensPublishReachesRuns(ctx, db) {
 		steps = append(steps, inFlightStep{
 			line: "bitbucket tokens: a proxied call after the publish may use a different token"})
+	}
+	if e.workspaceServiceRevisionStale() {
+		steps = append(steps, inFlightStep{
+			line: "workspace service: a new revision drains the one a run started on"})
 	}
 	if e.bitbucketProxySwitchTurns() {
 		steps = append(steps, inFlightStep{
@@ -398,6 +406,64 @@ func (e *initEngine) tokensPublishReachesRuns(ctx context.Context, db *rtdb.Clie
 func (e *initEngine) bitbucketProxySwitchTurns() bool {
 	_, turn := e.bitbucketProxyFlip()
 	return turn
+}
+
+// workspaceServiceRevisionStale is whether this update replaces the workspace's
+// own credentials service with a revision of this release's image — R11's second
+// half, "a new revision of the service, which drains the old one" — read over
+// the workspace's OWN root, which is another root of this installation and the
+// one whose tfvars carry the block (workspace_create.go's serviceBlock).
+//
+// The step is the drain and nothing else. A run in flight keeps the environment
+// and the route it started with (R11's first sentence): the service serves a
+// member's calls over the same routes on either revision, and what a replacement
+// does to a call in flight is drain the connection it holds when the old
+// revision is taken out of service. That is Cloud Run's own drain and not a
+// rewrite of anything a run holds — no record, ledger or counter is touched —
+// which is why the line says "drains" and names the revision, rather than
+// claiming the run is stopped or unaffected.
+//
+// Three states answer false, and each is a different fact:
+//
+//   - an installation that is not a workspace's own, and a split one, deploy no
+//     service at all (workspaceSplitFirebase: the skip's own reason says so) —
+//     the two predicates the stage itself runs on, read here from the same two
+//     functions rather than re-derived;
+//   - a session or a development build deploys nothing (serviceBlock's own two
+//     constants): the plan a session reads names a move it may not make;
+//   - a workspace whose root holds no block yet. This update DEPLOYS the service
+//     for the first time, and a revision nobody was calling drains nothing: the
+//     line would be a drain the operator could not find in anything the update
+//     does.
+//
+// What is left is the recorded image, compared as the deploy compares it
+// (credentialsImageStale): a block whose image is this release's — or a NEWER
+// release's, on a second machine of one installation upgraded later — is no
+// revision to move, and one that names no release at all, or one behind, is the
+// revision this run replaces. A file the door cannot read answers false: this
+// note is information, and a fact it cannot read is not permission to name a
+// step.
+func (e *initEngine) workspaceServiceRevisionStale() bool {
+	lc := e.lc
+	if lc == nil || !workspaceDeclared(lc) || workspaceSplitFirebase(lc) != "" {
+		return false
+	}
+	if agentMarker(os.Getenv, e.r.stdinTerminal()) != "" || releaseVersion() == "" {
+		return false
+	}
+	dir, err := infra.WorkspaceWorkdir(os.Getenv, lc.GCPProject)
+	if err != nil {
+		return false
+	}
+	vars, err := infra.ReadWorkdirVars(dir, "workspace")
+	if err != nil {
+		return false
+	}
+	svc := recordedWorkspaceService(vars)
+	if svc == nil {
+		return false
+	}
+	return credentialsImageStale(releaseVersion(), svc.Image)
 }
 
 // markerConverges is whether this update rewrites the installation's creation
