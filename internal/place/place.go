@@ -175,10 +175,10 @@ func firestoreFor(region string, p Place) Location {
 
 // databaseFor is the Realtime Database's row. Google offers it in three
 // locations and no other, so the region itself is only ever the answer for
-// one of the three; every other region gets the nearest of them, stated. The
-// table below is the product's guess at "nearest" for a region in neither
-// place and is the owner's to correct (O4); for a region of US or EU it never
-// leaves the place, which is what TestNoFallbackLeavesItsPlace pins.
+// one of the three; every other region gets the nearest of them, stated.
+// Which one is nearest is the product's guess (O4, the owner's to correct);
+// for a region of US or EU it never leaves the place, which is what
+// TestNoFallbackLeavesItsPlace pins.
 func databaseFor(region string) Location {
 	where := nearestDatabase(region)
 	if where == region {

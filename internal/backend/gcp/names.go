@@ -382,9 +382,12 @@ var SchedulerRegions = []string{
 // another region, since its URI names the job's location.
 //
 // Every entry stays on the continent of its key, which is what keeps a
-// region's daily check scheduled from its own part of the world. The last two
-// are the entries internal/place's list of accepted regions needs: Berlin has
-// no Scheduler and Frankfurt is its nearest, and Santiago's is São Paulo.
+// region's daily check scheduled from its own part of the world.
+// europe-west10 and southamerica-west1 are the two entries that were missing
+// from the regions internal/place accepts: Berlin has no Scheduler and
+// Frankfurt is its nearest, and Santiago's is São Paulo. Without them the
+// resolution of a region Fugaro accepts would be refused, and the daily check
+// of an installation there would have no schedule at all.
 var nearestSchedulerRegion = map[string]string{
 	"us-east5":             "us-east4",
 	"us-west8":             "us-west4",
