@@ -133,6 +133,33 @@ func TestAnEntryNameCarriesItsRepository(t *testing.T) {
 		}
 	}
 
+	// The read-back refuses what the naming rule could not have built, and it is
+	// the bundle loader's own reader (KS1 extends CredentialKey with it), so a
+	// key a document holds is a key this answers, not one a caller downstream
+	// trusts: a slug that is not a slug and a credential that is neither a
+	// provider's name nor the project key's spelling are refused here, whole,
+	// rather than answered as a part. The first case is also the read-back's own
+	// split rule read the other way: a key whose slug half carries the separator
+	// splits at the FIRST one, and the half before it is not a slug.
+	for _, c := range []struct{ key, why string }{
+		{RepoCredentialPrefix + "acme-one" + RepoCredentialSep + "openrouter", "a slug-shaped readable part with no hash, and no slug at all"},
+		{RepoCredentialPrefix + one + RepoCredentialSep + "OpenRouter", "a credential name the provider rule does not admit"},
+		{RepoCredentialPrefix + one + RepoCredentialSep + "open_router", "a credential name the provider rule does not admit"},
+		{RepoCredentialPrefix + one + RepoCredentialSep, "no credential at all"},
+		{RepoCredentialPrefix, "no separator and nothing after the prefix"},
+		{RepoCredentialPrefix + "acme" + RepoCredentialSep + "one-0123456789abcdef" + RepoCredentialSep + "openrouter", "a slug half carrying the separator, so the half before the first one is not a slug"},
+		{RepoCredentialPrefix + one + RepoCredentialSep + "openrouter-production", "a provider name longer than the rule admits"},
+		{"credential-x-key", "another family's name, which the key credential's rule reads"},
+	} {
+		slug, credential, ok := RepoCredentialByKey(c.key)
+		if ok {
+			t.Errorf("RepoCredentialByKey(%s) = %s, %s, true; %s, and the read answers no member of the family", c.key, slug, credential, c.why)
+		}
+		if slug != "" || credential != "" {
+			t.Errorf("RepoCredentialByKey(%s) refused with the halves %s, %s; a refusal answers them empty", c.key, slug, credential)
+		}
+	}
+
 	// And what the rule refuses: a half that is not one of the two shapes it
 	// builds from is refused rather than named, because a name built out of one
 	// is a name the loader would read as another repository's or another
