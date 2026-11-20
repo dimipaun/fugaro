@@ -332,8 +332,17 @@ func (f installationForge) Bitbucket() bbtokens.Selector {
 // Covers reports whether this call's forge traffic may reach the canonical
 // repository at all: an installation covers every repository its table holds,
 // which is every repository it serves.
+//
+// The table is the one Repos answers, derived the same way and for the same
+// reason — the deployer's where it set one, and the rows' own where it did not
+// — because the two readers have to agree: the canonical name a route's pairing
+// resolved out of the table is a name this reader must hold, or the
+// installation would refuse a forge call for the very repository it admitted
+// the caller through. (WS17 is where the second reader appears: the mint asks
+// this one, and a fixture that leaves Repos nil would otherwise mint for
+// nothing.)
 func (f installationForge) Covers(_ context.Context, canonical string) (bool, error) {
-	for _, held := range f.s.cfg.Repos {
+	for _, held := range (installationScope{s: f.s}).Repos() {
 		if held == canonical {
 			return true, nil
 		}

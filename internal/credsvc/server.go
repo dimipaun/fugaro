@@ -1481,7 +1481,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// nothing below it is: the run identity and the job's own token have
 		// been verified, the binding between them has been made — which is what
 		// fixes the repository the token is scoped to — and the operator's stop
-		// flag has been read, so a stopped service mints nothing. It reads the
+		// flag has been read, so a stopped service mints nothing. The handler
+		// reads that repository back out of the SCOPE rather than being handed
+		// the row resolved here (WS17): the table is the scope's answer for this
+		// caller, and for a workspace it holds the repositories the owner
+		// declared for the calling job account and no other. It reads the
 		// bundle itself, because the App key is in it, and it reads no policy
 		// of its own and consults no cascade: an installation token is not a
 		// model credential and no tier has anything to say about it. The one
@@ -1497,7 +1501,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// review is about. The pairing above already refused a review identity
 		// of any other shape, so a coding run launched into the review job never
 		// reaches a mint at all.
-		s.mint(ctx, w, r, id, s.jobRow(id, canonical))
+		s.mint(ctx, w, r, id)
 		return
 	}
 	if r.URL.Path == ContextTokenPath {
@@ -1519,12 +1523,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// identity gains nothing beyond its launch.
 		//
 		// It reads the bundle itself, because the App key is in it, and it reads
-		// the project's published policy for the allow-list that admits each
-		// context repository — the same list the launcher admitted them against,
-		// re-read here so `fugaro project repos rm` narrows a run's reach from
-		// the next call on. It consults no cascade and no budget: an installation
-		// token is not a model credential and no tier has anything to say about
-		// it.
+		// the allow-list that admits each context repository out of the calling
+		// SCOPE's policy (WS17) — the installation's own store for an
+		// installation, the member's project for a workspace — the same list the
+		// launcher admitted them against, re-read here so `fugaro project repos
+		// rm` narrows a run's reach from the next call on. It consults no cascade
+		// and no budget: an installation token is not a model credential and no
+		// tier has anything to say about it.
 		s.contextTokens(ctx, w, r, id)
 		return
 	}
