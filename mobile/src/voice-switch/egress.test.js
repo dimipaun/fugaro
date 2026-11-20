@@ -371,6 +371,47 @@ test('rule 9: the consent a call is made under is the record’s, never the call
   assert.equal(on.hop.calls.length, 1);
 });
 
+test('a switch that answered what is not a badge is a local turn, and not a refusal', async () => {
+  // The badge is the one input that comes from the app's own record rather than
+  // from the caller, so an answer this module cannot read is still a turn it
+  // owes an answer about: `local`, the badge's own `badge-unreadable`, and no
+  // call. Handing the caller a refusal instead would leave the turn unanswered
+  // and the owner with no sentence about their own speech.
+  // `null`, a primitive, a badge-shaped string: none of them is an object this
+  // module can read a `send` off. (An object with no provider is a different
+  // answer -- a route to nobody -- and rule 8's own test is where it lives.)
+  for (const answer of [null, 'local', 7, undefined]) {
+    const gate = createVoiceEgress({
+      hop: fakeHop(),
+      voiceSwitch: { indicator: async () => answer },
+      projects: [PROJECT],
+      secrets: [SECRET],
+    });
+    const turn = await gate.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT });
+    assert.equal(turn.ok, true, String(answer));
+    assert.equal(turn.send, false, String(answer));
+    assert.equal(turn.engine, ENGINE.LOCAL, String(answer));
+    assert.equal(turn.reason, EGRESS_CODE.BADGE_UNREADABLE, String(answer));
+  }
+
+  // A switch that threw is the same answer, and it carries the text-entry offer
+  // when the local engine is the one that failed: §4.5's last row is about what
+  // the owner can do next, and it does not depend on which half broke.
+  const threw = createVoiceEgress({
+    hop: fakeHop(),
+    voiceSwitch: {
+      indicator: async () => {
+        throw new Error('the record could not be read');
+      },
+    },
+    projects: [PROJECT],
+    secrets: [SECRET],
+  });
+  const turn = await threw.transcribe({ audio: AUDIO, contentType: 'audio/wav', project: PROJECT, route: agentText, now: AT, localFailed: true });
+  assert.equal(turn.reason, EGRESS_CODE.BADGE_UNREADABLE);
+  assert.equal(turn.offer, EGRESS_OFFER.TEXT_ENTRY);
+});
+
 test('rule 10: a failure is terminal, and nothing is queued, spooled or retried', async () => {
   const failure = { ok: false, code: 'unreachable', field: 'hop', detail: null };
   const hop = fakeHop({ failure });

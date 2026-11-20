@@ -963,11 +963,16 @@ test('the indicator has its place, and the switch’s answer is what it shows', 
     },
   });
   // The screen asks once as it is built (design §4.2: the badge is in place
-  // before anything is spoken), and it asks both directions -- the switch is
-  // per direction, and one badge over two directions would be a badge about
-  // neither.
+  // before anything is spoken): the first direction's ask is already made by
+  // the time a caller holds the screen, with no call of its own.
+  assert.ok(asked.length > 0, 'the screen asks the switch as it is built');
+  // ... and the app asks again on the design's own events, for both directions:
+  // the switch is per direction, and one badge over two directions would be a
+  // badge about neither.
+  const built = asked.length;
   await h.screen.refreshIndicator();
-  assert.deepEqual(asked.slice(0, 2).sort(), ['stt', 'tts']);
+  assert.ok(asked.length >= built + 2, 'a refresh asks both directions');
+  assert.deepEqual([...new Set(asked)].sort(), ['stt', 'tts']);
 
   const { indicator } = h.screen.state();
   assert.deepEqual({ ...indicator.stt }, {
@@ -990,11 +995,23 @@ test('the indicator has its place, and the switch’s answer is what it shows', 
   assert.equal(indicator.tts.engine, 'local');
   assert.equal(indicator.tts.send, false);
 
-  // The app asks again on the design's own events, and the screen asks the
-  // source rather than keeping an answer of its own.
-  const before = asked.length;
-  await h.screen.refreshIndicator();
-  assert.equal(asked.length, before + 2);
+});
+
+test('the badge is in the snapshot before the switch has answered, and it is never blank', async () => {
+  // A source that never settles is what the slot before the first answer is
+  // for: the screen is waiting on the hop, and §4.2 says the owner sees
+  // `local — checking` rather than nothing while they wait. An app that
+  // rendered a blank badge would be showing a blank where a promise about the
+  // owner's speech belongs.
+  const h = await harness({ indicator: () => new Promise(() => {}) });
+  const { indicator } = h.screen.state();
+  for (const direction of ['stt', 'tts']) {
+    assert.equal(indicator[direction].text, 'local — checking', direction);
+    assert.equal(indicator[direction].engine, 'local', direction);
+    assert.equal(indicator[direction].provider, null, direction);
+    assert.equal(indicator[direction].send, false, direction);
+    assert.equal(indicator[direction].refusal.code, SCREEN_CODES.NO_BADGE, direction);
+  }
 });
 
 test('a badge source that throws, or answers what is not a badge, leaves the fail-closed badge', async () => {
