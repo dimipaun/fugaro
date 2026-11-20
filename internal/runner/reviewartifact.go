@@ -1030,6 +1030,7 @@ func (r *run) writeReviewArtifact(ctx context.Context, res agent.Result) error {
 			Model:   r.stageModel("review"),
 			Effort:  r.artifactReviewEffort(),
 		},
+		Against:        r.reviewAgainst(ctx),
 		Verdict:        answer.Verdict,
 		Overview:       answer.Overview,
 		Strengths:      answer.Strengths,
@@ -1091,6 +1092,28 @@ func (r *run) writeReviewArtifact(ctx context.Context, res agent.Result) error {
 	r.skipPR = true
 	r.storeReviewEnded(ctx)
 	return nil
+}
+
+// reviewAgainst is what this review is recorded as having been checked
+// against (R8): RA1's own record — the source the launcher named, the root
+// run, the digest of the brief the reviewer was shown, and, for none, why
+// there is none — in the shape both records carry it (runstore.Against). The
+// artifact's `against` is this, and so is the line the review's own comment
+// gives (againstLine, F36), so the two can never say different things about
+// one review.
+//
+// It is resolved when the record is written rather than remembered from the
+// prompt's own call: resolveReviewSpec is a pure reading of the run's task and
+// the checkout, and it is a run's own code that asks — never a second claim
+// written beside the first (reviewjob: no run reads another run's task).
+func (r *run) reviewAgainst(ctx context.Context) *runstore.Against {
+	found := r.resolveReviewSpec(ctx)
+	return &runstore.Against{
+		Source: string(found.source.source),
+		Run:    found.source.run,
+		SHA256: found.source.sha256,
+		Reason: found.source.reason,
+	}
 }
 
 // artifactReviewEffort is the effort the artifact's reviewer block records: the
