@@ -104,7 +104,7 @@ locals {
   # config.ServiceHeldSecretNames' own flip (#907, C2.3), and a shared job that
   # gave the key up before the runner stopped reading it would fail every
   # GitHub run it starts (G22).
-  shared_job_served_secret_classes = []
+  shared_job_served_secret_classes = ["model"]
 
   # The model credentials, identified the way internal/config identifies them
   # (config.ModelSecretEnvs and config.ProviderKeyEnvPrefix): the two reserved

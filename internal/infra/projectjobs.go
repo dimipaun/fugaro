@@ -57,11 +57,12 @@ type ProjectJob struct {
 	// null for a job whose profile the service does not serve. It is the whole
 	// of the switch on this side — the module turns it into the job account's
 	// one roles/run.invoker grant on that service (modules/project/sa.tf) and
-	// otherwise changes nothing about the job, which keeps every mount it has
-	// (G17: the drop is B5.7's flip, behind the owner's check). Absent when
-	// null, so the document of a job the service does not serve is byte for
-	// byte what it was. See projectJobServesTheCredentialsService for what
-	// "served" means here.
+	// reads it again for the model mounts the same profile gives up
+	// (local.is_shared_job_served_model, B5.7) — and, null, it moves nothing at
+	// all about the job, which keeps every mount it has and every accessor on
+	// them (G9, D147). Absent when null, so the document of a job the service
+	// does not serve is byte for byte what it was. See
+	// projectJobServesTheCredentialsService for what "served" means here.
 	CredentialsService *CredentialsService `json:"credentials_service,omitempty"`
 }
 
@@ -1075,7 +1076,10 @@ func installationCredentialsService(lc *localcfg.Config) *CredentialsService {
 // projectJobServesTheCredentialsService is the profile's switch: whether this
 // profile's shared jobs reach the installation's credentials service, and
 // therefore whether the module grants each of their accounts roles/run.invoker
-// on it (B5.2, D505, G17 — the grant alone; the mounts stay until B5.7's flip).
+// on it (B5.2, D505, G17) and whether those jobs give up the model credentials
+// the service serves their runs (B5.7, config.SharedJobServedClasses): the
+// grant arrived one release before the drop, which is G17's order — no mount is
+// lost before the service serves that credential to the image the job runs.
 //
 // Two conditions, and the second is what a profile's auth is on this side of
 // the wire. There is no auth in a profile's own declaration — a profile names a
@@ -1402,15 +1406,22 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 // from (G17, D143).
 //
 // served is the profile's own switch, read once per profile by the caller
-// (projectJobServesTheCredentialsService) and handed to both halves. A class
-// the list does not carry leaves every mount exactly where it is, whatever the
-// switch says, so an empty list is a set derived as it was derived before the
-// flip (D147).
+// (projectJobServesTheCredentialsService) and handed to both halves. Both are
+// needed to move a mount: the class list alone would take the credential from a
+// profile the service does not serve, and the switch alone from a profile whose
+// class is not listed yet — which is the same pair of clauses the module's
+// local.is_shared_job_served_model spells, and they have to answer the same per
+// variable, or a job keeps an accessor it never uses or loses one its container
+// still mounts (C2.3). A class the list does not carry leaves every mount
+// exactly where it is, whatever the switch says, so an empty list is a set
+// derived as it was derived before the flip (D147).
 func projectJobMounts(lc *localcfg.Config, profile string, pr config.JobProfile, account string, secretEnv, env map[string]string, served bool) (map[string]string, error) {
 	mounts := maps.Clone(secretEnv)
-	for v := range mounts {
-		if config.IsSharedJobServedModelEnv(v) {
-			delete(mounts, v)
+	if served {
+		for v := range mounts {
+			if config.IsSharedJobServedModelEnv(v) {
+				delete(mounts, v)
+			}
 		}
 	}
 	if err := projectAccountMount(lc, profile, pr, account, mounts, env, served); err != nil {

@@ -890,21 +890,30 @@ const SharedJobClassModel = "model"
 // moves no accessor and no mount of the App key — TestFilledSharedJobListKeepsTheAppKey
 // pins exactly that.
 //
-// The empty list is the inert state, and it is what the release before the
-// flip plans: with it empty neither side drops anything, so the tree plans and
-// runs what it did before it knew about a served class (D147's "with it off
-// nothing changes", and the first of this flip's two commits). Filled, what it
-// moves is the model mounts of one profile's jobs — every job of it, one per
-// (profile, provider, account) — and only for a profile whose own switch is on,
-// which is the same condition that granted its accounts roles/run.invoker on
-// the service one release earlier (B5.2, G17), so a profile the switch holds
-// off keeps every mount and every accessor, before and after (G9, D147).
+// The class list is a list rather than a boolean so a class can be added or
+// held back one at a time, and it carries the model class since the flip's
+// second commit filled it — the state this release, 0.27.0, ships, one release
+// after the address did (B5.2). The inert state is the empty list: with it
+// empty neither side drops anything, and the tree plans and runs what the
+// release before this one did (D147's "with it off nothing changes"). Filled,
+// what it moves is the model mounts of one profile's jobs — every job of it,
+// one per (profile, provider, account) — and only for a profile whose own
+// switch is on, so a profile the switch holds off keeps every mount and every
+// accessor, before and after (G9, D147).
+//
+// The order is what keeps the fill from stranding a run: the profile's
+// repositories are admitted to the service (B5.1) and its jobs' accounts may
+// invoke it (B5.2, the release the address landed in), which is G17's rule that
+// no mount is lost before the service serves that credential to the image the
+// job runs. The owner gave the go on 2026-11-18 with the other three flips of
+// the chain, waiving B5.6's PASS and moving Check 197's owner-run checks to
+// after the flip (B5.8); removing the class is the owner's go read backwards.
 //
 // Terraform cannot ask Go, so the same class is a literal in
 // modules/project/sa.tf's shared_job_served_secret_classes, held to this list
 // by deploy/terraform's TestSharedJobServedClassesMatchTheModule, and the two
 // are filled in one commit.
-var SharedJobServedClasses = []string{}
+var SharedJobServedClasses = []string{SharedJobClassModel}
 
 // SharedJobServesClass reports whether the credentials service serves the
 // secrets of this class to a shared project job. A class this release does not

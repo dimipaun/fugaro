@@ -366,6 +366,110 @@ func TestEmptySharedJobListChangesNothing(t *testing.T) {
 	}
 }
 
+// TestFilledSharedJobListDropsTheModelMounts is B5.7's flip pinned where it
+// holds: the class list is filled, so a profile the credentials service serves
+// plans every job of it with no model credential at all — the profile's own
+// Anthropic key, a provider key if it mounts one, and, on an account job, the
+// account's own Claude OAuth token — while a profile the switch holds off keeps
+// every one of them, before and after (G9, D147).
+//
+// The mounts and the redaction list are the whole of the deployer's half: the
+// module's accessor list is the same set read through one local
+// (deploy/terraform's TestSharedJobServedClassesMatchTheModule), and a variable
+// that left the container leaves the redaction list with it, or the run
+// publishes the value of a variable it no longer carries.
+func TestFilledSharedJobListDropsTheModelMounts(t *testing.T) {
+	if !config.SharedJobServesClass(config.SharedJobClassModel) {
+		t.Fatalf("config.SharedJobServedClasses = %v and does not carry %q: B5.7's flip is what takes a switched profile's shared job off the model credentials its runs no longer read (D505, D2078)", config.SharedJobServedClasses, config.SharedJobClassModel)
+	}
+	// The profile's own mounts: the standard profile mounts the App key and the
+	// Anthropic key, and only the first of the two survives the flip.
+	tail := m5Additions + projectProfilesLCBlock
+	off := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+tail+credentialsServiceLCBlock)
+	on := projectJobsFor(t, m4LocalConfig+projectJobRepoReadyLC+tail+credentialsServiceLCBlock)
+	name := gcp.ProjectJobName("standard", "github", "")
+	before, after := off[name], on[name]
+	if before.CredentialsService != nil || after.CredentialsService == nil {
+		t.Fatalf("the fixtures are not the pair this test is about: the unswitched job carries %v and the switched one %v", before.CredentialsService, after.CredentialsService)
+	}
+	if _, mounted := before.SecretEnv[config.ReservedSecrets[config.AnthropicSecret]]; !mounted {
+		t.Fatalf("the unswitched job mounts %v and not the Anthropic key: the test would be vacuous", before.SecretEnv)
+	}
+	for env := range after.SecretEnv {
+		if config.IsModelSecretEnv(env) {
+			t.Errorf("the switched job mounts %s from %s: the service serves this profile's repositories, so no model credential belongs in the container (B5.7, D2078)", env, after.SecretEnv[env])
+		}
+	}
+	if got := after.Env[runner.SecretEnvsVar]; strings.Contains(got, config.ReservedSecrets[config.AnthropicSecret]) {
+		t.Errorf("the switched job's %s = %q names a variable it no longer mounts: the redaction list is the mounts, and a stale entry hides a value the run does not carry", runner.SecretEnvsVar, got)
+	}
+	if got, want := after.Env[runner.SecretEnvsVar], redactionEnvs(after.SecretEnv); got != want {
+		t.Errorf("the switched job's %s = %q, want %q: the list is re-derived from the mounts the flip left", runner.SecretEnvsVar, got, want)
+	}
+	if !maps.Equal(before.SecretEnv, off[name].SecretEnv) {
+		t.Errorf("the unswitched job mounts %v and then %v: the flip moves a served profile's job alone (G9)", before.SecretEnv, off[name].SecretEnv)
+	}
+
+	// The account's own token, which is the mount this class is mostly made of
+	// on a shared job: an account job of a served profile carries no
+	// CLAUDE_CODE_OAUTH_TOKEN at all, while the same profile's jobs with the
+	// switch off carry one each.
+	accounts := m5Additions + projectAccountAxisLC
+	held := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+accounts+credentialsServiceLCBlock)
+	served := projectJobsFor(t, m4LocalConfig+projectJobRepoReadyLC+accounts+credentialsServiceLCBlock)
+	token := config.ReservedSecrets[config.ClaudeOAuthToken]
+	mounted := 0
+	for _, job := range held {
+		if _, ok := job.SecretEnv[token]; ok {
+			mounted++
+		}
+	}
+	if mounted == 0 {
+		t.Fatalf("no job of the unswitched account axis mounts %s: the test would be vacuous", token)
+	}
+	for jobName, job := range served {
+		if logical, ok := job.SecretEnv[token]; ok {
+			t.Errorf("the served job %s still mounts %s from %s: the account's token is the credential the service serves its runs' model calls with (B5.1, B5.7)", jobName, token, logical)
+		}
+	}
+	if got, want := sortedJobNames(served), sortedJobNames(held); !slices.Equal(got, want) {
+		t.Fatalf("the flip moved the job set to %v, want %v: the class takes mounts away and never a job", got, want)
+	}
+}
+
+// TestFilledSharedJobListKeepsTheAppKey is the other half of B5.7's flip, and
+// it is G22 read as a test: the GitHub App's private key is
+// config.ServiceHeldSecretNames' name and not this list's, so filling the
+// shared-job class list leaves the App key's mount and the accessor that goes
+// with it exactly where they were. A shared job that gave the key up before the
+// runner stopped reading FUGARO_GITHUB_APP_PRIVATE_KEY is a job whose every
+// GitHub run dies in the credential — the reason that list is still empty
+// (#907, C2.3).
+func TestFilledSharedJobListKeepsTheAppKey(t *testing.T) {
+	if !config.SharedJobServesClass(config.SharedJobClassModel) {
+		t.Fatalf("config.SharedJobServedClasses = %v and does not carry %q: this is B5.7's filled state, and the empty list keeps everything by definition", config.SharedJobServedClasses, config.SharedJobClassModel)
+	}
+	if config.IsServiceHeldSecretName(config.GitHubAppKeySecret) {
+		t.Fatalf("config.ServiceHeldSecretNames = %v names the App key: its drop is that list's own flip (#907), and this test is about the App key staying while only the model class leaves (G22)", config.ServiceHeldSecretNames)
+	}
+	tail := m5Additions + projectProfilesLCBlock
+	on := projectJobsFor(t, m4LocalConfig+projectJobRepoReadyLC+tail+credentialsServiceLCBlock)
+	key := config.ReservedSecrets[config.GitHubAppKeySecret]
+	for jobName, job := range on {
+		logical, mounted := job.SecretEnv[key]
+		if !mounted {
+			t.Errorf("the served job %s mounts no %s (%v): the App key is served by no list this release fills, so its accessor and its mount stay together (G22, #907)", jobName, key, job.SecretEnv)
+			continue
+		}
+		if logical != config.GitHubAppKeySecret {
+			t.Errorf("the served job %s mounts %s from %s, want %s", jobName, key, logical, config.GitHubAppKeySecret)
+		}
+		if got := job.Env[runner.SecretEnvsVar]; !strings.Contains(got, key) {
+			t.Errorf("the served job %s = %q does not name %s: the mount is still there, and a mounted secret left off the redaction list is one the run would print", jobName, runner.SecretEnvsVar, key)
+		}
+	}
+}
+
 // TestTheProjectJobsSwitchFollowsTheRecordsOfTheRun pins the re-derivation a
 // run owes the records it writes itself: the switch is read from the local
 // config's per-repository records, and two writers move them INSIDE a run that
