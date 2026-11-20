@@ -82,7 +82,7 @@ type arm struct {
 
 // pair is one pair's two records, at one mode and tier, differing only in the
 // arm each spec describes.
-func pair(pairID string, mode rigor.Mode, tr tier.Tier, champion, challenger arm) abPair {
+func pair(pairID string, mode rigor.Rigor, tr tier.Tier, champion, challenger arm) abPair {
 	return abPair{
 		champion:   armRecord(pairID, pairID+"-champion", task.ABArmChampion, mode, tr, champion),
 		challenger: armRecord(pairID, pairID+"-challenger", task.ABArmChallenger, mode, tr, challenger),
@@ -92,7 +92,7 @@ func pair(pairID string, mode rigor.Mode, tr tier.Tier, champion, challenger arm
 // armRecord is one arm's record as a run writes it. Only the champion carries a
 // branch and a pull request: the shadow pushes nothing and opens nothing
 // (D554), and the report must be readable with those fields set.
-func armRecord(pairID, runID string, armTask task.ABArm, mode rigor.Mode, tr tier.Tier, a arm) runstore.Record {
+func armRecord(pairID, runID string, armTask task.ABArm, mode rigor.Rigor, tr tier.Tier, a arm) runstore.Record {
 	start := a.start
 	if start == "" {
 		start = abStartSHA
@@ -380,7 +380,7 @@ func TestABReportJSONRecommendation(t *testing.T) {
 
 	// The rate a caller passes is the rate the document reports: a project that
 	// raised Pro's allowance is what the advice was read at.
-	raised := BuildAB(all, nil, map[rigor.Mode]float64{rigor.Pro: 3})
+	raised := BuildAB(all, nil, map[rigor.Rigor]float64{rigor.Pro: 3})
 	var raisedOut bytes.Buffer
 	if err := ABJSON(&raisedOut, raised, meta); err != nil {
 		t.Fatalf("ABJSON: %v", err)
@@ -469,7 +469,7 @@ func TestABReportExcludesInvalidPairs(t *testing.T) {
 	neverStarted.champion.StartSHA = ""
 	neverStarted.champion.HeadSHA = ""
 	// A follow-up run carries no ab block at all, so it is no arm of anything.
-	followUp := runstore.Record{RunID: "follow-up", Repo: "acme/marker-repo", Rigor: &runstore.RigorRecord{Mode: rigor.Pro}}
+	followUp := runstore.Record{RunID: "follow-up", Repo: "acme/marker-repo", Rigor: &runstore.RigorRecord{Level: rigor.Pro}}
 
 	all := append(records(valid1, valid2, skewed, neverStarted), followUp)
 	rep := BuildAB(all, nil, nil)

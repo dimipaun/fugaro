@@ -139,6 +139,8 @@ import {
   BUSY_SPINNER_CLASS,
   BUSY_STILL_CLASS,
   CACHE_FRESH_MS,
+  RETRY_CLASS,
+  RETRY_LABEL,
   STAMP_AT_CLASS,
   STAMP_CLASS,
   STAMP_REFRESH_CLASS,
@@ -860,6 +862,62 @@ describe('the dashboard the entry mounts', () => {
     // is the record's and has no say over what the window's read drew.
     expect(classed(panel, 'run-replay')).toHaveLength(1)
     expect(classed(panel, 'run-logs')[0]?.attributes.get('data-busy')).toBeUndefined()
+  })
+
+  it('offers a refused log section its own read again, and never the diagnosis (R1)', async () => {
+    // F21's own case: a run's refused section had the CLI's sentence and the
+    // command it names and **no way to ask again**. The two reads are
+    // independent, so the control in the log section reads `run logs` and
+    // nothing else.
+    const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+    const answers: ReturnType<typeof holding>[] = []
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(frame),
+        diagnoseRun: () => ({ ok: true, data: { document: {} } }),
+        readRunLogs: () => {
+          const answer = holding()
+          answers.push(answer)
+          return answer.reply()
+        },
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    ;(classed(panel, 'live-run')[0] as FakeNode).click()
+    answers[0]?.release({ ok: false, reason: 'no such run 20261015-120000-aa01' })
+    await flush()
+
+    const retry = classed(classed(panel, 'run-logs')[0] as FakeNode, RETRY_CLASS)[0]
+    expect(retry, 'the refused log section offered no Retry').toBeDefined()
+    expect(retry?.textContent).toBe(RETRY_LABEL)
+    const diagnoses = calls.filter((call) => call.name === 'diagnoseRun').length
+
+    retry?.click()
+    await flush()
+    expect(
+      calls.filter((call) => call.name === 'readRunLogs'),
+      'the press did not read the section it stands in',
+    ).toHaveLength(2)
+    expect(
+      calls.filter((call) => call.name === 'diagnoseRun'),
+      'the log Retry read the run’s record as well',
+    ).toHaveLength(diagnoses)
+    expect((classed(panel, 'run-logs')[0] as FakeNode).attributes.get(BUSY_ATTRIBUTE)).toBe('true')
+
+    answers[1]?.release({
+      ok: true,
+      data: {
+        document: {
+          entries: [{ time: '2026-10-15T12:00:00Z', severity: 'info', stage: 'implement', message: 'the run started' }],
+          total: 1,
+          refused: 0,
+        },
+      },
+    })
+    await flush()
+    expect(classed(panel, 'run-log-line')).toHaveLength(1)
+    expect(classed(panel, 'console-unavailable')).toEqual([])
   })
 
   describe('the frame a run is opened in', () => {
@@ -2693,6 +2751,39 @@ function typeInto(document: FakeDocument, className: string, value: string): voi
   ;(launchField(document, className) as unknown as { value: string }).value = value
 }
 
+/** launchedReply is one accepted `run.launch`, in the envelope the main process
+ * builds: the six keys `launchOutcomeOf` reads closed, with a `launchResult`'s
+ * thirteen inside. It is here rather than in `launch-form.test.ts` because this
+ * file is where the *write* is driven -- the form's submit, and what the console
+ * does with the tab the write was made in (R2). */
+function launchedReply(): Record<string, unknown> {
+  return {
+    ok: true,
+    data: {
+      ok: true,
+      runId: '20261119-010000-abcd',
+      result: {
+        project: 'acme',
+        run: '20261119-010000-abcd',
+        repo: 'owner/repo-a',
+        runId: '20261119-010000-abcd',
+        branch: 'main',
+        ref: 'main',
+        execution: 'cloud-run',
+        logUrl: '',
+        status: 'launched',
+        pr: null,
+        previousRun: '',
+        recipe: null,
+        projectLayer: null,
+      },
+      reason: '',
+      outcomeUnknown: false,
+      replayed: false,
+    },
+  }
+}
+
 describe('the launch control the Live poll redraws around', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -2737,6 +2828,37 @@ describe('the launch control the Live poll redraws around', () => {
     expect(valueOf(launchField(document, LAUNCH_TASK_CLASS))).toBe('summarise the alerting backlog')
     expect(valueOf(launchField(document, LAUNCH_TITLE_CLASS))).toBe('the nightly backlog')
     expect(valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS))).toBe('github/owner/repo-b')
+  })
+
+  it('reads Live again the moment a launch is accepted, and not at the next tick (R2)', async () => {
+    // R2 and F17: `run.launch` names the tab it was made in. Live's frame is the
+    // one that does not hold the run the console has just started, and the
+    // poll's own tick is a second away -- so the scope is cleared and read at
+    // once, which is the frame the operator pressed Launch to see.
+    const { bridge, calls } = queueBridge({ launchRun: () => launchedReply() })
+    const document = await boot(bridge, new FakeDocument())
+    const watches = calls.filter((call) => call.name === 'subscribeLive').length
+    const joins = calls.filter((call) => call.name === 'listRuns').length
+
+    ;(launchField(document, LAUNCH_OPEN_CLASS) as FakeNode).click()
+    await flush()
+    typeInto(document, LAUNCH_REPOSITORY_CLASS, QUEUE_OFFER)
+    typeInto(document, LAUNCH_TASK_CLASS, 'try the nightly job again')
+    launchField(document, LAUNCH_SUBMIT_CLASS).click()
+    await flush()
+
+    expect(calls.filter((call) => call.name === 'launchRun')).toHaveLength(1)
+    expect(
+      calls.filter((call) => call.name === 'subscribeLive'),
+      'the accepted launch left the pre-launch frame on screen',
+    ).toHaveLength(watches + 1)
+    // The join's own clock goes with the frame: `live.rigorAt` is what holds the
+    // run list for `LIVE_RIGOR_TTL_MS`, and the run this write started is one
+    // only a fresh join can put a mode chip on.
+    expect(
+      calls.filter((call) => call.name === 'listRuns'),
+      'the launch kept the join read from before it',
+    ).toHaveLength(joins + 1)
   })
 })
 
@@ -4439,6 +4561,56 @@ describe('the sections Spend fills as their own reads land', () => {
     // was drawn from an answer rather than from the sentence beside it.
     expect(caps.getAttribute('data-available')).toBe('true')
     expect(caps.getAttribute(BUSY_ATTRIBUTE)).toBeNull()
+  })
+
+  it('offers a refused caps section its own read again, and no other (R1)', async () => {
+    // R1: a refused or timed-out section draws the CLI's sentence, the command
+    // it names **and** a control that re-spawns that section's own read. The
+    // caps and the report are two independent reads, so the control beside the
+    // caps' sentence must read `budget show` and never the report -- a Retry
+    // that re-read a view the operator was not refused would answer one refusal
+    // with another read's figures.
+    const answers: ReturnType<typeof holding>[] = []
+    const fake = spendBridge({
+      showBudget: () => {
+        const answer = holding()
+        answers.push(answer)
+        return answer.reply()
+      },
+      runReport: () => ({ ok: true, data: { document: reportDoc('2026-10-01') } }),
+    })
+    const document = await openSpend(fake.bridge)
+    answers[0]?.release({ ok: false, reason: BUDGET_REFUSAL })
+    await flush()
+
+    const retry = classed(sectionOf(document, 'spend-caps'), RETRY_CLASS)[0]
+    expect(retry, 'the refused caps section offered no Retry').toBeDefined()
+    expect(retry?.textContent).toBe(RETRY_LABEL)
+    // The CLI's own sentence and the command it names are still the section's
+    // whole explanation: the control is added beside them, not instead of them.
+    expect(holdsText(sectionOf(document, 'spend-caps'), BUDGET_REFUSAL)).toBe(true)
+    expect(operationOf(document)).toBe('budget.show')
+    const reports = fake.calls.filter((call) => call.name === 'runReport').length
+
+    retry?.click()
+    await flush()
+    expect(
+      fake.calls.filter((call) => call.name === 'showBudget'),
+      'the press did not read the section it stands in',
+    ).toHaveLength(2)
+    expect(
+      fake.calls.filter((call) => call.name === 'runReport'),
+      'the caps’ Retry read the report as well',
+    ).toHaveLength(reports)
+    // The read is out and the section says so, rather than sitting on the
+    // sentence as though nothing were happening.
+    expect(sectionOf(document, 'spend-caps').getAttribute(BUSY_ATTRIBUTE)).toBe('true')
+
+    answers[1]?.release({ ok: true, data: { document: {} } })
+    await flush()
+    expect(sectionOf(document, 'spend-caps').getAttribute('data-available')).toBe('true')
+    expect(holdsText(sectionOf(document, 'spend-caps'), BUDGET_REFUSAL)).toBe(false)
+    expect(classed(sectionOf(document, 'spend-caps'), RETRY_CLASS)).toEqual([])
   })
 
   it('starts `budget show` and the report together, and neither waits for the other', async () => {
@@ -6159,6 +6331,65 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       { op: 'set', key: 'budget.per_run_usd', value: '25' },
       { op: 'unset', key: 'budget.per_run_usd' },
     ])
+  })
+
+  it('reads the Project tab again the moment a setting is written, and drops the view it held (R2)', async () => {
+    // F17, the defect R2 answers: the three writes of this console left every
+    // tab showing the figures it had read **before** them, because nothing but
+    // the installation switch ever cleared a cache. The settings write here is
+    // the plan's red step for the whole task, and the observed fact is the read
+    // **at once**: the second `budget show` is the only thing that can put the
+    // document the write left on the screen.
+    const sent: unknown[] = []
+    const written = { ...BUDGET_DOC, repos: [{ ...BUDGET_DOC.repos[0], kill: null }] }
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({
+          ok: true,
+          data: { document: calls.filter((call) => call.name === 'showBudget').length === 1 ? BUDGET_DOC : written },
+        }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+      },
+    })
+    bridge['editSetting'] = (args: unknown): unknown => {
+      sent.push(args)
+      return {
+        ok: true,
+        data: { ok: true, sentence: 'wrote layers/project.yaml (backup at layers/project.yaml.bak)' },
+      }
+    }
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+
+    /** killed is the kill switches the body draws, by their own state: the
+     * fixture's repository is killed before the write and live after it. */
+    const killed = (): readonly (string | null)[] =>
+      classed(panelOf(document), 'projects-kill-row').map((row) => row.getAttribute('data-killed'))
+    expect(calls.filter((call) => call.name === 'showBudget')).toHaveLength(1)
+    expect(killed()).toContain('true')
+
+    ;(classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode).click()
+    await flush()
+    const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
+    typeValue(theBox(editor), '25')
+    controlUnder(editor, 'Review and write').click()
+    await flush()
+
+    expect(sent).toEqual([{ op: 'set', key: 'budget.per_run_usd', value: '25' }])
+    expect(
+      calls.filter((call) => call.name === 'showBudget'),
+      'the write left the tab’s cache entry in place',
+    ).toHaveLength(2)
+    expect(killed(), 'the pre-write figures are still on screen').not.toContain('true')
+    // The read is the **body's** and not the whole visit's: the settings panel
+    // is where the operator is reading the CLI's own answer to the write they
+    // just made, and a repaint of that section would take the sentence off the
+    // screen before they had read it (D1112's flow).
+    expect(holdsText(editor, 'wrote layers/project.yaml (backup at layers/project.yaml.bak)')).toBe(true)
+    expect(calls.filter((call) => call.name === 'readSettings')).toHaveLength(1)
   })
 
   it('disables the control that starts an edit while one is in flight', async () => {

@@ -175,6 +175,12 @@ type initOptions struct {
 	// question phase applies nothing.
 	rigor string
 
+	// answersFile is --answers-file: the wizard's five questions answered as
+	// one document, whose members fill the fields above and nothing else
+	// (setup_answers.go, D2904 of docs/console-improvements). "-" reads it from
+	// stdin, which is what a surface with no file of its own passes.
+	answersFile string
+
 	// --repo: onboard the repository of a checkout.
 	repo, noBuild, allowJobDelete bool
 	// retire is --retire: run the retirement a config change needs, behind
@@ -522,6 +528,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// the reader typed. `fugaro run --mode hotfix` is named here because it is
 	// the one door hotfix has, and it is not a layer's to set (D834).
 	f.StringVar(&o.rigor, "rigor", "", "answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set")
+	// --answers-file answers every question the wizard asks from one document
+	// (setup_answers.go, D2904 of docs/console-improvements): the surface that
+	// drives the CLI — the console's first-run wizard — has no terminal, and
+	// this is where its answers travel. The help names the members because the
+	// file is the reader's whole contract, and it says what the file is not: an
+	// answer is not a confirmation.
+	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the five questions a first run asks (--gcp-project, --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
@@ -1019,6 +1032,12 @@ func (r *initRun) lockWorkdirs(project string) (func(), error) {
 func runInit(r *initRun) error {
 	cmd, o := r.cmd, r.o
 	defer func() { clear(r.appKeyMem) }()
+	// The answers file, before anything is checked or asked: it fills the
+	// wizard's questions' flags, so a run that reads one is a run that was
+	// passed them (setup_answers.go).
+	if err := r.applySetupAnswers(); err != nil {
+		return err
+	}
 	if o.checkApp {
 		if err := refuseAppKeyReadInAgent(os.Getenv, checkGitHubAppFlag); err != nil {
 			return err
@@ -4510,6 +4529,12 @@ func (o *initOptions) installationFlags() []string {
 func runInitRepo(r *initRun, args []string) error {
 	cmd, o := r.cmd, r.o
 	defer func() { clear(r.appKeyMem) }()
+	// The answers file, as on the converge (setup_answers.go): a --repo run
+	// asks none of the wizard's questions, and the flags its answers fill are
+	// refused by name rather than dropped (installationFlags).
+	if err := r.applySetupAnswers(); err != nil {
+		return err
+	}
 	if o.checkApp {
 		if err := refuseAppKeyReadInAgent(os.Getenv, checkGitHubAppFlag); err != nil {
 			return err
@@ -4628,6 +4653,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// The rigor: block and defaults.rigor are the same kind of break: keys a
 	// strict decoder older than rigorSince refuses at bootstrap.
 	if err := r.gateRigor(o, repo, lc, cfg); err != nil {
+		return err
+	}
+	// The spellings this release adds to that key — an area rule's `level:`
+	// and the scalar `rigor:` shorthand — are the same kind of break on the
+	// newer rigorSpellingSince: the key above passes on any image newer than
+	// 0.11.0, and these still die at bootstrap on one.
+	if err := r.gateRigorSpelling(o, repo, lc, cfg); err != nil {
 		return err
 	}
 	// The governance: block, in either file, is the same kind of break, on
@@ -5218,6 +5250,26 @@ func (r *initRun) gateRigor(o *initOptions, repo string, lc *localcfg.Config, cf
 	return refuseRigorSkew(repo, cfg.RepoRigorSet, cfg.Layer.SetsRigor(), lc.BaseImage(config.BaseKind), w)
 }
 
+// gateRigorSpelling is fugaro update --repo's gate for rigorSpellingSince:
+// refuseRigorSpellingSkew, with gateRigor's escapes and for its reason. It is
+// its own gate rather than a wider condition in gateRigor because the two
+// answer different questions about one key: rigorSince is the key being written
+// at all, and this one is which spelling of it was written, which an
+// installation newer than rigorSince passes while an image older than this
+// release still dies on it at bootstrap. The three halves are read from the
+// text (RepoRigorLevelSet, RepoRigorScalarSet, SetsRigorLevel), since the
+// parsed block folds both spellings into its own fields.
+func (r *initRun) gateRigorSpelling(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseRigorSpellingSkew(repo, cfg.RepoRigorLevelSet, cfg.RepoRigorScalarSet, cfg.Layer.SetsRigorLevel(), lc.BaseImage(config.BaseKind), w)
+}
+
 // gateGovernance is fugaro update --repo's gate for governanceSince:
 // refuseGovernanceSkew, with gateRigor's escapes and for its reason — the
 // repository's half is the key being written (RepoGovernanceSet) rather than
@@ -5711,14 +5763,19 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		if gated {
 			r.res.Changes = &counts
 		} else {
-			// The flag's list and the flip's own accessor deletes: the drop
-			// is fugaro's decision, and the ordinary path — the one a project
-			// that is not managed takes — may not owe the user a flag or a
-			// second command for it (infra.ProxiedTokenAccessorAllowDelete,
-			// CLAUDE.md's HARD RULE, and the switch in init_retire.go's
-			// retireManaged is the managed path's own). Every other change in
-			// this plan is judged exactly as it was.
+			// The flag's list and the flips' own accessor deletes, one
+			// allowance per flip: the drop is fugaro's decision, and the
+			// ordinary path — the one a project that is not managed takes —
+			// may not owe the user a flag or a second command for it (the
+			// proxied token's is infra.ProxiedTokenAccessorAllowDelete, the
+			// fetched class's is infra.VaultAccessorAllowDelete, the S4
+			// flip's are infra.BuildAccessorAllowDelete; CLAUDE.md's HARD
+			// RULE, and the switch in init_retire.go's retireManaged is the
+			// managed path's own). Every other change in this plan is judged
+			// exactly as it was.
 			allowed := append(slices.Clone(r.o.allowDelete), infra.ProxiedTokenAccessorAllowDelete(plan, spec)...)
+			allowed = append(allowed, infra.VaultAccessorAllowDelete(plan, spec)...)
+			allowed = append(allowed, infra.BuildAccessorAllowDelete(plan, spec)...)
 			if err := r.guard(ctx, c, plan, allowed); err != nil {
 				return plan, err
 			}
@@ -5855,6 +5912,24 @@ func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcf
 	if err != nil {
 		return "", false, err
 	}
+	// A repository the credentials service serves (B4.9, D2076): the build's
+	// credential step fetches the git credential and the workflow's own build
+	// secrets there instead of reading the mounts the apply took away, and the
+	// address is what tells it to. The ID above is the caller's, read back out
+	// of the apply's own spec or resolved live, and a served request names no
+	// secret at all — so it is carried and unused, never looked up here.
+	//
+	// The switch is the SPEC's own answer, which is the document this run is
+	// about to apply and the one modules/repo/build.tf's
+	// local.build_mounts_served reads: the accessor list and this address are
+	// then one answer about one plan, and the build this converge submits
+	// cannot name a secret the same plan's account has just been denied
+	// (D2077).
+	serviceURL, err := buildServiceURL(lc, spec.Name, spec.BuildMountsServed())
+	if err != nil {
+		return "", false, err
+	}
+	bs.CredentialsServiceURL = serviceURL
 	if cfg.Layer != nil {
 		rb, err := openRecordBucket(ctx, lc.RecordBucketURL())
 		if err != nil {

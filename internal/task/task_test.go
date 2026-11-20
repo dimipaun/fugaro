@@ -502,7 +502,7 @@ func TestOldTaskParserRefusesCompressionOffField(t *testing.T) {
 		ProjectLayer *ProjectLayer `json:"project_layer,omitempty"`
 		OAuthToken   string        `json:"oauth_token,omitempty"`
 		Mode         string        `json:"mode,omitempty"`
-		Rigor        rigor.Mode    `json:"rigor,omitempty"`
+		Rigor        rigor.Rigor   `json:"rigor,omitempty"`
 		Paths        []string      `json:"paths,omitempty"`
 		Inputs       []InputFile   `json:"inputs,omitempty"`
 	}

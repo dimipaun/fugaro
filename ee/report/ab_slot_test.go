@@ -46,7 +46,7 @@ type reviewerSpec struct {
 // reviewerPairAt is one reviewer pair's two records, at one mode and tier: the
 // champion's own run, and the shadow that replayed the same level over the
 // champion's patch (B1.2).
-func reviewerPairAt(pairID, slot string, mode rigor.Mode, tr tier.Tier, champion, challenger reviewerSpec) abPair {
+func reviewerPairAt(pairID, slot string, mode rigor.Rigor, tr tier.Tier, champion, challenger reviewerSpec) abPair {
 	championRun := pairID + "-champion"
 	return abPair{
 		champion:   reviewerRecord(pairID, championRun, task.ABArmChampion, slot, mode, tr, champion),
@@ -60,7 +60,7 @@ func reviewerPairAt(pairID, slot string, mode rigor.Mode, tr tier.Tier, champion
 // read one change, so neither arm's coding says anything about the reviewers
 // (B1.2). The challenger carries the champion's run ID, which is the patch it
 // read, and a coder pair's challenger carries none.
-func reviewerRecord(pairID, runID string, armTask task.ABArm, slot string, mode rigor.Mode, tr tier.Tier, s reviewerSpec, championRun ...string) runstore.Record {
+func reviewerRecord(pairID, runID string, armTask task.ABArm, slot string, mode rigor.Rigor, tr tier.Tier, s reviewerSpec, championRun ...string) runstore.Record {
 	a := arm{model: abCoderShared, cost: s.runUSD, priced: true}
 	rec := armRecord(pairID, runID, armTask, mode, tr, a)
 	rec.AB.Slot = task.ABSlot(slot)

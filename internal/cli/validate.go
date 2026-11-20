@@ -831,7 +831,7 @@ func craftModelProblems(cfg *config.Config, lc *localcfg.Config, repo string, cl
 // bootstrap hand it: D1664's guard is about the models the two levels will
 // really run, and a level's model is its craft's where the level wrote none.
 func reviewLevelProblems(root string, cfg *config.Config, lc *localcfg.Config, lcErr error, claimed map[string]config.ModelProvider, crafts map[string]string) (problems, warnings []config.Problem) {
-	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{}).Mode
+	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{}).Level
 	// The floor lives in the owner-only policy node and is published from this
 	// file's own project config (L1.4): a config selected for another project
 	// holds another installation's floor.

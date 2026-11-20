@@ -214,16 +214,39 @@ var credentialSecretEnv = map[string]string{gitprov.KindBitbucket: gitTokenEnv, 
 // reaches the build step as _CONTEXT_DIR.
 const contextDirDefault = "/workspace/context"
 
+// served is whether the credentials service serves this build's secrets
+// (B4.9, the S4 flip; D2076, D2077): the spec names the service's address and
+// the class list carries the build's own classes.
+//
+// Both halves are needed. The address alone is what B4.5 already puts on the
+// rebuild of a check job whose environment names a service — that job's
+// request kept every mount until this flip — and the class is a Go fact rather
+// than a per-repository one, so it is the address that decides WHICH builds it
+// moves: a catalog build carries none (its identity is not one the build route
+// admits, internal/cli's gitcred_build), so it is never served and keeps every
+// secret it mounted.
+func (s BuildSpec) served() bool {
+	return s.CredentialsServiceURL != "" && config.BuildServesClass(config.BuildSecretClassBuild)
+}
+
 // BuildRequest is the Cloud Build request for s in project: images.CloudBuild
 // with its substitutions set, the credential step's secret and env chosen
 // by provider, the provider credential's version in availableSecrets, and
 // each workflow secret added to availableSecrets and to the build step's
-// secretEnv (and nowhere else). They stay mounted for a repository switched
-// to the installation's credentials service too, whose credential step
-// fetches the same credentials there instead of reading them (B4.5, D2076,
-// D2077): dropping the mounts is that flip's own change (B4.9), so until it
-// lands the request is the same one either way. It always names the
-// repository's build
+// secretEnv (and nowhere else).
+//
+// A repository the credentials service serves names no secret at all (B4.9,
+// D2076, D2077): s.CredentialsServiceURL is set and the class list carries the
+// build's own classes, so the request carries no availableSecrets — neither
+// the provider credential nor a workflow's build secrets — and no step holds a
+// secret in its secretEnv. Its credential step fetches the git credential from
+// the service with the build account's own identity, and the workflow's build
+// secrets with it (B4.5), which is where they come from instead; the account
+// keeps no accessor on any of them (modules/repo/build.tf). What stays is the
+// address and the list of variables to fetch: _SECRET_ENVS is the same list of
+// names either way, and a name is not a value.
+//
+// It always names the repository's build
 // account: a request without one would run as the project's default build
 // identity. It makes no calls.
 func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
@@ -253,18 +276,38 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 		b.Steps = slices.DeleteFunc(b.Steps, func(st *cloudbuild.BuildStep) bool { return st.Id == "smoke" })
 	}
 
-	version := func(id string) string { return "projects/" + project + "/secrets/" + id + "/versions/latest" }
-	b.AvailableSecrets.SecretManager[0].Env = credentialSecretEnv[s.GitProvider]
-	b.AvailableSecrets.SecretManager[0].VersionName = version(s.GitSecretID)
-	cred.SecretEnv = []string{credentialSecretEnv[s.GitProvider]}
-	cred.Env = slices.Clone(credentialEnv[s.GitProvider])
+	// Every workflow secret's variable name, whether or not its value is
+	// mounted below: _SECRET_ENVS is how the build step is told which name to
+	// read a file secret under, and the credential step which ones to fetch,
+	// so it is the same list for a repository the service serves and one it
+	// does not.
 	envs := make([]string, 0, len(s.WorkflowSecrets))
 	for _, ws := range s.WorkflowSecrets {
-		b.AvailableSecrets.SecretManager = append(b.AvailableSecrets.SecretManager,
-			&cloudbuild.SecretManagerSecret{Env: ws.Env, VersionName: version(ws.ID)})
-		build.SecretEnv = append(build.SecretEnv, ws.Env)
 		envs = append(envs, ws.Env)
 	}
+	// A repository the service serves names no secret here (B4.9, D2076,
+	// D2077): the values come from the service at the credential step, which
+	// is what the address below is for. Everything a mount would have carried
+	// goes — the provider credential's availableSecrets entry, the build
+	// step's own secretEnv and the workflow secrets' entries with it — because
+	// the build account holds no accessor on any of them once the class list
+	// carries the build's classes (modules/repo/build.tf), and Cloud Build
+	// fails a build that names a secret its account cannot read.
+	if s.served() {
+		b.AvailableSecrets = nil
+		cred.SecretEnv = nil
+	} else {
+		version := func(id string) string { return "projects/" + project + "/secrets/" + id + "/versions/latest" }
+		b.AvailableSecrets.SecretManager[0].Env = credentialSecretEnv[s.GitProvider]
+		b.AvailableSecrets.SecretManager[0].VersionName = version(s.GitSecretID)
+		cred.SecretEnv = []string{credentialSecretEnv[s.GitProvider]}
+		for _, ws := range s.WorkflowSecrets {
+			b.AvailableSecrets.SecretManager = append(b.AvailableSecrets.SecretManager,
+				&cloudbuild.SecretManagerSecret{Env: ws.Env, VersionName: version(ws.ID)})
+			build.SecretEnv = append(build.SecretEnv, ws.Env)
+		}
+	}
+	cred.Env = slices.Clone(credentialEnv[s.GitProvider])
 	// Cloud Build refuses a substitution the request doesn't reference, so
 	// each provider sends only its own.
 	b.Substitutions = map[string]string{
@@ -400,11 +443,19 @@ func CheckRepoURL(provider, repoURL string) error {
 // the build of project. reserved are the variables a workflow secret may
 // not reuse.
 func (s BuildSpec) check(project string, reserved map[string]bool) error {
-	for _, f := range []struct{ name, v string }{
+	fields := []struct{ name, v string }{
 		{"repository slug", s.Slug}, {"repository URL", s.RepoURL}, {"base branch", s.BaseBranch},
-		{"workflow", s.Workflow}, {"base image", s.Base}, {"image", s.Image}, {"git credential secret", s.GitSecretID},
+		{"workflow", s.Workflow}, {"base image", s.Base}, {"image", s.Image},
 		{"build service account", s.ServiceAccount}, {"runs bucket", s.Bucket},
-	} {
+	}
+	// A build the service serves names no git credential secret (B4.9, D2076):
+	// its credential step fetches the credential there, so the ID a mounted
+	// request needs is one this request has nothing to do with — and the
+	// account holds no accessor on any container it could name.
+	if !s.served() {
+		fields = append(fields, struct{ name, v string }{"git credential secret", s.GitSecretID})
+	}
+	for _, f := range fields {
 		if f.v == "" {
 			return fmt.Errorf("the Cloud Build request has no %s", f.name)
 		}

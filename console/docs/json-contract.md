@@ -649,37 +649,48 @@ reads:
 | `artifact_count` | int | **yes** | what an artifact run's record says it delivered; absent for every run that has none, and the count `runs ls`'s `ARTIFACTS` column shows — its total is `artifact_bytes` |
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
 | `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
-| `rigor` | `*runstore.RigorRecord` | **yes** | the mode the run resolved, the layer that won and the areas that matched (docs/rigor-modes D22, D24, D25): `mode`, `from`, `areas`, `at` and `revision` below. **Absent for a run that resolved none** — a record written before the field existed, a run that died before bootstrap, or a block that cannot be read as a decision — and absence means **"no record of this run's rigor"**, never "it resolved nothing" (the `-` cell of `runs ls`'s `MODE` column) |
+| `rigor` | `*runstore.RigorRecord` | **yes** | the level the run resolved, the layer that won and the areas that matched (docs/rigor-modes D22, D24, D25): `level` and `mode` — the one value under the axis's two keys — then `from`, `areas`, `at` and `revision` below. **Absent for a run that resolved none** — a record written before the field existed, a run that died before bootstrap, or a block that cannot be read as a decision — and absence means **"no record of this run's rigor"**, never "it resolved nothing" (the `-` cell of `runs ls`'s `MODE` column) |
 | `owner_decisions` | `*runstore.OwnerDecisions` | **yes** | what the run's review left for the repository's owner to settle (OD1): `decisions` (each one `file`° and `summary`, below) and `total`. **Absent for a run that left none** — every run whose review named no such finding, every run that stopped for its own reason, and every record written before the field existed — and absence means **"nothing is pending"**, never "the review had nothing to say" (the row's `reason` says the same sentence, and the `halt.reason` of `owner_decision` is the other half of the same fact where the loop stopped on the finding) |
 
-**`rigor` is the mode the run resolved, and it is read from the base branch.**
-The block is one decision (docs/rigor-modes D24), carrying the mode, the layer
+**`rigor` is the level the run resolved, and it is read from the base branch.**
+The block is one decision (docs/rigor-modes D24), carrying the level, the layer
 that decided it (`area`, `repo`, `project`, `default` or `request` — never
 `reached`, which is the resolver's answer to a later moment asking again and
 which the fold replaces with the earlier, narrower reason), every area rule
-that matched with the mode it sets and the moment it was first applied at
+that matched with the level it sets and the moment it was first applied at
 (`bootstrap`, `round` or `finalize` — D22's three moments) and the revision the
-configuration was read from. The mode's configuration comes from the **base
+configuration was read from. The level's configuration comes from the **base
 branch** for every run kind (D25), so a run's other keys may come from the
 checked-out ref while its rigor comes from what it will merge into: `revision`
 is how a reader tells those apart, and it is written either way. The block is
-D22's monotone fold — a later moment never lowers the mode, and the moment it
+D22's monotone fold — a later moment never lowers the level, and the moment it
 names is the last one that changed the block.
+
+**The level is carried under two keys (LD2).** The axis is spelled `level` now
+— in `fugaro.yaml`, in the project layer and in everything a person reads — and
+`mode` is the name it went by before, which stays because this block is a wire
+shape a reader outside the CLI's binary consumes and **a field never changes
+meaning** (CLAUDE.md). Every block this runner writes carries both, with the
+same value; a record written by a CLI before LD2 carries `mode` alone. A reader
+therefore **prefers `level` and falls back to `mode`** — `runstore.RigorRecord`'s
+`LevelOf` on the Go side, `readRigor` in `console/src/shared/rigor.ts` here —
+and the record's own `version` stays 1: the key was added, never retyped.
 
 | Field | Type | omitempty | Note |
 |---|---|---|---|
-| `mode` | string | no | the resolved mode: `poc`, `startup`, `pro`, `critical` or `hotfix` (`pro` is Fugaro's built-in default, D19) |
-| `from` | string | no | the layer that decided it; **never `reached`**, which is the resolver holding an earlier moment's mode (D22) — the fold keeps the layer that actually set it (D24's "the layer that won"), so a block that says `reached` is not one this runner writes and `Bounded` refuses it |
-| `areas` | `[]object` | **yes** | every rule that matched, **strictest first** (D23) and at most `rigor.MaxAreas` = **100** of them, each `name` (the rule's own name), `mode` (the mode that rule sets) and `at` (the moment it was first applied). **Absent when none matched** — a reader must not see "there were rules" where the answer is "there were none". The order is one the record establishes, not one it is handed: `Applied` sorts when it folds a moment in and `Bounded` sorts a block the job wrote, so the first entry is the rule whose mode decided — the one `runs ls`'s `MODE` column names |
+| `level` | string | no | the resolved level: `poc`, `startup`, `pro`, `critical` or `hotfix` (`pro` is Fugaro's built-in default, D19). It is the same fact as `mode` beside it on every block this runner writes; **LD2** |
+| `mode` | string | no | the same level under the name this axis had before LD2, written beside `level` with the same value. A block written before the rename carries this one alone, which is why a reader prefers `level` and falls back to it |
+| `from` | string | no | the layer that decided it; **never `reached`**, which is the resolver holding an earlier moment's level (D22) — the fold keeps the layer that actually set it (D24's "the layer that won"), so a block that says `reached` is not one this runner writes and `Bounded` refuses it |
+| `areas` | `[]object` | **yes** | every rule that matched, **strictest first** (D23) and at most `rigor.MaxAreas` = **100** of them, each `name` (the rule's own name), `level` and `mode` (the level that rule sets, under the two keys the block carries it under) and `at` (the moment it was first applied). **Absent when none matched** — a reader must not see "there were rules" where the answer is "there were none". The order is one the record establishes, not one it is handed: `Applied` sorts when it folds a moment in and `Bounded` sorts a block the job wrote, so the first entry is the rule whose level decided — the one `runs ls`'s `MODE` column names |
 | `at` | string | no | the moment of the resolution the block records: the last one that changed it |
 | `revision` | string | **yes** | where the configuration was read from, `origin/<base branch>`; absent when the run could not name it |
 
 **The reader bounds it again.** The block is job-writable, so `runview.Join`
 does not pass it through as written: `RigorRecord.Bounded` refuses a block
-whose mode, layer or moment is outside its vocabulary — the row then carries no
+whose level, layer or moment is outside its vocabulary — the row then carries no
 block, the same answer as a record that has none — and re-applies the caps
 (`rigor.MaxAreas` rules, `rigor.MaxAreaName` = 40 runes a name, 120 runes of
-revision), dropping an area whose own mode or moment is unreadable, and sorting
+revision), dropping an area whose own level or moment is unreadable, and sorting
 the rules strictest first before it caps them, so the rules that survive are the
 strictest ones and the first of them is the rule a reader names. A tampered
 `result.json` therefore reaches the console as no block or as a bounded one,

@@ -1515,15 +1515,20 @@ func mergeVerdictText(v runstore.MergeJudge) string {
 	if text == "" {
 		return ""
 	}
-	return fenced(text, maxJudgeFenceRunes)
+	return Fenced(text, maxJudgeFenceRunes)
 }
 
-// fenced is a value out of a record as a block of a sentence this program
+// Fenced is a value out of a record as a block of a sentence this program
 // writes. safetext drops the controls, escape sequences, bidi and zero-width
 // characters — and never a backtick: a value that carried the fence's own three
 // would end the block and write the words after it as this program's, so the
 // fence is opened one backtick longer than any run of them inside.
-func fenced(text string, room int) string {
+//
+// It is exported because more than one program writes such a block and the rule
+// is the same one: the judge's verdict and a split's scope here, and the ticket
+// an issue item came from in the brief of the run a launcher starts
+// (internal/cli, B9).
+func Fenced(text string, room int) string {
 	body := safetext.Clip(safetext.MultiLine(text), room)
 	fence := "```"
 	for strings.Contains(body, fence) {

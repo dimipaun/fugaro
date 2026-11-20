@@ -43,8 +43,50 @@ import (
 type userLsOptions struct {
 	cloudOptions
 	repo   string
+	me     bool
 	asJSON bool
 }
+
+// whoamiDocVersion is `fugaro user ls --me --json`'s document version, and it
+// is 1: the document is the console's own read (the `whoami` operation of
+// docs/console-improvements/implementation-plan.md, AL), so its shape is
+// published from its first release and a member added from here on is an
+// addition a version-1 reader reads as it did (CLAUDE.md, "a field never
+// changes meaning").
+const whoamiDocVersion = 1
+
+// whoamiDoc is `fugaro user ls --me --json`: the caller's own role, the scope
+// that role is held at, and the patterns that scope names.
+//
+// It carries no member: the document is about the caller and nobody else, and
+// the reader asking who they are is the caller. Every field is always written —
+// a role of `none` is a fact and an absent member is not — and `repos` is an
+// array seeded empty, never null (the console's own availability rule for a
+// JSON document).
+//
+// The two vocabularies are the console's (D2907, the plan's own words): `role`
+// is one of viewer, operator and admin, the closed set internal/access ranks,
+// or `none`; `scope` is one of `project`, `all` and `repos` — the console
+// spells all-repos `all` — or `none` for a caller holding nothing. The human
+// sentence beside this document keeps the CLI's own spelling of a scope, so a
+// person who reads it can copy it into `fugaro user grant --scope`.
+type whoamiDoc struct {
+	Version int      `json:"version"`
+	Role    string   `json:"role"`
+	Scope   string   `json:"scope"`
+	Repos   []string `json:"repos"`
+}
+
+// The words whoamiDoc publishes. whoamiRoleNone is what an unknown or absent
+// role reads as, which is the rule the console applies to a word it does not
+// know: nothing this CLI writes is outside this set.
+const (
+	whoamiRoleNone     = "none"
+	whoamiScopeNone    = "none"
+	whoamiScopeProject = "project"
+	whoamiScopeAll     = "all"
+	whoamiScopeRepos   = "repos"
+)
 
 // userListDocVersion is `fugaro user ls --json`'s document version. Version 1
 // carried the two lists under the keys the roles were spelled with before this
@@ -155,16 +197,25 @@ member in this machine's own config keeps the IAM grant the installation
 derives, and the resolver ranks none of them, because the CLI cannot read a
 caller's groups.
 
+--me prints your own role and the scope it is held at, and nothing about anybody
+else. It reads the same grants node and the same resolver the commands gate on:
+the role is the highest one a stored grant names you with, an implicit project
+admin reads admin at project scope, and a caller no stored grant names reads
+none. It is a read of your own pair alone, so unlike the grant and revoke
+subcommands a coding agent's session may run it.
+
 The command reads the grants node and the published policy with your own
 credentials and writes nothing. An installation with no Firebase budget backend
 has no grants node at all: its roles are still this machine's own
 terraform.operators and terraform.admins, and this command prints those and
-says so.`,
+says so — but --me has no roster to read your own role from and refuses rather
+than guess at one.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return userLs(cmd, o) },
 	}
 	addCloudFlags(cmd, &o.cloudOptions)
 	cmd.Flags().StringVar(&o.repo, "repo", "", "the repository to print the effective role in (provider/owner/name, or owner/name for a repository this machine's config lists)")
+	cmd.Flags().BoolVar(&o.me, "me", false, "print the caller's own role and the scope it is held at")
 	cmd.Flags().BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	return cmd
 }
@@ -178,9 +229,15 @@ func userLs(cmd *cobra.Command, o *userLsOptions) error {
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
+	if o.me && o.repo != "" {
+		return userErr("--me and --repo cannot be combined: --me prints the caller's own role, and --repo prints the role every member holds in one repository. Run one of them")
+	}
 	sel, lc, err := selectProject(ctx, o.cloudOptions)
 	if err != nil {
 		return err
+	}
+	if o.me {
+		return userLsMe(cmd, o, lc)
 	}
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return userLsNoBackend(cmd, o, sel, lc)
@@ -435,4 +492,108 @@ func userLsNoBackend(cmd *cobra.Command, o *userLsOptions, sel localcfg.Selectio
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "%s\n", accessNoBackend)
 	return printUserLists(cmd.OutOrStdout(), lc)
+}
+
+// userLsMe is `--me`: the caller's own role, and the scope it is held at
+// (D2907). It reads nothing about anybody else, and it is deliberately the
+// gate's own path: accessJudge builds the same Input (the grants node's pairs
+// and this machine's implicit admins) and reads the same caller (the
+// credential, never the config's `user:` key, F21) that accessGateProject and
+// accessGateRepo judge with, so the answer a console disables a control on is
+// the answer the CLI would refuse the write by.
+//
+// It reads no repository, so the published allow_repos is not read with it
+// (accessJudge's repoLevel): whether a repository is admissible is the policy's
+// answer at the moment of a check, and this read is not about one.
+func userLsMe(cmd *cobra.Command, o *userLsOptions, lc *localcfg.Config) error {
+	judged, err := accessJudge(cmd.Context(), lc, nil, false, "your own role is not read")
+	if err != nil {
+		return err
+	}
+	if judged == nil {
+		return userLsMeNoRoster(lc)
+	}
+	role, scope := accesslib.Self(judged.in, judged.caller)
+	if !o.asJSON {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\n", userLsMeSentence(judged.caller, lc, role, scope))
+		return nil
+	}
+	doc := whoamiDoc{
+		Version: whoamiDocVersion,
+		Role:    userLsMeRoleWord(role),
+		Scope:   userLsMeScopeWord(scope),
+		Repos:   userLsMeRepos(scope),
+	}
+	enc := json.NewEncoder(cmd.OutOrStdout())
+	enc.SetIndent("", "  ")
+	return enc.Encode(doc)
+}
+
+// userLsMeRoleWord is role as whoamiDoc spells it: the resolver's own word for
+// the three roles it ranks, and `none` for the empty role — the word a reader
+// that does not know a role reads it as.
+func userLsMeRoleWord(role accesslib.Role) string {
+	if role == accesslib.RoleNone {
+		return whoamiRoleNone
+	}
+	return string(role)
+}
+
+// userLsMeScopeWord is scope's kind as whoamiDoc spells it: the console's three
+// words for the three kinds that cover something, and `none` for the zero scope
+// a caller holding no role has.
+func userLsMeScopeWord(scope accesslib.Scope) string {
+	switch scope.Kind {
+	case accesslib.ScopeProject:
+		return whoamiScopeProject
+	case accesslib.ScopeAllRepos:
+		return whoamiScopeAll
+	case accesslib.ScopeRepos:
+		return whoamiScopeRepos
+	}
+	return whoamiScopeNone
+}
+
+// userLsMeRepos is the patterns the scope names, and an empty list for every
+// kind that names none: the document's arrays are seeded rather than null, so
+// "this scope names no pattern" is a fact a reader reads without a case for it.
+func userLsMeRepos(scope accesslib.Scope) []string {
+	if scope.Kind != accesslib.ScopeRepos {
+		return []string{}
+	}
+	return scope.Repos
+}
+
+// userLsMeSentence is --me without --json: one sentence, naming the credential
+// the role was read from and the pair the resolver placed it at, and never a
+// question. The scope is spelled the way the CLI's own scope grammar spells it,
+// so a person who reads it can copy it into `fugaro user grant --scope` — which
+// is why this sentence does not use whoamiDoc's `all` for all-repos.
+func userLsMeSentence(caller string, lc *localcfg.Config, role accesslib.Role, scope accesslib.Scope) string {
+	if role == accesslib.RoleNone {
+		return fmt.Sprintf("you (%s) hold no role in project %s: no stored grant names you, and you are not one of its implicit admins",
+			safetext.Field(caller), safetext.Field(lc.Name))
+	}
+	where := scope.String()
+	if scope.Kind == accesslib.ScopeProject {
+		where = "project scope"
+	}
+	return fmt.Sprintf("you (%s) hold %s at %s in project %s",
+		safetext.Field(caller), role, safetext.Field(where), safetext.Field(lc.Name))
+}
+
+// userLsMeNoRoster is --me's refusal on an installation with no roster to read
+// the caller's own role from: no Firebase budget backend at all, or one whose
+// grants node has never been written. Both are states where the gates make no
+// judgement either (accessJudge answers nil and the commands behave as they did
+// before the roles existed), so answering `none` would be a role claim no rule
+// makes and would disable controls the CLI still allows. The sentence names the
+// state and the one command that ends it, and it asks nothing.
+func userLsMeNoRoster(lc *localcfg.Config) error {
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		return userErr("--me reads your own role from the grants node at %s, and project %s has no Firebase budget backend (%s): an operator runs fugaro update --firebase-project %s --name %s, and the update after that migrates this machine's lists into the node",
+			accesslib.PathNode, safetext.Field(lc.Name), accessNoBackend, firebaseProjectIDWord(lc.GCPProject), lc.Name)
+	}
+	return userErr("--me reads your own role from the grants node at %s, and project %s has none: no role is stored there, and none of this machine's own lists can be read as one (they are text a person edits, finding F21). Its next fugaro update migrates terraform.operators and terraform.admins into the node, and this read answers from then on",
+		accesslib.PathNode, safetext.Field(lc.Name))
 }

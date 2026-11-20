@@ -803,7 +803,7 @@ func seedHistoryRun(t *testing.T, f *cloudFixture, id string, tr tier.Tier, minu
 	end := start.Add(time.Duration(minutes) * time.Minute)
 	seedPlanRun(t, f, id, "", &runstore.Record{
 		Status: runstore.StatusSucceeded, StartedAt: start, FinishedAt: &end,
-		Tier: &runstore.TierRecord{Tier: tr}, Rigor: &runstore.RigorRecord{Mode: rigor.Pro},
+		Tier: &runstore.TierRecord{Tier: tr}, Rigor: &runstore.RigorRecord{Level: rigor.Pro},
 		Cost: &runstore.Cost{TotalUSD: usd},
 	})
 }
@@ -831,7 +831,7 @@ func TestPlanStatusPrintsEstimateLine(t *testing.T) {
 		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady,
 		PR:        &runstore.PRRef{Number: 1, URL: "https://github.com/acme/app/pull/1"},
 		StartedAt: start, FinishedAt: &end,
-		Tier: &runstore.TierRecord{Tier: tier.Medium}, Rigor: &runstore.RigorRecord{Mode: rigor.Pro},
+		Tier: &runstore.TierRecord{Tier: tier.Medium}, Rigor: &runstore.RigorRecord{Level: rigor.Pro},
 		Cost: &runstore.Cost{TotalUSD: 2.5},
 	})
 

@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// The at-the-stop row (the owner's ruling of 2026-11-08): what each mode does
+// The at-the-stop row (the owner's ruling of 2026-11-08): what each level does
 // with the findings a run still has when it stops — its review rounds spent or
 // the time threshold reached, whichever comes first — without a ship verdict.
 // Every case below cites the sentence it holds: spec.md's findings policy per
-// mode, the severity override, and the ruling's two modes that accept. The
+// level, the severity override, and the ruling's two levels that accept. The
 // names carry Stop so the task's own command — `-run '…|Stop|…'` — is the whole
 // file.
 
@@ -34,71 +34,71 @@ var (
 	aNit = Score{Likelihood: 1, Impact: 1, FixCost: 1, Class: Cosmetic}
 )
 
-// TestStopRowsAreTheModesOwnAnswers pins each mode's row: the two that accept
+// TestStopRowsAreTheModesOwnAnswers pins each level's row: the two that accept
 // at the stop accept everything the override does not cover, Hotfix keeps its
 // own security gate, and the two that keep a draft block everything. A row that
 // widened Pro's or Critical's answer fails here rather than in a run, which is
 // the direction the ruling is explicit about.
 func TestStopRowsAreTheModesOwnAnswers(t *testing.T) {
 	cases := []struct {
-		mode Mode
-		// accepted are the findings the mode accepts at the stop; blocked the
+		level Rigor
+		// accepted are the findings the level accepts at the stop; blocked the
 		// ones it still blocks on.
 		accepted, blocked []Score
 	}{
 		{
 			// POC's row keeps the catastrophic, exactly as its round does: the
-			// stop row states the reading the mode already reviews under rather
+			// stop row states the reading the level already reviews under rather
 			// than a second, wider one.
-			mode:     POC,
+			level:    POC,
 			accepted: []Score{docDrift, likelyAndMaterial, aNit},
 			blocked:  []Score{aSecurityFinding, aDataLossFinding, impact5, Score{}},
 		},
 		{
-			mode:     Startup,
+			level:    Startup,
 			accepted: []Score{docDrift, likelyAndMaterial, aNit},
 			blocked:  []Score{aSecurityFinding, aDataLossFinding, impact5, Score{}},
 		},
 		{
 			// Pro accepts at the stop exactly what it accepts in a round — a
-			// finding the mode's own floor lets through is not one its stop row
-			// takes back — and nothing else: a round the mode blocked is still a
+			// finding the level's own floor lets through is not one its stop row
+			// takes back — and nothing else: a round the level blocked is still a
 			// draft when the rounds are gone.
-			mode:     Pro,
+			level:    Pro,
 			accepted: []Score{aNit},
 			blocked:  []Score{docDrift, likelyAndMaterial, aSecurityFinding, Score{}},
 		},
 		{
-			mode:     Critical,
+			level:    Critical,
 			accepted: nil,
 			blocked:  []Score{aNit, docDrift, likelyAndMaterial, aSecurityFinding, Score{}},
 		},
 		{
-			mode:     Hotfix,
+			level:    Hotfix,
 			accepted: []Score{aNit, docDrift, likelyAndMaterial, impact5, aDataLossFinding},
 			blocked:  []Score{aSecurityFinding, Score{}},
 		},
 	}
 	for _, c := range cases {
 		for _, s := range c.accepted {
-			if BlocksAtStop(c.mode, s) {
-				t.Errorf("%s blocks %+v at the stop; its row accepts it", c.mode, s)
+			if BlocksAtStop(c.level, s) {
+				t.Errorf("%s blocks %+v at the stop; its row accepts it", c.level, s)
 			}
 		}
 		for _, s := range c.blocked {
-			if !BlocksAtStop(c.mode, s) {
-				t.Errorf("%s accepts %+v at the stop; its row blocks it", c.mode, s)
+			if !BlocksAtStop(c.level, s) {
+				t.Errorf("%s accepts %+v at the stop; its row blocks it", c.level, s)
 			}
 		}
 	}
 }
 
 // TestStopRowCoversEveryModeInTheVocabulary: the case list above is written by
-// hand, so this is what keeps a mode added to the vocabulary from reaching the
-// stop without a case: every mode is in the table and in the list, and the two
+// hand, so this is what keeps a level added to the vocabulary from reaching the
+// stop without a case: every level is in the table and in the list, and the two
 // are the same vocabulary (D20's closed set).
 func TestStopRowCoversEveryModeInTheVocabulary(t *testing.T) {
-	for _, m := range Modes {
+	for _, m := range Rigors {
 		if _, ok := thresholds[m]; !ok {
 			t.Fatalf("%q has no row in the threshold table", m)
 		}
@@ -106,8 +106,8 @@ func TestStopRowCoversEveryModeInTheVocabulary(t *testing.T) {
 			t.Fatalf("%q is not in the vocabulary", m)
 		}
 	}
-	if len(Modes) != 5 {
-		t.Fatalf("the vocabulary has %d modes; TestStopRowsAreTheModesOwnAnswers lists one case per mode", len(Modes))
+	if len(Rigors) != 5 {
+		t.Fatalf("the vocabulary has %d levels; TestStopRowsAreTheModesOwnAnswers lists one case per level", len(Rigors))
 	}
 }
 
@@ -131,32 +131,32 @@ func TestStopStartupAcceptsTheFindingsItsFloorBlocks(t *testing.T) {
 	}
 }
 
-// TestStopBlocksTheCatastrophicInEveryAcceptingMode: the exception the ruling
-// writes is the one the spec's override writes, asked of both modes that accept
+// TestStopBlocksTheCatastrophicInEveryAcceptingLevel: the exception the ruling
+// writes is the one the spec's override writes, asked of both levels that accept
 // at the stop and of the third half of it — an impact of 5 in a class the spec
 // does not call catastrophic — which Startup reads the same way its rounds do.
 func TestStopBlocksTheCatastrophicInEveryAcceptingMode(t *testing.T) {
 	if BlocksAtStop(Hotfix, aDataLossFinding) || BlocksAtStop(Hotfix, impact5) {
 		t.Error("Hotfix blocks a data loss finding or an impact of 5 at the stop; its own row keeps the security gate alone")
 	}
-	for _, m := range []Mode{POC, Startup} {
+	for _, m := range []Rigor{POC, Startup} {
 		for _, s := range []Score{aSecurityFinding, aDataLossFinding, impact5} {
 			if !BlocksAtStop(m, s) {
-				t.Errorf("%s accepts %+v at the stop: a catastrophic finding ends the run a draft in every mode the ruling names", m, s)
+				t.Errorf("%s accepts %+v at the stop: a catastrophic finding ends the run a draft in every level the ruling names", m, s)
 			}
 		}
 	}
 }
 
-// TestStopWidensAndNeverNarrowsTheRound: the stop row is read over the mode's
-// ordinary one (BlocksAtStop), so a finding a mode tolerates in a round is one
+// TestStopWidensAndNeverNarrowsTheRound: the stop row is read over the level's
+// ordinary one (BlocksAtStop), so a finding a level tolerates in a round is one
 // it accepts at the stop, whatever its row says. The property is swept over the
-// whole table rather than sampled: a mode whose stop row was written instead of
+// whole table rather than sampled: a level whose stop row was written instead of
 // its round's would take a finding away at the stop, which is the fail-closed
 // direction the ruling does not ask for.
 func TestStopWidensAndNeverNarrowsTheRound(t *testing.T) {
-	modes := append(slices.Clone(Modes), "", "bogus")
-	for _, m := range modes {
+	levels := append(slices.Clone(Rigors), "", "bogus")
+	for _, m := range levels {
 		for _, s := range everyScore() {
 			if !Blocks(m, s) && BlocksAtStop(m, s) {
 				t.Fatalf("%s tolerates %+v in a round and blocks it at the stop", m, s)
@@ -165,16 +165,16 @@ func TestStopWidensAndNeverNarrowsTheRound(t *testing.T) {
 	}
 }
 
-// TestStopIsFailClosedWithoutARow: a mode the table does not hold, and the zero
-// Mode a record written before the modes existed carries, block at the stop
+// TestStopIsFailClosedWithoutARow: a level the table does not hold, and the zero
+// Rigor a record written before the levels existed carries, block at the stop
 // exactly as they do in a round — the value this code cannot place is never the
 // lenient answer. It is the ruling's own fail-closed clause read at the table:
-// a mode that says nothing keeps today's behaviour, which is the draft.
+// a level that says nothing keeps today's behaviour, which is the draft.
 func TestStopIsFailClosedWithoutARow(t *testing.T) {
-	for _, m := range []Mode{"", "bogus"} {
+	for _, m := range []Rigor{"", "bogus"} {
 		for _, s := range everyScore() {
 			if !BlocksAtStop(m, s) {
-				t.Fatalf("BlocksAtStop(%q, %+v) is false; a mode without a stop row keeps the draft", m, s)
+				t.Fatalf("BlocksAtStop(%q, %+v) is false; a level without a stop row keeps the draft", m, s)
 			}
 		}
 		// And the split is the one Decide reads: nothing accepted, so no
@@ -224,7 +224,7 @@ func TestStopSplitKeepsTheReviewersOrder(t *testing.T) {
 // at the stop too — a caller that wanted the count of accepted findings, or the
 // ones to file, cannot disagree with the readiness rule about which they are.
 func TestStopAndSplitAreTheSameRule(t *testing.T) {
-	for _, m := range append(slices.Clone(Modes), "", "bogus") {
+	for _, m := range append(slices.Clone(Rigors), "", "bogus") {
 		for _, s := range everyScore() {
 			b, a := SplitAtStop(m, []Score{s})
 			if got, want := len(b) == 1, BlocksAtStop(m, s); got != want {

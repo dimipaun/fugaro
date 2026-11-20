@@ -54,6 +54,7 @@ module "installation" {
   reports                   = var.reports
   licence                   = var.licence
   credentials_service       = var.credentials_service
+  enable_mobile_service     = var.enable_mobile_service
   intake                    = var.intake
   voice_service             = var.voice_service
   project_secrets           = var.project_secrets

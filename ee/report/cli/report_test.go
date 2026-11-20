@@ -351,7 +351,7 @@ func seedModeRun(t *testing.T, f *cloudFixture, slug, id, mode string, c runstor
 	fin := st.Add(time.Hour)
 	rec := &runstore.Record{RunID: id, Repo: "acme/app", Status: "succeeded", StartedAt: st, FinishedAt: &fin, Cost: &c, CostUSD: c.ModelUSD}
 	if mode != "" {
-		rec.Rigor = &runstore.RigorRecord{Mode: rigor.Mode(mode)}
+		rec.Rigor = &runstore.RigorRecord{Level: rigor.Rigor(mode)}
 	}
 	if err := runstore.Open(b, slug, id).WriteRecord(ctx, rec); err != nil {
 		t.Fatal(err)

@@ -47,14 +47,17 @@ func verdict(entries ...Entry) Verdict {
 
 func TestApplyNeverDefersAFloorFinding(t *testing.T) {
 	// Every shape the floor holds: the two classes the severity override names,
-	// the top of the impact scale, and a finding the reviewer left unscored.
+	// the top of the impact scale, a finding the reviewer left unscored, and a
+	// finding whose scope says the change does not do what its task asks (R6),
+	// which is floor in every mode but Hotfix.
 	floorScores := []rigor.Score{
 		{Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Security},
 		{Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.DataLoss},
 		{Likelihood: 1, Impact: 5, FixCost: 1, Class: rigor.Correctness},
+		{Likelihood: 1, Impact: 1, FixCost: 5, Class: rigor.Cosmetic, Scope: rigor.ScopeUnmet},
 		{},
 	}
-	for _, m := range rigor.Modes {
+	for _, m := range rigor.Rigors {
 		for _, s := range floorScores {
 			if !rigor.Floor(m, s) {
 				// Hotfix's row keeps the security gate alone (F28), so a

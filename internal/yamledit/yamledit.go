@@ -20,7 +20,8 @@
 //
 // The operations are generic: a path of mapping keys, and sequence items.
 // SetScalar, SetEmptyMapping, ExpandEmptyMapping, RemoveKey, AddListItem,
-// RemoveListItem, UpsertSeqItemByKey and RemoveSeqItemByKey return new bytes and
+// RemoveListItem, UpsertSeqItemByKey, UpsertSeqItemListByKey,
+// RemoveSeqItemByKey and RemoveSeqItemFieldByKey return new bytes and
 // never write a file. An operation that
 // changes nothing returns the input unchanged, byte for byte — Changed tells
 // that apart from a write of the same bytes — and a refusal returns the input
@@ -516,6 +517,53 @@ func RemoveSeqItemByKeyWithOptions(src []byte, path []string, keyField, keyValue
 	return out, nil
 }
 
+// RemoveSeqItemFieldByKey removes one key from the mapping of the item of a
+// sequence of mappings whose keyField holds keyValue, and only that one: a key
+// value written twice loses the field of one of its items, not both. field is a
+// path inside the item, so a key nested under another — a catalog entry's
+// source.branch — is named as the elements it is.
+//
+// It is RemoveKey's edit on a mapping no path reaches: an item of a sequence is
+// found by its key field rather than walked to, so the key removed inside it is
+// named relative to the item. A sequence that does not hold the key value, and
+// an item that does not carry the field, are left alone — the document comes
+// back byte for byte, which is what Changed tells from a write of the same
+// bytes.
+func RemoveSeqItemFieldByKey(src []byte, path []string, keyField, keyValue string, field []string) ([]byte, error) {
+	const op = "RemoveSeqItemFieldByKey"
+	if err := checkPath(op, path); err != nil {
+		return src, err
+	}
+	if keyField == "" {
+		return src, refuse(op, pathString(path), ReasonEmptyField)
+	}
+	if err := checkPath(op, field); err != nil {
+		return src, err
+	}
+	d, err := open(op, src)
+	if err != nil {
+		return src, err
+	}
+	out, err := d.removeItemField(op, path, keyField, keyValue, field)
+	if err != nil {
+		return src, err
+	}
+	// The post-condition is the field's absence, held against whether it was
+	// written at all: an edit that found nothing to remove writes nothing, and
+	// the field it left is the one that was there.
+	before := resolve(keyedItem(resolve(d.root, path), keyField, keyValue), field) != nil
+	if err := verified(op, path, out, func(root *yaml.Node) bool {
+		item := keyedItem(resolve(root, path), keyField, keyValue)
+		if item == nil {
+			return !before
+		}
+		return resolve(item, field) == nil
+	}); err != nil {
+		return src, err
+	}
+	return out, nil
+}
+
 // setScalar walks path, creating the mappings it does not find, and writes the
 // value at the end of it.
 func (d *doc) setScalar(op string, path []string, value string) ([]byte, error) {
@@ -934,6 +982,59 @@ func (d *doc) removeKeyedItem(op string, path []string, keyField, keyValue strin
 		return nil, err
 	}
 	if start, end, err = d.dropEmptySequence(op, pathString(path), chain, seq, start, end, opts); err != nil {
+		return nil, err
+	}
+	return splice(d.src, start, end, nil), nil
+}
+
+// removeItemField removes one key from the mapping of a keyed sequence item.
+// The item is found the way every other edit of one finds it (keyedItem), and
+// what comes out of it is removeKey's own splice: the flow member span where the
+// mapping is written in flow style, the block entry span otherwise, with the
+// comment lines above the key when it has them. The refusals are removeKey's
+// too, and they name the field rather than the sequence, because the field is
+// what the caller asked about.
+//
+// A mapping the field's path does not reach is not an error: the field is simply
+// not written, and a removal that finds nothing to remove writes nothing.
+func (d *doc) removeItemField(op string, path []string, keyField, keyValue string, field []string) ([]byte, error) {
+	chain, found, err := d.walk(op, path)
+	if err != nil || !found {
+		return d.src, err
+	}
+	seq, err := d.sequenceAt(op, path, chain[len(chain)-1])
+	if err != nil || seq == nil {
+		return d.src, err
+	}
+	m := keyedItem(seq, keyField, keyValue)
+	if m == nil {
+		return d.src, nil
+	}
+	for _, key := range field[:len(field)-1] {
+		if m = mapValue(m, key); m == nil || m.Kind != yaml.MappingNode {
+			return d.src, nil
+		}
+	}
+	e, err := d.find(op, m, field[len(field)-1], pathString(field))
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		return d.src, nil
+	}
+	if mergeKey(m) {
+		return nil, refuse(op, pathString(field), ReasonMergeKey)
+	}
+	if err := d.anchorFree(op, e, pathString(field)); err != nil {
+		return nil, err
+	}
+	var start, end int
+	if m.Style&yaml.FlowStyle != 0 {
+		start, end, err = d.flowMemberSpan(op, m, e)
+	} else {
+		start, end, err = d.entrySpan(op, e)
+	}
+	if err != nil {
 		return nil, err
 	}
 	return splice(d.src, start, end, nil), nil

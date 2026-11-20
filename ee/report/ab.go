@@ -170,7 +170,7 @@ type ABReport struct {
 // rates is the project's exchange rate per mode (D565): the extra cost a pair
 // may carry before the mode keeps the champion. A mode the table leaves out —
 // and nil, which is the whole table — takes the figure Fugaro ships.
-func BuildAB(records []runstore.Record, verdicts map[string]ab.Verdict, rates map[rigor.Mode]float64) ABReport {
+func BuildAB(records []runstore.Record, verdicts map[string]ab.Verdict, rates map[rigor.Rigor]float64) ABReport {
 	pairs := ab.Pairs(records)
 	rep := ABReport{Rows: []ABRow{}}
 	groups := map[abGroup]*abAcc{}
@@ -204,7 +204,7 @@ func BuildAB(records []runstore.Record, verdicts map[string]ab.Verdict, rates ma
 // pair, while the score is read at "", the strictest reading (ab's rule for a
 // mode outside the four).
 type abGroup struct {
-	mode          rigor.Mode
+	mode          rigor.Rigor
 	modeKey, tier string
 	// slot is what the pair varies (B1.3, D728) and is part of the key: two
 	// experiments over one repository are two groups even when they name one
@@ -248,11 +248,11 @@ func groupOf(p ab.Pair) abGroup {
 // scoredMode is the mode the pair's signals are read at: the mode the record
 // resolved, and "" for one that resolved none or one this build does not know,
 // which ab reads through its whole signal list.
-func scoredMode(rec runstore.Record) rigor.Mode {
+func scoredMode(rec runstore.Record) rigor.Rigor {
 	if rec.Rigor == nil {
 		return ""
 	}
-	mode, ok := rigor.Parse(string(rec.Rigor.Mode))
+	mode, ok := rigor.Parse(string(rec.Rigor.LevelOf()))
 	if !ok {
 		return ""
 	}
@@ -266,7 +266,7 @@ func recordedMode(rec runstore.Record) string {
 	if rec.Rigor == nil {
 		return ""
 	}
-	return string(rec.Rigor.Mode)
+	return string(rec.Rigor.LevelOf())
 }
 
 // tierKey is the row's tier: the tier the record carried, ABTierNone for a run
@@ -310,10 +310,10 @@ func (g abGroup) compare(o abGroup) int {
 // it for ModeNone: a pair nobody could read a mode for is a row of its own, at
 // the end, rather than one mixed into a mode it did not resolve.
 func modeRank(key string) int {
-	if i := slices.IndexFunc(rigor.Modes, func(m rigor.Mode) bool { return string(m) == key }); i >= 0 {
+	if i := slices.IndexFunc(rigor.Rigors, func(m rigor.Rigor) bool { return string(m) == key }); i >= 0 {
 		return i
 	}
-	return len(rigor.Modes)
+	return len(rigor.Rigors)
 }
 
 // tierRank is a group key's place in the tier vocabulary, and the place after
@@ -524,7 +524,7 @@ func pairCostRatio(p ab.Pair) float64 {
 // abRate is the extra cost a mode's groups are read at (D565): the caller's
 // figure, and Fugaro's own for a mode it leaves out. Nil is the shipped table,
 // which is what a machine that has read no project layer reports.
-func abRate(rates map[rigor.Mode]float64, m rigor.Mode) float64 {
+func abRate(rates map[rigor.Rigor]float64, m rigor.Rigor) float64 {
 	if rate, ok := rates[m]; ok {
 		return rate
 	}
