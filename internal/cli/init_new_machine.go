@@ -2,10 +2,14 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
+
+	"google.golang.org/api/googleapi"
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -215,4 +219,75 @@ func (r *initRun) newMachineBudget(ctx context.Context, e *initEngine, outs infr
 	}
 	next.Budget = &b
 	fmt.Fprintf(r.w, "the budget section of the local config was filled from the Firebase root's outputs (project %s, its realtime database, web API key and token signer; none is a secret): watch and runs can use the budget backend\n", pluginwire.Printable(fo.FirebaseProject))
+}
+
+// The installation's region, and a --region that is not it. `fugaro setup` and
+// `fugaro update` are the commands that plan, and a plan in another region
+// would replace the runs bucket (regional, upper(var.region)) and everything in
+// it — refused today, but late, by Terraform's data-bearing rule. Those two
+// commands refuse the typed region before anything is planned instead (D3088 as
+// amended, LP8); every other command keeps --region as the per-invocation
+// override it is. The loaders are where the refusal goes because they are the
+// one place both doors, --repo and --plan-only all pass through.
+
+// errRunsBucketMissing is the runs bucket not being there at all: nothing to
+// compare a typed region with, which is a setup that is about to create it.
+var errRunsBucketMissing = errors.New("the runs bucket does not exist")
+
+// runsBucketLocation reads the location the runs bucket was created in, which
+// is where the installation is. It is the only answer there is on a machine
+// with no project config to hold the region (R6, F12): a bucket's location is
+// fixed when it is made and cannot drift. Read-only; tests replace it, because
+// a config that does not exist yet carries no endpoints for a fake to answer
+// on.
+var runsBucketLocation = func(ctx context.Context, lc *localcfg.Config, bucket string) (string, error) {
+	c, err := newInitClients(ctx, lc)
+	if err != nil {
+		return "", err
+	}
+	b, err := c.Storage.Buckets.Get(bucket).Context(ctx).Do()
+	if err != nil {
+		var ge *googleapi.Error
+		if errors.As(err, &ge) && ge.Code == http.StatusNotFound {
+			return "", errRunsBucketMissing
+		}
+		return "", err
+	}
+	return b.Location, nil
+}
+
+// refuseAnotherRegion refuses a typed region that is not the installation's
+// own, naming the installation's region, saying it cannot move, and printing
+// the fix: the same command with that region (D3088 as amended, R6). The
+// comparison folds case: the region it is handed may be a bucket's location,
+// which the API spells in upper case.
+func refuseAnotherRegion(o *initOptions, own string) error {
+	if o.cloud.region == "" || strings.EqualFold(o.cloud.region, own) {
+		return nil
+	}
+	return userErr("--region %s is not the installation's region %s: an installation's region is where it was created and cannot move (the runs bucket and the installation's data are regional). Run the same command with --region %s", o.cloud.region, own, own)
+}
+
+// checkNewRegion is refuseAnotherRegion for a machine that has no project
+// config yet: with no region written down, the runs bucket's own location is
+// the installation's (R6). A bucket that is not there says nothing — a fresh
+// setup is about to create it — and a bucket whose location cannot be read is
+// accepted with one line saying it was not checked (R10): refusing would stop
+// a launcher's first update on a new machine for a permission the launcher is
+// not meant to hold, and Terraform's own refusal of a bucket's replacement
+// stays behind it.
+func checkNewRegion(ctx context.Context, o *initOptions, lc *localcfg.Config) error {
+	bucket := lc.RunsBucketName()
+	loc, err := runsBucketLocation(ctx, lc, bucket)
+	switch {
+	case errors.Is(err, errRunsBucketMissing):
+		return nil
+	case err != nil, loc == "":
+		fmt.Fprintf(o.cloud.errw(), "fugaro: note: --region %s was not checked against the runs bucket gs://%s, whose location could not be read\n", o.cloud.region, bucket)
+		return nil
+	}
+	// The bucket answers the location the API's way, "US-EAST5"; a region a
+	// --region and the config's own validation accept is lower case, and the
+	// fix this refusal prints has to be one the flag takes.
+	return refuseAnotherRegion(o, strings.ToLower(loc))
 }

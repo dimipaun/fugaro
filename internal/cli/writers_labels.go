@@ -98,6 +98,13 @@ const (
 	reasonPrice        = "a key of the local config's `compute_prices` block: no command writes one, and it overrides a region's Compute Engine list prices"
 
 	reasonTerraform = "`fugaro setup` writes it from its flags as it applies the installation's root: a Terraform input of the installation"
+
+	// The locations record: `fugaro setup` and `fugaro update` write the
+	// block from what the cloud holds, after the last apply (LP14 of
+	// docs/location-preference/), and no flag states one — the location of a
+	// thing that exists is read, never chosen (R5, D3088). So the row is the
+	// converge's bookkeeping and not an editor's.
+	reasonLocations = "`fugaro setup` and `fugaro update` write the record from what the cloud holds as they converge the installation: where one of the installation's located things is"
 )
 
 // settingsLabelRows is the table: every row this file answers for. It is
@@ -147,6 +154,10 @@ var settingsLabelRows = []settingsLabelRow{
 	{"local.gcp_project", labelPlumbing, "`fugaro setup` writes it when it creates the file: the local config's own GCP project"},
 	{"local.version", labelPlumbing, "`fugaro setup` writes it when it creates the file: the local config's own format version"},
 	{"log_view", labelPlumbing, "`fugaro setup` writes it from the apply's outputs as it installs: the installation's Cloud Logging view"},
+	{"locations.firestore", labelPlumbing, reasonLocations},
+	{"locations.log_bucket", labelPlumbing, reasonLocations},
+	{"locations.rtdb", labelPlumbing, reasonLocations},
+	{"locations.secrets", labelPlumbing, reasonLocations},
 	{"name", labelPlumbing, "`fugaro setup` writes it when it creates the file: the installation's project name, which is never renamed"},
 	{"region", labelPlumbing, "`fugaro setup` writes it when it creates the file: the installation's GCP region"},
 	{"registry", labelFile, "the legacy shared registry's address, stated in the local config: no command writes it"},

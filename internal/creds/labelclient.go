@@ -91,6 +91,18 @@ const (
 // regex has it.
 var labelSpecRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,43}$`)
 
+// labelNoReadConsumerCode is the service's own wire code for a Bitbucket read
+// refused for want of the installation's read consumer, respelled from the
+// service's constant (credsvc's ErrorNoReadConsumer) for the reason the label
+// names above are respelled: this package sits below the service and cannot
+// import it, so the two spellings are held to each other by the service's own
+// tests.
+//
+// It is the one refusal of this route a caller acts on rather than retries
+// (ErrLabelNoReadConsumer), and the code is how it is told from the outage
+// every other refusal of that read answers with, both being 503.
+const labelNoReadConsumerCode = "no_read_consumer"
+
 // labelRunIDRE is the shape of a run id, respelled from the rule the service
 // holds a write to (credsvc's is task.ValidRunID, which this package cannot
 // import). The run id is not decoration: it is what the service corroborates
@@ -330,6 +342,10 @@ func (s *ServiceLabeler) call(ctx context.Context, req LabelRequest) (LabelAnswe
 		return LabelAnswer{}, fmt.Errorf("%w: the service's answer is larger than a label call's", ErrLabel)
 	}
 	if resp.StatusCode != http.StatusOK {
+		if refusalError(data) == labelNoReadConsumerCode {
+			return LabelAnswer{}, fmt.Errorf("%w: %w: the service answered %d%s",
+				ErrLabelNoReadConsumer, ErrLabel, resp.StatusCode, refusalCode(data))
+		}
 		return LabelAnswer{}, fmt.Errorf("%w: the service answered %d%s", ErrLabel, resp.StatusCode, refusalCode(data))
 	}
 	var ans LabelAnswer
