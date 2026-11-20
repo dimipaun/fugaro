@@ -47,6 +47,26 @@ const wsOwnerShared = `workspace_shared:
       - member-b
 `
 
+// wsOwnerForeignRepo is the owner's table with one change: the member's job
+// service account is a job of a repository no config on this machine states a
+// forge for (`owner/repo-x`, which no fixture states in its repos block). The
+// local table writes a repository `owner/name` and the node carries it
+// canonically (`<provider>/<owner>/<name>`, R6), so the provider is the half this
+// file does not carry and the writer has to resolve — and a repository nothing
+// here can spell canonically is refused rather than guessed (F42).
+const wsOwnerForeignRepo = `workspace_members:
+  member-b:
+    job_service_accounts:
+      - account: job-account-b@member-b-gcp.iam.gserviceaccount.com
+        repos:
+          - owner/repo-x
+    firebase_project: member-b-fb
+    fp: member-b
+    exchange_url: https://exchange.example.com/v1
+    repos:
+      - owner/repo-b
+`
+
 // wsCredsRow is one member row of a credentials node a test seeds, in the shape
 // the writer publishes: an account with the repositories it is a job of, and the
 // member's Firebase project, fp and exchange URL.
@@ -249,6 +269,40 @@ func TestWriterRefusesAllMembersWithoutACap(t *testing.T) {
 	}
 	if v := p.db.Value(projectpolicy.PathWorkspaceCredentials("workspace-alpha")); v == nil {
 		t.Error("the refusal took the published node with it: a refusal writes nothing and leaves what is there")
+	}
+}
+
+// TestWriterRefusesAJobRepoWithoutAProvider is the writer's other refusal, and
+// the one the documented path reaches: `fugaro workspace member add --job-repos`
+// writes a job account's repositories as `owner/repo` with no forge
+// (localcfg.WorkspaceJobAccount.Repos), while the node's rows carry them
+// canonically because the workspace's own service holds the slug a run's verified
+// identity yields to them (R6, F42). The provider is therefore resolved from this
+// machine's own configs — the member's project config first, then this
+// installation's and the repository's checkout — and a repository no config here
+// states is a refusal and never a guess: an invented provider would hold a run of
+// another forge's repository to this account, and a node named the way the file
+// names it is one the reader refuses. Nothing is written, the record of the same
+// declaration included.
+func TestWriterRefusesAJobRepoWithoutAProvider(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerForeignRepo+wsOwnerCap)
+	r := newWSUpdateRig(t, h)
+	fakeTerminal(t)
+	_, out, err := r.apply(t, false)
+	if err == nil {
+		t.Fatalf("a job account's repository with no stated forge was published:\n%s", out)
+	}
+	for _, want := range []string{"member-b", "owner/repo-x", "no project config on this machine states which forge", "repos.owner/name.provider", "nothing was written"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q, so the owner is not told what to do: %v", want, err)
+		}
+	}
+	p := h.project(t, "workspace-alpha")
+	if v := p.db.Value(projectpolicy.PathWorkspaceCredentials("workspace-alpha")); v != nil {
+		t.Errorf("the run wrote a credentials node over the refusal: %v", v)
+	}
+	if v := p.db.Value(projectpolicy.PathWorkspace("workspace-alpha")); v != nil {
+		t.Errorf("the run wrote the record of the same declaration over the refusal: %v", v)
 	}
 }
 
