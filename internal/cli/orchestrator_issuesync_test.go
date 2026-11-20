@@ -73,20 +73,27 @@ type issueService struct {
 	srv  *httptest.Server
 	host *issuesync.Fake
 
-	// mu guards the two records below, which the server's own goroutines write
-	// and the test's reads.
+	// mu guards the record below, which the server's own goroutines write and
+	// the test's reads.
 	mu sync.Mutex
-	// presented is every ID token the service was presented with, in order: the
-	// daemon's own identity, which is what the route's orchestrator class is
-	// gated on.
-	presented []string
-	// apps is the App ID each repository's calls named.
-	apps map[string]string
+	// calls is every call the service was presented with, in order.
+	calls []issueCall
+}
+
+// issueCall is one call as the route read it: the repository and act it names,
+// the App ID the service would sign as, the number a read is for, and the ID
+// token the daemon presented.
+type issueCall struct {
+	repo   string
+	act    string
+	appID  string
+	number int
+	token  string
 }
 
 func newIssueService(t *testing.T, host *issuesync.Fake) *issueService {
 	t.Helper()
-	s := &issueService{host: host, apps: map[string]string{}}
+	s := &issueService{host: host}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.srv.Close)
 	return s
@@ -105,8 +112,10 @@ func (s *issueService) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	s.presented = append(s.presented, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	s.apps[req.Repository] = req.AppID
+	s.calls = append(s.calls, issueCall{
+		repo: req.Repository, act: req.Action, appID: req.AppID, number: req.Number,
+		token: strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "),
+	})
 	s.mu.Unlock()
 	if req.Repository != s.host.Repo {
 		http.Error(w, "the repository is not one of this installation's", http.StatusNotFound)
@@ -124,13 +133,25 @@ func (s *issueService) serve(w http.ResponseWriter, r *http.Request) {
 		for _, i := range open {
 			ans.Issues = append(ans.Issues, routeIssue(i))
 		}
+	case creds.IssueActionGet:
+		// The brief's read (B9): the one ticket it names, as the repository
+		// holds it now — which is what a body edited since the item was
+		// approved shows up as.
+		iss, ok := s.host.Issue(req.Number)
+		if !ok {
+			http.Error(w, "no such issue", http.StatusNotFound)
+			return
+		}
+		ans.Issues = append(ans.Issues, routeIssue(iss))
 	case creds.IssueActionOpen:
 		var opened issuesync.Issue
 		opened, err = s.host.Open(ctx, req.Title, req.Body)
 		ans.Issues = append(ans.Issues, routeIssue(opened))
 	default:
-		// The daemon's sync makes these two acts and no other: `get` is the
-		// brief's read and belongs to the launcher (B9), not to this turn.
+		// The route's own three acts are the whole of what this service
+		// performs: the listing and the creation are the sync's (B4) and the
+		// read is the launcher's (B9), and a call naming anything else is
+		// refused rather than answered as one of them.
 		http.Error(w, "the call names no act this daemon makes", http.StatusBadRequest)
 		return
 	}
@@ -154,18 +175,50 @@ func routeIssue(i issuesync.Issue) creds.Issue {
 	}
 }
 
-// identities is every token the service was presented with.
+// identities is every token the service was presented with, in the order the
+// calls were made: the daemon's own identity, which is what the route's
+// orchestrator class is gated on.
 func (s *issueService) identities() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]string(nil), s.presented...)
+	var out []string
+	for _, c := range s.calls {
+		out = append(out, c.token)
+	}
+	return out
 }
 
 // appID is the App ID the calls for one repository named.
 func (s *issueService) appID(repo string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.apps[repo]
+	app := ""
+	for _, c := range s.calls {
+		if c.repo == repo {
+			app = c.appID
+		}
+	}
+	return app
+}
+
+// callsOf is every call the service was presented with for one act.
+func (s *issueService) callsOf(act string) []issueCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []issueCall
+	for _, c := range s.calls {
+		if c.act == act {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// put is one ticket of the repository as the repository holds it: a test writes
+// it before the launch that reads the ticket, and rewrites it for the edit a
+// person makes at the forge between the item's approval and that read.
+func (s *issueService) put(number int, title, body string) {
+	s.host.Put(issuesync.Issue{Number: number, Title: title, Body: body})
 }
 
 // issueFixture is one installation whose daemon reaches a fake credentials
@@ -223,6 +276,29 @@ func (f *issueFixture) open(t *testing.T, d *orchestratorDaemon) {
 		t.Fatalf("building the daemon's tick: %v", err)
 	}
 	d.tick = tick
+}
+
+// running is the fixture's daemon after its start-up — the lease taken and the
+// tick built — which is what a test's cycle runs on.
+func (f *issueFixture) running(t *testing.T) *orchestratorDaemon {
+	t.Helper()
+	d, _ := f.daemon(t)
+	f.open(t, d)
+	return d
+}
+
+// runningWithoutAppID is the same daemon over an installation that records no
+// GitHub App ID for the repository: the read is refused before any call is made,
+// because the service signs its own token as that App and there is none to sign
+// as (B9).
+func (f *issueFixture) runningWithoutAppID(t *testing.T) *orchestratorDaemon {
+	t.Helper()
+	d, _ := f.daemon(t)
+	repo := d.lc.Repos[issueRepo]
+	repo.GitHubAppID = ""
+	d.lc.Repos[issueRepo] = repo
+	f.open(t, d)
+	return d
 }
 
 // step runs one cycle of that tick and fails the test if the cycle itself did
