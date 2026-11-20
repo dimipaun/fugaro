@@ -30,8 +30,8 @@ const (
 	// every reader already shares (R3), never a list of this package's.
 	//
 	// Since AK6b a bundle really can hold such a credential — the project's
-	// provider key is in the document (F15, D1418), and since KS1 so is one
-	// entry per repository and provider (R2, D3008) — so what keeps the Claude
+	// provider key is in the document (F15, D1418), and KS1 adds one entry per
+	// repository and provider beside it (R2, D3008) — so what keeps the Claude
 	// case unserved is checkCandidates' refusal below and not the absence of a
 	// credential, which is why a call whose only credential is one is answered
 	// a typed refusal naming Check 50 rather than served by another tier.
@@ -153,22 +153,24 @@ type Selector struct {
 //     unreadable state is not an empty one.
 //
 // candidates is the caller's list, and Select never widens it: exactly the
-// credentials the project policy admits for this call, tier A before tier B.
-// Nothing here reads an admission (that is C1.11's, from what C1.2 publishes)
-// and nothing here invents a credential the caller did not offer. The tier
+// credentials the project policy admits for this call, in the tier order
+// (tiers: A, then B where the policy spends, then C). Nothing here reads an
+// admission (that is C1.11's, from what C1.2 publishes) and nothing here
+// invents a credential the caller did not offer. The tier
 // decides which credential is taken and the order within a tier does not —
 // except in a tie, which the offered order breaks, so a pool is listed the way
 // its owner ordered it and the listed order never outranks the tier (F7). What
 // picks among the usable members of one tier is the caller's Strategy — the
 // rule above, or a rotation through them in that same order — and the tier is
 // decided before it, so neither rule can move a call off the cheaper one. A
-// candidate whose tier is not one this release selects is refused rather than
-// skipped; a tier-C candidate this call's model may not be served by is
-// refused the same way, and the difference between the two is only which
-// sentence the caller reads (checkCandidates). A tier B
-// candidate offered under `oauth-only` is not refused — it carries no mistake —
-// but it is never selected, and a call that nothing else can serve is answered
-// with ErrFallbackForbidden when that candidate could actually serve it (see the
+// candidate of a tier this release does not know is refused rather than
+// skipped, and so is a list left with nothing but tier-C candidates this call's
+// model may not be served by; a tier-C candidate that is merely one of several
+// is dropped from the list instead, because the call would never have been
+// served by it (checkCandidates, D3000). A tier B candidate offered under
+// `oauth-only` is not refused — it carries no mistake — but it is never
+// selected, and a call that nothing else can serve is answered with
+// ErrFallbackForbidden when that candidate could actually serve it (see the
 // list above: a broken one, or one held with no time to wait for, is
 // ErrNoCredential).
 //
