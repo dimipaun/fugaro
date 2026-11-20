@@ -552,14 +552,32 @@ func MergeShared(published, local *Config) *Config {
 //
 // unionMaps' local-wins rule covers every other field of the entry, and a
 // fresh map is returned, so neither argument is modified.
+//
+// The credentials service's records are carried one by one rather than as one,
+// because they are three keys of the file and a machine can hold some and not
+// the others: the entry a repository door writes carries all of them at once
+// (internal/cli's recordCredentialsServiceReady), while the upgrade backfill —
+// the door that repairs the roots no checkout here applies — writes the switch
+// alone, and an entry written before R12's fields existed carries the switch
+// with no fact beside it. Carrying them together would drop the published fact
+// of a machine whose own entry holds the switch, which is the one record that
+// door keeps.
 func mergeRepoRecords(published, local map[string]Repo) map[string]Repo {
 	out := unionMaps(published, local)
 	for name, l := range local {
 		p, ok := published[name]
-		if !ok || l.CredentialsServiceReady != nil {
+		if !ok {
 			continue
 		}
-		l.CredentialsServiceReady = p.CredentialsServiceReady
+		if l.CredentialsServiceReady == nil {
+			l.CredentialsServiceReady = p.CredentialsServiceReady
+		}
+		if l.ProviderKeysServed == nil {
+			l.ProviderKeysServed = p.ProviderKeysServed
+		}
+		if l.StageAccountServed == nil {
+			l.StageAccountServed = p.StageAccountServed
+		}
 		out[name] = l
 	}
 	return out
@@ -578,20 +596,24 @@ func mergeRepoRecords(published, local map[string]Repo) map[string]Repo {
 // Both arguments are the YAML forms SharedDiff compares (so "carries no
 // record" is the key's absence, which is what omitempty writes). The published
 // entry is never modified.
+//
+// It is the same rule for every record of the credentials service — the switch
+// and R12's two facts beside it — because the merge above carries each of them
+// the same way: a key the local entry does not hold is not a difference, and a
+// key it does hold is.
 func withoutUnwrittenRecord(local, published any) any {
 	le, lok := local.(map[string]any)
 	pe, pok := published.(map[string]any)
 	if !lok || !pok {
 		return published
 	}
-	if _, ok := le["credentials_service_ready"]; ok {
-		return published
-	}
-	if _, ok := pe["credentials_service_ready"]; !ok {
-		return published
-	}
 	out := maps.Clone(pe)
-	delete(out, "credentials_service_ready")
+	for _, key := range []string{"credentials_service_ready", "provider_keys_served", "stage_account_served"} {
+		if _, ok := le[key]; ok {
+			continue
+		}
+		delete(out, key)
+	}
 	return out
 }
 

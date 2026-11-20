@@ -1490,6 +1490,12 @@
         "repos.*.provider": {
           "default": "unset = none"
         },
+        "repos.*.provider_keys_served": {
+          "default": "unset = false: no update has found this repository's bundle holding an entry for every provider credential its config names, or the deployed service is not at the release that serves one, or the project publishes no allow-list"
+        },
+        "repos.*.stage_account_served": {
+          "default": "unset = false: no update has found a stage account this repository mixes with a provider key, or the deployed service is not at the release that serves one"
+        },
         "repos.*.vertex": {
           "default": "unset = false"
         },

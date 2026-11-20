@@ -2161,6 +2161,54 @@ type Repo struct {
 	// accounts, because the published entry is provider-qualified and this
 	// entry is the only place a per-repository job's provider is stated.
 	ClaudeAccounts []string `yaml:"claude_accounts,omitempty"`
+	// ProviderKeysServed records R12's first fact as the owner's own `fugaro
+	// update` read it: this repository's runs take their provider keys from
+	// the credentials service rather than from the keys mounted in their job
+	// (docs/keys-through-service/contract-provider.md, R12, F31). The writer
+	// is internal/cli's recordCredentialsServiceReady, over the bundle reading
+	// it already makes for the switch, and the reader is internal/infra's spec
+	// builder, which plans config.ProviderKeysServedEnv into the job's
+	// environment from this field (and the run's gateway then reads the entry
+	// out of its own job, KS5).
+	//
+	// It rides the switch's road exactly (F31), and every rule the field above
+	// documents holds here too: the same run, the same entry of the repository
+	// whose root that run applies, the same "nothing written where the bundle
+	// was not read", the same danger in publishing a false one — so the two
+	// fields are written together or not at all, and a reader that finds this
+	// one nil is a repository the fact was never judged for.
+	//
+	// It is a POINTER for the same reason the switch is, and the difference is
+	// the same one: nil is "no machine has judged this repository for the
+	// fact", and a recorded false is "the reading I made said no" — the
+	// repository's bundle holds no entry for one of the provider credentials
+	// its config names, the deployed service cannot read that entry kind, or
+	// the project publishes no allow-list (F32). MergeShared carries the
+	// published record over a nil one, as it does for the switch, and the
+	// publish diff treats a local nil as "unwritten" rather than as a false to
+	// write over another machine's true.
+	//
+	// The fact is deliberately NOT the switch itself (F30): a repository whose
+	// root was applied with the service on is still served its model credential
+	// when the bundle holds no named provider entry, and its provider calls
+	// then go out on the key its job mounts, exactly as they do today.
+	ProviderKeysServed *bool `yaml:"provider_keys_served,omitempty"`
+	// StageAccountServed records R12's second fact as the owner's own `fugaro
+	// update` read it: the mixed variant's second account — the one a
+	// repository's review, adversarial and triage stages go out on — is
+	// selected by the service like any named account, so the runner holds no
+	// token for it (R9, F44; the run reads config.StageAccountServedEnv out of
+	// its own job at bootstrap, KS10).
+	//
+	// It is a fact of its own rather than a second meaning for the field above,
+	// because the two are about different credentials and come apart: a
+	// repository whose project serves provider keys alone serves no stage
+	// account, and a run that folded them would go out on a token it was never
+	// given. Its conditions are the switch's own — the record is written only
+	// where the switch is on, beside this file's other two fields — plus the
+	// repository's record naming a stage account at all and the deployed
+	// service being at or after the release that serves one.
+	StageAccountServed *bool `yaml:"stage_account_served,omitempty"`
 }
 
 // CredentialsServiceOn is the record as every reader of the switch judges it:
@@ -2172,6 +2220,24 @@ type Repo struct {
 // another machine wrote.
 func (r Repo) CredentialsServiceOn() bool {
 	return r.CredentialsServiceReady != nil && *r.CredentialsServiceReady
+}
+
+// ProviderKeysServedOn is R12's first fact as its reader judges it, the way
+// CredentialsServiceOn judges the switch: true exactly where a run recorded
+// that this repository's provider keys are served. A nil record (no machine
+// judged it) and a recorded false are the same answer here — the fact decides
+// whether a run sends a provider call through the service, and a repository
+// nobody judged uses the key its job mounts — and the two differ in one place
+// only, MergeShared, where a nil record must not erase the record another
+// machine wrote.
+func (r Repo) ProviderKeysServedOn() bool {
+	return r.ProviderKeysServed != nil && *r.ProviderKeysServed
+}
+
+// StageAccountServedOn is R12's second fact as its reader judges it, on the
+// same terms as ProviderKeysServedOn above.
+func (r Repo) StageAccountServedOn() bool {
+	return r.StageAccountServed != nil && *r.StageAccountServed
 }
 
 // RecordSwitch is the record a run writes for one repository entry: a pointer
