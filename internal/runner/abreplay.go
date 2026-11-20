@@ -278,7 +278,7 @@ func (r *run) runReviewReplay(ctx context.Context) {
 		return
 	}
 	model, effort := r.reviewFacts(stage.stage)
-	sum := runstore.ReviewSummary{Round: 1, Tier: replayTier(r.replay), Verdict: "none", Head: head, Model: model, Effort: effort, Against: r.reviewAgainst}
+	sum := runstore.ReviewSummary{Round: 1, Tier: replayTier(r.replay), Verdict: "none", Head: head, Model: model, Effort: effort, Against: r.inRunAgainst}
 	if parsed {
 		sum.Verdict, sum.Findings = v.Verdict, len(v.Findings)
 	} else {
