@@ -77,8 +77,11 @@
 
 import { putReading, putText, startConsole } from './app'
 import { ONBOARDING_COPY } from './installations'
+import { newOpsFrom } from './new-bridge'
+import { readGate } from './gating'
 import { disabledWrite } from './writes'
 import type { CompatibilityBridge, MountLike, ScreenGate } from './app'
+import type { Gate } from './gating'
 import { formatReading, measured, notional, readNumber, unavailable } from '../shared/availability'
 import type { Reading } from '../shared/availability'
 import { rigorIndex } from '../shared/rigor'
@@ -2514,8 +2517,13 @@ export function drawWordmark(surface: DomSurface, home: () => void): DomElement 
   return link
 }
 
-/** drawHalt draws Halt fleet: designed, and not performed (`writes.ts`). */
-export function drawHalt(surface: DomSurface): DomElement {
+/** drawHalt draws Halt fleet: designed, and not performed (`writes.ts`).
+ *
+ * Halt fleet is every run of the project (`budget kill` with no repository),
+ * which the CLI gates as a project-level change (`accessGateProject`,
+ * `ActionManageProject`), so the role decision is `manage-project`: an admin at
+ * project scope may use it and everyone else reads why they may not (RB4). */
+export function drawHalt(surface: DomSurface, roles: Gate): DomElement {
   const factory = surface.factory
   const icon = factory.createNS('svg')
   icon.setAttribute('width', '14')
@@ -2526,7 +2534,7 @@ export function drawHalt(surface: DomSurface): DomElement {
     stroke.setAttribute('d', d)
     icon.append(stroke)
   }
-  return disabledWrite(factory, HALT_CLASS, HALT_LABEL, icon)
+  return disabledWrite(factory, HALT_CLASS, HALT_LABEL, icon, roles.can('manage-project'))
 }
 
 // ---------------------------------------------------------------------------
@@ -2917,6 +2925,13 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     theme: CONSOLE_THEME,
   })
   if (gate.compatibility.mode === 'refused') return
+  // The caller's own role (RB4, D2907; the read is WH1's `user ls --me --json`):
+  // read once, here, off the version line the handshake already has, so the
+  // header's write control is drawn with the role the CLI published rather than
+  // with a guess. With no answer -- a CLI below `WHOAMI_CLI_FLOOR`, which is
+  // unset until a release carries `--me`, a refusal, a bridge that cannot ask --
+  // the gate allows every action and every control is drawn as it always was.
+  const roles = await readGate(newOpsFrom(scope.fugaro), gate.compatibility.cliVersion)
   const bridge = readBridgeFrom(scope.fugaro)
   let installation: unknown
   try {
@@ -2980,6 +2995,7 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     document: scope.document,
     surface,
     gate,
+    roles,
     bridge,
     rail,
     railBridge,
@@ -3075,6 +3091,9 @@ interface DashboardDeps {
   readonly document: Document
   readonly surface: DomSurface
   readonly gate: ScreenGate
+  /** roles is the caller's own role, read at startup (RB4, D2907): the reason a
+   * write control this console draws is disabled for is `roles.can(action)`. */
+  readonly roles: Gate
   readonly bridge: ReadBridge
   /** rail is the installation rail, drawn before the dashboard was mounted and
    * updated from here: the Live half owns its state word, the two views that
@@ -3127,7 +3146,7 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, bridge, rail, railBridge, launchBridge, settingsBridge, moveBridge, licenceBridge, linkBridge, wiring, navigator, header } =
+  const { document, surface, gate, roles, bridge, rail, railBridge, launchBridge, settingsBridge, moveBridge, licenceBridge, linkBridge, wiring, navigator, header } =
     deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
@@ -3548,7 +3567,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const gauge = drawGauge(surface, hidesView(gate.compatibility, 'caps'))
   setGauge = gauge.set
   header.append(gauge.root)
-  header.append(drawHalt(surface))
+  header.append(drawHalt(surface, roles))
 
   // The view on screen is marked from the first paint, not only after the first
   // click: `markButtons` writes these attributes on every switch, and a
