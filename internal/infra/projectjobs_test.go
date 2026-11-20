@@ -368,10 +368,16 @@ func TestEmptySharedJobListChangesNothing(t *testing.T) {
 
 // TestFilledSharedJobListDropsTheModelMounts is B5.7's flip pinned where it
 // holds: the class list is filled, so a profile the credentials service serves
-// plans every job of it with no model credential at all — the profile's own
-// Anthropic key, a provider key if it mounts one, and, on an account job, the
-// account's own Claude OAuth token — while a profile the switch holds off keeps
-// every one of them, before and after (G9, D147).
+// plans every job of it with no Claude credential at all — the profile's own
+// Anthropic key, and, on an account job, the account's own Claude OAuth token —
+// while a profile the switch holds off keeps every one of them, before and
+// after (G9, D147).
+//
+// A provider's key is deliberately NOT part of this, and the last half of the
+// test is that: nothing serves one yet — the runner reads it from its own
+// environment and the gateway routes with the job's own key — so the drop of a
+// shared job's provider key is the keys-through-service plan's KS16, whose red
+// step is exactly this state (R6, D1634).
 //
 // The mounts and the redaction list are the whole of the deployer's half: the
 // module's accessor list is the same set read through one local
@@ -396,8 +402,8 @@ func TestFilledSharedJobListDropsTheModelMounts(t *testing.T) {
 		t.Fatalf("the unswitched job mounts %v and not the Anthropic key: the test would be vacuous", before.SecretEnv)
 	}
 	for env := range after.SecretEnv {
-		if config.IsModelSecretEnv(env) {
-			t.Errorf("the switched job mounts %s from %s: the service serves this profile's repositories, so no model credential belongs in the container (B5.7, D2078)", env, after.SecretEnv[env])
+		if config.IsSharedJobServedModelEnv(env) {
+			t.Errorf("the switched job mounts %s from %s: the service serves this profile's repositories, so no Claude credential belongs in the container (B5.7, D2078)", env, after.SecretEnv[env])
 		}
 	}
 	if got := after.Env[runner.SecretEnvsVar]; strings.Contains(got, config.ReservedSecrets[config.AnthropicSecret]) {
@@ -434,6 +440,43 @@ func TestFilledSharedJobListDropsTheModelMounts(t *testing.T) {
 	}
 	if got, want := sortedJobNames(served), sortedJobNames(held); !slices.Equal(got, want) {
 		t.Fatalf("the flip moved the job set to %v, want %v: the class takes mounts away and never a job", got, want)
+	}
+
+	// And the one model credential the filled class does NOT take: a provider's
+	// key. It is a model credential in Go (config.IsModelSecretEnv) and it is
+	// not one here, because nothing serves it yet — the runner reads it from
+	// its own environment and the gateway routes the call with the job's own
+	// key — so a shared job that gave it up would fail every provider-model run
+	// with nothing to fall back on. Its drop is the keys-through-service plan's
+	// KS16, whose red step is this state, and this half is what would go red
+	// were the provider-key clause reintroduced here (R6, D1634).
+	routed := m5Additions + providerProfileLCBlock
+	keys := projectJobsFor(t, m4LocalConfig+projectJobRepoReadyLC+routed+credentialsServiceLCBlock)
+	job, ok := keys[gcp.ProjectJobName("standard", "github", "")]
+	if !ok {
+		t.Fatalf("the profile that mounts a provider key deployed no job: jobs = %v", sortedJobNames(keys))
+	}
+	// The same profile with the switch off, so the two halves of the contrast
+	// are one job's set before and after rather than an assertion that could
+	// hold of a profile which mounted nothing.
+	heldKeys := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+routed+credentialsServiceLCBlock)
+	heldJob := heldKeys[gcp.ProjectJobName("standard", "github", "")]
+	anthropic := config.ReservedSecrets[config.AnthropicSecret]
+	if _, mounted := heldJob.SecretEnv[anthropic]; !mounted {
+		t.Fatalf("the unswitched job of the same profile mounts %v and not the Anthropic key: the contrast this half draws would be vacuous", heldJob.SecretEnv)
+	}
+	keyEnv := config.ProviderKeyEnv("openrouter-api-key")
+	keyLogical, keyMounted := job.SecretEnv[keyEnv]
+	if !keyMounted {
+		t.Errorf("the served job mounts %v and not %s: a provider's key is not served to a shared job yet, so the flip takes every other model credential and leaves this one (B5.7, R6, D1634)", job.SecretEnv, keyEnv)
+	} else if keyLogical != "openrouter-api-key" {
+		t.Errorf("the served job mounts %s from %s, want the profile's own entry", keyEnv, keyLogical)
+	}
+	if !strings.Contains(job.Env[runner.SecretEnvsVar], keyEnv) {
+		t.Errorf("the served job's %s = %q does not name %s: the redaction list is the mounts, and a mount left in the container is one the run must not publish", runner.SecretEnvsVar, job.Env[runner.SecretEnvsVar], keyEnv)
+	}
+	if _, dropped := job.SecretEnv[anthropic]; dropped {
+		t.Errorf("the served job mounts %s from %s: the named model credentials are the ones the flip takes, and this profile is served (B5.7, D2078)", anthropic, job.SecretEnv[anthropic])
 	}
 }
 
@@ -1372,6 +1415,30 @@ project_secrets:
   github-app-key: { allow_data_to: [acme/webapp] }
 profiles:
   standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [acme-personal, default], secrets: [github-app-key] }
+`
+
+// providerProfileLCBlock is the fixture a profile that mounts a PROVIDER's key
+// needs: one provider whose secret is its own key, admitted to this repository
+// by its own allow_data_to (a provider's key is not a project_secrets entry —
+// that block holds the reserved names alone, config.ValidateProjectSecrets) —
+// and one profile mounting the App key, the Anthropic key and that provider's
+// key. It is what TestFilledSharedJobListDropsTheModelMounts reads to pin the
+// one model credential B5.7's flip leaves standing in a served profile's job,
+// beside the named one it takes: nothing serves a provider's key yet, so its
+// drop is the keys-through-service plan's KS16 (R6, D1634).
+const providerProfileLCBlock = `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: ["acme/webapp"]
+project_secrets:
+  anthropic-api-key: { allow_data_to: [acme/webapp] }
+  github-app-key: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [github-app-key, anthropic-api-key, openrouter-api-key] }
 `
 
 // TestProjectJobAccountAxis: a profile that serves Claude accounts gets one

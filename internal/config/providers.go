@@ -890,6 +890,11 @@ const SharedJobClassModel = "model"
 // moves no accessor and no mount of the App key — TestFilledSharedJobListKeepsTheAppKey
 // pins exactly that.
 //
+// The class is filled whole and the drop is not: IsSharedJobServedModelEnv
+// holds a provider's key back, because nothing serves one yet — see that
+// function, and the keys-through-service plan's KS16 for the drop that follows
+// there.
+//
 // The class list is a list rather than a boolean so a class can be added or
 // held back one at a time, and it carries the model class since the flip's
 // second commit filled it — the state this release, 0.27.0, ships, one release
@@ -924,9 +929,22 @@ func SharedJobServesClass(class string) bool {
 }
 
 // IsSharedJobServedModelEnv reports whether a shared job's variable carries a
-// mount the credentials service serves that job — one of the model
-// credentials (IsModelSecretEnv: the Claude account token, the Anthropic key,
-// or a provider's key), while the class list above names "model".
+// mount the credentials service serves that job: one of the two NAMED model
+// credentials (ModelSecretEnvs — the Claude account token and the Anthropic
+// key), while the class list above names "model".
+//
+// A provider's key is deliberately not dropped here, although it is a model
+// credential everywhere else (IsModelSecretEnv): nothing serves one yet. The
+// runner reads a provider's key from its own environment (internal/runner's
+// ProviderCredential) and the gateway sends a routed call to the provider with
+// the job's own key, so a shared job that gave the key up would have no model
+// credential at all for a provider-model run. Serving one is the work of the
+// keys-through-service plan: KS5 wires the provider route through the service,
+// and the drop follows in KS16, whose acceptance, red step and file list are
+// written for exactly this state ("the shared job still mounts the profile's
+// provider key", docs/keys-through-service/implementation-plan.md, which names
+// this flip as what it waits on). Till then a shared job keeps every provider
+// key it mounted, and its account keeps the accessor that reads it (R6, D1634).
 //
 // It is the one predicate both halves of the deployer's drop read
 // (projectJobMounts for the profile's own mounts, projectAccountMount for the
@@ -934,7 +952,7 @@ func SharedJobServesClass(class string) bool {
 // have to answer the same per variable, because a mount the job's account keeps
 // no accessor on is a job Cloud Run refuses to create (C2.3).
 func IsSharedJobServedModelEnv(env string) bool {
-	return SharedJobServesClass(SharedJobClassModel) && IsModelSecretEnv(env)
+	return SharedJobServesClass(SharedJobClassModel) && slices.Contains(ModelSecretEnvs, env)
 }
 
 // ProxiedGitSecretNames are the git credential logical names a job gives up

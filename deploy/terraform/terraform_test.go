@@ -7373,12 +7373,19 @@ func TestSharedJobServedClassesMatchTheModule(t *testing.T) {
 		t.Errorf("%s: shared_job_served_secret_classes = %v, config.SharedJobServedClasses = %v: the two are filled in one commit, and a list on one side an empty one on the other plans a drop the other does not produce", path, got, config.SharedJobServedClasses)
 	}
 
-	// The model credentials, identified by the variable each is mounted as and
-	// not by a logical name — a provider's key has no fixed name — so these two
-	// literals are the module's copy of Go's own answer
-	// (config.ModelSecretEnvs and config.ProviderKeyEnvPrefix). A name that
-	// drifted here would move a mount Go's predicate says stays, or keep one it
-	// says goes, and the accessor with it.
+	// The model credentials the drop reaches, identified by the variable each
+	// is mounted as — so this literal is the module's copy of Go's own answer
+	// (config.ModelSecretEnvs). A name that drifted here would move a mount
+	// Go's predicate says stays, or keep one it says goes, and the accessor
+	// with it.
+	//
+	// A provider's key is NOT among them, and the absence is pinned: it is a
+	// model credential in Go (config.IsModelSecretEnv) but nothing serves one
+	// yet, so the deployer holds it back (config.IsSharedJobServedModelEnv) and
+	// the module must not reintroduce the provider-key clause — a shared job
+	// that lost the key would have no model credential at all for a
+	// provider-model run, and its drop is the keys-through-service plan's KS16
+	// (R6, D1634).
 	if m := regexp.MustCompile(`model_secret_env_names\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(code); m == nil {
 		t.Errorf("%s declares no model_secret_env_names list", path)
 	} else {
@@ -7392,11 +7399,6 @@ func TestSharedJobServedClassesMatchTheModule(t *testing.T) {
 		if !slices.Equal(names, want) {
 			t.Errorf("%s: model_secret_env_names = %v, config.ModelSecretEnvs = %v: the module and the deployer must call the same variables model credentials, or one drops a mount the other keeps", path, names, config.ModelSecretEnvs)
 		}
-	}
-	if m := regexp.MustCompile(`model_secret_env_prefix\s*=\s*"([^"]*)"`).FindStringSubmatch(code); m == nil {
-		t.Errorf("%s declares no model_secret_env_prefix", path)
-	} else if m[1] != config.ProviderKeyEnvPrefix {
-		t.Errorf("%s: model_secret_env_prefix = %q, config.ProviderKeyEnvPrefix = %q: a provider key is identified by its variable and by nothing else", path, m[1], config.ProviderKeyEnvPrefix)
 	}
 
 	// The per-mount local both clauses read, and the two halves of its
@@ -7415,8 +7417,11 @@ func TestSharedJobServedClassesMatchTheModule(t *testing.T) {
 		return strings.TrimPrefix(squash(found[1]), "env => ")
 	}
 	if got := local("is_shared_job_served_model"); !strings.Contains(got, `var.job.credentials_service != null && contains(local.shared_job_served_secret_classes, "model")`) ||
-		!strings.Contains(got, "contains(local.model_secret_env_names, env)") || !strings.Contains(got, "startswith(env, local.model_secret_env_prefix)") {
-		t.Errorf("%s: is_shared_job_served_model = %s: a mount is served exactly when the class list carries \"model\", the profile's own switch is on (B5.2) and the mount's variable is one of the model credentials", path, got)
+		!strings.Contains(got, "contains(local.model_secret_env_names, env)") {
+		t.Errorf("%s: is_shared_job_served_model = %s: a mount is served exactly when the class list carries \"model\", the profile's own switch is on (B5.2) and the mount's variable is one of the two named model credentials", path, got)
+	}
+	if strings.Contains(code, "model_secret_env_prefix") || strings.Contains(code, "startswith(env,") {
+		t.Errorf("%s names the provider-key namespace: a shared job keeps every provider key it mounts until the service serves one, and that drop is the keys-through-service plan's KS16 (config.IsSharedJobServedModelEnv, R6, D1634):\n%s", path, code)
 	}
 	for _, name := range []string{"job_secret_names", "job_mounts"} {
 		if got := local(name); got != "logical if !local.is_shared_job_served_model[env]" {

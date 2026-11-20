@@ -103,18 +103,21 @@ locals {
   # The GitHub App's key is deliberately not a class here: its drop is
   # config.ServiceHeldSecretNames' own flip (#907, C2.3), and a shared job that
   # gave the key up before the runner stopped reading it would fail every
-  # GitHub run it starts (G22).
+  # GitHub run it starts (G22). A provider's key is not dropped either, though
+  # the class is filled whole: its drop waits for the service to serve one, and
+  # that is the keys-through-service plan's KS16 (see model_secret_env_names
+  # below).
   shared_job_served_secret_classes = ["model"]
 
-  # The model credentials, identified the way internal/config identifies them
-  # (config.ModelSecretEnvs and config.ProviderKeyEnvPrefix): the two reserved
-  # variables and the provider-key namespace, so a mount is a model credential
-  # exactly when its VARIABLE is one of them. A provider's key has no fixed
-  # logical name — it is whatever the owner's local config calls it — which is
-  # why the variable is the only thing that identifies it, and why this list is
-  # variables where the class list above is class names.
-  model_secret_env_names  = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
-  model_secret_env_prefix = "FUGARO_PROVIDER_KEY_"
+  # The model credentials the class's drop reaches, identified the way
+  # internal/config identifies them (config.ModelSecretEnvs): the two reserved
+  # variables, so a mount is one of them exactly when its VARIABLE is — and a
+  # provider's key is NOT here, because nothing serves one yet, so its drop is
+  # the keys-through-service plan's KS16 (config.IsSharedJobServedModelEnv, R6,
+  # D1634). A provider's key would need the namespace rather than a name
+  # (config.ProviderKeyEnvPrefix), which is why this list is variables where
+  # the class list above is class names.
+  model_secret_env_names = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
 
   # One entry per mount: this mount is a model credential the credentials
   # service serves, exactly when the class list carries "model" AND the
@@ -124,13 +127,13 @@ locals {
   # read this one local, so the accessor and the mount cannot drift apart.
   is_shared_job_served_model = {
     for env, logical in var.job.secret_env :
-    env => var.job.credentials_service != null && contains(local.shared_job_served_secret_classes, "model") && (contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix))
+    env => var.job.credentials_service != null && contains(local.shared_job_served_secret_classes, "model") && contains(local.model_secret_env_names, env)
   }
 
   # The secrets the job's account may still read, by logical name: every mount
   # while the credentials service is off — D147's "with it off nothing
   # changes", and the same set this module granted before it knew about the
-  # service — and, once it is on, every mount except the model credentials.
+  # service — and, once it is on, every mount except those two.
   # toset, not the list of mounts: two variables may mount the same logical
   # name, and a repeated name in a for_each is an error rather than a second
   # binding.
