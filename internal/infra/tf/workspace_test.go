@@ -3,17 +3,20 @@ package tf
 import (
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
 
 // The workspace root's plan cover, tested over plan JSON the way
-// deploy/terraform/gcp/roots/workspace plans it: the workspace's own role, the
-// service account that holds it, and the one grant that binds them
-// (workspace.go, docs/workspaces/implementation-plan.md W3).
+// deploy/terraform/gcp/roots/workspace plans it: the workspace's two accounts —
+// the service the bundle runs as and the SA fallback's IAM account — its own
+// role, and the one grant that binds the role to the first of them
+// (workspace.go, docs/workspace-projects-users/implementation-plan.md WU3).
 const (
-	wsProject = "workspace-alpha-1234"
-	wsEmail   = WorkspaceServiceAccountID + "@" + wsProject + ".iam.gserviceaccount.com"
+	wsProject  = "workspace-alpha-1234"
+	wsEmail    = WorkspaceServiceAccountID + "@" + wsProject + ".iam.gserviceaccount.com"
+	wsIAMEmail = WorkspaceIAMAccountID + "@" + wsProject + ".iam.gserviceaccount.com"
 )
 
 // wsRole is the role path the root's grant names, which is what a plan of it
@@ -40,6 +43,14 @@ func wsActions(acts ...string) string {
 // both of its names literal, which is why the root is given them as variables.
 func wsSA(project, accountID string, acts ...string) string {
 	return `{"address":"google_service_account.workspace","mode":"managed","type":"google_service_account","change":{"actions":` +
+		wsActions(acts...) + `,"after":{"project":"` + project + `","account_id":"` + accountID + `"}}}`
+}
+
+// wsIAM is the SA fallback's IAM account as the root's plan writes it: the
+// account id is the root's own literal, which is why the cover can hold it
+// without being told it.
+func wsIAM(project, accountID string, acts ...string) string {
+	return `{"address":"google_service_account.workspace_iam","mode":"managed","type":"google_service_account","change":{"actions":` +
 		wsActions(acts...) + `,"after":{"project":"` + project + `","account_id":"` + accountID + `"}}}`
 }
 
@@ -79,7 +90,7 @@ func wsWhy(t *testing.T, p *Plan) string {
 	return strings.Join(WorkspaceNotCovered(p, wsProject, WorkspaceServiceAccountID), "; ")
 }
 
-func TestWorkspacePlanIsTheServiceAndItsOneGrant(t *testing.T) {
+func TestWorkspacePlanIsTheTwoAccountsAndItsOneGrant(t *testing.T) {
 	covered := []struct {
 		name    string
 		changes []string
@@ -87,27 +98,38 @@ func TestWorkspacePlanIsTheServiceAndItsOneGrant(t *testing.T) {
 		{"the root's own plan, with the member terraform computes", []string{
 			wsPinnedRole(),
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
+			wsIAM(wsProject, WorkspaceIAMAccountID, "create"),
 			wsComputedGrant(wsProject, wsRole, "create"),
 		}},
-		{"the root's own plan converged: the role, the account and the grant are all no-ops", []string{
+		{"the root's own plan converged: the role, the accounts and the grant are all no-ops", []string{
 			wsPinnedRole(),
 			wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
+			wsIAM(wsProject, WorkspaceIAMAccountID, "no-op"),
 			wsComputedGrant(wsProject, wsRole, "no-op"),
 		}},
-		{"the same plan converged: both resources are no-ops", []string{
+		{"the same plan converged: every resource is a no-op", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
+			wsIAM(wsProject, WorkspaceIAMAccountID, "no-op"),
+			wsComputedGrant(wsProject, wsRole, "no-op"),
+		}},
+		{"the SA fallback's IAM account created while the rest is converged", []string{
+			wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
+			wsIAM(wsProject, WorkspaceIAMAccountID, "create"),
 			wsComputedGrant(wsProject, wsRole, "no-op"),
 		}},
 		{"the member known, bare", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
+			wsIAM(wsProject, WorkspaceIAMAccountID, "create"),
 			wsKnownGrant(wsProject, wsEmail, wsRole, "create"),
 		}},
 		{"the member known, as the root writes it", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
+			wsIAM(wsProject, WorkspaceIAMAccountID, "create"),
 			wsKnownGrant(wsProject, "serviceAccount:"+wsEmail, wsRole, "create"),
 		}},
-		{"the account's display name updated, the grant held", []string{
+		{"the accounts' display names updated, the grant held", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "update"),
+			wsIAM(wsProject, WorkspaceIAMAccountID, "update"),
 			wsComputedGrant(wsProject, wsRole, "update"),
 		}},
 	}
@@ -167,6 +189,16 @@ func TestWorkspacePlanRefusesAGrantToAnotherPrincipal(t *testing.T) {
 		"allAuthenticatedUsers",
 		"serviceAccount:" + FugaroAccounts[0] + "@" + wsProject + ".iam.gserviceaccount.com",
 		"serviceAccount:fugaro-member@member-project-5678.iam.gserviceaccount.com",
+		// The SA fallback's own account, in its three spellings. Terraform
+		// grants it nothing, and that is the design rather than an omission:
+		// its reach on a member is the member owner's `roles/owner` grant and
+		// its token creators are the workspace admins, both written live by
+		// the CLI (D2803, D2818, WU20). A grant of the workspace database role
+		// to it here would be the workspace reading its own record through the
+		// identity a member's owner handed authority to.
+		wsIAMEmail,
+		"serviceAccount:" + wsIAMEmail,
+		"google_service_account.workspace_iam.member",
 	}
 	for _, member := range others {
 		t.Run(member, func(t *testing.T) {
@@ -205,7 +237,20 @@ func TestWorkspacePlanRefusesASecondRoleAnotherProjectAndAKey(t *testing.T) {
 		{"another account id", []string{
 			wsSA(wsProject, "fugaro-runner", "create"),
 			wsComputedGrant(wsProject, wsRole, "create"),
-		}, "the workspace's own service account is"},
+		}, "creates two and no third"},
+		{"the SA fallback's account replaced by another id", []string{
+			wsIAM(wsProject, "fugaro-workspace-admin", "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}, "creates two and no third"},
+		{"the SA fallback's IAM account in another project", []string{
+			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
+			wsIAM("member-project-5678", WorkspaceIAMAccountID, "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}, "an account in another project"},
+		{"an account id terraform knows only at apply", []string{
+			`{"address":"google_service_account.workspace_iam","mode":"managed","type":"google_service_account","change":{"actions":["create"],"after":{"project":"` + wsProject + `"},"after_unknown":{"account_id":true}}}`,
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}, "knows only at apply"},
 		{"a service account key", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
 			`{"address":"google_service_account_key.workspace","mode":"managed","type":"google_service_account_key","change":{"actions":["create"],"after":{}}}`,
@@ -225,10 +270,14 @@ func TestWorkspacePlanRefusesASecondRoleAnotherProjectAndAKey(t *testing.T) {
 		{"the member computed with no account in the plan", []string{
 			wsComputedGrant(wsProject, wsRole, "create"),
 		}, "does not create the workspace's own service account"},
+		{"the member computed while only the SA fallback's account is created", []string{
+			wsIAM(wsProject, WorkspaceIAMAccountID, "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}, "does not create the workspace's own service account"},
 		{"the member computed while another account is created", []string{
 			wsSA(wsProject, "fugaro-runner", "create"),
 			wsComputedGrant(wsProject, wsRole, "create"),
-		}, "the workspace's own service account is"},
+		}, "creates two and no third"},
 	}
 	for _, c := range refused {
 		t.Run(c.name, func(t *testing.T) {
@@ -300,26 +349,38 @@ func TestWorkspacePlanRefusesNoPlan(t *testing.T) {
 
 // TestWorkspaceRootDeclaresTheTypesTheCoverHolds reads the root itself and
 // holds its resources to the cover's three types: the file is what the embed
-// ships and what an operator applies, so a fourth type added there is a
-// workspace holding something else, and it fails here rather than in a plan the
-// cover would have refused anyway.
+// ships and what an operator applies, so a type added there is a workspace
+// holding something else, and it fails here rather than in a plan the cover
+// would have refused anyway.
 //
-// It also reads the root's two literals — the role id and the grant's role path
-// — against the Go side, because the cover builds the path from the project it
-// was given and compares the id it pins: a root that renamed either would leave
-// every plan of it refused, and this is where that is said in one sentence
-// rather than as a plan that will not confirm.
+// It also reads the root's literals — the role id, the grant's role path and
+// the SA fallback's account id — against the Go side, because the cover builds
+// the path from the project it was given and compares the ids it pins: a root
+// that renamed any of them would leave every plan of it refused, and this is
+// where that is said in one sentence rather than as a plan that will not
+// confirm.
 func TestWorkspaceRootDeclaresTheTypesTheCoverHolds(t *testing.T) {
 	raw, err := os.ReadFile("../../../deploy/terraform/gcp/roots/workspace/main.tf")
 	if err != nil {
 		t.Fatal(err)
 	}
+	blocks := regexp.MustCompile(`(?m)^resource "([a-z0-9_]+)" "([a-z0-9_]+)" \{`).FindAllStringSubmatch(string(raw), -1)
 	types := map[string]bool{}
-	for _, m := range regexp.MustCompile(`(?m)^resource "([a-z0-9_]+)" "([a-z0-9_]+)" \{`).FindAllStringSubmatch(string(raw), -1) {
+	accounts := 0
+	for _, m := range blocks {
 		types[m[1]] = true
+		if m[1] == workspaceAccountType {
+			accounts++
+		}
 	}
-	if len(types) != 3 || !types[workspaceRoleType] || !types[workspaceAccountType] || !types[workspaceGrantType] {
-		t.Fatalf("the workspace root must declare exactly the workspace's role, its account and that account's one grant, got %v", types)
+	if len(blocks) != 4 || len(types) != 3 || !types[workspaceRoleType] || !types[workspaceAccountType] || !types[workspaceGrantType] {
+		t.Fatalf("the workspace root must declare exactly the workspace's role, its TWO accounts (the bundle's service and the SA fallback's IAM account) and that one grant, got %d blocks over %v", len(blocks), types)
+	}
+	if accounts != 2 {
+		t.Fatalf("the workspace root declares %d service accounts, want two: the workspace's own service (W6) and the SA fallback's IAM account (D2803, F20 — two accounts, never one)", accounts)
+	}
+	if m := regexp.MustCompile(`(?m)^\s*account_id\s*=\s*"` + WorkspaceIAMAccountID + `"\s*$`); !m.Match(raw) {
+		t.Errorf("the root does not declare the SA fallback's account id the cover pins (%s): the cover holds that account by its literal, because the root gives it no variable the account's own name could travel in", WorkspaceIAMAccountID)
 	}
 	if m := regexp.MustCompile(`(?m)^\s*role_id\s*=\s*"` + WorkspaceDatabaseRoleID + `"\s*$`); !m.Match(raw) {
 		t.Errorf("the root does not declare the role id the cover pins (%s)", WorkspaceDatabaseRoleID)
@@ -330,6 +391,90 @@ func TestWorkspaceRootDeclaresTheTypesTheCoverHolds(t *testing.T) {
 	for _, p := range WorkspaceDatabasePermissions {
 		if !strings.Contains(string(raw), `"`+p+`"`) {
 			t.Errorf("the root's role does not hold %s, which the cover pins", p)
+		}
+	}
+}
+
+// TestWorkspaceRootMakesNoKeyForTheIAMAccount is the Go half of the tftest
+// case beside the root, and it says what "no key" is: the ROOT writes none.
+// That is a fact about what Fugaro writes and **not a claim that none can
+// exist** — the account lives in a project Fugaro does not own alone, and two
+// paths on that project make a key anyway, neither of them this root's:
+//
+//   - iam.serviceAccounts.actAs, which roles/editor and
+//     roles/iam.serviceAccountUser carry, lets a holder deploy a workload that
+//     runs as the account;
+//   - iam.serviceAccountKeys.create, which roles/editor resolves to, mints a
+//     user-managed key that outlives the binding that made it.
+//
+// The only control that closes the second is the organization policy
+// constraints/iam.disableServiceAccountKeyCreation, and WU11's `status` is what
+// takes both up. What this test holds is the root's own side: no
+// google_service_account_key, no actAs or token-creator grant, and no grant of
+// any kind naming the SA fallback's account — its reach on a member is written
+// live by the CLI (D2803, D2818), never by Terraform.
+// TestWorkspaceAccountsAreTwoAndNeitherIsTheCredentialsServices pins the three
+// sentences the design's accounts are told apart by (F20, D2803, D1299):
+//
+//   - the workspace root creates TWO accounts and never one. The service reads
+//     the workspace's own database and the members' ledgers; the SA fallback's
+//     IAM account holds roles/owner on every member it is linked to. One
+//     account doing both is a single compromise holding the workspace's state
+//     AND its authority over every member.
+//   - neither is the credentials service's account (CredentialsAccountID),
+//     which holds no write on a member at all (D1299).
+//   - neither is one of the installation's own (FugaroAccounts), which an
+//     installation's toAccounts rows may grant a job's role to: the whole
+//     reason WorkspaceServiceAccountID is outside that table, said again for
+//     the account that holds roles/owner on the members.
+func TestWorkspaceAccountsAreTwoAndNeitherIsTheCredentialsServices(t *testing.T) {
+	if WorkspaceServiceAccountID == WorkspaceIAMAccountID {
+		t.Fatalf("the workspace root's two accounts are one id (%s): F20 is two accounts, never one", WorkspaceServiceAccountID)
+	}
+	for _, id := range []string{WorkspaceServiceAccountID, WorkspaceIAMAccountID} {
+		if id == CredentialsAccountID {
+			t.Errorf("%s is the credentials service's account: that one holds no write on any member (D1299), and this one is created to hold authority over them", id)
+		}
+		if slices.Contains(FugaroAccounts, id) {
+			t.Errorf("%s is one of FugaroAccounts: as one of them, an installation table's toAccounts row could have granted it a job's role", id)
+		}
+	}
+}
+
+// wsCode is the root's source with its own comments removed, so a test can
+// hold what the file DOES to the text it may name in prose: the root's comments
+// are where the design says what "no key" is and which two paths make one
+// anyway, and a check over the raw text would refuse the sentence it is there
+// to read. A `#` inside a string literal would cut the line early, and no line
+// of this root has one.
+func wsCode(raw string) string {
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = line[:i]
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func TestWorkspaceRootMakesNoKeyForTheIAMAccount(t *testing.T) {
+	raw, err := os.ReadFile("../../../deploy/terraform/gcp/roots/workspace/main.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := wsCode(string(raw))
+	for _, bad := range []struct{ needle, why string }{
+		{"google_service_account_key", "a key resource: the root creates the SA fallback's account and writes no key for it (D2803), so a key here would be a credential of the account that holds roles/owner on every member"},
+		{"serviceAccountKeys", "a key permission or role literal"},
+		{"iam.serviceAccounts.actAs", "an actAs grant: the root grants the workspace database role and nothing else"},
+		{"roles/iam.serviceAccountUser", "an actAs role: the workspace root makes no impersonation grant at all"},
+		{"roles/iam.serviceAccountTokenCreator", "a token-creator role: the SA fallback's token creators are the workspace admins, written live by `workspace user add --admin` (D2818), never by Terraform"},
+		{"google_service_account_iam_member", "a service-account IAM resource: the root's one IAM resource is the project member that binds its database role"},
+		{"workspace_iam.member", "a reference to the SA fallback's account as a grant's member: Terraform grants it nothing"},
+	} {
+		if strings.Contains(src, bad.needle) {
+			t.Errorf("the workspace root's main.tf mentions %s (%s)", bad.needle, bad.why)
 		}
 	}
 }

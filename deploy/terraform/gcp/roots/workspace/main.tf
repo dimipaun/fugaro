@@ -1,5 +1,7 @@
 # The workspace root: the workspace's OWN service in the workspace's own
-# project (docs/workspaces/implementation-plan.md W3, spec.md §2, §5, §9).
+# project (docs/workspaces/implementation-plan.md W3, spec.md §2, §5, §9), and
+# the SA fallback's IAM account (WU3 of
+# docs/workspace-projects-users/implementation-plan.md, D2803).
 #
 # A workspace has a project of its own — the project the workspace is named
 # after, whose config carries the owner's half of the membership (D1290, D1291)
@@ -12,9 +14,9 @@
 # calls the workspace's credentials pay for (W7) — all of it over IAM, because
 # the database's rules deny every client (internal/budget/rules/workspace.go).
 #
-# So this root creates the account, the one role that names its reach and the
-# ONE grant that binds them, and nothing else. That "nothing else" is the
-# security property, not a
+# So this root creates that account, the one role that names its reach and the
+# ONE grant that binds them, plus the SA fallback's account with no role of its
+# own — and nothing else. That "nothing else" is the security property, not a
 # simplification: spec §9 has a workspace never holding another project's runs,
 # buckets, jobs or repositories, and the whole point of D1290's answer is that
 # the workspace's project is nobody's member. A job, a runs bucket or a
@@ -119,4 +121,40 @@ resource "google_project_iam_member" "workspace_database" {
   role       = "projects/${var.project}/roles/fugaroWorkspaceDatabase"
   member     = google_service_account.workspace.member
   depends_on = [google_project_iam_custom_role.workspace_database]
+}
+
+# The SA fallback's identity (D2803, WU3): the account a member's owner grants
+# roles/owner on their project — and on their Firebase project when it is a
+# separate one — when there is no organization to move the project into, and
+# which the workspace's admins only ever IMPERSONATE (WU20).
+#
+# Two accounts, never one (F20). This one holds roles/owner on every linked
+# member; the account above reads the workspace's own database and the members'
+# ledgers. Neither is the credentials service's account, which holds no write on
+# a member at all (D1299).
+#
+# The root creates it and grants it NOTHING. Its token creators are the
+# workspace admins, written live by `workspace user add --admin` (D2818), so a
+# grant of this account in a plan would be a role no `fugaro update` asked for —
+# and internal/infra/tf's WorkspaceNotCovered refuses any grant of this root
+# whose member is not the service account above.
+#
+# NO KEY IS WRITTEN HERE, and this comment is what "no key" means: the root
+# writes none, which is not the claim that none can exist. The account lives in
+# a project Fugaro does not own alone, and two paths make one anyway —
+# iam.serviceAccounts.actAs, which roles/editor and roles/iam.serviceAccountUser
+# carry, and iam.serviceAccountKeys.create, which roles/editor resolves to. The
+# organization policy constraints/iam.disableServiceAccountKeyCreation is the
+# only control that closes the second; WU11's `status` takes up both. The tftest
+# case beside this root says the same, and
+# TestWorkspaceRootMakesNoKeyForTheIAMAccount reads this file for the first half.
+#
+# The id is a literal rather than a var.names field, as the role's is, so the
+# plan carries the name internal/infra/tf pins (WorkspaceIAMAccountID) and no
+# value could differ from it.
+resource "google_service_account" "workspace_iam" {
+  project      = var.project
+  account_id   = "fugaro-workspace-iam"
+  display_name = "Fugaro workspace IAM"
+  description  = "The workspace ${var.workspace}'s IAM account: the identity a member's owner grants roles/owner on their project when the workspace has no folder (D2803). The workspace's admins impersonate it, and Terraform writes no key for it."
 }
