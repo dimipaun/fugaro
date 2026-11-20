@@ -8547,6 +8547,16 @@ with --limit, --after or --watch.
 its follow-ups), over the last 90d unless --since says otherwise; the totals
 line is then the PR's total cost.
 
+--stream, with --json, prints the listing as newline-delimited JSON instead of
+as one document: a line per run, each carrying one element of --json's runs
+array unchanged under `row`, then a line saying how many rows the feed
+carried (`end`). A consumer renders a run as its line arrives rather than
+holding the whole document, and a feed with no end line is a read that was
+interrupted. A listing that stopped after its first line writes an `error`
+line with the sentence the command would have printed, and exits non-zero.
+The rows of a page are the page's, so --limit and --after mean here what
+they mean without it.
+
 Usage: `fugaro runs ls`
 
 Flags:
@@ -8570,6 +8580,7 @@ Flags:
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 | `--state` | string | "" | no | only runs in this state, a run's or its pull request's (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed, live, ready, stalled) |
+| `--stream` | bool | `false` | no | with --json: one line per run, then a line saying how many there were |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
 
 Subcommands:
