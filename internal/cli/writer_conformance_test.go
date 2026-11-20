@@ -87,11 +87,16 @@ const (
 	// family its Owner token names has not registered the command that writes
 	// it (D2609, D2610).
 	writerOpenNoWriter = "no-writer"
-	// writerOpenWriterDoesNotWrite is a row a runnable writer answers for whose
+	// writerOpenWriterUnproven is a row a runnable writer answers for whose
 	// argv the probe could not show changing the key in the store the writer
-	// named — measured per candidate, and never a claim about the writer: the
-	// probe's own fixture and value ladder are half of it (writerProbeWrite).
-	writerOpenWriterDoesNotWrite = "writer-does-not-write-the-key"
+	// named. It is a state of the MEASUREMENT and never a claim that the writer
+	// does not write the key: the probe's own hermetic fixture and value ladder
+	// are half of it (writerProbeWrite), and three of the keys the end-to-end
+	// walk watches a command write — crafts.coder.access,
+	// credential_cascade.fallback and the pools' own leaves — stand in this
+	// state (config_ownership_e2e_test.go). A row here is one the ratchet has
+	// not proven, which is all the state says.
+	writerOpenWriterUnproven = "writer-unproven"
 )
 
 // writerLine is one golden line's verdict: the kind and, for a line that has
@@ -136,10 +141,10 @@ func writerLineParse(text string) (writerLine, error) {
 		return writerLine{}, fmt.Errorf("the label %q is not one of %s, %s, %s (writers_labels.go, D2611)", value, settings.LabelPlumbing, settings.LabelFakeEndpoint, settings.LabelFile)
 	case "open":
 		switch value {
-		case writerOpenNoWriter, writerOpenWriterDoesNotWrite:
+		case writerOpenNoWriter, writerOpenWriterUnproven:
 			return writerLineFor(writerOpenLine, value), nil
 		}
-		return writerLine{}, fmt.Errorf("the reason %q is neither %s nor %s, which are the two states an open row is in", value, writerOpenNoWriter, writerOpenWriterDoesNotWrite)
+		return writerLine{}, fmt.Errorf("the reason %q is neither %s nor %s, which are the two states an open row is in", value, writerOpenNoWriter, writerOpenWriterUnproven)
 	}
 	return writerLine{}, fmt.Errorf("the verdict %q is neither label:<label> nor open:<reason>", kind)
 }
@@ -662,7 +667,7 @@ func writerMeasured(t *testing.T) map[string]writerLine {
 			out[key] = writerLineFor(writerLabelledLine, string(w.Label))
 		default:
 			if err := writerProbeWrite(t, row, key, w); err != nil {
-				out[key] = writerLineFor(writerOpenLine, writerOpenWriterDoesNotWrite)
+				out[key] = writerLineFor(writerOpenLine, writerOpenWriterUnproven)
 			}
 		}
 	}
@@ -716,7 +721,7 @@ func TestWriterConformanceTheOwnerWritesTheKey(t *testing.T) {
 // than a line no reader knows. The shape: one line per key, sorted, and every
 // key a row of the registry still spells. The claim: a `label:` line names the
 // label the registry answers that row with, an `open:no-writer` line's key
-// answers nothing, and an `open:writer-does-not-write-the-key` line's key
+// answers nothing, and an `open:writer-unproven` line's key
 // answers a runnable writer. And the ledger's completeness over the states no
 // command decides: every labelled row and every row nothing answers for is in
 // the file, and no row a runnable writer answers for is recorded as labelled.
@@ -774,7 +779,7 @@ func TestWriterConformanceStrict(t *testing.T) {
 					t.Errorf("%s records %s as %s and a writer or a label answers it in the registry: the reason names the state the row is in",
 						writerGapsPath, entry.key, entry.line)
 				}
-			case writerOpenWriterDoesNotWrite:
+			case writerOpenWriterUnproven:
 				if !runnable[entry.key] {
 					t.Errorf("%s records %s as %s and no runnable writer answers it: an open row's reason names the state it is open in",
 						writerGapsPath, entry.key, entry.line)
@@ -869,12 +874,16 @@ const writerGoldenHeader = `# Every registry row the writer conformance test can
 #   open:no-writer
 #     no writer and no label answers the row: the family its Owner token names
 #     has not registered the command that writes it (D2609, D2610).
-#   open:writer-does-not-write-the-key
+#   open:writer-unproven
 #     a runnable writer answers the row and the probe could not show its argv
-#     changing the key in the store the writer named. This is a measurement of
-#     the probe as much as of the writer: its own hermetic fixture and value
-#     ladder are half of it (writerProbeWrite), so the line leaves the file when
-#     either the writer or the probe changes.
+#     changing the key in the store the writer named — either the command
+#     refused in the probe's own hermetic rig (a minimal installation that lacks
+#     the neighbour the write validates against), or it exited zero and the
+#     store still read what it read. It is a measurement of the probe as much as
+#     of the writer: crafts.coder.access, credential_cascade.fallback and the
+#     pools' leaves stand here and are keys the end-to-end walk watches a
+#     command write (config_ownership_e2e_test.go), so a line leaves the file
+#     when either the probe or the writer changes.
 #
 # The ratchet is strict in both directions (I1): a row the measurement does not
 # prove and this file does not list fails, and a line whose row a command writes
