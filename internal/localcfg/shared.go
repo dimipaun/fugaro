@@ -267,6 +267,14 @@ func (c *Config) Shared() *Config {
 	// it besides, because a shared config carrying it was not written by the
 	// converge.
 	s.Triage = nil
+	// ReviewAgainstTask travels the triage switch's way too, and is dropped
+	// here for its reason one key over: the switch is what turns off the check
+	// every review stage makes of a run's own work, so a launcher who could
+	// write it into the shared file would be having every teammate's pull
+	// requests reviewed against nothing — the check the owner published the
+	// node for. ParseShared refuses it besides, because a shared config
+	// carrying it was not written by the converge.
+	s.ReviewAgainstTask = nil
 	// RigorPending is dropped here for Triage's reason and one of its own that
 	// is nearer still: it is the wizard's rigor answer waiting to be written
 	// into the project layer, and the mode decides how much review every run of

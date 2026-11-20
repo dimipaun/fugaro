@@ -7778,7 +7778,7 @@ func TestMergeJudgeSchemaMatchesTheDocument(t *testing.T) {
 
 // TestPRIndexSchemaRoundTrip: the entry runstore writes is the document
 // schemas/pr-index.schema.json describes, both ways. The Go type's own
-// encoding validates, the schema's kind enum is the two kinds the Go
+// encoding validates, the schema's kind enum is the three kinds the Go
 // constants spell (so a kind added to one and not the other fails here), and
 // the reader's strict decode gets the entry back unchanged. The index is
 // written by the untrusted job account, so the reader is deliberately
@@ -7788,7 +7788,7 @@ func TestMergeJudgeSchemaMatchesTheDocument(t *testing.T) {
 func TestPRIndexSchemaRoundTrip(t *testing.T) {
 	sch := compile(t, "pr-index.schema.json")
 	at := time.Date(2026, 11, 19, 13, 0, 0, 0, time.UTC)
-	for _, kind := range []runstore.PRIndexKind{runstore.PRIndexOpened, runstore.PRIndexFollowed} {
+	for _, kind := range []runstore.PRIndexKind{runstore.PRIndexOpened, runstore.PRIndexFollowed, runstore.PRIndexReviewed} {
 		e := runstore.PRIndexEntry{Version: runstore.PRIndexVersion, RunID: "20261119-130000-abcd", Slug: "acme-app", PR: 42, Kind: kind, At: at}
 		data, err := json.Marshal(e)
 		if err != nil {
@@ -7827,7 +7827,7 @@ func TestPRIndexSchemaRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{string(runstore.PRIndexOpened), string(runstore.PRIndexFollowed)}; !slices.Equal(doc.Properties.Kind.Enum, want) {
+	if want := []string{string(runstore.PRIndexOpened), string(runstore.PRIndexFollowed), string(runstore.PRIndexReviewed)}; !slices.Equal(doc.Properties.Kind.Enum, want) {
 		t.Errorf("pr-index.schema.json's kind enum = %v, want %v", doc.Properties.Kind.Enum, want)
 	}
 

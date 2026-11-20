@@ -1496,6 +1496,9 @@
         "repos.*.workflows": {
           "default": "unset = every workflow the repository defines"
         },
+        "review_against_task": {
+          "default": "unset = on: every review stage is handed the task its pull request was written for, and a written false is the project-wide default a repository's own true turns back on"
+        },
         "review_floor": {
           "default": "unset = none: no floor is added"
         },

@@ -38,10 +38,11 @@
     "kind": {
       "enum": [
         "opened",
-        "followed"
+        "followed",
+        "reviewed"
       ],
-      "description": "How the run came to be on the pull request: `opened` for a run that opened it, `followed` for a follow-up run that started on one that already existed. A value is only ever added to this list; a kind is never renamed while it keeps its meaning.",
-      "$comment": "PRIndexOpened and PRIndexFollowed in internal/runstore/prindex.go."
+      "description": "How the run came to be on the pull request: `opened` for a run that opened it, `followed` for a follow-up run that started on one that already existed, `reviewed` for a review run, which opened and followed none and is on the pull request from the moment its artifact stage names the number it reviewed. A value is only ever added to this list; a kind is never renamed while it keeps its meaning.",
+      "$comment": "PRIndexOpened, PRIndexFollowed and PRIndexReviewed in internal/runstore/prindex.go."
     },
     "at": {
       "type": "string",

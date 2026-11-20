@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -27,11 +28,14 @@ const (
 )
 
 // launchSpecAsk is what a launched review asks the launcher's resolver beyond
-// the pull requests themselves: --code-only, the one answer that comes before
-// the bucket is read at all (R1, R11).
+// the pull requests themselves: --code-only and --spec FILE, the two answers
+// that come before the bucket is read at all (R1, R11, D2934). The two are
+// mutually exclusive, and the refusal for giving both is made where the flags
+// are (reviewSpecFlagsRefusal), so at most one of them is set here.
 type launchSpecAsk struct {
 	PRs      []int
 	CodeOnly bool
+	SpecFile string
 }
 
 // resolveLaunchSpec is the spec a launched review is checked against (R1,
@@ -59,6 +63,12 @@ func resolveLaunchSpec(ctx context.Context, env *cloudEnv, slug string, ask laun
 	}
 	if ask.CodeOnly {
 		return launchSpecNone(launchSpecCodeOnly), nil
+	}
+	// --spec FILE is the spec by hand (spec §4): it overrides the originating
+	// run's task, which is what makes it the way an orphan pull request is
+	// reviewed against something, so the bucket is not read at all.
+	if ask.SpecFile != "" {
+		return launchSpecFromFile(ask.SpecFile)
 	}
 	if len(ask.PRs) == 0 {
 		return launchSpecNone(launchSpecNoRun), nil
@@ -105,6 +115,61 @@ func specReadBy(rs *task.ReviewSpec) task.ReviewSpec {
 // the review's against record carries back to the person.
 func launchSpecNone(reason string) *task.ReviewSpec {
 	return &task.ReviewSpec{Source: task.ReviewSpecNone, Reason: reason}
+}
+
+// launchSpecFromFile is the spec of `--spec FILE`: the file's own text, which
+// overrides the task of the run that opened the pull request (spec §4). The
+// text is redacted with redact.Text like every other text a launcher adds
+// (R13), so no credential a hand-written spec happens to quote reaches the
+// reviewer, and it is a file source, which carries no run id at all
+// (task.ReviewSpecProblem).
+//
+// R4's cap is a REFUSAL here rather than a clip, the one place the two differ:
+// a stored task cannot be trimmed and a person can trim a file, so a file over
+// the cap is refused with its size and the person decides what to drop. An
+// empty file is refused too — it is not a spec, and a review asked for against
+// nothing is `--code-only`, which records why rather than reading as a brief
+// that happens to say nothing.
+func launchSpecFromFile(path string) (*task.ReviewSpec, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, userErr("--spec %s: %v", oneLineCLI(path), err)
+	}
+	if len(data) > task.MaxReviewSpecBytes {
+		return nil, userErr("--spec %s is %d bytes, and a review's spec carries at most %d: trim it to the part of it the pull request was written for", oneLineCLI(path), len(data), task.MaxReviewSpecBytes)
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return nil, userErr("--spec %s is empty, so there is nothing for the review to judge the diff against: write the task in it, or ask for a review of the code alone with --code-only", oneLineCLI(path))
+	}
+	return &task.ReviewSpec{Source: task.ReviewSpecFile, Text: redact.Text(text, nil)}, nil
+}
+
+// reviewSpecFlagsRefusal refuses the two combinations R11 rules out, and both
+// are the flags' own shape rather than the launch's: the launcher answers them
+// before it reads anything.
+//
+// --code-only and --spec ask a review for different things — no task at all,
+// and this file's text as the task — so giving both is refused rather than one
+// of them being dropped silently (spec §5). Each one also asks a review for
+// something, and a recipe that is not mode: review is no review: the flag would
+// write no field anywhere and the caller would read a launch that did not do
+// what was asked.
+func reviewSpecFlagsRefusal(codeOnly bool, specFile string, mode string) error {
+	if !codeOnly && specFile == "" {
+		return nil
+	}
+	if codeOnly && specFile != "" {
+		return userErr("--code-only and --spec ask a review for different things: --code-only judges the code alone with no task, and --spec FILE is the task the diff is judged against. Give one of the two, or neither — a review against the task of the run that opened the pull request is what both fall back to")
+	}
+	if mode != recipe.ModeReview {
+		flag := "--code-only"
+		if specFile != "" {
+			flag = "--spec"
+		}
+		return userErr("%s asks a review what to judge the pull request against, and this launch is not a review: it needs a mode: review recipe and --pr, as in fugaro run --recipe %s --pr N. For a review of a pull request, use fugaro review --pr N", flag, reviewOnlyRecipe)
+	}
+	return nil
 }
 
 // launchSpecForPR resolves one pull request's spec (R1): its rows in this
@@ -334,33 +399,41 @@ func clipReviewSpecText(text string) string {
 // shown, and an installation built from source must not lose its review's
 // spec because no record dates its image. This gate's only power is to omit
 // fields, so a read that fails drops nothing.
-func reviewSpecSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, clone *bool, warn io.Writer) {
+//
+// It returns the reason, once, for the two readers of it: the warning line it
+// writes on stderr and the launch's own --json document (launchResult.
+// ReviewSpecReason), so a caller reading either is told the same thing. The
+// returned string is empty when nothing was dropped.
+func reviewSpecSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, clone *bool, warn io.Writer) string {
 	if spec.ReviewSpec == nil && !spec.FromFindings {
-		return
+		return ""
 	}
+	reason := ""
 	drop := func() {
 		spec.ReviewSpec, spec.FromFindings, spec.OwnText = nil, false, ""
-		fmt.Fprintf(warn, "the job image predates %s and cannot read a review's spec, so this review judges the code alone; fugaro update in the checkout moves it onto this release's base image\n", reviewSpecSince)
+		reason = fmt.Sprintf("the job image predates %s and cannot read a review's spec, so this review judges the code alone", reviewSpecSince)
+		fmt.Fprintf(warn, "%s; fugaro update in the checkout moves it onto this release's base image\n", reason)
 	}
 	predates := func(rel string, known bool) bool { return known && imagePredates(rel, reviewSpecSince) }
 	if clone == nil {
 		rel, known := releaseOf(env.lc.BaseImage(config.BaseKind))
 		if predates(rel, known) {
 			drop()
-			return
+			return reason
 		}
 		if rel, known = recordBaseRelease(ctx, env, slug, spec); predates(rel, known) {
 			drop()
 		}
-		return
+		return reason
 	}
 	if *clone {
 		if rel, known := releaseOf(env.lc.BaseImage(config.BaseKind)); predates(rel, known) {
 			drop()
 		}
-		return
+		return reason
 	}
 	if rel, known := recordBaseRelease(ctx, env, slug, spec); predates(rel, known) {
 		drop()
 	}
+	return reason
 }

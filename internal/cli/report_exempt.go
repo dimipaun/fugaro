@@ -292,6 +292,7 @@ var exemptAnswers = map[string]string{
 	"settings set":               "writes one setting into one of the three documents, and prints the row it wrote",
 	"settings unset":             "removes one setting from one of the three documents, and prints the row it dropped",
 	"stats runs":                 "publishes per-recipe percentiles over a window, and prints the numbers it published",
+	"tell":                       "sends one message into the run's own prefix and prints the number it took, which is the whole answer: what became of the message is the run's own record",
 	"update-skills":              "pins the Fugaro plugin in the checkout's .claude/settings.json, and prints the pin",
 	"user add":                   "adds one person to the installation's launchers or operators, and prints the entry",
 	"user offboard":              "takes one member off the installation — their roster grants and the secrets they stored — and prints what it dropped",
