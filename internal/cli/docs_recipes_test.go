@@ -162,7 +162,7 @@ func TestDocsRecipesGuideNamesByLevel(t *testing.T) {
 	doc := string(data)
 	for _, want := range []string{
 		"`by_level`",
-		"the cap a run gets is its level's own cap, whatever the recipe says",
+		"its level's own share of the deployed cap, whatever the recipe says",
 		"is not a recipe key",
 		"remove by_level",
 	} {
