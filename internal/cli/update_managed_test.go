@@ -1831,7 +1831,10 @@ func TestUpdateManagedRefusesASessionWideningFlag(t *testing.T) {
 		// --region rewrites the persisted region (and the cover's region and
 		// registry), --github-app-id the App ID the repository jobs carry: both
 		// are written to the local config by an apply this gate would admit.
-		{"region", []string{"--region", "us-west1"}, nil},
+		// The region is the installation's own here, because another one is
+		// refused before the gate is ever asked (LP8, D3088): the row is about
+		// the flag a session may not pass, and that refusal is the flag's.
+		{"region", []string{"--region", "us-east5"}, nil},
 		{"github app id", []string{"--github-app-id", "123456"}, nil},
 		{"the owner's delete list", []string{"--allow-delete", address}, nil},
 	} {
