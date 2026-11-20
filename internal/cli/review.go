@@ -618,7 +618,7 @@ func reviewAgainstLine(data []byte) string {
 		if a.SHA256 == "" {
 			return "against: file"
 		}
-		return "against: file " + a.SHA256
+		return "against: file " + oneLineCLI(a.SHA256)
 	default:
 		return "against: none (" + oneLineCLI(a.Reason) + ")"
 	}

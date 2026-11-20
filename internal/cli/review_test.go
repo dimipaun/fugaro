@@ -1794,19 +1794,27 @@ func TestReviewOldImageJSONCarriesReason(t *testing.T) {
 // TestReviewShowAgainstLine is R8's reader: `fugaro review show` prints one
 // line saying what the review was checked against — the run whose task it was,
 // the digest of a hand-supplied file, or none with the reason — beside the
-// artifact it already printed, and never in --json, whose bytes are the ones
-// the service signed.
+// artifact it already printed, and never in --json, whose bytes are the job's
+// own and are printed as they stand.
+//
+// The last two rows are the record this build does not know, which is what
+// Against.Validate is for: an artifact is bytes a job wrote, and a line built
+// from it without the check would print an unknown source as `none`, and would
+// carry a sha256 that is not a digest — including the escape below — onto the
+// terminal as it stands.
 func TestReviewShowAgainstLine(t *testing.T) {
 	f := newCloudFixture(t)
 	digest := strings.Repeat("ab", 32)
 	for _, tc := range []struct {
 		name    string
 		against string
-		want    string
+		want    string // "" for a record no line is printed about
 	}{
 		{"a run's task", `{"source":"run","run":"` + rootID + `","sha256":"` + digest + `"}`, "against: run " + rootID},
 		{"a hand-supplied file", `{"source":"file","sha256":"` + digest + `"}`, "against: file " + digest},
 		{"no task at all", `{"source":"none","reason":"` + launchSpecCodeOnly + `"}`, "against: none (" + launchSpecCodeOnly + ")"},
+		{"an unknown source", `{"source":"branch","sha256":"` + digest + `"}`, ""},
+		{"a digest that is not one", `{"source":"file","sha256":"\u001b[2J"}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			id := wallRunIDAt(0, "120000", "5eed")
@@ -1819,6 +1827,10 @@ func TestReviewShowAgainstLine(t *testing.T) {
 			if err != nil {
 				t.Fatalf("review show %s: %v", ref, err)
 			}
+			want := 0
+			if tc.want != "" {
+				want = 1
+			}
 			lines := 0
 			for _, line := range strings.Split(out, "\n") {
 				if strings.HasPrefix(line, "against:") {
@@ -1828,8 +1840,8 @@ func TestReviewShowAgainstLine(t *testing.T) {
 					}
 				}
 			}
-			if lines != 1 {
-				t.Errorf("review show printed %d against: lines, want one:\n%s", lines, out)
+			if lines != want {
+				t.Errorf("review show printed %d against: lines, want %d:\n%s", lines, want, out)
 			}
 
 			asJSON, _, err := reviewCLI(t, "show", ref, "--json")
