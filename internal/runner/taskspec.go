@@ -309,6 +309,17 @@ func (r *run) planSectionOf(ctx context.Context, brief, planTask string) (string
 // pinned — the hash is the approval, and a section that moved under it is not
 // the text anybody read (D2737, D2932, F49).
 func (r *run) pinnedSection(ctx context.Context, pin plan.Pin) (string, string) {
+	// Both names are read off the head line of a brief, which is the text of
+	// whoever wrote the root task (F17), and both are echoed in the notes below
+	// — outside the nonce fence the task itself is quoted in, and unredacted,
+	// because a note is the runner's own sentence rather than the brief's. So a
+	// plan pointer whose names are not the path elements a plan task is made of
+	// is refused before anything is read or said: the note then carries the
+	// runner's words instead of the brief's, and no payload the head line spells
+	// reaches the reviewer outside the fence (R3, R5).
+	if task.PlanTaskProblem(pin.Plan+"/"+pin.Node) != "" {
+		return "", "the brief's plan pointer names no task in a plan."
+	}
 	if !r.commitPresent(ctx, pin.Commit) {
 		if _, err := sessionGit(ctx, r.repo, "fetch", "--quiet", "origin", pin.Commit); err != nil {
 			return "", fmt.Sprintf("the commit the brief pins (%s) is not in this checkout and could not be fetched.", safetext.OneLine(pin.Commit))
