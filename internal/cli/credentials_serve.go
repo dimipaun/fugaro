@@ -829,14 +829,25 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err != nil {
 		return credsvc.Config{}, userErr("the credentials service cannot verify its callers, so it will not start: %v", err)
 	}
-	cfg := credsvc.Config{
+	return credsvc.Config{
 		Auth:    auth,
 		Bundles: loader,
-		Policy:  credsvc.RTDBPolicy{DB: db},
-		State:   &creds.RTDBStore{DB: db},
-		Kills:   credsvc.RTDBKills{DB: db},
-		DB:      db,
-		Probes:  db,
+		// Resolver is the front door's scope resolver (C1): nil for an
+		// installation, which is its own — NewServer builds
+		// installationResolver over this same configuration
+		// (scope_installation.go), so an installation's deployment is served by
+		// the one front door it always was — and the workspace's own for the
+		// mode above (WS5), which is the only deployment whose runs its
+		// configuration could otherwise not bind: a workspace's container
+		// carries no job document (credentialsServiceWorkspaceEnvNames), so
+		// this table is empty there and the node the resolver re-reads is what
+		// binds a call.
+		Resolver: resolver,
+		Policy:   credsvc.RTDBPolicy{DB: db},
+		State:    &creds.RTDBStore{DB: db},
+		Kills:    credsvc.RTDBKills{DB: db},
+		DB:       db,
+		Probes:   db,
 		// The same client is the create-only write the sign route's
 		// one-signature mark is taken with (C3.9e, D1074): the mark is a node
 		// under creds/ like the probe's lease, read for its ETag and written
@@ -903,13 +914,7 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// rather than answer a grant naming a proxy that admits nothing.
 		BuildPairs: &creds.RTDBStore{DB: db},
 		Log:        log,
-	}
-	// The workspace's resolver, and nil for an installation: nil is the
-	// installation's own, which NewServer builds over this same configuration
-	// (scope_installation.go), so an installation's deployment is served by the
-	// one front door it always was.
-	cfg.Resolver = resolver
-	return cfg, nil
+	}, nil
 }
 
 // credentialsWorkspaceDeployment is the workspace's own half of the process: what
