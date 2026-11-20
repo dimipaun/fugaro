@@ -1161,6 +1161,7 @@ probe account carries predefined grants only).
 | 736 | The Firebase Auth, KMS and Cloud Run **quotas** at the stated scale ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 736**; the reconciliation's **U6**): the identity project's Identity Platform sign-in quota, the KMS signing operations per second it can want and the Cloud Run request and instance quotas beside them, read against the scale the plan states — every phone refreshing its token on the hour and pairing and revoking as the spec describes — so a limit that would stop pairing at the planned fleet size is found before the fleet is that size | See "Check 736" below; **one command**, run by **you**, on the **identity project** (**never `belong`**), with your own credentials; **no agent runs any step of it** | Each quota the command prints is compared with the plan's stated scale, and the reading names the ones with no headroom. A quota that answers with a limit below the stated scale is a **FAIL with the limit and the scale named**; a quota the read cannot reach is written as **not measured** rather than as headroom. The section records the figures it read, because a quota rises and the sentence here is only as good as its date. **OWNER-RUN, NOT RUN.** |
 | 737 | **The root key project** and the first signed key set ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 737** and task **A4**; the owner's **O7** and **O15**, and **A2**'s and **P8**'s pinned half): the separate owner-only project exists with its root KMS key, the root key is non-exportable and **no service account can sign with it** — signing is granted to exactly one member, a separate owner identity given as a variable, and the laptop's default login **cannot sign** either; the **key-set** signing command has signed the first set and A2 serves it; and a rotation rehearsal has run, so the new KMS key version and the signing command are known before the first real rotation needs them | See "Check 737" below; **one command** for the refusal that matters (your own login against the root key), run by **you**, at your own terminal with your own credential on the **root key project** (**never `belong`**); the applies and the ceremony are yours, and **no agent applies, signs or holds the key**; **no agent runs any step of it** | The root key's purpose is `ASYMMETRIC_SIGN`, its algorithm is Ed25519, and the sign attempt with the owner's own login is **refused** — a sign that succeeds is the **worst finding this check can produce**, because a key anyone holding the default login can sign with is a key that signs key sets no client should trust (O7). The signed set A2 serves verifies against the root public key, its `seq` is above every set before it and its not-after date is the one the envelope carries; the rotation rehearsal's reading is the new key version's `kid` and the command that signed it, recorded in the section. **USER-RUN, NOT RUN.** |
 | 640 | The status labels on a real pull request ([`docs/forge-labels/`](forge-labels/implementation-plan.md), its task **CK** and the block it reserves — **640–649**, 640 used; **U1** and **U3** are the two questions nothing offline can answer, and **D2437**'s table with **D2439**'s token and **D2440**'s create-on-first-use are what the labels' colours and the route's behaviour rest on): with the installation's orchestrator daemon running and **one approved task** launched, the pull request the run opens carries **`fugaro:running`** while the run is in flight and, once it has ended, **no** status label (a run that ended `succeeded` or `cancelled`) or **`fugaro:failed`** — plus the **`spec:<name>`** label its item's own spec asks for, in D2437's grey. **U1** — whether the dogfood installation's GitHub App really holds `pull_requests: write` — is read from the **credentials service's own audit lines** (`gcloud logging read`, purpose `label`), which are the service's record of the act and never the run's word; **U3** — what GitHub does with a label name that carries a **colon** — is read from the repository's own label table (`gh label list`). Run by **you**, on the **dogfood installation `fugaro`** (GCP project `fugaro-dev`, region `us-east5`, never `belong`), at your own terminal, as **one command**: `bash scripts/live-checks/check640.sh --installation fugaro`, with the test that drives it against fakes, `scripts/live-checks/check640_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** It reads and writes nothing anywhere, launches no run and costs nothing billable; the one conditional owner step is the plan's: if the check shows the App lacks `pull_requests: write`, you raise it on the App's settings page, which an agent cannot. **OWNER-RUN, NOT RUN.** |
+| 830 | What links a Batch VM to its job, and what a launcher can put on one ([`docs/batch-run-identity/`](batch-run-identity/implementation-plan.md), its task **BR0** and the plan's own **Check 830**; **U1** — which Google-made fact ties a VM to its job, and which permission reads it — is the owner's **O1**, **U2** is what the identity token in full format carries inside the task's container (the carrier of **D3101**), **U3** is where a job's variable reaches (**F3**, **R7**: the wrapped blob of **R5** must not be published anywhere), and **U8** is how soon a deleted job's name can be used again — with **R1** and **D3108** the reason U1's answer decides whether **BR3** can be built on it at all): with a throwaway Batch job in `fugaro-dev` shaped like a real run, a second job that writes the first job's uid and name into every launcher-controlled field it has (the job's own labels, the labels Batch puts on the VMs, and the task's variables), and a plain Compute Engine VM for **O8**'s avenue, the container reads the metadata server itself — so the link is judged on what the VM says about itself rather than on a naming convention, and a field a launcher can write is caught by the second job and by the plain VM rather than assumed safe. Run by **you**, at your own terminal, as **one command**: `CHK830_OWNER_RUN=yes bash scripts/live-checks/check-830.sh` (`--dry-run` prints every command and touches no project), with the test that drives it against a fake `gcloud` on PATH, `scripts/live-checks/check-830_test.sh` (run by `go test ./scripts`). **No agent runs any step of it**, and the plan blocks **BR3** on the result (**R4**). It costs two small `e2-standard-4` jobs and one VM alive for seconds, and deletes every job and instance it made. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -22250,3 +22251,93 @@ second signing grant: the reading's own criterion is that exactly one member can
 granted anyone else must have that grant removed before the section is written.
 
 **USER-RUN, NOT RUN: no agent runs any step of it.**
+
+## Check 830: what links a Batch VM to its job, and what a launcher can put on one (the sandbox project `fugaro-dev` only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **BR0** of
+[docs/batch-run-identity/implementation-plan.md](batch-run-identity/implementation-plan.md) — its
+row for **830** — as the probe the plan blocks **BR3** (the VM-to-job link the credentials service
+releases a job's blob on), **BR5** and **BR12** on (**R4**). It settles the owner's **O1** (which
+fact links a VM to its job and which permission reads it) and the four UNVERIFIED questions the
+reconciliation carries. **No agent runs any step of it**, and **BR3 starts only after this result is
+recorded**.
+
+**What it settles.**
+
+- **U1 — the link, and its forge.** Which Google-made fact ties a Batch VM to its job: a field of
+  the instance's own object (readable only with `compute.instances.get` on the VM — the second read
+  **D3102** asks about, and one that cannot be scoped to Fugaro's VMs), a field of the job's own
+  object (read with the `batch.jobs.get` the service already holds, **F26**), something visible
+  **inside** the VM only, or nothing at all. The row names the field and the read it costs, because
+  **BR3** is written against exactly that. A second job then tries to **forge** it: it carries the
+  probe job's uid and name in every field a launcher controls — its own labels, the labels Batch
+  puts on the VMs, and the task's variables — and its VM is read for the field the probe's own VM
+  carries the probe's identity in. **A field a launcher can write there must not be the link**
+  (**R1**, **D3108**): a launcher who can name another job's uid in it would be handed that job's
+  release. The same attempt is made against a **plain Compute Engine VM** named after the probe job
+  (**O8**): anyone holding `compute.instances.create` and `actAs` on a run account can make one.
+  Each avenue carries a **control** — how many of the written keys reached that VM at all — so an
+  attempt Batch copies nowhere reads as inert rather than as a pass.
+- **U2 — the identity token.** Whether a task's container can reach the metadata server at all, and
+  whether the token in **full** format carries the instance's **id**, **name**, **project** and
+  **zone**. Those claims are what **D3101** matches a VM to its job with, so a claim that is not
+  there cannot be matched on. The token itself is a bearer credential for that VM and is never
+  printed, here or in the container's own lines.
+- **U3 — where a job's variable reaches.** Whether the value of a variable the job carries — the
+  wrapped key's own variable (**R5**) with a generated stand-in value — appears in the probe job's
+  own log entries, anywhere in the project's Cloud Logging, in the instance metadata or the
+  instance's own object, or in the **`CreateJob` audit record**. The row is **fail-closed**: it
+  passes only when the value reached the container's own environment (the positive control, so the
+  job carried it) **and** every reading was taken and saw nothing, including the audit record,
+  which is waited for within a bound. The value is compared and never printed — a block that
+  printed it would be a block that had to be treated as secret — so the row names the readings
+  instead.
+- **U8 — reusing a deleted job's name.** The probe job is deleted, the same name is submitted again
+  in a bounded loop, and the seconds to acceptance are printed, with the first refusal's own
+  message. The re-created job is deleted at once; it existed to hold a name, not to run. **D3108**'s
+  registration does not depend on this answer.
+
+**What has to exist before it runs.** Nothing of the work: the check creates its own job and is
+built to run before a line of **C1**'s sides is written. It reads the tree it lives in — the log
+filter out of `internal/backend/batch/logs.go`, the managed label pair out of
+`internal/backend/gcp/names.go` and the wrapped variable's name out of `docs/batch-run-identity/` —
+so it must be run from the checkout whose commit you record. It needs `gcloud`, `bash`, `python3`
+and `git` on PATH, and nothing is installed or fetched.
+
+**The command.** It is **one command**, and the owner marker is the whole of the ceremony:
+
+```sh
+CHK830_OWNER_RUN=yes bash scripts/live-checks/check-830.sh
+```
+
+It names GCP project `fugaro-dev` and region `us-east5` itself: there is no `--project` flag and no
+variable that could point another project at it, and `belong`, EdgeWeb and EdgeServer are refused by
+name. `--dry-run` runs the guards and the tree reads, prints every command a real run would run, and
+touches no cloud project. A traced shell (`bash -x`) is refused, because a trace would print the
+commands into the log you paste back. Every bound is a knob — `CHK830_WAIT_LINES`, `CHK830_WAIT_AUDIT`,
+`CHK830_REUSE_BOUND`, `CHK830_LINGER_A`, `CHK830_LINGER_B` — because a slow project should be given
+longer rather than read as a `FAIL`.
+
+**What it reads, and what the block says.** One block on stdout headed `CHECK 830 RESULT`, whose last
+line is `CHECK 830 RESULT: PASS|FAIL`, with **one row per fact**: `u1-link` (the field, and the
+permission that reads it), `u1-forge` (whether a second job reproduced it, with the per-avenue
+control), `u1-handmade` (`O8`'s plain VM), `u2-token` (the four claims), `u3-marker` (the three
+readings, fail-closed), `u8-name` (the seconds) — beside the rows that say what ran: the probe job,
+the container's own readings, the VM, the guards and `restore`. Paste the **whole block** into this
+section, with the date and `fugaro version`. If `u1-link` is `FAIL`, or `u1-forge` is `FAIL`, or
+`u1-handmade` is `FAIL`, the work returns to **you** rather than falling back to **K1** (**R4**):
+that is the answer, and it is the reason this probe runs before **BR3** is written.
+
+**Restore.** The check deletes everything it made — the probe job, the forging job, the re-created
+job and the plain VM — and its `restore` row names anything an interrupted run left behind with the
+one command that removes it. Two small `e2-standard-4` jobs alive for their linger (300 s and 120 s by
+default), one VM alive for seconds, and a dozen `gcloud` reads: no model call, no build, no run of
+the backend, no image built. The scratch directory always goes, including on a Ctrl-C.
+
+**What waits on it.** **BR3** (**R4**), and through the owner's **O1** answer also **BR5** and
+**BR12**; the plan's critical path starts here, and the row **830** in the implementation plan's
+table says "after BR0 merges, before `R-C1-link-permission`, BR3, BR5 and BR12 start".
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** The script's own test,
+`scripts/live-checks/check-830_test.sh`, drives it entirely against a fake `gcloud` on PATH — no
+network, no project, no resource — and is run by `go test ./scripts` like every other check's.
