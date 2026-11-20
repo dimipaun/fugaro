@@ -16,11 +16,13 @@ import (
 // its public key, and the OPT-IN FACT, which is whether this installation has
 // asked for the compute root that creates that key.
 //
-// Both are written by `fugaro update` and by nothing else (R13), both are
-// published with the block so a launcher who is not an operator receives them,
-// and neither is written by any settings command: they are the installation's
-// facts and not a machine's preference, which is why the settings registry
-// lists them with `update` as their owner and with no flag.
+// Both are published with the block so a launcher who is not an operator
+// receives them, and neither is written by any settings command: they are the
+// installation's facts and not a machine's preference, which is why the
+// settings registry lists them with `update` as their owner and with no flag.
+// Whose hand writes them is the one thing the two do not share: the opt-in is
+// an OPERATOR's, written by selecting the backend (R2) and by opting out (R16),
+// and the key fact is `fugaro update`'s alone and by nothing else (R13).
 //
 // **The key fact is one fact in two fields.** The version names the key the
 // blob was wrapped to, so a later version is a different fact and never a

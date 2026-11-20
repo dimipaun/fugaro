@@ -94,6 +94,16 @@ const (
 	// F21: this one's registry owner names a family, and the family does not
 	// write it, so the reason says which family and what it writes instead.
 	reasonBatchSecrets = "a key of the local config's `batch` block naming the Secret Manager secrets a batch job mounts: the `secrets` family writes secret expiry and rotation and no key of this block, so a batch installation states it as the backend is provisioned"
+	// R2 and R16: the opt-in fact is an operator's own, and the two commands
+	// that write it are the selection of the backend and the explicit opt-out —
+	// C1 lands the fact and BR18 and BR20 land the writers, which then register
+	// them and are why this label is not a claim that no command ever will.
+	reasonBatchOptIn = "a key of the local config's `batch` block stating whether the installation has opted in to Batch: an operator writes it by selecting the backend and by opting out (R2, R16), and no settings command writes it"
+	// R13: the key fact is `fugaro update`'s alone, and the reason says why that
+	// is a rule and not a column — a key fact a settings command could write is
+	// a substituted public key, and a substituted one hands its holder every
+	// seal key wrapped to it.
+	reasonBatchSealKey = "a key of the local config's `batch` block: `fugaro update` writes it from the compute root's own output (R13), and no settings command writes it, because a substituted public key would open every seal key wrapped to it"
 	reasonBuild        = "a key of the local config's `build` block: no command writes one, and a person states where the installation's images are built"
 	reasonPrice        = "a key of the local config's `compute_prices` block: no command writes one, and it overrides a region's Compute Engine list prices"
 
@@ -114,6 +124,9 @@ var settingsLabelRows = []settingsLabelRow{
 	{"batch.socket_gid", labelFile, reasonBatch},
 	{"batch.subnetwork", labelFile, reasonBatch},
 	{"batch.task_timeout", labelFile, reasonBatch},
+	{"batch.opt_in", labelFile, reasonBatchOptIn},
+	{"batch.seal_key.public_key", labelFile, reasonBatchSealKey},
+	{"batch.seal_key.version", labelFile, reasonBatchSealKey},
 	{"bucket_url", labelFile, "the bucket address a run's task is written to, stated in the local config: `fugaro setup` writes runs_bucket and no command writes this one"},
 	{"build.machine_type", labelFile, reasonBuild},
 	{"build.region", labelFile, reasonBuild},

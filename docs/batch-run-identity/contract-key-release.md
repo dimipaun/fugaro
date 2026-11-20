@@ -242,9 +242,11 @@ leave the caller with `ErrSealKeyNotReleased`.
 ## The block's two identity facts
 
 `localcfg.Batch` carries two facts (`internal/localcfg/batch_sealkey.go`). Both are the
-installation's and not a machine's preference, both are written by `fugaro update` and by nothing
-else (R13), both are published with the block so a launcher who is not an operator receives them
-(R13, R15), and neither is written by any settings command.
+installation's and not a machine's preference, both are published with the block so a launcher who
+is not an operator receives them (R13, R15), and neither is written by any settings command. The
+two differ in whose hand writes them: the OPT-IN is an operator's own — the selection of the
+backend writes `in` (R2) and the explicit opt-out writes `withdrawn` (R16) — while the KEY FACT is
+`fugaro update`'s alone and by nothing else (R13).
 
 **The opt-in fact** (`batch.opt_in`, `localcfg.Batch.OptIn`) has three states and not two (D3110 as
 amended, D3111):
