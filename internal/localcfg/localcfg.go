@@ -62,15 +62,25 @@ import (
 // (internal/access, under config/admin) is their authority: `fugaro update`
 // derives these lists from it on every converge, and its migration writes the
 // node from the version-1 lists an installation already had.
-const ConfigVersion = 2
+//
+// Version 3 retypes ONE key, and it is the same reason the bump exists at all:
+// `workspace_members.*.job_service_accounts` is a list of service account
+// addresses in version 2 and a list of entries carrying an address and the
+// repositories it is a job of here (R6, D2992), so a version-2 list read as
+// this shape would decode as a list of entries with no account at all. The
+// document's own version is what tells the two apart, and a version-2 document
+// is folded (foldLegacyMemberAccounts) rather than refused: a config the
+// release behind wrote must keep parsing, and every command in that project —
+// `fugaro update` above all — reads it through this one.
+const ConfigVersion = 3
 
 // Config is the local CLI config.
 type Config struct {
 	// Version is the document's own version, and the field an older Fugaro
 	// refuses: ConfigVersion is the one this release writes, and Parse returns
-	// every accepted document as this version, because folding a version-1
-	// document produces version 2's shape and a document that says 1 while
-	// carrying 2's keys is the one spelling nobody may read.
+	// every accepted document as this version, because folding an older
+	// document produces this version's shape and a document that says 1 or 2
+	// while carrying 3's keys is the one spelling nobody may read.
 	Version int `yaml:"version"`
 	// Name is the Fugaro project (config.ProjectNameRE), which the file
 	// is named after.
@@ -533,6 +543,26 @@ type Config struct {
 	// and must not turn it back on for the project (TriageEffective); a written
 	// false is the switch.
 	Triage *bool `yaml:"triage,omitempty"`
+	// ReviewAgainstTask is whether every review stage checks a pull request
+	// against the task it was written for (R7 of docs/review-against-task/),
+	// the owner's answer for the whole project beside a repository's own
+	// fugaro.yaml `agent.review_against_task`. It travels the triage switch's
+	// way for the same reason: the check is what holds a pull request back to
+	// the work it was asked for, so a launcher who could write the switch into
+	// the runs bucket's shared file would be letting every teammate's runs be
+	// reviewed against nothing. Shared nils it and ParseShared refuses the key.
+	//
+	// The two answers meet the other way round from triage's (D2935): the
+	// repository's own true turns the check back on under a node that turned it
+	// off, because on is the stricter value (policy.Merge). Here the file is
+	// the owner's own statement and the only thing that moves it is his own
+	// edit, so a written true or a written false both win over the node
+	// (ReviewAgainstTaskEffective).
+	//
+	// An absent key is a machine whose file has nothing to say about the check
+	// and must not turn it back on for the project (ReviewAgainstTaskEffective);
+	// a written false is the switch.
+	ReviewAgainstTask *bool `yaml:"review_against_task,omitempty"`
 	// Orchestrator is the owner's block of the orchestrator daemon's own
 	// guardrails (D1239, D1234): how many runs it may have running at once, how
 	// many it launches in one batch, the rate it may spawn at, and the model
@@ -807,8 +837,9 @@ type Config struct {
 	// WorkspacePin is the member's own record of which workspace it trusts
 	// and which identity acts for it there: the workspace's Firebase project
 	// id, the issuer the member's exchange requires, the assertion-signing key
-	// it verifies a member-bound assertion against, and the workspace service
-	// account its own `fugaro update` binds the read-only database grant to.
+	// it verifies a member-bound assertion against, the workspace service
+	// account its own `fugaro update` binds the read-only database grant to, and
+	// — when it takes one — the address of the workspace's credentials service.
 	//
 	// It is the member's value and never the workspace's. The record a
 	// workspace publishes names no key, no issuer and no service account
@@ -819,7 +850,8 @@ type Config struct {
 	// could write this key could aim the member's exchange.
 	//
 	// The four values are written together by `fugaro workspace add` and
-	// validated together (validateWorkspace): a pin whose issuer is not
+	// validated together (validateWorkspace), and the fifth — the workspace's
+	// service address — is optional beside them: a pin whose issuer is not
 	// exactly WorkspaceIssuer(firebase_project) is refused at the load,
 	// because the signature is verified against Google's one global set of
 	// Firebase signing keys (internal/credsvc's GoogleKeysURL), so the pair
@@ -848,6 +880,19 @@ type Config struct {
 	// WorkspaceMembers' reason: the block's presence is the claim that there
 	// is a ceiling, so a block that is written states its amount.
 	WorkspaceCap *WorkspaceCap `yaml:"workspace_cap,omitempty"`
+	// WorkspaceShared is the workspace owner's own list of the credentials the
+	// workspace offers its members, keyed by the credential's name as the
+	// workspace's bundle holds it. It is where `fugaro workspace share` and
+	// `fugaro workspace unshare` write, and it is the owner's declaration and
+	// never a member's: a member's runs read the route record its own config
+	// publishes, so a member holding this key would be naming credentials it
+	// does not hold.
+	//
+	// It is local-only for Workspace's reason, and by the same rule the value
+	// a member may be served is the intersection of this list with the member's
+	// own policy (D1298): a name here is permission to serve, never an
+	// instruction to a member's runs.
+	WorkspaceShared *map[string]WorkspaceShared `yaml:"workspace_shared,omitempty"`
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
@@ -896,10 +941,15 @@ func (r NodeRemovals) IsZero() bool {
 // exchange), W5 (the admission) and W7 (the grant), and no code path reads one
 // of them from the workspace's record — which carries none of them.
 //
-// The four are all required together: a pin missing one is refused at the load
-// rather than read as a member that trusts less, because a member that verified
-// no signature, or bound its grant to no account, would be a member whose
-// admission depends on which half happens to be absent.
+// The four values are all required together: a pin missing one is refused at
+// the load rather than read as a member that trusts less, because a member that
+// verified no signature, or bound its grant to no account, would be a member
+// whose admission depends on which half happens to be absent.
+//
+// ServiceAddress is the fifth field and the one exception to that rule: it is
+// optional, because a pin without it is a member whose runs take no workspace
+// credential and an existing pin therefore converges with no edit at all
+// (R3).
 type WorkspacePin struct {
 	// FirebaseProject is the workspace's Firebase project id, which the
 	// token's `aud` must be.
@@ -914,6 +964,20 @@ type WorkspacePin struct {
 	// ServiceAccount is the workspace service account the member's own
 	// `fugaro update` binds its read-only database grant to.
 	ServiceAccount string `yaml:"service_account"`
+	// ServiceAddress is the address of the workspace's credentials service:
+	// where this member's runs call it for a credential the workspace holds
+	// and the project does not (R3). It is empty for a member that takes no
+	// workspace credential, which is the state of every pin written before
+	// this field existed and the reading that lets such a pin converge
+	// untouched.
+	//
+	// It is the member's own value and never the workspace's: a workspace
+	// that could move the address a member calls would be aiming that
+	// member's calls, and the run's gateway sends its own identity token
+	// there. The member's own `fugaro update` copies it into the route record
+	// its runs read at bootstrap (R4); nothing is ever read back from the
+	// workspace's own publication.
+	ServiceAddress string `yaml:"service_address,omitempty"`
 }
 
 // IsZero reports whether the pin is the absent one, which is the state of
@@ -928,10 +992,34 @@ type WorkspaceMember struct {
 	// Repos are the repositories this member contributes to the workspace, as
 	// `owner/repo`. Empty for a member that contributes none.
 	Repos []string `yaml:"repos,omitempty"`
-	// JobServiceAccounts are the member's job service accounts: the identities
-	// the workspace's service resolves a caller by. Each is an IAM service
-	// account address.
-	JobServiceAccounts []string `yaml:"job_service_accounts,omitempty"`
+	// JobAccounts are the member's job service accounts, each with the
+	// concrete repositories it is a job of. The account is the identity the
+	// workspace's service resolves a caller by; the repositories are what
+	// holds the run's verified slug to that account, and they are concrete
+	// `owner/repo` names and never a pattern: a pattern is a promise about
+	// what the account may be a job of, and the workspace's service compares
+	// slugs (R6, D2992, F42).
+	//
+	// One account carries one repository for a repository's own job, and
+	// several for a shared project job, which serves exactly the repositories
+	// its profile admits. An entry with no repository is the one
+	// foldLegacyMemberAccounts writes for a version-2 file, which named the
+	// member's accounts and never their jobs, and the load reads it rather
+	// than refusing it: the fold produces it, and a refusal would leave every
+	// command in that project — `fugaro update` among them — unable to read
+	// the file the release behind wrote. What the entry means is the narrow
+	// reading and never a widening: the service holds a run's verified slug to
+	// this list, so an account with none is served nothing. `fugaro workspace
+	// member add` refuses to write one, and a published account has to carry
+	// its repositories on the node's own row (R6, D2992, F42).
+	JobAccounts []WorkspaceJobAccount `yaml:"job_service_accounts,omitempty"`
+	// DatabaseRegion is the region the member's Realtime Database lives in,
+	// and it is empty for a database in the project's default region. The
+	// database is still the member's own — it is derived from the Firebase
+	// project the verified `iss` names — and this says only where in that
+	// project it lives, so an owner cannot pair one member's accounts with
+	// another's database by writing one (R6, the workspaces design's O4).
+	DatabaseRegion string `yaml:"database_region,omitempty"`
 	// FirebaseProject is the member's Firebase project id, which the caller's
 	// token is issued under.
 	FirebaseProject string `yaml:"firebase_project,omitempty"`
@@ -943,13 +1031,73 @@ type WorkspaceMember struct {
 	ExchangeURL string `yaml:"exchange_url,omitempty"`
 }
 
+// WorkspaceJobAccount is one job service account of a member and the
+// repositories it is a job of. The two are one statement and are written
+// together: an account without its repositories is a caller the workspace's
+// service cannot hold a run's repository to, and a repository without its
+// account is a slug no identity in the table claims.
+type WorkspaceJobAccount struct {
+	// Account is the job service account, by email: an IAM service account
+	// address.
+	Account string `yaml:"account"`
+	// Repos are the concrete repositories this account is a job of, as
+	// `owner/repo`, sorted and each once by the writer that publishes them.
+	Repos []string `yaml:"repos,omitempty"`
+}
+
 // IsZero reports whether the entry declares nothing at all, which is the state
 // validateWorkspace refuses and `fugaro workspace member rm` reads as "there is
 // no entry to remove". It is one rule with two readers, so the loader and the
 // command cannot come to different answers about an entry that is there and
 // says nothing.
 func (m WorkspaceMember) IsZero() bool {
-	return len(m.Repos) == 0 && len(m.JobServiceAccounts) == 0 && m.FirebaseProject == "" && m.FP == "" && m.ExchangeURL == ""
+	return len(m.Repos) == 0 && len(m.JobAccounts) == 0 && m.DatabaseRegion == "" && m.FirebaseProject == "" && m.FP == "" && m.ExchangeURL == ""
+}
+
+// The three kinds a shared entry may carry: the route record's own spelling
+// (R4), and the whole of the set — the pool serves a model credential and the
+// two forge credentials, and nothing else the bundle holds is offered to a
+// member's run.
+const (
+	WorkspaceSharedModel     = "model"
+	WorkspaceSharedBitbucket = "bitbucket"
+	WorkspaceSharedGitHub    = "github"
+)
+
+// WorkspaceShared is one credential the workspace offers its members, as the
+// owner's own config declares it: the entry under `workspace_shared`, keyed by
+// the credential's name, which is the name the workspace's bundle holds it
+// under and the name the workspace's service speaks.
+//
+// It is the owner's declaration about the workspace, like the member table
+// beside it, and it is never a member's: a member reads nothing the workspace
+// publishes, so the only copy of this list a member holds is the one the
+// workspace's own config carries here.
+//
+// A model credential is offered by name; a forge credential — the Bitbucket
+// token and the GitHub App key — is offered for the repositories it covers,
+// because those routes are per repository and the workspace owner, not the
+// member, is the side that knows what the token reaches.
+type WorkspaceShared struct {
+	// Kind is what the credential is for, spelled as the route record spells
+	// it (R4), and it is derived rather than typed: `fugaro workspace share`
+	// reads the credential's name out of the bundle's own key spelling
+	// (credsvc.CredentialKey) and writes the kind that answers. A kind this
+	// file does not know is refused rather than read as a model one, because
+	// the kind is what decides whether Covers is required.
+	Kind string `yaml:"kind"`
+	// Projects are the member projects this credential may be served to, as
+	// project names. It is the workspace's own allow-list, and the effective
+	// set is this list intersected with the member's own policy (D1298): a
+	// member the list does not name is not served the credential whatever its
+	// policy says.
+	Projects []string `yaml:"projects,omitempty"`
+	// Covers are the repositories the credential reaches, as `owner/repo`,
+	// for a forge entry. It is required for `bitbucket` and `github` and
+	// refused for `model`: a model call names no repository, and a forge
+	// credential with no coverage is one the workspace's service could never
+	// decide a request against.
+	Covers []string `yaml:"covers,omitempty"`
 }
 
 // WorkspaceCap is a workspace's own spend ceiling, as the file writes it: a
@@ -2381,6 +2529,76 @@ func foldLegacyLists(data []byte, top map[string]yaml.Node) ([]byte, error) {
 	return out, nil
 }
 
+// foldLegacyMemberAccounts rewrites a version-2 document's member table into
+// the spelling this release reads: each `workspace_members.<name>.job_service_accounts`
+// entry, which was a service account address, becomes an entry carrying that
+// address and the repositories it is a job of (ConfigVersion, R6, D2992).
+//
+// It writes NO repositories, and that restraint is the whole of its judgement:
+// a version-2 file names the member's accounts and never which job each is, so
+// the fold states the pair with the second half empty rather than filling it
+// from the repositories the member contributes. Copying those would hand an
+// account a reach its owner never declared — the shared project job is exactly
+// the case where the two differ — and the fold's one job is to read an old
+// document in the shape this release reads it, never to decide anything the old
+// document did not say. An entry that is already a mapping is left as it is, so
+// a document whose `version` is behind while its table is already this shape —
+// a hand-written file, or one a future release writes — keeps what it wrote.
+//
+// Like the version-1 fold it works on the parsed YAML tree: the rewrite is the
+// shape of one list, the comments and the rest of the document are nobody's
+// business here, and an entry that is not a string is left for the typed decode
+// to refuse with its own message.
+func foldLegacyMemberAccounts(data []byte, top map[string]yaml.Node) ([]byte, error) {
+	if documentVersion(top) >= 3 {
+		return data, nil
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return data, nil // not YAML at all: the typed decode says so, in its own words
+	}
+	if root.Kind != yaml.DocumentNode || len(root.Content) != 1 || root.Content[0].Kind != yaml.MappingNode {
+		return data, nil
+	}
+	members := mappingValue(root.Content[0], "workspace_members")
+	if members == nil || members.Kind != yaml.MappingNode {
+		return data, nil
+	}
+	moved := false
+	for i := 0; i+1 < len(members.Content); i += 2 {
+		entry := members.Content[i+1]
+		if entry.Kind != yaml.MappingNode {
+			continue
+		}
+		accounts := mappingValue(entry, "job_service_accounts")
+		if accounts == nil || accounts.Kind != yaml.SequenceNode {
+			continue
+		}
+		for j, a := range accounts.Content {
+			if a.Kind != yaml.ScalarNode || a.Tag != "!!str" {
+				continue
+			}
+			accounts.Content[j] = &yaml.Node{
+				Kind: yaml.MappingNode,
+				Tag:  "!!map",
+				Content: []*yaml.Node{
+					{Kind: yaml.ScalarNode, Tag: "!!str", Value: "account"},
+					a,
+				},
+			}
+			moved = true
+		}
+	}
+	if !moved {
+		return data, nil
+	}
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // documentVersion is the `version` a document states, or 0 when it states none
 // and when the document itself could not be read.
 func documentVersion(top map[string]yaml.Node) int {
@@ -2445,6 +2663,14 @@ func Parse(data []byte) (*Config, error) {
 		}
 	}
 	folded, err := foldLegacyLists(data, top)
+	if err != nil {
+		return nil, fmt.Errorf("local config: %w", err)
+	}
+	// The two folds read the version from `top`, the document as it was
+	// written, and not from each other's output: one document's version is one
+	// fact, and it is what tells every shape in it from the shape this release
+	// writes.
+	folded, err = foldLegacyMemberAccounts(folded, top)
 	if err != nil {
 		return nil, fmt.Errorf("local config: %w", err)
 	}
@@ -2713,6 +2939,31 @@ func (c *Config) BakeReposEffective(published *bool) *bool {
 func (c *Config) TriageEffective(published *bool) *bool {
 	if c.Triage != nil {
 		return c.Triage
+	}
+	return published
+}
+
+// ReviewAgainstTaskEffective is the keep rule for the review-against-task
+// switch, stated here beside the field for the triage switch's reason (R7 of
+// docs/review-against-task/, D2935): this file's answer when it writes one, and
+// the published node's otherwise — so a machine whose config predates the key
+// does not publish a node that turns the check back on for every run of the
+// project. The cost of the other reading is the triage switch's: a machine
+// whose config says nothing about the check would be undoing a decision the
+// owner made, and the decision here is the one that holds a pull request back
+// to the work it was asked for.
+//
+// The answer is a pointer for the triage switch's reason: absent and on are one
+// statement to every reader (config.Agent.ReviewAgainstTaskOn reads an absent
+// key as on), so only a written answer has anything to say and the publisher
+// omits the member when the answer is nil. A written true is not the same
+// statement as an absent key here the way it is for the bake switch, because
+// the node may hold a false: a repository's own true is what turns the check
+// back on under it (policy.Merge), and the owner's own file states that for the
+// whole project (D2935).
+func (c *Config) ReviewAgainstTaskEffective(published *bool) *bool {
+	if c.ReviewAgainstTask != nil {
+		return c.ReviewAgainstTask
 	}
 	return published
 }
@@ -3393,6 +3644,20 @@ func validateWorkspace(c *Config, bad func(string, ...any)) {
 			}
 		}
 	}
+	// The address is the fifth half of the pin and it is optional: absent means
+	// this member takes no workspace credential, which is what every pin
+	// written before the field existed says, so a config that gains the field
+	// converges with no edit (R3). Present, it is where the member's own runs
+	// call the workspace's service, and the run's gateway sends its identity
+	// token there — so a query or a fragment is refused rather than carried,
+	// because a signed POST to a URL with either is a call the service would
+	// answer on a different resource than the one this file names.
+	if p.ServiceAddress != "" {
+		u, err := url.Parse(p.ServiceAddress)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			bad("workspace_pin.service_address %q must be an https URL with a host and no userinfo, query or fragment: it is where this member's runs call the workspace's own credentials service", p.ServiceAddress)
+		}
+	}
 	if c.WorkspaceMembers != nil {
 		for _, name := range slices.Sorted(maps.Keys(*c.WorkspaceMembers)) {
 			m := (*c.WorkspaceMembers)[name]
@@ -3406,7 +3671,7 @@ func validateWorkspace(c *Config, bad func(string, ...any)) {
 			// is the order they were declared in, and the record that is
 			// published is sorted where it is built (W2).
 			if m.IsZero() {
-				bad("workspace_members.%s declares nothing: an entry carries the member's job_service_accounts, firebase_project, fp and exchange_url, which is what the workspace's own service resolves a caller by", name)
+				bad("workspace_members.%s declares nothing: an entry carries the member's job_service_accounts with its repos, and firebase_project, fp and exchange_url, which is what the workspace's own service resolves a caller by", name)
 				continue
 			}
 			for _, repo := range m.Repos {
@@ -3417,13 +3682,36 @@ func validateWorkspace(c *Config, bad func(string, ...any)) {
 			if why := duplicated(m.Repos); why != "" {
 				bad("workspace_members.%s: repos lists %s twice", name, why)
 			}
-			for _, sa := range m.JobServiceAccounts {
-				if !signerRE.MatchString(sa) {
-					bad("workspace_members.%s: job_service_accounts entry %q is not a service account address", name, sa)
+			// The account and its repositories are one statement, and what the
+			// load holds of it is the account's own spelling and the shape of
+			// each repository: concrete `owner/name` and never a pattern
+			// (F42), because the service compares a run's verified slug to
+			// this list. An account that names no repository is NOT refused
+			// here — the fold writes exactly that entry for a version-2 file,
+			// and a load that refused it would refuse the migration's own
+			// output (see the field's note). The command that writes an entry
+			// refuses it, so a hand-edited one is the only way to reach the
+			// load with it, and there it means the narrow thing.
+			accounts := make([]string, 0, len(m.JobAccounts))
+			for _, a := range m.JobAccounts {
+				accounts = append(accounts, a.Account)
+				if !signerRE.MatchString(a.Account) {
+					bad("workspace_members.%s: job_service_accounts entry %q is not a service account address", name, a.Account)
+				}
+				for _, repo := range a.Repos {
+					if !repoRE.MatchString(repo) {
+						bad("workspace_members.%s: job_service_accounts %q: repos entry %q must look like owner/name, which is concrete and never a pattern", name, a.Account, repo)
+					}
+				}
+				if why := duplicated(a.Repos); why != "" {
+					bad("workspace_members.%s: job_service_accounts %q lists %s twice", name, a.Account, why)
 				}
 			}
-			if why := duplicated(m.JobServiceAccounts); why != "" {
-				bad("workspace_members.%s: job_service_accounts lists %s twice", name, why)
+			if why := duplicated(accounts); why != "" {
+				bad("workspace_members.%s: job_service_accounts lists %s twice: one account is the job of one set of repositories, and two rows naming it would make a caller's jobs depend on which row was read", name, why)
+			}
+			if m.DatabaseRegion != "" && !projectpolicy.ValidDatabaseRegion(m.DatabaseRegion) {
+				bad("workspace_members.%s: database_region %q is not a region name (the region of the member's Realtime Database host, e.g. europe-west1); leave it out for a database in the project's default region", name, m.DatabaseRegion)
 			}
 			if m.FirebaseProject != "" && !projectRE.MatchString(m.FirebaseProject) {
 				bad("workspace_members.%s: firebase_project %q is not a GCP project ID", name, m.FirebaseProject)
@@ -3456,6 +3744,60 @@ func validateWorkspace(c *Config, bad func(string, ...any)) {
 			bad("workspace_cap.monthly: %v", err)
 		case micros < 1:
 			bad("workspace_cap.monthly %v is less than one micro-dollar: the smallest cap this file can state is 0.000001, and a workspace with no cap leaves the block out", c.WorkspaceCap.Monthly)
+		}
+	}
+	// The shared list is the owner's declaration of what the workspace's
+	// credentials service may offer, and every rule here is one the workspace's
+	// own service would otherwise have to make at a call: a kind it does not
+	// know is a route it cannot decide, a forge entry with no coverage is a
+	// repository it cannot admit, and a coverage on a model entry is a
+	// repository the entry was never written for. The names are the bundle's
+	// own spelling, which is why they are checked against nothing here: what
+	// the bundle holds is the installation's business and is reported by
+	// `fugaro doctor`, not refused at the load of a file a member parses too.
+	if c.WorkspaceShared != nil {
+		for _, name := range slices.Sorted(maps.Keys(*c.WorkspaceShared)) {
+			s := (*c.WorkspaceShared)[name]
+			if name == "" {
+				bad("workspace_shared holds an entry with no name: the key is the credential's name as the workspace's bundle holds it")
+			}
+			switch s.Kind {
+			case WorkspaceSharedModel, WorkspaceSharedBitbucket, WorkspaceSharedGitHub:
+			default:
+				bad("workspace_shared.%s: kind %q must be %s, %s or %s (the route record's own spelling; `fugaro workspace share` derives it from the credential's name)",
+					name, s.Kind, WorkspaceSharedModel, WorkspaceSharedBitbucket, WorkspaceSharedGitHub)
+			}
+			// A model call names no repository, so a model entry that carries
+			// coverage is refused rather than read as a narrower model entry:
+			// there is no repository for the workspace's service to compare,
+			// and an owner who wrote one meant a forge entry.
+			if len(s.Covers) > 0 && s.Kind == WorkspaceSharedModel {
+				bad("workspace_shared.%s: kind %s carries no covers: a model call names no repository, so the coverage belongs to a forge entry", name, s.Kind)
+			}
+			if s.Kind == WorkspaceSharedBitbucket || s.Kind == WorkspaceSharedGitHub {
+				if len(s.Covers) == 0 {
+					bad("workspace_shared.%s: kind %s covers no repository: a forge route is decided per repository, so the entry names the repositories the workspace owner's credential reaches", name, s.Kind)
+				}
+				for _, repo := range s.Covers {
+					if !repoRE.MatchString(repo) {
+						bad("workspace_shared.%s: covers entry %q must look like owner/name", name, repo)
+					}
+				}
+				if why := duplicated(s.Covers); why != "" {
+					bad("workspace_shared.%s: covers lists %s twice", name, why)
+				}
+			}
+			if len(s.Projects) == 0 {
+				bad("workspace_shared.%s names no project: a written entry states the members it may be served to, and an empty list is refused rather than read as every member", name)
+			}
+			for _, p := range s.Projects {
+				if !config.ProjectNameRE.MatchString(p) {
+					bad("workspace_shared.%s: projects entry %q is not a project name", name, p)
+				}
+			}
+			if why := duplicated(s.Projects); why != "" {
+				bad("workspace_shared.%s: projects lists %s twice", name, why)
+			}
 		}
 	}
 }

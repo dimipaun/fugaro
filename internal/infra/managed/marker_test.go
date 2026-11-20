@@ -2649,14 +2649,44 @@ var runAccountGrants = setOf(
 	// fugaro/managed.json: firebasedatabase.instances.get and .update reach a
 	// Realtime Database instance and no Cloud Storage object, carry no
 	// permission to grant a role, no actAs, no token minting and no build or
-	// job execution, and the account holds nothing else anywhere in the tree
-	// (roots/workspace/main.tf declares the role, the account and this grant,
-	// and internal/infra/tf's WorkspaceNotCovered refuses any other resource or
-	// any other member in a plan of it). The role is deliberately not
+	// job execution, and the account holds nothing else anywhere in the tree but
+	// the two grants reviewed below (roots/workspace/main.tf declares the role,
+	// the account, this grant and WS6's service half, and internal/infra/tf's
+	// WorkspaceNotCovered refuses any other resource or any other member in a
+	// plan of it). The role is deliberately not
 	// roles/firebasedatabase.admin: that adds the instance lifecycle, which
 	// this tree refuses outside the Firebase module
 	// (deploy/terraform/terraform_test.go's backendRoleRE).
 	`google_project_iam_member | "projects/${var.project}/roles/fugaroWorkspaceDatabase" | project=var.project | google_service_account.workspace.member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
+	// Reviewed for WS6 (the workspace's own credentials service, D2980): the two
+	// grants the service half of the workspace root makes, and neither of them
+	// reaches the installation's runs bucket and its marker.
+	//
+	//   - the bundle accessor reads ONE secret of the workspace's OWN project,
+	//     unconditioned and per-secret rather than per-credential because every
+	//     model credential the workspace holds is one YAML document the loader
+	//     reads in one go (F4, Q6). secretmanager.versions.access on that
+	//     container's payloads carries no storage permission, no write of any
+	//     kind, no actAs and no token minting, so fugaro/managed.json — an
+	//     object of the installation's runs bucket — is not a thing this grant
+	//     can reach, and the container it does read is the workspace's own;
+	//   - the invoke grant is roles/run.invoker on the workspace's own service,
+	//     and its members are the job accounts of a member's OWN runs, which is
+	//     the identity the service resolves a caller by (F17). Invoking it
+	//     reaches that process's front door and no project resource: the model
+	//     and forge routes a member's run calls, and a typed refusal for
+	//     everything else (R14). It is a member resource and never a binding,
+	//     which is what makes a member leaving the table a deletion and nothing
+	//     else — the ONE deletion internal/infra/tf's WorkspaceNotCovered admits
+	//     (F25) — so no operator repair is ever the answer here.
+	//
+	// Neither is bound to a named person, so no row above covers it: the
+	// accessor's member is terraform's own computation of the workspace account
+	// (google_service_account.workspace.member) and the invoker's is the member
+	// table's job accounts, each of them resolved at apply rather than written
+	// here.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.credentials_service.bundle_secret | google_service_account.workspace.member | for_each= | perms=`,
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | "serviceAccount:${each.value}" | for_each=local.credentials_service_on ? local.member_job_accounts : toset([]) [local.credentials_service_on=var.credentials_service != null] [local.member_job_accounts=toset(flatten([for m in values(var.members) : m.job_service_accounts]))] | perms=`,
 	// Reviewed for P5.1b (the installation's resident orchestrator, the mobile
 	// design's section 4.3). The account is the installation's own, it exists on
 	// no installation that has not opted in — var.orchestrator is null by

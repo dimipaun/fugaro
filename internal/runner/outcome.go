@@ -1045,9 +1045,9 @@ type seniorRound struct {
 }
 
 // scoresOf presents the reviewer's findings to the threshold table: the three
-// anchored axes and the class it reads, never the free-form severity string
-// beside them (D2). A finding with no score reads as the zero Score, which
-// blocks in every mode (D4).
+// anchored axes, the class and the task scope it reads, never the free-form
+// severity string beside them (D2). A finding with no score reads as the zero
+// Score, which blocks in every mode (D4).
 func scoresOf(findings []Finding) []rigor.Score {
 	out := make([]rigor.Score, 0, len(findings))
 	for _, f := range findings {
@@ -1056,9 +1056,16 @@ func scoresOf(findings []Finding) []rigor.Score {
 	return out
 }
 
-// scoreOf is one finding as the table reads it.
+// scoreOf is one finding as the table reads it. The scope goes in as the
+// reviewer wrote it, the way internal/runner reads the class: the words are
+// closed by the schema the reviewer is held to and by the artifact's own check
+// (issuescope.go), and a word the table does not know is one it must not let
+// decide a merge.
 func scoreOf(f Finding) rigor.Score {
-	return rigor.Score{Likelihood: f.Likelihood, Impact: f.Impact, FixCost: f.FixCost, Class: rigor.Class(f.Class)}
+	return rigor.Score{
+		Likelihood: f.Likelihood, Impact: f.Impact, FixCost: f.FixCost,
+		Class: rigor.Class(f.Class), Scope: rigor.Scope(f.Scope),
+	}
 }
 
 // Plural formats "1 finding" / "3 findings".

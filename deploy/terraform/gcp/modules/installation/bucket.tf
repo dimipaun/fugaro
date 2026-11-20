@@ -76,6 +76,27 @@ resource "google_storage_bucket" "runs" {
     }
   }
 
+  # A message a person sends a run that is going (docs/run-messages, D2941) is
+  # a PLAINTEXT object a launcher writes under tokens/<slug>/<run>/messages/
+  # and the job only reads. It is worth keeping while the run it steered is
+  # recent and no longer, so it goes at the message age; unlike the budget
+  # token's rule above, this one is unconditional, because a run accepts a
+  # message whether or not the budget is enabled. GCS matches a prefix and a
+  # suffix and never a middle segment, so the suffix is the whole of what keeps
+  # this rule off the budget token beside it under tokens/ — and that suffix is
+  # the store's own constant (runmsg.Suffix), which internal/infra's
+  # TestMessageLifecycleSuffixMatchesRunmsg pins to this literal (F11, U4).
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      age            = var.bucket_lifecycle.messages_days
+      matches_prefix = ["tokens/"]
+      matches_suffix = [".msg.json"]
+    }
+  }
+
   # The stored reports (slice P, ruling E3): a report of a repository and a
   # period, and the project's year roll-up beside them, are kept 18 months —
   # long enough that the policy review reads a whole year back and the one

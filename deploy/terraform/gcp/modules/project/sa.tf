@@ -48,16 +48,19 @@ resource "google_storage_bucket_iam_member" "job" {
   }
 }
 
-# The runs bucket's budget token objects, the whole of tokens/, read-only
-# (gcp.ProjectTokenBucketCondition, plan task 3.2 step 2; budget-token-channel
-# §7.2). The widened objectUser grant above is on runs/, cache/ and locks/ and
-# never covers tokens/; this one is objectViewer, so the account can read a
-# queued run's sealed token and can neither delete nor replace it, and what it
-# reads is ciphertext — sealed under a key only the execution its launch minted
-# it for receives — so the reach is over bytes, not over tokens. The widening
-# is the same one D4 documents for the other three prefixes, for the same
-# reason: one job serves every repository admitted to its profile, so its token
-# read cannot name one repository's prefix.
+# The whole of tokens/, read-only (gcp.ProjectTokenBucketCondition, plan task
+# 3.2 step 2; budget-token-channel §7.2). The widened objectUser grant above is
+# on runs/, cache/ and locks/ and never covers tokens/; this one is
+# objectViewer, so the account can read and can neither delete nor replace. The
+# token it reads is ciphertext — sealed under a key only the execution its
+# launch minted it for receives — but tokens/ is not all ciphertext: a person's
+# messages to a running run live there in plaintext (docs/run-messages, D2941,
+# F2), so on a shared project job every repository's agent can read every
+# repository's messages. That is the reach it already has over runs/, whose
+# task.json, the brief itself, it reads the same way. The widening is the same
+# one D4 documents for the other three prefixes, for the same reason: one job
+# serves every repository admitted to its profile, so its read cannot name one
+# repository's prefix.
 resource "google_storage_bucket_iam_member" "job_tokens" {
   bucket = var.runs_bucket
   role   = "roles/storage.objectViewer"

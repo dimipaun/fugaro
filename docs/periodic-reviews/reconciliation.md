@@ -1005,8 +1005,10 @@ rulings that amend decisions take none.
 this design: the task that implements the check writes the register's row and its `## Check 343`
 section, under the number free at that merge, which is the register's own rule for the task that
 implements a check (`docs/gcp-live-checklist.md:586`). The register's highest **written** `## Check`
-section is still **663**, so the census sentence [README.md](README.md)'s Checks 340–349 row carries,
-and `internal/cli/docs_check340_test.go` holds it to the register, do not move.
+section was **663**, so the census sentence [README.md](README.md)'s Checks 340–349 row carries,
+and `internal/cli/docs_check340_test.go` holds it to the register, did not move then; it has since moved
+with the mobile-identity-pairing work's **730** to **737**, written by its task **T0** on 2026-11-19, and
+the row and the guard move with it, which is exactly what that guard's own failure mode asks for.
 
 ### 7.4 The tasks this answer adds, and the levels they sit at
 

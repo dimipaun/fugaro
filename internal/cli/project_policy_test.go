@@ -4057,6 +4057,76 @@ func TestPublishKeepsTheTriageSwitchTheConfigIsSilentAbout(t *testing.T) {
 	}
 }
 
+// TestPublishKeepsTheReviewAgainstTaskNoConfigCanState is the triage switch's
+// case one key over, and it is sharper there: the published true is the one
+// value that turns the task check on for every run of the project and that no
+// repository can walk out of (D2935), so a publish from this release — which
+// reads the member, and so no longer refuses a node that carries it, but has no
+// key of its own that could state it — must not be the write that takes it off.
+// The width of the trap is the whole point: the drop is silent, the diff says
+// nothing, and the owner learns of it from a review that stopped checking the
+// task. The node stands where a hand-edited one or a newer release's write left
+// it, which is why the test seeds it rather than publishing it.
+func TestPublishKeepsTheReviewAgainstTaskNoConfigCanState(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	var node map[string]any
+	if err := json.Unmarshal([]byte(nodeJSON(t, f, projectpolicy.PathShared())), &node); err != nil {
+		t.Fatal(err)
+	}
+	node["review_against_task"] = true
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("a publish over a node carrying review_against_task was refused: %v", err)
+	}
+	if p := publishedPolicy(t, f); p.ReviewAgainstTask == nil || !*p.ReviewAgainstTask {
+		t.Errorf("the publish dropped the owner's forced check: ReviewAgainstTask = %v, want true", p.ReviewAgainstTask)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"review_against_task":true`) {
+		t.Errorf("the node does not carry the switch:\n%s", raw)
+	}
+}
+
+// TestPublishCarriesReviewAgainstTask: the local config is the switch's own
+// home from this release on (R7 of docs/review-against-task/, D2935), and the
+// publish is the only door from that file to the policy node every run of the
+// project reads it from — `fugaro update` runs this stage, which is the one
+// command the HARD RULE allows, so a config that states the switch and a node
+// that says the other answer is exactly the drift this stage exists to close.
+// The written value replaces the node's rather than merging with it: the merge
+// that decides a repository's answer against the project's is the runner's
+// (policy.Merge, RA8a), and the file read here is the owner's own, so his
+// written true turns the check back on under a published false the same way a
+// written false states the project-wide default.
+func TestPublishCarriesReviewAgainstTask(t *testing.T) {
+	f := newProjectFixture(t, "review_against_task: false\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.ReviewAgainstTask == nil || *p.ReviewAgainstTask {
+		t.Fatalf("ReviewAgainstTask = %v, want the written false the config states", p.ReviewAgainstTask)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"review_against_task":false`) {
+		t.Errorf("the node does not carry the switch:\n%s", raw)
+	}
+
+	// The other direction, over the node that now says false: a written true is
+	// the owner's own answer too, and the publish carries it as it stands.
+	rewriteProjectConfig(t, f, "review_against_task: true\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.ReviewAgainstTask == nil || !*p.ReviewAgainstTask {
+		t.Errorf("ReviewAgainstTask = %v, want the written true the config states", p.ReviewAgainstTask)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"review_against_task":true`) {
+		t.Errorf("the second publish did not carry the written true:\n%s", raw)
+	}
+}
+
 // TestPublishDropsReviewFloorOnPurpose: `review_floor: {}` is how the owner
 // takes a published floor away. Silence about the key keeps the node's floor
 // (the test above), so the written empty object is the spelling that has to

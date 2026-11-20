@@ -1492,15 +1492,16 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 		pred string
 	}{
 		{16, `"TOKEN || USER"`}, {17, `"TOKEN || USER"`},
-		{31, `"TOKEN || USER"`}, {105, `"TOKEN || USER"`},
+		{34, `"TOKEN || USER"`}, {108, `"TOKEN || USER"`},
 		{18, `(TOKEN && auth.token.fs == $slug) || USER`},
-		{32, `(TOKEN && auth.token.fs == $slug) || USER`},
-		{134, `(TOKEN && auth.token.fs == $slug) || USER`},
-		{206, `"RUN || USER"`},
-		{61, `"RUN"`}, {236, `"RUN"`},
-		{340, `"MAILBOX"`}, {402, `"MAILBOX"`},
-		{53, `"PAIRING"`},
+		{35, `(TOKEN && auth.token.fs == $slug) || USER`},
+		{137, `(TOKEN && auth.token.fs == $slug) || USER`},
+		{209, `"RUN || USER"`},
+		{64, `"RUN"`}, {239, `"RUN"`},
+		{344, `"MAILBOX"`}, {406, `"MAILBOX"`},
+		{56, `"PAIRING"`},
 		{11, `".read": "USER"`},
+		{274, `".read": "USER"`},
 	} {
 		if want.n < 1 || want.n > len(lines) {
 			t.Fatalf("rules.json.tmpl has %d lines and the paragraph cites line %d", len(lines), want.n)
@@ -1510,10 +1511,10 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 		}
 	}
 	if !strings.Contains(para, "`RUN || USER`") {
-		t.Errorf("## Check 81: the paragraph listing D112's grants does not name `RUN || USER` for the day's per-run node (rules.json.tmpl line 206): a mu token reads it because USER is in that disjunction, and a citation that says `TOKEN || USER` there is not what the template says")
+		t.Errorf("## Check 81: the paragraph listing D112's grants does not name `RUN || USER` for the day's per-run node (rules.json.tmpl line 209): a mu token reads it because USER is in that disjunction, and a citation that says `TOKEN || USER` there is not what the template says")
 	}
 	if !strings.Contains(para, "`RUN`") {
-		t.Errorf("## Check 81: the paragraph does not file runs/** and agents/** under `RUN`: the template gates both with it (lines 61 and 236), and calling them `TOKEN` names a predicate a mu token fails for another reason than the one the sentence is making")
+		t.Errorf("## Check 81: the paragraph does not file runs/** and agents/** under `RUN`: the template gates both with it (lines 64 and 239), and calling them `TOKEN` names a predicate a mu token fails for another reason than the one the sentence is making")
 	}
 }
 
@@ -2130,7 +2131,7 @@ func TestDocsCheck81TemplateCountsMatchTheTemplate(t *testing.T) {
 }
 
 // TestDocsCheck81Step6CountsItsReadColumns: step 6's FACT line counts its two
-// columns -- "the first thirteen are **200** ... the second twenty-six are
+// columns -- "the first fourteen are **200** ... the second twenty-six are
 // **401**" -- and the Passes paragraph above the section repeats both numbers.
 // The counts are the step's own two `for p in ...; do` loops, and nothing
 // derived them, so a path added to one column would leave the prose counting
@@ -2147,7 +2148,7 @@ func TestDocsCheck81Step6CountsItsReadColumns(t *testing.T) {
 		t.Fatalf("check 81 step 6 has %d `for p in ...; do` loops and its FACT line counts two columns: this test reads the granted column and the denied one out of those loops", len(loops))
 	}
 	granted, denied := len(loops[0]), len(loops[1])
-	words := map[int]string{13: "thirteen", 26: "twenty-six"}
+	words := map[int]string{14: "fourteen", 26: "twenty-six"}
 	gw, ok := words[granted]
 	if !ok {
 		t.Fatalf("check 81 step 6's first loop reads %d paths and this test has no word for that count: write one", granted)

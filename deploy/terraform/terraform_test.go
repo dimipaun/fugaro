@@ -1872,7 +1872,19 @@ var (
 	// signer — is written where that signer is
 	// (modules/firebase/iam.tf's mobile_token_minter, and its comment states
 	// why the grant cannot live in the root that creates the account).
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity|mobile)\[0\]\.member|google_service_account\.(catalog_check|reports|licence|voice)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|mobile_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
+	//
+	// "serviceAccount:${each.value}" is the workspace root's invoker binding
+	// (WS6, D2980): the member table's job accounts arrive as bare addresses —
+	// internal/localcfg's WorkspaceMember.JobServiceAccounts holds an "IAM
+	// service account address" and `fugaro workspace member add` writes that
+	// shape into the workspace's own config, which is what this root's tfvars
+	// carries — so the resource writes the prefix the table does not. It is
+	// admitted by shape for the reason each.value is: what bounds the member is
+	// the root rather than the expression, the variable's own validation holds
+	// every entry to a service account address, and internal/infra/tf's
+	// WorkspaceNotCovered refuses an invoke grant whose member is not one of
+	// the table's accounts.
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity|mobile)\[0\]\.member|google_service_account\.(catalog_check|reports|licence|voice)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{each\.value\}"|"serviceAccount:\$\{var\.(history_account|coordinator_account|mobile_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces

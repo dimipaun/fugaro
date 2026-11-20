@@ -247,6 +247,15 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		// either); the row is printed in docs/project-layer.md, which
 		// TestScopeTableMatchesDocs keeps equal to config.Scopes.
 		"agent.triage": InRepo,
+		// The review-against-task switch (R7 of docs/review-against-task/) is
+		// repo-only for the triage switch's reason one step sharper: the key
+		// decides whether a review judges a run's own work against what was
+		// asked, so a launcher-writable layer is the one home that could turn
+		// the check off from the revision under review. The design doc's §5
+		// table is not the pin here, for the reason above; the row is printed
+		// in docs/project-layer.md, which TestScopeTableMatchesDocs keeps equal
+		// to config.Scopes.
+		"agent.review_against_task": InRepo,
 
 		"budget.mode":           InRepo,
 		"budget.per_run_usd":    InRepo,

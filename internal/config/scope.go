@@ -137,6 +137,15 @@ var Scopes = []ScopeRow{
 	// the owner's published policy node as the other home; that one arrives as
 	// the runner's ceiling (policy.Layer.Triage) and is not this table's.
 	{Key: "agent.triage", In: InRepo, Why: "it turns a review round's own stage off, and a launcher writes the task and the project layer that travels in it; only the repository's own, PR-reviewed fugaro.yaml — read from the base branch — may set it, the reason agent.compression and agent.oauth_token are refused to a layer"},
+	// The review-against-task switch (R7 of docs/review-against-task/): the
+	// repository's own reviewed file and nothing else, for the triage switch's
+	// reason one step sharper — the key decides whether a review judges a run's
+	// own work against what was asked, so a layer a launcher writes is the one
+	// home that could turn the check off from the revision under review. D2935
+	// admits the owner's published policy node as the other home; that one
+	// arrives as the runner's ceiling (policy.Layer.ReviewAgainstTask) and is
+	// not this table's.
+	{Key: "agent.review_against_task", In: InRepo, Why: "it turns off the check every review stage makes of a run's own work, and a launcher writes the task and the project layer that travels in it; only the repository's own, PR-reviewed fugaro.yaml — read from the base branch — may set it, the reason agent.triage beside it and agent.compression are refused to a layer"},
 	{Key: "budget.mode", In: InRepo, Why: whyPolicy},
 	{Key: "budget.per_run_usd", In: InRepo, Why: whyPolicy},
 	{Key: "budget.allowed_models", In: InRepo, Why: whyPolicy},
