@@ -1486,6 +1486,16 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 			rep.Discovered = rec.Discovered
 			rep.ConflictPaths = rec.ConflictPaths
 		}
+		if rec != nil && rec.PR != nil && rec.PR.Number > 0 {
+			// The pull request the run left, which is the record's own answer
+			// (F25) and the whole of what tells a fold of a succeeded run that
+			// the item waits on a merge rather than being done (D2705). It is
+			// read here and never a second time: the merge read is handed the
+			// same number off this same report, because one attempt leaves one
+			// pull request and the item it left it for is the item the report
+			// is folded into.
+			rep.PRNumber = rec.PR.Number
+		}
 		if rec != nil && rec.Halt != nil {
 			// The halt travels whole, and the marker with it: the fold asks the
 			// build's seam whether this is a refusal a workspace's credentials
