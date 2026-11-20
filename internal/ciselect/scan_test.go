@@ -3,6 +3,7 @@ package ciselect
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -274,6 +275,132 @@ func repoRoot() string { return "../.." }
 	wantReads(t, p, "internal/z/gen/**", "internal/z/gen/dep/**")
 	if p.Any {
 		t.Errorf("./internal/a is any, want the closure of the built package: %v", p.Reads)
+	}
+}
+
+func TestScanMarksAWalkOfTheRootThroughAHelperAny(t *testing.T) {
+	m := scanTree(t, map[string]string{
+		"go.mod":           goMod,
+		"testdata/one.txt": "one\n",
+		"internal/testutil/root.go": `package testutil
+
+// ModuleRoot is the repository root: a test names a path under it, and one
+// walks it.
+func ModuleRoot() string { return "../.." }
+`,
+		"internal/w1/w1_test.go": `package w1
+
+import (
+	"io/fs"
+	"path/filepath"
+)
+
+func TestWalkTheRoot(t *testing.T) {
+	_ = filepath.WalkDir(repoRoot(), func(p string, d fs.DirEntry, err error) error { return nil })
+}
+
+func repoRoot() string { return "../.." }
+`,
+		"internal/w2/w2_test.go": `package w2
+
+import (
+	"os"
+	"testing"
+
+	"example.com/m/internal/testutil"
+)
+
+func TestReadDirTheRoot(t *testing.T) {
+	_, _ = os.ReadDir(testutil.ModuleRoot())
+}
+`,
+		"internal/w3/w3_test.go": `package w3
+
+import (
+	"io/fs"
+	"path/filepath"
+)
+
+func TestWalkOneDirectory(t *testing.T) {
+	_ = filepath.WalkDir(filepath.Join(repoRoot(), "testdata"), func(p string, d fs.DirEntry, err error) error { return nil })
+}
+
+func repoRoot() string { return "../.." }
+`,
+	})
+
+	// A walk of the repository root is a walk of the repository however the root
+	// is spelled: a helper that answers it is the root, not a path the scan
+	// cannot resolve, and recording nothing would leave the package reading
+	// nothing at all (F3, R4).
+	for _, pkg := range []string{"./internal/w1", "./internal/w2"} {
+		if p := entry(t, m, pkg); !p.Any {
+			t.Errorf("%s is not any, want any: %v", pkg, p.Reads)
+		}
+	}
+	// And a directory under the root reached through the same helper is still a
+	// directory with a finite list.
+	w3 := entry(t, m, "./internal/w3")
+	if w3.Any {
+		t.Errorf("./internal/w3 is any, want a finite list: %v", w3.Reads)
+	}
+	wantReads(t, w3, "testdata/**")
+}
+
+func TestScanSkipsAPathTheCheckoutIgnores(t *testing.T) {
+	const reader = "internal/a/a_test.go"
+	files := map[string]string{
+		"go.mod":           goMod,
+		".gitignore":       "# the reports the test command writes\n/reports/\n",
+		"reports/tree.xml": "<testsuite/>\n",
+		"docs/x.md":        "x\n",
+		reader: `package a
+
+import (
+	"os"
+	"path/filepath"
+)
+
+func TestReads(t *testing.T) {
+	_, _ = os.ReadFile("../../docs/x.md")
+	_, _ = os.ReadFile(filepath.Join(repoRoot(), "reports", "tree.xml"))
+}
+
+func repoRoot() string { return "../.." }
+`,
+	}
+	root := tree(t, files)
+	// The reports directory is on the disk — a verify run leaves one — and the
+	// checkout ignores it, so it is in no commit and in no diff: a scan that
+	// recorded the read would write a map no clean clone reproduces.
+	git(t, root, "init", "-q")
+	git(t, root, "add", "--", "go.mod", ".gitignore", "docs/x.md", reader)
+
+	m, err := Scan(root)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	p := entry(t, m, "./internal/a")
+	wantReads(t, p, "docs/x.md")
+	wantNoReads(t, p, "reports/tree.xml", "reports/**")
+	if p.Any {
+		t.Errorf("./internal/a is any, want a finite list: %v", p.Reads)
+	}
+}
+
+// git runs one git command in root, failing the test on error. The scan reads
+// the checkout with git itself, so the fixture that pins it is a real, small
+// repository rather than a directory shaped like one.
+func git(t *testing.T, root string, args ...string) {
+	t.Helper()
+	bin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, append([]string{"-C", root}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_OPTIONAL_LOCKS=0")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
 

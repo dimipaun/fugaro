@@ -13,8 +13,10 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -100,10 +102,11 @@ func MarshalReadMap(m ReadMap) ([]byte, error) {
 // a run opens. CS2b's trace refines it with what the tests really opened.
 func Scan(root string) (ReadMap, error) {
 	s := &scanner{
-		root:  root,
-		files: map[string]bool{},
-		dirs:  map[string]bool{".": true},
-		pkgs:  map[string]*pkgReads{},
+		root:      root,
+		files:     map[string]bool{},
+		dirs:      map[string]bool{".": true},
+		pkgs:      map[string]*pkgReads{},
+		globCache: map[string]bool{},
 	}
 	if err := s.index(); err != nil {
 		return ReadMap{}, err
@@ -125,6 +128,13 @@ type scanner struct {
 	files map[string]bool
 	dirs  map[string]bool
 	pkgs  map[string]*pkgReads
+	// byDepth holds the same paths split into segments, by how many they have:
+	// a pattern with no "**" in it can only match a path of its own depth, and
+	// looking at those alone is what keeps a scan of a tree this size quick.
+	byDepth map[int][][]string
+	// globCache remembers a pattern's answer: the same pattern is written in
+	// many test files, and what it matches cannot change under them.
+	globCache map[string]bool
 }
 
 // pkgReads is what one directory contributes. A read of a _test.go file belongs
@@ -166,13 +176,26 @@ func (r *reads) merge(o reads) {
 	r.any = r.any || o.any
 }
 
-// index records every file and directory of the checkout. Everything is
-// recorded, node_modules and the dot directories included: the tests of this
-// repository read a file wherever it is, and a path that is not in the index
-// cannot be resolved to the repository at all. Only .git is left out, and only
-// because a walk of it costs more than the map is worth.
+// index records every file and directory of the checkout. Everything the commit
+// holds is recorded, node_modules and the dot directories included: the tests of
+// this repository read a file wherever it is, and a path that is not in the
+// index cannot be resolved to the repository at all.
+//
+// The commit, and not the disk, is the point: a path this checkout ignores — the
+// JUnit reports `fugaro verify test` leaves in reports/, a built binary in the
+// tree root — is in no commit and in no diff, and recording a read of one would
+// make the map differ between two checkouts of the same commit. A tree that is
+// not a checkout, which is what a test's fixture is, is walked as it stands
+// instead, .git left out because a walk of it costs more than the map is worth.
 func (s *scanner) index() error {
-	return filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
+	if files, ok := s.gitFiles(); ok {
+		for _, rel := range files {
+			s.record(rel)
+		}
+		s.bucket()
+		return nil
+	}
+	err := filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -191,9 +214,65 @@ func (s *scanner) index() error {
 			s.dirs[rel] = true
 			return nil
 		}
-		s.files[rel] = true
+		s.record(rel)
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	s.bucket()
+	return nil
+}
+
+// bucket splits the index into segments by depth, once the index is complete.
+func (s *scanner) bucket() {
+	s.byDepth = map[int][][]string{}
+	for _, set := range []map[string]bool{s.files, s.dirs} {
+		for name := range set {
+			if name == "." {
+				continue
+			}
+			segs := strings.Split(name, "/")
+			s.byDepth[len(segs)] = append(s.byDepth[len(segs)], segs)
+		}
+	}
+}
+
+// gitFiles lists the paths the checkout holds: the tracked files and the
+// untracked ones the ignore files do not cover. ok is false when git cannot
+// answer — no git, or a directory that is not a repository — which is the
+// caller's cue to walk the tree instead. The ignore files are the checkout's own
+// and git reads them, so a rule this repository adds later — a nested
+// .gitignore, a negation, an exclude file — needs no second implementation here
+// and cannot change what the map means.
+func (s *scanner) gitFiles() ([]string, bool) {
+	cmd := exec.Command("git", "-C", s.root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	// No home directory and no system config: what the checkout holds must not
+	// depend on the machine the scan runs on.
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_OPTIONAL_LOCKS=0")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, false
+	}
+	var files []string
+	for _, name := range strings.Split(string(out), "\x00") {
+		if name != "" {
+			files = append(files, name)
+		}
+	}
+	return files, true
+}
+
+// record adds one repository file and the directories that hold it to the index.
+func (s *scanner) record(rel string) {
+	rel = path.Clean(rel)
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") || rel == ".git" || strings.HasPrefix(rel, ".git/") {
+		return
+	}
+	s.files[rel] = true
+	for dir := path.Dir(rel); dir != "." && dir != "/"; dir = path.Dir(dir) {
+		s.dirs[dir] = true
+	}
 }
 
 // scanGo parses every Go file the go tool would build and aggregates what each
@@ -856,8 +935,12 @@ func (f *fileScanner) walk(c *ast.CallExpr) {
 		}
 		reads = len(got) > 0
 		if f.scan.treeRoot(root.text, f.dir) {
+			// A walk of the root reaches everything, so the files the file names
+			// elsewhere are a part of what it reads and not a replacement for
+			// it: `any` says the list is incomplete, and dropping what the file
+			// does name would lose a read a docs test pins (a walk in one test
+			// function must not unname the file another reads).
 			reads, f.out.reads.any = true, true
-			f.out.reads.files = map[string]bool{}
 		}
 	case !root.known && !root.notRepo && root.rooted:
 		reads, f.out.reads.any = true, true
@@ -892,6 +975,12 @@ func (s *scanner) namesChild(dir, text string) bool {
 func (s *scanner) treeRoot(text, dir string) bool {
 	if text == "" {
 		return false
+	}
+	if strings.Contains(text, rootMark) {
+		// A root helper — repoRoot(), testutil.ModuleRoot() — stands for the
+		// root itself, and only a path under it is not the root: the same test
+		// that walks filepath.Join(repoRoot(), "testdata") walks repoRoot().
+		return path.Clean(strings.TrimPrefix(strings.ReplaceAll(text, rootMark, ""), "/")) == "."
 	}
 	// A test runs in its package's directory, so "." there is the package and
 	// only a text that climbs to the root — "../.." — is the whole repository.
@@ -1162,13 +1251,75 @@ func (s *scanner) resolve(dir, text string) []string {
 		case s.dirs[cand]:
 			out = append(out, cand+"/**")
 		case hasGlob(cand):
-			if matches, _ := filepath.Glob(filepath.Join(s.root, filepath.FromSlash(cand))); len(matches) > 0 {
+			if s.globMatches(cand) {
 				out = append(out, cand)
 			}
 		}
 	}
 	sort.Strings(out)
 	return out
+}
+
+// globMatches reports whether the checkout holds a path a pattern matches. The
+// pattern is matched against the index and not against the disk, so a file the
+// checkout ignores — and so a file no clone of this commit has — cannot make the
+// map depend on the machine the scan ran on. "**" spans directories, which is
+// what a test writing one means by it.
+func (s *scanner) globMatches(pat string) bool {
+	if got, ok := s.globCache[pat]; ok {
+		return got
+	}
+	want := strings.Split(pat, "/")
+	found := false
+	for _, name := range s.byDepth[len(want)] {
+		if matchSegments(want, name) {
+			found = true
+			break
+		}
+	}
+	if !found && slices.Contains(want, "**") {
+		// "**" spans directories, so such a pattern can match a path of any
+		// depth and the depth bucket says nothing.
+		for depth, names := range s.byDepth {
+			if depth == len(want) {
+				continue
+			}
+			for _, name := range names {
+				if matchSegments(want, name) {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+	}
+	s.globCache[pat] = found
+	return found
+}
+
+// matchSegments matches one split pattern against one split path, "**" taking
+// any number of segments.
+func matchSegments(want, name []string) bool {
+	for len(want) > 0 {
+		if want[0] == "**" {
+			for i := 0; i <= len(name); i++ {
+				if matchSegments(want[1:], name[i:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if len(name) == 0 {
+			return false
+		}
+		if ok, err := path.Match(want[0], name[0]); err != nil || !ok {
+			return false
+		}
+		want, name = want[1:], name[1:]
+	}
+	return len(name) == 0
 }
 
 // pathLike reports whether a text is shaped like a path at all: a doc sentence
