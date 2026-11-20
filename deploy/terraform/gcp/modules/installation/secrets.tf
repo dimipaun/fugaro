@@ -25,7 +25,11 @@ resource "google_secret_manager_secret" "project" {
   # first. So the field is ignored below, and this block decides only a
   # container Terraform itself creates.
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {
@@ -116,7 +120,11 @@ resource "google_secret_manager_secret" "voice_provider_keys" {
   # first. So the field is ignored below, and this block decides only a
   # container Terraform itself creates.
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {

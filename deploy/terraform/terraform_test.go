@@ -8107,3 +8107,53 @@ func TestLauncherAccountsReachTheServices(t *testing.T) {
 		t.Errorf("launcher_accounts must default to the empty list: an installation whose roster names no launcher renders no entry at all, and a module that refused to plan without the variable would break every tfvars written before this release:\n%s", squash(body))
 	}
 }
+
+// TestSecretContainersAreReplicatedInTheRegion (LP5a, D3082, F9, R5): the six
+// google_secret_manager_secret resources of the two modules declare ONE thing —
+// user-managed replication in the installation's region, with the field
+// ignored — and they must change together, because they are the same fact
+// about the same kind of object.
+//
+// Why the field is ignored: a container's replication cannot be changed after
+// it is created (Secret Manager refuses the update), so a declaration that
+// disagrees with what exists is not an update but a REPLACEMENT, which deletes
+// every version in the container first. Every container created before this
+// declaration is replicated automatically, wherever Google chose, so a
+// declaration without ignore_changes would empty the project's own credentials
+// on the update that carries it.
+//
+// The six are listed rather than counted: a seventh container is a decision
+// about where its versions live, and it should be one nobody makes by adding a
+// resource block.
+func TestSecretContainersAreReplicatedInTheRegion(t *testing.T) {
+	want := []string{
+		"gcp/modules/installation/credentials.tf google_secret_manager_secret.credentials_bundle",
+		"gcp/modules/installation/licence.tf google_secret_manager_secret.licence_renewal",
+		"gcp/modules/installation/orchestrator.tf google_secret_manager_secret.pairing_key",
+		"gcp/modules/installation/secrets.tf google_secret_manager_secret.project",
+		"gcp/modules/installation/secrets.tf google_secret_manager_secret.voice_provider_keys",
+		"gcp/modules/repo/secrets.tf google_secret_manager_secret.this",
+	}
+	reUserManaged := regexp.MustCompile(`(?m)^\s*user_managed\s*\{`)
+	reAutomatic := regexp.MustCompile(`(?m)^\s*auto\s*\{`)
+	var got []string
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_secret_manager_secret") {
+			got = append(got, path+" "+blk.name)
+			if !hasAttr(blk.body, "location", "var.region") {
+				t.Errorf("%s: %s does not replicate in var.region: a container created from now on is replicated where the installation is, and a region this file spells itself is one an installation in another region gets wrong (D3082, F9)", path, blk.name)
+			}
+			if !reUserManaged.MatchString(blk.body) || reAutomatic.MatchString(blk.body) {
+				t.Errorf("%s: %s does not declare user_managed replication and no automatic one: an automatic container is one Google places, and a plan cannot move it (D3082, F9)", path, blk.name)
+			}
+			if !hasAttr(blk.body, "ignore_changes", "[replication]") {
+				t.Errorf("%s: %s does not ignore changes to replication: a container's replication cannot be changed after it is created, so a declaration that disagrees with an existing container replaces it and deletes every version in it — which is what the automatic containers of every installation that exists before this release would meet (D3082, R5)", path, blk.name)
+			}
+		}
+	})
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("the tree's secret containers are\n%s\nwant\n%s\nevery one of them declares the same replication and the same ignore_changes, so a seventh is a decision about where its versions live rather than an extra resource block",
+			strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}

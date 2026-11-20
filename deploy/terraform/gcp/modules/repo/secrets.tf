@@ -18,7 +18,11 @@ resource "google_secret_manager_secret" "this" {
   # first. So the field is ignored below, and this block decides only a
   # container Terraform itself creates.
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {
