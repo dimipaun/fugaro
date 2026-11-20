@@ -182,7 +182,6 @@ const ownershipOwner = "someone@example.com"
 // same rig's Realtime Database fake, at the path the publisher writes.
 type ownershipWorld struct {
 	t  *testing.T
-	r  *initRig
 	db *gcpfake.RTDB
 }
 
@@ -209,7 +208,7 @@ func newOwnershipWorld(t *testing.T) *ownershipWorld {
 	// are each command's own refusal BEFORE its write, and a walk that stopped
 	// at one of them would prove nothing about the hook.
 	r.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\ncrafts:\n  coder:\n    access: team-a\n")
-	return &ownershipWorld{t: t, r: r, db: db}
+	return &ownershipWorld{t: t, db: db}
 }
 
 // ownershipSteps is the walk, one step per family, in the order they are run:
@@ -258,9 +257,8 @@ var ownershipSteps = []struct {
 // are served out of. `stated` is what keeps the comparison honest — a block the
 // config is silent about is not a disagreement, it is the node's own, because
 // the publish merges those blocks rather than replacing them (D844's rule, the
-// clone_urls line of buildProjectPolicy) — and the walk asserts before its
-// first step that the node carries NONE of the four, so no comparison below is
-// of two absences.
+// clone_urls line of buildProjectPolicy) — and prePublish reads the node the
+// initial publish left, so a comparison made here is never of two absences.
 //
 // Each pair is the two spellings of one block and not two derivations of it.
 // The binaries row is the one subtrahend: the node always carries the cap, the
@@ -338,10 +336,10 @@ func (w *ownershipWorld) agree(step string) {
 // craft set` has a craft to move — carries the seed's own value and not the one
 // the walk writes.
 //
-// The alliance is per block and not "the node is empty": the publish is a merge
-// of the whole config, so a block the seed states IS published, and a walk that
-// demanded an empty node would be asserting something about the seed rather
-// than about the commands.
+// It is a reading of the node block by block and not "the node is empty": the
+// publish writes the whole config, so a block the seed states IS published, and
+// a walk that demanded an empty node would be asserting something about the
+// seed rather than about the commands.
 func (w *ownershipWorld) prePublish(t *testing.T) {
 	t.Helper()
 	p := w.node()
