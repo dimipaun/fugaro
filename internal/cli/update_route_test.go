@@ -415,6 +415,60 @@ func TestNoWorkspaceNoRoute(t *testing.T) {
 	}
 }
 
+// TestARepositoryWithNoProviderKeepsItsRecord: a repos entry that records no
+// provider is one this project's local config does not say the provider of —
+// the checkout's own fugaro.yaml decides, and usedProviders leaves such an
+// entry out rather than guessing at it — so this run cannot build the slug that
+// keys the repository's record. What that repository published before stays
+// published, and so does every other record this run does not publish: the leaf
+// of a repository whose provider is unknown is a name this run cannot tell from
+// the leaf of one it no longer serves, so a run that removed it would be taking
+// away a record its own diff reports as left alone.
+func TestARepositoryWithNoProviderKeepsItsRecord(t *testing.T) {
+	sm := gcpfake.NewSecrets(t)
+	f := newProjectFixture(t, routeMemberPin+routeCredsService)
+	rewriteConfigLine(t, "no_auth: true", "no_auth: true, secret_manager: "+sm.URL+"/")
+	// The entry named its provider when the record below was published, and
+	// records none now — an entry localcfg accepts, and the checkout's own
+	// fugaro.yaml is what decides the provider it leaves out.
+	rewriteConfigLine(t,
+		"acme/other: { provider: bitbucket, workflows: [web] }",
+		"acme/other: { workflows: [web] }")
+
+	// The record acme/other published while the entry still named a provider,
+	// keyed by the slug that provider gave it.
+	old := creds.RoutePath(routeSlug(t, "bitbucket", "acme/other"))
+	f.db.Set(old, map[string]any{
+		"version": creds.RouteVersion,
+		"address": routeAddress,
+		"model":   string(creds.HolderWorkspace),
+	})
+
+	r := newRouteRigOn(t, f, sm)
+	routeSeedBundle(t, r.sm, config.AnthropicSecret+": "+credsValue(t, "paid"))
+	routeSeedPolicy(t, r.f, map[string][]string{config.AnthropicKeyAccount: {"github/acme/app"}},
+		[]string{"bitbucket/acme/other", "github/acme/app"}, nil)
+
+	if st := r.check(t); st.State != initflow.Todo {
+		t.Fatalf("check = %+v, want Todo: acme/app's own record is not published yet", st)
+	}
+	out := r.planText(t)
+	if want := "acme/other: no route is derived, so its published record (if any) is left as it is"; !strings.Contains(out, want) {
+		t.Errorf("the plan does not say %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "removed") {
+		t.Errorf("the plan speaks of removals, and this run removes none: a leaf it cannot attribute is one it must not take away:\n%s", out)
+	}
+	oc, _ := r.apply(t)
+	if !strings.Contains(oc.Detail, "published 1 credential-route record") {
+		t.Errorf("the report does not name the publish: %q", oc.Detail)
+	}
+	if v := f.db.Value(old); v == nil {
+		t.Errorf("the record at %s was removed, and the diff this run confirmed said it was left as it is", old)
+	}
+	routeOn(t, r.f, "github", "acme/app")
+}
+
 // TestLeavingRemovesTheRoute: the record a member published while it was in a
 // workspace is removed once it is in none, so the runs of its repositories take
 // every credential from its own service again. That is what makes leaving a

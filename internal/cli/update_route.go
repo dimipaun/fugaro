@@ -348,7 +348,8 @@ type routeStale struct {
 // routeUnknown is a repository this run could not derive a route for: the
 // record's key is the repository's SLUG, so a repository whose provider the
 // local config does not name has no key to publish at. It is reported and not
-// guessed at, and the repository keeps whatever it published before.
+// guessed at, and what becomes of the record it published before is the run's
+// rule about the leaves it cannot attribute (routePublication.keepsUnknowns).
 type routeUnknown struct {
 	repo string
 	why  string
@@ -371,6 +372,14 @@ type routePublication struct {
 	stale []routeStale
 	// unknown are the repositories this run could not derive a route for.
 	unknown []routeUnknown
+	// keepsUnknowns is whether a repository this run could not derive a route
+	// for keeps whatever it published — and, with it, every other record this
+	// run does not publish. The two cannot be told apart: a record's key is its
+	// repository's slug, and the provider this config does not name is what the
+	// slug's hash is taken from, so the leaf of such a repository is a name
+	// this run cannot attribute to anything. The diff says which records are
+	// kept, and then this run removes none of them.
+	keepsUnknowns bool
 }
 
 // routeSkip is the state this stage does not act on, in the sentence that
@@ -431,8 +440,18 @@ func routePublicationRead(ctx context.Context, r *initRun, lc *localcfg.Config, 
 			bySlug[row.slug] = true
 		}
 	}
-	if err := p.readStale(ctx, lc, bySlug); err != nil {
-		return nil, err
+	// A repository this run could not derive a route for may own a leaf this
+	// run would otherwise call stale — and which leaf that is cannot be worked
+	// out, because the provider this run does not have is what the slug's hash
+	// is taken from. So nothing is removed at all, and the diff says which
+	// records are kept. A project that publishes no route (removes) is the
+	// other case: every record under the subtree is one nobody publishes, and
+	// an underived repository's own goes with the rest.
+	p.keepsUnknowns = !p.removes && len(p.unknown) > 0
+	if !p.keepsUnknowns {
+		if err := p.readStale(ctx, lc, bySlug); err != nil {
+			return nil, err
+		}
 	}
 	if p.removes && len(p.stale) == 0 {
 		// A project in no workspace that published no record: the stage found
@@ -484,11 +503,13 @@ func (p *routePublication) rowFor(repo string, entry localcfg.Repo, facts routeF
 	}
 	if entry.Provider == "" {
 		// Repo.Provider's own doc: empty means the checkout's fugaro.yaml
-		// decides, and a checkout is not what this stage reads. The
-		// repositories this stage cannot key are the ones `fugaro run` cannot
-		// launch from this machine either (repoSlug refuses them by name), so
-		// leaving their published record alone takes nothing away from a run
-		// this machine makes.
+		// decides, which is a file this stage does not read — and the same
+		// ruling usedProviders makes in this very flow, where an entry that
+		// records no provider is left out rather than guessed at (localcfg
+		// accepts such an entry). Without the provider there is no slug, and
+		// without the slug no key: the repository is reported and its published
+		// record is left to the run's own rule about the leaves it cannot
+		// attribute (routePublication.keepsUnknowns).
 		return unknown(fmt.Sprintf("its entry in this project's local config names no provider, and a record's key is the repository's slug: set `repos.%s.provider`", safetext.Field(repo)))
 	}
 	canonical, err := projectpolicy.Canonical(entry.Provider, repo)
@@ -918,6 +939,15 @@ func (p *routePublication) print(w io.Writer) {
 		fmt.Fprintf(w, "  %s: removed, and %s goes with it\n", s.path, held)
 	}
 	for _, u := range p.unknown {
-		fmt.Fprintf(w, "  %s: no route is derived, so its published record (if any) is left as it is (%s)\n", safetext.Field(u.repo), u.why)
+		// What the line says about the repository's own record follows what
+		// this run does to the leaves it does not publish: kept, where it
+		// removes none of them (keepsUnknowns), and removed with the rest,
+		// where it removes every record it finds — a project that left its
+		// workspace.
+		held := "so any record it published goes with the rest"
+		if p.keepsUnknowns {
+			held = "so its published record (if any) is left as it is"
+		}
+		fmt.Fprintf(w, "  %s: no route is derived, %s (%s)\n", safetext.Field(u.repo), held, u.why)
 	}
 }
