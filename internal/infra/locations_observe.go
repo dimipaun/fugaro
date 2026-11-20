@@ -117,6 +117,16 @@ type ObserveInputs struct {
 // else — an outage, an answer the API should not give — is returned as an
 // error, because it is neither of those two facts.
 func ObserveLocations(ctx context.Context, in ObserveInputs) (Observed, error) {
+	// A read with no client behind it is a caller's mistake and not a fact
+	// about the cloud: it is an error, as it is everywhere else that reads
+	// through Clients. FirebaseDB is the one a configuration can leave out
+	// (endpoints.firebase_database), and it is named.
+	if in.Clients == nil || in.Firestore == nil {
+		return Observed{}, errors.New("observe locations needs the clients it reads by")
+	}
+	if in.Clients.FirebaseDB == nil {
+		return Observed{}, errors.New("no Realtime Database management client (endpoints.firebase_database is not set)")
+	}
 	o := &observer{ctx: ctx, in: in}
 	for _, read := range []func() error{o.firestoreDatabase, o.databaseInstance, o.secretContainers, o.logBucket, o.runsBucket} {
 		if err := read(); err != nil {
