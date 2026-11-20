@@ -45,13 +45,17 @@
 //      microphone; the demo's absence from the list is the assertion F10 and
 //      D212 ask this task for -- it is text-only by construction, and it has no
 //      session to enter a voice screen with.
-//   6. `fetch(` -- the network (P5.3.7). It may be opened from
+//   6. the network -- `fetch(`, `WebSocket`, `XMLHttpRequest` and
+//      `EventSource`, the four doors this platform opens one through, and the
+//      same four the module scans in `src/audio/index.test.js` and
+//      `src/voice/index.test.js` name (P5.3.7). It may be opened from
 //      `src/voice-switch/hop.js` and nowhere else, so the one file that can put
 //      a byte in front of a third party is a file a reviewer reads whole, and a
 //      second call site is a failing test rather than a new egress path. **In
 //      any spelling**: `fetch(`, `globalThis.fetch(`, `window.fetch(` and
 //      `self.fetch(` are one call under four names, and a rule that caught only
-//      the first would leave three ways to open the network unwatched. The
+//      the first would leave three ways to open the network unwatched -- which
+//      is exactly what it did before this rule named the other three doors. The
 //      scan below it (rule 7, which has no pattern list of its own) holds §5's
 //      fifth rule over the same directory: the egress half keeps no timer, no
 //      file and no store between one utterance and the next.
@@ -131,12 +135,16 @@ const RULES = [
   },
   {
     name: 'the network is opened in one file, and it is the hop',
-    // A call and not a mention: `\b` is a boundary between the identifier and
-    // whatever precedes it, so `prefetch(` and `refetch(` are not this rule's
-    // while `globalThis.fetch(`, `window.fetch(` and `self.fetch(` are -- the
-    // same call through a global's name, and a lookbehind that excluded `.`
-    // would let all three through.
-    pattern: /\bfetch\s*\(/,
+    // A call and not a mention, for the one door that is a function: `\b` is a
+    // boundary between the identifier and whatever precedes it, so `prefetch(`
+    // and `refetch(` are not this rule's while `globalThis.fetch(`,
+    // `window.fetch(` and `self.fetch(` are -- the same call through a global's
+    // name, and a lookbehind that excluded `.` would let all three through. The
+    // other three doors are constructors, so the name itself is the offence:
+    // `new WebSocket(`, `new XMLHttpRequest()` and `new EventSource(` each open
+    // a connection, and a rule that watched only the call shape would watch
+    // none of them.
+    pattern: /\bfetch\s*\(|\b(WebSocket|XMLHttpRequest|EventSource)\b/,
     allow: ['src/voice-switch/hop.js'],
     why: 'P5.3.7: the egress path is the only thing in the app that talks to a third party, and a second file that could open the network is a second place a byte could leave from',
   },
@@ -260,6 +268,30 @@ test('the egress half holds nothing between turns — no timer, no file, no stor
       false,
       `${file}: §5 rule 5 and D118 — a failure is answered locally, never spooled for later`,
     );
+  }
+});
+
+// **Rule 6's four doors, one line each.** The rule's control is a single line
+// and a single line can hold all four tokens, which would let a dropped
+// alternative pass: the line would still match through the names that remain.
+// So each door is asserted on a line of its own -- and the near misses with it,
+// because `\b` is the whole reason `prefetch(` is not the network being opened.
+test('every door this platform opens a network through is the rule’s business', () => {
+  const rule = RULES[5];
+  const offence = (line) => offences(rule, new Map([['src/app/offender.js', `function offence() { ${line}; }\n`]]));
+  const innocent = (line) => offences(rule, new Map([['src/app/innocent.js', `function innocent() { ${line}; }\n`]]));
+
+  for (const line of [
+    "const answer = await fetch(url, { method: 'POST' })",
+    "const answer = await globalThis.fetch(url, { method: 'POST' })",
+    "const socket = new WebSocket('wss://example.invalid/voice')",
+    'const request = new XMLHttpRequest()',
+    'const events = new EventSource(url)',
+  ]) {
+    assert.deepEqual(offence(line), ['src/app/offender.js'], line);
+  }
+  for (const line of ['const p = prefetch(url)', 'const r = refetch(url)', 'const c = fetchAll(url)']) {
+    assert.deepEqual(innocent(line), [], line);
   }
 });
 
