@@ -1,15 +1,16 @@
 <!-- SPDX-License-Identifier: LicenseRef-Fugaro-Subscription -->
 <!-- See mobile/LICENSE.md for the terms. -->
-# `voice-switch/` — the app's two voice settings, the consent record and the indicator
+# `voice-switch/` — the app's two voice settings, the indicator and the egress path
 
-The phone's half of where an utterance may go (mobile plan, task **P5.3.6**,
-decisions **D111**, **D114**, **D123**, **D127**; the design is
-`docs/mobile/design/voice-evaluation-switch.md` §4.1–§4.3). Two settings per
-account — `stt` and `tts`, each `local` by default — and the list of provider
-names the user has agreed to; both are **device-local** and go through the app's
-non-secret settings store. The badge is rendered by
+The phone's half of where an utterance may go (mobile plan, tasks **P5.3.6** and
+**P5.3.7**; decisions **D111**, **D114**, **D118**, **D123**, **D127**; the
+design is `docs/mobile/design/voice-evaluation-switch.md` §4.1–§4.5 and §5). Two
+settings per account — `stt` and `tts`, each `local` by default — and the list of
+provider names the user has agreed to; both are **device-local** and go through
+the app's non-secret settings store. The badge is rendered by
 `shared/voice-switch`'s one pure function, whose table this module does not
-restate.
+restate. And the sending is here with it: `hop.js` is the client, `egress.js` is
+§5's ten never-send rules, and no other file in the app opens the network.
 
 ```js
 import { createVoiceSwitch } from './index.js';
@@ -76,6 +77,60 @@ opinion about:
 | `persistent: true`, `dismissible: false` | the design §4.2: the indicator is not a toast and cannot be dismissed |
 | the fail-closed badge | a refusal is not an answer, and a badge is still owed |
 
+## The egress path
+
+The hop client and the rules that gate it (task **P5.3.7**; §4.4, §4.5 and §5).
+The app builds the client once and the egress over it, asks the egress for a
+turn, and gets **one record** back — remote when the turn went, local when it did
+not, with the reason in it either way.
+
+```js
+import { createVoiceHop, createVoiceEgress } from './index.js';
+
+const hop = createVoiceHop({
+  baseUrl,           // the hop's address; the app configures it, and no host ships here
+  hosts,             // shared/url's allow-list, which the owner names the host in
+  fetch,             // the platform's transport
+  token: () => idToken(),   // D111's item (1), read per call and never stored
+});
+
+const egress = createVoiceEgress({
+  hop,
+  voiceSwitch: voice,          // the switch above: the badge is read from the record
+  projects,                    // the slugs this account may speak of
+  secrets,                     // D118: what the redactor must not let out
+  onCall,                      // told in flight, then done or failed, so a screen can change back
+});
+
+await egress.transcribe({ audio, contentType, project, route, now, state, status, localFailed });
+await egress.speak({ text, project, route, now, state, status, localFailed });
+await egress.decide({ direction, route, project, now, state, status });   // the gate, without the send
+```
+
+**No credential of its own, and no host of its own.** The request is
+`Authorization: Bearer <Firebase ID token>`, the audio or the text as the body,
+the project in `X-Fugaro-Project`, `credentials: 'omit'`, `redirect: 'error'` and
+`cache: 'no-store'` — and nothing else. The ID token is read per call from the
+port and goes into one header; a token that cannot be presented is not sent.
+**The URL is checked whole against `shared/url` on every call**, and
+`shared/url`'s allow-list ships **empty**: until the owner names the hop's host
+(the plan's P5.3, item 2), every call fails closed with `allow-list-empty` and is
+served locally. That is why this task left `shared/url/index.js` alone.
+
+**The ten rules of §5**, each with a test in `egress.test.js` and each a guard in
+the mutation proof: nothing while a confirmation is pending (a rule about a
+**state**, `pending(state, now)`, never about a phrase); a destructive route
+served entirely locally, with the read-back rebuilt by `confirm`'s `readBack` and
+the confirmation transcribed locally; the residual the design states honestly (an
+utterance that turns out destructive may have been transcribed remotely before
+anything knew it was); the redactor **substitutes and never drops** on the text
+path and is **not** claimed for the audio path; no command intended, nothing
+goes; only this account's own project goes, and `belong` is refused **by name**
+before the configured list is consulted; the hop is the only transport; no
+credential but the ID token; and **nothing is queued, spooled, filed or
+buffered** — a failure is terminal, answered locally, with no retry and no second
+provider.
+
 ## The guard this task exists for
 
 **A remote call is not attempted without a recorded consent for that provider
@@ -119,17 +174,27 @@ will stop it is here, and `switch.test.js` is where it is proved.
   `consent.test.js` pins the limit rather than leaving it to be found.
 - **Consent is per name, not per direction.** `shared/voice-switch` says so
   itself: a name agreed to for speech in is a name agreed to for speech out.
-- **`send: true` is not a send.** Nothing in this app acts on it yet — the
-  egress path is P5.3.7 — and a caller that read it as permission today would be
-  reading a field the app does not consult.
-- **The badge is not drawn here.** `src/voice/screen.js` renders it, and this
-  task deliberately did not touch that file (P5.3.7 wires the hop and the
-  screen together).
+- **The hop's answer is passed through unread.** The client hands the provider's
+  own bytes back with its content type; it reads the hop's **own**
+  `StatusAnswer`, because that shape is this app's contract, and it does not
+  parse a provider's answer shape. A caller that needs a transcript out of an
+  STT answer needs that provider's shape, which is not in this tree.
+- **No host is named here.** The client takes its address as configuration and
+  checks it against `shared/url`'s allow-list, which is empty until the owner
+  names the host (the plan's P5.3, item 2). `shared/url/index.js` was not edited
+  by this task, and a run of the app today answers **locally** on every turn.
+- **The text path is redacted; the audio path is not**, and cannot be: §5 rule 4
+  reaches text, which is the TTS and summariser path. Nothing here claims
+  otherwise, and `egress.test.js` pins the audio path as unredacted rather than
+  leaving the asymmetry to be discovered.
+- **The screen holds the badge; it does not build it.** `src/voice/screen.js`
+  carries what the switch answered (§4.2) and tags each transcript line with the
+  engine the app names, and it makes no decision about where an utterance goes.
 
 ## The mutation proof
 
 ```sh
-mobile/src/voice-switch/mutation-proof.sh    # 29 guards, one planted bug each
+mobile/src/voice-switch/mutation-proof.sh    # 56 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
@@ -137,22 +202,26 @@ fail: `switch.js` with `switch.test.js` for the consent, per-direction and
 one-at-a-time guards, `consent.js` with `consent.test.js` (one entry per name, the date the
 caller gave, the list judged before it is edited, and the name that is not a
 name), `settings.js` with `settings.test.js` (the default, the key that cannot
-be composed, the field set, and the round-trip) and `indicator.js` with
+be composed, the field set, and the round-trip), `indicator.js` with
 `indicator.test.js` (`send`, the two words about the badge, and the fail-closed
-draw). It finds a working node rather than assuming one (the base carries none,
+draw), `hop.js` with `hop.test.js` (the allow-list, the token, the ambient
+credential, the redirect, the bound, the engine name, an unknown reason and the
+status-failure table) and `egress.js` with `egress.test.js` (§5's rules, one
+mutation each), plus `src/voice/screen.js` with `screen.test.js` for the badge
+that is in the snapshot before the switch answers and the engine tag read when
+the utterance arrives. It finds a working node rather than assuming one (the base carries none,
 `docs/base-image.md`), proves the pristine suite green and a planted
 always-succeeding refusal killed before any real mutation is trusted, and
 restores each file with `git checkout`.
 
-## The one file outside this directory this task touched
+## The files outside this directory these tasks touched
 
-| File | Change |
-| --- | --- |
-| `src/boundary.test.js` | `src/voice-switch/index.js` added to the walk's **list** (the new directory, named on purpose). No rule and no pattern was weakened. |
+| File | Change | Task |
+| --- | --- | --- |
+| `src/boundary.test.js` | `src/voice-switch/index.js`, `hop.js` and `egress.js` added to the walk's **list**; two rules added (the network is opened in `hop.js` only, and the egress half keeps no timer, no file and no store). No rule and no pattern was weakened. | P5.3.6, P5.3.7 |
+| `src/voice/screen.js` | the indicator's place (§4.2) and the engine tag on each transcript line. It picks no engine and makes no routing decision. | P5.3.7 |
+| `shared/url/index.js` | **not touched.** Its allow-list is still the empty list. | — |
 
 `src/accounts/settings.js` and `src/accounts/secret.js` were **not** touched: the
 store, its fences and `SECRET_ITEMS` are as they were, which
-`settings.test.js` asserts rather than assumes. `src/voice/screen.js`,
-`shared/url/index.js` and everything on the egress path were not touched either:
-that is P5.3.7, and this task stops at the answer about where an utterance
-*would* go.
+`settings.test.js` asserts rather than assumes.
