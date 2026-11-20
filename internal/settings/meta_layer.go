@@ -118,13 +118,13 @@ func registerLayerMeta() {
 	})
 	each("layer.defaults.git.pr.early_draft", Meta{
 		Label:       "Open early drafts",
-		Description: "Whether a pull request is opened as a draft before the run's first verified stage.",
+		Description: "Whether a first run opens its draft pull request at the first checkpoint push, or at the first verified stage end when checkpoints are off, instead of only at finalize.",
 		Group:       GroupProfiles,
 		Type:        TypeBool,
 	})
 	each("layer.defaults.git.pr.checkpoints", Meta{
 		Label:       "Push checkpoints",
-		Description: "Whether a run pushes a checkpoint commit at each verified stage end.",
+		Description: "Whether a first run pushes its new commits to its branch while a stage runs and at every stage boundary, so a container that dies keeps its committed work.",
 		Group:       GroupProfiles,
 		Type:        TypeBool,
 	})
