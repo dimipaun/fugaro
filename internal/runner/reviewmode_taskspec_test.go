@@ -327,3 +327,53 @@ func TestReviewJobSpecNonJobPathComment(t *testing.T) {
 		t.Errorf("the comment no longer opens with the recipe and the verdict:\n%s", comments[0])
 	}
 }
+
+// TestReviewJobSpecNoneReasonNeutralized: the reason is the one field of the
+// "Checked against" line a launcher wrote — the source, the run and the digest
+// are Fugaro's own words and its own spelling of a run id and a hex digest — so
+// it is neutralized like every other field of the comment that reaches a
+// repository: an @mention in it cannot pull an account into a review's comment,
+// and an issue autolink or a Markdown marker cannot forge structure in the
+// rendered text (R8, F36).
+//
+// Mutation (drop the neutralizeFinding call in againstLine, leaving
+// safetext.OneLine alone): this test fails, finding the mention and the
+// autolink intact in the posted comment.
+func TestReviewJobSpecNoneReasonNeutralized(t *testing.T) {
+	ctx := context.Background()
+	r := reviewPromptRun(t, nil, false, func(r *run) {
+		r.spec.ReviewSpec = &task.ReviewSpec{
+			Source: task.ReviewSpecNone,
+			Reason: "launched with **@dimi** by hand on #12",
+		}
+	})
+
+	p := &fake.Provider{Repo: r.spec.Repo}
+	p.State.PRs = []fake.PRState{{PR: gitprov.PR{Number: 7}}}
+	r.provider = p
+	r.rec = &runstore.Record{
+		Version: 1, RunID: r.spec.RunID, Repo: r.spec.Repo,
+		Recipe: &runstore.RecipeRecord{Name: "reviewonly", Source: "catalog"},
+	}
+	r.postReviewComments(ctx, Verdict{Verdict: "ship"})
+
+	comments := p.State.PRs[0].Comments
+	if len(comments) != 1 {
+		t.Fatalf("the review posted %d comments, want one: %q", len(comments), comments)
+	}
+	body := comments[0]
+	for _, raw := range []string{"@dimi", "#12"} {
+		if strings.Contains(body, raw) {
+			t.Errorf("the launcher's own reason reaches the comment with %q intact, so the rendered comment pings an account or auto-links an issue: %q", raw, body)
+		}
+	}
+	// The zero-width space's exact position, not merely "the raw substring is
+	// gone": elsewhere in neutralizeFinding ordinary punctuation gains a
+	// backslash, which a plain substring check for the raw form would pass on
+	// without breaking GitHub's own text scanning at render time.
+	for _, want := range []string{"@​dimi", "#​12"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the comment does not carry the neutralized form %q: %q", want, body)
+		}
+	}
+}
