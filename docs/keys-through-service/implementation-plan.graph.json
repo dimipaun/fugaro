@@ -14,8 +14,10 @@
         "prediction": true,
         "paths": [
           "internal/gateway/providerwire.go",
+          "internal/gateway/providerwire_test.go",
           "internal/credsvc/provider_wire.go",
           "internal/credsvc/provider_wire_stub.go",
+          "internal/config/provider_served.go",
           "docs/keys-through-service/contract-provider.md"
         ]
       },
@@ -56,7 +58,8 @@
           "internal/cli/initsecrets.go",
           "internal/cli/recipes_skew.go",
           "internal/cli/accounts_add_key_test.go",
-          "website/content/cli-reference.md"
+          "website/content/cli-reference.md",
+          "internal/cli/owner_probe.go"
         ]
       }
     },
@@ -125,40 +128,9 @@
         "prediction": true,
         "paths": [
           "internal/config/providers.go",
-          "internal/config/providers_auth_test.go"
-        ]
-      }
-    },
-    {
-      "id": "KS7",
-      "title": "a budget-off run has an identity",
-      "run": null,
-      "version": null,
-      "tier": "medium",
-      "size": 2,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/cli/launch_budget.go",
-          "internal/runner/budget_session.go",
-          "internal/runner/budget_off_identity_test.go"
-        ]
-      }
-    },
-    {
-      "id": "KS8",
-      "title": "the gateway runs with the budget off",
-      "run": null,
-      "version": null,
-      "tier": "medium",
-      "size": 2,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/runner/gateway.go",
+          "internal/config/providers_auth_test.go",
           "internal/runner/routing.go",
-          "internal/agent/env.go",
-          "internal/runner/gateway_off_test.go"
+          "internal/cli/validate.go"
         ]
       }
     },
@@ -192,13 +164,14 @@
           "internal/cli/run.go",
           "internal/runner/stage_account_test.go",
           "SECURITY.md",
-          "website/content/security.md"
+          "website/content/security.md",
+          "internal/runner/agentenv.go"
         ]
       }
     },
     {
       "id": "KS11",
-      "title": "the serving path of a provider credential flips",
+      "title": "the serving path of a provider credential flips (release B)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -210,9 +183,14 @@
           "internal/config/craft.go",
           "internal/craft/pathpool.go",
           "internal/credsvc/pool.go",
+          "internal/credsvc/bundle.go",
+          "internal/projectpolicy/migrate.go",
+          "internal/infra/spec.go",
           "internal/cli/accounts.go",
+          "internal/cli/accounts_add.go",
           "internal/cli/accounts_add_converge.go",
-          "internal/cli/accounts_pool.go"
+          "internal/cli/accounts_pool.go",
+          "internal/cli/creds.go"
         ]
       }
     },
@@ -231,8 +209,7 @@
           "internal/cli/init_stages.go",
           "internal/initflow/stage.go",
           "internal/cli/setup_refusals_test.go",
-          "internal/apply/steps.go",
-          "internal/cli/init_credentials.go"
+          "internal/apply/steps.go"
         ]
       }
     },
@@ -249,6 +226,7 @@
           "internal/infra/spec.go",
           "internal/infra/readiness.go",
           "internal/infra/spec_test.go",
+          "internal/cli/init_credentials.go",
           "internal/cli/recipes_skew.go",
           "internal/cli/update_converge_test.go",
           "docs/multi-model.md",
@@ -268,8 +246,14 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "deploy/terraform/gcp/modules/workflow/**",
+          "deploy/terraform/gcp/modules/workflow/job.tf",
+          "deploy/terraform/gcp/modules/workflow/sa.tf",
+          "deploy/terraform/gcp/modules/workflow/variables.tf",
+          "deploy/terraform/gcp/modules/repo/workflows.tf",
+          "deploy/terraform/gcp/modules/repo/variables.tf",
+          "deploy/terraform/gcp/roots/repo/variables.tf",
           "internal/infra/tfvars.go",
+          "internal/config/providers.go",
           "deploy/terraform/terraform_test.go",
           "deploy/terraform/secret_readers_test.go",
           "docs/secrets-brokering/secret-readers.md"
@@ -286,13 +270,14 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "deploy/terraform/gcp/modules/repo/secrets.tf",
           "internal/infra/retire.go",
           "internal/infra/tf/retire.go",
+          "internal/infra/discover.go",
           "internal/cli/init_retire.go",
+          "internal/cli/init_retire_test.go",
           "internal/cli/update_delete_keys_test.go",
           "internal/cli/update_converge_test.go",
-          "deploy/terraform/terraform_test.go"
+          "docs/design/config-transitions.md"
         ]
       }
     },
@@ -306,9 +291,9 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "deploy/terraform/gcp/modules/installation/secrets.tf",
           "deploy/terraform/gcp/modules/project/job.tf",
           "internal/infra/projectjobs.go",
+          "internal/infra/retire.go",
           "internal/cli/update_delete_project_keys_test.go",
           "deploy/terraform/terraform_test.go"
         ]
@@ -325,7 +310,8 @@
         "prediction": true,
         "paths": [
           "scripts/live-checks/check50*.sh",
-          "scripts/live-checks/check78*.sh",
+          "scripts/live-checks/check780*.sh",
+          "scripts/live-checks/check781*.sh",
           "docs/gcp-live-checklist.md"
         ]
       }
@@ -349,6 +335,24 @@
       }
     },
     {
+      "id": "KS19",
+      "title": "the fact that a repository's provider keys are served",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_credentials.go",
+          "internal/localcfg/localcfg.go",
+          "internal/infra/spec.go",
+          "internal/cli/doctor_brokering.go",
+          "internal/cli/init_provider_served_test.go"
+        ]
+      }
+    },
+    {
       "id": "I1",
       "title": "integration",
       "run": null,
@@ -359,6 +363,7 @@
         "prediction": true,
         "paths": [
           "internal/credsvc/provider_wire_stub.go",
+          "internal/credsvc/provider_wire_bundle.go",
           "internal/cli/keys_end_to_end_test.go"
         ]
       },
@@ -423,19 +428,9 @@
       "reason": "the pin may be admitted only once the gateway takes the route through the service"
     },
     {
-      "task": "KS8",
-      "needs": "KS7",
-      "reason": "the pass-through needs the identity"
-    },
-    {
       "task": "KS9",
       "needs": "KS3",
       "reason": "both edit cascade.go"
-    },
-    {
-      "task": "KS10",
-      "needs": "KS8",
-      "reason": "both edit agent/env.go"
     },
     {
       "task": "KS10",
@@ -449,18 +444,13 @@
     },
     {
       "task": "KS11",
-      "needs": "KS5",
-      "reason": "the path may say service only once the gateway takes it"
-    },
-    {
-      "task": "KS11",
       "needs": "KS2",
-      "reason": "both edit the accounts commands' shared helpers"
+      "reason": "both edit creds.go and accounts_add.go"
     },
     {
       "task": "KS12",
       "needs": "KS2",
-      "reason": "it uses the since-constant and the guard KS2 extends"
+      "reason": "it uses the since-constant, the guard and the owner probe KS2 adds"
     },
     {
       "task": "KS13",
@@ -474,18 +464,8 @@
     },
     {
       "task": "KS13",
-      "needs": "KS8",
-      "reason": "a mount may go only once a budget-off run has the gateway"
-    },
-    {
-      "task": "KS13",
       "needs": "KS10",
       "reason": "a mount may go only once the stage account is served"
-    },
-    {
-      "task": "KS13",
-      "needs": "KS11",
-      "reason": "a mount may go only once the path says service"
     },
     {
       "task": "KS13",
@@ -500,12 +480,12 @@
     {
       "task": "KS14",
       "needs": "KS13",
-      "reason": "the variable goes only after nothing sets it"
+      "reason": "the variable goes only after nothing sets it; it also waits on the plan that removes budget mode off"
     },
     {
       "task": "KS15",
       "needs": "KS14",
-      "reason": "a container goes only after its accessors, and both edit terraform_test.go"
+      "reason": "a container goes only after its accessors; it also waits on the plan that removes budget mode off"
     },
     {
       "task": "KS15",
@@ -515,7 +495,7 @@
     {
       "task": "KS16",
       "needs": "KS15",
-      "reason": "the same deletion, and both edit terraform_test.go; it also waits on secrets-brokering B5.7"
+      "reason": "the same deletion, and both edit retire.go; it also waits on secrets-brokering B5.7"
     },
     {
       "task": "KS18",
@@ -561,6 +541,41 @@
       "task": "R-entry-name",
       "needs": "C1",
       "reason": "amends a file C1 creates"
+    },
+    {
+      "task": "KS6",
+      "needs": "KS19",
+      "reason": "the refusal reads the record KS19 writes"
+    },
+    {
+      "task": "KS11",
+      "needs": "KS13",
+      "reason": "the path may say service only once no mount is computed from it, and both edit infra/spec.go"
+    },
+    {
+      "task": "KS11",
+      "needs": "KS1",
+      "reason": "both edit bundle.go"
+    },
+    {
+      "task": "KS13",
+      "needs": "KS19",
+      "reason": "both edit infra/spec.go and init_credentials.go"
+    },
+    {
+      "task": "KS14",
+      "needs": "KS11",
+      "reason": "no mount is computed from the serving path"
+    },
+    {
+      "task": "KS16",
+      "needs": "KS14",
+      "reason": "both edit terraform_test.go"
+    },
+    {
+      "task": "I1",
+      "needs": "KS19",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
     }
   ],
   "decoupling": [
@@ -608,6 +623,15 @@
       },
       "integration": "I1",
       "reason": "the gateway needs the wire, not the route's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "KS5",
+        "needs": "KS19"
+      },
+      "integration": "I1",
+      "reason": "the gateway needs the fact's name, not the code that records it"
     }
   ],
   "contract_changes": [

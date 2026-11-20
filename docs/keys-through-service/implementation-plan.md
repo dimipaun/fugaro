@@ -6,16 +6,20 @@ explicit go by name.** It builds [spec.md](spec.md) as amended by
 
 The answers that shaped it: only a Claude model through a provider key waits for Check 50 (D3000);
 every model key lives in the project's one bundle and `fugaro update` copies the existing ones
-there (D3001); the gateway always runs (D3002), and a budget-off run opens an identity like any
-other, an installation with no database keeping its mounts (D3004); the service enforces the
+there, one entry per repository (D3001, D3008); the service enforces the
 policy's rules and the cap stays in the gateway (D3003); an old key secret is deleted once copied
 (D3005, not the recommendation); only a project owner copies and sets keys (D3006); no check ties
-a provider key to a repository's auth mode (D3007, the owner's own answer). The owner's ruling
-D2975 reverses D1634 and D1670.
+a provider key to a repository's auth mode (D3007, the owner's own answer); budget mode off is
+removed, `observe` stays, and the removal is a spec of its own (D3009 to D3011, which withdraw
+D3002 and D3004). The owner's ruling D2975 reverses D1634 and D1670.
 
 **It ships in two releases** (A4): release A serves every model key through the service with the
-mounts still there (C1, KS1 to KS12, I1); release B drops the mounts and deletes the old secrets
-(KS13 to KS16). KS13 is not launched before release A is cut.
+mounts still there (C1, KS1 to KS6, KS9, KS10, KS12, KS19, I1); release B drops the mounts and
+deletes the old secrets (KS11, KS13 to KS16). KS13 is not launched before release A is cut.
+
+**Two tasks wait on another plan** (R13): KS14 and KS15 are not launched before the plan that
+removes budget mode off has merged its removal. Until then a budget-off repository keeps its
+mounted keys. **KS7 and KS8 are dropped** with D3002 and D3004; their numbers are not reused.
 
 ## 1. Conventions every task follows
 
@@ -30,7 +34,8 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
   A new command, flag or update stage is added to the censuses that count it: the CLI reference,
   the closed-stdin harness, the list of writing commands, the stage refusal table and
   `internal/apply/steps.go`. Every write of a named provider entry goes through the existing guard
-  for an older deployed service (F22).
+  for an older deployed service (F22). "A project owner" is always KS2's one probe (F36), never a
+  second test of it.
 - **Ask first.** A new dependency; a change to the contract's files (raise a contract change, §7).
 - **Never.** A secret-shaped literal; a live cloud call from a test or an agent; a confirmation
   step; an edit under `.github/workflows/`; a key's value in a log, an error, a header, a test
@@ -47,13 +52,16 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 | A run never obtains another repository's provider key: the wire carries the provider's name and the service derives the entry | KS4 `TestTheEntryIsDerivedFromTheVerifiedRepository` |
 | A Claude model through a provider key is refused until Check 50; any other model is served | KS3 `TestAClaudeModelThroughAProviderWaitsForCheck50`, `TestANonClaudeProviderModelIsServed` |
 | The fee, the price check and the provider-cost settle are the gateway's and are unchanged | KS5 `TestARoutedCallThroughTheServiceCostsWhatItCostBefore` |
-| Between the releases a run that is not ready still uses its mount | KS5 `TestARunThatIsNotReadyUsesItsMount` |
-| A budget-off run has an identity, is charged nothing and holds no key; a local run is unchanged | KS7 `TestABudgetOffRunHasAnIdentity`; KS8 `TestBudgetOffRunsThroughThePassThroughGateway`, `TestALocalRunStillReadsItsOwnEnvironment` |
-| An installation with no database keeps its mounts and is told so | KS13 `TestNoDatabaseKeepsItsMounts` |
+| Between the releases a run whose job does not carry the fact still uses its mount | KS5 `TestARunWithoutTheFactUsesItsMount` |
+| Release A turns the switch off for no repository | KS19 `TestTheSwitchOfASwitchedRepositoryIsUnchanged` |
+| No provider key is entered under a name the deployed service reads as an Anthropic key | C1 `TestAProviderEntryIsNeverAnAnthropicKeyName` |
+| A provider pin whose keys are not served is refused at launch with the fix | KS6 `TestAProviderPinWhoseKeysAreNotServedIsRefused` |
+| A budget-off repository, and an installation with no database, keep their mounts and are told so | KS13 `TestABudgetOffRepositoryKeepsItsMounts`, `TestNoDatabaseKeepsItsMounts` |
 | The copy prints no value, runs only for a project owner, overwrites nothing silently, is idempotent and follows a rotation | KS12 `TestTheCopyPrintsNoValue`, `TestAnOperatorsUpdateSkipsTheCopy`, `TestTheCopyNeverOverwritesAnEntryItDidNotWrite`, `TestTheCopyTwiceChangesNothing`, `TestTheCopyFollowsANewerVersion` |
 | No named provider entry is written for a deployed service that cannot read it | KS2 `TestAnOlderServiceIsNotWrittenANamedEntry`; KS12 `TestTheCopyRunsAfterTheServiceIsDeployed` |
 | A mount is dropped only where the bundle holds every key the repository needs | KS13 `TestAMountGoesOnlyWhenTheBundleIsReady` |
 | A launch on an image older than release A is refused with the fix | KS13 `TestAnOlderImageIsRefusedAtLaunch` |
+| An update never takes the last mount from a repository whose keys were not copied: it stops first and changes nothing | KS14 `TestAnUpdateStopsBeforeTerraformWhileARepositoryIsNotReady`, `TestTheStoppedUpdateChangesNothing` |
 | Only a copied, unmounted model container is ever deleted, and only by a project owner's update | KS15 `TestOnlyACopiedUnmountedModelContainerIsDeleted`, `TestAnOperatorsUpdateDeletesNothing`, `TestANonModelSecretIsNeverDeleted` |
 | `fugaro update` converges an installation at the previous release with a run in flight | KS13 `TestUpdateConvergesTheMountsFromThePreviousRelease`; KS15 `TestUpdateDeletesTheOldSecretsWithARunInFlight` |
 
@@ -64,15 +72,21 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
   route's path, carrying the provider's name and never an entry's), the typed refusals the service
   answers with, the bundle's entry for a named provider credential with the rule that names it
   from a repository and a provider (R2, U2), and the accessor the service reads it through. The
-  names the gateway needs live in a gateway file, because the gateway cannot import the service
-  (F26). A stub accessor answers "no such credential".
-- Files: `internal/gateway/providerwire.go` (new), `internal/credsvc/provider_wire.go` (new),
-  `internal/credsvc/provider_wire_stub.go` (new, stub),
+  entry's name is of a new family and can never equal a `credential-<name>-key` (F33). The same
+  rule names a repository's own Anthropic key and OAuth token (D3008). The contract also names
+  R12's fact: the job entry a run reads it from, and the document says where it is recorded (U6).
+  The names the gateway needs live in a gateway file, because the gateway cannot import the
+  service (F26). A stub accessor answers "no such credential".
+- Files: `internal/gateway/providerwire.go` (new), `internal/gateway/providerwire_test.go` (new),
+  `internal/credsvc/provider_wire.go` (new), `internal/credsvc/provider_wire_stub.go` (new, stub),
+  `internal/config/provider_served.go` (new, the fact's names),
   `docs/keys-through-service/contract-provider.md` (new).
-- Interfaces: produces the names, the refusal types, the entry's naming rule and the accessor's
-  signature; consumed by KS2, KS3, KS4, KS5, KS12. KS1 builds its other side.
-- Tests: `TestStubAccessorHoldsNothing`, `TestAnEntryNameCarriesItsRepository`.
-- Command: `go test ./internal/credsvc/ -run 'StubAccessor|AnEntryNameCarries' -count=1 && go test ./internal/gateway/ -run ProviderWire -count=1`.
+- Interfaces: produces the names, the refusal types, the entry's naming rule, the accessor's
+  signature and the fact's names; consumed by KS2, KS3, KS4, KS5, KS6, KS12, KS19. KS1 builds the
+  accessor's other side.
+- Tests: `TestStubAccessorHoldsNothing`, `TestAnEntryNameCarriesItsRepository`,
+  `TestAProviderEntryIsNeverAnAnthropicKeyName`, `TestProviderWireNamesAreDistinct` (in the gateway).
+- Command: `go test ./internal/credsvc/ -run 'StubAccessor|AnEntryNameCarries|AProviderEntryIsNever' -count=1 && go test ./internal/gateway/ -run ProviderWireNames -count=1`.
 - Red step: two repositories with one provider name produce one entry name.
 - Depends on: none.
 - Commit: `credsvc: the provider wire contract (C1, R1, R2)`.
@@ -81,56 +95,65 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 ## 4. Slices and tasks
 
 **Release A. Slice 1, the service serves a named provider key:** KS1 to KS4.
-**Slice 2, the run asks for it:** KS5, KS6, KS11. **Slice 3, every run has a gateway:** KS7 to KS10.
+**Slice 2, the run asks for it:** KS5, KS6, KS19. **Slice 3, the stage account:** KS9, KS10.
 **Slice 4, the keys move:** KS12. **Integration:** I1.
-**Release B. Slice 5, the mounts and the old secrets go:** KS13 to KS16.
+**Release B. Slice 5, the mounts and the old secrets go:** KS13, KS11, KS14 to KS16.
 **Checks and documents:** KS17, KS18.
 
 ### KS1: named provider entries in the bundle
-- Acceptance: the bundle decodes and serves one key per named provider credential, with its base
-  address and auth form, beside today's entries; a bundle of today's shape still loads; the schema
-  and the loader agree; a bundle at the stated worst case stays under the secret's size limit (U5).
+- Acceptance: the bundle decodes and serves one key per repository and named provider credential,
+  with its base address and auth form, beside today's entries, and one entry per repository for
+  its own Anthropic key or OAuth token (D3008); `Bundle.Credentials` offers a coding caller the
+  provider entries of its own repository; a bundle of today's shape still loads; the schema and
+  the loader agree; a bundle at the stated worst case, counted as repositories times credentials,
+  stays under the secret's size limit (U5).
 - Files: `internal/credsvc/bundle.go`, `schemas/creds-bundle.schema.json`,
   `internal/credsvc/bundle_provider_test.go` (new).
 - Interfaces: builds C1's other side (the real accessor).
-- Tests: `TestBundleServesANamedProviderEntry`, `TestTodaysBundleStillLoads`,
-  `TestBundleSchemaMatchesTheLoader`, `TestAWorstCaseBundleFits`.
-- Command: `go test ./internal/credsvc/ -run 'BundleServesANamed|TodaysBundleStill|BundleSchemaMatches|AWorstCaseBundle' -count=1`.
+- Tests: `TestBundleServesANamedProviderEntry`, `TestBundleOffersACallerItsOwnRepositorysEntries`,
+  `TestTodaysBundleStillLoads`, `TestBundleSchemaMatchesTheLoader`, `TestAWorstCaseBundleFits`.
+- Command: `go test ./internal/credsvc/ -run 'BundleServesANamed|BundleOffersACaller|TodaysBundleStill|BundleSchemaMatches|AWorstCaseBundle' -count=1`.
 - Red step: a named provider entry is refused as an unknown key.
 - Depends on: C1 (it starts after C1 merges).
 - Commit: `credsvc: the bundle holds named provider keys (KS1, F3, R2)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### KS2: every writer of a provider key writes the bundle
-- Acceptance: `fugaro creds set credential-<name>-key` accepts an `openrouter` credential;
-  `fugaro accounts add --type openrouter` and `fugaro secrets set` of a provider's secret write the
-  bundle and no container; each goes through the guard for an older service, with a new
-  since-constant; each reads the value from stdin only, asks nothing, and refuses a person who is
-  not a project owner with the fix (D3006).
+- Acceptance: `fugaro creds set` accepts the key of an `openrouter` credential and writes it under
+  C1's name for each repository named, several in one command (O8); `fugaro accounts add --type
+  openrouter` and `fugaro secrets set` of a provider's secret write the bundle and no container;
+  each goes through the guard for an older service, with a new since-constant; each reads the
+  value from stdin only and asks nothing. One probe answers "is this person a project owner"
+  (`testIamPermissions` on the bundle's secret, F36), and each writer refuses anyone else with the
+  fix, in the three ways `credsOwnerOnly` refuses today (D3006).
 - Files: `internal/cli/creds.go`, `internal/cli/accounts_add.go`, `internal/cli/secrets.go`,
   `internal/cli/initsecrets.go`, `internal/cli/recipes_skew.go`,
-  `internal/cli/accounts_add_key_test.go`, `website/content/cli-reference.md`. It is past five
-  files because a provider key has three writers (F27).
+  `internal/cli/owner_probe.go` (new), `internal/cli/accounts_add_key_test.go`,
+  `website/content/cli-reference.md`. It is past five files because a provider key has three
+  writers (F27).
 - Interfaces: consumes C1 (the entry's naming rule).
 - Tests: `TestCredsSetAcceptsAnOpenRouterKey`, `TestAccountsAddOpenRouterWritesTheBundle`,
   `TestSecretsSetOfAProviderSecretWritesTheBundle`, `TestNoWriterCreatesAContainer`,
-  `TestAnOlderServiceIsNotWrittenANamedEntry`.
-- Command: `go test ./internal/cli/ -run 'CredsSetAcceptsAnOpenRouter|AccountsAddOpenRouter|SecretsSetOfAProvider|NoWriterCreatesAContainer|AnOlderServiceIsNotWritten|CliReferenceNames' -count=1`.
+  `TestAnOlderServiceIsNotWrittenANamedEntry`, `TestOnlyAProjectOwnerWritesAProviderKey`.
+- Command: `go test ./internal/cli/ -run 'CredsSetAcceptsAnOpenRouter|AccountsAddOpenRouter|SecretsSetOfAProvider|NoWriterCreatesAContainer|AnOlderServiceIsNotWritten|OnlyAProjectOwnerWrites|CliReferenceNames' -count=1`.
 - Red step: `creds set` refuses the name with `credsKeyCredentialHalfRefusal`.
 - Depends on: C1.
 - Commit: `cli: a provider key goes to the bundle (KS2, D1670 reversed, D3006)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### KS3: the gate, narrowed
-- Acceptance: a coding caller is offered a named provider credential its policy admits; selection
+- Acceptance: a coding caller is offered a named provider credential its policy admits, under
+  every auth the service serves and not only `api-key` (`narrowToRepoAuth`, F32); selection
   refuses it for a Claude model with the refusal that names Check 50, and admits it for any other
-  model; the single `provider-key` entry behaves as today.
+  model; the single `provider-key` entry behaves as today. It does not edit `bundle.go`: what it
+  needs from the bundle is C1's accessor.
 - Files: `internal/creds/select.go`, `internal/creds/select_provider_test.go` (new),
   `internal/credsvc/cascade.go`.
 - Interfaces: consumes C1 (the accessor and the refusal type).
 - Tests: `TestAClaudeModelThroughAProviderWaitsForCheck50`, `TestANonClaudeProviderModelIsServed`,
+  `TestAnOAuthRepositoryIsOfferedItsProviderCredential`,
   `TestSelectRefusesReservedTierC` (moved to the Claude case).
-- Command: `go test ./internal/creds/ -run 'AClaudeModelThrough|ANonClaudeProvider|SelectRefusesReserved' -count=1 && go test ./internal/credsvc/ -run Cascade -count=1`.
+- Command: `go test ./internal/creds/ -run 'AClaudeModelThrough|ANonClaudeProvider|SelectRefusesReserved' -count=1 && go test ./internal/credsvc/ -run 'Cascade|AnOAuthRepositoryIsOffered' -count=1`.
 - Red step: a non-Claude model is refused with the Check 50 text.
 - Depends on: C1.
 - Commit: `creds: only a Claude model through a provider waits for Check 50 (KS3, D3000, F5)`.
@@ -156,66 +179,42 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 - Reviewer tier: opus, mandatory independent review.
 
 ### KS5: a provider route goes through the service
-- Acceptance: for a run whose repository is ready (R10) the gateway sends a routed call to the
+- Acceptance: for a run whose job carries R12's fact the gateway sends a routed call to the
   service's provider route with the provider's name, keeping its own routing, fee, price check and
   settle, and taking the service's refusals, its unreachable halt and its retry as a service call
-  does today; a run that is not ready uses its mounted key as today (R12); the runner reads a
+  does today; a run whose job does not carry it uses its mounted key as today; the runner reads a
   provider key from its environment only on that second path.
 - Files: `internal/gateway/route.go`, `internal/gateway/forward.go`, `internal/gateway/service.go`,
   `internal/runner/providers.go`, `internal/runner/providerkey.go`,
   `internal/gateway/route_service_test.go` (new).
 - Interfaces: consumes C1.
 - Tests: `TestARoutedCallGoesThroughTheService`, `TestARoutedCallThroughTheServiceCostsWhatItCostBefore`,
-  `TestARunThatIsNotReadyUsesItsMount`, `TestAServiceRefusalOnARouteHaltsAsAServiceCallDoes`.
-- Command: `go test ./internal/gateway/ -run 'ARoutedCall|ARunThatIsNotReady|AServiceRefusalOnARoute' -count=1 && go test ./internal/runner/ -run Provider -count=1`.
+  `TestARunWithoutTheFactUsesItsMount`, `TestAServiceRefusalOnARouteHaltsAsAServiceCallDoes`.
+- Command: `go test ./internal/gateway/ -run 'ARoutedCall|AServiceRefusalOnARoute' -count=1 && go test ./internal/runner/ -run 'Provider|ARunWithoutTheFact' -count=1`.
 - Red step: `validateRoutes` refuses the route with `errServiceOnRoute`.
-- Depends on: C1.
+- Depends on: C1 (the wire and the fact's name; KS19 records the fact, an edge C1 broke).
 - Commit: `gateway: a provider route is served through the credentials service (KS5, D1634 reversed, R1, R12)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### KS6: no auth mode ties a provider key to a repository
 - Acceptance: `config.CheckProviderAuth` admits a provider pin under every auth the service
-  serves; `config.CheckProviderGateway` (a provider model needs `enforce`) is unchanged; Vertex is
+  serves, and `RoutingInertReason` no longer calls such a pin inert; a launch whose repository
+  pins a provider model under an auth other than `api-key` while its provider keys are not served
+  (R12's fact) is refused with the fix, because that job mounts no provider key;
+  `config.CheckProviderGateway` (a provider model needs `enforce`) is unchanged; Vertex is
   unchanged.
-- Files: `internal/config/providers.go`, `internal/config/providers_auth_test.go` (new).
-- Interfaces: none.
-- Tests: `TestAProviderPinIsAdmittedUnderEveryServedAuth`, `TestAProviderModelStillNeedsEnforce`.
-- Command: `go test ./internal/config/ -run 'AProviderPinIsAdmitted|AProviderModelStillNeeds' -count=1`.
+- Files: `internal/config/providers.go`, `internal/config/providers_auth_test.go` (new),
+  `internal/runner/routing.go`, `internal/cli/validate.go`, and the existing tests that pin
+  `CheckProviderAuth` and `RoutingInertReason`.
+- Interfaces: consumes C1 (the fact's name).
+- Tests: `TestAProviderPinIsAdmittedUnderEveryServedAuth`, `TestAProviderModelStillNeedsEnforce`,
+  `TestAProviderPinWhoseKeysAreNotServedIsRefused`.
+- Command: `go test ./internal/config/ -run 'AProviderPinIsAdmitted|AProviderModelStillNeeds|Routing' -count=1 && go test ./internal/runner/ -run RoutingInert -count=1 && go test ./internal/cli/ -run 'AProviderPinWhoseKeys|RoutingInert' -count=1`.
 - Red step: a provider pin under `oauth` is refused.
 - Depends on: KS4 and KS5 (kept, behaviour: the pin may be admitted only once the service can
-  serve it to a job that mounts no provider key).
+  serve it to a job that mounts no provider key); KS19 (kept, behaviour: the refusal reads the
+  record KS19 writes).
 - Commit: `config: a provider pin is admitted under every served auth (KS6, D3007)`.
-- Reviewer tier: opus, mandatory independent review.
-
-### KS7: a budget-off run has an identity
-- Acceptance: the launcher mints the run's token and the run opens its session with the budget
-  mode off, where the installation has a database; nothing is reserved, charged or capped; an
-  installation with no database launches as today.
-- Files: `internal/cli/launch_budget.go`, `internal/runner/budget_session.go`,
-  `internal/runner/budget_off_identity_test.go` (new).
-- Interfaces: none new.
-- Tests: `TestABudgetOffRunHasAnIdentity`, `TestABudgetOffSessionChargesNothing`,
-  `TestNoDatabaseLaunchesAsToday`.
-- Command: `go test ./internal/runner/ -run 'ABudgetOffRunHas|ABudgetOffSession' -count=1 && go test ./internal/cli/ -run 'NoDatabaseLaunchesAsToday|LaunchBudget' -count=1`.
-- Red step: `serviceUpstream` refuses the run for having no identity.
-- Depends on: none.
-- Commit: `runner: a budget-off run opens its identity (KS7, D3004, F18)`.
-- Reviewer tier: opus, mandatory independent review.
-
-### KS8: the gateway runs with the budget off
-- Acceptance: a budget-off run that has an identity starts its gateway as a pass-through to the
-  service: no cap is read and no key is in the agent's environment; `serviceSwitchModeRefusal` is
-  gone; a local run, and a run held on its mounts, still take the key from the environment as
-  today; observe and enforce are unchanged.
-- Files: `internal/runner/gateway.go`, `internal/runner/routing.go`, `internal/agent/env.go`,
-  `internal/runner/gateway_off_test.go` (new).
-- Interfaces: none new.
-- Tests: `TestBudgetOffRunsThroughThePassThroughGateway`, `TestALocalRunStillReadsItsOwnEnvironment`,
-  `TestARunHeldOnItsMountsStillReadsThem`, `TestObserveAndEnforceAreUnchanged`.
-- Command: `go test ./internal/runner/ -run 'BudgetOffRunsThrough|ARunHeldOnItsMounts|ObserveAndEnforce' -count=1 && go test ./internal/agent/ -run 'Env|ALocalRun' -count=1`.
-- Red step: a budget-off run puts the key in the agent's environment.
-- Depends on: KS7 (kept, behaviour: the pass-through needs the identity).
-- Commit: `runner: the gateway runs with the budget off, as a pass-through (KS8, D3002, F7)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### KS9: the service serves a stage's account
@@ -236,122 +235,166 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 - Acceptance: the gateway carries the stage's account per stage and asks the service for it; the
   agent's environment holds no token for it where the repository is ready; `SECURITY.md`'s residual
   on the mixed run is changed with its test.
-- Files: `internal/gateway/gateway.go`, `internal/agent/env.go`, `internal/cli/run.go`,
-  `internal/runner/stage_account_test.go` (new), `SECURITY.md` with `website/content/security.md`
-  and the test that pins the sentence.
+- Files: `internal/gateway/gateway.go`, `internal/agent/env.go`, `internal/runner/agentenv.go`,
+  `internal/cli/run.go`, `internal/runner/stage_account_test.go` (new), `SECURITY.md` with
+  `website/content/security.md` and the test that pins the sentence.
 - Interfaces: none new.
 - Tests: `TestTheStageAccountIsAskedOfTheService`, `TestTheAgentHoldsNoStageToken`.
 - Command: `go test ./internal/runner/ -run 'TheStageAccountIsAsked|TheAgentHoldsNoStage' -count=1 && go test ./internal/cli/ -run 'MixedStage|SecurityMd' -count=1 && (cd website && npm run check)`.
 - Red step: the agent's environment still carries the stage account's token.
-- Depends on: KS8 (kept: both edit `agent/env.go`); KS9 (kept, behaviour: the service must admit
-  the account first); KS4 (kept: both edit `SECURITY.md`).
+- Depends on: KS9 (kept, behaviour: the service must admit the account first); KS4 (kept: both
+  edit `SECURITY.md`).
 - Commit: `runner: the stage account is served by the credentials service (KS10, R9)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### KS11: the serving path of a provider credential flips
-- Acceptance: `config.CredentialServingPath` answers the service for `openrouter`, and its readers
-  follow: the accounts commands, the craft and pool code and the service's pool; a pool's failover
-  between provider members is unchanged, at a stage boundary (F24); Vertex still answers the runner.
+### KS11: the serving path of a provider credential flips (release B)
+- Acceptance: `config.CredentialServingPath` answers the service for `openrouter`, and every
+  reader follows: the accounts commands, the craft and pool code, the service's pool and bundle,
+  the policy migration, and `runnerKeyCredentialName`, which stops computing a provider mount
+  (F29); a pool's failover between provider members is unchanged, at a stage boundary (F24);
+  Vertex still answers the runner.
 - Files: `internal/config/stage_accounts.go`, `internal/config/craft.go`,
-  `internal/craft/pathpool.go`, `internal/credsvc/pool.go`, `internal/cli/accounts.go`,
-  `internal/cli/accounts_add_converge.go`, `internal/cli/accounts_pool.go`. It is past five files
-  because one constant has that many readers.
+  `internal/craft/pathpool.go`, `internal/credsvc/pool.go`, `internal/credsvc/bundle.go`,
+  `internal/projectpolicy/migrate.go`, `internal/infra/spec.go`, `internal/cli/accounts.go`,
+  `internal/cli/accounts_add.go`, `internal/cli/accounts_add_converge.go`,
+  `internal/cli/accounts_pool.go`, `internal/cli/creds.go`. It is past five files because one
+  constant has that many readers; the change in each is one arm.
 - Interfaces: none new.
 - Tests: `TestAnOpenRouterCredentialIsServedByTheService`, `TestAPoolStillFailsOverAtAStageBoundary`,
   `TestVertexStaysOnTheRunner`.
 - Command: `go test ./internal/config/ ./internal/craft/ -run 'AnOpenRouterCredentialIsServed|APoolStillFailsOver|VertexStays' -count=1 && go test ./internal/credsvc/ -run Pool -count=1 && go test ./internal/cli/ -run 'Accounts' -count=1`.
 - Red step: the path of an `openrouter` credential is the runner's.
-- Depends on: KS5 (kept, behaviour: the path may say "service" only once the gateway takes it);
-  KS2 (kept: both edit the accounts commands' shared helpers).
+- Depends on: KS13 (kept, behaviour and a shared file: the path may say "service" only once no
+  mount is computed from it, and both edit `infra/spec.go`); KS2 (kept: both edit `creds.go` and
+  `accounts_add.go`); KS1 (kept: both edit `bundle.go`).
 - Commit: `config: a provider credential is served by the service (KS11, D1634 reversed, F24)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### KS12: `fugaro update` copies the keys into the bundle
 - Acceptance: one new stage, after the stage that deploys the service, reads for each model key
   the installation holds outside the bundle its newest version and writes it into the bundle under
-  C1's name, through the guard for an older service, in memory, printing no value; it is
-  idempotent; it copies again when a container holds a newer version; an entry it did not write
-  and that differs is left alone and named in one line; a person who is not a project owner gets
-  the stage skipped with a line saying who must run it. `credentialsBundleServes` comes to require
-  every named provider entry a repository needs (R10).
+  C1's name, through the guard for an older service, in memory, printing no value: a provider key
+  once for each repository that uses it, and a repository's own Anthropic key or OAuth token under
+  that repository's entry (D3008); it is idempotent; it copies again when a container holds a
+  newer version; an entry it did not write and that differs is left alone and named in one line;
+  a person who is not a project owner (KS2's probe) gets the stage skipped with a line saying who
+  must run it.
 - Files: `internal/cli/update_keys.go` (new), `internal/cli/update_keys_test.go` (new),
   `internal/cli/init_stages.go`, `internal/initflow/stage.go`,
-  `internal/cli/setup_refusals_test.go`, `internal/apply/steps.go`,
-  `internal/cli/init_credentials.go`. It is past five files for the stage's censuses.
+  `internal/cli/setup_refusals_test.go`, `internal/apply/steps.go`. It is past five files for the
+  stage's censuses.
 - Interfaces: consumes C1 (the entry's naming rule).
 - Tests: `TestTheCopyWritesEveryModelKey`, `TestTheCopyPrintsNoValue`,
   `TestAnOperatorsUpdateSkipsTheCopy`, `TestTheCopyNeverOverwritesAnEntryItDidNotWrite`,
   `TestTheCopyTwiceChangesNothing`, `TestTheCopyFollowsANewerVersion`,
-  `TestTheCopyRunsAfterTheServiceIsDeployed`, `TestABundleMissingANamedEntryIsNotReady`.
-- Command: `go test ./internal/cli/ -run 'TheCopy|AnOperatorsUpdateSkips|ABundleMissingANamedEntry|SetupRefusals' -count=1 && go test ./internal/apply/ -run StepsMatches -count=1`.
+  `TestTheCopyRunsAfterTheServiceIsDeployed`, `TestASharedKeyIsCopiedOncePerRepository`.
+- Command: `go test ./internal/cli/ -run 'TheCopy|AnOperatorsUpdateSkips|ASharedKeyIsCopied|RefusalMatrix' -count=1 && go test ./internal/apply/ -run StepsMatches -count=1`.
 - Red step: after an update the bundle lacks a key that a repository's container holds.
-- Depends on: C1; KS2 (kept: it uses the since-constant and the guard KS2 extends).
+- Depends on: C1; KS2 (kept: it uses the since-constant, the guard and the owner probe KS2 adds).
 - Commit: `update: the model keys are copied into the bundle (KS12, D3001, D3006, R4)`.
 - Reviewer tier: opus, mandatory independent review.
 
+### KS19: the fact that a repository's provider keys are served
+- Acceptance: the owner's `fugaro update` reads, beside today's switch, whether the bundle holds an
+  entry for every provider credential the repository's config names, whether the deployed service
+  can read that entry kind, and whether the project publishes an allow-list (F32); it records the
+  answer on the repository's entry in the local config, under a new field, and the job is planned
+  with C1's entry from that record; a run of another person, or a failed read, leaves the record
+  as it was, as the switch does; today's `ready` and the switch of every repository are unchanged
+  (F30); `doctor` reports the fact where it reports the switch.
+- Files: `internal/cli/init_credentials.go`, `internal/localcfg/localcfg.go`,
+  `internal/infra/spec.go`, `internal/cli/doctor_brokering.go`,
+  `internal/cli/init_provider_served_test.go` (new).
+- Interfaces: consumes C1 (the fact's names); builds the side KS5 and KS6 read.
+- Tests: `TestTheFactIsRecordedWhenEveryProviderEntryIsThere`, `TestTheFactNeedsAnAllowList`,
+  `TestAnOperatorsRunLeavesTheFactAsItWas`, `TestTheSwitchOfASwitchedRepositoryIsUnchanged`,
+  `TestTheJobCarriesTheFactFromTheRecord`.
+- Command: `go test ./internal/cli/ -run 'TheFactIsRecorded|TheFactNeedsAnAllowList|AnOperatorsRunLeavesTheFact|TheSwitchOfASwitchedRepository' -count=1 && go test ./internal/infra/ -run TheJobCarriesTheFact -count=1`.
+- Red step: a repository whose bundle holds every provider entry has a job with no such entry.
+- Depends on: C1.
+- Commit: `update: record that a repository's provider keys are served (KS19, R12, F31)`.
+- Reviewer tier: opus, mandatory independent review.
+
 ### KS13: release B: no model mount where the bundle is ready
-- Acceptance: for a repository that is ready (R10), `SecretMounts` yields no model mount of any
-  kind and `CredentialsServiceServes` is true for every auth but Vertex in every budget mode; a
-  repository that is not ready, and an installation with no database, keep their mounts and are
-  told why in one line; a launch on a job image older than release A is refused with the command
+- Acceptance: `credentialsBundleServes` comes to require every provider entry a repository needs
+  (R10); for a repository that is ready, `SecretMounts` yields no model mount of any kind, the
+  stage account's included; a repository that is not ready, a repository in budget mode off and an
+  installation with no database keep their mounts and are told why in one line (R13); a launch on a job image older than release A is refused with the command
   that rebuilds it; an installation at the previous release converges through `fugaro update`. The
   pinned sentences that say a provider key the job mounts stays its own are changed with their
   tests.
 - Files: `internal/infra/spec.go`, `internal/infra/readiness.go`, `internal/infra/spec_test.go`,
-  `internal/cli/recipes_skew.go`, `internal/cli/update_converge_test.go`, `SECURITY.md` with
+  `internal/cli/init_credentials.go`, `internal/cli/recipes_skew.go`,
+  `internal/cli/update_converge_test.go`, `SECURITY.md` with
   `website/content/security.md`, `docs/multi-model.md`, `docs/credentials-service/runbook.md` and
   the tests that pin them. It is past five files for those pins.
 - Interfaces: none new.
-- Tests: `TestAMountGoesOnlyWhenTheBundleIsReady`, `TestNoDatabaseKeepsItsMounts`,
-  `TestAnOlderImageIsRefusedAtLaunch`, `TestTheServiceServesEveryAuthButVertex`,
+- Tests: `TestAMountGoesOnlyWhenTheBundleIsReady`, `TestABundleMissingAProviderEntryIsNotReady`,
+  `TestABudgetOffRepositoryKeepsItsMounts`, `TestNoDatabaseKeepsItsMounts`,
+  `TestAnOlderImageIsRefusedAtLaunch`,
   `TestUpdateConvergesTheMountsFromThePreviousRelease`; the existing
   `TestFilledServiceServedAuthsKeepsProviderKeys` and
   `TestSwitchedMixedRepositoryKeepsItsStageAccountToken` are reversed.
-- Command: `go test ./internal/infra/ -run 'AMountGoesOnlyWhen|NoDatabaseKeeps|TheServiceServesEveryAuth|FilledServiceServedAuths|SwitchedMixedRepository' -count=1 && go test ./internal/cli/ -run 'AnOlderImageIsRefused|UpdateConvergesTheMounts|SecurityMd|DocsMultiModel|DocsCredentialsRunbook' -count=1 && (cd website && npm run check)`.
+- Command: `go test ./internal/infra/ -run 'AMountGoesOnlyWhen|ABudgetOffRepositoryKeeps|NoDatabaseKeeps|FilledServiceServedAuths|SwitchedMixedRepository' -count=1 && go test ./internal/cli/ -run 'ABundleMissingAProviderEntry|AnOlderImageIsRefused|UpdateConvergesTheMounts|SecurityMd|DocsMultiModel|DocsCredentialsRunbook' -count=1 && (cd website && npm run check)`.
 - Red step: an `api-key` job still mounts its provider key.
-- Depends on: KS5, KS6, KS8, KS10, KS11 and KS12 (kept, behaviour: a mount may go only once every
-  path serves that credential and its value is in the bundle); KS2 (kept: both edit
-  `recipes_skew.go`). **Not launched before release A is cut.**
+- Depends on: KS5, KS6, KS10 and KS12 (kept, behaviour: a mount may go only once every path
+  serves that credential and its value is in the bundle); KS19 (kept: both edit `infra/spec.go`
+  and `init_credentials.go`); KS2 (kept: both edit `recipes_skew.go`). **Not launched before
+  release A is cut.**
 - Commit: `infra: no model key is mounted where the bundle is ready (KS13, R5, R10)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### KS14: the workflow module loses its model mounts
 - Acceptance: `modules/workflow` holds no model env entry, no job accessor on a model secret and
-  no service accessor on one; `var.model_secrets_served` and its locals are gone, with the Go
-  validation that mirrors them and the tfvars that set them; the secret-readers list and its test
-  match.
+  no service accessor on one; `var.model_secrets_served` and its locals are gone from the module,
+  from `modules/repo` and from the repository root that pass it down, with the Go constants and
+  validation that mirror them and the tfvars that set them; R12's fact and its job entry go with
+  them, since every run now takes the service. Because a repository that is not ready would have
+  no mount left to fall back to, an update that finds one stops before the Terraform step, changes
+  nothing and says that a project owner must run `fugaro update` once (D3012); every repository
+  keeps running on its mounts until then. The secret-readers list and its test match.
 - Files: `deploy/terraform/gcp/modules/workflow/job.tf`, `sa.tf` and `variables.tf` beside it,
-  `internal/infra/tfvars.go`, `deploy/terraform/terraform_test.go`,
-  `deploy/terraform/secret_readers_test.go` with `docs/secrets-brokering/secret-readers.md`.
+  `deploy/terraform/gcp/modules/repo/workflows.tf` and `variables.tf`,
+  `deploy/terraform/gcp/roots/repo/variables.tf`, `internal/infra/tfvars.go`,
+  `internal/config/providers.go`, `internal/cli/update_mounts_gate.go` (new, D3012's stop) with
+  its test, `deploy/terraform/terraform_test.go`,
+  `deploy/terraform/secret_readers_test.go` with `docs/secrets-brokering/secret-readers.md`. It is
+  past five files because one variable is declared at three levels.
 - Interfaces: none.
-- Tests: `TestWorkflowModuleMountsNoModelSecret`, `TestSecretReadersDocMatchesTheTable`;
+- Tests: `TestWorkflowModuleMountsNoModelSecret`, `TestSecretReadersDocMatchesTheTable`,
+  `TestAnUpdateStopsBeforeTerraformWhileARepositoryIsNotReady`,
+  `TestTheStoppedUpdateChangesNothing`;
   `TestServiceHeldSecretsMatchTheCredentialsService` and `TestModelSecretsServedValidationMatchesGo`
   are removed with what they held.
-- Command: `go test ./deploy/terraform/ -count=1 && go test ./internal/infra/ -run Tfvars -count=1 && terraform fmt -check -recursive deploy/terraform`.
+- Command: `go test ./deploy/terraform/ -count=1 && go test ./internal/infra/ -run Tfvars -count=1 && go test ./internal/cli/ -run 'AnUpdateStopsBeforeTerraform|TheStoppedUpdateChanges|RefusalMatrix' -count=1 && terraform fmt -check -recursive deploy/terraform`.
 - Red step: the module still declares the model env entries.
-- Depends on: KS13 (kept: the variable goes only after nothing sets it).
+- Depends on: KS13 (kept: the variable goes only after nothing sets it); KS11 (kept, behaviour:
+  no mount is computed from the serving path). **Not launched before the plan that removes budget
+  mode off has merged its removal (R13).**
 - Commit: `terraform: the workflow module mounts no model key (KS14, F9)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### KS15: the old model secrets are deleted
 - Acceptance: for a per-repository model container whose newest value is in the bundle and that no
-  job mounts, a project owner's `fugaro update` takes it out of Terraform's state and deletes it
-  through the API; the module no longer declares it; an operator's update deletes nothing and says
-  so; no other secret is ever deleted; with a run in flight the update names the deletion in one
+  job mounts, a project owner's `fugaro update` (KS2's probe) works in R7's order: after the apply,
+  it takes the container and its operator grants out of Terraform's state and then deletes the
+  container through the API; discovery does not bring a deleted container back; no `.tf` file
+  changes (F35); an operator's update deletes nothing and says so; no other secret is ever deleted; with a run in flight the update names the deletion in one
   short line and the run finishes. The retained-types note says which class the ruling of
   2026-11-06 no longer covers, and why (D3005).
-- Files: `deploy/terraform/gcp/modules/repo/secrets.tf`, `internal/infra/retire.go`,
-  `internal/infra/tf/retire.go`, `internal/cli/init_retire.go`,
+- Files: `internal/infra/retire.go`, `internal/infra/tf/retire.go`, `internal/infra/discover.go`,
+  `internal/cli/init_retire.go`, `internal/cli/init_retire_test.go`,
   `internal/cli/update_delete_keys_test.go` (new), `internal/cli/update_converge_test.go`,
-  `deploy/terraform/terraform_test.go`. It is past five files because a deletion is state, API
-  and module together.
+  `docs/design/config-transitions.md`. It is past five files because a deletion is state, API and
+  discovery together.
 - Interfaces: none.
 - Tests: `TestOnlyACopiedUnmountedModelContainerIsDeleted`, `TestAnOperatorsUpdateDeletesNothing`,
-  `TestANonModelSecretIsNeverDeleted`, `TestUpdateDeletesTheOldSecretsWithARunInFlight`.
-- Command: `go test ./internal/cli/ -run 'OnlyACopiedUnmounted|AnOperatorsUpdateDeletes|ANonModelSecret|UpdateDeletesTheOldSecrets' -count=1 && go test ./deploy/terraform/ -count=1 && go test ./internal/infra/... -run Retir -count=1`.
-- Red step: the plan refuses to destroy the container.
-- Depends on: KS14 (kept: a container goes only after its accessors, and both edit
-  `terraform_test.go`); KS12 (kept: the copy must exist first).
+  `TestANonModelSecretIsNeverDeleted`, `TestUpdateDeletesTheOldSecretsWithARunInFlight`,
+  `TestTheGrantsLeaveStateBeforeTheContainerIsDeleted`, `TestDiscoveryDoesNotBringADeletedContainerBack`.
+- Command: `go test ./internal/cli/ -run 'OnlyACopiedUnmounted|AnOperatorsUpdateDeletes|ANonModelSecret|UpdateDeletesTheOldSecrets|TheGrantsLeaveState|Retire|Docs' -count=1 && go test ./internal/infra/... -run 'Retir|DiscoveryDoesNotBring' -count=1`.
+- Red step: the apply after a deletion fails on a grant whose container is gone.
+- Depends on: KS14 (kept: a container goes only after its accessors); KS12 (kept: the copy must
+  exist first). It waits on the other plan with KS14 (R13).
 - Commit: `update: a repository's old model secrets are deleted once copied (KS15, D3005, R7)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -360,33 +403,33 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
   key a shared job mounted as a profile secret is served through the service like any other, and
   the project-wide model containers follow KS15's rule. **This task waits on B5.7, which is another
   plan's and is not started.**
-- Files: `deploy/terraform/gcp/modules/installation/secrets.tf`,
-  `deploy/terraform/gcp/modules/project/job.tf`, `internal/infra/projectjobs.go`,
-  `internal/cli/update_delete_project_keys_test.go` (new), `deploy/terraform/terraform_test.go`.
+- Files: `deploy/terraform/gcp/modules/project/job.tf`, `internal/infra/projectjobs.go`,
+  `internal/infra/retire.go`, `internal/cli/update_delete_project_keys_test.go` (new),
+  `deploy/terraform/terraform_test.go`.
 - Interfaces: none.
 - Tests: `TestASharedJobMountsNoProviderKey`, `TestAProjectModelContainerIsDeletedOnlyAfterItsCopy`.
 - Command: `go test ./deploy/terraform/ -count=1 && go test ./internal/infra/ -run ProjectJob -count=1 && go test ./internal/cli/ -run AProjectModelContainer -count=1`.
 - Red step: the shared job still mounts the profile's provider key.
-- Depends on: KS15 (kept: the same deletion, and both edit `terraform_test.go`); secrets
-  brokering's B5.7 (external).
+- Depends on: KS15 (kept: the same deletion, and both edit `retire.go`); KS14 (kept: both edit
+  `terraform_test.go`); secrets brokering's B5.7 (external).
 - Commit: `terraform: shared project jobs mount no model key (KS16, F27)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### KS17: the live checks, as scripts
-- Acceptance: Check 50 and Checks 780 to 782 exist as one command each under
+- Acceptance: Check 50 and Checks 780 and 781 exist as one command each under
   `scripts/live-checks/`, each with its hermetic self-test and its row in
   `docs/gcp-live-checklist.md`; Check 50's row keeps the facts its documents test pins; none is run
   by an agent.
-- Files: `scripts/live-checks/check50.sh`, `check780.sh`, `check781.sh`, `check782.sh` (new) with
+- Files: `scripts/live-checks/check50.sh`, `check780.sh`, `check781.sh` (new) with
   their `_test.sh`, `docs/gcp-live-checklist.md`.
 - Interfaces: none.
-- Tests: the four `_test.sh`, `TestChecklistHasCheck50`.
-- Command: `for n in 50 780 781 782; do bash scripts/live-checks/check${n}_test.sh; done && go test ./internal/cli/ -run 'ChecklistHasCheck50|Docs' -count=1`.
+- Tests: the three `_test.sh`, `TestChecklistHasCheck50`.
+- Command: `for n in 50 780 781; do bash scripts/live-checks/check${n}_test.sh; done && go test ./internal/cli/ -run 'ChecklistHasCheck50|Docs' -count=1`.
 - Red step: each self-test fails on a missing script.
 - Depends on: none.
-- Commit: `checks: 50 and 780 to 782 as scripts (KS17, F13)`.
+- Commit: `checks: 50, 780 and 781 as scripts (KS17, F13)`.
 - Reviewer tier: standard.
-- Owner-run: `bash scripts/live-checks/check50.sh` and the three like it. No agent performs any
+- Owner-run: `bash scripts/live-checks/check50.sh` and the two like it. No agent performs any
   step of them.
 
 ### KS18: the documents and the operator notes
@@ -394,9 +437,10 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
   `docs/workspace-credentials/spec.md` says the gate is narrowed (O1); the rules file and
   `docs/release.md` no longer describe a runner path for provider keys; each release's
   `### For operators` is "run `fugaro update`" and what it will say: in release A that a project
-  owner's update copies the model keys into the bundle, in release B that it removes the mounts
-  and deletes the old secrets, and that a run on an image older than release A is refused with the
-  rebuild command.
+  owner's update copies the model keys into the bundle, in release B that it removes the mounts of
+  every ready repository, that a budget-off repository keeps its own, and that a run on an image
+  older than release A is refused with the rebuild command. The release that carries KS15 says
+  that the update deletes the old secrets.
 - Files: `docs/model-crafts/reconciliation.md`, `docs/workspace-credentials/spec.md`,
   `.claude/rules/credentials-service.md`, `docs/release.md`, the release notes files of the two
   releases.
@@ -409,19 +453,21 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 - Reviewer tier: opus, mandatory independent review (a rules file).
 
 ### I1: integration
-- Acceptance: the stub `provider_wire_stub.go` is deleted; one hermetic end-to-end test drives a
-  ready repository's run with a non-Claude provider coder through its gateway to the service and a
+- Acceptance: the stub `provider_wire_stub.go` is deleted and the service is wired to the bundle's
+  real accessor; one hermetic end-to-end test drives a run of a repository whose provider keys are
+  served with a non-Claude provider coder through its gateway to the service and a
   fake provider: the call is served and charged what it cost, with the key copied by the update's
   stage and none read from the job's environment; the same run with a Claude model through the
   provider is refused naming Check 50.
 - Files: `internal/credsvc/provider_wire_stub.go` (deleted),
+  `internal/credsvc/provider_wire_bundle.go` (new, the rewiring),
   `internal/cli/keys_end_to_end_test.go` (new).
 - Interfaces: consumes every side of C1.
 - Tests: `TestAProviderModelIsServedEndToEndFromACopiedKey`,
   `TestAClaudeModelThroughAProviderIsRefusedEndToEnd`.
 - Command: `go test ./internal/cli/ -run 'AProviderModelIsServedEndToEnd|AClaudeModelThroughAProviderIsRefusedEndToEnd' -count=1 && go build ./... && go vet ./...`.
 - Red step: the test fails to build while the stub is still referenced.
-- Depends on: C1 and every side of an edge it broke: KS1, KS2, KS3, KS4, KS5, KS12.
+- Depends on: C1 and every side of an edge it broke: KS1, KS2, KS3, KS4, KS5, KS12, KS19.
 - Commit: `keys: a provider model served end to end (I1)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -434,34 +480,37 @@ repository's mode is `startup`.
 
 | Level | Tasks |
 | --- | --- |
-| 0 | C1, KS7, KS17 |
-| 1 | KS1, KS2, KS3, KS5, KS8 |
-| 2 | KS4, KS9, KS11, KS12 |
+| 0 | C1, KS17 |
+| 1 | KS1, KS2, KS3, KS5, KS19 |
+| 2 | KS4, KS9, KS12 |
 | 3 | KS6, KS10, I1 |
 | 4 | KS13 (after release A is cut) |
-| 5 | KS14, KS18 |
-| 6 | KS15 |
-| 7 | KS16 (after B5.7) |
+| 5 | KS11, KS18 |
+| 6 | KS14 (after the plan that removes budget mode off) |
+| 7 | KS15 |
+| 8 | KS16 (after B5.7) |
 
-**Critical path.** By these levels: C1, KS3, KS4, KS10, KS13, KS14, KS15, KS16. The last four are a
-true sequence: a mount, its Terraform and its secret each go only after the one before. The graph
-read reports `critical path (8 tasks): C1 -> KS3 -> KS4 -> KS10 -> KS13 -> KS14 -> KS15 -> KS16`, with C1
-the bottleneck, and `gain: 5 broken, 23 kept, 3 added; before 9 tasks, weight 22; after 8 tasks, weight 17.5;
-improves`.
+**Critical path.** The graph read reports `critical path (9 tasks): C1 -> KS3 -> KS4 -> KS10 -> KS13 -> KS11 -> KS14 -> KS15 -> KS16`,
+with C1 the bottleneck, and `gain: 6 broken, 24 kept, 3 added; before 10 tasks, weight 23; after 9 tasks, weight 19.5; improves`.
+The last five are a true sequence: a mount, the path that computes it, its Terraform and its
+secret each go only after the one before.
 
 **Where the graph and this table differ.** The graph format records a contract's consumers only,
-so KS1, which builds C1's other side, carries no edge to C1 in the graph and reads there as ready
-at once. It is not: it starts after C1 merges. The graph also cannot hold the two outside waits:
-the release between KS12 and KS13, and B5.7 before KS16.
+so KS1 and KS19, which build C1's other sides, carry no edge to C1 in the graph and read there as
+ready at once. They are not: each starts after C1 merges. The graph also cannot hold the three
+outside waits: the release between release A's tasks and KS13, the other plan before KS14, and
+B5.7 before KS16.
 
 **Edges broken by C1 and rejoined in I1.** KS2, KS3, KS4 and KS12 after KS1: each needs the entry's
 naming rule and the accessor's signature, not the bundle's code. KS5 after KS4: the gateway needs
-the wire, not the route's code.
+the wire, not the route's code. KS5 after KS19: the gateway needs the fact's name, not the code
+that records it.
 
-**Edges kept.** Each is stated in its task: behaviour (KS6 after KS4 and KS5; KS8 after KS7; KS10
-after KS9; KS11 after KS5; KS13 after KS5, KS6, KS8, KS10, KS11 and KS12; KS14 after KS13; KS15
-after KS12 and KS14; KS16 after KS15), a shared file (KS4 and KS9 after KS3; KS10 after KS4 and
-KS8; KS11 and KS12 after KS2; KS13 after KS2), and another plan (KS16 after B5.7).
+**Edges kept.** Each is stated in its task: behaviour (KS6 after KS4, KS5 and KS19; KS10 after KS9;
+KS11 after KS13; KS13 after KS5, KS6, KS10 and KS12; KS14 after KS13 and KS11; KS15 after KS12 and
+KS14; KS16 after KS15), a shared file (KS4 and KS9 after KS3; KS10 after KS4; KS11 after KS1 and
+KS2; KS12 after KS2; KS13 after KS2 and KS19; KS16 after KS14), and another plan (KS14 after the
+removal of budget mode off; KS16 after B5.7).
 
 **Shared files.** No level holds two writers of one file.
 
@@ -469,24 +518,28 @@ KS8; KS11 and KS12 after KS2; KS13 after KS2), and another plan (KS16 after B5.7
 | --- | --- |
 | `internal/credsvc/cascade.go` | KS3 (1), KS9 (2) |
 | `internal/credsvc/forward.go`, `request.go`, `server.go` | KS4 (2) |
-| `internal/credsvc/bundle.go`, `schemas/creds-bundle.schema.json` | KS1 (1) |
-| `internal/credsvc/pool.go` | KS11 (2) |
+| `internal/credsvc/bundle.go` | KS1 (1), KS11 (5) |
+| `schemas/creds-bundle.schema.json` | KS1 (1) |
+| `internal/credsvc/pool.go`, `internal/projectpolicy/migrate.go` | KS11 (5) |
 | `internal/gateway/route.go`, `forward.go`, `service.go` | KS5 (1) |
-| `internal/gateway/gateway.go` | KS10 (3) |
-| `internal/runner/gateway.go`, `routing.go` | KS8 (1) |
-| `internal/runner/budget_session.go`, `internal/cli/launch_budget.go` | KS7 (0) |
-| `internal/agent/env.go` | KS8 (1), KS10 (3) |
-| `internal/config/providers.go` | KS6 (3) |
-| `internal/config/stage_accounts.go`, `craft.go`, `internal/craft/pathpool.go` | KS11 (2) |
-| `internal/cli/creds.go`, `accounts_add.go`, `secrets.go`, `initsecrets.go` | KS2 (1) |
-| `internal/cli/accounts.go`, `accounts_add_converge.go`, `accounts_pool.go` | KS11 (2) |
+| `internal/gateway/gateway.go`, `internal/agent/env.go`, `internal/runner/agentenv.go`, `internal/cli/run.go` | KS10 (3) |
+| `internal/runner/routing.go`, `internal/cli/validate.go` | KS6 (3) |
+| `internal/config/providers.go` | KS6 (3), KS14 (6) |
+| `internal/config/stage_accounts.go`, `craft.go`, `internal/craft/pathpool.go` | KS11 (5) |
+| `internal/cli/creds.go`, `accounts_add.go` | KS2 (1), KS11 (5) |
+| `internal/cli/secrets.go`, `initsecrets.go` | KS2 (1) |
+| `internal/cli/accounts.go`, `accounts_add_converge.go`, `accounts_pool.go` | KS11 (5) |
 | `internal/cli/recipes_skew.go` | KS2 (1), KS13 (4) |
-| `internal/cli/run.go` | KS10 (3) |
-| `internal/cli/init_stages.go`, `internal/initflow/stage.go`, `internal/apply/steps.go`, `internal/cli/init_credentials.go` | KS12 (2) |
-| `internal/infra/spec.go`, `readiness.go`, `spec_test.go` | KS13 (4) |
-| `internal/infra/tfvars.go` | KS14 (5) |
-| `internal/cli/update_converge_test.go` | KS13 (4), KS15 (6) |
-| `deploy/terraform/terraform_test.go` | KS14 (5), KS15 (6), KS16 (7) |
+| `internal/cli/init_stages.go`, `internal/initflow/stage.go`, `internal/apply/steps.go` | KS12 (2) |
+| `internal/cli/setup_refusals_test.go` | KS12 (2), KS14 (6) |
+| `internal/cli/init_credentials.go` | KS19 (1), KS13 (4) |
+| `internal/localcfg/localcfg.go`, `internal/cli/doctor_brokering.go` | KS19 (1) |
+| `internal/infra/spec.go` | KS19 (1), KS13 (4), KS11 (5) |
+| `internal/infra/readiness.go`, `spec_test.go` | KS13 (4) |
+| `internal/infra/tfvars.go` | KS14 (6) |
+| `internal/infra/retire.go` | KS15 (7), KS16 (8) |
+| `internal/cli/update_converge_test.go` | KS13 (4), KS15 (7) |
+| `deploy/terraform/terraform_test.go` | KS14 (6), KS16 (8) |
 | `SECURITY.md`, `website/content/security.md` and their tests | KS4 (2), KS10 (3), KS13 (4) |
 | `docs/multi-model.md`, `docs/credentials-service/runbook.md` and their tests | KS13 (4) |
 | `docs/gcp-live-checklist.md` | KS17 (0) |
@@ -498,12 +551,12 @@ R8 lists the files other plans also write, and how the plans are kept apart.
 
 As `fugaro plan graph --plan docs/keys-through-service/implementation-plan.md` printed it:
 
-`ready in 555–2220 min, no history yet for 21 tasks (21 tasks; seeds for 21; from the seeds: no history is cached on this machine yet)`
+`ready in 600–2400 min, no history yet for 20 tasks (20 tasks; seeds for 20; from the seeds: no history is cached on this machine yet)`
 
 It is informational and reserves no budget: it is what the tasks' tiers and this machine's history
-predict, and it moves as runs finish. It does not count the release between KS12 and KS13 or the
-wait for B5.7. The graph counts one node more than this plan's 20 runs: the contract change of §7,
-which runs only if raised.
+predict, and it moves as runs finish. It does not count the release before KS13, the wait for the
+plan that removes budget mode off, or the wait for B5.7. The graph counts one node more than this
+plan's 19 runs: the contract change of §7, which runs only if raised.
 
 ## 7. Contract changes anticipated
 
@@ -512,14 +565,16 @@ which runs only if raised.
 
 ## 8. Checks the plan takes
 
-From the reserved block 780–789, and Check 50 written as a script. All owner-run (KS17).
+From the reserved block 780–789 (780 and 781 used), and Check 50 written as a script. All owner-run (KS17).
 
 | Check | What it measures |
 | --- | --- |
 | **50** | As its checklist row says: whether Claude's cache markers survive a provider's endpoint. Passing it lifts KS3's refusal for a Claude model, in a change of its own |
-| **780** | After release B, on a real installation that was at the release before A: a project owner's `fugaro update` copies the model keys, drops the mounts and deletes the old secrets, with a run in flight that finishes; an operator's update does none of it (U3) |
+| **780** | After the release that carries KS15, on a real installation that was at the release before A: a project owner's `fugaro update` copies the model keys, drops the mounts and deletes the old secrets, with a run in flight that finishes; an operator's update does none of it (U3) |
 | **781** | After release A: a non-Claude provider model served through the service end to end, charged the provider's reported cost, with the key read from the bundle |
-| **782** | After release A: a budget-off run through the pass-through gateway: served, nothing charged, no key in the agent's environment |
+
+Check 782 (a budget-off run through a pass-through gateway) is withdrawn with D3002; its number is
+not reused.
 
 ## 9. After-deploy steps
 
@@ -528,9 +583,14 @@ An operator's update skips that step and says so; nothing breaks, because the mo
 there.
 
 **Release B: `fugaro update`, run by a project owner.** It rebuilds the job images behind its
-existing confirmation, removes the model mounts of every repository whose bundle is ready, and
-deletes the old key secrets. A run launched on an image older than release A is refused with the
-rebuild command. An installation with no database keeps its mounts.
+existing confirmation and removes the model mounts of every repository whose bundle is ready. A
+run launched on an image older than release A is refused with the rebuild command. A repository
+in budget mode off, and an installation with no budget database, keep their mounts (R13).
+
+**The release that carries KS14 and KS15**, after the plan that removes budget mode off:
+`fugaro update`. It deletes the old key secrets. Where a repository's keys were never copied, the
+update stops before the Terraform step, changes nothing and says a project owner must run it
+(D3012).
 
 KS18's release notes say what each update prints.
 
@@ -543,7 +603,16 @@ KS18's release notes say what each update prints.
   owner chose deletion.
 - **Metering provider calls in the service** (D3003's other option): a second price table, ledger
   and fee logic.
-- **Budget-off keeping its mounts everywhere** (D3004's other option), **or removing the mode**.
+- **A pass-through gateway for budget mode off, and an identity for a budget-off run** (D3002 and
+  D3004, tasks KS7 and KS8): withdrawn by D3009. The mode is removed under its own spec (D3011).
+- **Removing `observe` as well** (D3010's other option): a cap nobody chose would start refusing
+  runs, and Vertex under `enforce` is refused today.
+- **Applying KS14's Terraform and refusing launches, or letting operators copy** (D3012's other
+  options).
+- **Flipping the serving path in release A** (the first draft of KS11): it drops the mounts
+  release A relies on (F29).
+- **Entering a provider key as `credential-<name>-key`** (the first draft of R2): the deployed
+  service reads that name as an Anthropic key (F33).
 - **Letting operators copy and set keys** (D3006's other option): it ends "operators never read a
   value".
 - **Moving routing, the fee and the settle into the service**: only the last hop moves (R1).

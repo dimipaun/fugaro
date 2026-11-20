@@ -1,9 +1,11 @@
 # Every model key through the credentials service: reconciliation
 
-Checked against `origin/main` at `45658d8a8` on 2026-11-19. **Where this file disagrees with
+Checked against `origin/main` at `45658d8a8` on 2026-11-19; the symbols review round 2 named were
+read again at `39344123a`. **Where this file disagrees with
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
-**D3000–D3007**, all answered by the owner on 2026-11-19 (D3003–D3007 were added by review round
-1). It reverses **D1634** and **D1670**
+**D3000–D3012**, all answered by the owner (D3000–D3011 on 2026-11-19, D3012 on 2026-11-20;
+D3003–D3007 were added by review round 1, D3008–D3012 by round 2). **D3009 withdraws D3002 and D3004:** budget mode off is removed, under
+a spec of its own. It reverses **D1634** and **D1670**
 ([model crafts](../model-crafts/reconciliation.md)) and narrows the code behind **D150**
 ([credentials service](../credentials-service/reconciliation.md)); each is marked where it bites.
 
@@ -77,12 +79,12 @@ a non-Claude model. Consequence: D3000, KS3.
   `internal/cli/run.go`; `TestSwitchedMixedRepositoryKeepsItsStageAccountToken`).
 - Every shared project job mounts its account's token (`projectAccountMount`,
   `internal/infra/projectjobs.go`), which is secrets brokering's B5.7, not started.
-Consequence: D3002, D3004, KS7 to KS10, and KS16 follows B5.7.
+Consequence: D3009 for the budget mode, KS9 and KS10 for the stage account, and KS16 follows B5.7.
 
 **F7 — Gap: budget mode off has no path to the service.** With the budget off the run has no
 gateway, and `agent.BuildEnv` (`internal/agent/env.go`) puts the key in the agent's own
 environment. `serviceSwitchModeRefusal` (`internal/runner/gateway.go`) refuses a switched
-repository in that mode. Consequence: D3002.
+repository in that mode. Consequence: D3002 at first, withdrawn by D3009.
 
 **F8 — Gap: nothing copies a key into the bundle.** `fugaro creds set` is the bundle's only writer.
 An installation's existing keys sit in per-repository containers
@@ -143,9 +145,9 @@ unreachable halt, retry), so KS5 edits it.
 
 **F18 — Gap (review round 1).** A budget-off run has no identity: `startBudgetBackend` returns
 before it opens a session, `serviceUpstream` refuses with no run identity, and the launcher mints
-no token when the mode is off or the installation has no database
-(`internal/cli/launch_budget.go`). The service also refuses a project that publishes no
-`budget.allowed_models`. Consequence: D3004.
+no token when the installation has no database (`internal/cli/launch_budget.go`; F37 corrects
+the rest of this sentence). The service also refuses a project that publishes no
+`budget.allowed_models`. Consequence: D3004 at first, withdrawn by D3009.
 
 **F19 — Rule (review round 1).** `CredentialsServiceServes` calls `ready` "the condition that
 makes the switch safe", and `credentialsBundleServes` (`internal/cli/init_credentials.go`) judges
@@ -176,7 +178,7 @@ outside the gateway. Consequence: two tasks, KS9 and KS10.
 **F24 — Gap (review round 1).** `config.CredentialServingPath`
 (`internal/config/stage_accounts.go`) still answers `runner` for `openrouter`, and it is read by
 the accounts commands, the craft and pool code and `infra/spec.go`. Consequence: KS11 flips it and
-moves its readers. A pool's failover between provider members stays at a stage boundary, because
+moves its readers, in release B (F29). A pool's failover between provider members stays at a stage boundary, because
 the gateway names one provider per route (R1).
 
 **F25 — Wrong (review round 1), corrects A4 and R5.** The fact "this job's image is at or after a
@@ -202,21 +204,91 @@ secrets brokering's B4.9 and B5.7 write `internal/config/providers.go`, the rule
 drops the shared job's mounted token. Consequence: R8 as amended, and KS16 is what is left after
 B5.7.
 
+**F29 — Wrong (review round 2), corrects F24.** `runnerKeyCredentialName` (`internal/infra/spec.go`)
+computes a job's provider mounts from `config.CredentialServingPath`. Flipping the path in release
+A would drop the mounts that release A still relies on. The path is also read by
+`internal/projectpolicy/migrate.go`, `internal/credsvc/bundle.go`, `internal/cli/creds.go`,
+`accounts_add.go` and `recipes_skew.go`. Consequence: KS11 moves to release B, after KS13, and
+names every reader.
+
+**F30 — Wrong (review round 2), corrects R10.** Requiring the named provider entries in `ready`
+during release A would turn the switch off for a repository already switched whose bundle lacks
+one. A `cascade` repository has no mount to return to, so its runs would stop. Consequence: R12
+keeps release A's `ready` as it is and adds a second fact; `ready` widens in KS13.
+
+**F31 — Gap (review round 2).** R12 said "a run whose image and bundle are ready" and named nothing
+that carries that to a run. Today's switch is read by the owner's own `fugaro update`
+(`credentialsBundleServes` reads the bundle's entry names), recorded on the repository's entry in
+the local config (`CredentialsServiceReady`), and planned into the job from there. Consequence:
+the second fact takes the same road (C1 names it, KS19 records and plans it, KS5 reads it).
+
+**F32 — Gap (review round 2).** `narrowToRepoAuth` (`internal/credsvc/cascade.go`) keeps the paid
+tier only for an `api-key` record, so an `oauth` repository is never offered a provider credential,
+whatever KS6 admits. `requestNoAllowListRefusal` (`internal/credsvc/request.go`) refuses every call
+of a project that publishes no `budget.allowed_models`. Consequence: KS3 offers a named provider
+credential under every served auth; the second fact is true only where the project publishes an
+allow-list; KS6 refuses a provider pin whose keys are not served, at launch, with the fix.
+
+**F33 — Wrong (review round 2), corrects R2.** The bundle loads `credential-<name>-key` as a tier B
+Anthropic key. Entering a provider's key under that name would change what the field means for the
+deployed service. Consequence: a new entry family for provider keys, named by C1.
+
+**F34 — Gap (review round 2).** The copy said nothing about a repository's own Anthropic key or
+OAuth token still held in a container. Consequence: D3008.
+
+**F35 — Wrong (review round 2), corrects R7.** The container resource is a `for_each` over a
+variable, so removing one needs no change to a `.tf` file. Terraform's state also holds two
+operator grants per operator on each container, and a grant left in state fails the next apply
+once its container is gone. `internal/infra/discover.go` unions every labelled live container back
+into the variable, and `docs/design/config-transitions.md` describes the retirement under test.
+Consequence: R7's order, and KS15's files.
+
+**F36 — Gap (review round 2).** "A project owner" had no test in the plan. The repository has one
+for another purpose: `testIamPermissions` (`internal/cli/doctor_launcher.go`,
+`operator_write.go`), and `credsOwnerOnly` (`internal/cli/creds.go`) already refuses a bundle write
+three ways. Consequence: KS2 writes the one probe, and KS12 and KS15 use it.
+
+**F37 — Wrong (review round 2), corrects F18.** `budgetMintOn` (`internal/cli/launch_budget.go`)
+mints a token with the mode off when the installation has a database and a policy is published.
+Only an installation with no database never mints.
+
+**F38 — Rule (the census taken for D3009).** Budget mode off is today's default and not an
+exception. `--budget-mode` defaults to unset, a setup with no `--firebase-project` builds no budget
+database, and the runner reads unset as off (`localcfg.BudgetMode`, `spendFromEnv`), though the
+settings registry says unset means observe. About 32 Go files outside tests read the mode off,
+and `schemas/fugaro.schema.json` and `schemas/result.schema.json` list it. With a gateway running,
+a model with no price is refused at bootstrap, a provider model needs `enforce`, Vertex with
+`enforce` is refused, and the Cloud Batch backend refuses every run that has an identity
+(`internal/backend/batch/run.go`). Consequence: removing the mode is larger than this plan's
+subject. D3010 and D3011, and R13.
+
+**F39 — Gap (review round 2): files and filters the plan missed.** KS14 also needs
+`modules/repo/workflows.tf`, `modules/repo/variables.tf`, `roots/repo/variables.tf` and the
+constants in `internal/config/providers.go`. KS10 also needs `internal/runner/agentenv.go`. KS6
+also needs `RoutingInertReason` (`internal/runner/routing.go`, `internal/cli/validate.go`) and the
+tests that pin `CheckProviderAuth`. The refusal table's tests are `TestRefusalMatrix*`, and no
+gateway test matched `ProviderWire`. Consequence: each task as amended.
+
 ## 4. Decisions
 
-All answered by the owner on 2026-11-19.
+All answered by the owner on 2026-11-19, D3012 on 2026-11-20.
 
 | # | Question | Answer | Mark |
 | --- | --- | --- | --- |
 | **D3000** | Which provider calls wait for Check 50 (F5)? | Only a Claude model through a provider key. A non-Claude provider model is served by the service without waiting | as recommended. **It replaces the owner's answer of earlier the same day** ("run Check 50 first" for every provider key), given on the first reading of the gate; the two facts of F5 were found afterwards |
 | **D3001** | Where do model keys live at the end, and how do they get there (F8)? | In the project's one bundle. `fugaro update` copies each existing key there itself, in memory on the owner's machine, and then retires the per-repository containers | as recommended |
-| **D3002** | What happens to budget mode off (F7)? | The gateway always runs: with the budget off it is a pass-through to the service, with no budget enforced and no key in the job | as recommended |
+| **D3002** | What happens to budget mode off (F7)? | The gateway always runs: with the budget off it is a pass-through to the service, with no budget enforced and no key in the job | as recommended; **withdrawn by D3009** |
 
 | **D3003** | A hand-built call can reach the service without the gateway, where the cap and the fee are applied (F16). Acceptable? | Yes. The service enforces the policy's model and provider rules on every call; the cap stays in the gateway, and `SECURITY.md` states the limit | added by review round 1; as recommended |
-| **D3004** | A budget-off run has no identity (F18). What then? | It opens its identity like any other run. An installation with no database cannot, keeps its mounted keys, and `fugaro update` says so | added by review round 1; as recommended |
+| **D3004** | A budget-off run has no identity (F18). What then? | It opens its identity like any other run. An installation with no database cannot, keeps its mounted keys, and `fugaro update` says so | added by review round 1; as recommended; **withdrawn by D3009** |
 | **D3005** | What happens to an old key secret once its value is in the bundle (F20)? | **`fugaro update` deletes it.** | added by review round 1; **not the recommendation** (which was to drop it from Terraform and keep it). **It reverses the owner's ruling of 2026-11-06 for this class of secret** |
 | **D3006** | Who runs the copy, and who sets a provider key afterwards (F21)? | A project owner only. An operator's `fugaro update` skips the copy, keeps the mounts and says the owner must run it. Operators still never read a value | added by review round 1; as recommended |
 | **D3007** | May a repository on another auth mode pin a provider model? | **The owner's own answer:** "There shouldn't be any repo tie-in to keys. Api-keys, oauth tokens etc are there for the models only which should use the most appropriate way to authenticate." | added by review round 1; **not either option** |
+| **D3008** | How are a repository's own Anthropic key and OAuth token, and a key several repositories share, entered in the bundle (F34)? | One entry per repository. A key shared today is copied once for each repository that uses it | added by review round 2; as recommended |
+| **D3009** | A budget-off run held on its mounts keeps a key in the agent's environment. Acceptable? | **The owner's own answer:** "I don't think we should have this no-budget case", and then "Yes let's remove it. We should always have a budget. If anyone doesn't care, they can set a high number." Budget mode off is removed | added by review round 2; **not either option; it withdraws D3002 and D3004** |
+| **D3010** | With off gone, does `observe` stay (F38)? | Yes. Two modes remain, and `fugaro update` rewrites off to `observe`, so no run starts being refused by a cap nobody chose | added by review round 2; as recommended |
+| **D3011** | Where does the removal of off live (F38)? | In a spec of its own, "always a budget", written next. This plan drops its budget-off tasks | added by review round 2; as recommended |
+| **D3012** | KS14 removes the Terraform that can mount a key. What does an update do where the owner's copy never ran, given D3006? | The update stops before the Terraform step, changes nothing, and says a project owner must run `fugaro update` once. Every repository keeps running on its mounts | added by review round 2; as recommended |
 
 **What D3007 means here, and what it leaves open.** In this plan: a provider model may be pinned
 under every auth the service serves, and no check ties a provider key to a repository's auth mode
@@ -237,19 +309,22 @@ plan. It is O4, for the owner.
   it is for, and the service attaches that key and forwards to the provider's own address. The
   service checks the name against the member's published policy for the calling repository before
   it attaches anything, so a run cannot name a credential its policy does not give it. Contract C1.
-- **R2. One entry per provider credential, and the caller never names an entry.** *(Amended by
-  review round 1.)* The bundle carries one key per provider credential from each of its three
-  sources (F27): a project-wide one keeps `credential-<name>-key`, and a repository's own is
-  entered under a name that carries the repository, so two repositories with one name for
-  different keys never collide. The wire carries the provider's name only. The service derives the
+- **R2. One entry per repository and provider credential, and the caller never names an entry.**
+  *(Amended by review rounds 1 and 2: F33, D3008.)* Every provider key is entered under a name of
+  a new family that carries the repository and the provider credential's name, whichever of its
+  three sources it came from (F27). No provider key is entered as `credential-<name>-key`, which
+  the deployed service reads as an Anthropic key. A key several repositories share is entered once
+  for each. The wire carries the provider's name only. The service derives the
   entry from the run's verified repository, so a run cannot ask for another repository's key.
 - **R3. The gate, narrowed.** The service refuses a provider credential for a Claude model until
   Check 50 passes, with the refusal that names the check, and serves it for any other model
   (D3000). Which models are Claude's is the existing pin vocabulary, not a new list.
 - **R4. The copy.** *(Amended by review round 1.)* `fugaro update` gains one stage, after the stage
   that deploys the service, that for each model key the installation holds outside the bundle
-  reads the newest version and writes it into the bundle under R2's name, through the existing
-  guard for an older service (F22). It holds the value only in memory and prints none of it. It is
+  reads the newest version and writes it into the bundle, through the existing guard for an older
+  service (F22). A provider key goes under R2's name. A repository's own Anthropic key or OAuth
+  token goes under an entry that carries the repository, and the repository's record names it
+  (D3008). It holds the value only in memory and prints none of it. It is
   idempotent; it copies again when a container holds a newer version than the one it copied; it
   never overwrites a bundle entry it did not write without saying so. It runs only for a project
   owner: an operator's update skips it and says who must run it (D3006). It asks nothing.
@@ -261,34 +336,53 @@ plan. It is O4, for the owner.
   names, in one short line each, the two steps that can reach a run: none for the copy, and the
   deletion of an old secret, which happens only when no job references it.
 - **R7. An old secret is deleted by the update, once copied and unmounted.** *(Amended by review
-  round 1, D3005.)* The retirement table cannot do it (F20). `fugaro update` takes a model
-  container out of Terraform's state and deletes it through the API, in the retirement code
-  (`internal/infra/retire.go`, `internal/cli/init_retire.go`), and only when its newest value is
-  in the bundle, no job mounts it and the person running the update is a project owner. Every
+  rounds 1 and 2: D3005, F35.)* The retirement table cannot do it (F20). In this order: the apply
+  that leaves no job mounting the container; then the container and its operator grants leave
+  Terraform's state; then the container is deleted through the API. It happens in the retirement
+  code (`internal/infra/retire.go`, `internal/cli/init_retire.go`), with discovery taught not to
+  bring a deleted container back, and only when the container's newest value is in the bundle, no
+  job mounts it and the person running the update is a project owner (F36). Every
   other secret stays under the ruling of 2026-11-06.
 - **R8. Several plans, one set of files.** *(Amended by review round 1, F28.)* A task of this plan
   is not launched while a task of workspace service or secrets brokering that edits the same file
   is live, and whichever lands second rebases. The files are `internal/credsvc/cascade.go`,
-  `forward.go` and `server.go`, `internal/gateway/service.go`, `internal/runner/gateway.go`,
+  `forward.go` and `server.go`, `internal/gateway/service.go` and `gateway.go`,
+  `internal/runner/gateway.go` and `budget_session.go`, `internal/cli/creds.go`,
   `internal/config/providers.go`, `SECURITY.md`, the rules file, `secret-readers.md`,
   `deploy/terraform/terraform_test.go` and `modules/project`. No plan waits for another as a whole.
 - **R9. The stage account goes through the service.** The mixed variant's second account is
   selected by the service like any named account, through the gateway, so the runner holds no
   token for it (F6).
-- **R10. One switch for every auth but Vertex.** *(Amended by review round 1, F19, D3004.)*
-  `CredentialsServiceServes` stops depending on the budget mode. It keeps depending on `ready`,
-  which comes to mean that the bundle holds every key the repository needs, the named provider
-  entries included. An installation with no database is never ready and keeps its mounts.
+- **R10. One switch for every auth but Vertex.** *(Amended by review rounds 1 and 2: F19, F30,
+  D3009.)* In release B (KS13) `ready` comes to mean that the bundle holds every key the
+  repository needs, the provider entries included, and a ready repository mounts no model key.
+  `CredentialsServiceServes` keeps its budget-mode argument in this plan; the plan that removes
+  the mode removes the argument (R13).
 - **R11. The service checks the route itself.** The service builds the provider routes from the
   published policy and refuses a call the policy's model and provider rules do not allow, whoever
   built the request (D3003, F16).
-- **R12. The gateway uses the service when it can and the mount when it must.** Between the two
-  releases a run whose image and bundle are ready sends a routed call through the service, and
-  any other run uses its mounted key as today.
+- **R12. The gateway uses the service when it can and the mount when it must.** *(Amended by
+  review round 2: F30, F31, F32.)* Release A adds one recorded fact per repository, "its provider
+  keys are served": the bundle holds an entry for every provider credential the repository's
+  config names, the deployed service can read that entry kind, and the project publishes an
+  allow-list. The owner's `fugaro update` reads it and records it beside today's switch, and the
+  job is planned from the record, as the switch is. A run whose job carries the fact sends a routed
+  call through the service; any other run uses its mounted key as today. Release A's `ready` does
+  not change, so no switched repository is turned off. A launcher that sets the fact falsely gains
+  nothing: the service still refuses a credential it does not hold for that repository.
+- **R13. A budget-off repository waits for the other plan.** *(Review round 2: D3009, D3011.)*
+  Until "always a budget" lands, a repository in budget mode off, and an installation with no
+  budget database, keep their mounted keys through both releases, as today, and
+  `fugaro update` says so in one line. KS14 and KS15, which take the mounts' Terraform and the old
+  secrets away, are not launched before that plan's removal has merged. The census of F38 is that
+  spec's starting material: the database becomes mandatory, unset stops meaning off, an unpriced
+  model and the Cloud Batch backend need an answer, and `update` rewrites off to `observe`
+  (D3010).
 
 ## 6. Open tensions and open items
 
-No two answers pull against each other.
+One tension was found and settled: D3006 (an operator's update keeps the mounts) against KS14
+(the Terraform that mounts goes). D3012 answers it.
 
 - **O1.** D3000 replaces an answer the owner gave earlier the same day. It is recorded in
   [workspace credentials](../workspace-credentials/spec.md) as "D150's gate stays"; KS18 amends that
@@ -308,6 +402,12 @@ No two answers pull against each other.
 - **O6.** After this work only a project owner can set or rotate a provider key; an operator could
   before (D3006).
 - **O7.** A hand-built call escapes the cap for a provider model (D3003), stated in `SECURITY.md`.
+- **O8.** D3008 multiplies the bundle's entries by the repositories that share a key, and rotating
+  a shared key becomes one write per repository. `fugaro creds set` takes the repositories to
+  write in one command (KS2), and KS1's worst case is counted that way (U5).
+- **O9.** KS14 and KS15 wait on a plan that does not exist yet (R13). If "always a budget" is not
+  written or not approved, release B stops after KS13 and KS11: no ready repository mounts a model
+  key, and the Terraform that could mount one stays.
 
 ## 7. UNVERIFIED
 
@@ -319,4 +419,9 @@ No two answers pull against each other.
   (`docs/design/update-in-flight.md` marks it unverified). Settled by Check 780, owner-run.
 - **U4.** *Settled by review round 1 (F23).*
 - **U5.** The bundle's size against Secret Manager's limit for one secret, for an installation with
-  many provider keys. Settled by KS1's test of a bundle at a stated worst case.
+  many repositories and provider keys (D3008). Settled by KS1's test of a bundle at a stated worst
+  case.
+- **U6.** The exact shape of the record and of the job's entry that carry R12's fact. The road is
+  verified (F31); the names are C1's.
+- **U7.** That a container's operator grants are separate addresses in Terraform's state that the
+  retirement code can remove by name (F35). Settled by KS15's first test.
