@@ -101,10 +101,11 @@ resource "google_secret_manager_secret" "licence_renewal" {
     fugaro_project = var.fugaro_project
   }
 
-  # Replicated in the installation's region, and the replication of one that
-  # exists ignored (secrets.tf's own declaration and the whole of its
-  # reasoning): a licensed installation's renewal key cannot be re-created, so
-  # a plan must never replace this container.
+  # A container the CLI created is replicated in the installation's region, and
+  # replication is creation-time only: a differing value here would plan a
+  # replacement, which prevent_destroy refuses and which deletes every version
+  # first. So the field is ignored below, and this block decides only a
+  # container Terraform itself creates.
   replication {
     user_managed {
       replicas {

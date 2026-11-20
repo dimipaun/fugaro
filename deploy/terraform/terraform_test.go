@@ -1483,6 +1483,44 @@ func TestRolloverJobPausedAndIgnored(t *testing.T) {
 	}
 }
 
+// A secret container is created before Terraform sees it — by `fugaro secrets
+// set`, or by the enrolment's secrets stage, which runs before the root that
+// imports the container — and since LP5b the CLI replicates it in the
+// installation's region rather than automatically. Replication is a
+// creation-time field, so a container that exists beside a config naming
+// another value is a plan to replace it: prevent_destroy refuses that plan,
+// which fails the whole update and the import before it, and a replacement
+// that got past it would delete every version first. Every secret resource
+// therefore ignores the field. ignore_changes is not visible in a plan test,
+// so the source is pinned, as TestRolloverJobPausedAndIgnored pins the same
+// thing for a job's paused.
+func TestAnAdoptedSecretKeepsItsOwnReplication(t *testing.T) {
+	want := []string{
+		"gcp/modules/installation/credentials.tf google_secret_manager_secret.credentials_bundle",
+		"gcp/modules/installation/licence.tf google_secret_manager_secret.licence_renewal",
+		"gcp/modules/installation/orchestrator.tf google_secret_manager_secret.pairing_key",
+		"gcp/modules/installation/secrets.tf google_secret_manager_secret.project",
+		"gcp/modules/installation/secrets.tf google_secret_manager_secret.voice_provider_keys",
+		"gcp/modules/repo/secrets.tf google_secret_manager_secret.this",
+	}
+	var seen []string
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_secret_manager_secret") {
+			seen = append(seen, path+" "+blk.name)
+			if !regexp.MustCompile(`ignore_changes\s*=\s*\[\s*replication\s*\]`).MatchString(blk.body) {
+				t.Errorf("%s: %s does not ignore changes to replication, so a container the CLI created in the installation's region would plan a replacement", path, blk.name)
+			}
+			if !hasAttr(blk.body, "prevent_destroy", "true") {
+				t.Errorf("%s: %s no longer prevents destroy", path, blk.name)
+			}
+		}
+	})
+	slices.Sort(seen)
+	if !slices.Equal(seen, want) {
+		t.Errorf("the secret resources are %v, want %v", seen, want)
+	}
+}
+
 // REGRESSION (live, Check 23 step 8, 2026-10-05): a Scheduler call that carries
 // overrides in its body needs run.jobs.runWithOverrides, which roles/run.invoker
 // lacks (Cloud Run answered 403). The rollover job's body does carry overrides,

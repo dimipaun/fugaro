@@ -62,6 +62,9 @@ type reportOptions struct {
 	repo, since, til string
 	by               string
 	json, csv        bool
+	// stream is --stream: with --json, the report written as one JSON line per
+	// row and a last line carrying the totals, instead of one document.
+	stream bool
 }
 
 func newReportCmd(d Deps) *cobra.Command {
@@ -96,6 +99,16 @@ func newReportCmd(d Deps) *cobra.Command {
 			"run_hours, runs, calls, tokens}], totals, warnings}; *_usd are exact decimal\n" +
 			"strings and null means n/a or not recorded for that breakdown (an unreadable\n" +
 			"row carries null money).\n\n" +
+			"--stream, with --json, prints that document as newline-delimited JSON\n" +
+			"instead of whole: a line per row, each carrying one element of --json's rows\n" +
+			"array unchanged under `row`, then a line saying how many rows the feed\n" +
+			"carried and carrying the document's `totals` (`end`). A consumer draws a row\n" +
+			"as its line arrives rather than holding the whole document, and a feed with\n" +
+			"no end line is a read that was interrupted. A feed that stopped after its\n" +
+			"first row writes an `error` line with the sentence the command would have\n" +
+			"printed, and exits non-zero. The document's own header, notice and warnings\n" +
+			"are not part of the feed; --by, --since, --until and --repo mean here what\n" +
+			"they mean without it.\n\n" +
 			"A project without Firestore history says so and shows run-record totals instead\n" +
 			"(from the runs bucket, not budget history).",
 		Args: cobra.NoArgs,
@@ -108,6 +121,7 @@ func newReportCmd(d Deps) *cobra.Command {
 	f.StringVar(&o.by, "by", "day", "group by day, week, month, year, repo, model, person or mode")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
 	f.BoolVar(&o.csv, "csv", false, "print CSV (RFC 4180)")
+	f.BoolVar(&o.stream, "stream", false, "with --json: one line per row, then the line that ends the feed")
 	fcli.AddCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -158,6 +172,12 @@ func runReport(cmd *cobra.Command, o *reportOptions, d Deps) error {
 	}
 	if o.json && o.csv {
 		return fcli.UserErr("--json and --csv don't go together")
+	}
+	// The feed's lines are JSON objects, one per row of --json's rows array, so
+	// --stream without --json would be a report in a shape neither the document
+	// nor the table has.
+	if o.stream && !o.json {
+		return fcli.UserErr("--stream needs --json: the feed is JSON lines, one per row of the document's rows array")
 	}
 	dim, err := report.ParseDim(o.by)
 	if err != nil {
@@ -213,6 +233,8 @@ func reportEmit(cmd *cobra.Command, o *reportOptions, rep report.Report, m repor
 	m.Warnings = append(m.Warnings, reportShadowSpendNote)
 	out := cmd.OutOrStdout()
 	switch {
+	case o.stream:
+		return streamReport(out, rep)
 	case o.json:
 		return report.JSON(out, rep, m)
 	case o.csv:

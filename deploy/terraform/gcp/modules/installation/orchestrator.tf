@@ -151,11 +151,11 @@ resource "google_secret_manager_secret" "pairing_key" {
     fugaro_project = var.fugaro_project
   }
 
-  # Replicated in the installation's region, and the replication of one that
-  # exists ignored (secrets.tf's own declaration and the whole of its
-  # reasoning). The pairing keys are versions of this container and no path
-  # recovers them, so a replacement is the one plan this resource may not
-  # produce.
+  # A container the CLI created is replicated in the installation's region, and
+  # replication is creation-time only: a differing value here would plan a
+  # replacement, which prevent_destroy refuses and which deletes every version
+  # first. So the field is ignored below, and this block decides only a
+  # container Terraform itself creates.
   replication {
     user_managed {
       replicas {

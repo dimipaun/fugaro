@@ -388,6 +388,7 @@ No two answers pull against each other.
   too (F8). Today only installations that chose a budget carry that dependency.
 - **O3.** D3020, D3022 and D3023 stop some runs that work today until a person acts (§4).
 - **O4.** Cloud Batch can launch nothing after this work, until a design of its own (D3021).
+  That design is [batch-run-identity](../batch-run-identity/README.md).
 - **O5.** The database costs about two dollars a month at the design's own estimate and needs
   billing on the project (F18). An installation with no billing gets R2's line with that fix, and
   launches nothing until it is linked.

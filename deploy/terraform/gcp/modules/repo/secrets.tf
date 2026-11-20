@@ -12,15 +12,11 @@ resource "google_secret_manager_secret" "this" {
     fugaro_secret = each.key
   }
 
-  # Replicated in the installation's region, and the replication of one that
-  # exists ignored: a container's replication cannot be changed after it is
-  # created (Secret Manager refuses the update), and any other declaration would
-  # replace the container, which deletes every version in it first — which is
-  # what an adopted container, replicated automatically like every container
-  # created before this declaration, would meet. modules/installation's
-  # secrets.tf states the whole of the reasoning; this is the repository's own
-  # containers carrying the same declaration for the same reason (D3082, F9,
-  # R5).
+  # A container the CLI created is replicated in the installation's region, and
+  # replication is creation-time only: a differing value here would plan a
+  # replacement, which prevent_destroy refuses and which deletes every version
+  # first. So the field is ignored below, and this block decides only a
+  # container Terraform itself creates.
   replication {
     user_managed {
       replicas {
