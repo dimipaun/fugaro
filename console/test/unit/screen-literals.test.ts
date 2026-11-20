@@ -1819,6 +1819,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'checkout.ts',
       'confirm.ts',
       'entry.ts',
+      'gating.ts',
       'graph/layout-client.ts',
       'graph/layout.ts',
       'graph/model.ts',
