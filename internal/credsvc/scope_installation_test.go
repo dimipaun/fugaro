@@ -514,6 +514,111 @@ func TestTheModelPathReadsTheScopesReadersAndNotTheDeployments(t *testing.T) {
 	}
 }
 
+// ws1Pool is the pool the scope answers in the two tests below: a STRICT SUBSET
+// of the fixture's bundle, which holds the default account, alice's, bob's and
+// the project's paid key. It is the shape a workspace member's own shared node
+// has (R8), and it is what a project's crafts must never widen.
+func ws1Pool() poolOfferingWithout {
+	return poolOfferingWithout{
+		{Name: testPoolAccount, Tier: creds.TierA},
+		{Name: config.AnthropicSecret, Tier: creds.TierB},
+	}
+}
+
+// ws1Crafts is a project whose crafts go out on the pool of the given members,
+// which is how a craft's candidate list enters the model path (poolOffering).
+func ws1Crafts(members ...string) string {
+	typed := make([]string, 0, len(members))
+	for _, m := range members {
+		typed = append(typed, `{"name": "`+m+`", "type": "claude-oauth"}`)
+	}
+	return `"credentials": {"fallback": "auto"},
+		` + poolCraftBlock(strings.Join(typed, ",\n\t\t\t"), members...) + `,
+		"subscription_spread": true`
+}
+
+// TestTheCraftsNeverWidenTheScopesPool is the crafts∩pool guard's own pin
+// (candidates, heldBy, MC6): a project's crafts narrow the pool a call belongs
+// to and never widen it.
+//
+// The scope's pool is a strict subset of the deployment's bundle, and the
+// crafts name one credential that is inside it (bob) and one that is not
+// (alice). Both facts the guard exists for are read off the one walk: alice is
+// never offered to the call — and never serves it — and every credential the
+// crafts and the pool disagree about is reported with the reason the run's halt
+// reads, alice and the paid key the crafts do not name alike.
+func TestTheCraftsNeverWidenTheScopesPool(t *testing.T) {
+	s := poolSvc(t, ws1Crafts(testAccount, testPoolAccount))
+	s.server.resolver = resolverWithout{inner: installationResolver{s: s.server}, offering: ws1Pool()}
+
+	ctx := context.Background()
+	b, err := s.server.cfg.Bundles.Load(ctx)
+	if err != nil {
+		t.Fatalf("the fixture's bundle could not be loaded: %v", err)
+	}
+	// The call is resolved by the scope's resolver and the candidate walk is
+	// given that scope, which is the seam the guard is on: the pool is the
+	// scope's answer and the crafts are the project's.
+	req := httptest.NewRequest(http.MethodPost, MessagesPath, nil)
+	req.Header.Set("Authorization", "Bearer "+s.jobToken())
+	req.Header.Set(HeaderRunIdentity, s.runToken())
+	req.Header.Set(HeaderRunJob, s.job)
+	sc, err := s.server.resolver.Resolve(ctx, req)
+	if err != nil {
+		t.Fatalf("the resolver refused a call of its own run: %v", err)
+	}
+	cands, _, skipped, err := s.server.candidates(withScope(ctx, sc), sc.Caller(), testRepo, s.policy.shared, b)
+	if err != nil {
+		t.Fatalf("candidates: %v", err)
+	}
+	if len(cands) != 1 || cands[0].Name != testPoolAccount {
+		t.Fatalf("the call is offered %v, want only %q, the one credential the crafts and the pool both hold: the crafts name %q too, and they do not open a pool this call does not belong to",
+			cands, testPoolAccount, testAccount)
+	}
+	reported := reportedNotAdmitted(t, skipped)
+	for _, name := range []string{testAccount, config.AnthropicSecret} {
+		if got, ok := reported[name]; !ok || got.Reason != ReasonNotAdmitted {
+			t.Errorf("the credential %q is neither offered nor reported as not admitted (%+v): one of the two lists it was left out by has to say so", name, got)
+		}
+	}
+
+	// And the call itself is served, by the pool's own member: a credential the
+	// crafts name and the pool does not hold would have served it here.
+	resp, body := s.call(t, callBody("ws1-crafts-pool"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the model call is answered %d: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != testPoolAccount {
+		t.Errorf("%s = %q, want %q: the crafts never widen the pool this call belongs to", HeaderCredential, got, testPoolAccount)
+	}
+}
+
+// TestCraftsNamingNothingThePoolHoldsAreRefused is the other end of the same
+// guard: when the crafts and the pool hold nothing in common the call has no
+// candidate at all, and the refusal is the crafts' own sentence rather than the
+// selector's, which answers an empty list with "no credential is offered" and
+// sends an operator to the bundle for a disagreement that is between the
+// published node and the pool.
+func TestCraftsNamingNothingThePoolHoldsAreRefused(t *testing.T) {
+	s := poolSvc(t, ws1Crafts(testAccount))
+	s.server.resolver = resolverWithout{inner: installationResolver{s: s.server}, offering: ws1Pool()}
+
+	resp, body := s.call(t, callBody("ws1-crafts-pool-empty"))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the call is answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	e := refusal(t, resp.StatusCode, body)
+	if !strings.Contains(e.Message, poolRefusalHead) {
+		t.Errorf("the refusal is %q, want the crafts' own sentence (%q): what disagrees here is the published node and the pool this call belongs to", e.Message, poolRefusalHead)
+	}
+	if strings.Contains(e.Message, noCandidatesHead) {
+		t.Errorf("the refusal is %q, and it is the sentence an empty candidate list gets: the bundle is not what left this call with nothing", e.Message)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d requests, want none", n)
+	}
+}
+
 // TestTheProbeReadsTheScopesStateAndNotTheDeployments pins the probe's own read
 // (probe.go's probeDue, R1, R8): the marks that decide whether a probe is owed,
 // and on which credential, are the CALL's scope's — the same state the
@@ -634,15 +739,15 @@ func (r faultResolver) Resolve(ctx context.Context, req *http.Request) (Scope, e
 }
 
 // resolverWithout is an installation's resolver answering its scope with one of
-// seven answers changed, and the two groups are the two things a scope can
+// eight answers changed, and the two groups are the two things a scope can
 // disagree with: the three the front door's own guards read (the path the scope
 // does not serve, the caller it does not report, the slip it does not accept),
-// each a deployment whose scope and whose front door disagree; and the four
-// readers R1's seam is about (the policy, the kill switches, the state and the
-// repository's own auth record — the last a reader OF ITS OWN and never a
-// method of the state, C1's rule 2), each answered from an object of the test's
-// own where the test sets one, which is what makes a reader that read the
-// deployment instead of the scope fail.
+// each a deployment whose scope and whose front door disagree; and the five
+// readers R1's seam is about (the policy, the kill switches, the state, the
+// repository's own auth record — a reader OF ITS OWN and never a method of the
+// state, C1's rule 2 — and the offering, which is the POOL a call belongs to),
+// each answered from an object of the test's own where the test sets one, which
+// is what makes a reader that read the deployment instead of the scope fail.
 type resolverWithout struct {
 	inner    ScopeResolver
 	path     string
@@ -652,6 +757,7 @@ type resolverWithout struct {
 	kills    KillReader
 	state    StateStore
 	repoAuth RepoAuthReader
+	offering OfferingReader
 }
 
 func (r resolverWithout) Resolve(ctx context.Context, req *http.Request) (Scope, error) {
@@ -660,7 +766,7 @@ func (r resolverWithout) Resolve(ctx context.Context, req *http.Request) (Scope,
 		return nil, err
 	}
 	return scopeWithout{Scope: sc, path: r.path, noCaller: r.noCaller, noSlip: r.noSlip,
-		policy: r.policy, kills: r.kills, state: r.state, repoAuth: r.repoAuth}, nil
+		policy: r.policy, kills: r.kills, state: r.state, repoAuth: r.repoAuth, offering: r.offering}, nil
 }
 
 type scopeWithout struct {
@@ -672,14 +778,15 @@ type scopeWithout struct {
 	// noSlip refuses the slip (R18): a workspace's scope, whose callers present
 	// none.
 	noSlip bool
-	// policy, kills, state and repoAuth are the scope's readers where the test
-	// answers them from its own object, and nil where it does not: a nil one
-	// answers the scope this wraps, so a test names only the readers its claim
-	// is about.
+	// policy, kills, state, repoAuth and offering are the scope's readers where
+	// the test answers them from its own object, and nil where it does not: a nil
+	// one answers the scope this wraps, so a test names only the readers its
+	// claim is about.
 	policy   PolicyReader
 	kills    KillReader
 	state    StateStore
 	repoAuth RepoAuthReader
+	offering OfferingReader
 }
 
 func (s scopeWithout) Serves(path string) bool { return path != s.path }
@@ -719,4 +826,20 @@ func (s scopeWithout) RepoAuth() RepoAuthReader {
 		return s.Scope.RepoAuth()
 	}
 	return s.repoAuth
+}
+
+func (s scopeWithout) Offering() OfferingReader {
+	if s.offering == nil {
+		return s.Scope.Offering()
+	}
+	return s.offering
+}
+
+// poolOfferingWithout is a call's pool answered by a test's own list rather than
+// by the bundle: a workspace member's shared node, which is a subset of the
+// installation's bundle and never more than it.
+type poolOfferingWithout []creds.Credential
+
+func (o poolOfferingWithout) Offering(_ context.Context, _ *Bundle) ([]creds.Credential, error) {
+	return o, nil
 }

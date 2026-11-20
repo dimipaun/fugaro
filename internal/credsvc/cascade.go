@@ -117,14 +117,22 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 	if narrowed {
 		// The crafts are a narrowing of the POOL and never a widening of it: the
 		// list is the intersection, so a workspace's pool can only ever lose
-		// entries to a node that names more, and the credentials the crafts
-		// leave out of the pool this call belongs to are reported rather than
-		// dropped, so the run's halt message reads the same list either way.
+		// entries to a node that names more, and every credential the crafts and
+		// the pool disagree about is reported rather than dropped, so the run's
+		// halt message reads the list it was served from and what the two
+		// documents differed on.
 		cands = heldBy(crafted, pool)
-		for _, cred := range pool {
-			if !named(crafted, cred.Name) {
-				skipped = append(skipped, Tried{Name: cred.Name, Tier: wireTier(cred.Tier), Reason: ReasonNotAdmitted})
-			}
+		skipped = append(skipped, craftsAndPoolSkips(crafted, pool)...)
+		if len(cands) == 0 {
+			// The crafts and this call's pool hold nothing in common: every name
+			// the crafts go out on is one the pool does not hold, so this call
+			// has no candidate at all. The refusal is the crafts' own
+			// (poolRefusal) and not an empty list handed to the selector, which
+			// answers an empty list with a sentence about the bundle — the one
+			// document that is not at fault, since what disagrees is the
+			// published node and the pool this call belongs to.
+			return nil, creds.StrategyFailover, nil, &poolRefusal{message: poolRefusalHead +
+				"the crafts go out on " + credentialNames(crafted) + ", and the pool this call belongs to holds " + credentialNames(pool)}
 		}
 	}
 	hasA := false
