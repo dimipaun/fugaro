@@ -2313,7 +2313,7 @@ func TestUpdateManagedWorkspaceStageUnderTheGate(t *testing.T) {
 	// migration it admits: this test is about the stage after it, and a first
 	// publish there is the one write a session is never admitted (D854).
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
-	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+	appendWorkspaceConfig(t, r, wsOwnerTable+wsOwnerCap)
 	// The node the table replaces: member-b as the table declares it (and no
 	// widening anywhere in it) plus a member this table does not declare, so
 	// this publish removes rather than admits.
@@ -2427,7 +2427,7 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
 	// The local table declares a member the published node does not carry.
-	r.appendConfig(t, wsOwnerTwoMembers+wsOwnerCap)
+	appendWorkspaceConfig(t, r, wsOwnerTwoMembers+wsOwnerCap)
 	db.Set(projectpolicy.PathWorkspace(initProjectName), map[string]any{
 		"version": projectpolicy.WorkspaceVersion,
 		"name":    initProjectName,
@@ -2492,7 +2492,7 @@ func TestUpdateManagedRefusesTheFirstWorkspacePublish(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
-	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+	appendWorkspaceConfig(t, r, wsOwnerTable+wsOwnerCap)
 
 	got, err := updateRun(t, r, "update")
 	if err == nil {
