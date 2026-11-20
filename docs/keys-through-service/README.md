@@ -16,6 +16,7 @@ path where a key must sit in the job, is removed under a spec of its own (D3009,
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's ruling; no typo was fixed |
 | [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A5, findings F1–F47, decisions D3000–D3015 with the owner's answers, resolutions R1–R13, open items O1–O12, UNVERIFIED U1–U7. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Contract C1, tasks KS1–KS20 (KS7 and KS8 dropped, their numbers not reused), integration I1 (20 runs over two releases, and one contract change that runs only if raised); levels, critical path, shared files; Checks 50, 780 and 781 |
+| [contract-provider.md](contract-provider.md) | C1's prose half: what a routed call carries, the two refusals, the bundle's family for a named provider entry and its naming rule, the accessor, R12's two facts and where they are recorded. The Go is `internal/credsvc/provider_wire.go`, `internal/gateway/providerwire.go` and `internal/config/provider_served.go` |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
 **Numbers reserved:** decisions **D3000–D3019** (D3000–D3015 used), checks **780–789** (780 and

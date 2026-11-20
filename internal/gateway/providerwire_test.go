@@ -77,6 +77,7 @@ func TestProviderWireNamesAreDistinct(t *testing.T) {
 		{"the claim secret's header", gateway.HeaderSlipClaim},
 		{"the auth mode's header", gateway.HeaderAuthMode},
 		{"the auth account's header", gateway.HeaderAuthAccount},
+		{"the build's header", credsvc.HeaderBuild},
 		{"the tier's header", gateway.HeaderTier},
 		{"the credential's header", gateway.HeaderCredential},
 		{"the switch's header", gateway.HeaderSwitch},
