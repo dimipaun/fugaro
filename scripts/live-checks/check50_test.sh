@@ -9,9 +9,10 @@
 # repository edgeappinc/fugarosandbox) whose state the check MUTATES, because that is what
 # Check 50 is: the fakes carry the state in a directory, and each fake command
 # changes it the way the real one does — `models add` claims the ID on a route
-# entry, `models rm` takes the claim away, `project routing set` writes the
-# switch into the operator's config, `project policy publish` rebuilds the node
-# (and REFUSES when the switch names a model no route entry claims), `update`
+# entry and in the operator's config, `models rm` takes the claim out of both,
+# `project routing set` writes the switch into the operator's config, `project
+# policy publish` rebuilds the node out of that config (and REFUSES when the
+# switch names a model no provider entry of it claims), `update`
 # writes FUGARO_MODEL_PRICES into the job's environment, `secrets versions
 # disable/enable` move one version, and `run` writes a record and the reviewer's
 # own `model call` lines for the mode that launch was given. The cases that
@@ -127,6 +128,13 @@ def claimed(model_id):
     return model_id in config_claims()
 
 
+def unquoted(text):
+    """One YAML scalar without the quotes around it: `models add` writes an inline
+    list with its IDs quoted, so a reader that kept the quote characters would find
+    no claim in the very config line the fake's own writer put one in."""
+    return text.strip().strip('"').strip("'")
+
+
 def config_claims():
     """Every ID named by a `models:` list of a providers: entry of the config."""
     try:
@@ -150,9 +158,9 @@ def config_claims():
         if body.startswith("models:"):
             text = body.split(":", 1)[1].strip()
             if text.startswith("["):
-                found.update(i.strip() for i in text.strip("[]").split(",") if i.strip())
+                found.update(unquoted(i) for i in text.strip("[]").split(",") if i.strip())
         elif body.startswith("- ") and found is not None:
-            found.add(body[2:].strip())
+            found.add(unquoted(body[2:]))
     return found
 
 
@@ -188,15 +196,19 @@ def set_claim(model_id, add=True):
             continue
         inline = entry[start].strip().split(":", 1)[1].strip()
         if inline.startswith("["):
-            ids = [x.strip() for x in inline.strip("[]").split(",") if x.strip()]
-            ids = ids + [model_id] if add and model_id not in ids else [x for x in ids if x != model_id]
+            ids = [unquoted(x) for x in inline.strip("[]").split(",") if x.strip()]
+            if add:
+                if model_id not in ids:
+                    ids.append(model_id)
+            else:
+                ids = [x for x in ids if x != model_id]
             entry[start] = "    models: [%s]" % ", ".join(ids)
             out.extend(entry)
             continue
         block = [entry[start]]
         j = start + 1
         while j < len(entry) and entry[j].strip().startswith("- "):
-            if add or entry[j].strip()[2:].strip() != model_id:
+            if add or unquoted(entry[j].strip()[2:]) != model_id:
                 block.append(entry[j])
             j += 1
         if add:
@@ -314,6 +326,13 @@ elif cmd == "publish":
         print("fugaro: the published policy was deleted")
         sys.exit(0)
     routing = None if "--remove-routing" in flags else read_routing()
+    published = load("policy.json", None) or {}
+    if routing is None and "--remove-routing" not in flags and published.get("routing"):
+        sys.stderr.write(
+            "fugaro: error: the published policy routes Claude and this config names no Claude "
+            "switch, so a publish would drop the switch the project is routed on: write the "
+            "switch back in the config, or ask for --remove-routing (buildProjectPolicy)\n")
+        sys.exit(1)
     if routing and os.environ.get("FAKE_MODE") != "switch-alone":
         for model in (routing.get("claude") or {}).get("models") or []:
             want = CLAIM.get(model, model)
@@ -829,7 +848,12 @@ JSON
 }
 
 # The operator's project config, a repository checkout and the job list: the
-# state the check finds before it writes anything.
+# state the check finds before it writes anything. The word names what the
+# published NODE reads, which is what step 7 branches on, and the config written
+# beside it is the operator's: `policy-routing` is the two of them agreeing, and
+# `policy-routing-no-switch` is a node that routes Claude while the config the
+# check records names no switch of its own — the state a republish is refused
+# from (buildProjectPolicy), which is the restore arm the case below measures.
 write_installation() { # dir policy-word
   local dir=$1 word=${2:-policy-no-routing}
   mkdir -p "$dir/state/records" "$dir/state/calls" "$dir/home/.config/fugaro/projects"
@@ -841,7 +865,7 @@ write_installation() { # dir policy-word
 JSON
   case "$word" in
   no-policy) printf 'null\n' >"$dir/state/policy.json" ;;
-  policy-routing) printf '{"sources":["environment"],"budget":{"mode":"enforce"},"routing":{"claude":{"via":"openrouter","models":["claude-sonnet-5-5"]}}}\n' >"$dir/state/policy.json" ;;
+  policy-routing | policy-routing-no-switch) printf '{"sources":["environment"],"budget":{"mode":"enforce"},"routing":{"claude":{"via":"openrouter","models":["claude-sonnet-5-5"]}}}\n' >"$dir/state/policy.json" ;;
   *) printf '{"sources":["environment"],"budget":{"mode":"enforce"}}\n' >"$dir/state/policy.json" ;;
   esac
   printf '{"project":"fugaro","runs":[],"totals":{"runs":0},"warnings":[]}\n' >"$dir/state/runs.json"
@@ -1210,9 +1234,9 @@ test_the_policy_routing_arm_republishes() {
 
 test_a_restore_that_cannot_republish_says_what_is_still_published() {
   local dir=$work/restore-fails
-  prepare "$dir" policy-routing
+  prepare "$dir" policy-routing-no-switch
   save_config_before "$dir"
-  run_check "$dir" CHECK50_RESTORE_PUBLISH_FAILS=1
+  run_check "$dir"
   expect_status "$status" 1 "a restore whose republish failed"
   expect_contains "$out" "FACT restore: FAIL" "a restore whose republish failed: the row"
   expect_contains "$out" "STILL PUBLISHED" "a restore whose republish failed: what is still in place"
