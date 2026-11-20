@@ -140,6 +140,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	top := maps1(tree)
 	delete(top, "workflows")
 	overlay(merged, top, "", SourceRepo, res.Sources)
+	dropLayerRigorRepos(merged, res.Sources)
 	wfs, profileOf, ps := resolveWorkflows(tree, repo, l, res.Sources)
 	if len(ps) > 0 {
 		return nil, nil, ps
@@ -426,6 +427,27 @@ func dropSources(sources map[string]string, path string) {
 			delete(sources, p)
 		}
 	}
+}
+
+// dropLayerRigorRepos removes defaults.rigor.repos from the document the merged
+// config is decoded from. The map is the project layer's alone (LD4): it names
+// the level each repository of the project runs at, and a repository's own file
+// cannot write it — Rigor.UnmarshalYAML refuses a key that is not default or
+// areas — so the key has no repository half to merge with and, left in the
+// merged block, the strict decode below refuses it ("field repos not found in
+// type config.Rigor") and every repository of the project stops resolving. The
+// layer keeps the map, and ProjectRigor reads it there.
+func dropLayerRigorRepos(merged map[string]any, sources map[string]string) {
+	r, ok := merged["rigor"].(map[string]any)
+	if !ok {
+		return
+	}
+	if _, ok := r["repos"]; !ok {
+		return
+	}
+	delete(r, "repos")
+	delete(sources, "rigor.repos")
+	dropSources(sources, "rigor.repos")
 }
 
 // markLeaves records source for every leaf of v under path.
