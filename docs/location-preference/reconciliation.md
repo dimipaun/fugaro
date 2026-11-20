@@ -1,0 +1,323 @@
+# Reconciliation: one location preference for an installation
+
+Checked against `origin/main` at `252329076` on 2026-11-20. **Where this file disagrees with
+[spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
+**D3080–D3091**, all answered by the owner on 2026-11-20, every one as recommended. It carries out
+**D3029** of [always a budget](../always-a-budget/reconciliation.md) (in that plan's open follow-up,
+pull request #3305), it replaces **D4** of `docs/design/m9-budget-and-dashboard.md` for a new
+installation, and it reverses the ruling **D12 of 2026-10-20** for the Firestore location (D3090).
+
+The places each Google product offers were read from Google's own pages on 2026-11-20 and are
+listed under [What each product offers](#what-each-product-offers).
+
+## Assumptions
+
+- **A1.** "An installation" is one Fugaro project: one GCP project, one project config, one runs
+  bucket. A workspace is several of them and has no location of its own beyond its own project's.
+- **A2.** "Chosen once at setup" means `fugaro setup`'s first-run questions, which are asked at a
+  terminal and fail at once without one. It is a question, not a confirmation.
+- **A3.** "Every regional resource the installation creates" means what Fugaro creates in the
+  customer's GCP project. It does not mean what Google, a git host or a model provider store
+  elsewhere, nor a resource the customer's project already had (its `_Default` log bucket).
+- **A4.** "Recorded" means written where a teammate's machine also reads it, as the region is
+  today.
+- **A5.** "Keeps what it has" covers the two databases and also every other resource whose
+  location cannot change: the buckets, the secrets' replication and the log bucket.
+
+No finding contradicts A1, A2 or A4. A3 became D3082 and A5 became F9 to F11.
+
+## What the spec names, and what the repository has
+
+| The spec's concept | What the repository has |
+| --- | --- |
+| The location preference | Nothing. The nearest thing is `region` in the project config (`localcfg.Config.Region`), which setup asks as a first-run question (`wizard_stage.go`, the `--region` question; `defaultRegion` in `init_inputs.go`) |
+| The mapping the product owns | One instance of it: `gcp.SchedulerRegion` and `nearestSchedulerRegion` (`internal/backend/gcp/names.go`), which place Cloud Scheduler's jobs where the region has no Scheduler |
+| "Setup says so before anything is created" | The wizard asks its questions before the project config is loaded and before anything is applied (`gatherInputs`, `init_inputs.go`) |
+| The confirmation of a permanent location | `confirmLocation` (`internal/cli/init_firebase.go`), reached from `deployDatabase` |
+| "Accepted as it is, not refused" | The opposite, twice: `FirestoreStep.checkExisting` (`internal/infra/firestore.go`) and `discovery.firebaseDB` (`internal/infra/discover_firebase.go`) refuse a database anywhere else |
+| The preference recorded | The shared config carries the region to a teammate (`keep(&out.Region, …)` in `internal/localcfg/shared.go`) |
+| A workspace whose projects differ | `database_region` on a workspace member (`localcfg`'s `DatabaseRegion`, `projectpolicy.ValidDatabaseRegion`, `credsvc`'s `workspaceDatabase`) already lets a member's database live in another region |
+
+## The census
+
+Every region or location literal under `deploy/terraform/gcp` (tests aside) and `internal/infra`
+(tests aside), and every reader of the installation's region.
+
+**Fixed in code today (four):**
+
+| What | Where | Value | Can it change later? |
+| --- | --- | --- | --- |
+| The run history's Firestore database | `infra.FirestoreLocation` (`internal/infra/firestore.go`) | `us-east5` | No |
+| The budget's Realtime Database | `google_firebase_database_instance.this` (`modules/firebase/firebase.tf`) and `firebaseDBRegion` (`internal/infra/discover_firebase.go`) | `us-central1` | No |
+| Fugaro's log bucket and its view | `google_logging_project_bucket_config.fugaro` and `google_logging_log_view_iam_member.runs` (`modules/installation/logging.tf`); `locations/global` in `internal/infra/discover.go` and `internal/infra/imports.go` | `global` | No |
+| Every secret's replication | `replication { auto {} }` on six resources: `project` and `voice_provider_keys` (`modules/installation/secrets.tf`), `licence_renewal` (`licence.tf`), `pairing_key` (`orchestrator.tf`), `credentials_bundle` (`credentials.tf`), `this` (`modules/repo/secrets.tf`); and two creators in Go, `internal/backend/gcp/secrets.go` and `internal/intake/gcp.go` | automatic: wherever Google chooses | No |
+
+**Already follows the installation's region (`var.region`, from `localcfg.Config.Region`):**
+every Cloud Run job and service (the project and workflow jobs, the history, licence, reports,
+catalog-check, coordinator, orchestrator and reaper jobs, the credentials, mobile, voice and intake
+services); every Artifact Registry repository (`registry.tf`, `build_identity.tf`,
+`modules/repo/registry.tf`); the runs bucket and the MCP auth store (`location = upper(var.region)`
+in `bucket.tf` and `mcpauth_store.tf`); the Terraform state bucket (`infra.CreateStateBucket`) and
+the managed state bucket (`managedmode.EnsureManagedStateBucket`); the compute root's network
+(`modules/compute/network.tf`); Cloud Build (`localcfg.Config.BuildRegion`, the region unless
+`build.region` says otherwise); and Vertex model calls (`CLOUD_ML_REGION`, set from the region in
+`internal/infra/spec.go` and `projectjobs.go`).
+
+**Follows the region through a mapping:** the Cloud Scheduler jobs (`scheduler_region`), by
+`gcp.SchedulerRegion`.
+
+**Not regional, and Fugaro's to state rather than to place:** the API key's `locations/global`
+(`discover_firebase.go`), Identity Platform (initialised over REST in `init_firebase.go`), the
+service accounts and IAM.
+
+**Readers of the region:** `newProjectConfig` (`internal/cli/init.go`), `localcfg.Config.Override`
+(called from `internal/cli/project.go`), `gcpOptions` (`init.go`), `BuildRegion`, the
+`SchedulerRegion` resolutions in `internal/infra/spec.go`, `firebase.go`, `reportsjob.go` and
+`compute.go`, the shared config (`shared.go`), the update record (`localcfg/updaterecord.go`) and
+the setup answers file (`setupAnswerQuestions`, `schemas/setup-answers.schema.json`).
+
+## What each product offers
+
+Read on 2026-11-20 from the pages named; the dates are each page's own "last updated".
+
+| Product | Places | Fixed once created? | Page |
+| --- | --- | --- | --- |
+| Realtime Database | `us-central1`, `europe-west1`, `asia-southeast1` and no other | Yes | firebase.google.com/docs/database/locations (2026-11-18) |
+| Firestore | Regions including `us-east5` and thirteen in the EU (`europe-west1`, `-west2`, `-west3`, `-west4`, `-west6`, `-west8`, `-west9`, `-west10`, `-west12`, `europe-southwest1`, `europe-north1`, `europe-north2`, `europe-central2`); multi-regions `nam5`, `nam7`, `eur3` | Yes | firebase.google.com/docs/firestore/locations (2026-11-18) |
+| Cloud Run | 43 regions, `us-east5` and `europe-west1` among the Tier 1 ones | n/a | docs.cloud.google.com/run/docs/locations (2026-11-18) |
+| Cloud Scheduler | 34 regions; no `us-east5`; nine in the EU | n/a | docs.cloud.google.com/scheduler/docs/locations (2026-11-10) |
+| Artifact Registry | Regions, and multi-regions `us`, `europe`, `asia` | Not stated | docs.cloud.google.com/artifact-registry/docs/repositories/repo-locations (2026-11-10) |
+| Secret Manager | Automatic replication ("without restriction", globally) or user-managed (a named set of locations) | Yes: "the locations in the replication policy can't be updated" | docs.cloud.google.com/secret-manager/docs/choosing-replication (2026-11-10) |
+| Cloud Storage | Regions, dual-regions, multi-regions `US`, `EU`, `ASIA` | A bucket can now be relocated, under conditions Fugaro does not meet by default | docs.cloud.google.com/storage/docs/locations (2026-11-17) |
+| Cloud Build | 42 regions; a build is pinned by naming the region, with no private pool | n/a | docs.cloud.google.com/build/docs/locations (2026-11-13) |
+| Cloud Logging buckets | `global`, multi-regions `us` and `eu`, and regions | Yes | docs.cloud.google.com/logging/docs/region-support (2026-11-20) |
+| Claude on Vertex AI | `global`, multi-regions `us` and `eu`, and regions including `us-east5` and `europe-west1`; the global endpoint "doesn't support data residency requirements" | n/a | docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/locations (2026-11-20) |
+
+Google's own definition, which D3082 follows: "Data residency describes where your data is stored
+at rest" (docs.cloud.google.com/assured-workloads/docs/data-residency).
+
+## Findings
+
+**F1 — Wrong: neither database accepts another location today.** The spec's item 5 reads as if a
+database elsewhere were a state the code meets. `FirestoreStep.checkExisting` refuses any location
+but `infra.FirestoreLocation`, and `discovery.firebaseDB` refuses a default instance outside
+`firebaseDBRegion`. So no installation that exists has a database anywhere but `us-east5` and
+`us-central1`, and item 5 changes two refusals into adoptions. It applies to a Firebase project
+that already had a database before Fugaro met it. Resolved by R3 and D3091.
+
+**F2 — Exists: setup already asks one location question.** The wizard's `--region` question
+(`wizard_stage.go`) is a first-run question with a default (`defaultRegion`, `us-east5`), an
+answers-file key (`region` in `setupAnswerQuestions`) and a refusal that names the flag when
+nothing can answer (`firstRunMissing`). The preference is that question in a person's words, not a
+second one. Decided by D3080.
+
+**F3 — Exists: the scheduler's mapping is the pattern.** `gcp.SchedulerRegion` is a table the
+product owns, dated against Google's page, with a fixed fallback per region. Every entry of
+`nearestSchedulerRegion` stays on the continent of its key. The new mapping follows it and a test
+pins that no fallback leaves the place (LP1).
+
+**F4 — Rule: the region can be changed after setup, and then nothing agrees.**
+`localcfg.Config.Override` writes any `--region` into an existing project config, and no caller
+compares it with the installation. The runs bucket is regional (`upper(var.region)`), so the next
+plan replaces a bucket and is refused late by the data-bearing rule (D1551,
+`docs/no-prompt-policy/reconciliation.md`). The comment on `defaultRegion` says the region is
+"changeable on a later run"; with the place derived from it (D3080) it is not. Decided by D3088.
+
+**F5 — Rule: the location's own confirmation is a ruling the spec reverses.** `confirmLocation`
+holds the Firestore location's note, and `stepConfirmation` (`internal/cli/init.go`) names "the
+Firestore location" among the three steps that are "the person's alone (D12, 2026-10-20)". The
+spec's item 4 removes that step. D3027 of always-a-budget moved the budget database's write ahead
+of the note; with the note gone that order no longer matters. Decided by D3090.
+
+**F6 — Rule: `docs/design/m9-budget-and-dashboard.md` D4 fixes both locations.** It says the
+Realtime Database goes in `us-central1` and Firestore in `us-east5`, with no fallback. The design
+is replaced for a new installation by the mapping below; an existing one still matches it. The
+design document gets a note (LP11), not a rewrite.
+
+**F7 — Gap: `defaultRegion`'s comment forbids what the spec asks.** It says the region and the
+Firestore location "happen to hold the same value and are never derived from one another". D3085
+derives one from the other. The comment goes with the constant (LP3, LP4).
+
+**F8 — Gap: changing the Realtime Database's region in Terraform replaces the instance.** The
+resource carries `prevent_destroy`, and the region is a creation-time field. So the module's region
+must be an input whose value, for an instance that exists, is that instance's own location as
+discovery read it, never the mapping's answer. LP2 holds this and tests that an existing
+installation plans no change.
+
+**F9 — Gap: secrets replicate "without restriction".** All six Terraform secret resources and both
+Go creators use automatic replication, which Google documents as global. The comment in
+`secrets.tf` says why it cannot simply change: "any other replication would replace them, which
+deletes every version first". An EU promise that covers credentials (D3082) needs user-managed
+replication on a new installation and automatic kept on an existing one, so the choice is a recorded
+fact of the installation and not a function of the region (D3087).
+
+**F10 — Gap: the run log bucket is `global`.** It holds each run's output, which is the code and
+the agent's transcript, and its location is permanent. The same shape as F9: a new installation's
+bucket goes in the place, an existing one stays `global`, and the import addresses in
+`internal/infra/imports.go` and the read in `internal/infra/discover.go` stop assuming `global`.
+
+**F11 — Gap: an installation made before this work cannot be told from its region alone.** Its
+secrets are automatic and its log bucket global whatever its region. `fugaro update` therefore
+records what the cloud holds, key by key, and uses the mapping only for what does not exist yet
+(R5, D3089).
+
+**F12 — Gap: a teammate's machine types the region again.** `fugaro update` on a new machine asks
+`--gcp-project` and `--region` (`firstRunMissing`), and nothing compares the answer with the
+installation. The runs bucket's own location is the installation's region and cannot drift. LP7
+reads it before it trusts a typed region (R6).
+
+**F13 — Exists: every reader of a database URL already accepts a regional host.** The validators
+in `internal/rtdb/client.go`, `internal/infra/tfvars.go`, `internal/infra/firebase.go`,
+`internal/cli/credentials_serve.go`, `orchestrator_serve.go` and `voice_serve.go` accept both
+`<db>.firebaseio.com` and `<db>.<region>.firebasedatabase.app`, and the URL a run uses is the
+Firebase root's `rtdb_url` output, not a string built from a constant. A budget database in
+`europe-west1` needs no change in a reader.
+
+**F14 — Gap: a workspace finds a member's database by `database_region`, which a person types.**
+`fugaro workspace` writes `workspace_members.<project>.database_region` from a flag
+(`internal/cli/workspace.go`), and an empty one means `us-central1` (`credsvc`'s
+`workspaceDatabase`). Once a member can be in `europe-west1` by choosing EU, a member linked
+without the flag is read at the wrong host. LP9 fills it from the member's own record. D3084 lets
+members differ.
+
+**F15 — Open: the `(default)` Firestore database and the project's default resource location.**
+Firebase's page says the default database is tied to a project's default resource location where
+one was set. A Firebase project that already has one may refuse a Firestore database elsewhere.
+It is U1, and Check 820 measures it.
+
+**F16 — Rule: `fugaro update` is the whole upgrade.** Nothing here may ship a step other than
+`fugaro update`. The record (F11) is written by `update` itself, with no question, and a run in
+flight is untouched: no resource is replaced, and the record is a config field no run reads.
+
+**F17 — Rule: a field never changes meaning.** `region` keeps its meaning. The record and the
+answers-file key are new names; nothing is removed or retyped, so no format's version moves.
+
+**F18 — Gap: the documents a customer reads say nothing about where data lives.** `SECURITY.md`
+and `website/content/security.md` name `us-east5` only inside an image path. The spec's item 7 is
+new text, pinned by a docs test (LP11).
+
+**F19 — Gap: always-a-budget's AB7 and this plan share one file.** AB7 and this plan's LP3 and
+LP10 all edit `internal/cli/init_firebase.go`, and AB7's
+`TestTheBudgetDatabaseIsWrittenBeforeTheLocationNote` asserts an order around a note LP10 removes.
+The plan orders LP10 after AB7 and says what AB7's test becomes (O2).
+
+## The mapping
+
+What a new installation gets. It is the product's table (`internal/place`, LP1); the two named
+places are D3081's.
+
+| | US | EU | A region in neither |
+| --- | --- | --- | --- |
+| Regions that derive the place | `us-*` | `europe-*` except `europe-west2` (London) and `europe-west6` (Zürich), which are not in the EU | all others, those two included |
+| Region when only the place is chosen | `us-east5` | `europe-west1` (D3086) | n/a: a region is typed |
+| Compute, registry, buckets, builds | the region | the region | the region |
+| Cloud Scheduler | `gcp.SchedulerRegion`, as today | the same | the same |
+| Firestore (D3085) | the region where Firestore offers it, else `us-east5` | the region where offered, else `europe-west1` | the region where offered, else a stated fallback |
+| Realtime Database | `us-central1` | `europe-west1` | the nearest of the three, stated |
+| Secrets (D3082) | user-managed, in the region | user-managed, in the region | user-managed, in the region |
+| Run log bucket (D3082) | the region | the region | the region |
+
+Where the table says "stated", setup prints the line before anything is created (the spec's
+item 2). A region in neither place carries no promise and its Realtime Database is outside its
+country: setup says that too.
+
+## Decisions
+
+All answered by the owner on 2026-11-20. None departs from the recommendation.
+
+| # | Question | Answer | Why |
+| --- | --- | --- | --- |
+| **D3080** | How do the preference and the compute region relate (item 3)? | **The region stays the one stored setting; the place is derived from it.** Setup asks the place and takes its default region; `--region` stays as the precise form | as recommended: two values that are one cannot disagree |
+| **D3081** | Which places are offered at first? | **US and EU are named and promised. Any other region still works, with each fallback stated before anything is created** | as recommended: no capability setup has today is removed |
+| **D3082** | What does EU promise? | **All data at rest that Fugaro creates in a new installation is stored in the place**: databases, buckets, registry, secrets, run logs. The exceptions are listed in the documents | as recommended: it is Google's own meaning of residency, and credentials and run output are the data that matters |
+| **D3083** | Are model calls in the promise? | **No, and the documents say so plainly.** Vertex calls go to the installation's region, as today | as recommended: nothing Fugaro enforces would hold for the other providers |
+| **D3084** | A workspace whose members are in different places? | **Allowed. Each project keeps its own place**, and the documents say the workspace's service reads each member's ledger across places | as recommended: the code already carries a member's database region |
+| **D3085** | Where does a new Firestore database go? | **The installation's own region where Firestore offers it, else the place's default** | as recommended: one region for everything where it can be |
+| **D3086** | Which region does EU give with no `--region`? | **`europe-west1`** | as recommended: the Realtime Database's only EU location, so everything is in one region |
+| **D3087** | Where is "what this installation has" kept? | **A locations record in the project config, shared like the region**, written once by setup and by update; where it and the cloud disagree the cloud wins and the record is corrected | as recommended: the secrets' replication cannot be derived |
+| **D3088** | A `--region` that differs from the installation's? | **Refused at once, with the reason** | as recommended: today it ends in a late Terraform refusal |
+| **D3089** | An installation made before this work, with compute in the EU and a database not yet created? | **`fugaro update` creates it in the derived place**, prints the line and asks nothing | as recommended: it is what D3029 held AB7 back for |
+| **D3090** | The Firestore location's own note (D12 of 2026-10-20)? | **Removed everywhere.** The line is printed and the database is created, in any session the stage itself may run in | as recommended: the brief's item 4; the stage's own fences still apply |
+| **D3091** | A database found outside the installation's place? | **Adopted if empty or ours, recorded where it really is, said once, and reported by `fugaro doctor` as information** | as recommended: accepted is not the same as hidden |
+
+**What D3082 does not promise.** The documents list each of these by name: prompts and code sent
+to a model provider (D3083); the git host; Google's global control plane (IAM, service accounts,
+resource names and labels, the API key, Identity Platform's configuration); the project's own
+`_Default` and `_Required` log buckets, which Google creates in `global` and which hold whatever
+the customer's project routes there; and everything an installation made before this work already
+has.
+
+**What D3090 means.** A coding agent's session and a scripted `fugaro update` can now create a
+database whose location is permanent, where the stage itself may run. What keeps an agent out is
+unchanged: the refusal of cloud writes in an agent's session and the managed gate (D3028 of
+always-a-budget). The ruling of 2026-10-20 still holds for creating the project and linking the
+billing account.
+
+## Resolutions
+
+One defensible answer each, so stated and not asked.
+
+- **R1.** The mapping is one pure package, `internal/place`, with no cloud call, tested against a
+  dated copy of Google's lists, like `gcp.SchedulerRegions` (F3).
+- **R2.** `--location us|eu` is a new setup flag and a new answers-file key. With `--region` it
+  must agree, and a disagreement is refused at once. With neither and no terminal, setup fails at
+  once naming both flags, as it does for `--region` today (F2). At a terminal the question's
+  default is US, which is today's default region.
+- **R3.** An existing database is adopted wherever it is, under the rules that already decide
+  whether it is ours: empty, or carrying our mark. A Firestore database that is not native mode is
+  still refused, because that is not a location (F1).
+- **R4.** The module's region for the Realtime Database is the existing instance's location when
+  discovery finds one, and the mapping's answer only when it finds none (F8).
+- **R5.** The record is written key by key: a key is the location of the thing that exists, or the
+  mapping's answer once Fugaro has created it. A key already recorded is never rewritten from the
+  mapping, only corrected from the cloud (D3087, F11). For secrets the key is the installation's
+  one replication policy: automatic if any Fugaro secret exists when `update` first records it.
+- **R6.** A typed region that differs from the runs bucket's own location is refused (F12), by the
+  same refusal as D3088.
+- **R7.** Setup prints where each thing will go, one line per row of the mapping, before anything
+  is created, and asks nothing about it (items 2 and 4).
+- **R8.** No release note carries a step: `### For operators` says run `fugaro update`, and that
+  it records where the installation's data already is and moves nothing (F16).
+- **R9.** The part AB7 waits on is **LP2** (F8, D3029): after it, a budget database created by any
+  path goes where the mapping says.
+
+## Open tensions
+
+None. No two answers pull against each other.
+
+## Open items
+
+- **O1.** U1 and U2 are measured only by a live setup in the EU (Check 820, owner-run). Until it
+  passes, the EU row is tested against fakes alone.
+- **O2.** AB7 of always-a-budget tests that the budget database is written before the location's
+  note (D3027). LP10 removes the note and is ordered after AB7; it rewrites that test to assert
+  that no note is printed. If AB7 has not merged when LP10 is ready, LP10 waits.
+- **O3.** Pull request #3305 (D3029 in always-a-budget) is open. This plan names LP2 as what AB7
+  waits on; #3305's text says "the part that says where a new budget database goes" and needs the
+  name once this merges.
+- **O4.** An installation in neither place (D3081) gets its Realtime Database on another
+  continent in some cases (South America to `us-central1`). The fallback table in LP1 is the
+  product's guess at "nearest" and is the owner's to correct.
+- **O5.** The workspace root (`deploy/terraform/gcp/roots/workspace`) is not in CI's Terraform
+  loop until the owner copies the staged workflow in (`.claude/rules/terraform.md`). LP5 and LP6
+  touch modules the workspace root does not use; if that changes, the root is validated by hand.
+
+## UNVERIFIED
+
+- **U1.** Whether a Firebase project with a default resource location already set refuses a
+  `(default)` Firestore database in another location. Settled by Check 820, or by Firebase's API
+  on a scratch project; the owner can.
+- **U2.** Whether `google_firebase_database_instance` creates a `DEFAULT_DATABASE` instance named
+  `<project>-default-rtdb` in `europe-west1` and returns a
+  `<project>-default-rtdb.europe-west1.firebasedatabase.app` URL. Firebase's page says a default
+  instance may be in any of the three locations; the provider's behaviour is not checked. Settled
+  by Check 820.
+- **U3.** Whether Cloud Run jobs are offered in every Cloud Run region. Google's page lists no
+  exception for jobs and does not say so either.
+- **U4.** Where Cloud Build's `global` default pool runs. Fugaro names a region for every build
+  (`BuildRegion`), so it matters only if some build does not; none was found.
+- **U5.** Which services Google's own residency commitment covers (cloud.google.com/terms/data-residency
+  could not be read in full). The documents in LP11 state what Fugaro configures, not what Google
+  commits to, and link Google's page.
+- **U6.** Whether a user-managed secret in one region is readable by a Cloud Run job in the same
+  region with no other change. Secret Manager's page implies it; Check 820 measures it.
