@@ -216,8 +216,21 @@ sweep_leftovers() {
   for n in $names; do
     gcloud batch jobs delete "$n" --project="${P:?}" --location="${L:?}" --quiet >/dev/null 2>&1 || true
   done
-  if [ -n "$(jobs_of_mine 2>/dev/null || true)" ]; then
-    LEFT_BEHIND="${LEFT_BEHIND}${LEFT_BEHIND:+, }the job(s) $(printf '%s' "$(jobs_of_mine 2>/dev/null || true)" | oneline)"
+  # A job whose delete has been accepted is still listed until the platform has
+  # finished with it, so the list is read again, bounded, rather than once: a
+  # job the step before this one deleted is not a job this check left behind.
+  # A poll of zero counts as a second of the bound, so the bound still bounds
+  # the wait whatever the poll is set to.
+  local waited=0 tick="$SWEEP_POLL"
+  [ "$tick" -gt 0 ] || tick=1
+  names=$(jobs_of_mine 2>/dev/null || true)
+  while [ -n "$names" ] && [ "$waited" -lt "$SWEEP_BOUND" ]; do
+    sleep "$tick"
+    waited=$((waited + tick))
+    names=$(jobs_of_mine 2>/dev/null || true)
+  done
+  if [ -n "$names" ]; then
+    LEFT_BEHIND="${LEFT_BEHIND}${LEFT_BEHIND:+, }the job(s) $(printf '%s' "$names" | oneline)"
   fi
   if [ -n "$HANDMADE_MADE" ]; then
     gcloud compute instances delete "$HANDMADE_MADE" --project="${P:?}" --zone="${A_VM_ZONE:?}" --quiet >/dev/null 2>&1 || true
@@ -323,6 +336,13 @@ WAIT_LINES=${CHK830_WAIT_LINES:-600}
 WAIT_AUDIT=${CHK830_WAIT_AUDIT:-180}
 REUSE_BOUND=${CHK830_REUSE_BOUND:-180}
 REUSE_POLL=${CHK830_REUSE_POLL:-5}
+# Deleting a Batch job is asynchronous: the delete is accepted at once and the
+# job stays listable, in DELETION_IN_PROGRESS, until the platform has finished
+# with it (the engine's own reaper lists that state: internal/backend/batch/
+# reap.go). The sweep at the end waits for its own deletes to land within this
+# bound, because a list taken one call too early is not a list of what is left.
+SWEEP_BOUND=${CHK830_SWEEP_BOUND:-120}
+SWEEP_POLL=${CHK830_SWEEP_POLL:-5}
 # The audience the probe asks the metadata server for. A real service's URL is
 # not this check's to know; the claims are the measurement, and the audience is
 # printed so the block says which one was asked for.
@@ -1248,6 +1268,49 @@ print(json.dumps(d))' "$labels_json" "$(json_obj "$CHK_LABEL=$CHK_VALUE")")
   fi
 }
 
+# refused_field MESSAGE: the field a Compute refusal is about, as
+# `<home><TAB><key>` with home `labels` or `metadata`, when the message names
+# one of the fields this check wrote — `resource.labels.batch-job-uid`,
+# `resource.metadata.job_uid`. Empty otherwise, a metadata *item*
+# (`resource.metadata.items[0].key`) included: that names a position in a list,
+# not a key, and a second attempt built on a guess at which key it was would
+# drop a field for no reason the platform gave.
+refused_field() { # refused_field MESSAGE
+  printf '%s\n' "$1" | awk '
+    {
+      if (match($0, /resource[.]metadata[.]items\[/)) exit
+      if (match($0, /resource[.]labels[.][A-Za-z0-9_-]+/)) {
+        s = substr($0, RSTART, RLENGTH)
+        sub(/^resource[.]labels[.]/, "", s)
+        print "labels\t" s
+        exit
+      }
+      if (match($0, /resource[.]metadata[.][A-Za-z0-9_-]+/)) {
+        s = substr($0, RSTART, RLENGTH)
+        sub(/^resource[.]metadata[.]/, "", s)
+        print "metadata\t" s
+        exit
+      }
+    }'
+}
+
+# kv_without LIST DROP: the `k=v` list without the pair whose key is DROP. The
+# second attempt of O8's plain VM is built with this, so that the one field
+# Compute named is the only one left out — every other field the first attempt
+# carried is still written, and the VM is read with all of them.
+kv_without() { # kv_without LIST DROP
+  printf '%s\n' "$1" | awk -F, -v drop="$2" '
+    {
+      out = 0
+      for (i = 1; i <= NF; i++) {
+        eq = index($i, "=")
+        if (eq < 2) continue
+        if (substr($i, 1, eq - 1) == drop) continue
+        printf "%s%s", (out++ ? "," : ""), $i
+      }
+    }'
+}
+
 # handmade: O8's plain Compute Engine VM — the one someone with
 # compute.instances.create and actAs on a run account could make by hand. It is
 # named after the probe job and labelled with the probe job's identity, which is
@@ -1261,15 +1324,37 @@ step_handmade() { # step_handmade LABELS META KEYS_TRIED
   if ! gcloud compute instances create "$HANDMADE_VM" --project="${P:?}" --zone="${A_VM_ZONE:?}" \
     --machine-type="$MT" --image-family=debian-12 --image-project=debian-cloud --no-address \
     --labels="$labels" --metadata="$metadata" >"$SCRATCH/err" 2>&1; then
-    local msg
+    local msg refused rhome rdrop refused_shown retry_labels retry_metadata
     msg=$(oneline <"$SCRATCH/err")
+    refused=$(refused_field "$msg")
+    rhome=""
+    rdrop=""
+    IFS=$'\t' read -r rhome rdrop <<<"$refused"
+    if [ -z "$rhome" ]; then
+      fact u1-handmade FAIL "O8's plain VM: the first attempt, carrying every one of the ${keys_tried} keys, was refused by Compute (${msg}) and the refusal names no field this check wrote, so there is nothing to leave out of a second attempt that would still carry the rest: this sitting does not say which of the fields u1-link named a hand-made VM can carry. Read the message against those fields by hand before BR3 rests on one"
+      return 0
+    fi
+    refused_shown="${rhome}.${rdrop}"
+    # Only the field Compute named is left out of the second attempt: the whole
+    # metadata set is still written — Compute refuses label keys, and a metadata
+    # item it did not name is a field a hand-made VM is free to carry, which is
+    # what this row is asking about — and every label but the refused one. A
+    # field that is never written is a field that was never tried, so nothing
+    # else may be dropped, and a refusal that names no field ends the row above
+    # rather than guessing at one.
+    retry_labels="$labels"
+    retry_metadata="$metadata"
+    case "$rhome" in
+    labels) retry_labels=$(kv_without "$labels" "$rdrop") ;;
+    metadata) retry_metadata=$(kv_without "$metadata" "$rdrop") ;;
+    esac
     if gcloud compute instances create "$HANDMADE_VM" --project="${P:?}" --zone="${A_VM_ZONE:?}" \
       --machine-type="$MT" --image-family=debian-12 --image-project=debian-cloud --no-address \
-      --labels="${CHK_LABEL}=${CHK_VALUE},job_uid=${A_UID}" --metadata="job_uid=${A_UID}" >"$SCRATCH/err" 2>&1; then
+      --labels="${CHK_LABEL}=${CHK_VALUE}${retry_labels:+,$retry_labels}" --metadata="$retry_metadata" >"$SCRATCH/err" 2>&1; then
       # The refusal is part of this row's answer, so it belongs in the row's own
       # sentence: a fact recorded beside the verdict would be what a reader of
       # the block sees instead of the verdict.
-      note="the first attempt, carrying every one of the ${keys_tried} keys, was refused by Compute (${msg}) — a field Compute will not let a hand-made VM carry cannot be forged that way — and the VM this row is about was then created with only job_uid and read with that set; "
+      note="the first attempt, carrying every one of the ${keys_tried} keys, was refused by Compute (${msg}) — a field Compute will not let a hand-made VM carry cannot be forged that way — and ${refused_shown} is the only field the second attempt left out: every other field the first attempt carried was written to the VM this row is about, and is read below; "
     else
       fact u1-handmade INFO "O8's plain VM could not be created in ${A_VM_ZONE} (${msg}), so this sitting does not say whether a hand-made VM can carry the link's field. The keys it would have carried were ${keys_tried}; a quota or a default-network problem in ${A_VM_ZONE} is the innocent reading, and the run of this check on a quiet project answers it"
       return 0
@@ -1313,21 +1398,28 @@ step_u3() {
   local waited=0 audit=not
   while :; do
     project_log_text 'protoPayload.methodName="google.cloud.batch.v1.BatchService.CreateJob"' "$SCRATCH/audit.json"
-    if grep -qF "$JOB_A" "$SCRATCH/audit.json" 2>/dev/null || grep -qF "$A_UID" "$SCRATCH/audit.json" 2>/dev/null; then
+    # The record waited for here is this run's own, and the uid is what tells it
+    # apart: the job's name is fixed, so a record from a run in the last hour —
+    # the run the FAIL texts below ask the owner to make, on the very failure
+    # this loop is waiting out — carries the same name and would be read as this
+    # run's record before this run's has arrived. A Batch uid is new with every
+    # job creation, so it is the one thing on the record that is this run's
+    # alone; absence is established only for a record that was read.
+    if grep -qF "$A_UID" "$SCRATCH/audit.json" 2>/dev/null; then
       audit=yes
       break
     fi
     [ "$waited" -ge "$WAIT_AUDIT" ] && break
     sleep 10
     waited=$((waited + 10))
-    say "waiting for the CreateJob audit record of ${JOB_A} (${waited}s of ${WAIT_AUDIT}s)"
+    say "waiting for this run's CreateJob audit record (uid ${A_UID}) (${waited}s of ${WAIT_AUDIT}s)"
   done
   local seen=""
   grep -qF "$MARKER_VALUE" "$SCRATCH/log-job.json" 2>/dev/null && seen="${seen}the probe job's own log entries (all logs, selected by its uid), "
   grep -qF "$MARKER_VALUE" "$SCRATCH/log-value.json" 2>/dev/null && seen="${seen}Cloud Logging anywhere in ${P} in the last hour, "
   grep -qF "$MARKER_VALUE" "$SCRATCH/lines-a" 2>/dev/null && seen="${seen}the instance metadata as the container itself read it, "
   grep -qF "$MARKER_VALUE" "$SCRATCH/vm-a.json" 2>/dev/null && seen="${seen}the instance's own object, "
-  grep -qF "$MARKER_VALUE" "$SCRATCH/audit.json" 2>/dev/null && seen="${seen}the CreateJob audit record, "
+  grep -qF "$MARKER_VALUE" "$SCRATCH/audit.json" 2>/dev/null && seen="${seen}the CreateJob audit record read here (this run's own, selected by uid), "
   local entries
   entries=$(python3 -c 'import json,sys
 try:
@@ -1339,9 +1431,9 @@ except Exception:
   elif [ -n "$seen" ]; then
     fact u3-marker FAIL "the marker variable ${MARKER_NAME}'s stand-in value APPEARS in ${seen}which is the finding this row exists for: a variable on a Batch job is published there, so the wrapped blob of R5 would be published too (F3, R7). Nothing may carry the key as a job variable while this holds, and the value is not printed in this block on purpose — read it out of the job's own object if you need to see it: gcloud batch jobs describe ${JOB_A} --project=${P} --location=${L}"
   elif [ "$audit" != yes ]; then
-    fact u3-marker FAIL "the marker variable ${MARKER_NAME}'s stand-in value reached the container (the control) and was not found in any reading that WAS taken — ${entries} log entries for the probe job, the project-wide search, the instance metadata inside and outside the VM — but the CreateJob audit record of ${JOB_A} could NOT be read within ${WAIT_AUDIT}s, so absence was not established for it: a record this check never saw is not a record that says no. Give it longer (CHK830_WAIT_AUDIT=<seconds>) and run again, and check that Admin Activity records for batch.googleapis.com are on in ${P}. Nothing may rest on the marker until this is answered (R7, F3)"
+    fact u3-marker FAIL "the marker variable ${MARKER_NAME}'s stand-in value reached the container (the control) and was not found in any reading that WAS taken — ${entries} log entries for the probe job, the project-wide search, the instance metadata inside and outside the VM — but this run's own CreateJob audit record (the one carrying the uid ${A_UID}) could NOT be read within ${WAIT_AUDIT}s, so absence was not established for it: a record this check never saw is not a record that says no. A record naming ${JOB_A} but not this run's uid is another run's and is not read as this one's — job names are reused, uids are not. If the CreateJob records in ${P} carry no uid at all, this row stays fail-closed on purpose: read the record for this run by hand (gcloud logging read 'protoPayload.methodName="google.cloud.batch.v1.BatchService.CreateJob"' --freshness=1h) and check its own timestamp against the job's createTime (${A_CREATED:-<unread>}). Give it longer (CHK830_WAIT_AUDIT=<seconds>) and run again, and check that Admin Activity records for batch.googleapis.com are on in ${P}. Nothing may rest on the marker until this is answered (R7, F3)"
   else
-    fact u3-marker PASS "the marker variable ${MARKER_NAME}'s stand-in value reached the container's own environment (the control, so the job carried it) and appears in none of the readings: neither in the probe job's own log entries (${entries} of them, selected by its uid across every log), nor anywhere in ${P}'s Cloud Logging in the last hour, nor in the instance metadata as the container read it or in the instance's own object, nor in the CreateJob audit record, which was found and names ${JOB_A}"
+    fact u3-marker PASS "the marker variable ${MARKER_NAME}'s stand-in value reached the container's own environment (the control, so the job carried it) and appears in none of the readings: neither in the probe job's own log entries (${entries} of them, selected by its uid across every log), nor anywhere in ${P}'s Cloud Logging in the last hour, nor in the instance metadata as the container read it or in the instance's own object, nor in the CreateJob audit record of this run (the one carrying the uid ${A_UID}, which was found)"
   fi
 }
 

@@ -8,15 +8,19 @@
 #
 # The fake is a small model of Batch and Compute, driven by files a case writes:
 #
-#   cfg            key=value knobs — submit_fail, delete_fail, create_fail,
-#                  create_refuse_reserved, refuse_reuse, hide_vms
+#   cfg            key=value knobs — submit_fail, delete_fail, delete_lists,
+#                  create_fail, create_refuse_reserved, create_refuse_blind,
+#                  refuse_reuse, hide_vms
 #   uid.map        job name <TAB> its UID, which is what its logs are read by
 #   state.map      job name <TAB> its state
 #   vmjob.map      job name <TAB> the instance it ran on
 #   vm.map         instance name <TAB> the file `compute instances describe`
 #                  answers with
 #   instances.base the instances that were there before the check ran
-#   jobs           the jobs that exist right now (submit adds, delete removes)
+#   jobs           the jobs that exist right now (submit adds; delete removes,
+#                  after `delete_lists` more list calls when that is set, which
+#                  is how a Batch delete behaves: accepted at once, finished
+#                  later, the job listed as DELETION_IN_PROGRESS in between)
 #   created        the instances made by hand right now (create adds, delete
 #                  removes), which is where O8's plain VM lives
 #   mades/<name>.json  the object Compute made out of a `create` call: the labels
@@ -176,6 +180,22 @@ def lookup(name, key, default=""):
     return default
 
 
+def counts(name):
+    out = {}
+    for row in rows(name):
+        try:
+            out[row[0]] = int(row[1])
+        except (IndexError, ValueError):
+            continue
+    return out
+
+
+def write_counts(name, m):
+    with open(os.path.join(state, name), "w") as fh:
+        for k in sorted(m):
+            fh.write("%s\t%d\n" % (k, m[k]))
+
+
 def canned(name):
     try:
         with open(os.path.join(state, name)) as fh:
@@ -276,6 +296,12 @@ if argv[:2] == ["compute", "instances"]:
         die("fake gcloud: unhandled describe format: %s" % fmt)
     if op == "create":
         reserved = cfg("reserved_key")
+        if cfg("create_refuse_blind") == "yes":
+            # A refusal that names no field of the request: the check may drop a
+            # field from a second attempt only when the platform says which one
+            # it will not take, so this has to end the row rather than make a
+            # guess at what to leave out.
+            die("ERROR: INVALID_ARGUMENT: the request was refused by the platform")
         if cfg("create_refuse_reserved") == "yes" and reserved and reserved in flag("--labels"):
             die("ERROR: Invalid value for field 'resource.labels.%s': the key is reserved" % reserved)
         if cfg("create_fail") == "yes":
@@ -397,13 +423,31 @@ if argv[:2] == ["batch", "jobs"]:
             sys.exit(0)
         die("fake gcloud: unhandled describe format: %s" % fmt)
     if op == "list":
+        # A job whose delete the platform has accepted is still listed until it
+        # has finished with it, so with `delete_lists` set the delete below
+        # leaves the name here for that many more list calls — the state a Batch
+        # job is in as DELETION_IN_PROGRESS, and the reason the sweep cannot
+        # read one list and call what it finds left behind.
+        held = counts("deleting")
+        for job in list(held):
+            held[job] -= 1
+            if held[job] <= 0:
+                del held[job]
+                write_list("jobs", [j for j in read_list("jobs") if j != job])
+        write_counts("deleting", held)
         for job in read_list("jobs"):
             print(job.split("/")[-1])
         sys.exit(0)
     if op == "delete":
         if cfg("delete_fail") == "yes":
             die("ERROR: PERMISSION_DENIED: this account cannot delete jobs")
-        write_list("jobs", [j for j in read_list("jobs") if j != name])
+        linger = int(cfg("delete_lists", "0") or "0")
+        if linger > 0:
+            held = counts("deleting")
+            held[name] = linger
+            write_counts("deleting", held)
+        else:
+            write_list("jobs", [j for j in read_list("jobs") if j != name])
         if name == cfg("job_a"):
             open(os.path.join(state, "deleted_a"), "w").write("yes\n")
         print("Job %s deleted." % name)
@@ -605,8 +649,11 @@ out=""
 err=""
 status=0
 # The knobs a case turns. RUN_OWNER=no is the owner guard's case and
-# BASH_FLAGS=-x the xtrace guard's; every waiting bound is zero so a case that
-# models an absence models it at once rather than in real minutes.
+# BASH_FLAGS=-x the xtrace guard's; every waiting bound is zero, so a case that
+# models an absence models it at once rather than in real minutes — except the
+# sweep's, which is two seconds: a case whose job the platform keeps listing
+# after the delete (delete_lists) is waiting that out within the bound, and two
+# seconds is the shortest bound a case can tell a wait from a single read in.
 RUN_OWNER=yes
 BASH_FLAGS=""
 run_check() { # run_check [K=V ...] [-- ARGS...]
@@ -626,6 +673,8 @@ run_check() { # run_check [K=V ...] [-- ARGS...]
     CHK830_WAIT_AUDIT=0
     CHK830_REUSE_BOUND=0
     CHK830_REUSE_POLL=0
+    CHK830_SWEEP_BOUND=2
+    CHK830_SWEEP_POLL=0
   )
   [ "$RUN_OWNER" = yes ] && base+=(CHK830_OWNER_RUN=yes)
   set +e
@@ -673,15 +722,21 @@ for f in sorted(os.listdir(d)):
 PY
 }
 # write_default_case: the platform answers most cases start from. Both jobs ran;
-# the probe's VM carries Batch's OWN job-uid label and metadata item (which is
-# the Google-made fact u1-link is about, and the field a forge would have to
-# reproduce), and its own name carries no part of the job's identity — the
-# `name-forges` bend is the platform where Batch names the VM after the job, and
-# where the name is therefore a candidate field too; the forging job's VM
-# carries its OWN uid in the same two fields, so
-# the forge does not reproduce the probe's identity but the fields are live
-# (that is what the control counts); the hand-made VM carries neither. The
-# CreateJob audit record names the probe job, as the real one does.
+# the probe's VM carries Batch's OWN job-uid label, which is the Google-made fact
+# u1-link is about and the field a forge would have to reproduce, and its own
+# name carries no part of the job's identity — the `name-forges` bend is the
+# platform where Batch names the VM after the job, and where the name is
+# therefore a candidate field too. The identity sits in the label alone, and not
+# also in the same-named metadata item: Compute refuses that label key on a VM
+# made by hand, so a platform whose link lives there alone is the one where O8's
+# row can be answered at all, and where it is answered about every field the
+# check did write — the `metadata-identity` bend is the other platform, where the
+# identity also sits in a metadata item a hand-made VM can carry, and where the
+# row must fail on it. The forging job's VM carries its OWN uid in the same
+# field, so the forge does not reproduce the probe's identity but the field is
+# live (that is what the control counts). The hand-made VM carries the fields the
+# check wrote to it, as Compute would give them back. The CreateJob audit record
+# carries the probe job's own uid, as the real one does.
 write_default_case() { # write_default_case DIR [bend...]
   local d=$1
   shift
@@ -702,14 +757,14 @@ write_default_case() { # write_default_case DIR [bend...]
   printf '[{"protoPayload": {"methodName": "google.cloud.batch.v1.BatchService.CreateJob", "resourceName": "projects/p/locations/%s/jobs/%s", "request": {"job": {"name": "projects/p/locations/%s/jobs/%s", "uid": "%s"}}}}]\n' \
     us-east5 "$job_a" us-east5 "$job_a" "$uid_a" >"$d/state/audit.json"
   write_vm "$d/state/vm-a.json" "$vm_a" "$instance_id" "$zone" \
-    "fugaro=managed,fugaro_chk=830,batch-job-uid=$uid_a" "batch-job-uid=$uid_a"
+    "fugaro=managed,fugaro_chk=830,batch-job-uid=$uid_a" ""
   write_vm "$d/state/vm-b.json" "$vm_b" 9900112234 "$zone" \
     "fugaro=managed,fugaro_chk=830,batch-job-uid=$uid_b,job_uid=$uid_a,job_name=$job_a,instance_name=$vm_a,instance_id=$instance_id" ""
   printf '%s\t%s\n' "$vm_a" vm-a.json >"$d/state/vm.map"
   printf '%s\t%s\n' "$vm_b" vm-b.json >>"$d/state/vm.map"
   # Compute refuses the label key Google's own control plane writes on a Batch
-  # VM, so the plain VM for O8 comes out of the check's second attempt with only
-  # job_uid on it — which is the shape u1-handmade reports as INFO. The
+  # VM, so the plain VM for O8 comes out of the check's second attempt carrying
+  # every field but that one — which is the shape u1-handmade answers about. The
   # `handmade-accepted` bend below takes that refusal away, and a platform that
   # accepts the key is exactly what that row exists to catch.
   printf 'create_refuse_reserved=yes\nreserved_key=batch-job-uid\n' >>"$d/state/cfg"
@@ -726,12 +781,28 @@ write_default_case() { # write_default_case DIR [bend...]
       # The probe's VM carries its identity in two labels: the reserved one
       # Compute refuses, and one a hand-made VM will happily take. The first
       # attempt is turned away for the reserved key, and the VM that comes out of
-      # the check's second attempt — carrying job_uid alone — already carries the
-      # field the link is on.
+      # the check's second attempt — carrying every label but that one — already
+      # carries the field the link is on.
       write_vm "$d/state/vm-a.json" "$vm_a" "$instance_id" "$zone" \
         "fugaro=managed,fugaro_chk=830,batch-job-uid=$uid_a,job_uid=$uid_a" ""
       write_vm "$d/state/vm-b.json" "$vm_b" 9900112234 "$zone" \
         "fugaro=managed,fugaro_chk=830,batch-job-uid=$uid_b,job_uid=$uid_b" ""
+      ;;
+    metadata-identity)
+      # The platform where the link also lives in a metadata item on the VM: a
+      # field Compute does not refuse a hand — the label key beside it is still
+      # refused, so the plain VM is built by the second attempt, and that
+      # attempt has to carry the whole metadata set for this field to be tried
+      # at all. It is, so the plain VM reproduces it and the row FAILS here.
+      write_vm "$d/state/vm-a.json" "$vm_a" "$instance_id" "$zone" \
+        "fugaro=managed,fugaro_chk=830,batch-job-uid=$uid_a" "batch-job-uid=$uid_a"
+      ;;
+    delete-is-slow)
+      # A Batch delete is accepted at once and the job stays listable, in
+      # DELETION_IN_PROGRESS, until the platform has finished with it: the sweep
+      # at the end of the run must wait that out rather than read one list and
+      # call the job it just deleted left behind.
+      printf 'delete_lists=3\n' >>"$d/state/cfg"
       ;;
     name-forges)
       # The platform where Batch names the VM after the job: the probe's VM
@@ -789,6 +860,20 @@ write_default_case() { # write_default_case DIR [bend...]
       ;;
     marker-in-the-project)
       printf '[{"textPayload": "the task started with @MARKER@ in its variables"}]\n' >"$d/state/log-value.json"
+      ;;
+    audit-stale)
+      # A record from an earlier run of this check: the job's name is the same —
+      # it is fixed — and the uid is not this run's. A row that took a record by
+      # its name would pass here before this run's own record had arrived, and
+      # would have claimed absence for a record nobody read.
+      printf '[{"protoPayload": {"methodName": "google.cloud.batch.v1.BatchService.CreateJob", "resourceName": "projects/p/locations/us-east5/jobs/%s", "request": {"job": {"name": "projects/p/locations/us-east5/jobs/%s", "uid": "77099"}}}}]\n' \
+        "$job_a" "$job_a" >"$d/state/audit.json"
+      ;;
+    refuse-unattributed)
+      # Compute turns the first attempt away with a message that names no field
+      # of the request, so there is nothing to leave out of a second attempt
+      # that would still carry the rest.
+      printf 'create_refuse_blind=yes\n' >>"$d/state/cfg"
       ;;
     audit-leaks)
       printf '[{"protoPayload": {"methodName": "google.cloud.batch.v1.BatchService.CreateJob", "resourceName": "projects/p/locations/us-east5/jobs/%s", "request": {"job": {"name": "%s", "taskGroups": [{"taskSpec": {"environment": {"variables": {"FUGARO_BUDGET_TOKEN_WRAPPED": "@MARKER@"}}}}]}}}}]\n' \
@@ -903,12 +988,14 @@ test_happy_path() {
   expect_row u1-forge "Control: 5/5 of those keys" "happy: the attempt was live — the keys did reach that VM"
   expect_row u1-forge "fields compared" "happy: the attempt was judged, not passed over"
   expect_verdict u1-handmade PASS "happy: O8's plain VM is judged, not only reported"
-  expect_row u1-handmade "refused by Compute" "happy: the refusal that led to the fallback is inside the row"
-  expect_row u1-handmade "created with only job_uid" "happy: and so is which attempt made the VM"
+  expect_row u1-handmade "refused by Compute" "happy: the refusal that led to the second attempt is inside the row"
+  expect_row u1-handmade "labels.batch-job-uid is the only field the second attempt left out" \
+    "happy: and so is exactly which field it left out — the one field the refusal named, and no other"
   expect_verdict u2-token PASS "happy: the identity token"
   expect_row u2-token "instance_id=${instance_id}, instance_name=${vm_a}, project_id=fugaro-dev, zone=${zone}" "happy: the four claims"
   expect_verdict u3-marker PASS "happy: where a job's variables reach"
-  expect_row u3-marker "which was found and names ${job_a}" "happy: the audit record was read, not assumed"
+  expect_row u3-marker "the CreateJob audit record of this run (the one carrying the uid ${uid_a}, which was found)" \
+    "happy: the audit record was read, and read as this run's own — by a uid a stale record cannot carry"
   expect_verdict u8-name PASS "happy: the reuse of a deleted name"
   expect_row u8-name "attempt 1 of this loop" "happy: it came back at once"
   expect_verdict restore PASS "happy: the restore row"
@@ -994,10 +1081,11 @@ test_a_handmade_vm_that_carries_the_field_fails_u1_handmade() {
   nothing_left "a hand-made VM"
 }
 
-# The refusal and the finding at once: Compute turns the first attempt away, the
-# fallback VM is made carrying job_uid alone — and job_uid is the field the link
-# rests on, so the row is a FAIL. The refusal is inside that FAIL rather than a
-# row of its own before it, which is what used to hide the finding.
+# The refusal and the finding at once: Compute turns the first attempt away for
+# the reserved key, and the second attempt — carrying every other field, the
+# metadata set included — reproduces a field the link rests on, so the row is a
+# FAIL. The refusal is inside that FAIL rather than a row of its own before it,
+# which is what used to hide the finding.
 test_a_handmade_vm_that_carries_the_fallback_key_fails_the_row() {
   setup_case handmade-forges
   write_default_case "$dir" handmade-forges
@@ -1005,11 +1093,60 @@ test_a_handmade_vm_that_carries_the_fallback_key_fails_the_row() {
   expect_status "$status" 1 "a hand-made VM that carries the fallback key"
   expect_verdict u1-handmade FAIL "a hand-made VM that carries the fallback key: the row"
   expect_row u1-handmade "refused by Compute" "a hand-made VM that carries the fallback key: the refusal is inside the verdict"
-  expect_row u1-handmade "created with only job_uid" "a hand-made VM that carries the fallback key: which attempt made it"
+  expect_row u1-handmade "the only field the second attempt left out" "a hand-made VM that carries the fallback key: which attempt made it"
   expect_row u1-handmade "instance.labels.job_uid" "a hand-made VM that carries the fallback key: the field it carries"
   expect_verdict u1-link PASS "a hand-made VM that carries the fallback key: the link itself exists"
   expect_last_line "CHECK 830 RESULT: FAIL" "a hand-made VM that carries the fallback key"
   nothing_left "a hand-made VM that carries the fallback key"
+}
+
+# The platform where the link also lives in a metadata item on the VM. The label
+# key beside it is still reserved, so the plain VM comes out of the check's
+# second attempt — and that attempt carries the whole metadata set, so the field
+# IS written, the plain VM reproduces it, and the row FAILS naming it. This is
+# the case a fallback that sent one key alone would pass on a field it never
+# tried to write: drop the metadata set from the second attempt and the row
+# passes here instead.
+test_a_handmade_vm_that_can_carry_the_metadata_field_fails_the_row() {
+  setup_case handmade-metadata
+  write_default_case "$dir" metadata-identity
+  run_check
+  expect_status "$status" 1 "a hand-made VM that can carry the metadata field"
+  expect_verdict u1-handmade FAIL "a hand-made VM that can carry the metadata field: the row"
+  expect_row u1-handmade "instance.metadata.items.batch-job-uid" \
+    "a hand-made VM that can carry the metadata field: the field reproduced, named with the object it is on"
+  expect_row u1-handmade "refused by Compute" "a hand-made VM that can carry the metadata field: the refusal is still inside the verdict"
+  expect_verdict u1-forge PASS "a hand-made VM that can carry the metadata field: the forging job's own fields still hold"
+  expect_last_line "CHECK 830 RESULT: FAIL" "a hand-made VM that can carry the metadata field"
+  nothing_left "a hand-made VM that can carry the metadata field"
+  # The finding was that the second attempt dropped the metadata set, so the
+  # field this row is about was never written and a "not reproduced" was read
+  # off a field that was never tried. The create that made the VM is the proof
+  # that it was: its metadata carries the key the link rests on.
+  local last_create
+  last_create=$(grep -F -- "compute instances create ${handmade}" "$dir/state/gcloud.calls" | tail -n 1)
+  printf '%s' "$last_create" | grep -q -- "--metadata=[^ ]*batch-job-uid=${uid_a}" \
+    || fail "a hand-made VM that can carry the metadata field: the second attempt did not carry the metadata set, so the field was never written: $last_create"
+  printf '%s' "$last_create" | grep -q -- "--metadata=[^ ]*job_uid=${uid_a}" \
+    || fail "a hand-made VM that can carry the metadata field: the second attempt left a metadata key out of the set it wrote: $last_create"
+}
+
+# A refusal that names no field: there is nothing to leave out of a second
+# attempt that would still carry every other field, so the row ENDS there rather
+# than making a second attempt with a guessed key dropped. A guessed drop is a
+# field never tried, which is the pass this whole row must not be able to earn.
+test_a_refusal_that_names_no_field_ends_the_row() {
+  setup_case refuse-unattributed
+  write_default_case "$dir" refuse-unattributed
+  run_check
+  expect_status "$status" 1 "a refusal that names no field"
+  expect_verdict u1-handmade FAIL "a refusal that names no field: the row is a failure, not a guess"
+  expect_row u1-handmade "names no field this check wrote" "a refusal that names no field: what was missing from the message"
+  expect_row u1-handmade "refused by Compute" "a refusal that names no field: the platform's message is still shown"
+  [ "$(count_calls "compute instances create ${handmade}")" = 1 ] \
+    || fail "a refusal that names no field: a second attempt was made with a field dropped for no reason the platform gave"
+  expect_last_line "CHECK 830 RESULT: FAIL" "a refusal that names no field"
+  nothing_left "a refusal that names no field"
 }
 
 # O8's plain VM is named after the probe job, so on a platform whose Batch VMs
@@ -1038,7 +1175,7 @@ test_a_plain_vm_named_after_the_job_forges_the_name_field() {
 # The same attempt against a platform that refuses the key: the row is a verdict
 # like any other — the refusal is not a row of its own beside it, where a reader
 # would see it instead of the verdict — and it says which attempt was refused and
-# what the plain VM was left carrying.
+# which field the second attempt left out.
 test_a_plain_vm_compute_refuses_the_key_on_is_recorded() {
   setup_case handmade-refused
   write_default_case "$dir"
@@ -1046,9 +1183,10 @@ test_a_plain_vm_compute_refuses_the_key_on_is_recorded() {
   expect_verdict u1-handmade PASS "a refused key: the row is a verdict, and the refusal is inside it"
   expect_row u1-handmade "refused by Compute" "a refused key: the refusal is in the row"
   expect_row u1-handmade "the key is reserved" "a refused key: the platform's own words"
-  expect_row u1-handmade "created with only job_uid" "a refused key: the fallback is named"
+  expect_row u1-handmade "labels.batch-job-uid is the only field the second attempt left out" \
+    "a refused key: the field the refusal named is the only one the second attempt dropped"
   [ "$(count_calls "compute instances create ${handmade}")" = 2 ] \
-    || fail "a refused key: the plain VM is tried once with every key and once with the one that is allowed"
+    || fail "a refused key: the plain VM is tried once with every key and once with every key but the refused one"
   nothing_left "a refused key"
 }
 
@@ -1204,6 +1342,23 @@ test_an_audit_record_that_was_never_read_fails_u3() {
   expect_row u3-marker "CHK830_WAIT_AUDIT=" "an audit record never read: the knob that gives it longer"
 }
 
+# The record the FAIL texts above ask the owner to run again for: a re-run within
+# the hour sees the PREVIOUS run's CreateJob record, which carries the job's name
+# (fixed) and a uid that is not this run's. Accepting it would be a PASS taken
+# before this run's own record had arrived — absence claimed for a record nobody
+# had read — so the record is told apart by the one thing on it that is this
+# run's alone.
+test_an_audit_record_from_another_run_is_not_this_runs() {
+  setup_case audit-stale
+  write_default_case "$dir" audit-stale
+  run_check
+  expect_status "$status" 1 "an audit record from another run"
+  expect_verdict u3-marker FAIL "an audit record from another run: the row is fail-closed"
+  expect_row u3-marker "could NOT be read within" "an audit record from another run: this run's own record was not taken"
+  expect_row u3-marker "another run's" "an audit record from another run: why the record that was found is not this run's"
+  expect_absent "$out" "appears in none of the readings" "an audit record from another run: no PASS was recorded beside the FAIL on a record from another run"
+}
+
 test_a_marker_that_never_reached_the_container_is_void() {
   setup_case control-absent
   write_default_case "$dir" control-absent
@@ -1249,6 +1404,28 @@ test_resources_that_cannot_be_deleted_are_named() {
   expect_row restore "the instance ${handmade}" "a resource that cannot be deleted: the instance"
   expect_row restore "gcloud batch jobs delete <name>" "a resource that cannot be deleted: the command that removes a job"
   expect_row restore "gcloud compute instances delete <name>" "a resource that cannot be deleted: the command that removes an instance"
+}
+
+# Deleting a Batch job is asynchronous: the delete is accepted at once and the
+# job stays listable, in DELETION_IN_PROGRESS, until the platform has finished
+# with it (internal/backend/batch/reap.go lists that state). The sweep that runs
+# at the end of the check has just deleted the job it made, so it must wait that
+# out: a single list taken one call too early records a job the check has already
+# deleted as left behind and fails the restore row — and the whole check — on a
+# run that left nothing behind at all.
+test_a_slow_delete_is_not_a_leftover() {
+  setup_case slow-delete
+  write_default_case "$dir" delete-is-slow
+  run_check CHK830_SWEEP_BOUND=30
+  expect_status "$status" 0 "a slow delete"
+  expect_verdict restore PASS "a slow delete: the restore row"
+  expect_verdict u8-name PASS "a slow delete: the reuse row"
+  expect_last_line "CHECK 830 RESULT: PASS" "a slow delete"
+  nothing_left "a slow delete"
+  local lists
+  lists=$(count_calls "batch jobs list")
+  [ "${lists:-0}" -ge 3 ] \
+    || fail "a slow delete: the job list was read ${lists:-0} time(s) after the deletes, so the sweep judged what was left behind on a list the platform was still finishing the delete for"
 }
 
 test_a_probe_that_cannot_be_submitted_stops_the_run() {
@@ -1350,6 +1527,8 @@ t test_the_forge_attempt_is_what_makes_the_row
 t test_a_second_job_that_reproduces_the_field_fails_u1_forge
 t test_a_handmade_vm_that_carries_the_field_fails_u1_handmade
 t test_a_handmade_vm_that_carries_the_fallback_key_fails_the_row
+t test_a_handmade_vm_that_can_carry_the_metadata_field_fails_the_row
+t test_a_refusal_that_names_no_field_ends_the_row
 t test_a_plain_vm_named_after_the_job_forges_the_name_field
 t test_a_plain_vm_compute_refuses_the_key_on_is_recorded
 t test_no_google_made_link_at_all_fails_u1_link
@@ -1364,10 +1543,12 @@ t test_a_marker_that_reaches_the_jobs_own_logs_fails_u3
 t test_a_marker_that_reaches_the_project_logs_fails_u3
 t test_a_marker_in_the_createjob_record_fails_u3
 t test_an_audit_record_that_was_never_read_fails_u3
+t test_an_audit_record_from_another_run_is_not_this_runs
 t test_a_marker_that_never_reached_the_container_is_void
 t test_a_name_that_comes_back_slowly_is_measured
 t test_a_name_that_never_comes_back_is_a_failure
 t test_resources_that_cannot_be_deleted_are_named
+t test_a_slow_delete_is_not_a_leftover
 t test_a_probe_that_cannot_be_submitted_stops_the_run
 t test_the_owner_marker_is_required
 t test_belong_is_refused_by_name
