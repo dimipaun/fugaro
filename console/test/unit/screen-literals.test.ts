@@ -1831,6 +1831,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'manage/kinds/read.ts',
       'manage/kinds/recipes.ts',
       'manage/kinds/repos.ts',
+      'manage/shell.ts',
       'manage/types.ts',
       'new-bridge.ts',
       'screens/accountkeys.ts',
