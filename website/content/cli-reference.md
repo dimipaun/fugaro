@@ -1640,10 +1640,10 @@ Regenerate the index of docs/backlog/, the folder the backlog was before it
 became the project's work items.
 
 The index lists one row per item — the id linked to its file, the title,
-the mode, the area, the status, who filed it and the date — sorted by id,
-with the closed and dropped rows grouped under the open ones, under a
-count line (D28). It is written to <dir>/README.md, and it is the only
-file this command touches.
+the level, the kind, the area, the status, who filed it and the date —
+sorted by id, with the closed and dropped rows grouped under the open ones,
+under a count line (D28). It is written to <dir>/README.md, and it is the
+only file this command touches.
 
 The document is a pure function of the item files: every date in it comes
 from the item that carries it and no clock is read, so regenerating an

@@ -17,17 +17,18 @@ import (
 func newItem(title string) New {
 	return New{
 		Title:   title,
-		Mode:    "pro",
+		Level:   "pro",
+		Kind:    "deferred",
 		Area:    "repo",
 		FiledBy: "octocat",
 		FiledIn: "run:20261024-120000-abcd",
 		Date:    "2026-10-24",
-		Body:    Body("the round's findings", "the mode files what it leaves open", "clear them", []string{"run `20261024-120000-abcd`"}),
+		Body:    Body("the round's findings", "the level files what it leaves open", "clear them", []string{"run `20261024-120000-abcd`"}),
 	}
 }
 
 // TestWriteFilesAnItemTheFolderAccepts: Write allocates the id from the folder,
-// names the file `<id>-<slug>.md`, writes the eight fields D27 requires, and
+// names the file `<id>-<slug>.md`, writes the nine fields D27 requires, and
 // leaves a document this package parses — which is the same claim the folder's
 // own pin makes over the tree (D26, D27).
 func TestWriteFilesAnItemTheFolderAccepts(t *testing.T) {
@@ -189,7 +190,9 @@ func TestWriteRefusesAFilingItCannotRender(t *testing.T) {
 		{"no title", func(n *New) { n.Title = "" }, "title"},
 		{"a title with no word to make a slug from", func(n *New) { n.Title = "!!!" }, "slug"},
 		{"a title of two lines", func(n *New) { n.Title = "one\ntwo" }, "title"},
-		{"no mode", func(n *New) { n.Mode = "" }, "mode"},
+		{"no level", func(n *New) { n.Level = "" }, "level"},
+		{"no kind", func(n *New) { n.Kind = "" }, "kind"},
+		{"a kind that is neither of the two", func(n *New) { n.Kind = "tolerated" }, "open-risk"},
 		{"no filer", func(n *New) { n.FiledBy = "" }, "filed-by"},
 		{"a date that is not a day", func(n *New) { n.Date = "2026-10-24T10:00:00Z" }, "date"},
 		{"a filed-in that is none of the three", func(n *New) { n.FiledIn = "somewhere" }, "filed-in"},

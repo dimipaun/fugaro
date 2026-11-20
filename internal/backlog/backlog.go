@@ -5,11 +5,11 @@
 // An item is a file named `<id>-<slug>.md`, where the id is the day the item
 // was filed and a two-digit sequence that day — so two pull requests filing
 // an item at once write two differently named files and the merge is a union
-// of disjoint files rather than a conflict (D26). The file carries eight
+// of disjoint files rather than a conflict (D26). The file carries nine
 // front-matter fields, each required, and a body whose headings are named
-// (D27). The index is derived state: it is regenerated, never merged by hand,
-// and two branches that regenerated it at once are reconciled by re-running
-// the command (D28).
+// (D27 as amended by LD5). The index is derived state: it is regenerated,
+// never merged by hand, and two branches that regenerated it at once are
+// reconciled by re-running the command (D28).
 //
 // Nothing here reads a clock, a network or an environment: every date comes
 // from the item file that carries it, so the same folder renders to the same
@@ -38,12 +38,25 @@ const (
 	FormatName = "FORMAT.md"
 )
 
-// Fields are the eight front-matter keys D27 requires, in the order the
-// format document states them. Each is required, and a ninth is a field
-// nobody decided: Parse refuses both.
+// Fields are the nine front-matter keys D27 requires, in the order the format
+// document states them. Each is required, and a tenth is a field nobody
+// decided: Parse refuses both.
+//
+// The ninth is LD5's amendment: `kind` is what makes an open risk an item
+// beside a tolerated finding, and the field D27 named `mode` is `level` since
+// the same ruling renamed it (LD2). `kind` sits beside `level` because the two
+// are the pair a reader of an item asks first — under what rigor it was left
+// open, and what of it was left.
 var Fields = []string{
-	"id", "title", "mode", "area", "status", "filed-by", "filed-in", "date",
+	"id", "title", "level", "kind", "area", "status", "filed-by", "filed-in", "date",
 }
+
+// Kinds are LD5's two kinds of item, and there is no third: a `deferred` item
+// is something a run or a person consciously left open — the findings Startup
+// and Pro tolerate, the deferrals they list, the fix a Hotfix owes — and an
+// `open-risk` item is a risk Critical could not close, which is the one thing
+// D30's amended row files of its own.
+var Kinds = []string{"deferred", "open-risk"}
 
 // Statuses are D27's three words for `status`, and there is no fourth.
 var Statuses = []string{"open", "closed", "dropped"}
@@ -100,12 +113,13 @@ var (
 	filedInRE = regexp.MustCompile(`^(run|pr):(.+)$`)
 )
 
-// Item is one backlog item: its eight front-matter fields, the path it was
+// Item is one backlog item: its nine front-matter fields, the path it was
 // read from and its body.
 type Item struct {
 	ID      string // D26's id, and the file name's first two segments.
 	Title   string // the filer's words, one line.
-	Mode    string // the resolved mode a run ran under; "none" for a hand-filed item.
+	Level   string // the resolved rigor level a run ran under; "none" for a hand-filed item.
+	Kind    string // one of Kinds: `deferred` or `open-risk` (LD5).
 	Area    string // the matched areas, strictest first, comma-separated; "project" or "repo" for a whole layer.
 	Status  string // one of Statuses.
 	FiledBy string // the run's launcher, or the filer's login.
@@ -121,9 +135,9 @@ type Item struct {
 //
 // Every rule the format states is a refusal here rather than a warning: a
 // missing or unknown field, an empty value, a status outside the three words,
-// a date that is not a day, an id that disagrees with the file name, a
-// duplicate field, a filed-by that is an email address and a body missing a
-// required heading. An item the folder's
+// a kind outside the two, a date that is not a day, an id that disagrees with
+// the file name, a duplicate field, a filed-by that is an email address and a
+// body missing a required heading. An item the folder's
 // pin accepts and this refuses would be one `fugaro backlog list` cannot show,
 // which is why the two are checked against each other.
 func Parse(path string, data []byte) (Item, error) {
@@ -145,6 +159,9 @@ func Parse(path string, data []byte) (Item, error) {
 	if !contains(Statuses, item.Status) {
 		return Item{}, fmt.Errorf("%s: status %q is not one of %s (D27)", path, item.Status, strings.Join(Statuses, ", "))
 	}
+	if !contains(Kinds, item.Kind) {
+		return Item{}, fmt.Errorf("%s: kind %q is not one of %s (D27 as amended by LD5)", path, item.Kind, strings.Join(Kinds, ", "))
+	}
 	if !dateRE.MatchString(item.Date) {
 		return Item{}, fmt.Errorf("%s: date %q is not `YYYY-MM-DD` (D27)", path, item.Date)
 	}
@@ -165,8 +182,8 @@ func Parse(path string, data []byte) (Item, error) {
 }
 
 // parseFrontMatter splits the `---` fenced front matter from the body, and
-// holds the eight fields to D27's list: each present, each non-empty, each
-// once, and no ninth.
+// holds the nine fields to D27's list: each present, each non-empty, each
+// once, and no tenth.
 func parseFrontMatter(path, doc string) (Item, string, error) {
 	lines := strings.Split(doc, "\n")
 	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
@@ -189,13 +206,13 @@ func parseFrontMatter(path, doc string) (Item, string, error) {
 		}
 		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
 		if !contains(Fields, key) {
-			return Item{}, "", fmt.Errorf("%s: front matter carries %q, which is not one of D27's eight fields", path, key)
+			return Item{}, "", fmt.Errorf("%s: front matter carries %q, which is not one of D27's nine fields", path, key)
 		}
 		if _, dup := values[key]; dup {
 			return Item{}, "", fmt.Errorf("%s: front matter states %q twice", path, key)
 		}
 		if value == "" {
-			return Item{}, "", fmt.Errorf("%s: front matter's %q is empty: every one of the eight is required (D27)", path, key)
+			return Item{}, "", fmt.Errorf("%s: front matter's %q is empty: every one of the nine is required (D27)", path, key)
 		}
 		values[key] = value
 	}
@@ -208,9 +225,9 @@ func parseFrontMatter(path, doc string) (Item, string, error) {
 		}
 	}
 	item := Item{
-		ID: values["id"], Title: values["title"], Mode: values["mode"],
-		Area: values["area"], Status: values["status"], FiledBy: values["filed-by"],
-		FiledIn: values["filed-in"], Date: values["date"],
+		ID: values["id"], Title: values["title"], Level: values["level"],
+		Kind: values["kind"], Area: values["area"], Status: values["status"],
+		FiledBy: values["filed-by"], FiledIn: values["filed-in"], Date: values["date"],
 	}
 	if !idRE.MatchString(item.ID) {
 		return Item{}, "", fmt.Errorf("%s: id %q is not `<YYYYMMDD>-<NN>` (D26)", path, item.ID)

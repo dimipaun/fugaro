@@ -17,7 +17,8 @@ func item(mutate func(*string)) string {
 	doc := "---\n" +
 		"id: 20261021-01\n" +
 		"title: a title\n" +
-		"mode: none\n" +
+		"level: none\n" +
+		"kind: deferred\n" +
 		"area: repo\n" +
 		"status: open\n" +
 		"filed-by: dimipaun\n" +
@@ -34,18 +35,18 @@ func item(mutate func(*string)) string {
 
 const itemPath = "docs/backlog/20261021-01-a-title.md"
 
-// TestParseAcceptsAWellFormedItem is the parser's baseline: the eight fields,
-// the three-word status, the id agreeing with the file name, and the two
-// required headings are all it takes.
+// TestParseAcceptsAWellFormedItem is the parser's baseline: the nine fields,
+// the three-word status, the two-word kind, the id agreeing with the file name,
+// and the two required headings are all it takes.
 func TestParseAcceptsAWellFormedItem(t *testing.T) {
 	it, err := Parse(itemPath, []byte(item(nil)))
 	if err != nil {
 		t.Fatalf("Parse refused a well-formed item: %v", err)
 	}
-	if it.ID != "20261021-01" || it.Title != "a title" || it.Mode != "none" ||
-		it.Area != "repo" || it.Status != "open" || it.FiledBy != "dimipaun" ||
-		it.FiledIn != "hand" || it.Date != "2026-10-21" {
-		t.Errorf("Parse read %+v, want the file's own eight fields", it)
+	if it.ID != "20261021-01" || it.Title != "a title" || it.Level != "none" ||
+		it.Kind != "deferred" || it.Area != "repo" || it.Status != "open" ||
+		it.FiledBy != "dimipaun" || it.FiledIn != "hand" || it.Date != "2026-10-21" {
+		t.Errorf("Parse read %+v, want the file's own nine fields", it)
 	}
 	if it.Path != itemPath {
 		t.Errorf("Parse read Path %q, want %q", it.Path, itemPath)
@@ -56,10 +57,10 @@ func TestParseAcceptsAWellFormedItem(t *testing.T) {
 }
 
 // TestParseRefusesEveryWayAnItemCanBeWrong is the format, one refusal at a
-// time: D27's eight fields (missing, unknown, empty, duplicated), D26's id and
-// its agreement with the file name, the three-word status, the day-shaped
-// date, `filed-in`'s vocabulary, a filed-by that is an address, and D27's
-// body headings.
+// time: D27's nine fields (missing, unknown, empty, duplicated), D26's id and
+// its agreement with the file name, the three-word status, LD5's two-word kind,
+// the day-shaped date, `filed-in`'s vocabulary, a filed-by that is an address,
+// and D27's body headings.
 func TestParseRefusesEveryWayAnItemCanBeWrong(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -72,15 +73,17 @@ func TestParseRefusesEveryWayAnItemCanBeWrong(t *testing.T) {
 			*d = (*d)[:strings.Index(*d, "\n---\n")] + "\n"
 		}, "never closed"},
 		{"a field is missing", itemPath, func(d *string) { *d = strings.Replace(*d, "area: repo\n", "", 1) }, `"area"`},
+		{"the kind is missing", itemPath, func(d *string) { *d = strings.Replace(*d, "kind: deferred\n", "", 1) }, `"kind"`},
 		{"a field is empty", itemPath, func(d *string) { *d = strings.Replace(*d, "title: a title", "title:", 1) }, `"title" is empty`},
 		{"a field is repeated", itemPath, func(d *string) { *d = strings.Replace(*d, "area: repo\n", "area: repo\narea: repo\n", 1) }, "twice"},
-		{"a ninth field", itemPath, func(d *string) { *d = strings.Replace(*d, "date: 2026-10-21", "date: 2026-10-21\nseverity: high", 1) }, `"severity"`},
+		{"a tenth field", itemPath, func(d *string) { *d = strings.Replace(*d, "date: 2026-10-21", "date: 2026-10-21\nseverity: high", 1) }, `"severity"`},
 		{"a line that is not key: value", itemPath, func(d *string) { *d = strings.Replace(*d, "title: a title", "title a title", 1) }, "key: value"},
 		{"the id is not a date and a sequence", itemPath, func(d *string) { *d = strings.Replace(*d, "id: 20261021-01", "id: B7", 1) }, "YYYYMMDD"},
 		{"the id disagrees with the file name", "docs/backlog/20261021-02-a-title.md", nil, "disagrees"},
 		{"the file name is not an item's", "docs/backlog/notes.md", nil, "not an item file name"},
 		{"the slug is not lower kebab", "docs/backlog/20261021-01-A_Title.md", nil, "not an item file name"},
 		{"a status outside the three words", itemPath, func(d *string) { *d = strings.Replace(*d, "status: open", "status: deferred", 1) }, "deferred"},
+		{"a kind outside the two", itemPath, func(d *string) { *d = strings.Replace(*d, "kind: deferred", "kind: tolerated", 1) }, "open-risk"},
 		{"a date that is not a day", itemPath, func(d *string) { *d = strings.Replace(*d, "date: 2026-10-21", "date: 2026-10-21T09:00:00Z", 1) }, "YYYY-MM-DD"},
 		{"filed-in outside the vocabulary", itemPath, func(d *string) { *d = strings.Replace(*d, "filed-in: hand", "filed-in: somewhere", 1) }, "filed-in"},
 		{"filed-by is an email address", itemPath, func(d *string) { *d = strings.Replace(*d, "filed-by: dimipaun", "filed-by: someone@example.com", 1) }, "address"},
@@ -113,6 +116,23 @@ func TestParseAcceptsEachFiledInShape(t *testing.T) {
 		}
 		if it.FiledIn != want {
 			t.Errorf("Parse read filed-in %q, want %q", it.FiledIn, want)
+		}
+	}
+}
+
+// TestParseAcceptsEachKind: LD5's two kinds are the vocabulary, and each is a
+// value the parser reads back — the open risk is what makes Critical's own
+// filing representable beside a tolerated finding.
+func TestParseAcceptsEachKind(t *testing.T) {
+	for _, want := range Kinds {
+		doc := item(func(d *string) { *d = strings.Replace(*d, "kind: deferred", "kind: "+want, 1) })
+		it, err := Parse(itemPath, []byte(doc))
+		if err != nil {
+			t.Errorf("Parse refused kind %q: %v", want, err)
+			continue
+		}
+		if it.Kind != want {
+			t.Errorf("Parse read kind %q, want %q", it.Kind, want)
 		}
 	}
 }
