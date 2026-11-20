@@ -32,14 +32,17 @@
 #                 the repository's own file carries.
 #   mode-off      the repository's COMMITTED `fugaro.yaml` is read with `git show
 #                 HEAD:fugaro.yaml`: when it says `budget.mode: off`, a launch
-#                 from that checkout must be refused with the fix (D3022). A
-#                 repository whose committed file does not say off leaves this
-#                 row UNVERIFIED — the check names what to commit instead of
-#                 inventing a reading.
+#                 from that checkout must be refused, at once, with the word
+#                 `off` named as the fix (D3022). A repository whose committed
+#                 file does not say off leaves this row UNVERIFIED — the check
+#                 names what to commit instead of inventing a reading.
 #
-# It writes nothing, changes nothing, launches NO run and reaches no model: the
-# one command it runs that can spend anything is `fugaro validate`, which spends
-# nothing. The point is the refusal, not a run.
+# It writes nothing and changes nothing. The ONE launch it makes exists to be
+# REFUSED, and a config load is what refuses it: nothing is spent when the
+# refusal happens, which is the reading the row is for. `fugaro validate` is the
+# only other command it runs, and that spends nothing. A launch the release does
+# NOT refuse is the finding (a run on a mode the release does not have): it is a
+# real run then, and the row names it and the command that stops it.
 #
 # Usage:      bash scripts/live-checks/check791.sh --sandbox <a sandbox repository
 #               checkout> [--installation <name>] [--dry-run]
@@ -56,7 +59,11 @@
 # Where:      the checkout you name and the installation you name, and nowhere
 #             else. It reads the published policy, which names repositories; run
 #             it on a sandbox you are happy to see named.
-# Costs:      NOTHING billable: no run, no model call, no build, no write.
+# Costs:      nothing, as long as the release holds: `fugaro validate` spends
+#             nothing, and the one launch spends nothing when the refusal happens
+#             — which is what the row is for. A launch the release does NOT refuse
+#             is a real, billable run, and the `mode-off` row names it and the
+#             command that stops it. No build, no write.
 # Runs:       by YOU. No agent runs any step of it — the check refuses to start in
 #             a coding agent's session (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
 #             CLAUDE_CODE_REMOTE, CURSOR_AGENT, AI_AGENT) — and its own test
@@ -226,11 +233,14 @@ What it would do, in order:
             -> it must REFUSE, and its refusal must name 'model_prices' (D3020). The model it
                names is read off the committed file above.
   mode-off  when HEAD:fugaro.yaml carries 'budget.mode: off',
-            fugaro run --task-file <a task the check writes> --dry-run   (in ${SANDBOX:-<sandbox>})
-            -> it must be refused with the fix (D3022). A committed file that does not say off
-               leaves this row UNVERIFIED.
+            fugaro run --task-file <a task the check writes> --json   (in ${SANDBOX:-<sandbox>})
+            -> it must be refused, at once, with the word 'off' named (D3022). A config load is
+               what refuses it, so nothing is spent; a launch it does NOT refuse is a real run,
+               and the row names it and the command that stops it.
+               A committed file that does not say off leaves this row UNVERIFIED.
 
-Costs: nothing billable. No run is launched and no model is called.
+Costs: nothing, as long as the release holds. 'fugaro validate' spends nothing, and the one
+       launch spends nothing when the refusal happens — which is what the row is for.
 Cleanup: the check's scratch directory.
 PLAN
 }
@@ -457,14 +467,17 @@ step_mode_off() {
 
 Change nothing: this launch exists to be refused.
 TASK
-  local out rstatus=0
-  out=$( (cd "$SANDBOX" && fugaro run --task-file "$SCRATCH/task.md" --dry-run) 2>&1) || rstatus=$?
+  local rstatus=0
+  (cd "$SANDBOX" && fugaro run --task-file "$SCRATCH/task.md" --json) >"$SCRATCH/launch.out" 2>&1 || rstatus=$?
   if [ "$rstatus" -eq 0 ]; then
-    fact mode-off FAIL "a launch from a checkout whose committed fugaro.yaml says 'budget.mode: off' was NOT refused (exit 0): $(printf '%s' "$out" | head -c 400). Off is accepted nowhere (AB2, D3022) — a repository's file that says it is rejected at once, and a launch that goes ahead is a run on a mode the release does not have"
+    local rid
+    rid=$(jget "$SCRATCH/launch.out" run_id)
+    [ -n "$rid" ] || rid=$(jget "$SCRATCH/launch.out" id)
+    fact mode-off FAIL "a launch from a checkout whose committed fugaro.yaml says 'budget.mode: off' was NOT refused: it launched ${rid:-a run whose id this check could not read}, and off is accepted nowhere (AB2, D3022) — a repository's file that says it is rejected at once, so a launch that goes ahead is a run on a mode the release does not have. STOP IT: 'fugaro cancel --now ${rid:-<the run id>}'; the launcher printed $(head -c 400 "$SCRATCH/launch.out" 2>/dev/null)"
     return 0
   fi
-  if ! printf '%s' "$out" | grep -qi 'off'; then
-    fact mode-off FAIL "the launch was refused (exit ${rstatus}) and the refusal never names 'off': $(printf '%s' "$out" | head -c 400). The person meeting it has to be told which key to remove, and a refusal that does not name it leaves them guessing"
+  if ! grep -qi 'off' "$SCRATCH/launch.out"; then
+    fact mode-off FAIL "the launch was refused (exit ${rstatus}) and the refusal never names 'off': $(head -c 400 "$SCRATCH/launch.out" 2>/dev/null). The person meeting it has to be told which key to remove, and a refusal that does not name it leaves them guessing"
     return 0
   fi
   fact mode-off PASS "a launch from a checkout whose committed fugaro.yaml says 'budget.mode: off' is refused (exit ${rstatus}) and the refusal names the word 'off': a repository's file that says it is rejected at once (D3022)"

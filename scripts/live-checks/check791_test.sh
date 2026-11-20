@@ -222,11 +222,14 @@ test_a_committed_file_without_off_leaves_its_row_unverified() {
 test_a_launch_that_is_not_refused_is_a_finding() {
   case_dir launched
   make_sandbox "$sandbox" "$(off_yaml)"
-  printf 'launching run acme/20261120-000000-abcd\n' >"$answers/run.txt"
+  printf '{"run_id": "acme-app/20261120-120000-7910", "status": "running"}\n' >"$answers/run.txt"
   FAKE791_RUN_STATUS=0
   run791
   expect_status "$status" 1 "off is accepted nowhere"
   expect_contains "$out" "was NOT refused" "the finding says the launch went ahead"
+  expect_contains "$out" "acme-app/20261120-120000-7910" "the finding names the run it launched"
+  expect_contains "$out" "fugaro cancel --now acme-app/20261120-120000-7910" \
+    "and the command that stops the run a bug let through"
 }
 
 test_a_dirty_working_tree_is_not_read_as_the_committed_file() {
