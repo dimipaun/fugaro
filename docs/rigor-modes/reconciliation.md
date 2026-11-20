@@ -926,7 +926,19 @@ pin, moved the table's row from 148 to 149.) (Amended 2026-11-18:
 owner-run Check 640 in the register — the status labels on a real pull request,
 with its row and its section, the sibling test `scripts/live_checks_test.go`
 drives, and the two questions the check settles, U1 and U3 — moved the table's
-row from 148 to 149.) They
+row from 148 to 149.) (Amended 2026-11-19:
+`internal/cli/docs_mobile_identity_pairing_test.go`, the mobile-identity-pairing
+folder's pin over the four documents, the decision and task numbering and the
+register's Checks 730 to 737, moved the table's row from 150 to 151.) (Amended 2026-11-19:
+`internal/cli/docs_troubleshoot_cloud_test.go`, the troubleshoot-cloud plan's
+T-TC9 — the pin over the tier sentences the agent guide, the working skill's
+page for the command and the release notes that carry the tier — moved the
+table's row from 151 to 152.) (Amended 2026-11-20:
+`internal/cli/docs_runs_ls_speed_test.go`, the runs-ls-speed plan's RL5 — the pin
+over the residual of the pull-request index in the bucket's threat model, the
+in-flight audit's own row for the backfill, the two skills' sentences about the
+fast queries and the release notes that carry the change — moved the table's row
+from 152 to 153.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -937,9 +949,30 @@ switched `api-key` or `oauth` repository's job — added `serviceAuthSince` to
 row is held to its own command rather than to another folder's guard, so it is named here only because a
 reader who finds the figure stale should find who moved it.)
 
+(Amended 2026-11-18, the same day: the same plan's B3.8 — the S3 flip, which takes the mounts of a
+switched repository's workflow secrets off its job — added `vaultSince` to
+`internal/cli/recipes_skew.go` as well, which moved the *Image-skew `Since` constants* row from 55 to
+56. Same row, same reason for naming it.)
+
+(Amended 2026-11-19: the review-against-task plan's S-OUT added
+`internal/runner/issuescope.go`, whose reader refuses an `unmet` or `differs`
+issue below `major` (that plan's R6), which moved the *Sites that compare a
+finding's severity to a value* row from 0 to 1 and the *Files in `internal/runner`
+that mention `Severity` at all* row from 4 to 5. The comparison reads the
+artifact's closed three-word enum, not the in-run format's free-form label, and
+the two paragraphs below say what each row measures now. Both are rows held to
+their own command rather than to another folder's guard, so they are named here
+for the reason the two above are: a reader who finds a figure stale should find
+who moved it.)
+
+(Amended 2026-11-19: the review-against-task plan's S-TASK — the task fields a launched review is
+judged against, `review_spec`, `from_findings` and `own_text` — added `reviewSpecSince` to
+`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 56 to 57.
+Same row, same reason for naming it.)
+
 (Amended 2026-11-19: the rigor-modes plan's LV1.1 — the rename that makes the type `Rigor` and the
 file's word `level`, with the released `mode:` still read — added `rigorSpellingSince` to
-`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 55 to 56. The
+`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 57 to 58. The
 row is named here for the reason above: a reader who finds the figure stale should find who moved it.)
 
 | Construct | Count | Command |
@@ -947,16 +980,16 @@ row is named here for the reason above: a reader who finds the figure stale shou
 | Catalog recipes | 14 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 15 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 116 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 117 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 5 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
-| Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
-| Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 56 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Sites that compare a finding's severity to a value | 1 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
+| Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
+| Image-skew `Since` constants | 58 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 150 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 153 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 10 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |
@@ -972,15 +1005,22 @@ command prints `file:count`, which is not the figure the row states.
 
 Three of those rows are worth reading rather than counting.
 
-The **zero** is F1 and F2 in one figure: `internal/runner/prompts.go` and
-`internal/runner/reviewmode.go` each read `f.Severity` only to print it as a
-label, and no comparison against any value exists in the package. A mode
-threshold table has nothing to attach to today.
+The **one** is F1 and F2's row after the review-against-task plan's S-OUT on
+2026-11-19, and it is not a mode threshold table attaching to a label:
+`internal/runner/issuescope.go`'s reader refuses an issue whose scope is `unmet`
+or `differs` below `major` (that plan's R6), and the artifact's `severity` is the
+closed three-word enum this folder's own amendment above describes rather than
+the in-run format's free-form string. Every other read of `f.Severity` in the
+package still prints a label and compares nothing, so an in-run threshold table
+still has nothing to attach to: D2's rule is about the format whose severity is a
+word the reviewer chose, and it is intact.
 
-The **three** files are `verdict.go` (the schema string, the field, the
-fallback), `prompts.go` (the label) and `reviewmode.go` (the label again) — that
-is the entire surface a scoring change touches inside the runner, which is why D3
-is as small as it is.
+The **five** files are `verdict.go` (the schema string, the field, the
+fallback), `prompts.go` (the label), `reviewmode.go` (the label again),
+`reviewartifact.go` (the artifact's severity enum, the field it is required on,
+and the reader that closes it) and `issuescope.go` (that one rule) — that is the
+entire surface a scoring change touches inside the runner, which is why D3 is as
+small as it is.
 
 The four layering rows the 2026-10-20 amendment added are these: **4** layers a
 key may be set in (F37), **3** blocks the project layer's closed `defaults:` may

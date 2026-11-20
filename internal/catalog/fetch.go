@@ -192,40 +192,60 @@ func contextDigest(files []gitprov.TreeFile) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// validSource is a dockerfile source's repository, path and ref, checked before
+// the provider is opened rather than only where the catalog is validated: this
+// is where all three reach an API path and a build, and a value that got past a
+// validation is still not one to hand a provider (a path outside the
+// repository, an owner/name that is not one, a ref the API would read as
+// something else). The ref is held to config.ValidBranchName, the rule the
+// catalog's own validation applies, so this guard tightens or loosens with that
+// one instead of being a second, weaker rule that reads like a safety net.
+func validSource(e config.Entry) error {
+	s := e.Source
+	if !validRepo(s.Repo) {
+		return fmt.Errorf("the catalog entry %s: the source's repository is not the owner/name of a repository of this project", nameOf(e))
+	}
+	if !gitprov.ValidRepoPath(s.Path) {
+		return fmt.Errorf("the catalog entry %s: the source's path must be a relative path inside %s, with no .. segment", nameOf(e), pluginwire.Printable(s.Repo))
+	}
+	if s.Branch != "" && !config.ValidBranchName(s.Branch) {
+		return fmt.Errorf("the catalog entry %s: the source's branch must be a git branch name", nameOf(e))
+	}
+	return nil
+}
+
+// openEntryProvider is the provider an entry's repository is read through, and
+// the one sentence an opener that cannot answer gets. It is one function because
+// Resolve and ResolveRef open the same repository through the same seam, and a
+// person has to read the same words whichever of the two reached it.
+func openEntryProvider(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) (gitprov.Provider, error) {
+	if open == nil {
+		return nil, fmt.Errorf("the catalog entry %s: no git provider was given to read %s with", nameOf(e), pluginwire.Printable(e.Source.Repo))
+	}
+	p, _, err := open(ctx, kind, e.Source.Repo)
+	if err != nil {
+		return nil, fmt.Errorf("the catalog entry %s: opening the provider of %s: %w", nameOf(e), pluginwire.Printable(e.Source.Repo), err)
+	}
+	return p, nil
+}
+
 // fetchDockerfileAt reads a dockerfile source's file out of its repository, at
 // the commit its branch resolves to, and answers with that commit as well: it
 // is what the read happened at, so it is what a caller records and what the
 // context beside the file is read at.
 //
-// The repository, the path and the ref are checked before the provider is
-// opened, not only where the catalog is validated: this is where all three
-// reach an API path and a build, and a value that got past a validation is
-// still not one to hand a provider (a path outside the repository, an
-// owner/name that is not one, a ref the API would read as something else).
-// The ref is held to config.ValidBranchName, the rule the catalog's own
-// validation applies, so this guard tightens or loosens with that one
-// instead of being a second, weaker rule that reads like a safety net.
-//
-// The resolved commit is held to gitops.ValidCommitSHA for the same reason: it
-// reaches a build's `git fetch`, the revision label and the record, and each of
-// those reads a ref that is not a commit as something else.
+// The resolved commit is held to gitops.ValidCommitSHA for the same reason the
+// source is validated before the provider is opened: it reaches a build's `git
+// fetch`, the revision label and the record, and each of those reads a ref that
+// is not a commit as something else.
 func fetchDockerfileAt(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) ([]byte, string, gitprov.Provider, error) {
 	s := e.Source
-	if !validRepo(s.Repo) {
-		return nil, "", nil, fmt.Errorf("the catalog entry %s: the source's repository is not the owner/name of a repository of this project", nameOf(e))
+	if err := validSource(e); err != nil {
+		return nil, "", nil, err
 	}
-	if !gitprov.ValidRepoPath(s.Path) {
-		return nil, "", nil, fmt.Errorf("the catalog entry %s: the source's path must be a relative path inside %s, with no .. segment", nameOf(e), pluginwire.Printable(s.Repo))
-	}
-	if s.Branch != "" && !config.ValidBranchName(s.Branch) {
-		return nil, "", nil, fmt.Errorf("the catalog entry %s: the source's branch must be a git branch name", nameOf(e))
-	}
-	if open == nil {
-		return nil, "", nil, fmt.Errorf("the catalog entry %s: no git provider was given to read %s with", nameOf(e), pluginwire.Printable(s.Repo))
-	}
-	p, _, err := open(ctx, kind, s.Repo)
+	p, err := openEntryProvider(ctx, open, kind, e)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("the catalog entry %s: opening the provider of %s: %w", nameOf(e), pluginwire.Printable(s.Repo), err)
+		return nil, "", nil, err
 	}
 	r, ok := p.(gitprov.ContentsReader)
 	if !ok {
@@ -274,6 +294,31 @@ func resolveRef(ctx context.Context, p gitprov.Provider, e config.Entry) (string
 		return "", fmt.Errorf("the catalog entry %s: %s resolved to %s, which is not a full commit", nameOf(e), pluginwire.Printable(cmp.Or(e.Source.Branch, "the default branch")), pluginwire.Printable(commit))
 	}
 	return commit, nil
+}
+
+// ResolveRef is a dockerfile source's ref read on its own: the commit its
+// branch names, or the default branch's when it names none (resolveRef, D1394).
+// It is the read Resolve makes first — through the same opener and with the
+// same words, so the two cannot report one fact two ways — exported for the
+// callers that have to tell a ref the repository no longer has from a definition
+// this release refuses. Nothing else about the entry is read and nothing is
+// judged: a definition Resolve would refuse answers here as a commit.
+//
+// A source that is not a Dockerfile names no branch to resolve, so it is
+// refused by name rather than answered with a ref of some other source's.
+func ResolveRef(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) (string, error) {
+	if e.Source.Kind != config.SourceDockerfile {
+		return "", fmt.Errorf("the catalog entry %s has no ref to resolve: only a Dockerfile source names a branch, and this one is %s",
+			nameOf(e), pluginwire.Printable(string(e.Source.Kind)))
+	}
+	if err := validSource(e); err != nil {
+		return "", err
+	}
+	p, err := openEntryProvider(ctx, open, kind, e)
+	if err != nil {
+		return "", err
+	}
+	return resolveRef(ctx, p, e)
 }
 
 // definition is what both of a source's shapes hand back: bytes bounded to
@@ -342,7 +387,13 @@ func refuseCredentialIn(e config.Entry, data []byte) error {
 	lines, esc := dockerfileLines(data)
 	for _, line := range lines {
 		if asksForASecret(line.text) {
-			return SecretRefusal(e.Name, line.line)
+			err := SecretRefusal(e.Name, line.line)
+			if e.Source.Kind == config.SourceDockerfile {
+				// The file is read at the entry's own branch, which can be an
+				// old one that still carries what main no longer does.
+				return fmt.Errorf("%w (read from %s at %s)", err, pluginwire.Printable(e.Source.Repo), pluginwire.Printable(cmp.Or(e.Source.Branch, "its default branch")))
+			}
+			return err
 		}
 		if err := refuseCredentialNames(e, line.text, esc); err != nil {
 			return err

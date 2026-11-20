@@ -5,12 +5,12 @@ import "slices"
 // The threshold table (D2, D7a): what each level does with the findings its
 // reviewer scored, as data rather than as a condition inside the runner.
 //
-// A finding carries three anchored 1–5 axes and a class (D1, D3;
-// runner.VerdictSchema is the schema the reviewer is held to). The table reads
-// those four and never the free-form `severity` string beside them (D2): the
-// five words are a label derived from the score (label.go), so a word and a
-// score cannot disagree, and a level's decision is answerable to a reader
-// rather than to the model's choice of adjective.
+// A finding carries three anchored 1–5 axes, a class and a scope (D1, D3,
+// D2930; runner.VerdictSchema is the schema the reviewer is held to). The
+// table reads those five and never the free-form `severity` string beside them
+// (D2): the five words are a label derived from the score (label.go), so a
+// word and a score cannot disagree, and a mode's decision is answerable to a
+// reader rather than to the model's choice of adjective.
 //
 // Nothing acts on this yet. T2.3 lands the table and its tests; Slice 3's T3.1
 // is the task that puts it inside runner.Decide, which is where readiness is
@@ -54,11 +54,41 @@ var Classes = []Class{Correctness, Performance, Security, DataLoss, Maintainabil
 // whose reviewer named none — is not.
 func KnownClass(c Class) bool { return slices.Contains(Classes, c) }
 
-// Score is the part of a finding the table reads (D2): the three axes and the
-// class. It is deliberately not runner.Finding — internal/rigor may not import
-// internal/runner, which reads this package — so the runner presents its own
-// finding as this at the call site and the table's inputs are stated once,
-// here, rather than as four field names a reader has to go and find.
+// Scope is a finding's scope: the one axis of a finding that is about the task
+// the pull request was written for rather than about the code (D2930, R6). The
+// three words are the reviewer's own:
+//
+//   - unmet — the task asks for something the diff does not do;
+//   - beyond — the diff does something the task did not ask for;
+//   - differs — the task asked for Y and the diff does X instead.
+//
+// runner.Finding.Scope carries the same three words (internal/runner/
+// issuescope.go), and it is deliberately not shared: internal/runner reads this
+// package, so the words are stated here rather than imported from there. The
+// reader that closes the vocabulary is the reviewer's schema and the artifact's
+// own check; a word this type does not know is read as a finding about the code
+// alone, the way a transcript written before the field existed reads.
+type Scope string
+
+const (
+	// ScopeUnmet is a finding that says the task asks for something the diff
+	// does not do. R6 blocks it in every mode but Hotfix.
+	ScopeUnmet Scope = "unmet"
+	// ScopeBeyond is a finding that says the diff does something the task did
+	// not ask for. It is scored by its own risk: it blocks only where the axes
+	// do.
+	ScopeBeyond Scope = "beyond"
+	// ScopeDiffers is a finding that says the task asked for Y and the diff does
+	// X instead. R6 blocks it in every mode but Hotfix.
+	ScopeDiffers Scope = "differs"
+)
+
+// Score is the part of a finding the table reads (D2): the three axes, the
+// class and the scope. It is deliberately not runner.Finding — internal/rigor
+// may not import internal/runner, which reads this package — so the runner
+// presents its own finding as this at the call site and the table's inputs are
+// stated once, here, rather than as five field names a reader has to go and
+// find.
 //
 // Zero is the unscored finding. The valid scale starts at 1 on every axis, so
 // nothing a reviewer scores can read as absent, and a verdict written before
@@ -74,6 +104,14 @@ type Score struct {
 	FixCost int
 	// Class is what kind of issue it is.
 	Class Class
+	// Scope is whether the finding is about the task the pull request was
+	// written for, which is the one axis here that is not about the code
+	// (D2930). An unmet or differing finding blocks in every mode but Hotfix
+	// whatever the axes say (R6); a beyond one is scored by them. It is absent
+	// on a finding about the code alone, which is every finding written before
+	// it existed, and a word outside the three is read as absent rather than as
+	// a finding the table cannot place.
+	Scope Scope
 }
 
 // Risk is likelihood × impact: the one number the table's floors are stated
@@ -108,24 +146,44 @@ func (s Score) catastrophic() bool {
 	return s.Class == Security || s.Class == DataLoss || s.Impact == 5
 }
 
-// override is one level's reading of the spec's severity override — "rare but
-// catastrophic findings (data loss, security) block even in Startup mode" — as
-// the level's own row rather than as a condition beside it: the table is data
-// and Blocks is its one reader (D2, D7).
+// unmetOrDiffers reports whether the finding says the change does not do what
+// its task asked: its scope is unmet or differs (D2930, R6). Such a finding
+// blocks in every mode but Hotfix, whatever its axes say, which is why both of
+// a row's gates read it beside the severity override rather than leaving it to
+// the threshold: whether the diff does what its task asked is not a matter of
+// likelihood and impact, and a finding the mode's floor does not hold is one
+// the triage judge is free to defer.
+//
+// A scope the three words do not name — the empty one a transcript written
+// before the field existed carries, and a word a reviewer invented — is not one
+// of the two, so it turns nothing down: the schema is what constrains the model,
+// and this reader must not let a word it cannot place decide a merge.
+func (s Score) unmetOrDiffers() bool {
+	return s.Scope == ScopeUnmet || s.Scope == ScopeDiffers
+}
+
+// override is one mode's reading of what blocks whatever the axes say — the
+// spec's severity override ("rare but catastrophic findings (data loss,
+// security) block even in Startup mode") and, in the same set, R6's two task
+// scopes (unmet, differs) — as the mode's own row rather than as a condition
+// beside it: the table is data and Blocks is its one reader (D2, D7).
 type override int
 
 const (
 	// overrideCatastrophic is the override as the spec states it: a Security or
-	// DataLoss class, or an impact of the top of the scale. It is the zero
-	// value, so a row that says nothing about the override keeps all of it — a
-	// level can only give part of it up by naming the part it keeps, which is
-	// D4's fail-closed rule read at the table's own data.
+	// DataLoss class, or an impact of the top of the scale, and beside them
+	// R6's two task scopes (unmet, differs), which block in the same modes. It
+	// is the zero value, so a row that says nothing about the override keeps
+	// all of it — a mode can only give part of it up by naming the part it
+	// keeps, which is D4's fail-closed rule read at the table's own data.
 	overrideCatastrophic override = iota
 	// overrideSecurity is the security gate alone. Hotfix's row is the one that
 	// reads its own sentence — "only findings that make the fix wrong or unsafe
 	// block" — this way, by the owner's ruling of 2026-10-26: a finding of
 	// class security blocks there whatever its axes say, and a finding whose
-	// class is data_loss or whose impact is 5 is tolerated like any other.
+	// class is data_loss or whose impact is 5 is tolerated like any other. R6
+	// exempts Hotfix from the task scopes for the same reason, so an unmet or
+	// differing finding is tolerated there too.
 	overrideSecurity
 )
 
@@ -137,7 +195,7 @@ func (o override) blocks(s Score) bool {
 	if o == overrideSecurity {
 		return s.Class == Security
 	}
-	return s.catastrophic()
+	return s.catastrophic() || s.unmetOrDiffers()
 }
 
 // stop is one level's at-the-stop row (the owner's ruling of 2026-11-08): what
@@ -159,8 +217,9 @@ const (
 	// nobody wrote.
 	stopDraft stop = iota
 	// stopCatastrophic accepts at the stop every finding the spec's severity
-	// override does not cover: what still blocks is a Security or DataLoss class
-	// or an impact of 5 (catastrophic), whatever the axes say. Startup's row,
+	// override does not cover and R6's task scope does not hold: what still
+	// blocks is a Security or DataLoss class, an impact of 5, or a scope of
+	// unmet or differs, whatever the axes say. Startup's row,
 	// whose sentence is "fix common; log rare/expensive to backlog" and whose
 	// point is time to market, and POC's, whose own row already tolerates
 	// everything else.
@@ -176,11 +235,17 @@ const (
 
 // blocks reports whether this reading of the stop rule still blocks s. A value
 // outside the three above is read as stopDraft — the strict answer — the way an
-// unknown level blocks everything.
+// unknown mode blocks everything.
+//
+// It reads R6's task scope beside the override for the reason the override is
+// read here at all: a stop has to name what it does not take, and the two gates
+// of a mode's row are one rule written twice rather than two. stopSecurity
+// leaves both out at once, which is Hotfix's row: the mode the ruling of
+// 2026-10-26 gave the fewest gates has them at the stop too.
 func (o stop) blocks(s Score) bool {
 	switch o {
 	case stopCatastrophic:
-		return s.catastrophic()
+		return s.catastrophic() || s.unmetOrDiffers()
 	case stopSecurity:
 		return s.Class == Security
 	}

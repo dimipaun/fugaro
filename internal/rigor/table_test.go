@@ -118,6 +118,86 @@ func TestTableBlocksAnUnscoredFindingInEveryMode(t *testing.T) {
 	}
 }
 
+// scopeScore is the finding the scope cases below are asked about: the lowest
+// risk the scale can express, in a class no mode's override names and with a
+// fix cost no escape reaches — Startup's stop takes it and POC ignores it, so
+// nothing but the scope can block it, and each case fails rather than passing
+// on some other gate.
+func scopeScore(scope Scope) Score {
+	return Score{Likelihood: 1, Impact: 1, FixCost: 5, Class: Cosmetic, Scope: scope}
+}
+
+// TestScopeUnmetBlocksExceptHotfix is R6's first half: a finding whose scope
+// says the change does not do what its task asks — unmet, or differs — blocks
+// in every mode but Hotfix, whatever its axes say. Hotfix is the exception the
+// resolution names and not an omission: its row keeps the security gate alone.
+func TestScopeUnmetBlocksExceptHotfix(t *testing.T) {
+	for _, m := range Rigors {
+		for _, scope := range []Scope{ScopeUnmet, ScopeDiffers} {
+			s := scopeScore(scope)
+			if got, want := Blocks(m, s), m != Hotfix; got != want {
+				t.Errorf("Blocks(%s, %+v) = %v, want %v: a scope of %s blocks in every mode but Hotfix (R6)", m, s, got, want, scope)
+			}
+		}
+	}
+	// The scope is what carries it rather than the axes: the same finding with
+	// a `beyond` scope is scored by its own risk, which is the lowest one, so
+	// every mode that blocks nothing at that risk tolerates it.
+	for _, m := range []Rigor{POC, Startup, Pro} {
+		if s := scopeScore(ScopeBeyond); Blocks(m, s) {
+			t.Errorf("Blocks(%s, %+v) = true; a beyond finding is scored by its own risk (R6)", m, s)
+		}
+	}
+}
+
+// TestScopeUnmetIsFloor: the floor is the part of a mode's rule the triage
+// judge may not move (rigor.Floor, D1840), so R6's two scopes have to be
+// inside it and not only inside Blocks — a scope the row blocked below the
+// floor would be one the judge could defer. What the floor buys is tested
+// where the judge is (internal/triage: Apply blocks every finding Floor
+// names); this is the table's own half of it.
+func TestScopeUnmetIsFloor(t *testing.T) {
+	for _, m := range Rigors {
+		for _, scope := range []Scope{ScopeUnmet, ScopeDiffers} {
+			s := scopeScore(scope)
+			if got, want := Floor(m, s), m != Hotfix; got != want {
+				t.Errorf("Floor(%s, %+v) = %v, want %v: %s is floor in every mode but Hotfix (R6)", m, s, got, want, scope)
+			}
+		}
+	}
+	// A beyond finding is on the axes and not in the floor, which is the
+	// judge's reach: a row that made every scope floor would hand the judge
+	// nothing to weigh.
+	if s := scopeScore(ScopeBeyond); Floor(Startup, s) {
+		t.Errorf("Floor(Startup, %+v) = true; a beyond finding is scored by its own risk (R6)", s)
+	}
+}
+
+// TestScopeUnmetNotAcceptedAtStop is R6's second gate, which round 2 of the
+// reconciliation added (F28): Stop is a separate type from Override, so a
+// scope inside one and not the other would let a run that spent its rounds
+// merge a change its own reviewer says does not do what its task asks. The
+// score is the one Startup's stop accepts outright — the task's red step —
+// so the case fails until the stop row names the scope.
+func TestScopeUnmetNotAcceptedAtStop(t *testing.T) {
+	if s := scopeScore(""); BlocksAtStop(Startup, s) {
+		t.Fatalf("Startup's stop blocks %+v; the case proves nothing unless the score alone is accepted there", s)
+	}
+	for _, m := range Rigors {
+		for _, scope := range []Scope{ScopeUnmet, ScopeDiffers} {
+			s := scopeScore(scope)
+			if got, want := BlocksAtStop(m, s), m != Hotfix; got != want {
+				t.Errorf("BlocksAtStop(%s, %+v) = %v, want %v: %s blocks at the stop in every mode but Hotfix (R6)", m, s, got, want, scope)
+			}
+		}
+	}
+	// And it is the scope that does it: the same finding with a beyond scope is
+	// accepted at Startup's stop exactly as the score alone is.
+	if s := scopeScore(ScopeBeyond); BlocksAtStop(Startup, s) {
+		t.Errorf("BlocksAtStop(Startup, %+v) = true; a beyond finding is scored by its own risk (R6)", s)
+	}
+}
+
 // TestTableCriticalBlocksEveryFinding: "Critical — Every finding blocks"
 // (spec.md), with no exception for a finding the other levels tolerate.
 func TestTableCriticalBlocksEveryFinding(t *testing.T) {

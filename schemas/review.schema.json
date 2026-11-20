@@ -14,6 +14,18 @@
     "pr": { "type": "integer", "minimum": 1, "description": "The pull request this review is about. With repository and head_sha it makes the document a statement about ONE review of ONE pull request at ONE commit, and the verifier's checks compare exactly those." },
     "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$", "description": "The commit the review read, as Git names an object: forty lowercase hex characters, or sixty-four for a SHA-256 repository. A review of an earlier commit does not approve the branch's current one, so the coordinator compares this against the head it holds -- and a reader that took a branch name, an abbreviated commit or a value differing only in case would be comparing two different objects as if they were one. The runner holds it to the same pattern, so an artifact the runner writes is never one this document refuses." },
     "base": { "type": "string", "description": "The base branch the pull request targets, as the run read it. Provenance for a reader, compared by nothing: `main` is not the same branch in every repository, and the base can move under a review that was honest about the head." },
+    "against": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source"],
+      "description": "What this review was checked against: the task of the run that opened the pull request, or a spec a person supplied by hand (spec §2, R8). It is the LAUNCHER's claim and not evidence (R16) -- the launcher read the task out of the runs bucket and wrote this record -- so a reader that needs it to be true trusts the launcher and not this document. Absent on a review whose writer did not know the field: a review written before the shape had it, and the document is still valid then, because the field is optional and the version does not move. source `none` is the different statement that the review looked and found nothing to check against, and it carries the reason: a review of a pull request no run produced, one run code-only on request, or one whose runs are outside the lookback window.",
+      "properties": {
+        "source": { "type": "string", "enum": ["run", "file", "none"], "description": "Where the text the reviewer judged against came from. `run` is the task of the root run, the run that opened this pull request's branch, read from runs/<slug>/<run>/task.json; `file` is a spec a person passed at launch; `none` is no text at all, which is why a `none` carries a reason and the other two never do." },
+        "run": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$", "description": "The root run whose stored task was quoted, present for source `run` and for nothing else: a file a person supplied is not a run, and a review with nothing to check against names none." },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The digest of the text the reviewer was actually shown, after the launcher clipped it to 16 KiB and redacted it (R4, R13) -- so a reader can tell two reviews of one pull request apart when the task behind them changed, and can compare what a later review quoted with what this one did. Lowercase hex, the shape every digest in this tree is stored in." },
+        "reason": { "type": "string", "minLength": 1, "description": "Why there was nothing to check against, present for source `none` and for nothing else: `--code-only`, `no run found`, `pick of different tasks` or `own-step recipe`. It is what keeps a code-only review from reading as a launcher that lost the task." }
+      }
+    },
     "reviewer": {
       "type": "object",
       "additionalProperties": false,
@@ -38,6 +50,7 @@
         "properties": {
           "severity": { "type": "string", "enum": ["blocker", "major", "minor"] },
           "class": { "type": "string", "enum": ["correctness", "performance", "security", "data_loss", "maintainability", "cosmetic"] },
+          "scope": { "type": "string", "enum": ["unmet", "beyond", "differs"], "description": "Whether this issue is about the task the pull request was written for (D2930). `unmet`: the task asks for something the diff does not do; `beyond`: the diff does something the task did not ask for; `differs`: the task asked for Y and the diff does X instead. Absent on an issue about the code alone, which is every issue written before the field existed. It is unrelated to `review_scope`: that is the range of files a review was handed (the halt reason in result.json) and a budget's `Scope` is what the budget bounds, while this one is per issue and names the task axis -- the two never meet. An issue with `unmet` or `differs` below `major`, and a `ship` verdict carrying one, are refused by this shape's reader: a change that does not do what it was asked to do is never a ship." },
           "file": { "type": "string" },
           "line": { "type": "integer", "minimum": 1, "description": "A claim about the head the review read, which is why head_sha is recorded beside it: a reader that finds the file moved still knows which commit the line meant. Absent when the finding is not about a line." },
           "summary": { "type": "string" },

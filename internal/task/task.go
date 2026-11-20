@@ -609,6 +609,53 @@ type Spec struct {
 	// set it (taskGradeSince, internal/cli/recipes_skew.go) rather than let
 	// the run fail at bootstrap after the task was written.
 	ModelGrade escalation.Grade `json:"model_grade,omitempty"`
+	// ReviewSpec is the spec the launched review of a pull request is checked
+	// against (docs/review-against-task R2): the task the pull request was
+	// written for, the follow-up's own text beside it, and the plan task
+	// whose section of its plan the reviewer is also pointed at. The
+	// launcher writes it — `fugaro review` and `fugaro run --recipe
+	// review-only` resolve it through one shared resolver (D2934) — and the
+	// review job's runner reads it and reads no other run; an in-run review
+	// carries no block, since its runner holds the run's own task already.
+	//
+	// It is DATA and never an instruction (R3): the reviewer compares the
+	// diff against it, and the runner quotes it redacted, cleaned and
+	// nonce-fenced under a sentence that says so. Never the pull request
+	// body, which whoever can edit the pull request can rewrite (spec §2),
+	// and never a source the review job fetches itself (F3): the launcher
+	// hands the bytes in.
+	//
+	// Nil for every launch that is not a launched review, which is every
+	// spec written before this field, so a spec carrying none is
+	// byte-identical to what the release before it wrote and is still read
+	// by a runner that has never heard of the field. A task that carries one
+	// needs a runner that knows it: Parse decodes with DisallowUnknownFields,
+	// so an older runner refuses the whole spec — the skew every new task
+	// field has, which is why the launcher omits the field, and warns with
+	// the reason, against a job image older than reviewSpecSince (D2933).
+	ReviewSpec *ReviewSpec `json:"review_spec,omitempty"`
+	// FromFindings marks a follow-up launched from a review's own findings
+	// (fugaro run --pr N --review-run R, R2/F30): such a run's task text is
+	// the rendered findings followed by the person's TEXT, and only the
+	// person's part is a brief — the rest is a reviewer's words, and quoting
+	// them as the spec would make a reviewer the author of the brief the next
+	// review judges against (F25).
+	//
+	// False is every other launch, and every spec written before this field,
+	// so a spec carrying false is byte-identical to the previous release's.
+	// OwnText beside it is the field it gates: Validate refuses own_text
+	// without it.
+	FromFindings bool `json:"from_findings,omitempty"`
+	// OwnText is the person's own words on a findings follow-up
+	// (Spec.FromFindings, R2): the TEXT they typed, kept apart from the
+	// findings the task text opens with, so a review of that pull request
+	// quotes what the person asked for and leaves the reviewer's words out
+	// (R1). Empty — and so no key at all — for every other launch, which is
+	// every spec written before this field. It is bounded by
+	// MaxReviewSpecBytes, and Validate refuses it without FromFindings, since
+	// a launch that did not mark the findings has no person's text to keep
+	// apart from them.
+	OwnText string `json:"own_text,omitempty"`
 }
 
 // FollowUpOf is the parent a triage follow-up came from: the run whose
@@ -1733,6 +1780,26 @@ func (s *Spec) Validate() error {
 		if p := PlanTaskProblem(s.PlanTask); p != "" {
 			bad("task spec: plan_task %s", p)
 		}
+	}
+	// The spec a launched review is checked against (Spec.ReviewSpec, R2),
+	// through the one list the launcher applies before it writes anything
+	// (ReviewSpecProblem): a block the launcher accepts has to be one the
+	// runner accepts, or the launch writes a task the review job then refuses
+	// at bootstrap. An absent block is legal — an in-run review, and every
+	// spec written before this field, carry none.
+	if p := ReviewSpecProblem(s.ReviewSpec); p != "" {
+		bad("task spec: review_spec %s", p)
+	}
+	// The person's own words on a findings follow-up (Spec.OwnText, R2): they
+	// are quoted as the brief only when the launch marked its task text as
+	// carrying a reviewer's findings too, so a task that carries own_text
+	// without that mark is one whose text a reader cannot take apart (F30).
+	// The text itself is held to the same cap as the spec's own two texts.
+	if s.OwnText != "" && !s.FromFindings {
+		bad("task spec: own_text needs from_findings: it is the person's own words beside a review's findings, and a launch that did not mark them has none to keep apart")
+	}
+	if p := ReviewSpecTextProblem("own_text", s.OwnText); p != "" {
+		bad("task spec: %s", p)
 	}
 	// config.ClaudeAccountNameRE and config.MaxClaudeAccountNameLen are the
 	// single source of truth for a named account's shape (internal/config/

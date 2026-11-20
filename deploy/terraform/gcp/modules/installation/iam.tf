@@ -177,6 +177,8 @@ resource "google_cloud_run_v2_service_iam_member" "credentials_invoker" {
   name     = var.credentials_service.service
   role     = "roles/run.invoker"
   member   = each.value
+
+  depends_on = [google_cloud_run_v2_service.credentials]
 }
 
 # ... and the read mint's second class (BB5): the coordinator's own service
@@ -208,6 +210,8 @@ resource "google_cloud_run_v2_service_iam_member" "credentials_coordinator" {
   name     = var.credentials_service.service
   role     = "roles/run.invoker"
   member   = google_service_account.coordinator[0].member
+
+  depends_on = [google_cloud_run_v2_service.credentials]
 }
 
 # ... and the verify route's one caller class (CSR14, D1068): the installation's
@@ -233,6 +237,8 @@ resource "google_cloud_run_v2_service_iam_member" "credentials_verifier" {
   name     = var.credentials_service.service
   role     = "roles/run.invoker"
   member   = google_service_account.fugaro_verifier[0].member
+
+  depends_on = [google_cloud_run_v2_service.credentials]
 }
 
 # The verifier account's own half of the impersonation the verify route is

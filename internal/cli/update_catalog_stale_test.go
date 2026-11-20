@@ -2,11 +2,13 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/spf13/cobra"
 )
@@ -58,6 +60,17 @@ func catalogStaleRig(t *testing.T, serverBase, workerBase string) (*convergeRig,
 	// step 3): the append reaches the run through the copy, not through the
 	// rig's own file.
 	registerInstallation(t, r.initRig)
+	// The guard `fugaro update` runs before its first stage
+	// (update_catalog_guard.go) reads each entry's repository, so the catalog
+	// build's provider seam points at a fake repository holding both
+	// definitions: the two are the entries' own and ask for no secret, so the
+	// guard has nothing to say about this catalog and the tests below are about
+	// the images stage alone.
+	stubCatalogCredential(t)
+	stubCatalogProviderState(t, fake.State{Files: map[string]string{
+		"images/server.Dockerfile": "FROM example.invalid/base\nRUN true\n",
+		"images/worker.Dockerfile": "FROM example.invalid/base\nRUN true\n",
+	}})
 	putCatalogRecord(t, mustSlug("github", "acme/app"), "server", serverBase)
 	putCatalogRecord(t, mustSlug("bitbucket", "acme/sandbox"), "worker", workerBase)
 	var built []string
@@ -215,5 +228,27 @@ func TestUpdateJSONDoesNotReachTheCatalogRebuild(t *testing.T) {
 	}
 	if all := out + errOut + newestLog(t, "update"); !strings.Contains(all, "not confirmed (--json confirms no step") {
 		t.Errorf("the run does not name --json as the reason it stopped before the stages:\n%s", all)
+	}
+}
+
+// TestUpdateSaysWhyACatalogRebuildDidNotFinish: a rebuild the stage submitted
+// and that was refused is named with its reason in the step left for the person,
+// not only in the log. Without it the run ended on "run fugaro image build go,
+// then fugaro update again", a command that fails the same way and says nothing
+// about what to change.
+func TestUpdateSaysWhyACatalogRebuildDidNotFinish(t *testing.T) {
+	_, _, _ = catalogStaleRig(t, pinnedRef(config.BaseKind, convergePrev), pinnedRef(config.BaseKind, convergeRelease))
+	catalogRebuild = func(_ *cobra.Command, entry string, _ imageBuildOptions) error {
+		return errors.New("the catalog entry " + entry + ": line 31 of its Dockerfile asks for a secret")
+	}
+
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
+	if err == nil {
+		t.Fatalf("a run whose rebuild was refused reported success:\n%s", out)
+	}
+	want := "server (acme/app's checkout): its rebuild did not finish (the catalog entry server: line 31 of its Dockerfile asks for a secret)"
+	if all := out + errOut; !strings.Contains(all, "left for you (images, command): ") || !strings.Contains(all, want) {
+		t.Errorf("the step left for the person does not carry the refusal %q:\n%s", want, all)
 	}
 }

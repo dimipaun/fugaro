@@ -77,6 +77,16 @@ const (
 	// the node arrives on the ceiling and the repository's file in the checked
 	// out branch.
 	KeyTriage = "triage"
+	// KeyReviewAgainstTask is the switch that makes a review check a pull
+	// request against its task (docs/review-against-task, D2935): the
+	// repository's own agent.review_against_task, and the owner's published
+	// policy node. It is a key of the merge for KeyTriage's reason — the two
+	// homes meet only here — and it is the inverse of it in direction: ON is the
+	// stricter value, so the merge takes a true wherever it appears and records
+	// a layer's false that lost to one. That is what makes the owner's published
+	// true a check no repository can walk out of, and his published false only
+	// the default a repository's own true overrides.
+	KeyReviewAgainstTask = "review_against_task"
 	// The governance keys, spelled as fugaro.yaml spells them under
 	// governance: (docs/task-governance/spec.md §2, §5). The three stages are
 	// the ones a run's governance bounds: an artifact run's plan and render
@@ -519,6 +529,23 @@ type Layer struct {
 	// the merge takes it wherever it appears and drops a layer's true under an
 	// effective false.
 	Triage *bool
+	// ReviewAgainstTask is this layer's switch for checking a pull request
+	// against the task it was written for (docs/review-against-task, D2935):
+	// nil = the layer writes none, true = every review stage is shown the
+	// originating run's task and asked whether the change does what it asks,
+	// false = it is not. A pointer for Triage's reason: false is a value here
+	// and not "unset", and the merge has to be able to tell a layer that says
+	// false from one that says nothing.
+	//
+	// The two homes it has are Triage's: the repository's own
+	// agent.review_against_task, read from the base branch, and the owner-only
+	// policy node, which internal/runner puts on the ceiling. Its direction is
+	// the opposite one — on is the stricter answer — so the merge takes a true
+	// wherever it appears and drops a layer's false under an effective true
+	// (see Merge). The owner's published true therefore forces the check on for
+	// every repository, while his published false is the project-wide default a
+	// repository's own true overrides (D2935).
+	ReviewAgainstTask *bool
 	// Governance is this layer's governance limits; the zero value sets
 	// none, which is what leaves the ceiling's own alone (see Governance).
 	Governance Governance
@@ -629,6 +656,25 @@ func unionFloor(a, b []Level) []Level {
 // method rather than by dereferencing a pointer every caller would have to
 // remember to read as "off wins".
 func (e Effective) TriageOff() bool { return e.Triage != nil && !*e.Triage }
+
+// ReviewAgainstTaskForced reports whether the merged layers force a review to
+// be checked against the task: some layer wrote true, which nothing under it
+// could turn off, because on is the stricter answer for this key (D2935). It is
+// the owner's published `true` — the one value no repository can walk out of —
+// and a repository's own true reaches the same answer.
+func (e Effective) ReviewAgainstTaskForced() bool {
+	return e.ReviewAgainstTask != nil && *e.ReviewAgainstTask
+}
+
+// ReviewAgainstTaskDefaultOff reports whether the merged layers leave the check
+// off by default: at least one layer wrote false and none wrote true (D2935).
+// It is what the owner's published `false` means — a project-wide default off,
+// not a ceiling — and the reading order a consumer owes it is the one R7 names:
+// Forced first, then the repository's own value where its base file sets one,
+// then this, then on.
+func (e Effective) ReviewAgainstTaskDefaultOff() bool {
+	return e.ReviewAgainstTask != nil && !*e.ReviewAgainstTask
+}
 
 // Effective is the merged policy plus where each key came from.
 type Effective struct {

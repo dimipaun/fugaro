@@ -28,6 +28,15 @@ locals {
     # backend-less installation must not look a price up at all — which is
     # what enable_budget names here. Enabling the API is free; the read is.
     var.enable_budget ? ["cloudbilling.googleapis.com"] : [],
+    # The voice hop's google engine synthesizes speech through Cloud
+    # Text-to-Speech (internal/voicesvc's provider.go, one constant endpoint),
+    # and it makes that call as the hop's own account rather than with a
+    # provider key: enabling the API IS that engine's credential, so a hop
+    # whose project never enabled it answers every google call with
+    # SERVICE_DISABLED and the register's row cannot be measured at all (P5.3.5,
+    # Check 85). Gated on the hop like the entries above: the call exists only
+    # for an installation that carries it.
+    local.voice_on ? ["texttospeech.googleapis.com"] : [],
   ))
 }
 

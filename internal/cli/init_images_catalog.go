@@ -291,7 +291,7 @@ func catalogLeftFor(missed []catalogLeft) *initflow.Left {
 	names := make([]string, len(missed))
 	for i, m := range missed {
 		cmds[i] = catalogBuildCommand(m.entry.entry.Name)
-		names[i] = fmt.Sprintf("%s (%s's checkout)", pluginwire.Printable(m.entry.entry.Name), pluginwire.Printable(m.entry.repo.Repo))
+		names[i] = fmt.Sprintf("%s (%s's checkout): %s", pluginwire.Printable(m.entry.entry.Name), pluginwire.Printable(m.entry.repo.Repo), m.why)
 	}
 	return &initflow.Left{
 		Stage:    initflow.Images,

@@ -652,6 +652,54 @@ func ProxiedTokenAccessorAllowDelete(p *tf.Plan, spec RepoSpec) []string {
 	if p == nil || !spec.DropsBitbucketToken() {
 		return nil
 	}
+	return jobAccessorAllowDelete(p, spec, func(ws WorkflowSpec, key string) bool {
+		return mountsServiceHeldSecret(ws, key, spec.BitbucketProxied, spec.ModelSecretsServed)
+	})
+}
+
+// VaultAccessorAllowDelete is the guard's allow-list for p when this
+// repository's job gives up its account's accessor on the workflow secrets the
+// credentials service FETCHES for it (B3.8, S3; RepoSpec.Workflows' own
+// VaultSecretNames, which is the same answer modules/workflow/sa.tf's
+// job_secret_names clause reads): one address per workflow this spec deploys
+// that fetches the name.
+//
+// It is B1.13's rule for a second class of secret, and it exists for the same
+// reason (CLAUDE.md's HARD RULE, the review finding ProxiedTokenAccessorAllowDelete
+// above carries): the plan that lands the flip deletes an accessor the state
+// holds and this tree's spec no longer produces, a managed project's own
+// retirement converges it (init's retireManaged, whose guard is
+// RetireAllowDelete), and a project that is not managed takes the ordinary plan
+// — where the run would stop with `--retire`'s two typed confirmations or
+// `--allow-delete` as the only ways past a delete fugaro itself decided. One
+// plain `fugaro update --repo` applies it instead.
+//
+// The filter is the drop's own list, read off the spec: config's class list is
+// the switch (config.VaultFetchesClass, the same answer dropVaultMounts reads
+// before it takes a mount away), and ws.VaultSecretNames is what that drop
+// recorded for this workflow — so a name the service does not fetch for it (a
+// provider key the run's route forwards rather than attaches, the App key while
+// service_held_secret_names is empty, a secret D2313 leaves storeless here) is
+// not admitted, and the accessor of a variant that has left the configuration
+// stops the run as it always has. Nothing else a plan does to any address is
+// touched, and the service's own grant on the container is not this list's
+// business: the fetched class is the one flip that keeps it (D2074, B3.8's
+// sa.tf), so this flip's own plan carries no delete of it.
+func VaultAccessorAllowDelete(p *tf.Plan, spec RepoSpec) []string {
+	if p == nil || !config.VaultFetchesClass(config.VaultSecretClassWorkflow) {
+		return nil
+	}
+	return jobAccessorAllowDelete(p, spec, func(ws WorkflowSpec, key string) bool {
+		return slices.Contains(ws.VaultSecretNames, key)
+	})
+}
+
+// jobAccessorAllowDelete is the walk both flips' allow-lists share: every
+// delete in p of a job account's own accessor in one of this repository root's
+// workflows, admitted when admits says this spec does not produce it. The
+// address shape is parsed once, here, so the two cannot drift about what they
+// are reading, and each flip's own rule stays in its own function above.
+func jobAccessorAllowDelete(p *tf.Plan, spec RepoSpec, admits func(WorkflowSpec, string) bool) []string {
 	var out []string
 	for _, rc := range p.ResourceChanges {
 		if !slices.Contains(rc.Change.Actions, "delete") {
@@ -670,7 +718,7 @@ func ProxiedTokenAccessorAllowDelete(p *tf.Plan, spec RepoSpec) []string {
 			continue
 		}
 		ws, deployed := spec.Workflows[variant]
-		if !deployed || !mountsServiceHeldSecret(ws, key, spec.BitbucketProxied, spec.ModelSecretsServed) {
+		if !deployed || !admits(ws, key) {
 			continue
 		}
 		out = append(out, rc.Address)

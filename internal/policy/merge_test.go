@@ -838,6 +838,80 @@ func TestAgentTriageOffInPolicyWinsOverARepositoryOn(t *testing.T) {
 	}
 }
 
+// TestMergeReviewAgainstTaskOnIsStricter is D2935's direction for the switch
+// that makes a review check a pull request against its task
+// (docs/review-against-task): it has the two homes triage has — the
+// repository's own agent.review_against_task and the owner's published policy
+// node (Layer.ReviewAgainstTask, which the runner puts on the ceiling) — and
+// the opposite polarity. ON is the stricter answer here, so a later layer may
+// turn the check on over an off, and turning it off over an on is the value
+// the merge drops and records. That is what makes the owner's published `true`
+// a check no repository can walk out of, while his published `false` is only
+// the default a repository's own `true` overrides (D2935).
+//
+// The layers are the three Merge is always handed — the owner's node as the
+// ceiling, the project's default branch, the task's own branch.
+func TestMergeReviewAgainstTaskOnIsStricter(t *testing.T) {
+	on, off := true, false
+	cases := []struct {
+		name                 string
+		ceiling, def, branch *bool
+		want                 *bool
+		wantSrc              string
+		ignored              int
+	}{
+		{"nothing set", nil, nil, nil, nil, "", 0},
+		{"the owner's node turns it on", &on, nil, nil, &on, "ceiling", 0},
+		{"the default branch turns it on", nil, &on, nil, &on, "default-branch", 0},
+		{"the repository turns it on", nil, nil, &on, &on, "branch", 0},
+		{"the repository turns it on over a published off", &off, nil, &on, &on, "branch", 0},
+		{"the default branch turns it on over a published off", &off, &on, nil, &on, "default-branch", 0},
+		{"a branch off under a default-branch on", nil, &on, &off, &on, "default-branch", 1},
+		{"the repository turns it off under a published on", &on, nil, &off, &on, "ceiling", 1},
+		{"the default branch turns it off under a published on", &on, &off, nil, &on, "ceiling", 1},
+		{"the repository turns it off under nothing", nil, nil, &off, &off, "branch", 0},
+		{"the repository turns it off twice", nil, &off, &off, &off, "default-branch", 0},
+		{"two equals are not ignored", &on, nil, &on, &on, "ceiling", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := Merge(Layer{ReviewAgainstTask: tc.ceiling}, Layer{ReviewAgainstTask: tc.def}, Layer{ReviewAgainstTask: tc.branch})
+			switch {
+			case tc.want == nil && e.ReviewAgainstTask != nil:
+				t.Fatalf("ReviewAgainstTask = %v, want nil: a layer that says nothing is not a value", *e.ReviewAgainstTask)
+			case tc.want != nil && (e.ReviewAgainstTask == nil || *e.ReviewAgainstTask != *tc.want):
+				t.Fatalf("ReviewAgainstTask = %v, want %v", e.ReviewAgainstTask, *tc.want)
+			}
+			if got := e.Sources[KeyReviewAgainstTask]; got != tc.wantSrc {
+				t.Errorf("Sources[%s] = %q, want %q", KeyReviewAgainstTask, got, tc.wantSrc)
+			}
+			// The two accessors are the merge's direction read: on is stricter,
+			// so the merged value is forced exactly when some layer asked for it
+			// and the default is off exactly when some layer asked off and none
+			// asked on.
+			wantForced := tc.want != nil && *tc.want
+			wantDefaultOff := tc.want != nil && !*tc.want
+			if got := e.ReviewAgainstTaskForced(); got != wantForced {
+				t.Errorf("ReviewAgainstTaskForced() = %v, want %v (ReviewAgainstTask = %v)", got, wantForced, e.ReviewAgainstTask)
+			}
+			if got := e.ReviewAgainstTaskDefaultOff(); got != wantDefaultOff {
+				t.Errorf("ReviewAgainstTaskDefaultOff() = %v, want %v (ReviewAgainstTask = %v)", got, wantDefaultOff, e.ReviewAgainstTask)
+			}
+			if len(e.Ignored) != tc.ignored {
+				t.Fatalf("Ignored = %v, want %d record(s)", e.Ignored, tc.ignored)
+			}
+			for _, ig := range e.Ignored {
+				if ig.Key != KeyReviewAgainstTask || ig.Value != "false" || ig.Effective != "true" {
+					t.Errorf("Ignored = %+v: a dropped value is a layer's false under an effective true", ig)
+				}
+				if ig.Source != tc.wantSrc {
+					t.Errorf("Ignored = %+v: source = %q, want the layer the effective value came from, %q", ig, ig.Source, tc.wantSrc)
+				}
+			}
+		})
+	}
+}
+
 // TestMergeNamesTheChainLayer pins the two things the chain layer needs of
 // this package (docs/run-limit-carry-over F4, D1055): a layer past the run's
 // own file is named "chain" and not "branch" — the number did not come from

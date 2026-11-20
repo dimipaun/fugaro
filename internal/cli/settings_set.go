@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/settings"
+	"github.com/dimipaun/fugaro/internal/tier"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
@@ -291,8 +292,9 @@ var settingsGenericKeys = map[string]bool{
 	// TestSettingsOwnerStringsAreAClosedVocabulary is what fails on it.
 	//
 	// The orchestrator block and the two nudge thresholds are the machine's own
-	// config, `triage`, `verifier_accounts` and the two schedules are local and
-	// project keys this path already writes the file of, and
+	// config, `triage`, `review_against_task`, `verifier_accounts` and the two
+	// schedules are local and project keys this path already writes the file
+	// of, and
 	// `planning.decoupling` is the fifth of the four file-carrier rows G12 left
 	// with the layer file's token while its repository half was never in that
 	// file. Every one of them is named rather than reached by a prefix: a
@@ -307,6 +309,7 @@ var settingsGenericKeys = map[string]bool{
 	"issues.nudge_after_days":               true,
 	"issues.nudge_recurrence":               true,
 	"triage":                                true,
+	"review_against_task":                   true,
 	"verifier_accounts":                     true,
 	"layer.jobs.reports.paused":             true,
 	"layer.jobs.catalog_check.paused":       true,
@@ -642,6 +645,25 @@ func settingsRefuseRow(key, registry string, row settings.Row) (settings.Row, er
 	}
 	if strings.Contains(key, "*") {
 		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)
+	}
+	// A block is a shape and not a setting (settings.IsBlock): `governance.
+	// stage_timeout` holds a stage's own bound and has no value of its own, so a
+	// scalar written at its spelling would land on the block and be refused at
+	// the file's own re-read — "cannot unmarshal !!str into
+	// config.StageTimeout", an answer about the reader rather than about the
+	// key. It is refused here, beside the map-entry case and for the same
+	// reason, and the row stays in the read: a person reading `fugaro settings`
+	// sees the block and the settings it holds (D2604).
+	//
+	// The question is asked of the registry's own table and not of the key:
+	// the entry pair (--add-entry, --remove-entry) names a block deliberately,
+	// and the row such a write is about is built from the block's leaves rather
+	// than held by the registry (settingsEntryRow, D1175 — `layer.ab
+	// --add-entry rate=0.05`). A key the registry holds no row for is no block
+	// of this path's, and one whose row the registry holds is refused here
+	// whatever was asked of it.
+	if reg, ok := settings.Lookup(key); ok && settings.IsBlock(reg.Key) {
+		return settings.Row{}, userErr("%s is a block of settings rather than a setting: it holds %s; write one of them", key, strings.Join(settings.BlockChildren(row.Key), ", "))
 	}
 	if !settingsGenericKey(registry) {
 		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*), the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account), the pools' subscription switch (subscription_spread) and a repository's workflows.<name>.* and the project layer's profiles.<name>.*, and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
@@ -1735,6 +1757,12 @@ func settingsCeilingBase(ctx context.Context, row settings.Row, raw string) stri
 		// The file holds no ceiling of its own: the layer below is the whole
 		// of what a run gets.
 		return effective
+	case effective == settingsCeilingUnset:
+		// effective is a state and not a value (settingsGovernanceBuiltIn):
+		// no layer states a figure for the key here, so the file's own value is
+		// the whole of what a run gets from it, and there is nothing to compare
+		// a write against but that.
+		return raw
 	case effective == "":
 		return raw
 	case settingsLoosens(row.Key, effective, raw):
@@ -1755,20 +1783,115 @@ func settingsCeilingBase(ctx context.Context, row settings.Row, raw string) stri
 // name its own spend cap far above the one it started under, from a file it may
 // edit anyway (F2).
 //
-// Every other ceiling key answers "" there, and that is not the same blind spot.
-// `agent.max_run_tokens`'s unset means the deployed ceiling, which this binary
-// holds nowhere as a value, so there is no number to compare against; a
-// `budget.*` or `governance.*` key no layer sets has no cap to raise, and the
-// two writes that take a cap away — 0 and `unset` — are typed on their own. The
-// project layer spells the same agent cap one block deeper (SD14), which is the
-// `defaults.` prefix and the same number.
+// A governance key is the third answer: the figures Fugaro ships for the block
+// are the ceiling every run starts under, and they arrive through the policy
+// hook the way `policy.WithDefaults` reads them (an untagged build ships none,
+// D522). Without them a first write into an unset governance key compared
+// against nothing, `settingsLoosens` answered false for the empty old value,
+// and a session could set the whole project's guardrails from a file it may
+// edit (F2, D2604).
+//
+// Every other ceiling key answers "" there, and that is not the same blind
+// spot. `agent.max_run_tokens`'s unset means the deployed ceiling, which this
+// binary holds nowhere as a value, so there is no number to compare against; a
+// `budget.*` key no layer sets has no cap to raise, and the two writes that
+// take a cap away — 0 and `unset` — are typed on their own. The project layer
+// spells the same agent cap one block deeper (SD14), which is the `defaults.`
+// prefix and the same number.
 func settingsCeilingBuiltIn(key string) string {
 	key = strings.TrimPrefix(key, "layer.")
 	if strings.TrimPrefix(key, "defaults.") == "agent.max_budget_usd" {
 		return strconv.Itoa(config.DefaultMaxBudgetUSD)
 	}
+	if strings.HasPrefix(key, "governance.") {
+		return settingsGovernanceBuiltIn(strings.TrimPrefix(key, "governance."))
+	}
 	return ""
 }
+
+// settingsShippedGovernance is the source of the figures Fugaro ships for the
+// governance block (settingsGovernanceBuiltIn reads it by key). It is a
+// variable for the reason those figures arrive through a hook at all:
+// `policy.Governance{}.WithDefaults()` answers the zero block in a build that
+// links no edition (D522), so an untagged test binary reads "unset" for every
+// governance key and the branch comparing a write against a shipped figure is
+// one no test could reach — the fence could fail open, a stage's fraction
+// swapped for a larger stage's or a tier's expectation inflated, with nothing
+// to fail. A test installs the figures a tagged build ships; nothing else
+// swaps it, and the released binary has the one source, the hook's.
+var settingsShippedGovernance = func() policy.Governance { return policy.Governance{}.WithDefaults() }
+
+// settingsGovernanceBuiltIn is what a run gets today for one key of the
+// governance block that no layer states: the figure Fugaro ships for it, or
+// settingsCeilingUnset for a key Fugaro ships no figure for.
+//
+// The figures are `policy.Governance{}.WithDefaults()`'s, read by key through
+// settingsShippedGovernance, so the registry's DEFAULT column, the ceiling a run
+// starts under and this fence name one source — and an untagged build, whose
+// hook ships nothing, reads its own truth rather than a 0 every write would then
+// be tighter than.
+//
+// stage_tokens and stage_timeout are the keys with no figure of their own, and
+// their unset is a bound of another kind rather than a missing number: a stage
+// with no token ceiling and no timeout of its own is bounded by the run's own
+// workflow (policy.WithDefaults' own words, workflows.<name>.timeouts.stage).
+// Written at the project layer that bound is not one figure — each repository's
+// own workflow states its own — so the state word is the honest answer, and a
+// write over it takes the typed name for the reason D846 gives: nobody can
+// prove it tightens.
+func settingsGovernanceBuiltIn(key string) string {
+	g := settingsShippedGovernance()
+	switch key {
+	case policy.KeyReviewRatio:
+		return settingsBuiltInFigure(float64(g.ReviewRatio))
+	case policy.KeyReviewFloorCalls:
+		return settingsBuiltInFigure(float64(g.ReviewFloorCalls))
+	case policy.KeyMaxSubagents:
+		return settingsBuiltInFigure(float64(g.MaxSubagents))
+	case policy.KeyStageBudgetImplement:
+		return settingsBuiltInFigure(g.StageBudget.Implement)
+	case policy.KeyStageBudgetReview:
+		return settingsBuiltInFigure(g.StageBudget.Review)
+	case policy.KeyStageBudgetFix:
+		return settingsBuiltInFigure(g.StageBudget.Fix)
+	}
+	if leaf, ok := strings.CutPrefix(key, "tiers."); ok {
+		name, member, ok := strings.Cut(leaf, ".")
+		if !ok {
+			return settingsCeilingUnset
+		}
+		exp := g.Tiers.For(tier.Tier(name))
+		switch member {
+		case policy.KeyExpectedUSD:
+			return settingsBuiltInFigure(exp.ExpectedUSD)
+		case policy.KeyExpectedMinutes:
+			return settingsBuiltInFigure(float64(exp.ExpectedMinutes))
+		case policy.KeyMaxSubagents:
+			return settingsBuiltInFigure(float64(exp.MaxSubagents))
+		}
+	}
+	// The keys the defaults leave at nothing: the two stage bounds above, and
+	// every key of the block in a build that ships no defaults at all.
+	return settingsCeilingUnset
+}
+
+// settingsBuiltInFigure is one of Fugaro's own figures as the fence compares
+// it, and settingsCeilingUnset for a figure the build ships none of: a hook
+// that answers 0 has not stated a ceiling, so a write over it is measured
+// against the state rather than against a 0 no cap is looser than.
+func settingsBuiltInFigure(f float64) string {
+	if f == 0 {
+		return settingsCeilingUnset
+	}
+	return strconv.FormatFloat(f, 'g', -1, 64)
+}
+
+// settingsCeilingUnset is the base of a ceiling no layer states a value for and
+// Fugaro ships no figure for — `governance.stage_timeout.implement` on a
+// project that has never written one. It is not a value and is never compared
+// as one: settingsCeilingBase lets the file's own value decide instead, and
+// settingsLoosens reads it as the unprovable form, which is a loosening.
+const settingsCeilingUnset = "unset"
 
 // settingsEffectiveCeiling is the value a run gets for row from the read's own
 // resolver, "" when no layer resolves one. The read is the offline one, so a
@@ -1828,6 +1951,15 @@ func settingsLoosens(key, oldValue, newValue string) bool {
 	if strings.HasPrefix(key, policyDecisionModelPrefix) {
 		return settingsDecisionModelRank(newValue) < settingsDecisionModelRank(oldValue)
 	}
+	if settingsCeilingDuration(key) {
+		// A stage timeout is a duration and not a figure, so the comparison
+		// below — which reads an unparseable value as the unprovable form and
+		// therefore as a loosening — would read every write of "20m" as a
+		// loosening too. A repository could then write neither a tighter stage
+		// timeout nor a looser one, and D2604's "a repo write may only tighten"
+		// would be a rule about nothing.
+		return settingsDurationLoosens(oldValue, newValue)
+	}
 	oldN, oldErr := strconv.ParseFloat(oldValue, 64)
 	newN, newErr := strconv.ParseFloat(newValue, 64)
 	// 0 is the value that sets no cap at all (`config.Budget`: "0 sets none";
@@ -1856,6 +1988,41 @@ func settingsLoosens(key, oldValue, newValue string) bool {
 	// Fugaro does not know how to compare, so it is treated as a loosening:
 	// the typed name on an edit nobody can prove tightens is the safe half of
 	// D846's asymmetry.
+	return true
+}
+
+// settingsCeilingDuration reports whether a ceiling key's own value is a
+// duration rather than a number: the stage timeouts are the one family inside
+// the fence that counts seconds (governance.stage_timeout.*, and the project
+// layer's spelling of them under the `layer.` prefix the ceiling key's own
+// test trims, SD14).
+func settingsCeilingDuration(key string) bool {
+	return strings.HasPrefix(strings.TrimPrefix(key, "layer."), "governance.stage_timeout.")
+}
+
+// settingsDurationLoosens is settingsLoosens' comparison for a ceiling whose
+// value is a duration: the longer wall clock is the looser bound, and a 0 — no
+// timeout of its own at all, which is what the config's own reader calls unset
+// — is the loosest one. It is the numeric path's rule with ParseDuration where
+// that one has ParseFloat, including its two ends: a value that is not a
+// duration on either side is a form this Fugaro cannot compare and is treated
+// as a loosening (D846's asymmetry, and the state word
+// settingsGovernanceBuiltIn answers for a key with no figure of its own).
+func settingsDurationLoosens(oldValue, newValue string) bool {
+	newD, newErr := time.ParseDuration(newValue)
+	if newErr == nil && newD == 0 {
+		return true
+	}
+	oldD, oldErr := time.ParseDuration(oldValue)
+	if oldErr == nil && oldD == 0 {
+		return false
+	}
+	if oldValue == "" {
+		return false
+	}
+	if oldErr == nil && newErr == nil {
+		return newD > oldD
+	}
 	return true
 }
 

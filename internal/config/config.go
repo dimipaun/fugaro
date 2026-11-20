@@ -193,6 +193,16 @@ type Config struct {
 	// (internal/cli). Like the fields above it is never part of the file or of
 	// SHA256.
 	RepoTriageSet bool `yaml:"-" json:"-"`
+	// RepoReviewAgainstTaskSet is whether the repository's own file wrote the
+	// agent.review_against_task key at all, at any value: the question
+	// RepoRigorSet answers for rigor:, and Agent.ReviewAgainstTask can answer
+	// neither half of it — the key written false and the key absent both read
+	// off, and a runner older than reviewSpecSince refuses the key itself,
+	// whatever it says (internal/cli). The gates that judge a job image read
+	// this, and the runner's own answer to whether the check runs reads the
+	// value (ReviewAgainstTaskOn). Like the fields above it is never part of the
+	// file or of SHA256.
+	RepoReviewAgainstTaskSet bool `yaml:"-" json:"-"`
 	// RepoModelGradesSet is whether the repository's own file wrote the
 	// model_grades key at all, at any value: the question RepoRigorSet answers
 	// for rigor:, and ModelGrades cannot answer it — the block written empty
@@ -698,6 +708,27 @@ type Agent struct {
 	// the launch's own gate judges the job image on (internal/cli's
 	// triageSince).
 	Triage *bool `yaml:"triage,omitempty" json:"Triage,omitempty"`
+	// ReviewAgainstTask is whether every review stage is given the task the
+	// pull request was written for and asked whether the change does what it
+	// asks (docs/review-against-task/): true, false, or nil for the default,
+	// which is on. It is a pointer for Triage's reason: the key's absence and
+	// `review_against_task: false` are two answers, and the field cannot tell
+	// them apart otherwise.
+	//
+	// The repository is the only layer that may name it — config.Scopes gives
+	// the key InRepo and nothing else, Triage's own refusal, so a project layer
+	// or a profile (the same launcher-writable bucket object) cannot, and a
+	// task's own embedded layer cannot turn the check off after the base branch
+	// turned it on. The value is read from the **base** configuration and never
+	// from the run's branch (R7), so a run's own agent cannot switch off the
+	// review of its own work; a nil base configuration counts as on, the strict
+	// direction. The owner's published policy node is the other home
+	// (policy.Layer.ReviewAgainstTask, where `true` forces the check on and
+	// `false` is a project-wide default off, D2935), read beside this key as a
+	// separate gate. Binaries before 0.27.0 refuse the key (strict decoder),
+	// whatever it says, which is what the launch's own gate judges the job
+	// image on (internal/cli's reviewSpecSince).
+	ReviewAgainstTask *bool `yaml:"review_against_task,omitempty" json:"ReviewAgainstTask,omitempty"`
 	// Recipe names the task loop that follows implement
 	// (docs/design/recipes.md): a recipe in .fugaro/recipes/, the project's,
 	// or the catalog's. "" is default. fugaro run --recipe wins over it.
@@ -750,6 +781,23 @@ func (a Agent) TriageOn(mode rigor.Rigor) bool {
 		return false
 	}
 	return a.Triage == nil || *a.Triage
+}
+
+// ReviewAgainstTaskOn reports whether the repository's own configuration has
+// every review stage checked against the task the pull request was written for
+// (docs/review-against-task/, R7): false only when the key is written false,
+// and true when it is absent — the default the spec asks for (§1).
+//
+// It is the repository's half of the answer and not the whole of it. The
+// owner's published policy node arrives beside it as the runner's ceiling
+// (RA8a), which reads this field as one gate of two: a published true forces
+// the check on whatever this says, and a published false is a project-wide
+// default off that this field's true overrides (D2935). The reader that has to
+// agree on that order is internal/runner's reviewAgainstTaskOn; this method is
+// what it asks for the file's own value, so no second reading of the pointer
+// exists.
+func (a Agent) ReviewAgainstTaskOn() bool {
+	return a.ReviewAgainstTask == nil || *a.ReviewAgainstTask
 }
 
 // TriageMode reports whether mode is one of the two modes the triage stage

@@ -1642,6 +1642,169 @@ func TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage(t *testing.T) {
 	}
 }
 
+// vaultLaunchYAML is oauthLaunchYAML's shape with the one thing B3.8's gate
+// reads and no other launch test declares: a workflow whose own `secrets:`
+// names a value. The declaration is the whole of the worked half — the gate
+// refuses the launch where the WORKFLOW declares a secret, and leaves every
+// repository whose workflow declares none alone — and what the flip really
+// takes off such a repository's job is Go's dropVaultMounts, pinned by
+// internal/infra's TestFilledVaultListDropsWorkflowMountsAndAccessors.
+const vaultLaunchYAML = `version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: api-key
+workflows:
+  web:
+    commands: { build: sh build.sh, test: sh test.sh }
+    secrets: [{ name: sandbox-probe, env: SANDBOX_PROBE }]
+`
+
+// TestLaunchRefusesAVaultRunOnAnOldImage is B3.8's own gate (G17): a
+// repository whose workflow secrets the flip has taken the mounts of is not
+// launched onto a job image whose runner predates the fetch. The job such a run
+// starts mounts none of the workflow's own `secrets:` (Go's dropVaultMounts),
+// so a runner that does not know to ask the credentials service for them has no
+// value for a declared variable at all: it stops at bootstrap, before any
+// model call and with the launch already paid for (D143).
+//
+// The judge is the one every *Since gate uses, against the release whose runner
+// carries the fetch (vaultSince — B3.4's fetchWorkflowSecrets, which is the
+// release BEFORE the flip's own), and the rows are the gate's conditions taken
+// one at a time: a switched repository declaring a secret is refused on the
+// image below that release, and a repository whose record says its root was
+// never applied with the service on, an installation that carries no service, a
+// published node whose budget mode is off and a workflow declaring no secret
+// are admitted — none of them loses a mount to the flip, and each is judged by
+// every gate it always was (G9, G17).
+//
+// The admitted rows end at policyImageGate rather than at the launch, the way
+// TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage's do and for the same reason:
+// every node this reader reads is policy version 5 or later, whose release is
+// newer than the image the refused rows run on, so a launch on that image is
+// refused by that gate afterwards. What they hold is that the refusal is not
+// this gate's (this gate's sentence is the only one that names vaultSince) —
+// and the row on the current release, which reaches the backend, holds the
+// other end: the same repository, on an image this gate is old for, is
+// launched.
+func TestLaunchRefusesAVaultRunOnAnOldImage(t *testing.T) {
+	const old = "ghcr.io/dimipaun/fugaro-base:0.25.0"
+	const atFetch = "ghcr.io/dimipaun/fugaro-base:" + vaultSince
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		base    string
+		block   string
+		mode    string
+		ready   bool
+		refused bool
+	}{
+		{"a switched repository whose workflow declares a secret, on an image below the fetch", vaultLaunchYAML, old, proxiedBlock, "enforce", true, true},
+		{"the workflow declares no secret", apiKeyLaunchYAML, old, proxiedBlock, "enforce", true, false},
+		{"the repository's own switch is off", vaultLaunchYAML, old, proxiedBlock, "enforce", false, false},
+		{"the installation carries no credentials service", vaultLaunchYAML, old, "", "enforce", true, false},
+		{"the published node's budget mode is off", vaultLaunchYAML, old, proxiedBlock, "off", true, false},
+		{"the job image is at the fetch's release", vaultLaunchYAML, atFetch, proxiedBlock, "enforce", true, false},
+		{"the job image is the current release", vaultLaunchYAML, releasePolicy, proxiedBlock, "enforce", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			if tc.block != "" {
+				f.appendConfig(t, tc.block)
+			}
+			publishPolicy(t, f, cascadePolicyWithMode(tc.mode))
+			projectJobCheckoutYAML(t, tc.yaml)
+			if tc.ready {
+				markRepoCredentialsServiceReady(t, f.cloudFixture)
+			}
+			writeBuildRecord(t, f.cloudFixture, appSlug, "web", tc.base)
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", budgetRun, "Add a feature")
+			switch {
+			case tc.refused && err == nil:
+				t.Fatal("a repository whose workflow secrets the flip has taken the mounts off was launched onto a job image whose runner cannot fetch them from the credentials service: the run would stop at bootstrap over a declared secret it has no value for (G17)")
+			case tc.refused:
+				for _, want := range []string{vaultSince, "workflow secrets are brokered", "job mounts none of the workflow's own secrets", "fugaro update"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+				if launchedAny(f) {
+					t.Error("the refused launch started an execution")
+				}
+				if storedTaskFor(t, f.cloudFixture, appSlug) {
+					t.Error("the refused launch stored a task")
+				}
+			case !tc.refused && err != nil && imageGateOnly(err, tc.base):
+				return
+			case !tc.refused && err != nil:
+				t.Fatalf("a launch this gate does not judge was refused: %v", err)
+			case !launchedAny(f):
+				t.Error("a launch this gate does not judge started no execution")
+			}
+		})
+	}
+}
+
+// TestVaultGateLeavesAReviewLaunchAlone: a review launch is not judged by
+// B3.8's gate, because the flip takes no mount away from one. A review run does
+// not run on the repository's own job at all: it runs on the review-only
+// variant, whose container mounts nothing and is told the service's address by
+// its own deployment (O1, internal/infra's reviewVariant) — the plan's words
+// for this task are "review runs unchanged". So the same fixture that is
+// refused as an ordinary launch is admitted as a review one, and the mode is
+// the only difference between the two calls.
+func TestVaultGateLeavesAReviewLaunchAlone(t *testing.T) {
+	const old = "ghcr.io/dimipaun/fugaro-base:0.25.0"
+	f := newLaunchBudget(t, "enforce")
+	f.appendConfig(t, proxiedBlock)
+	publishPolicy(t, f, cascadePolicyWithMode("enforce"))
+	projectJobCheckoutYAML(t, vaultLaunchYAML)
+	markRepoCredentialsServiceReady(t, f.cloudFixture)
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", old)
+	env := fileEnv(t, f.cloudFixture)
+	slug, spec := appSlug, &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "Add a feature"}
+	if err := env.vaultGate(context.Background(), slug, spec, "", false, io.Discard); err == nil {
+		t.Fatal("the ordinary launch of a switched repository declaring a secret was admitted on an image below the fetch: the flip is filled (config.VaultFetchedSecretClasses carries workflow) and the run's job mounts none of the workflow's own secrets, so the image has to know the fetch — and the review half below only means anything because this half refuses first")
+	}
+	spec.Mode = recipe.ModeReview
+	if err := env.vaultGate(context.Background(), slug, spec, "", false, io.Discard); err != nil {
+		t.Errorf("a review launch of the same repository was refused by the vault gate: a review run holds no workflow secret of its own and mounts none, so the flip takes nothing away from it (O1): %v", err)
+	}
+}
+
+// TestVaultSinceHasAReleaseBullet: vaultSince names 0.26.0, the release that
+// carries the runner half — B3.4's fetchWorkflowSecrets and the route B3.2
+// answers it on — and NOT the release the flip itself ships in, which is the
+// pair D2072 splits across two releases as serviceAuthSince's does. The number
+// is one release off from the obvious answer, so docs/release.md's
+// Before-you-tag list is what holds it to the release actually cut and stops it
+// sliding onto the flip's own release, which would refuse a 0.26.0 image whose
+// runner fetches correctly. Nothing in the code ties the number the gate
+// refuses on to the release whose runner reads the service.
+//
+// The pinned phrases are that account: the runner half by name, the release the
+// flip ships in, and the "refuses too late" failure a value below 0.26.0 buys.
+func TestVaultSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `vaultSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no vaultSince bullet: the checklist is where a release verifies the constant, and this constant is one release off from the flip it is for")
+	}
+	if !strings.Contains(bullet, "currently `\""+vaultSince+"\"`") {
+		t.Errorf("docs/release.md's vaultSince bullet does not carry the constant's release (%q)", vaultSince)
+	}
+	for _, want := range []string{"fetchWorkflowSecrets", "not the release the flip ships in", "0.26.0 image is the oldest one that can carry both halves", "refuses too late"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's vaultSince bullet does not say %q", want)
+		}
+	}
+}
+
 // TestProxySinceHasAReleaseBullet: proxySince names 0.22.0, the release that
 // carries the runner half, so docs/release.md's Before-you-tag list is what
 // holds the constant to the release actually cut — the job every other *Since

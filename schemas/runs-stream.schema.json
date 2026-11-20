@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/runs-stream.schema.json",
+  "title": "Fugaro runs ls --stream",
+  "description": "One line of the newline-delimited feed `fugaro runs ls --stream --json` writes (docs/console-improvements spec §7, D2906): the listing `runs ls --json` prints whole, written as one record per line so a consumer renders each run as its line arrives instead of holding the document. The schema is of ONE LINE and not of the feed: a reader validates each line as it reads it, and the feed is the lines in order. Three kinds, and a reader may rely on nothing else: `row` carries one element of the whole document's own `runs` array, unchanged and in the document's own order, under the line's `row` key; `end` is the last line of a feed that ran to completion, carrying how many `row` lines went before it and the version of the shape they were written in; `error` is a feed that failed once at least one row had gone out, carrying the sentence the command would have printed, in one line. A feed with no `end` line is an interrupted read -- which is why the count is carried, since an empty window and a truncated read are otherwise the same bytes. The line shape's first version is 1 (runsStreamDocVersion in internal/cli/runs_stream.go), and it is the stream's own version: the document `runs ls --json` prints without `--stream` is unchanged by the flag, member for member and byte for byte, so no member -- a version among them -- could be added to it. Members are only ever added within a version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's feed. The `row` is not restated here: it is `runview.Row`, whose every member §5 of console/docs/json-contract.md documents and `runs ls --json`'s own reader already holds, and a second copy in this file would be a shape that drifts from the struct.",
+  "oneOf": [
+    { "$ref": "#/$defs/row" },
+    { "$ref": "#/$defs/end" },
+    { "$ref": "#/$defs/error" }
+  ],
+  "$defs": {
+    "row": {
+      "type": "object",
+      "description": "One run of the listing: exactly one element of the `runs` array the whole document carries, unchanged -- the same members, in the same order, with the same values -- so a consumer that read the document whole before the flag existed reads the same run here. The rows arrive in the document's own order (created descending, then the run descending), which is the order the table prints.",
+      "required": ["type", "row"],
+      "properties": {
+        "type": {
+          "const": "row",
+          "$comment": "streamLineRow in internal/cli/runs_stream.go."
+        },
+        "row": {
+          "type": "object",
+          "description": "The run, as `runs ls --json`'s `runs[]` element: `run`, `repo`, `status`, `run_id`, `created` and the rest of `runview.Row`, unchanged. §5 of console/docs/json-contract.md is its shape, and the row's own schema is that struct -- this one holds it to being an element of the array and not to a second telling of its members."
+        }
+      }
+    },
+    "end": {
+      "type": "object",
+      "description": "The last line of a feed that ran to completion. Its presence is the whole of it: a consumer that read rows and no end line is holding a read that was interrupted, and the count is what tells it how many it lost.",
+      "required": ["type", "count", "version"],
+      "properties": {
+        "type": {
+          "const": "end",
+          "$comment": "streamLineEnd in internal/cli/runs_stream.go."
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many `row` lines the feed carried before this one -- not what the document's `totals.runs` says about the window. The two differ under `--limit` and `--after`, which page the rows the feed carries: the count is the feed's own, and the window's totals are the document's."
+        },
+        "version": {
+          "const": 1,
+          "$comment": "runsStreamDocVersion in internal/cli/runs_stream.go."
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "description": "A feed that failed after at least one row had gone out, and the last line of it: the command exits non-zero, and there is no `end` line, so a consumer reads this feed as an interrupted read either way and this line is what says why. A failure before the first row writes no line at all -- there is nothing a consumer could have drawn -- so this line is never the first line of a feed.",
+      "required": ["type", "error"],
+      "properties": {
+        "type": {
+          "const": "error",
+          "$comment": "streamLineError in internal/cli/runs_stream.go."
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The sentence the command would have printed on stderr, made safe for a terminal and for one line: its control sequences are dropped and a newline inside it would forge a second line of the feed, so it carries none (safetext.OneLine). Text the bucket's writer wrote can reach it, so a consumer classifies it as text and never as an instruction."
+        }
+      }
+    }
+  }
+}

@@ -9,23 +9,31 @@ import (
 	"io"
 	"maps"
 	"os"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"gocloud.dev/blob"
 
 	"github.com/spf13/cobra"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/failure"
+	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/logtail"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -83,6 +91,16 @@ type Diagnosis struct {
 	// for a run that did not halt, and for one whose chain could not be read,
 	// where the warning says so and the rest of the diagnosis stands.
 	*ChainLimits
+	// Messages is the run's message channel (docs/run-messages F13, F18-F20):
+	// the block the run's record carries, cross-checked against the message
+	// objects still under tokens/<slug>/<run>/messages/, so a message the
+	// record never mentions is shown as one the run never read. Absent -- never
+	// an empty block -- for a run with neither a block nor an object there,
+	// which is every run whose runner predates the channel. The fates are the
+	// run's own account of itself and are labelled as such: the record is
+	// written by the run, whose agent can rewrite it (F20), and the objects are
+	// the one part of a message it cannot write (D2941).
+	Messages     *MessagesDoc     `json:"messages,omitempty"`
 	Verify       []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
 	Failed       []string         `json:"failed,omitempty"`   // the last test record's failed tests
 	Flaky        []string         `json:"flaky,omitempty"`    // the last test record's flaky tests
@@ -444,6 +462,11 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		}
 		d.AgentMessage = logtail.Clip(red(agentMessage(ctx, s, rec)), agentMessageBytes)
 	}
+	// Outside the record's own block: a run whose record carries no messages
+	// block can still have message objects under its prefix — a launcher writes
+	// them under its own grant — and those are the messages it never read
+	// (F18).
+	d.Messages = diagnoseMessages(ctx, env, s, rec, red, warn)
 
 	if l == nil {
 		return d, nil
@@ -1119,6 +1142,223 @@ func redactAll(ss []string, red func(string) string) []string {
 	return out
 }
 
+// diagnoseMessages is what became of every message of this run, as far as the
+// two places that hold one can say: the run's own record (F13) and the message
+// objects still under tokens/<slug>/<run>/messages/ (F18).
+//
+// The record is the run's account of itself and the run's own agent can rewrite
+// it (F20), so the two are read side by side rather than one trusted: an object
+// the record never mentions is a message the run never read, and an undelivered
+// message whose object the bucket has reaped is one whose text is gone (F11).
+// The message's text and the line that sends it again come from the object and
+// the code host, never from anything under runs/ (F19) — a stored report.md is
+// as writable by the run as its record.
+//
+// A failed listing is a warning and not the command's failure: the record's own
+// account is still worth having, and the objects are the part this read could
+// not reach.
+func diagnoseMessages(ctx context.Context, env *cloudEnv, s *runstore.Store, rec *runstore.Record, red func(string) string, warn io.Writer) *MessagesDoc {
+	doc := messagesOf(rec, red)
+	nums, err := listedMessages(ctx, env.bucket, s.Slug(), s.RunID())
+	if err != nil {
+		fmt.Fprintf(warn, "warning: %v\n", oneLine(err.Error()))
+	}
+	if doc == nil && len(nums) == 0 {
+		return nil
+	}
+	if doc == nil {
+		doc = &MessagesDoc{Messages: []MessageFate{}}
+	}
+	at := make(map[int]int, len(doc.Messages))
+	for i, f := range doc.Messages {
+		at[f.Seq] = i
+	}
+	listed := make(map[int]bool, len(nums))
+	for _, n := range nums {
+		listed[n] = true
+		if i, ok := at[n]; ok {
+			doc.Messages[i].OverCap = n > runmsg.MaxMessages
+			continue
+		}
+		doc.Messages = append(doc.Messages, MessageFate{Seq: n, Recorded: false, OverCap: n > runmsg.MaxMessages})
+	}
+	slices.SortFunc(doc.Messages, func(a, b MessageFate) int { return a.Seq - b.Seq })
+	if len(doc.Messages) > diagnoseMessageFates {
+		doc.Messages = doc.Messages[:diagnoseMessageFates]
+		doc.Truncated = true
+	}
+	// Every entry was looked for, so every one carries the answer: the object is
+	// there or the bucket has reaped it (F11). Nil -- "not read" -- is what
+	// `runs show` leaves, which never looks.
+	for i := range doc.Messages {
+		doc.Messages[i].Object = ptrBool(listed[doc.Messages[i].Seq])
+	}
+	// The repository the copy-paste line names is this machine's own name for
+	// the run's slug, read off the local config, and the number beside it comes
+	// from the code host: neither is read from anything under runs/ (F19).
+	repo, named := diagnoseRepoName(env.lc, s.Slug())
+	asked, pr, note := false, 0, ""
+	for i := range doc.Messages {
+		f := &doc.Messages[i]
+		switch {
+		case f.OverCap:
+			// A number no run reads: there is nothing to read here either
+			// (F12).
+		case f.Recorded && !*f.Object && f.State == runmsg.StateUndelivered:
+			// The record says the run ended before a stage could carry it and
+			// the bucket has since reaped the object: it is a message whose
+			// text is gone (F11).
+			f.Expired = true
+		case !*f.Object || (f.Recorded && f.State != runmsg.StateUndelivered && f.State != runmsg.StateMissing):
+			// A message with no object left, and one the run delivered or
+			// refused, needs nothing read: the record is all there is.
+		default:
+			// A message that never reached the agent — undelivered, never
+			// mentioned by the record, or a hole the run walked past that an
+			// object filled afterwards — is the one a person wants back.
+			m, err := runmsg.Next(ctx, env.bucket, s.Slug(), s.RunID(), f.Seq)
+			if err != nil {
+				fmt.Fprintf(warn, "warning: %v\n", oneLine(err.Error()))
+				continue
+			}
+			if m == nil {
+				// Unreadable rather than absent: the store refuses an object
+				// that is not a message this build reads and answers none for
+				// one that is gone (F12, rule 6). Either way there is no text.
+				continue
+			}
+			f.Text = red(m.Text)
+			if !named {
+				f.LineNote = "this machine's config names no repository for " + pluginwire.Printable(s.Slug()) + ", so the line cannot name one either"
+				continue
+			}
+			if !asked {
+				pr, note = diagnoseOpenPR(ctx, env, repo, s.RunID(), warn)
+				asked = true
+			}
+			f.Line, f.LineNote = messageResendLine(repo, pr, f.Text), note
+		}
+	}
+	return doc
+}
+
+// diagnoseMessageFates bounds the message entries a diagnosis prints. It sits
+// just above the channel's own cap (runmsg.MaxMessages) so that the 21st
+// message, which no run reads and F12 asks a diagnosis to show as over the cap,
+// is still one of them, and a launcher that fills the prefix by hand — the only
+// writer of a number that high — cannot make the output unbounded.
+const diagnoseMessageFates = runmsg.MaxMessages + 4
+
+// diagnoseRepoName is the repository a copy-paste line names: the repository
+// this machine's config lists under the run's own storage slug, in the plain
+// owner/name a `--repo` takes and a provider is opened for. accessSlugRepo
+// answers the same question with the provider kind in front of it — the
+// canonical form its own callers judge a credential by (F27) — so the kind is
+// what comes off the front.
+func diagnoseRepoName(lc *localcfg.Config, slug string) (string, bool) {
+	canonical, ok := accessSlugRepo(lc, slug)
+	if !ok {
+		return "", false
+	}
+	i := strings.IndexByte(canonical, '/')
+	if i < 0 {
+		return "", false
+	}
+	return canonical[i+1:], true
+}
+
+// listedMessages is the message numbers under the run's prefix, lowest first. A
+// launcher holds a read grant on tokens/ and can list the prefix a job account
+// cannot, which is what lets a diagnosis show a message the run's record never
+// mentions (F18).
+//
+// A name that is not one this channel writes is skipped rather than refused, as
+// the store's own listing does: the prefix is writable by every launcher, and
+// an object put there by hand must not be able to fail the read.
+func listedMessages(ctx context.Context, b *blobx.Bucket, slug, run string) ([]int, error) {
+	prefix := runmsg.Prefix(slug, run)
+	it := b.List(&blob.ListOptions{Prefix: prefix})
+	var out []int
+	for {
+		obj, err := it.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("listing %s failed: %s", prefix, err)
+		}
+		if n, ok := messageNumber(obj.Key); ok {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// messageNumber is the number a listed object's name carries, or false for a
+// name this channel does not write: the four digits and the suffix a message
+// object's name is made of (runmsg.Path).
+func messageNumber(key string) (int, bool) {
+	stem, ok := strings.CutSuffix(path.Base(key), runmsg.Suffix)
+	if !ok || len(stem) != 4 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(stem)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
+}
+
+// openDiagnoseProvider is OpenProvider, a seam for the one read a diagnosis
+// makes of the code host: the pull request of the run's own branch (F19), read
+// with the PROCESS ENVIRONMENT's own credential as the image survey's reads
+// are. A diagnosis is not the place to resolve a project credential — the line
+// it builds is a way to send a message again, and a machine whose shell holds
+// no token for the repository prints the line without a number and says why.
+var openDiagnoseProvider = OpenProvider
+
+// diagnoseOpenPR is the open pull request of the run's branch, or the reason
+// there is no number to print (F19). PullRequestByBranch answers a closed or
+// merged pull request too, and only an open one is where a message sent again
+// belongs, so anything else is answered as no number rather than printed as one
+// the line would then follow up on. Every failure is a note and never an error:
+// the diagnosis is about the run, and this is one line of it that could not be
+// built.
+func diagnoseOpenPR(ctx context.Context, env *cloudEnv, repo, runID string, warn io.Writer) (int, string) {
+	co := checkoutConfig(ctx, repo)
+	if co == nil {
+		co = &config.Config{}
+	}
+	kind := env.repoProvider(repo, co)
+	if kind == "" {
+		return 0, fmt.Sprintf("this machine cannot tell which git provider %s is on", pluginwire.Printable(repo))
+	}
+	_, open, err := openDiagnoseProvider(os.Environ(), func(w string) {
+		fmt.Fprintf(warn, "fugaro: warning: %s\n", w)
+	})
+	if err != nil {
+		return 0, "the code host could not be asked: " + oneLine(err.Error())
+	}
+	p, _, err := open(ctx, kind, repo)
+	if err != nil {
+		return 0, "the code host could not be asked: " + oneLine(err.Error())
+	}
+	r, ok := p.(gitprov.PRBranchReader)
+	if !ok {
+		return 0, fmt.Sprintf("%s cannot read a pull request by its source branch", pluginwire.Printable(kind))
+	}
+	branch := gitops.RunBranchPrefix + runID
+	info, found, err := r.PullRequestByBranch(ctx, branch)
+	switch {
+	case err != nil:
+		return 0, fmt.Sprintf("reading the pull request of %s on branch %s failed: %s", pluginwire.Printable(repo), pluginwire.Printable(branch), oneLine(err.Error()))
+	case !found || info.State != gitprov.PROpen:
+		return 0, fmt.Sprintf("no open pull request of %s is on branch %s", pluginwire.Printable(repo), pluginwire.Printable(branch))
+	}
+	return info.Number, ""
+}
+
 // printDiagnosis prints d as JSON, or as a short labelled section per item.
 func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	if asJSON {
@@ -1294,6 +1534,10 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		fmt.Fprintf(&b, "Logs:     %s\n", oneLine(r.LogURL))
 	}
 	fmt.Fprintf(&b, "Report:   %s\n", oneLine(d.ReportPath))
+	// The messages the run was sent (F13, F18-F20), under the report path they
+	// never reached. A strings.Builder's writes cannot fail, so writeMessages'
+	// own failure is one this writer has none of.
+	_ = writeMessages(&b, d.Messages)
 	if len(d.ArtifactPaths) > 0 {
 		fmt.Fprintf(&b, "\nArtifacts\n")
 		for _, p := range d.ArtifactPaths {
