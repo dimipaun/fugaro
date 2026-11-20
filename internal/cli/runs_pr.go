@@ -22,11 +22,14 @@ const prIndexRecent = 24 * time.Hour
 // prRefs is the runs a --pr listing reads: the runs the pull request's index
 // names, the runs of the last prIndexRecent, and the runs that are going now.
 //
-// It answers no refs at all -- and prints one note -- when the pull request has
-// no index entry, or when the index could not be read: the caller then reads
-// the window exactly as it did before the index existed (D2964, F9). A note is
-// the whole of the fallback's cost to the reader: it is a slower listing and
-// not a different one, and the note never reaches --json's document.
+// It answers no refs at all -- and, for a listing, prints one note -- when the
+// pull request has no index entry, or when the index could not be read: the
+// caller then reads the window exactly as it did before the index existed
+// (D2964, F9). A note is the whole of the fallback's cost to the reader: it is
+// a slower listing and not a different one, and the note never reaches --json's
+// document. The note is the listing's own (lsFilter's indexNote): a caller that
+// reads a pull request's runs to decide something falls back in silence, since
+// it is the runs and not the line that a launch needs.
 //
 // The refs are a superset of the runs that end up listed, deliberately: every
 // one of them is read and then checked against its own records the way the
@@ -47,11 +50,15 @@ func prRefs(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time, warnf
 		// The index is an optimisation, and a bucket that refused this one
 		// listing of it is not a bucket that cannot answer the query: the scan
 		// below reads the window and reports what the bucket says of it.
-		warnf("note: the pull-request index of %s#%d could not be read: %v; reading every run of the window instead\n", slug, f.pr, err)
+		if f.indexNote {
+			warnf("note: the pull-request index of %s#%d could not be read: %v; reading every run of the window instead\n", slug, f.pr, err)
+		}
 		return nil, nil
 	}
 	if len(entries) == 0 {
-		warnf("note: no pull-request index for %s#%d: reading every run of the window, as it did before the index existed\n", slug, f.pr)
+		if f.indexNote {
+			warnf("note: no pull-request index for %s#%d: reading every run of the window, as it did before the index existed\n", slug, f.pr)
+		}
 		return nil, nil
 	}
 	refs := make([]lsRef, 0, len(entries))

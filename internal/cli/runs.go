@@ -124,6 +124,20 @@ type lsFilter struct {
 	// runs ls --no-cache sets it too: the whole cache is an optimisation,
 	// so ignoring it must cost nothing but time.
 	noCache bool
+	// indexNote asks for the two lines that say why a --pr read fell back to
+	// the window: the index could not be read, or the pull request has no
+	// entry in it (runs_pr.go, D2964).
+	//
+	// They are a listing's, and the listing is the only reader that sets it.
+	// The person watching `runs ls --pr N` is the one who reads why it is
+	// slow, while a caller that reads a pull request's runs to decide
+	// something -- the launcher resolving the spec a review is handed
+	// (reviewspec.go's launchSpecForPR), a follow-up's own resolvePR -- is
+	// not reading a listing, and a line about this implementation's shortcut
+	// is not something a launch prints. The read is the same either way: the
+	// note is a note, never a different set of runs (RL3's acceptance, which
+	// keeps those callers on the index).
+	indexNote bool
 }
 
 // lsRef names one run a listing means to read.
@@ -397,7 +411,7 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	}
 	defer env.Close()
 
-	f := lsFilter{batch: o.batch, state: o.state, debt: o.debt, pr: o.pr, warn: cmd.ErrOrStderr(), noCache: o.noCache}
+	f := lsFilter{batch: o.batch, state: o.state, debt: o.debt, pr: o.pr, warn: cmd.ErrOrStderr(), noCache: o.noCache, indexNote: true}
 	if prSet && o.repo == "" && len(env.lc.Repos) != 1 {
 		return userErr("runs ls --pr needs --repo: the local config lists %d repositories", len(env.lc.Repos))
 	}

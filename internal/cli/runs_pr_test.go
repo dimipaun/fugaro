@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -287,6 +288,38 @@ func TestBackfillIndexEqualsScan(t *testing.T) {
 	}
 	if a, b := jsonDoc(t, indexed.Totals), jsonDoc(t, scan.Totals); a != b {
 		t.Errorf("the index totals %s, the scan %s", a, b)
+	}
+}
+
+// TestPRFallbackNoteIsTheListings: the fallback's one line is a listing's
+// (D2964, F9). The person watching `runs ls --pr N` reads why it is slow; a
+// caller that reads a pull request's runs to decide something — the launcher
+// resolving the spec a review is handed (reviewspec.go's launchSpecForPR) — is
+// not reading a listing, and a line about this implementation's shortcut has no
+// business on a launch's own output. TestLaunchSpec* pins the same from the
+// launcher's side.
+//
+// Mutation caught: writing the note for every read of a pull request's runs,
+// which puts a line about the index on `fugaro review --pr N`'s output.
+func TestPRFallbackNoteIsTheListings(t *testing.T) {
+	f := newCloudFixture(t)
+	root := runIDAt(30, "090000", "aaaa")
+	seedSpec(t, f, firstRunSpec(root), false)
+	writeRecord(t, f, root, prRecord(root, "", 7, 1))
+
+	// The listing says so, once.
+	_, errOut := lsJSON(t, "--pr", "7")
+	if n := strings.Count(errOut, "no pull-request index"); n != 1 {
+		t.Errorf("stderr = %q, want the listing's one line saying it read the window", errOut)
+	}
+	// The read that decides hears nothing about the index.
+	env := fileEnv(t, f)
+	var buf bytes.Buffer
+	if _, err := loadRows(t.Context(), env, lsFilter{slugs: []string{appSlug}, pr: 7, warn: &buf, noCache: true}, time.Now()); err != nil {
+		t.Fatalf("reading pull request 7's runs: %v", err)
+	}
+	if s := buf.String(); strings.Contains(s, "pull-request index") {
+		t.Errorf("a read that is not a listing was told about the index: %q", s)
 	}
 }
 
