@@ -7,7 +7,7 @@ here was checked again on the merged tree. Two plans this one touches merged in 
 read on main: batch-run-identity (#3323, merged as `b03f9147a`, its branch tip `69f76967d`) and
 credentials-belong-to-models (#3315, merged as `7abc5eb2f`). Owner: Dimi Paun. Every decision
 below was asked with its options and costs on 2026-11-20, and the owner's answer is in its cell;
-D3129 and D3130 were asked twice, and say why.
+D3129 was asked three times and D3130 twice, and each says why; D3131 was added by review round 2.
 
 Paths and symbols are cited without line numbers. "The runs' signer" is
 `google_service_account.signer` in `deploy/terraform/gcp/modules/firebase/iam.tf`; "the minter
@@ -108,8 +108,8 @@ and the CLI already asks it for something at launch (`slipGrantOverService`). Co
 orchestrator and the coordinator have signer grants of their own. Only
 `orchestrator_token_minter` exists. The coordinator's account holds a bucket reader and a secret
 accessor (`modules/installation/coordinator.tf`), the credentials service's invoker
-(`modules/installation/iam.tf`) and the database admin role (`modules/firebase/iam.tf`), and no
-signing. `ee/coordinator` calls neither `launchRun` nor `token.Mint`. Consequence: the
+(`modules/installation/iam.tf`), and its writer account the database admin role
+(`modules/firebase/iam.tf`); neither holds signing. `ee/coordinator` calls neither `launchRun` nor `token.Mint`. Consequence: the
 coordinator needs no change, and ask 4's "the coordinator" is met by doing nothing.
 
 **F3 (Gap). The same signer and the same grant sign pairing and device tokens.** `fugaro pair`
@@ -215,12 +215,14 @@ token (its D3101, D3102, D3108, R1), because "any carrier the run account opens 
 a second launcher" (its F4). With a ticket the run claims there is no sealed token to open; the
 same VM attestation can guard the claim. Its F24 and O6 are this spec's origin, and its O12 (the
 launcher's identity token is a bearer token for a wider audience) applies here unchanged (O5).
-Tasks of theirs this touches: the key-release half of their **C1**, and **BR1**, **BR2**,
-**BR3** (the link from a VM to its job), **BR4**, **BR5**, **BR14** (the reaper ends a sealed
-run), **BR17** and **BR22** (the service refuses a registration where Batch is off). Their C1
-carries a second thing, the published opt-in fact, which this spec does not touch, and **BR6**,
-BR7, BR16 and BR18 depend on C1 for that fact alone. Untouched: **BRS**, **BR0** (Check 830),
-BR6 and the rest of the update side. Decisions of theirs this touches:
+Their **C1** is not only a wire. It holds the wrapped blob's envelope, the release route, the
+registration, the published opt-in fact, and the `batch:` block's key fact with its settings
+entry and schema. Read on main, the tasks built on the key or on that C1 are **C1**, **BR1**,
+**BR2**, **BR3**, **BR4**, **BR5**, **BR6** (it depends on C1 for the opt-in fact), **BR7**,
+**BR12**, **BR13**, **BR14**, **BR16**, **BR17**, **BR18**, **BR19**, **BR20**, **BR21**,
+**BR22**, their change request and their I1. Free of both: **BRS**, **BR0** (Check 830) and
+**BR8** to **BR11**. Two earlier versions of this finding listed fewer; the list is now read
+from that plan's own Depends lines, and LM19 is what settles it task by task. Decisions of theirs this touches:
 D3101 and D3108 keep their intent and change their object (from the seal key to the claim);
 D3102 is strengthened (the same service); D3109 (people only) meets D3123 here, which admits
 roster service accounts, and the amendment of that plan has to settle the two (O2). Consequence:
@@ -273,11 +275,15 @@ bootstrapped halts on its old image. That is what every policy version bump does
 10 included; `docs/design/update-in-flight.md` promises for a run that has bootstrapped.
 Consequence: R8, R9, R10 and O12.
 
-**F25 (Gap, round 1). An update that deletes a grant needs the delete listed.** `tf.Guard`
-(`internal/infra/tf/guard.go`) refuses a delete no list names, and a managed project has its own
-guard (`GuardManaged`). The precedent is `HardeningAllowDelete`, wired in `internal/cli/init.go`.
-Without the same for the people's and the orchestrator's rows, the update would refuse and point
-at a flag, which the hard rule forbids. Consequence: plan task LM20.
+**F25 (Gap, rounds 1 and 2). An update that deletes a grant needs the delete listed.** `tf.Guard`
+(`internal/infra/tf/guard.go`) refuses a delete no list names. The precedent is
+`HardeningAllowDelete`, wired in `internal/cli/init.go`. Without the same for the people's and
+the orchestrator's rows, the update of an ordinary project would refuse and point at a flag,
+which the hard rule forbids. A managed project is different: `GuardManaged` warns about, and
+does not refuse, a delete of a type classified as holding no data, and
+`google_service_account_iam_member` is one (`nonDataBearingTypes`, `internal/infra/tf/cover.go`);
+its update passes addresses through `managed.Spec.Upgrade` in `internal/cli/update_managed.go`.
+Consequence: plan task LM20 covers both paths, and LM14's stage runs on both.
 
 **F26 (Gap, round 1). A run's own node is readable by the run.** In
 `internal/budget/rules/rules.json.tmpl` a run's node grants its token a read, and a grant
@@ -286,14 +292,32 @@ cascades to every child, so a record "beside the run's budget record" could not 
 Consequence: R3 puts the record there, and LM5 pins it with a test and generates no new rules.
 
 **F27 (Gap, round 1). An installation not yet updated has no stub to answer "not served".** Its
-service was built before the contract. A path it does not know falls to the shared request
-parse, and an installation may have no service configured at all. Consequence: R7 names what the
+service was built before the contract. A path it does not know is answered 404 `not_found` by
+`servedRoute` in `ServeHTTP` (`internal/credsvc/server.go`), before any caller is resolved, and
+an installation may have no service configured at all. The service already has a refusal named
+`refuseNotServed` for another purpose (a workspace scope); the contract's code is a different
+one. Consequence: R7 names what the
 bridge keys on, and C1 pins the answer of a release-behind service with a test.
 
 **F28 (Gap, round 1). The service's environment names are held in two exact lists.**
 `internal/infra/tf/cover.go` says a new name goes on its allow-list first
 (`CredentialsServiceEnvAwaitingTheModule`) and into the module second, and the installation
-root's own test holds the environment as an exact map. Consequence: LM22 before LM12.
+root's own test holds the environment as an exact map. `TestCredentialsServiceEnvIsTheDeploymentsOwn`
+(`internal/cli/credentials_serve_test.go`) also fails when the module sets a name the command
+does not read, or renders one still on the awaiting list. Consequence: LM22 (the names and their
+reader) before LM12 (the module, which also takes them off the awaiting list).
+
+**F29 (Gap, round 2). The CLI gate's answer has inputs the service does not hold.** `accessInput`
+(`internal/cli/access_run_gate.go`) gives the resolver the machine's implicit admins
+(`userImplicitAdmins`, from the local `terraform.budget_admins`), admits without judging a
+service-account credential (`ErrServiceAccount`), and does not run when the roles records cannot
+be read. An issuer that ran the resolver without the first would refuse an owner a launch that
+works today. Consequence: R16.
+
+**F30 (Gap, round 2). Any launcher can run code as a job account.** It launches a task on that
+job. With `run.executions.get` it also reads a peer's ticket. So the claim race of R5 is open to
+every launcher of the same job, or of a shared job, not to a special few. Consequence: the
+trust-boundary table and R5 say so.
 
 ## What each option does to the trust boundary
 
@@ -303,7 +327,7 @@ for as long as its refresh token lives.
 
 | | Who can mint what, after | A stolen launcher laptop | Single point of |
 | --- | --- | --- | --- |
-| **Credentials service issues a one-time ticket (chosen: D3121, D3122)** | Only the credentials account signs. It signs a run's identity for a ticket a roster caller asked for, and a pairing or device token for a verified person; no route takes a uid or a claim set | Launches runs on any repository of the installation, up to the caps, as that person and on the record. Cannot sign anything, cannot take over or re-issue another person's run, cannot mint a device token for anyone else | Every launch and every run start. It already is the single point of every model call once keys-through-service lands |
+| **Credentials service issues a one-time ticket (chosen: D3121, D3122)** | Only the credentials account signs. It signs a run's identity for a ticket a roster caller asked for, and a pairing or device token for a verified person; no route takes a uid or a claim set | Launches runs on the repositories that person holds the launch scope on, up to the caps, as that person and on the record. Cannot sign anything, cannot re-issue another person's run, cannot mint a device token for anyone else. Can still race the claim of a run on a job it can launch, which is detected and not prevented (R5, F30) | Every launch and every run start. It already is the single point of every model call once keys-through-service lands |
 | Credentials service returns the token | Only the service signs, but the token crosses the launcher's machine and the sealed channel | As above, plus a silent copy of any run's token inside its hour (F9) | Every launch |
 | A second service with its own account | Only that account signs; the account that holds the keys does not | As the chosen row | Every launch; one more service to keep up |
 | The workspace service | Nothing, for an installation without a workspace | not applicable | Every launch of a member; no answer for the default installation |
@@ -311,7 +335,7 @@ for as long as its refresh token lives.
 
 ## Decisions
 
-Numbers D3120–D3130 are used; the block is D3120–D3139 (see the README for the reading).
+Numbers D3120–D3131 are used; the block is D3120–D3139 (see the README for the reading).
 
 | # | Question | Answer (owner, 2026-11-20) |
 | --- | --- | --- |
@@ -319,16 +343,18 @@ Numbers D3120–D3130 are used; the block is D3120–D3139 (see the README for t
 | **D3121** | What issues the identity? Recommended: the credentials service, on new routes for the launcher class. Alternatives: a second service of the same image with its own account (about 3 more tasks, one more service; the rule in F7 untouched); the workspace service (no answer for an installation without one); the job's platform (C4, rejected). | **The credentials service.** As recommended. Why: its launcher class, its roster and the launch-time call exist (F1). **This amends the rule that the service account's only grant is its database role** (F7, F8): it gains the minter role on the runs' signer account. |
 | **D3122** | What does the launcher get back? Recommended: a one-time ticket the run redeems, so the launcher never holds the identity. Alternative: the token itself on today's sealed channel (runner and images untouched; a second launcher can still copy it silently, F9). | **A one-time ticket.** As recommended. Why: ask 3 says "obtain", and a copy becomes a race whose loser reports it. Cost accepted: the runner and the image contract change, every run start depends on the issuer, and on Cloud Run a peer launcher who also runs code as the job account can still win the race, detected and not prevented (R5). |
 | **D3123** | What happens to roster entries that are not a person? Recommended: a `serviceAccount:` entry becomes its own class at the issuer; a `group:` entry cannot be issued to, and `update` names each before it removes the grant. Alternatives: people only (matches batch-run-identity's D3109; a pipeline's service account stops); both, with groups resolved through a directory (a grant outside the managed project). | **Service accounts yes, groups no.** As recommended. Why: a service account's ID token names it exactly; a group needs a lookup the installation does not have. |
-| **D3124** | How does the removal reach a teammate's older CLI? Recommended: one release; `update` removes the people's grant only after the issuer answers, and the published policy's version moves so an older CLI refuses with the upgrade sentence. Alternatives: two releases (F24 open one more release); one release with no lever (IAM's 403 and the wrong fix). | **One release, with the policy version bump.** As recommended. Why: pre-1.0, and the older CLI's own refusal names the fix. Cost accepted: every launcher upgrades before their next launch after the operator's update. |
+| **D3124** | How does the removal reach a teammate's older CLI? Recommended: one release; `update` removes the people's grant only after the issuer answers, and the published policy's version moves so an older CLI refuses with the upgrade sentence. Alternatives: two releases (batch-run-identity's F24 open one more release); one release with no lever (IAM's 403 and the wrong fix). | **One release, with the policy version bump.** As recommended. Why: pre-1.0, and the older CLI's own refusal names the fix. Costs accepted as shown: every launcher upgrades before their next launch after the operator's update; a policy migration inside `update`; an installation with no published policy shows the older CLI IAM's own error (O4). A cost not shown then is D3131. |
 | **D3125** | The resident orchestrator loses its minter row and asks the issuer under its own class. What may it be issued? Recommended: a run of any repository of the installation, as it launches today. Alternatives: only chains a person started (about 2 more tasks; a root launched before the upgrade has no record); it keeps its own grant (a second minter). | **Any repository's run.** As recommended. Why: parity, and already narrower, since the issuer signs run identities only. |
 | **D3126** | `fugaro pair` signs with the same grant (F3). What happens to pairing? Recommended: the issuer mints the pairing and device tokens for a verified person, on routes that take no uid and no claim. Alternatives: wait for the mobile plan's own minter (blocks the removal); pairing stops and `update` says so. | **The issuer mints both.** As recommended. Why: it keeps `fugaro pair` working and takes device tokens away from launchers. The option's text said it "closes" SECURITY.md's H1; review round 1 showed that overstates it, and O13 says what remains. |
 | **D3127** | Operators can still reach signing through the deployer account, and by re-granting (F6). What does the spec claim about operators? Recommended: no standing grant, and SECURITY.md says the rest; doctor lists every principal beyond the issuer. Alternatives: also narrow the deployer grant to `getAccessToken` (about 2 more tasks on the update's own impersonation chain; one hop removed, not the reach); claim it only where the Firebase project is a separate one. | **No standing grant; the documents say the rest.** As recommended. Why: an operator administers the installation's IAM; the honest claim is the standing grant and the audit trail. Ask 1 therefore holds in full for launchers, and as "no standing grant" for operators. |
-| **D3128** | When does it ship (F16, F17)? Recommended: tasks start after always-a-budget's I1 and keys-through-service's release A, and it ships in the CLI release after them. Alternatives: with always-a-budget (that plan's no-release window grows); ahead of both (built on code AB4 deletes). | **After both, in its own release.** As recommended. Why: one mint path to replace, and every job reaches the service. Cost accepted: F24 stays open until those two land. |
-| **D3129** | What happens to batch-run-identity (F18)? **Asked twice.** First: recommended, its C1 and the tasks behind it wait for a documents pull request that re-plans its release as a VM-attested claim, "BRS, BR0 and BR6 may go". Second, after review round 1 showed that their C1 also carries the opt-in fact BR6 depends on: recommended, their C1 launches as approved and only the key-release tasks wait. Alternatives the second time: hold C1 whole (only BRS and BR0 go; BR6's approval on hold too); Batch goes ahead as planned. | First answer: "Hold C1, amend that plan", as recommended. **Amended after review, and answered again by the owner (2026-11-20): their C1 goes; the key-release tasks wait.** As recommended. BR1, BR2, BR3, BR4, BR5, BR14, BR17 and BR22 wait for LM19, which amends the wire half of their C1 by a contract change. BRS, BR0, BR6 and the update-side tasks are free, and **no approval of theirs is put on hold**. Cost accepted: the wire half of their C1 is built and then partly rewritten. |
+| **D3128** | When does it ship (F16, F17)? Recommended: tasks start after always-a-budget's I1 and keys-through-service's release A, and it ships in the CLI release after them. Alternatives: with always-a-budget (that plan's no-release window grows); ahead of both (built on code AB4 deletes). | **After both, in its own release.** As recommended. Why: one mint path to replace, and every job reaches the service. Cost accepted: batch-run-identity's F24 stays open until those two land. |
+| **D3129** | What happens to batch-run-identity (F18)? **Asked three times**, because the first two questions each rested on a wrong reading of that plan. First: its C1 and the tasks behind it wait, "BRS, BR0 and BR6 may go". Second, after round 1 showed BR6 depends on that C1: its C1 goes and only the key-release tasks wait. Third, after round 2 showed that C1 also publishes the key fact and that the update side is built around the key: recommended, everything that touches the key or that C1 waits for LM19, which may start as soon as this plan's C1 merges. Alternatives the third time: C1 goes as answered (a config field published and then removed, the most rework); Batch goes ahead in full (two identity paths). | First answer: "Hold C1, amend that plan". Second: "C1 goes; key-release tasks wait". **Amended after review twice; the owner's third answer (2026-11-20) is the one that stands: hold all that touches the key.** As recommended. Their C1 and every task depending on it or on the key wait for LM19 (the list is in F18). Only BRS, BR0 and BR8 to BR11 go. **The go the owner gave their C1 and BR6 on 2026-11-20 is on hold**; BRS and BR0 keep theirs. LM19 may start as soon as this plan's C1 merges, ahead of D3128's gate (this settles O10). |
 | **D3130** | Ask 2 says the issuer checks "for which repository". **Asked twice.** First, on the wrong premise that no per-repository launch list exists: recommended, the issuer checks only that the repository is the installation's. Second, after review round 1 found the roles-and-scopes resolver (F23): recommended, the issuer runs the resolver the CLI gate runs, on the verified caller. Alternative the second time: installation only, as first answered (a modified CLI can still launch any repository). | First answer: "It is the installation's", as recommended. **Amended after review, and answered again by the owner (2026-11-20): enforce the scopes at the issuer.** As recommended. No launch scope on that repository, no ticket. The first answer's two checks stay under it: the repository is one the installation has a job for, and the ticket is bound to the account that job runs as (for a shared or review job, that job's account: F12). Cost accepted: about 2 more tasks, and the service reads the access records on every ticket. |
+| **D3131** | Added by review round 2. The policy version bump of D3124 makes a runner of the release behind refuse the policy at bootstrap, so an execution created before the update and not yet started halts (F24). Accept that for this release? Recommended: accept, and `update` says the count at its door. Alternatives: no bump (IAM's 403 and the wrong fix for older CLIs); bump only when nothing is queued (the grant may never move on a busy installation). | **Accept, and say it at the door.** As recommended. Why: every policy bump already does this, and the window is the queue. Cost accepted: executions queued and not started when the update runs are lost to it. |
 
 No answer departs from its recommendation. No answer was "your call". Two answers were amended
-after review and put to the owner again, who answered both the same day: D3129 and D3130.
+after review and put to the owner again, who answered the same day: D3129 (twice) and D3130.
+D3131 was added by review round 2.
 
 ## Resolutions
 
@@ -347,7 +373,10 @@ One defensible answer each; stated, not asked.
   ahead of the shared request parse, as the merge route is for `VerifyOrchestrator`, because the
   caller holds no run identity yet. A claim carries a nonce the runner draws and keeps in memory:
   the same nonce again gets the same answer, so a retry after a lost response is not a second
-  claim; another nonce after a success is.
+  claim; another nonce after a success is. The record keeps the nonce's digest, never the nonce;
+the nonce is written to no log and no audit line; and the same-nonce answer holds only for the
+ticket's own life. Stated: a ticket, its nonce and the job's identity token together are a token
+for that long, and all three exist only inside the run's own container.
 - **R3. The issuance record.** The issuer writes, once per slug and run, who asked (the verified
   address and class), when, the claims it will sign, the account the claim must come from, a
   digest of the ticket and whether it was claimed. The ticket itself is never stored. The record
@@ -356,13 +385,17 @@ One defensible answer each; stated, not asked.
   job name on it. This is what makes a re-issue checkable (F10). **Stated:** the rules do not
   bind the principals that write past them through IAM. Database admins, the history account,
   the coordinator's writer and the public mobile service's account (the same database role as
-  the credentials account) can read and change the record.
+  the credentials account) can read and write the record, and could write one of their own for
+  the issuer to sign. So the claim checks the record again before it signs: the account is in
+  the service's job tables, the uid comes from the record's path, and the claims pass R4's
+  checks. The same principals write the roles records the scope check reads
+  (`internal/access/store.go`). A launcher is not among them: it holds the database's viewer role.
 - **R4. What the issuer checks before it issues.** The caller is on the roster, in one of three
   classes (a person, a roster service account, the orchestrator). The repository is one the
   installation has a job for, and the caller holds the launch action on it by the resolver the
   CLI gate uses (D3130 as amended, F23): the issuer gives the answer `requireAccess` gives today
-  for every caller that gate judges, and allows what it allows where an installation has no
-  roles to judge by. The orchestrator's class is not scope-checked (D3125). The account the launch names is that repository's job
+  for every caller that gate judges, by R16. The orchestrator's class is not scope-checked
+  (D3125). The account the launch names is that repository's job
   account, the shared project job's or the review job's (F12). The run id is well formed. The
   project claim is the installation's own, and the expiry is no further out than the service's
   configured maximum. No record exists for this slug and run under another caller, no ticket of
@@ -373,8 +406,8 @@ One defensible answer each; stated, not asked.
   halts saying so. Obtain: no token exists until the run claims, and the claim must come from the
   recorded job account. **Residual, stated:** on Cloud Run, a launcher who reads another run's
   ticket from its execution and runs code as the same job account before that run starts can
-  claim first. The victim run halts and the audit line names the claim; it is detected, not
-  prevented (F11, Check 840). On Batch the VM attestation can prevent it (D3129). **A second
+  claim first. Any launcher of that job can do both (F30). The victim run halts and the audit line
+  names the claim; it is detected, not prevented (F11, Check 840). On Batch the VM attestation can prevent it (D3129). **A second
   residual, stated:** a roster caller who learns a run id before its launcher has asked can ask
   first and take the record; the real launch is then refused. That is a denial of one launch, on
   the record under the denier's verified name, and never another person's identity. The launcher
@@ -385,10 +418,12 @@ One defensible answer each; stated, not asked.
 - **R7. One release of bridge, on both sides.** The CLI of this release asks the issuer; where the
   service does not serve the route (an installation not yet updated, F15) it signs locally as
   before, which works exactly as long as the people's row is still there. The bridge keys on
-  three things only: the contract's "not served" answer, the answer a release-behind service
-  gives a path it does not know (pinned in C1, F27), and no service configured. It is no
+  three things only: the contract's "not served" answer, which the service also gives while it
+  has no signer configured; the 404 a release-behind service gives a path it does not know
+  (pinned in C1, F27); and no service configured. It is no
   downgrade: local signing needs the row, and once LM14 has removed the row the bridge has
-  nothing to sign with. The runner of this
+  nothing to sign with; there the launch refuses with the fix (run `fugaro update`), not with
+  IAM's error. The runner of this
   release claims when the execution carries a ticket, and opens the sealed object when it carries
   the old marker. An execution created before the update that has bootstrapped finishes; one
   that has not is F24's case (R9). Both old paths, the seal and
@@ -398,7 +433,10 @@ One defensible answer each; stated, not asked.
   on. A stage after the credentials service's own probes the ticket route; when it answers, the
   stage applies both roots with the switch off, which removes the people's row and the
   orchestrator's; the two deletes are on the update's own allow-list, for an ordinary and for a
-  managed project (F25). When it does not answer, the rows stay and the update says why. The
+  managed project (F25). The orchestrator's row goes only once the resident service runs this
+  release's image, which the installation stage has moved earlier in the same update; an image
+  of the release behind would sign locally and fail. When the issuer does not answer, the rows
+  stay and the update says why. The
   policy version has moved by then (F24): where the service answers "not served" an upgraded CLI
   still launches through the bridge. Nothing is asked (no-prompt policy, spec §1).
 - **R9. Runs in flight.** A run that already exchanged its token holds a Firebase session that no
@@ -406,7 +444,10 @@ One defensible answer each; stated, not asked.
   the Firebase row). Removing a signing grant reaches neither. The policy version bump is
   shape-free and follows version 10's ordering, and it has version 10's reach: an execution
   created before the update that has not bootstrapped yet halts with the skew sentence (F24,
-  O12). `TestUpdateLeavesARunInFlightRunning` gains the case of a run that has bootstrapped.
+  accepted in D3131). The service of the release behind refuses the migrated policy until the
+  credentials stage has replaced it, which follows the policy stage at once
+  (`docs/design/update-in-flight.md`, the credentials-service row); that window exists for every
+  bump today. `TestUpdateLeavesARunInFlightRunning` gains the case of a run that has bootstrapped.
 - **R10. What `update` says, and when.** At the update's door, with the note about runs in
   flight and before the policy stage (F24), one line each: the
   `group:` roster entries that can no longer launch, by name, with the fix (name the people);
@@ -426,6 +467,12 @@ One defensible answer each; stated, not asked.
 - **R15. Check 840 does not gate.** If it finds that an execution's identity token carries
   something of the execution, a contract change (R-C1-execution) binds the claim to it and the
   residual in R5 closes for Cloud Run.
+- **R16. The issuer's scope check gives the CLI gate's answer, arm by arm** (F29). The implicit
+  admins the gate reads from the local configuration are rendered to the service by `update`,
+  as a third environment entry beside the two of LM22, so an owner is not refused. A roster
+  service account is admitted without a scope judgement, as the gate admits it today. Where the
+  roles records cannot be read the issuer refuses: it cannot write its own record there either,
+  so nothing that could have launched is stopped by this arm alone.
 
 ## Answers to what the brief did not know
 
@@ -448,8 +495,8 @@ None. No two answers pull against each other.
 
 - **O1. The spec's ruling section holds a placeholder.** The owner confirmed the reading (D3120)
   and has not written his own words into it. `spec.md` stays as received.
-- **O2. batch-run-identity's amendment is not written.** D3129 as amended holds its key-release
-  tasks; the documents pull request that re-plans them is task LM19 here and needs its own go.
+- **O2. batch-run-identity's amendment is not written.** D3129 as amended holds every task of
+  it that touches the key or its C1; the documents pull request that re-plans them is task LM19 here and needs its own go.
   It must settle D3109 (people only) against D3123 (roster service accounts).
 - **O3. #3323 merged while this was in review.** This pull request does not edit that folder;
   LM19 amends it on main. Its README still reads as before D3129.
@@ -469,15 +516,13 @@ None. No two answers pull against each other.
   merge time; if another plan lands one first, this plan's bump is that plan's, or one more.
 - **O9. The estimate has no cost.** No history is cached for these tasks on this machine, so the
   graph read prints a time range and no dollar figure.
-- **O10. Whether D3128's hold covers LM19.** LM19 is a documents task that unblocks Batch. D3128
-  as answered lets only C1 and LM0 start early, so LM19 is held by default; lifting that is the
-  owner's.
+- **O10. Settled by D3129's third answer:** LM19 may start as soon as this plan's C1 merges,
+  ahead of D3128's gate.
 - **O11. The graph draws no edge from LM1 or LM19 to C1.** `fugaro plan graph` admits an edge
   onto a contract only from the consumer side of an edge the contract broke. The plan's own text
   carries both waits.
-- **O12. A policy version bump halts executions that are queued and not bootstrapped** (F24).
-  The update says how many at its door. Avoiding it means a lever other than the policy version,
-  which D3124 chose; whether that cost is acceptable for this release is the owner's to confirm.
+- **O12. Settled by D3131:** a policy version bump halts executions that are queued and not
+  bootstrapped (F24); the owner accepted it, and the update says how many at its door.
 - **O13. H1 closes for launchers, not for everyone.** After D3126 a launcher can no longer mint a
   device token. An operator through the deployer (D3127) and the credentials account still can,
   and SECURITY.md names a device-held signing key as the change that closes H1. LM16 says this
@@ -486,8 +531,11 @@ None. No two answers pull against each other.
   (section 4.5) has the resident orchestrator satisfy a consumer check with a claim it would mint
   through its own `signJwt`. No code mints it today; after D3125 no route can. LM16 records it
   there; whether that design needs a route is that plan's.
-- **O15. D3129 and D3130 as amended** are recorded from the owner's second answers. Listed here
-  so the reader sees the cells are not the first answers.
+- **O15. D3129 and D3130 as amended** are recorded from the owner's later answers (D3129's third,
+  D3130's second). Listed here so the reader sees the cells are not the first answers.
+- **O16. Two approvals in another plan are on hold by D3129:** batch-run-identity's C1 and BR6.
+  That plan's README and status row still say four tasks are approved; LM19 corrects the folder,
+  and this pull request adds the hold to its status row only.
 
 ## UNVERIFIED
 

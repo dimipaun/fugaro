@@ -22,6 +22,7 @@
      "internal/credsvc/identity_config.go",
      "internal/credsvc/identity_stub.go",
      "internal/credsvc/server.go",
+     "internal/credsvc/scope_installation.go",
      "docs/launcher-does-not-mint/contract.md"
     ]
    }
@@ -133,6 +134,7 @@
      "internal/cli/launch_identity.go",
      "internal/cli/launch_budget.go",
      "internal/cli/run.go",
+     "internal/cli/troubleshoot_launch.go",
      "internal/cli/orchestrator_launcher.go",
      "internal/cli/orchestrator_serve.go",
      "internal/cli/launch_identity_test.go"
@@ -223,7 +225,8 @@
      "deploy/terraform/gcp/modules/installation/variables.tf",
      "deploy/terraform/gcp/roots/installation/variables.tf",
      "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl",
-     "deploy/terraform/gcp/modules/installation/orchestrator_test.go"
+     "deploy/terraform/gcp/modules/installation/orchestrator_test.go",
+     "internal/infra/tf/cover.go"
     ]
    }
   },
@@ -381,6 +384,7 @@
      "internal/infra/identity_allow_delete.go",
      "internal/infra/identity_allow_delete_test.go",
      "internal/cli/init.go",
+     "internal/cli/update_managed.go",
      "internal/managed/plan_test.go"
     ]
    }
@@ -404,16 +408,18 @@
   },
   {
    "id": "LM22",
-   "title": "the cover knows the service's new environment names",
+   "title": "the service's new environment names, and their reader",
    "run": null,
    "version": null,
-   "tier": "trivial",
-   "size": 0.5,
+   "tier": "small",
+   "size": 1,
    "footprint": {
     "prediction": true,
     "paths": [
      "internal/infra/tf/cover.go",
-     "internal/infra/tf/cover_test.go"
+     "internal/infra/tf/cover_test.go",
+     "internal/cli/credentials_serve.go",
+     "internal/cli/credentials_serve_test.go"
     ]
    }
   },
@@ -515,11 +521,6 @@
    "reason": "without the list the guard refuses the delete"
   },
   {
-   "task": "LM21",
-   "needs": "I1",
-   "reason": "the lever ships with what it levers"
-  },
-  {
    "task": "LM15",
    "needs": "LM13",
    "reason": "it classifies the row LM13 writes"
@@ -603,6 +604,16 @@
    "task": "I1",
    "needs": "LM23",
    "reason": "the integration runs every side together"
+  },
+  {
+   "task": "LM6",
+   "needs": "LM8",
+   "reason": "it calls the gate LM8 writes"
+  },
+  {
+   "task": "LM14",
+   "needs": "LM21",
+   "reason": "the move never ships without the lever, and the convergence test needs the bump"
   }
  ],
  "decoupling": [

@@ -19,9 +19,12 @@ shaped it:
 - **D3126**: the issuer mints pairing and device tokens.
 - **D3127**: operators lose the standing grant; the documents state what they can still reach.
 - **D3128**: tasks start after always-a-budget's I1 and keys-through-service's release A. Only
-  **C1** and **LM0** may start before them.
-- **D3129** (amended after review, answered again): batch-run-identity's C1 goes as approved;
-  its BR1, BR2, BR3, BR4, BR5, BR14, BR17 and BR22 wait for LM19.
+  **C1** and **LM0** may start before them, and **LM19** once C1 has merged (D3129).
+- **D3129** (amended after review twice; the third answer stands): everything in
+  batch-run-identity that touches the key or its C1 waits for LM19; only its BRS, BR0 and BR8 to
+  BR11 go. LM19 may start as soon as this plan's C1 merges.
+- **D3131** (added by review round 2): the policy bump's halt of executions queued and not
+  started is accepted, and the update says the count at its door.
 - **D3130** (amended after review, answered again): the issuer enforces the roles-and-scopes
   launch check on the verified caller, and still checks that the repository is the installation's.
 
@@ -49,6 +52,9 @@ after review round 1 and its number is not reused. LM18 ships one release after 
 - **Main stays releasable at every merge.** Until I1, the service's identity routes answer the
   contract's "not served" refusal, the CLI treats that as an installation not yet updated and
   signs locally (R7), and the runner sees no ticket. The people's grant is removed by LM14 alone.
+- **No CLI release is cut between the merge of LM21 and the merge of LM14.** The version bump
+  without the move tells every older CLI to upgrade for nothing; the move without the bump is
+  the option D3124 rejected. LM14 depends on LM21, so the order is fixed and only the gap is a rule.
 - Live checks are run by the owner, from one script each. No agent performs any step of one.
 
 ## Global constraints and review focus
@@ -84,17 +90,20 @@ check. LM18 is the removal one release later.
 ### C1: the identity wire contract
 
 - Acceptance: one package declares the four routes' paths, request and response bodies, refusal
-  codes (among them "not served"), the claim's nonce and what a repeated nonce gets (R2), the
-  ticket's execution variable name, and the issuance record's shape and its place under `creds`
-  (R3); the service mounts the four
-  routes on stubs that answer "not served"; a test pins what a service of the release behind
-  answers for these paths, which is the bridge's other trigger (F27); the wire decodes strictly
+  codes (among them "not served", a code of its own and not the existing `refuseNotServed`), the
+  claim's nonce and what a repeated nonce gets (R2), the probe `update` makes of the ticket
+  route, the ticket's execution variable name, and the issuance record's shape, with the nonce's
+  digest, and its place under `creds` (R3); the service mounts the four
+  routes on stubs that answer "not served", listed where the service lists the routes it serves
+  and the routes it answers ahead of the shared parse; a test pins the 404 a service of the
+  release behind gives these paths, which is the bridge's other trigger (F27); the wire decodes strictly
   and has no field for a uid or a free claim set.
 - Files: `internal/identitywire/wire.go` (new), `internal/identitywire/wire_test.go` (new),
   `internal/credsvc/identity_config.go` (new: the service's identity configuration, the issuance
   store's interface and the scope check's interface), `internal/credsvc/identity_stub.go` (new,
-  stub), `internal/credsvc/server.go` (mounts the stubs),
-  `docs/launcher-does-not-mint/contract.md` (new).
+  stub), `internal/credsvc/server.go` and `internal/credsvc/scope_installation.go` (the mount, in
+  `servedRoute` and `aheadOfTheSharedParse`), `docs/launcher-does-not-mint/contract.md` (new).
+  Past five; the two mount files are a line or two each.
 - Interfaces: produces everything LM1–LM7, LM10, LM19, LM23 and I1 build against. Consumes
   nothing.
 - Tests: `TestIdentityWireDecodesStrictly`, `TestIdentityWireHasNoCallerChosenIdentity`,
@@ -147,7 +156,9 @@ check. LM18 is the removal one release later.
 ### LM2: the claim route and the signing
 
 - Acceptance: a job's Google ID token plus an unclaimed ticket, from the account on the record,
-  yields one custom token signed as the runs' signer with the claims on the record; the same
+  yields one custom token signed as the runs' signer with the claims on the record, after the
+  record itself is checked again (the account is in the job tables, the uid comes from the
+  record's path, the claims pass R4); the nonce is in no log and no audit line; the same
   nonce again gets the same answer and no audit line of a second claim; another nonce after a
   success, a wrong account, an expired or unknown ticket are each refused with one audit line.
 - Files: `internal/credsvc/identity_claim.go` (new), `internal/credsvc/identity_sign.go` (new),
@@ -155,7 +166,8 @@ check. LM18 is the removal one release later.
 - Interfaces: consumes C1 and `token.Signer`, `token.MintAt`. Produces the real claim handler and
   the service's signer (the service's own credentials through `token.IAMSigner`).
 - Tests: `TestClaimSignsTheRecordedClaims`, `TestClaimIsOnce`,
-  `TestClaimRetryWithTheSameNonceIsNotASecondClaim`, `TestClaimRefusesAnotherJobAccount`,
+  `TestClaimRetryWithTheSameNonceIsNotASecondClaim`, `TestClaimRevalidatesTheRecord`,
+  `TestClaimNeverLogsTheNonce`, `TestClaimRefusesAnotherJobAccount`,
   `TestClaimRefusesExpiredTicket`, `TestClaimAnsweredAheadOfRunIdentity`.
 - Command: `go test ./internal/credsvc/ -run 'Claim' -count=1`
 - Red step: `TestClaimIsOnce` fails when the store does not mark the claim.
@@ -215,21 +227,27 @@ check. LM18 is the removal one release later.
 - Acceptance: `launchRun` gets a ticket from the service and puts it on the execution under the
   contract's variable; no token is signed and no object is written; the ticket is asked before
   anything that names the run id is written where another launcher reads (R5).
-  `residentLauncher.Launch` presents its own account's identity token and takes the same path.
+  A launch that holds a ticket calls LM8's gate. Every way in asks before it writes, the
+  troubleshoot launch included. `residentLauncher.Launch` presents its own account's identity
+  token and takes the same path.
   The launch signs locally as before (R7) only where the service answers "not served", answers
   as a release-behind service does (C1's pinned answer), or no service is configured. Where the
   service is unreachable or refuses, the launch fails with the reason and the fix after a
-  bounded retry (R1).
+  bounded retry (R1). Where the bridge fires and the row is already gone, the launch refuses
+  with the fix and not with IAM's error.
 - Files: `internal/cli/launch_identity.go` (new), `internal/cli/launch_budget.go`,
-  `internal/cli/run.go`, `internal/cli/orchestrator_launcher.go`,
-  `internal/cli/orchestrator_serve.go`, and `internal/cli/launch_identity_test.go` (new).
+  `internal/cli/run.go`, `internal/cli/troubleshoot_launch.go`,
+  `internal/cli/orchestrator_launcher.go`, `internal/cli/orchestrator_serve.go`, and
+  `internal/cli/launch_identity_test.go` (new). Past five; the last three are one call site each.
 - Interfaces: consumes C1. Produces the CLI's issuer client.
 - Tests: `TestLaunchAsksTheIssuerAndSignsNothing`, `TestLaunchAsksBeforeItWritesTheRun`,
   `TestLaunchBridgesOnlyOnTheThreeAnswers`, `TestLaunchRefusesWithTheFixWhenIssuerUnreachable`,
-  `TestLaunchRefusalNamesAnotherCallersRun`, `TestResidentLauncherAsksTheIssuer`.
-- Command: `go test ./internal/cli/ -run 'LaunchAsks|LaunchBridges|LaunchRefus|ResidentLauncherAsksTheIssuer' -count=1`
+  `TestLaunchRefusalNamesAnotherCallersRun`, `TestBridgeWithoutTheRowRefusesWithTheFix`,
+  `TestLaunchWithATicketRefusesAnOlderImage`, `TestResidentLauncherAsksTheIssuer`.
+- Command: `go test ./internal/cli/ -run 'LaunchAsks|LaunchBridges|LaunchRefus|BridgeWithoutTheRow|LaunchWithATicket|ResidentLauncherAsksTheIssuer' -count=1`
 - Red step: `TestLaunchAsksTheIssuerAndSignsNothing` fails: the fake IAM sees a `signJwt` call.
-- Depends on: C1. External: always-a-budget's AB4 merged (F17).
+- Depends on: C1; LM8 (kept: it calls the gate LM8 writes). External: always-a-budget's AB4
+  merged (F17).
 - Commit: `cli: a launch asks for a ticket (LM6)`
 - Reviewer tier: opus, independent review.
 
@@ -242,7 +260,8 @@ check. LM18 is the removal one release later.
   run halts; an execution that carries the old marker opens the sealed object as before (R7).
 - Files: `internal/runner/identity_claim.go` (new), `internal/runner/budget_session.go`,
   `internal/runner/projectpolicy.go`, `internal/runner/identity_claim_test.go` (new).
-- Interfaces: consumes C1 and `metadataIDToken`.
+- Interfaces: consumes C1 and `metadataIDToken`. `takeBudgetToken` in `projectpolicy.go` is the
+  take both the budget session and the policy read share; it is where the claim goes in.
 - Tests: `TestRunnerClaimsItsIdentity`, `TestRunnerHaltsWhenTicketAlreadyClaimed`,
   `TestRunnerRetriesThenHaltsWhenIssuerUnreachable`, `TestRunnerStillOpensASealedToken`.
 - Command: `go test ./internal/runner/ -run 'RunnerClaims|RunnerHalts|RunnerRetries|RunnerStillOpens' -count=1`
@@ -253,8 +272,9 @@ check. LM18 is the removal one release later.
 
 ### LM8: a new launcher refuses an image that cannot claim
 
-- Acceptance: a launch that holds a ticket refuses a job image older than the release that
-  claims, naming the image refresh the update performs; a launch on the bridge path is not refused.
+- Acceptance: a gate function refuses a job image older than the release that claims, naming the
+  image refresh the update performs. LM6 calls it for a launch that holds a ticket and not for
+  one on the bridge.
 - Files: `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`.
 - Interfaces: a constant beside `serviceAuthSince`.
 - Tests: `TestIdentitySinceRefusesAnOlderImage`.
@@ -303,8 +323,9 @@ check. LM18 is the removal one release later.
 ### LM12: the installation root: the orchestrator's row and the service's configuration
 
 - Acceptance: the orchestrator's minter row sits behind the same switch, on by default; the
-  credentials service receives the signer account and the roster's service accounts in its
-  environment, under the names LM22 put on the cover's list; each roster service
+  credentials service receives the signer account, the roster's service accounts and the
+  implicit admins (R16) in its environment, under the names LM22 declared, and the three names
+  leave the cover's awaiting list in the same change; each roster service
   account holds the invoker row; with the defaults the plan is unchanged.
 - Files: `deploy/terraform/gcp/modules/installation/orchestrator.tf`,
   `deploy/terraform/gcp/modules/installation/credentials.tf`,
@@ -312,13 +333,15 @@ check. LM18 is the removal one release later.
   `deploy/terraform/gcp/modules/installation/variables.tf`,
   `deploy/terraform/gcp/roots/installation/variables.tf`,
   `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl`,
-  `deploy/terraform/gcp/modules/installation/orchestrator_test.go`.
+  `deploy/terraform/gcp/modules/installation/orchestrator_test.go`, `internal/infra/tf/cover.go`.
+  Past five; one module's files and the list that tracks them.
 - Interfaces: produces the variables LM13 writes.
 - Tests: the module's own tests; `TestOrchestratorMinterIsBehindTheSwitch` (new); the root's
-  exact environment map.
-- Command: `go test ./deploy/terraform/gcp/modules/installation/ -run 'Orchestrator' -count=1 && terraform fmt -check -recursive deploy/terraform`
+  exact environment map; `TestCredentialsServiceEnvIsTheDeploymentsOwn`.
+- Command: `go test ./deploy/terraform/gcp/modules/installation/ -run 'Orchestrator' -count=1 && go test ./internal/cli/ -run 'CredentialsServiceEnvIsTheDeploymentsOwn' -count=1 && terraform fmt -check -recursive deploy/terraform`
 - Red step: the new test fails with the row unconditional.
-- Depends on: LM22 (the cover's rule: a name is on its list before a module renders it).
+- Depends on: LM22 (the cover's rule: a name is on its list, and read by the command, before a
+  module renders it).
 - Commit: `terraform(installation): the orchestrator's minter row behind the switch (LM12)`
 - Reviewer tier: opus, independent review.
 
@@ -327,8 +350,8 @@ check. LM18 is the removal one release later.
 - Acceptance: an update passes the credentials account to the Firebase root, so the issuer's row
   is planned, and leaves the switch on; it passes the account only once the installation root
   has created it, so a fresh setup's first apply names no account that does not exist (U9); the
-  plan cover names the row by account and role; the roster's `serviceAccount:` entries are
-  rendered to the service, its `group:` entries are not.
+  plan cover names the row by account and role; the roster's `serviceAccount:` entries and the
+  implicit admins are rendered to the service, the roster's `group:` entries are not.
 - Files: `internal/infra/firebase.go`, `internal/infra/tfvars.go`, `internal/infra/launchers.go`,
   `internal/infra/tf/cover.go`, `internal/infra/tf/cover_grants_test.go`, and the golden plans
   (`scripts/gen-golden-plans.sh`).
@@ -343,8 +366,10 @@ check. LM18 is the removal one release later.
 
 ### I1: wire the issuer in
 
-- Acceptance: the stub file is gone; the service reads its signer account and its
-  service-account roster from the environment and serves the four routes for real; one test runs
+- Acceptance: the stub file is gone; the service takes the values LM22's reader read into C1's
+  configuration and serves the four routes for real; with no signer account configured it
+  answers "not served" on all four, so an installation whose roots carry no issuer row yet stays
+  on the bridge; one test runs
   a launch through the service to a session: ticket, claim, exchange. In the same test a second
   person's ask for that run is refused, a caller without the launch scope is refused, a copied
   ticket's second claim is refused and the losing run halts, a retried claim with its nonce
@@ -356,8 +381,8 @@ check. LM18 is the removal one release later.
   contract's.
 - Interfaces: consumes every side C1 separated.
 - Tests: `TestIdentityEndToEnd`, `TestIdentityCrossClassRefused`,
-  `TestLaunchToSessionThroughTheIssuer`, `TestCredentialsServeReadsTheSigner`.
-- Command: `go test ./internal/credsvc/ ./internal/cli/ -run 'IdentityEndToEnd|IdentityCrossClass|LaunchToSessionThroughTheIssuer|CredentialsServeReadsTheSigner' -count=1`
+  `TestLaunchToSessionThroughTheIssuer`, `TestNoSignerConfiguredIsNotServed`.
+- Command: `go test ./internal/credsvc/ ./internal/cli/ -run 'IdentityEndToEnd|IdentityCrossClass|LaunchToSessionThroughTheIssuer|NoSignerConfiguredIsNotServed' -count=1`
 - Red step: `TestIdentityEndToEnd` fails with "not served" while the stubs are mounted.
 - Depends on: LM1, LM2, LM3, LM4, LM5, LM6, LM7, LM10 and LM23 (it runs all of them together),
   and LM8 (once this merges a launch holds a real ticket, and an image that cannot claim must be
@@ -368,8 +393,10 @@ check. LM18 is the removal one release later.
 ### LM14: `update` moves the grant
 
 - Acceptance: at its door, with the note about runs in flight and before the policy stage, the
-  update prints R10's lines (the `group:` entries by name with the fix, older CLIs, pairing, the
-  executions queued and not started). A stage after the credentials service's probes the ticket
+  update prints R10's lines (the `group:` entries by name with the fix, older CLIs, pairing, and
+  the count of executions queued and not started, which will halt: D3131). The stage runs on an
+  ordinary and on a managed update. The orchestrator's row goes only when the resident service
+  already runs this release's image (R8). A stage after the credentials service's probes the ticket
   route; when it answers, the stage applies both roots with the switch off and the people's and
   the orchestrator's rows are gone; when it does not, the rows stay and one line says why. An
   installation at the previous release converges with this one command, with a run in flight and
@@ -380,12 +407,14 @@ check. LM18 is the removal one release later.
 - Interfaces: consumes LM13's values, LM20's list and C1's probe shape.
 - Tests: `TestUpdateMovesTheGrantOnlyAfterTheIssuerAnswers`, `TestUpdateKeepsTheGrantAndSaysWhy`,
   `TestUpdateSaysItsLinesAtTheDoor`, `TestUpdateFromThePreviousReleaseConverges`,
+  `TestUpdateMovesTheGrantOnAManagedProject`, `TestOrchestratorRowGoesAfterItsImageMoved`,
   `TestUpdateLeavesARunInFlightRunning`.
-- Command: `go test ./internal/cli/ -run 'UpdateMovesTheGrant|UpdateKeepsTheGrant|UpdateSaysItsLinesAtTheDoor|UpdateFromThePreviousRelease|UpdateLeavesARunInFlightRunning' -count=1`
+- Command: `go test ./internal/cli/ -run 'UpdateMovesTheGrant|UpdateKeepsTheGrant|UpdateSaysItsLinesAtTheDoor|UpdateFromThePreviousRelease|OrchestratorRowGoesAfter|UpdateLeavesARunInFlightRunning' -count=1`
 - Red step: `TestUpdateMovesTheGrantOnlyAfterTheIssuerAnswers` fails: the people's row is in the
   final plan.
 - Depends on: I1 (the stage's test launches through the real issuer after the move), LM13 (the
-  switch it turns), LM20 (without the list the guard refuses the delete).
+  switch it turns), LM20 (without the list the guard refuses the delete), LM21 (the move never
+  ships without the lever, and the convergence test needs the bump).
 - Commit: `update: the minter grant moves to the service (LM14)`
 - Reviewer tier: opus, independent review.
 
@@ -460,10 +489,10 @@ check. LM18 is the removal one release later.
 ### LM19: amend batch-run-identity (documents)
 
 - Acceptance: a documents pull request re-plans that plan's release as a VM-attested claim on
-  this plan's C1: its D3101 and D3108 with their new object; the wire half of its C1 amended by
-  a contract change; its BR1, BR2, BR3, BR4, BR5, BR14, BR17 and BR22 rewritten or dropped; its
-  D3109 settled against D3123; each amended answer marked and put to the owner. The opt-in fact
-  in its C1, and BR6 and the update side, are left as they are (D3129 as amended).
+  this plan's C1: its D3101 and D3108 with their new object; its C1 re-cut (what of the wire,
+  the registration, the key fact and the opt-in fact stays); every task F18 lists rewritten,
+  kept or dropped, one by one from its own Depends line; its D3109 settled against D3123; its
+  README's approvals corrected (O16); each amended answer marked and put to the owner.
 - Files: `docs/batch-run-identity/reconciliation.md`, `implementation-plan.md`,
   `implementation-plan.graph.json`, `README.md`.
 - Tests: the Docs filter; `fugaro plan graph --plan docs/batch-run-identity/implementation-plan.md`.
@@ -471,26 +500,29 @@ check. LM18 is the removal one release later.
 - Red step: none; a documents task.
 - Depends on: C1 merged (it is written against the contract's document). **The graph draws no
   edge for this one**, for the same reason as LM1: it reads the contract's text and is not one
-  side of an edge the contract broke. Held by D3128 like every task but C1 and LM0 unless the
-  owner says otherwise (O10).
+  side of an edge the contract broke. It may start as soon as C1 has merged, ahead of D3128's
+  gate (D3129).
 - Commit: `docs(batch-run-identity): the release is a claim (LM19)`
 - Reviewer tier: opus, independent review.
 
 ### LM20: the update's own deletes are listed
 
 - Acceptance: the plan that turns the switch off deletes exactly the people's minter rows and
-  the orchestrator's, and the update's allow-list names exactly those, for an ordinary project
-  (`tf.Guard`) and a managed one (`GuardManaged`); any other delete in that plan is still
-  refused; no flag is asked of the operator (F25).
+  the orchestrator's. For an ordinary project the update's allow-list names exactly those, so
+  `tf.Guard` admits them and still refuses any other delete, and no flag is asked of the
+  operator. For a managed project the same addresses go through `managed.Spec.Upgrade`, where
+  `GuardManaged` warns about the deletes and records them, and the test pins that it does not
+  refuse (F25).
 - Files: `internal/infra/identity_allow_delete.go` (new),
-  `internal/infra/identity_allow_delete_test.go` (new), `internal/cli/init.go`, and the managed
-  plan's guard test (`internal/managed/plan_test.go`).
+  `internal/infra/identity_allow_delete_test.go` (new), `internal/cli/init.go`,
+  `internal/cli/update_managed.go`, `internal/managed/plan_test.go`.
 - Interfaces: consumes the resource addresses LM11 and LM12 give the rows. Produces the list
   LM14's stage passes.
 - Tests: `TestIdentityAllowDeleteNamesOnlyTheMinterRows`,
   `TestManagedGuardAdmitsTheMinterRowDeletes`, `TestGuardStillRefusesAnotherDelete`.
 - Command: `go test ./internal/infra/ ./internal/managed/ ./internal/cli/ -run 'IdentityAllowDelete|ManagedGuardAdmitsTheMinterRow|GuardStillRefusesAnotherDelete' -count=1`
-- Red step: `TestManagedGuardAdmitsTheMinterRowDeletes` fails: the guard refuses the delete.
+- Red step: `TestIdentityAllowDeleteNamesOnlyTheMinterRows` fails: with no list, `tf.Guard`
+  refuses the ordinary project's plan.
 - Depends on: LM11 and LM12 (it names their rows' addresses).
 - Commit: `infra: the minter rows' deletes are the update's own (LM20)`
 - Reviewer tier: opus, independent review.
@@ -507,38 +539,44 @@ check. LM18 is the removal one release later.
   `TestOlderCLIIsToldToUpgrade`.
 - Command: `go test ./internal/projectpolicy/ ./internal/cli/ -run 'VersionSince|MigrateToTheIdentityVersion|OlderCLIIsToldToUpgrade' -count=1`
 - Red step: `TestVersionSinceCoversEveryVersion` fails until the new version has its row.
-- Depends on: I1 (the lever ships with what it levers: bumped before the path works, a release
-  cut in between tells every older CLI to upgrade for nothing).
+- Depends on: none. The rule in Conventions keeps a release from being cut between this and LM14.
 - Commit: `policy: the version an identity-issuing installation publishes (LM21)`
 - Reviewer tier: opus, independent review.
 
-### LM22: the cover knows the service's new environment names
+### LM22: the service's new environment names, and their reader
 
-- Acceptance: the two new entries of the service's environment, the signer account and the
-  service-account roster, are named once, as constants beside the list the cover keeps, and are
-  on its list of entries awaiting the module (`CredentialsServiceEnvAwaitingTheModule`), so the
-  module that renders them next is not a finding.
-- Files: `internal/infra/tf/cover.go`, `internal/infra/tf/cover_test.go`.
-- Interfaces: produces the two names LM12 renders and I1 reads.
-- Tests: `TestCredentialsServiceEnvKnowsTheIdentityNames`.
-- Command: `go test ./internal/infra/tf/ -run 'CredentialsServiceEnvKnowsTheIdentityNames' -count=1`
-- Red step: the test fails: the names are not on the list.
+- Acceptance: the three new entries of the service's environment (the signer account, the
+  roster's service accounts, the implicit admins of R16) are named once, are on the cover's list
+  of entries awaiting the module (`CredentialsServiceEnvAwaitingTheModule`), and are read by
+  `credentials serve` into values nothing uses yet; `TestCredentialsServiceEnvIsTheDeploymentsOwn`
+  knows the three, so the module that renders them next (LM12) turns nothing red.
+- Files: `internal/infra/tf/cover.go`, `internal/infra/tf/cover_test.go`,
+  `internal/cli/credentials_serve.go`, `internal/cli/credentials_serve_test.go`.
+- Interfaces: produces the three names LM12 renders, and the read values I1 hands to C1's
+  configuration.
+- Tests: `TestCredentialsServiceEnvKnowsTheIdentityNames`, `TestCredentialsServeReadsTheIdentityEnv`,
+  `TestCredentialsServiceEnvIsTheDeploymentsOwn`.
+- Command: `go test ./internal/infra/tf/ ./internal/cli/ -run 'CredentialsServiceEnvKnowsTheIdentityNames|CredentialsServeReadsTheIdentityEnv|CredentialsServiceEnvIsTheDeploymentsOwn' -count=1`
+- Red step: `TestCredentialsServiceEnvKnowsTheIdentityNames` fails: the names are not on the list.
 - Depends on: none.
-- Commit: `infra: the cover's list knows the identity names (LM22)`
+- Commit: `infra: the identity names and their reader (LM22)`
 - Reviewer tier: opus, independent review.
 
 ### LM23: the issuer enforces the launch scope
 
 - Acceptance: the ticket route's scope check runs `internal/access`'s resolver on the verified
   caller for the launch action on the repository, and gives the answer the CLI gate
-  (`requireAccess`) gives today for the same caller and records, including where an installation
-  has no roles to judge by; a caller without the scope gets no ticket and one audit line; the
-  orchestrator's class is not scope-checked (D3125, D3130 as amended).
+  (`requireAccess`) gives today, arm by arm (R16): the implicit admins come from the service's
+  configuration; a roster service account is admitted without a scope judgement; an installation
+  with no roles to judge by is allowed as the gate allows it; unreadable roles records refuse.
+  A caller without the scope gets no ticket and one audit line; the orchestrator's class is not
+  scope-checked (D3125, D3130 as amended).
 - Files: `internal/credsvc/identity_scope.go` (new), `internal/credsvc/identity_scope_test.go`
   (new).
 - Interfaces: consumes C1 (the scope check's interface) and `internal/access`. First step: U10.
 - Tests: `TestIssuerRefusesACallerWithoutTheLaunchScope`,
-  `TestIssuerAgreesWithTheCLIGate` (a table run through both), `TestOrchestratorClassIsNotScopeChecked`.
+  `TestIssuerAgreesWithTheCLIGate` (a table run through both, with a row for each arm of R16),
+  `TestOrchestratorClassIsNotScopeChecked`.
 - Command: `go test ./internal/credsvc/ -run 'IssuerRefusesACallerWithoutTheLaunchScope|IssuerAgreesWithTheCLIGate|OrchestratorClassIsNotScopeChecked' -count=1`
 - Red step: `TestIssuerRefusesACallerWithoutTheLaunchScope` fails against the stub check, which
   admits everyone.
@@ -550,25 +588,25 @@ check. LM18 is the removal one release later.
 
 | Level | Tasks |
 | --- | --- |
-| 0 | C1, LM0, LM8, LM11, LM22 |
+| 0 | C1, LM0, LM8, LM11, LM21, LM22 |
 | 1 | LM1, LM2, LM3, LM4, LM5, LM6, LM7, LM10, LM12, LM19, LM23 |
 | 2 | I1, LM13, LM20 |
-| 3 | LM14, LM15, LM21 |
+| 3 | LM14, LM15 |
 | 4 | LM16, LM17 |
 | after a release | LM18 |
 
 The graph read reports five levels and puts LM1 and LM19 at level 0 and LM18 at level 4: it has
 no edge for the first two (see their Depends lines, and O11) and no way to say "one release
 later". **The table above is the order to launch in, and this graph is not to be imported for
-automatic launching while C1 is unmerged.** D3128 already holds every task but C1 and LM0 behind
-two other plans, so in practice C1 has merged before LM1 or LM19 can start.
+automatic launching while C1 is unmerged.** D3128 holds LM1 behind two other plans, so in
+practice C1 has merged long before it; LM19 is launched by hand once C1 has merged (D3129).
 
 **Critical path**, as the read printed it: `C1 -> LM10 -> I1 -> LM14 -> LM16`, five tasks. Every
 path through slice B or C to I1 is as long, and so is LM22 → LM12 → LM13 → LM14 → LM16. LM14 is
 sequential behind I1 because it removes the grant, and nothing may remove it before a launch has
 gone through the issuer in a test. LM18 waits a release by design.
 
-**External gates (D3128):** everything but C1 and LM0 waits for always-a-budget's I1 and
+**External gates (D3128):** everything but C1, LM0 and LM19 waits for always-a-budget's I1 and
 keys-through-service's release A.
 
 ### Shared files
@@ -583,21 +621,25 @@ keys-through-service's release A.
 | `internal/cli/run.go` | LM6 | 1 |
 | `internal/cli/orchestrator_launcher.go`, `orchestrator_serve.go` | LM6 | 1 |
 | `internal/cli/pair.go` | LM10, LM18 | 1, after a release |
-| `internal/cli/credentials_serve.go` | I1 | 2 |
+| `internal/cli/credentials_serve.go` | LM22, I1 | 0, 2 |
+| `internal/cli/troubleshoot_launch.go` | LM6 | 1 |
+| `internal/cli/update_managed.go` | LM20 | 2 |
+| `internal/credsvc/scope_installation.go` | C1 | 0 |
 | `internal/cli/init.go` | LM20 | 2 |
 | `internal/cli/init_stages.go`, `update_in_flight.go` | LM14 | 3 |
-| `internal/cli/launch_budget_test.go` | LM21 | 3 |
+| `internal/cli/launch_budget_test.go` | LM21 | 0 |
 | `internal/cli/recipes_skew.go` | LM8 | 0 |
 | `internal/runner/budget_session.go` | LM7, LM18 | 1, after a release |
 | `internal/budget/rules/rules_test.go` | LM5 | 1 |
-| `internal/infra/tf/cover.go` | LM22, LM13 | 0, 2 |
+| `internal/infra/tf/cover.go` | LM22, LM12, LM13 | 0, 1, 2 |
 | `deploy/terraform/gcp/modules/firebase/iam.tf` | LM11, LM18 | 0, after a release |
 | `internal/infra/tokensigners.go` | LM15 | 3 |
-| `internal/projectpolicy/version.go` | LM21 | 3 |
+| `internal/projectpolicy/version.go` | LM21 | 0 |
 | `docs/gcp-live-checklist.md` | LM0, LM17 | 0, 4 |
 
 No level holds two writers of one file. C1's own files (`internal/identitywire/*`,
-`identity_config.go`, `server.go`'s mount, `contract.md`) are named by no other task; the stub
+`identity_config.go`, the mount in `server.go` and `scope_installation.go`, `contract.md`) are
+named by no other task; the stub
 file is named by I1 alone, which deletes it.
 
 ## The dependencies the plan broke and kept
@@ -621,16 +663,19 @@ The pass is on for this repository (`planning.decoupling` is `true`, the default
 - LM13 → LM11 and LM13 → LM12: the golden plans are generated from their variables.
 - LM20 → LM11 and LM20 → LM12: it lists the addresses of rows those tasks write; a list written
   ahead of the rows is a guess the guard would then enforce.
+- LM6 → LM8: it calls the gate LM8 writes; a contract for one function would be the function.
 - I1 → LM8: behaviour. Once I1 merges a launch holds a real ticket, and an image that cannot
   claim must already be refused at launch.
-- LM14 → I1, LM13 and LM20: it removes the grant; each is something that must work, not a shape.
-- LM21 → I1: the version bump ships with what it levers.
+- LM14 → I1, LM13, LM20 and LM21: it removes the grant; each is something that must work, not a
+  shape.
 - LM15 → LM13: it classifies the row LM13 writes.
 - LM16 → I1, LM14 and LM21; LM17 → LM14 and LM21: they state and prove what is true after them.
 - LM18 → LM14: a released version must sit between them.
 
-**The gain**, as the read printed it: `gain: 8 broken, 13 kept, 2 added; before 6 tasks, weight
-10; after 5 tasks, weight 9; improves`. The critical path goes from six tasks to five.
+**The gain**, as the read printed it: `gain: 8 broken, 15 kept, 2 added; before 6 tasks, weight
+10; after 5 tasks, weight 9; improves`. The counts are the tool's own: it counts the edges of the
+graph as it was before the pass, so its "kept" is not the number of lines in the list above. The
+critical path goes from six tasks to five.
 
 **Contract changes anticipated:**
 
