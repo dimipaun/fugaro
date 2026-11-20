@@ -682,6 +682,21 @@ the section is dimmed while its read is out, never blanked, and says "still read
 a quarter of a minute. A screen this session has already read is drawn at once, stamped
 `as of HH:MM` with a Refresh control.
 
+**The settings rows are an accordion with a search** (the console-improvements plan's
+SU2a; spec §4, D2908). The rows are filed under the groups the CLI's own metadata names,
+in `settings.MetaGroups`' order, one `details.projects-settings-group` per group with the
+group's own name as the text of its `summary.projects-settings-group-title` — a native
+disclosure, so **every group is collapsed when the panel is painted** and the browser is
+what opens one. The name is the only place a section carries its group: it goes through
+`putText`, and no attribute holds it. A row the registry describes nothing about has no group of its
+own, and is drawn under the console's `Other` section with its raw key as the whole of its
+name: `span.projects-settings-label` is drawn only where the document carries a label, and
+the key beside it is muted there (`span.projects-settings-label + span.projects-settings-key`).
+The box (`input.projects-settings-search`) filters the document **already read** — on the
+label, the description and the raw key, never through `--grep`, which the console's argv
+list forbids (R7) — and it expands every group with a match and puts away the ones without;
+a query that matches nothing draws `p.projects-settings-none` and never a second read.
+
 | Group | Class hooks |
 |---|---|
 | Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-state`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
@@ -691,7 +706,7 @@ a quarter of a minute. A screen this session has already read is drawn at once, 
 | Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-enrolled`, `projects-repo-card-none` |
 | Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-account-none`, `projects-accounts-note` |
 | Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
-| Settings | `projects-settings`, `projects-settings-list`, `projects-settings-row`, `projects-settings-key`, `projects-settings-scope`, `projects-settings-value`, `projects-settings-wins`, `projects-settings-state`, `projects-settings-owner-word`, `projects-settings-owner`, `projects-settings-owner-generic`, `projects-settings-pencil`, `projects-settings-editor`, `projects-settings-editor-outcome` |
+| Settings | `projects-settings`, `projects-settings-search`, `projects-settings-group`, `projects-settings-group-title`, `projects-settings-label`, `projects-settings-none`, `projects-settings-list`, `projects-settings-row`, `projects-settings-key`, `projects-settings-scope`, `projects-settings-value`, `projects-settings-wins`, `projects-settings-state`, `projects-settings-owner-word`, `projects-settings-owner`, `projects-settings-owner-generic`, `projects-settings-pencil`, `projects-settings-editor`, `projects-settings-editor-outcome` |
 | Models | `projects-models`, `projects-models-body`, `projects-models-heading`, `projects-models-route-list`, `projects-models-route`, `projects-models-route-name`, `projects-models-route-kind`, `projects-models-route-host`, `projects-models-route-fee`, `projects-models-claims`, `projects-models-claims-word`, `projects-models-claim`, `projects-models-to`, `projects-models-to-word`, `projects-models-to-every`, `projects-models-to-none`, `projects-models-allow`, `projects-models-route-base`, `projects-models-route-note`, `projects-models-list`, `projects-models-row`, `projects-models-id`, `projects-models-route-of`, `projects-models-input`, `projects-models-output`, `projects-models-catalog`, `projects-models-catalog-checked`, `projects-models-catalog-age`, `projects-models-catalog-stale` |
 | Managed state | `projects-managed`, `projects-managed-marks`, `projects-managed-marks-head`, `projects-managed-marks-list`, `projects-managed-trail`, `projects-managed-trail-head`, `projects-managed-trail-list`, `projects-managed-trail-state`, `projects-managed-term`, `projects-managed-value`, `projects-managed-word`, `projects-managed-number` |
 | Account keys | `projects-account-keys`, `projects-account-keys-title`, `projects-account-keys-state`, `projects-account-keys-source`, `projects-account-keys-because`, `projects-account-keys-body`, `projects-account-keys-list`, `projects-account-keys-row`, `projects-account-keys-key`, `projects-account-keys-stage`, `projects-account-keys-value` |

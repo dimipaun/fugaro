@@ -359,6 +359,18 @@ export interface DomElement extends SkewElement {
    * would be a tablist whose ring never follows the arrows. `ElementLike` -- the
    * interface the screens are drawn against -- is untouched by it. */
   focus(): void
+  /** addEventListener and `value` are what a **section** needs to own its own
+   * interaction, and the settings panel is the one that does (the
+   * console-improvements plan's SU2a, `projects.ts`'s `SettingsElement`): its
+   * search filters a document this build already read, so the section binds it
+   * itself rather than handing a read or a command to this file's seam. `value`
+   * is the box's own text, which is not its `textContent`, and it is a getter
+   * for that reason -- a keystroke changes the node, not the wrapper.
+   *
+   * A screen never reached either of them through `SkewElement`, which is
+   * untouched by both. */
+  addEventListener(type: string, listener: () => void): void
+  readonly value: string
 }
 
 /** DomScreenFactory is a `SkewFactory` whose elements are wrapped nodes. It is
@@ -430,6 +442,15 @@ export function domSurface(document: Document): DomSurface {
         node.appendChild(nodeOf(child))
       },
       childNodes: () => [...node.children].map((child) => wrap(child)),
+      addEventListener: (type: string, listener: () => void) => {
+        node.addEventListener(type, listener)
+      },
+      get value(): string {
+        // Only a form control has one, and the one caller is the settings
+        // panel's search box: `Element` does not declare the member, and a
+        // wrapper for anything else throws only where a reader asked for it.
+        return (node as Element & { value: string }).value
+      },
       focus: (): void => {
         // Both elements this factory makes -- `createElement`'s and
         // `createElementNS`'s -- implement `focus` (`HTMLElement` and

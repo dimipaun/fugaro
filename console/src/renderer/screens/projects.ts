@@ -429,6 +429,15 @@ export interface ProjectsModelsInputs {
  * `writable` and the document names a `target_layer` the generic path would
  * write, and nothing else. A key the generic path does not write gets no pencil
  * however the document spells it (D1111).
+ *
+ * `label`, `description` and `group` are the read's own metadata (D2908,
+ * contract §6.19), each the empty string when the document carried none: the
+ * eight members are optional, and a key the CLI's table has no entry for writes
+ * none of them. **The empty string is the row's own fact** -- this key has no
+ * label, no description and no group -- and it is drawn as such: the raw key
+ * where a label would be, and under the console's own `Other` group
+ * (`SETTINGS_OTHER_GROUP`). Reading a missing member as anything else would
+ * invent a label the CLI never printed.
  */
 export interface ProjectsSettingsRow {
   readonly key: string
@@ -440,6 +449,9 @@ export interface ProjectsSettingsRow {
   readonly owner: string
   readonly targetLayer: string
   readonly pencil: boolean
+  readonly label: string
+  readonly description: string
+  readonly group: string
 }
 
 /**
@@ -454,11 +466,69 @@ export interface ProjectsSettingsRow {
  * model drops the row whole -- no key, no value, no pencil -- rather than
  * blanking a cell. `buildProjectsSettings` is where that happens, so no drawing
  * code can be handed one.
+ *
+ * `rows` is every row the section draws, in the document's own order, and
+ * `groups` is the same rows under the accordion the spec's section 4 asks for
+ * (D2908): the section draws the groups, and the flat list is the fact the
+ * grouping is a partition of. Both are here rather than one, because the
+ * document's own order is what the CLI's read guarantees (§6.19: "one row per
+ * key, in the registry's own order") and the groups are the console's reading
+ * of the metadata -- a test that asserted only the groups could not see a row
+ * the grouping had dropped.
  */
 export interface ProjectsSettings {
   readonly panel: ProjectsPanel
   readonly rows: readonly ProjectsSettingsRow[]
+  readonly groups: readonly ProjectsSettingsGroup[]
 }
+
+/**
+ * ProjectsSettingsGroup is one accordion section: the name the row's `group`
+ * member gave, and the rows filed under it, in the document's own order.
+ *
+ * **The name may be a group this console does not know.** The contract names
+ * ten groups (`SETTINGS_GROUPS`, `settings.MetaGroups`), and a newer CLI may
+ * have grown an eleventh: its rows are drawn under the CLI's own word for it,
+ * after the ten, rather than being pushed into `Other` -- a group the console
+ * has not heard of is still the group the CLI filed the row under, and folding
+ * it into `Other` would say the row has no group when the document says it has
+ * one.
+ */
+export interface ProjectsSettingsGroup {
+  readonly name: string
+  readonly rows: readonly ProjectsSettingsRow[]
+}
+
+/**
+ * SETTINGS_GROUPS is the accordion's order, and it is the contract's:
+ * `settings.MetaGroups` in `internal/settings/meta.go`, spelled in
+ * `console/docs/json-contract.md` §6.19 as "one of `settings.MetaGroups` in the
+ * order the console draws the panels". The console cannot import a Go table, so
+ * the list is written here -- the copy §6.19 and the row members exist to make
+ * checkable -- and a group the CLI files a row under and this list does not name
+ * is drawn after these (`ProjectsSettingsGroup`'s note).
+ */
+export const SETTINGS_GROUPS: readonly string[] = Object.freeze([
+  'Runs',
+  'Budget',
+  'Repositories',
+  'Workflows',
+  'Profiles',
+  'Credentials',
+  'Reviews',
+  'Follow-ups',
+  'Watching',
+  'This machine',
+])
+
+/**
+ * SETTINGS_OTHER_GROUP is where a row with no `group` member of its own goes
+ * (D2908): "the raw key drawn under the console's own 'Other' group". It is the
+ * console's word and not the CLI's, so it is drawn through `literal`, and it is
+ * last -- a row the registry describes nothing about is a row a reader meets
+ * after the ones the CLI filed.
+ */
+export const SETTINGS_OTHER_GROUP = 'Other'
 
 /**
  * ProjectsSettingsInputs is everything the settings section is built from.
@@ -1077,12 +1147,23 @@ function settingsRowAt(entry: unknown): SettingsRowRead {
   const rawValue = row['value']
   const value = rawValue === undefined ? null : textAt(rawValue)
   const writable = row['writable'] === undefined ? false : row['writable']
+  // The metadata (D2908) is read the same way round as the writability
+  // members: absent is a CLI whose read carries none of the eight -- a row with
+  // no label, no description and the console's own `Other` group -- and a
+  // member that is **present and of another type** withholds the table, as
+  // every other member of this row does.
+  const label = row['label'] === undefined ? '' : textAt(row['label'])
+  const description = row['description'] === undefined ? '' : textAt(row['description'])
+  const group = row['group'] === undefined ? '' : textAt(row['group'])
   if (
     scope === null ||
     wins === null ||
     state === null ||
     owner === null ||
     targetLayer === null ||
+    label === null ||
+    description === null ||
+    group === null ||
     (value === null && rawValue !== undefined) ||
     typeof writable !== 'boolean'
   ) {
@@ -1104,8 +1185,57 @@ function settingsRowAt(entry: unknown): SettingsRowRead {
       owner,
       targetLayer,
       pencil: writable && targetLayer !== '',
+      label,
+      description,
+      group,
     },
   }
+}
+
+/**
+ * settingsRowMatches is whether one row answers a search (the spec's section 4,
+ * R7): a case-insensitive substring of **the label, the description and the raw
+ * key**, and of nothing else. An empty (or whitespace-only) query matches every
+ * row, which is the state the panel opens in.
+ *
+ * The three are the fields a reader has to go on, and the key is one of them
+ * because a person who does know the dotted name must be able to type it --
+ * which is also why the search is over the document already read and never a
+ * new read: `--grep` is not on the console's argv list (R7), and a filter that
+ * spawned a command per keystroke would be a read the console's own surface
+ * does not have.
+ */
+export function settingsRowMatches(row: ProjectsSettingsRow, query: string): boolean {
+  const needle = query.trim().toLowerCase()
+  if (needle === '') return true
+  return [row.label, row.description, row.key].some((text) => text.toLowerCase().includes(needle))
+}
+
+/**
+ * settingsGroupsOf files the rows under the accordion's sections: the ten
+ * groups of the contract's order that have a row, then any group the CLI named
+ * that this console has not heard of, in the order the document first names it,
+ * and `Other` last for the rows that name no group at all.
+ *
+ * **A group with no row is not drawn.** A heading with nothing under it would
+ * claim the project sets something it does not, and which of the ten a registry
+ * happens to fill is the CLI's table's business and not this screen's.
+ */
+function settingsGroupsOf(rows: readonly ProjectsSettingsRow[]): readonly ProjectsSettingsGroup[] {
+  const byName = new Map<string, ProjectsSettingsRow[]>()
+  for (const row of rows) {
+    const name = row.group === '' ? SETTINGS_OTHER_GROUP : row.group
+    const held = byName.get(name)
+    if (held === undefined) byName.set(name, [row])
+    else held.push(row)
+  }
+  const order: string[] = []
+  for (const name of SETTINGS_GROUPS) if (byName.has(name)) order.push(name)
+  for (const name of byName.keys()) {
+    if (name !== SETTINGS_OTHER_GROUP && !SETTINGS_GROUPS.includes(name)) order.push(name)
+  }
+  if (byName.has(SETTINGS_OTHER_GROUP)) order.push(SETTINGS_OTHER_GROUP)
+  return order.map((name) => ({ name, rows: byName.get(name) ?? [] }))
 }
 
 /** settingsRowsAt reads the document's `settings` member: every row it may
@@ -1163,15 +1293,16 @@ export function buildProjectsSettings(inputs: ProjectsSettingsInputs): ProjectsS
       document === null
         ? (inputs.because ?? absent('settings.read', undefined))
         : `${SETTINGS_VERSION_WORD}${String(document.version)} and this console reads version ${SETTINGS_DOC_VERSION}`
-    return { panel: unavailablePanel('settings', 'settings', 'settings.read', because), rows: [] }
+    return { panel: unavailablePanel('settings', 'settings', 'settings.read', because), rows: [], groups: [] }
   }
   const read = settingsRowsAt(document.settings)
   if (!read.ok) {
-    return { panel: unavailablePanel('settings', 'settings', 'settings.read', read.because), rows: [] }
+    return { panel: unavailablePanel('settings', 'settings', 'settings.read', read.because), rows: [], groups: [] }
   }
   return {
     panel: readPanel('settings', 'settings', 'settings.read', read.rows.length),
     rows: read.rows,
+    groups: settingsGroupsOf(read.rows),
   }
 }
 
@@ -1227,6 +1358,40 @@ export interface ScreenElement extends ElementLike {
  * with no window at all. */
 export interface ScreenFactory {
   create(tag: string): ScreenElement
+}
+
+/**
+ * SettingsElement is what the settings section draws into: `ScreenElement` plus
+ * the two members the accordion and its search box need, and they are here for
+ * one reason each.
+ *
+ * **`addEventListener` is how the section owns its own interaction.** The
+ * convention in this tree is that a screen draws and the entry wires, because
+ * the entry is the only place with a document; the settings section is not a
+ * screen but a section of one, exactly as the Manage section is
+ * (`renderer/manage/shell.ts`, which widens its own surface the same way for its
+ * three), and the accordion's search is the section's own: it
+ * filters a document this build has already read, so it opens no read, names no
+ * command and writes nothing -- the one thing the entry's seam is for. The
+ * groups themselves need no listener at all: they are `<details>`, which the
+ * browser opens and closes on its own.
+ *
+ * **`value` is the search box's text.** An `<input>`'s value is not its
+ * `textContent`, so the query a keystroke leaves is read here and nowhere else.
+ * Nothing else about the DOM is touched: no attribute a screen may not set, no
+ * navigation, no inline style.
+ */
+export interface SettingsElement extends ScreenElement {
+  addEventListener(type: string, listener: () => void): void
+  value: string
+}
+
+/** SettingsFactory is the factory the settings section draws with: `ScreenFactory`
+ * with the wider element above. The entry's own factory satisfies it
+ * (`renderer/entry.ts`'s `DomElement`), and a caller holding only a
+ * `ScreenFactory` still hands it to everything else this screen draws. */
+export interface SettingsFactory {
+  create(tag: string): SettingsElement
 }
 
 /** make is a fresh element with its classes. */
@@ -1795,9 +1960,29 @@ export function fillProjectsModels(factory: ScreenFactory, model: ProjectsModels
  * two identifiers that are not branches either (`revision` and `base`,
  * `src/shared/schema.ts`). Its one loss is the recorder's own `<branch>` marker
  * for a key that is credential-shaped, which the CLI's registry has none of.
+ *
+ * **The label leads the row and the key stays beside it** (the spec's section 4:
+ * "Give every setting a human-readable label"; "The raw key may be shown
+ * subtly"). A row the CLI's table describes draws its label first, through
+ * `putText` with the `label` class, and then the key -- the advanced reader's
+ * copy of the same row, drawn muted by the stylesheet. A row the table does not
+ * describe has no label to lead with, and its key is the whole of what names it;
+ * drawing an empty label cell there would be a row with a blank name.
+ *
+ * The description is **not drawn here**: it is what the search matches on
+ * (`settingsRowMatches`) and what the edit window shows (the settings-edit
+ * plan's SU1), and a sentence under every one of a hundred rows would be a page
+ * rather than a table.
  */
-function settingsRowLine(parent: ScreenElement, factory: ScreenFactory, row: ProjectsSettingsRow): void {
+function settingsRowLine(
+  parent: ScreenElement,
+  factory: SettingsFactory,
+  row: ProjectsSettingsRow,
+): ScreenElement {
   const element = cell(parent, factory, 'li', 'projects-settings-row')
+  if (row.label !== '') {
+    textCell(element, factory, 'span', row.label, 'label', 'settings[].label', 'projects-settings-label')
+  }
   textCell(element, factory, 'span', row.key, 'branch', 'settings[].key', 'projects-settings-key')
   if (row.scope !== '') textCell(element, factory, 'span', row.scope, 'label', 'settings[].scope', 'projects-settings-scope')
   if (row.value !== null) textCell(element, factory, 'span', row.value, 'label', 'settings[].value', 'projects-settings-value')
@@ -1809,6 +1994,7 @@ function settingsRowLine(parent: ScreenElement, factory: ScreenFactory, row: Pro
     textCell(element, factory, 'span', row.owner, 'label', 'settings[].owner', 'projects-settings-owner')
     literal(cell(element, factory, 'span', 'projects-settings-owner-generic'), SETTINGS_NOT_GENERIC_WORD)
   }
+  return element
 }
 
 /**
@@ -1842,16 +2028,150 @@ function settingsPencil(factory: ScreenFactory, key: string): ScreenElement {
   return button
 }
 
-/** settingsPanelBody is the settings panel's content: one row per setting, in
- * the document's own order. The panel is drawn only for a document this build
- * read, and a document with no settings at all draws an empty list rather than
- * a sentence: `[]` is the read's own answer about a registry that had no rows,
- * which is a different fact from a read that did not land. */
-function settingsPanelBody(factory: ScreenFactory, model: ProjectsSettings): ScreenElement {
+/** SETTINGS_SEARCH_LABEL is what the search box is called, and it is the box's
+ * accessible name: the placeholder below is a hint a reader may not hear, and a
+ * control with no name is a control a screen reader announces as "search". */
+export const SETTINGS_SEARCH_LABEL = 'Search settings'
+
+/** SETTINGS_SEARCH_PLACEHOLDER is the hint drawn in the empty box, naming the
+ * three fields the filter reads (`settingsRowMatches`). */
+export const SETTINGS_SEARCH_PLACEHOLDER = 'Filter by name, description or key'
+
+/** SETTINGS_NO_MATCH is what a search that matches nothing draws. It is the
+ * console's own sentence -- no CLI prints it -- and it is shown only while a
+ * non-empty query has no match: an empty panel with no words would read as a
+ * document that carried no rows, which is the read's own answer and not this. */
+export const SETTINGS_NO_MATCH = 'No setting matches that search.'
+
+/** SETTINGS_SEARCH_CLASS, SETTINGS_GROUP_CLASS, SETTINGS_GROUP_TITLE_CLASS,
+ * SETTINGS_LABEL_CLASS and SETTINGS_NONE_CLASS are the accordion's hooks: the
+ * box, one section per group, the section's heading, the row's human label, and
+ * the no-match sentence. They are constants here rather than literals at the
+ * call sites so `screens.css` and the design's §2 inventory can name them. */
+export const SETTINGS_SEARCH_CLASS = 'projects-settings-search'
+export const SETTINGS_GROUP_CLASS = 'projects-settings-group'
+export const SETTINGS_GROUP_TITLE_CLASS = 'projects-settings-group-title'
+export const SETTINGS_LABEL_CLASS = 'projects-settings-label'
+export const SETTINGS_NONE_CLASS = 'projects-settings-none'
+
+/** SettingsGroupDrawn is one drawn section: the `<details>` and the rows inside
+ * it, each with the model row it was drawn from. The search keeps these handles
+ * rather than re-reading the tree -- the section's own drawing is the only place
+ * that knows which element belongs to which row, and a second walk by class
+ * would be a second, silently divergent reading of the same tree. */
+interface SettingsGroupDrawn {
+  readonly element: ScreenElement
+  readonly rows: readonly { readonly element: ScreenElement; readonly row: ProjectsSettingsRow }[]
+}
+
+/**
+ * settingsPanelBody is the settings panel's content: a search box, then one
+ * `<details>` per group in the contract's order (`SETTINGS_GROUPS`), each
+ * collapsed -- no `open` attribute -- with one row per setting inside it, in the
+ * document's own order.
+ *
+ * **The groups are `<details>` and the browser is what opens them.** A group
+ * collapsed by default and opened by its own summary is the accordion the spec
+ * asks for, and it needs no listener, no keyboard handling and no state here: a
+ * section that re-drew itself on every press would take the rows' own editors
+ * and the reader's place with it.
+ *
+ * **The search is the one interaction this section owns** (`SettingsElement`'s
+ * note): the box filters the rows already read, and it opens a group whose rows
+ * match and puts a group with none away. A query is answered **in the frame it
+ * happened in** -- no read, no busy mark, nothing spawned -- because the
+ * document it filters is the one this panel was drawn from.
+ *
+ * The panel is drawn only for a document this build read, and a document with no
+ * settings at all draws the box and no section rather than a sentence: `[]` is
+ * the read's own answer about a registry that had no rows, which is a different
+ * fact from a read that did not land, and the no-match sentence is not drawn for
+ * it.
+ */
+function settingsPanelBody(factory: SettingsFactory, model: ProjectsSettings): ScreenElement {
   const element = make(factory, 'div', 'projects-settings-body')
-  const list = cell(element, factory, 'ul', 'projects-settings-list')
-  for (const row of model.rows) settingsRowLine(list, factory, row)
+  // The box is drawn through the raw `create`/`setAttribute` pair for
+  // `settingsPencil`'s reason -- the `tag.class` pair is what
+  // `theme-selectors.test.ts` can read -- and because `SettingsFactory.create`
+  // is the one call that hands back the wider element the search needs: an
+  // `<input>`'s value is not its `textContent`, and the listener is this
+  // section's own.
+  const search = factory.create('input')
+  search.setAttribute('class', SETTINGS_SEARCH_CLASS)
+  element.append(search)
+  search.setAttribute('type', 'search')
+  search.setAttribute('aria-label', SETTINGS_SEARCH_LABEL)
+  search.setAttribute('placeholder', SETTINGS_SEARCH_PLACEHOLDER)
+  search.setAttribute('autocomplete', 'off')
+  search.setAttribute('spellcheck', 'false')
+  const none = literal(cell(element, factory, 'p', SETTINGS_NONE_CLASS), SETTINGS_NO_MATCH)
+  none.setAttribute('hidden', '')
+  const groups: SettingsGroupDrawn[] = []
+  for (const group of model.groups) {
+    const disclosure = make(factory, 'details', SETTINGS_GROUP_CLASS)
+    const title = cell(disclosure, factory, 'summary', SETTINGS_GROUP_TITLE_CLASS)
+    // The group's name is the CLI's own word for a group whose entry the
+    // registry carries and this console's own `Other` for a row that carries
+    // none, and both are drawn through the same door: `putText` sanitizes a
+    // document string and passes the console's own word through unchanged.
+    putText(title, group.name, 'label', 'settings[].group')
+    const list = cell(disclosure, factory, 'ul', 'projects-settings-list')
+    const drawn: { element: ScreenElement; row: ProjectsSettingsRow }[] = []
+    for (const row of group.rows) drawn.push({ element: settingsRowLine(list, factory, row), row })
+    groups.push({ element: disclosure, rows: drawn })
+    element.append(disclosure)
+  }
+  bindSettingsSearch(search, none, groups)
   return element
+}
+
+/**
+ * bindSettingsSearch is the search box's own listener, attached once per
+ * drawing: on every `input`, the query is read off the box and applied to the
+ * sections the drawing kept (`SettingsGroupDrawn`).
+ *
+ * A row that does not match is `hidden` and a row that does loses the attribute;
+ * a section with no matching row is `hidden` too, and a section with one is
+ * shown and **opened**. An empty query puts everything back the way the panel
+ * opens: every row shown, every section closed.
+ *
+ * The listener is attached here rather than in the entry for the reason
+ * `SettingsElement` records: the filter is over the document this build read,
+ * so it writes nothing, spawns nothing and needs nothing the entry holds.
+ */
+function bindSettingsSearch(
+  search: SettingsElement,
+  none: ScreenElement,
+  groups: readonly SettingsGroupDrawn[],
+): void {
+  const apply = (): void => {
+    const query = search.value
+    const searching = query.trim() !== ''
+    let matched = 0
+    for (const group of groups) {
+      let hits = 0
+      for (const row of group.rows) {
+        if (!settingsRowMatches(row.row, query)) {
+          row.element.setAttribute('hidden', '')
+          continue
+        }
+        row.element.removeAttribute('hidden')
+        hits += 1
+      }
+      matched += hits
+      if (hits === 0) {
+        group.element.setAttribute('hidden', '')
+        group.element.removeAttribute('open')
+        continue
+      }
+      group.element.removeAttribute('hidden')
+      if (searching) group.element.setAttribute('open', '')
+      else group.element.removeAttribute('open')
+    }
+    if (searching && matched === 0) none.removeAttribute('hidden')
+    else none.setAttribute('hidden', '')
+  }
+  search.addEventListener('input', apply)
 }
 
 /**
@@ -1863,7 +2183,7 @@ function settingsPanelBody(factory: ScreenFactory, model: ProjectsSettings): Scr
  * It appends to the host and not to the slot, for `fillProjects`'s reason: the
  * slot is where the mark of the read that is still out lives.
  */
-export function fillProjectsSettings(factory: ScreenFactory, model: ProjectsSettings, host: ScreenElement): void {
+export function fillProjectsSettings(factory: SettingsFactory, model: ProjectsSettings, host: ScreenElement): void {
   const element = panelShell(factory, model.panel)
   if (model.panel.state === 'read') element.append(settingsPanelBody(factory, model))
   host.append(element)
@@ -2107,7 +2427,7 @@ export function fillProjects(
  * budget's screen and nothing where the models panel would be -- which is the
  * whole of what "that read has not answered" looks like in this frame. */
 export function renderProjects(
-  factory: ScreenFactory,
+  factory: SettingsFactory,
   model: ProjectsModel,
   theme: ProjectsTheme,
   models?: ProjectsModels,

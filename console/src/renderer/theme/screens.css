@@ -917,6 +917,46 @@ p.projects-models-catalog {
  * the stylesheet is not the channel a state reaches a reader on (section 3.5).
  */
 
+/* The accordion and its search (the console-improvements plan's SU2a, D2908):
+ * one `details.projects-settings-group` per group of the contract's order, each
+ * collapsed when the panel is painted -- no `open` attribute is written -- and
+ * opened by its own summary, which is the heading and the control at once. The
+ * section owns no state here: the browser opens a `<details>` on its own, and
+ * the search is the section's one listener (the design section 2.5).
+ *
+ * The box filters the rows of the document this build already read, on the
+ * label, the description and the key, and it opens the sections that matched
+ * and puts away the ones that did not: a query is answered in the frame it
+ * happened in, because nothing about it is a read. */
+input.projects-settings-search {
+  width: 100%;
+  margin-block: var(--space-2xs);
+  padding: var(--space-3xs) var(--space-xs);
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-sunken);
+  border: var(--rule-width) solid var(--control-border);
+  border-radius: var(--radius-sm);
+}
+
+summary.projects-settings-group-title {
+  padding-block: var(--space-2xs);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+/* The sentence a search that matches nothing draws: the console's own words
+ * (`SETTINGS_NO_MATCH`), hidden until a non-empty query has no hit, and never
+ * shown for a document whose registry carried no rows -- that is the read's own
+ * answer and not a search that found nothing. */
+p.projects-settings-none {
+  padding-block: var(--space-2xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
 ul.projects-settings-list {
   display: grid;
   gap: var(--space-2xs);
@@ -933,11 +973,30 @@ li.projects-settings-row {
   border-bottom: var(--rule-width) solid var(--border);
 }
 
+/* The row's human label leads it (design section 2.5: "Give every setting a
+ * human-readable label"), and the raw key stays beside it in the mono figure
+ * below -- the advanced reader's copy of the same row. A row the registry
+ * describes nothing about has no label at all: its key is the whole of what
+ * names it, so there is no rule here for a missing one. */
+span.projects-settings-label {
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
 span.projects-settings-key,
 span.projects-settings-value,
 span.projects-settings-owner {
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
+}
+
+/* The muted spelling of the key, on the one row that has a label in front of
+ * it (spec section 4: "The raw key may be shown subtly"). A row with no label
+ * keeps the key at the figure's own weight, because there the key is the whole
+ * of what names the row. */
+span.projects-settings-label + span.projects-settings-key {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 /* The muted half: the scope a key belongs to, the layer that decided it, the

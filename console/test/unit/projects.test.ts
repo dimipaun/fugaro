@@ -53,7 +53,12 @@ import {
   PROJECT_PANEL_KEYS,
   PROJECTS_SOURCE_LINES,
   PROJECTS_THEMES,
+  SETTINGS_GROUPS,
+  SETTINGS_NO_MATCH,
+  SETTINGS_OTHER_GROUP,
   SETTINGS_PENCIL_KEY,
+  SETTINGS_SEARCH_LABEL,
+  SETTINGS_SEARCH_PLACEHOLDER,
   buildProjectsModel,
   buildProjectsModels,
   buildProjectsSettings,
@@ -65,8 +70,10 @@ import type {
   ProjectsInputs,
   ProjectsModelsInputs,
   ProjectsSettingsInputs,
+  ProjectsSettingsRow,
   ScreenElement,
   ScreenFactory,
+  SettingsFactory,
 } from '../../src/renderer/screens/projects'
 import {
   PR_NO_LINK_REASON,
@@ -141,12 +148,32 @@ class FakeScreen implements ScreenElement {
   childNodes(): readonly ScreenElement[] {
     return this.nodes
   }
+
+  /** listeners is every listener bound to this element, by event type: the
+   * settings panel's search is the one section that binds its own, and `fire`
+   * is how a test presses it without a browser. */
+  readonly listeners = new Map<string, (() => void)[]>()
+
+  /** value is a form control's own text, which is not its `textContent` -- the
+   * settings search box is the one element a screen reads either way. */
+  value = ''
+
+  addEventListener(type: string, listener: () => void): void {
+    const held = this.listeners.get(type)
+    if (held === undefined) this.listeners.set(type, [listener])
+    else held.push(listener)
+  }
+
+  /** fire runs every listener bound for a type, the way the browser would. */
+  fire(type: string): void {
+    for (const listener of this.listeners.get(type) ?? []) listener()
+  }
 }
 
 /** factory makes fresh fakes, in the shape the renderer is handed: Run's stage
  * timeline draws its icons and bars in the SVG namespace, which is the one
  * screen that needs the second `create`. */
-const factory: RunFactory = {
+const factory: RunFactory & SettingsFactory = {
   create: (tag) => new FakeScreen(tag),
   createNS: (tag) => new FakeScreen(tag, 'svg'),
 }
@@ -1291,6 +1318,108 @@ function settingsWithRow(member: string, value: unknown): unknown {
   return { ...SETTINGS, settings: [{ ...first, [member]: value }] }
 }
 
+/** groupedRow is one row of SETTINGS_GROUPED: the shape every row of that
+ * document carries, with the metadata of contract §6.19 (D2908) added by the
+ * caller. It is the shared half of the fixture below so that the case is about
+ * the four groups and not about four hand-written rows. */
+function groupedRow(key: string, meta: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    key,
+    scope: 'project',
+    value: 'a-value-the-table-may-draw',
+    wins: 'project',
+    default: { value: 'a-default', source: 'settings.Default' },
+    state: 'ok',
+    writable: false,
+    owner: '',
+    target_layer: '',
+    ...meta,
+  }
+}
+
+/** SETTINGS_GROUPED is `settings --json` with the metadata of contract §6.19:
+ * four rows, three of them describing their group, their label and their
+ * description, and **one describing none of the three** -- the row the console
+ * files under `Other` and names by its raw key alone. The groups are written
+ * **out of the contract's order** (`SETTINGS_GROUPS` is Runs, Budget,
+ * Repositories, ..., Credentials), so a panel that drew the sections in the
+ * document's own order would fail the order case below. */
+const SETTINGS_GROUPED = {
+  version: 1,
+  project: 'example-project',
+  generated_at: '2026-11-03T06:00:00Z',
+  sources: [{ layer: 'default', read_at: '2026-11-03T06:00:00Z', duration_ms: 0, status: 'ok' }],
+  settings: [
+    groupedRow('credentials.default_claude_account', {
+      group: 'Credentials',
+      label: 'Default Claude account',
+      description: 'The account a model call goes out on.',
+    }),
+    groupedRow('agent.review_rounds', {
+      group: 'Runs',
+      label: 'Review rounds',
+      description: 'How many review rounds a run gives.',
+    }),
+    groupedRow('stages.review.timeout', {
+      group: 'Runs',
+      label: 'Review stage timeout',
+      description: 'How long a review stage may take.',
+    }),
+    groupedRow('legacy.undocumented_key'),
+    groupedRow('budget.per_run_usd', {
+      group: 'Budget',
+      label: 'Per-run cap',
+      description: 'The most one run may spend.',
+    }),
+  ],
+}
+
+/** settingsGroups is the accordion's sections, in the order the panel drew them. */
+function settingsGroups(node: ScreenElement): readonly FakeScreen[] {
+  return all(node, 'projects-settings-group')
+}
+
+/** groupName is the heading one section drew: the group's own name, which is
+ * the only place the section carries it. It is drawn through `putText`, so the
+ * string is the sanitizer's answer rather than the document's raw member. */
+function groupName(group: ScreenElement): string | null {
+  const heading = all(group, 'projects-settings-group-title')[0]
+  return heading?.textContent ?? null
+}
+
+/** names is every drawn section's heading, in the order the panel drew them. */
+function names(node: ScreenElement): readonly (string | null)[] {
+  return settingsGroups(node).map((group) => groupName(group))
+}
+
+/** settingsGroupOf is the section one group name drew. */
+function settingsGroupOf(node: ScreenElement, name: string): FakeScreen {
+  const found = settingsGroups(node).filter((group) => groupName(group) === name)
+  expect(found, `expected exactly one settings group named ${name}`).toHaveLength(1)
+  const first = found[0]
+  if (first === undefined) throw new Error(`no settings group ${name}`)
+  return first
+}
+
+/** settingsSearch is the panel's search box, and `search` types a query into it
+ * and presses it: the listener is the section's own, so the test fires the
+ * `input` event the browser would rather than reaching for a DOM. */
+function settingsSearch(node: ScreenElement): FakeScreen {
+  return one(node, 'projects-settings-search')
+}
+
+function search(node: ScreenElement, query: string): void {
+  const box = settingsSearch(node)
+  box.value = query
+  box.fire('input')
+}
+
+/** visibleRows is the rows a search left on screen: the ones the section did
+ * not put away with the `hidden` attribute. */
+function visibleRows(node: ScreenElement, className: string): readonly FakeScreen[] {
+  return all(node, className).filter((row) => row.getAttribute('hidden') === null)
+}
+
 describe('the settings section', () => {
   it('draws one row per setting the document carries, in its own order', () => {
     const tree = settingsTree(settingsInputs())
@@ -1530,6 +1659,108 @@ describe('the settings section', () => {
     const tree = settingsTree(settingsInputs({ raw: { ...SETTINGS, version: 2 } }))
     expect(all(tree, 'projects-settings-row')).toEqual([])
     expect(drawn(tree)).toContain('settings --json is version 2 and this console reads version 1')
+  })
+
+  it('files the rows under the contract’s groups, in the contract’s order', () => {
+    const tree = settingsTree(settingsInputs({ raw: SETTINGS_GROUPED }))
+    // The document names Credentials first and Runs second; the panel draws the
+    // contract's order (`settings.MetaGroups`, §6.19) and puts `Other` last for
+    // the row that names no group at all. The rows keep the document's own order
+    // inside their group.
+    expect(names(tree)).toEqual(['Runs', 'Budget', 'Credentials', SETTINGS_OTHER_GROUP])
+    expect(settingsKeys(settingsGroupOf(tree, 'Runs'))).toEqual(['agent.review_rounds', 'stages.review.timeout'])
+    expect(texts(settingsGroupOf(tree, 'Runs'), 'projects-settings-group-title')).toEqual(['Runs'])
+    expect(settingsKeys(tree)).toEqual([
+      'agent.review_rounds',
+      'stages.review.timeout',
+      'budget.per_run_usd',
+      'credentials.default_claude_account',
+      'legacy.undocumented_key',
+    ])
+  })
+
+  it('draws a group collapsed until a reader opens it, and no section for a group with no row', () => {
+    const tree = settingsTree(settingsInputs({ raw: SETTINGS_GROUPED }))
+    for (const group of settingsGroups(tree)) {
+      // A collapsed `<details>` is one with no `open` attribute: the section
+      // writes none, so the first paint is every group shut (spec section 4).
+      expect(group.getAttribute('open'), `${groupName(group)} drew open`).toBeNull()
+    }
+    // The ten groups are the vocabulary a row may name, not the list of
+    // headings: a group with no row of its own draws nothing rather than an
+    // empty section claiming the project sets something it does not.
+    expect(SETTINGS_GROUPS).toContain('Workflows')
+    expect(names(tree)).not.toContain('Workflows')
+  })
+
+  it('draws the label a row carries, and its raw key alone when it carries none', () => {
+    const tree = settingsTree(settingsInputs({ raw: SETTINGS_GROUPED }))
+    const described: ProjectsSettingsRow | undefined = buildProjectsSettings(
+      settingsInputs({ raw: SETTINGS_GROUPED }),
+    ).rows.find((row) => row.key === 'agent.review_rounds')
+    expect(described?.label).toBe('Review rounds')
+    expect(described?.description).toBe('How many review rounds a run gives.')
+    expect(described?.group).toBe('Runs')
+    expect(texts(settingsRow(tree, 'agent.review_rounds'), 'projects-settings-label')).toEqual(['Review rounds'])
+    // The row the registry describes nothing about: no label cell at all, and
+    // the key is the whole of what names it.
+    const other = settingsGroupOf(tree, SETTINGS_OTHER_GROUP)
+    expect(settingsKeys(other)).toEqual(['legacy.undocumented_key'])
+    expect(texts(settingsRow(tree, 'legacy.undocumented_key'), 'projects-settings-label')).toEqual([])
+  })
+
+  it('reads a search over the label, the description and the key, and expands only what matched', () => {
+    const tree = settingsTree(settingsInputs({ raw: SETTINGS_GROUPED }))
+    const box = settingsSearch(tree)
+    expect(box.getAttribute('type')).toBe('search')
+    expect(box.getAttribute('aria-label')).toBe(SETTINGS_SEARCH_LABEL)
+    expect(box.getAttribute('placeholder')).toBe(SETTINGS_SEARCH_PLACEHOLDER)
+    expect(one(tree, 'projects-settings-none').getAttribute('hidden')).not.toBeNull()
+
+    // The label: "Review rounds" is `agent.review_rounds`' label, and the row
+    // beside it in the same group matches nothing about "rounds".
+    search(tree, 'rounds')
+    expect(settingsGroupOf(tree, 'Runs').getAttribute('open')).not.toBeNull()
+    expect(visibleRows(settingsGroupOf(tree, 'Runs'), 'projects-settings-row')).toHaveLength(1)
+    expect(settingsRow(tree, 'agent.review_rounds').getAttribute('hidden')).toBeNull()
+    expect(settingsRow(tree, 'stages.review.timeout').getAttribute('hidden')).not.toBeNull()
+    // And the groups that matched nothing are put away entirely, `Other` with
+    // them -- that group is not a place a search falls back to.
+    for (const name of ['Budget', 'Credentials', SETTINGS_OTHER_GROUP]) {
+      expect(settingsGroupOf(tree, name).getAttribute('hidden'), `${name} stayed up`).not.toBeNull()
+    }
+
+    // The description: "The most one run may spend." is `budget.per_run_usd`'s.
+    search(tree, 'may spend')
+    expect(settingsGroupOf(tree, 'Budget').getAttribute('open')).not.toBeNull()
+    expect(settingsGroupOf(tree, 'Runs').getAttribute('hidden')).not.toBeNull()
+
+    // The raw key, for the reader who does know the dotted name.
+    search(tree, 'legacy.undocumented')
+    expect(settingsGroupOf(tree, SETTINGS_OTHER_GROUP).getAttribute('open')).not.toBeNull()
+    expect(settingsKeys(settingsGroupOf(tree, SETTINGS_OTHER_GROUP))).toEqual(['legacy.undocumented_key'])
+
+    // A query that matches nothing draws the console's sentence and **no**
+    // group: an empty panel with no words would read as a read that carried no
+    // rows, which is a different fact.
+    search(tree, 'no-setting-is-called-this')
+    expect(one(tree, 'projects-settings-none').getAttribute('hidden')).toBeNull()
+    expect(one(tree, 'projects-settings-none').textContent).toBe(SETTINGS_NO_MATCH)
+    for (const group of settingsGroups(tree)) expect(group.getAttribute('hidden')).not.toBeNull()
+  })
+
+  it('puts the whole panel back when the search box is emptied', () => {
+    const tree = settingsTree(settingsInputs({ raw: SETTINGS_GROUPED }))
+    search(tree, 'rounds')
+    search(tree, '   ')
+    // Whitespace is not a query: the panel goes back to the way it opens, every
+    // group closed and every row drawn.
+    for (const group of settingsGroups(tree)) {
+      expect(group.getAttribute('open')).toBeNull()
+      expect(group.getAttribute('hidden')).toBeNull()
+    }
+    expect(one(tree, 'projects-settings-none').getAttribute('hidden')).not.toBeNull()
+    expect(visibleRows(tree, 'projects-settings-row')).toHaveLength(5)
   })
 
   it('draws the settings section beside the budget panels, under one frame', () => {
