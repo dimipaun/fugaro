@@ -15,9 +15,10 @@
         "paths": [
           "internal/localcfg/locations.go",
           "internal/localcfg/localcfg.go",
-          "internal/localcfg/shared.go",
           "internal/settings/registry.go",
-          "docs/location-preference/contract-locations.md"
+          "internal/cli/writers_labels.go",
+          "schemas/settings.schema.json",
+          "docs/location-preference/record.md"
         ]
       }
     },
@@ -32,6 +33,7 @@
         "prediction": true,
         "paths": [
           "internal/place/*.go",
+          "internal/backend/gcp/names.go",
           "docs/location-preference/locations.md"
         ]
       }
@@ -52,6 +54,7 @@
           "deploy/terraform/gcp/roots/firebase/tests/firebase.tftest.hcl",
           "internal/infra/firebase.go",
           "internal/infra/discover_firebase.go",
+          "internal/infra/testdata/firebase*.tfvars.json",
           "internal/infra/tf/testdata/golden/firebase*.plan.json"
         ]
       }
@@ -68,7 +71,15 @@
         "paths": [
           "internal/infra/firestore.go",
           "internal/infra/firestore_test.go",
-          "internal/cli/init_firebase.go"
+          "internal/gcpfake/firestore.go",
+          "internal/cli/init_firebase.go",
+          "internal/cli/init_firestore_test.go",
+          "internal/cli/init_confirm_test.go",
+          "internal/cli/init_review_test.go",
+          "internal/cli/update_test.go",
+          "internal/cli/init_converge_test.go",
+          "internal/cli/managed_money_steps_test.go",
+          "scripts/live-checks/check27*.sh"
         ]
       }
     },
@@ -88,7 +99,9 @@
           "internal/cli/setup_answers.go",
           "schemas/setup-answers.schema.json",
           "website/content/cli-reference.md",
-          "plugin/skills/setup/SKILL.md"
+          "plugin/skills/setup/SKILL.md",
+          "internal/cli/init_inputs_test.go",
+          "internal/cli/testdata/region_prompts.golden"
         ]
       }
     },
@@ -106,12 +119,14 @@
           "deploy/terraform/gcp/modules/installation/licence.tf",
           "deploy/terraform/gcp/modules/installation/orchestrator.tf",
           "deploy/terraform/gcp/modules/installation/credentials.tf",
+          "deploy/terraform/gcp/modules/installation/intake.tf",
           "deploy/terraform/gcp/modules/installation/variables.tf",
           "deploy/terraform/gcp/modules/repo/secrets.tf",
           "deploy/terraform/gcp/modules/repo/variables.tf",
           "deploy/terraform/gcp/roots/installation/*.tf",
           "deploy/terraform/gcp/roots/repo/*.tf",
           "internal/infra/tfvars.go",
+          "internal/infra/testdata/*.tfvars.json",
           "internal/infra/tf/testdata/golden/installation*.plan.json",
           "internal/infra/tf/testdata/golden/repo*.plan.json"
         ]
@@ -119,7 +134,7 @@
     },
     {
       "id": "LP5b",
-      "title": "secrets created outside Terraform follow the same policy",
+      "title": "a secret the CLI creates follows the installation's policy",
       "run": null,
       "version": null,
       "tier": "small",
@@ -128,8 +143,24 @@
         "prediction": true,
         "paths": [
           "internal/backend/gcp/secrets.go",
-          "internal/intake/gcp.go",
+          "internal/backend/gcp/secrets_test.go",
           "internal/gcpfake/secrets.go"
+        ]
+      }
+    },
+    {
+      "id": "LP5c",
+      "title": "the intake service's secrets follow the installation's policy",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/intake/gcp.go",
+          "internal/intake/gcp_test.go",
+          "internal/cli/intake_serve.go"
         ]
       }
     },
@@ -145,16 +176,19 @@
         "paths": [
           "deploy/terraform/gcp/modules/installation/logging.tf",
           "deploy/terraform/gcp/modules/installation/variables.tf",
+          "deploy/terraform/gcp/roots/installation/*.tf",
           "internal/infra/discover.go",
           "internal/infra/imports.go",
           "internal/infra/tfvars.go",
+          "internal/cli/doctor_batch.go",
+          "internal/infra/testdata/*.tfvars.json",
           "internal/infra/tf/testdata/golden/installation*.plan.json"
         ]
       }
     },
     {
       "id": "LP7",
-      "title": "the recorder",
+      "title": "what the cloud holds",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -162,8 +196,8 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/infra/locations_record.go",
-          "internal/infra/locations_record_test.go",
+          "internal/infra/locations_observe.go",
+          "internal/infra/locations_observe_test.go",
           "internal/gcpfake/locations.go"
         ]
       }
@@ -211,6 +245,13 @@
         "paths": [
           "internal/cli/init_firebase.go",
           "internal/cli/init.go",
+          "internal/cli/init_confirm_test.go",
+          "internal/cli/init_converge_test.go",
+          "internal/cli/init_inputs_test.go",
+          "internal/cli/init_review_test.go",
+          "internal/cli/setup_refusals_test.go",
+          "internal/cli/update_test.go",
+          "internal/cli/testdata/region_prompts.golden",
           "internal/cli/init_firebase_always_test.go",
           "docs/no-prompt-policy/reconciliation.md"
         ]
@@ -261,8 +302,8 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "scripts/live-checks/check-820.sh",
-          "scripts/live-checks/check-821.sh",
+          "scripts/live-checks/check-820*.sh",
+          "scripts/live-checks/check-821*.sh",
           "docs/location-preference/check820-steps.md",
           "docs/location-preference/check821-steps.md",
           "docs/gcp-live-checklist.md"
@@ -280,11 +321,26 @@
         "prediction": true,
         "paths": [
           "internal/cli/init_stages.go",
-          "internal/infra/locations_record.go",
           "internal/cli/locations_end_to_end_test.go",
+          "internal/infra/testdata/*-eu.tfvars.json",
           "internal/infra/tf/testdata/golden/installation-eu.plan.json",
           "internal/infra/tf/testdata/golden/firebase-eu.plan.json",
           "scripts/gen-golden-plans.sh"
+        ]
+      }
+    },
+    {
+      "id": "LP15",
+      "title": "the key service finds an installation whose database is regional",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/keyservice/workspaces.go",
+          "ee/keyservice/workspaces_test.go"
         ]
       }
     }
@@ -321,89 +377,104 @@
       "reason": "the mapping's answers; the mapping is smaller than a contract for it"
     },
     {
+      "task": "LP2",
+      "needs": "LP8",
+      "reason": "order: a mistyped region is refused before a region decides a permanent location"
+    },
+    {
+      "task": "LP3",
+      "needs": "LP8",
+      "reason": "order: a mistyped region is refused before a region decides a permanent location"
+    },
+    {
       "task": "LP5a",
-      "needs": "LP0",
-      "reason": "the record's shape"
+      "needs": "LP7",
+      "reason": "behaviour: it must read what exists at its own merge"
     },
     {
       "task": "LP5b",
-      "needs": "LP0",
-      "reason": "the record's shape"
+      "needs": "LP7",
+      "reason": "behaviour: it must read what exists at its own merge"
+    },
+    {
+      "task": "LP5c",
+      "needs": "LP5a",
+      "reason": "the variable LP5a's module sets"
     },
     {
       "task": "LP6",
-      "needs": "LP0",
-      "reason": "the record's shape"
-    },
-    {
-      "task": "LP9",
-      "needs": "LP0",
-      "reason": "the record's shape"
+      "needs": "LP5a",
+      "reason": "shared files: the installation module's and root's variables, internal/infra/tfvars.go and the same golden plans"
     },
     {
       "task": "LP12",
       "needs": "LP0",
-      "reason": "the record's shape"
-    },
-    {
-      "task": "LP6",
-      "needs": "LP5a",
-      "reason": "shared files: modules/installation/variables.tf, internal/infra/tfvars.go and the same golden plans"
+      "reason": "the record's type"
     },
     {
       "task": "LP10",
       "needs": "LP3",
-      "reason": "one file, internal/cli/init_firebase.go"
+      "reason": "shared files: internal/cli/init_firebase.go and the tests of the note"
     },
     {
       "task": "LP10",
       "needs": "LP4",
-      "reason": "one file, internal/cli/init.go"
+      "reason": "shared files: internal/cli/init.go and the region prompts golden file"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP0",
+      "reason": "it runs this side with the others and proves the whole"
     },
     {
       "task": "LP14",
       "needs": "LP2",
-      "reason": "it joins this side and proves the whole"
+      "reason": "it runs this side with the others and proves the whole"
     },
     {
       "task": "LP14",
       "needs": "LP3",
-      "reason": "it joins this side and proves the whole"
+      "reason": "it runs this side with the others and proves the whole"
     },
     {
       "task": "LP14",
       "needs": "LP4",
-      "reason": "it joins this side and proves the whole"
+      "reason": "it runs this side with the others and proves the whole"
     },
     {
       "task": "LP14",
       "needs": "LP5a",
-      "reason": "it joins this side and proves the whole"
+      "reason": "it runs this side with the others and proves the whole"
     },
     {
       "task": "LP14",
       "needs": "LP5b",
-      "reason": "it joins this side and proves the whole"
+      "reason": "it runs this side with the others and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP5c",
+      "reason": "it runs this side with the others and proves the whole"
     },
     {
       "task": "LP14",
       "needs": "LP6",
-      "reason": "it joins this side and proves the whole"
+      "reason": "it runs this side with the others and proves the whole"
     },
     {
       "task": "LP14",
       "needs": "LP7",
-      "reason": "it joins this side and proves the whole"
+      "reason": "it runs this side with the others and proves the whole"
     },
     {
       "task": "LP14",
       "needs": "LP9",
-      "reason": "it joins this side and proves the whole"
+      "reason": "it runs this side with the others and proves the whole"
     },
     {
       "task": "LP14",
       "needs": "LP12",
-      "reason": "it joins this side and proves the whole"
+      "reason": "it runs this side with the others and proves the whole"
     },
     {
       "task": "LP11",
@@ -416,19 +487,14 @@
       "reason": "it states that no step confirms a location"
     },
     {
+      "task": "LP11",
+      "needs": "LP15",
+      "reason": "it states that the key service finds a regional installation"
+    },
+    {
       "task": "LP13",
       "needs": "LP14",
       "reason": "the scripts run the shipped commands"
-    },
-    {
-      "task": "LP7",
-      "needs": "LP0",
-      "reason": "the recorder fills the record's type"
-    },
-    {
-      "task": "LP14",
-      "needs": "LP0",
-      "reason": "it writes the record into the config"
     }
   ],
   "decoupling": [],
