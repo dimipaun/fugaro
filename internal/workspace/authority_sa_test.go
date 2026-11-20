@@ -174,6 +174,42 @@ func TestSALinkGrantsOwner(t *testing.T) {
 	}
 }
 
+// TestSALinkRefusesTheWorkspaceProject: the workspace's own project is never
+// linked. Every admin can impersonate the account, so an owner grant to it
+// there is an owner grant to each of them — and one RemoveAdmin cannot take
+// away, which is the whole of the order that call keeps (D2818, R8).
+func TestSALinkRefusesTheWorkspaceProject(t *testing.T) {
+	ctx := t.Context()
+	iam := wu20Cloud()
+	iam.project(wu20Workspace)
+	iam.project("member-a")
+	iam.project("member-a-firebase")
+	a := iam.sa()
+
+	// Either spelling of the workspace's own project is refused: as the member's
+	// GCP project and as its Firebase project, which is a project of its own.
+	for _, m := range []MemberTarget{
+		{Project: wu20Workspace},
+		{Project: "member-a", Firebase: wu20Workspace},
+		{Project: wu20Workspace, Firebase: "member-a-firebase"},
+	} {
+		err := a.Link(ctx, m)
+		if err == nil {
+			t.Errorf("Link of %+v: want a refusal, as %s is the workspace's own project", m, wu20Workspace)
+			continue
+		}
+		if !strings.Contains(err.Error(), wu20Workspace) {
+			t.Errorf("Link of %+v = %v, want a refusal naming %s", m, err, wu20Workspace)
+		}
+	}
+	if len(iam.log) != 0 {
+		t.Errorf("a refused link made the calls %v, want none: the grant is not made on the first project either", iam.log)
+	}
+	if got := iam.owners[wu20Workspace]; len(got) != 0 {
+		t.Errorf("%s's owners = %v, want none", wu20Workspace, got)
+	}
+}
+
 // TestSALinkCoversTheFirebaseProject: a member whose Firebase project is a
 // project of its own is granted on both, and it is held only while both are —
 // the authority over a member is the two grants or neither (F2, R10) — and a

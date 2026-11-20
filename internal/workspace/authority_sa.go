@@ -151,8 +151,22 @@ func (a *SAAuthority) printf(format string, args ...any) {
 // running Link again is how it is finished: a grant that is already there costs
 // one read at the cloud side and no write, so the retry converges rather than
 // duplicating.
+//
+// The workspace's own project is the one name a link refuses (D2818, R8). The
+// account is impersonated by every admin — a token creator of it is what an
+// admin holds — so an owner grant to the ACCOUNT on the workspace's own project
+// is an owner grant to all of them, and one RemoveAdmin cannot take away: that
+// call drops the admin's own owner grant first precisely so that a later
+// failure cannot be undone by the owner it just removed, and an owner the
+// account holds is reachable again through impersonation. The workspace project
+// is the installation's, made by `workspace init`, and never a member's; a link
+// naming it is a mistake about which project is the member's, and the refusal
+// says which.
 func (a *SAAuthority) Link(ctx context.Context, m MemberTarget) error {
 	if err := a.check(m); err != nil {
+		return err
+	}
+	if err := a.checkNotTheWorkspace(m); err != nil {
 		return err
 	}
 	for _, p := range saProjects(m) {
@@ -325,6 +339,18 @@ func (a *SAAuthority) check(m MemberTarget) error {
 	}
 	if m.Project == "" {
 		return errors.New("no project given: the SA authority's grant names the member's GCP project")
+	}
+	return nil
+}
+
+// checkNotTheWorkspace refuses a link whose member names the workspace's own
+// project, as either its GCP project or its Firebase one. It is a link's
+// refusal alone: the grant must not be made, while an unlink or a hold of that
+// name is not a way to make one (a grant there can only come from outside this
+// authority, and dropping it is the right thing to do with it).
+func (a *SAAuthority) checkNotTheWorkspace(m MemberTarget) error {
+	if m.Project == a.Workspace || m.Firebase == a.Workspace {
+		return fmt.Errorf("refusing to link %s: it is the workspace's own project, which the account is never granted roles/owner on — every admin can impersonate the account, so that grant would be theirs and would outlive RemoveAdmin (D2818, R8)", a.Workspace)
 	}
 	return nil
 }
