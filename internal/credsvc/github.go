@@ -6,7 +6,7 @@ package credsvc
 // C2.3 takes the job's grant and mount away, and this file is the endpoint
 // they meet at.
 //
-// Three things make "the run's own repository" a property of this service
+// Four things make "the run's own repository" a property of this service
 // rather than a check on something the caller sent:
 //
 //   - The repository is never the caller's to name. A mint call carries the
@@ -19,13 +19,13 @@ package credsvc
 //     run that asked for another repository has no field to ask in, and a job
 //     account bound to another repository never reaches this function.
 //   - The repository the table answers is held to the coverage this call's
-//     forge credentials reach (ForgeReader.Covers, R5, WS17). It is the
-//     workspace's third fence: the owner's declaration names the repositories
-//     a shared App key is spent on, the member's own policy is the second, and
-//     the table is the first. An installation covers every repository its
-//     table holds, so the fence refuses nothing its pairing admitted; a
-//     workspace whose owner's declaration does not name the repository is
-//     refused before the bundle is read, so the key is never spent on it.
+//     forge credentials reach (ForgeReader.Covers, R5, WS17): a workspace's
+//     owner declares the repositories its shared App key is spent on, and this
+//     fence holds the table's answer to that declaration. An installation
+//     covers every repository its table holds, so the fence refuses nothing
+//     its own pairing admitted; a workspace whose owner's declaration does not
+//     name the repository is refused before the bundle is read, so the key is
+//     never spent on it.
 //   - The permissions are the class's and this service adds none: a repository
 //     caller is issued github.RunTokenPermissions(), the exported spelling of
 //     the set internal/gitprov/github's own provider mints with, so the
@@ -333,14 +333,14 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 		return
 	}
 	// The repository is the scope's answer and not this handler's to read off
-	// the job row: a workspace's table holds the repositories the CALLING job
-	// account's own declaration reaches and no other member's, so reading the
-	// row here would be a second answer to a question the scope has already
-	// narrowed. The scope's two fences are asked in that one call and before
-	// the bundle is read — the PAIRING, which refuses a slug no table holds,
-	// and the COVERAGE, which refuses a repository the workspace owner's
-	// declaration does not name — so a repository this caller may not be served
-	// costs this service no read of the App key at all.
+	// the job row: a workspace's table holds the CALLING job account's own
+	// repositories and no other member's, so reading the row here would be a
+	// second answer to a question the scope has already narrowed. The scope's
+	// two fences are asked in that one call and before the bundle is read — the
+	// PAIRING, which refuses a slug no table holds, and the COVERAGE, which
+	// refuses a repository the workspace owner's declaration does not name — so
+	// a repository this caller may not be served costs this service no read of
+	// the App key at all.
 	canonical, ok := s.admitMintRepository(ctx, w, id)
 	if !ok {
 		return

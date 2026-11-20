@@ -1484,14 +1484,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// flag has been read, so a stopped service mints nothing. The handler
 		// reads that repository back out of the SCOPE rather than being handed
 		// the row resolved here (WS17): the table is the scope's answer for this
-		// caller, and for a workspace it holds the repositories the owner
-		// declared for the calling job account and no other. It reads the
-		// bundle itself, because the App key is in it, and it reads no policy
-		// of its own and consults no cascade: an installation token is not a
-		// model credential and no tier has anything to say about it. The one
-		// policy this route is held to was read by the pairing above, and only
-		// for a shared caller (pairShared): the project's answer for the calling
-		// job's profile is what says that repository may be served, and the mint
+		// caller, and a workspace's holds the calling job account's own
+		// repositories and no other member's. It reads the bundle itself,
+		// because the App key is in it, and it reads no policy of its own and
+		// consults no cascade: an installation token is not a model credential
+		// and no tier has anything to say about it. The one policy this route
+		// is held to was read by the pairing above, and only for a shared
+		// caller (pairShared): the project's answer for the calling job's
+		// profile is what says that repository may be served, and the mint
 		// reads no policy here because the gate belongs to the class's binding
 		// rather than to the route.
 		//

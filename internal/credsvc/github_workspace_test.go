@@ -12,8 +12,9 @@ package credsvc
 // scope's policy, which for a workspace is the MEMBER's project: the list the
 // launcher admitted the run's context repositories against.
 //
-// The three fences are asked in the order the plan's constraint table fixes
-// them, and each of the four tests below is one of them seen from the mint:
+// The three fences are the allow-list, the member's policy and the
+// repository's admission (the plan's constraint table, R5), and each of the
+// four tests below is one of them seen from this task's routes:
 //
 //   - the TABLE, which is the calling job account's own repositories and never
 //     another member's (TestAnotherMembersRepositoryIsRefusedAMint);
