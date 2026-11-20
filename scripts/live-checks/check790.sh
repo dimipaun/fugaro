@@ -192,10 +192,10 @@ PY
 
 # job_env FILE prints one line per environment entry of the FIRST container of a
 # Cloud Run job or execution document: `<NAME>=<value>` for a plain entry and
-# `secret:<NAME>` for one read from a secret. It is the NAMES that are read: the
-# row that says a job carries no database address, and the row that says an
-# execution mounts no model key, are both readings of this list, and a value is
-# never printed.
+# `secret:<NAME>:<secret id>` for one read from a secret. It is the NAMES that
+# are read: the row that says a job carries no database address, and the row that
+# says an execution mounts no model key, are both readings of this list, and a
+# value is never printed.
 job_env() { # job_env <file>
   python3 - "$1" <<'PY'
 import json, sys
@@ -239,9 +239,15 @@ for job in jobs:
             name = e.get("name", "")
             if not name:
                 continue
-            if "valueSource" in e:
-                src = e["valueSource"].get("secretKeyRef", {}) or {}
-                print("secret:%s" % src.get("name", name))
+            # A mount is answered in two spellings and BOTH are read: a run/v2
+            # document — what the repository's own terraform writes — names the
+            # secret itself, under `valueSource.secretKeyRef.secret`, while the
+            # older one names it under `secretKeyRef.name`, under `valueFrom` or
+            # `valueSource`. The id is printed with the env name, because a
+            # reader of a mount needs the two together.
+            if "valueSource" in e or "valueFrom" in e:
+                src = (e.get("valueSource") or e.get("valueFrom") or {}).get("secretKeyRef", {}) or {}
+                print("secret:%s:%s" % (name, src.get("secret") or src.get("name") or name))
             else:
                 print("%s=%s" % (name, e.get("value", "")))
 PY
@@ -676,6 +682,53 @@ PY
   esac
 }
 
+# model_key_mounts FILE prints the model credentials the container's own
+# environment holds — the mount the release takes away (AB1b, D3009). job_env
+# prints a mount as `secret:<env name>:<secret id>`, and the two are read
+# together the way check193.sh's mounts_of reads them: the variable
+# (ANTHROPIC_API_KEY, or a provider key's FUGARO_PROVIDER_KEY_ namespace) and
+# the secret's own id (`anthropic-api-key`, `provider-key`, with the hash
+# SecretID puts on a derived id stripped). Reading both is the whole point: a
+# `gcloud` document names the reference in two spellings, so a reader that knew
+# one of them would call a job that still mounts the paid key an unmounted one
+# — and this row would then report the gateway's absence on an agent whose
+# environment holds the key. The Claude OAuth token is deliberately not among
+# these names: AB1b keeps the oauth arm and OAuthStageEnv unchanged.
+model_key_mounts() { # model_key_mounts <file>
+  job_env "$1" | python3 -c '
+import re, sys
+
+MODEL_ENVS = ("ANTHROPIC_API_KEY",)
+PROVIDER_KEY_ENV_PREFIX = "FUGARO_PROVIDER_KEY_"
+MODEL_SECRETS = ("anthropic-api-key", "provider-key")
+SECRET_HASH_RE = re.compile(r"-[0-9a-f]{16}$")
+
+
+def named(base):
+    stem = SECRET_HASH_RE.sub("", base)
+    return any(stem.endswith("-" + s) or ("-" + s + "-") in stem for s in MODEL_SECRETS)
+
+
+out = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    base = ""
+    if line.startswith("secret:"):
+        _, name, ref = line.split(":", 2)
+        base = ref.split(":")[-1].split("/")[-1]
+    else:
+        name, _, value = line.partition("=")
+        if not value:
+            continue
+    if name in MODEL_ENVS or name.startswith(PROVIDER_KEY_ENV_PREFIX) or named(base):
+        if name not in out:
+            out.append(name)
+print(", ".join(out))
+'
+}
+
 step_gateway() {
   say "launching the run that has to have a gateway (paid)"
   cat >"$SCRATCH/task.md" <<'TASK'
@@ -694,15 +747,16 @@ TASK
     fact gateway UNVERIFIED "the newest execution of '${JOB}' could not be read, so whether the agent's environment holds an API key is NOT measured: $(head -c 300 "$SCRATCH/exec.json.err" 2>/dev/null)"
     return 0
   }
-  local names image
+  local names image mounts
   names=$(job_env "$SCRATCH/exec.json")
   image=$(job_image "$SCRATCH/exec.json")
   if ! printf '%s\n' "$names" | grep -q '^FUGARO_RTDB_URL='; then
     fact gateway FAIL "the newest execution of '${JOB}' carries no database address: a run with no database is refused at its start, and the gateway that reaches the credentials service is the database's own session — a run on this execution has no gateway"
     return 0
   fi
-  if printf '%s\n' "$names" | grep -qE '^ANTHROPIC_API_KEY=|^secret:.*model|^secret:.*anthropic|^secret:.*provider-key'; then
-    fact gateway FAIL "the newest execution of '${JOB}' still carries a model credential in the container's own environment, so a run on it can reach the model WITHOUT the gateway: the whole point of the release is that the gateway is what holds the credential and the agent's environment holds none (AB1b, D3009)"
+  mounts=$(model_key_mounts "$SCRATCH/exec.json")
+  if [ -n "$mounts" ]; then
+    fact gateway FAIL "the newest execution of '${JOB}' still carries a model credential in the container's own environment (${mounts}), so a run on it can reach the model WITHOUT the gateway: the whole point of the release is that the gateway is what holds the credential and the agent's environment holds none (AB1b, D3009)"
     return 0
   fi
   fact gateway PASS "the execution of '${JOB}' that the post-update run ${NEW_ID:-<id not read>} landed on carries FUGARO_RTDB_URL and mounts no model credential: the run has a gateway, and the agent's environment holds no API key for want of one (image ${image:-<not read>})"

@@ -188,9 +188,12 @@ make_sandbox() { # make_sandbox <dir>
 }
 
 # job_json writes a Cloud Run job document with the given container image and one
-# environment entry per argument after it. An entry of the form `secret:NAME` is
-# written as a secret reference, which is how the row that reads a mounted model
-# key is bent.
+# environment entry per argument after it. An entry of the form
+# `v2secret:ENVNAME:SECRETID` is written as a run/v2 mount — the spelling the
+# repository's own terraform writes, naming the secret itself — and
+# `v1secret:ENVNAME:SECRETID` as the older one (`valueFrom.secretKeyRef.name`).
+# Both are here because the row that reads a mounted model key reads both, and a
+# fixture in a shape neither API produces would pin neither.
 job_json() { # job_json <outfile> <image> [ENTRY...]
   local out=$1 image=$2
   shift 2
@@ -199,8 +202,12 @@ import json, sys
 out, image = sys.argv[1], sys.argv[2]
 env = []
 for raw in sys.argv[3:]:
-    if raw.startswith("secret:"):
-        env.append({"name": raw[len("secret:"):], "valueSource": {"secretKeyRef": {"name": raw[len("secret:"):]}}})
+    if raw.startswith("v2secret:") or raw.startswith("v1secret:"):
+        kind, name, secret = raw.split(":", 2)
+        if kind == "v2secret":
+            env.append({"name": name, "valueSource": {"secretKeyRef": {"secret": secret, "version": "latest"}}})
+        else:
+            env.append({"name": name, "valueFrom": {"secretKeyRef": {"name": secret, "key": "latest"}}})
     else:
         name, _, value = raw.partition("=")
         env.append({"name": name, "value": value})
@@ -224,7 +231,8 @@ PY
 }
 
 # exec_json writes a Cloud Run EXECUTION document, in the shape an execution
-# really has (`spec.template.spec.containers`).
+# really has (`spec.template.spec.containers`), with the same two spellings of a
+# mount job_json writes.
 exec_json() { # exec_json <outfile> <image> [ENTRY...]
   local out=$1 image=$2
   shift 2
@@ -233,8 +241,12 @@ import json, sys
 out, image = sys.argv[1], sys.argv[2]
 env = []
 for raw in sys.argv[3:]:
-    if raw.startswith("secret:"):
-        env.append({"name": raw[len("secret:"):], "valueSource": {"secretKeyRef": {"name": raw[len("secret:"):]}}})
+    if raw.startswith("v2secret:") or raw.startswith("v1secret:"):
+        kind, name, secret = raw.split(":", 2)
+        if kind == "v2secret":
+            env.append({"name": name, "valueSource": {"secretKeyRef": {"secret": secret, "version": "latest"}}})
+        else:
+            env.append({"name": name, "valueFrom": {"secretKeyRef": {"name": secret, "key": "latest"}}})
     else:
         name, _, value = raw.partition("=")
         env.append({"name": name, "value": value})
@@ -463,13 +475,57 @@ test_an_in_flight_run_that_never_ends_leaves_the_row_unverified() {
   expect_contains "$out" "still not terminal" "the row says what it could not read"
 }
 
-test_an_execution_that_still_mounts_a_model_key_is_a_finding() {
-  case_dir still-mounts
-  exec_json "$answers/exec.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid" "secret:anthropic-api-key"
+test_a_v2_spelled_mount_of_the_model_key_is_a_finding() {
+  case_dir still-mounts-v2
+  # The spelling the repository's own terraform writes: the run/v2 document
+  # names the secret itself (`valueSource.secretKeyRef.secret`), and the secret
+  # id is the derived one, hash and all. A reader that knew only
+  # `secretKeyRef.name` prints nothing recognisable here and calls a run that
+  # still mounts the paid key an unmounted one.
+  exec_json "$answers/exec.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid" \
+    "v2secret:ANTHROPIC_API_KEY:fugaro-acme-app-anthropic-api-key-0123456789abcdef"
   run790
   expect_status "$status" 1 "the agent's environment must hold no model credential"
   expect_contains "$out" "gateway" "the row is the finding"
   expect_contains "$out" "WITHOUT the gateway" "the finding says why it matters"
+  expect_contains "$out" "ANTHROPIC_API_KEY" "the finding names the variable it found mounted"
+}
+
+test_a_v1_spelled_mount_of_the_model_key_is_a_finding() {
+  case_dir still-mounts-v1
+  # The older spelling (`valueFrom.secretKeyRef.name`), read for the same
+  # reason: both are what Cloud Run answers with, and the row must catch either.
+  exec_json "$answers/exec.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid" \
+    "v1secret:ANTHROPIC_API_KEY:fugaro-acme-app-anthropic-api-key"
+  run790
+  expect_status "$status" 1 "the agent's environment must hold no model credential"
+  expect_contains "$out" "gateway" "the row is the finding"
+  expect_contains "$out" "WITHOUT the gateway" "the finding says why it matters"
+}
+
+test_a_model_key_in_a_plain_variable_is_a_finding() {
+  case_dir plain-key
+  # The key does not have to come from a secret container to be in the agent's
+  # environment: a plain ANTHROPIC_API_KEY reaches the model without a gateway
+  # just as well.
+  exec_json "$answers/exec.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid" \
+    "ANTHROPIC_API_KEY=a-plain-variable-value"
+  run790
+  expect_status "$status" 1 "the agent's environment must hold no model credential"
+  expect_contains "$out" "gateway" "the row is the finding"
+  expect_contains "$out" "ANTHROPIC_API_KEY" "the finding names the variable it found"
+}
+
+test_an_execution_that_mounts_no_model_key_is_not_a_finding() {
+  case_dir mounts-nothing
+  # The other side of the same row: an execution with the database address and a
+  # secret that is not the model's (the git credential) passes, so the two cases
+  # above are findings for what they mount and not for mounting anything.
+  exec_json "$answers/exec.json" "us-docker.pkg.dev/p/jobs/app:0.34.0" "FUGARO_BUCKET=b" "FUGARO_RTDB_URL=https://db.invalid" \
+    "v2secret:FUGARO_GITHUB_APP_PRIVATE_KEY:fugaro-acme-app-github-app-key-0123456789abcdef"
+  run790 --operator-config "$answers/operator-config.yaml"
+  expect_status "$status" 0 "an unmounted execution is the state the release establishes"
+  expect_contains "$out" "mounts no model credential" "the row says what it read"
 }
 
 test_a_pre_release_runner_whose_record_names_another_mode_is_a_finding() {
@@ -616,7 +672,10 @@ t test_a_repository_update_that_fails_is_a_finding
 t test_a_job_that_never_learned_its_database_is_a_finding
 t test_an_in_flight_run_that_dies_is_a_finding
 t test_an_in_flight_run_that_never_ends_leaves_the_row_unverified
-t test_an_execution_that_still_mounts_a_model_key_is_a_finding
+t test_a_v2_spelled_mount_of_the_model_key_is_a_finding
+t test_a_v1_spelled_mount_of_the_model_key_is_a_finding
+t test_a_model_key_in_a_plain_variable_is_a_finding
+t test_an_execution_that_mounts_no_model_key_is_not_a_finding
 t test_a_pre_release_runner_whose_record_names_another_mode_is_a_finding
 t test_a_pre_release_runner_whose_record_names_no_mode_has_no_subject
 t test_a_record_that_cannot_be_read_has_no_subject
