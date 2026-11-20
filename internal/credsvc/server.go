@@ -1023,10 +1023,13 @@ func NewServer(cfg Config) (*Server, error) {
 		// from the published node (scope_workspace.go, C3), which is also the
 		// only place they can come from, because the workspace's container
 		// carries no job document and sets no FUGARO_JOB_ACCOUNTS
-		// (internal/infra/tf's WorkspaceServiceEnv, WS6). What still refuses a
-		// caller there is cfg.Auth above: the identities the node names are the
-		// verifier's own table, and a caller it does not admit is refused before
-		// any handler reads a repository.
+		// (internal/infra/tf's WorkspaceServiceEnv, WS6). THIS TABLE is not what
+		// admits a caller there and its emptiness is not an admission: the
+		// resolver's own front door is the workspace's verifier, and a caller it
+		// does not admit is refused before any handler runs, while the handlers
+		// that verify their caller themselves read cfg.Auth above, whose table is
+		// the node's member accounts. Neither is this table, and a deployment
+		// that handed none in admits nobody here.
 		return nil, errors.New("credsvc: the service has no job accounts, so it can bind no run to a repository")
 	}
 	if len(cfg.ReviewAccounts) > 0 && len(cfg.Repos) == 0 {
