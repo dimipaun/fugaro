@@ -24,19 +24,18 @@ import (
 // totals row that is no row's own figure. Every day is final, so the report
 // reads the history and the RTDB fake answers nothing for the window's
 // unarchived days: the same bytes on every run.
-func reportStreamFixture(t *testing.T) *reportFixture {
+func reportStreamFixture(t *testing.T) {
 	t.Helper()
 	f := newReportFixture(t)
 	f.doc("2026-10-14", repOpts{spent: 1_500_000, compute: 200_000, estimated: 1, final: true, person: "a@x.io", model: "m1"})
 	f.doc("2026-10-15", repOpts{spent: 2_000_000, notional: 700_000, final: true, person: "b@x.io", model: "m2"})
 	f.doc("2026-10-16", repOpts{spent: 500_000, final: true, person: "a@x.io", model: "m1"})
-	return f
 }
 
 // reportStreamArgs is the command the feed's tests run: --json, like every
 // consumer of the feed, over the fixture's window.
-func reportStreamArgs(extra ...string) []string {
-	return append([]string{"report", "--json", "--stream", "--since", "2026-10-10", "--until", "2026-10-20"}, extra...)
+func reportStreamArgs() []string {
+	return []string{"report", "--json", "--stream", "--since", "2026-10-10", "--until", "2026-10-20"}
 }
 
 // reportStreamEnd is the feed's end line as a consumer reads it. The totals are
@@ -196,6 +195,9 @@ func TestReportStreamRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	feed := readReportFeed(t, out)
+	if len(feed.rows) == 0 {
+		t.Fatalf("the feed carried no row:\n%s", out)
+	}
 	if got := string(feed.rows[0]); !strings.Contains(got, `"key":"2026-10-14"`) {
 		t.Errorf("the feed's first row is not the window's first day:\n%s", got)
 	}
