@@ -59,7 +59,9 @@
         "paths": [
           "internal/localcfg/localcfg.go",
           "internal/projectpolicy/policy.go",
+          "internal/projectpolicy/paths.go",
           "internal/cli/project_cmd.go",
+          "internal/budget/rules/rules.json.tmpl",
           "internal/localcfg/repo_crafts_test.go",
           "internal/projectpolicy/repo_crafts_test.go"
         ]
@@ -279,6 +281,8 @@
           "internal/cli/run.go",
           "internal/cli/run_attach.go",
           "internal/cli/project_routing.go",
+          "internal/cli/followup.go",
+          "internal/cli/review.go",
           "internal/cli/run_access_test.go"
         ]
       }
@@ -299,6 +303,7 @@
           "internal/cli/recipes_skew.go",
           "internal/cli/initsecrets.go",
           "internal/localcfg/localcfg.go",
+          "internal/infra/spec.go",
           "internal/cli/init_credentials_access_test.go"
         ]
       }
@@ -424,10 +429,10 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "scripts/live-checks/check800.sh",
-          "scripts/live-checks/check800_test.sh",
-          "scripts/live-checks/check801.sh",
-          "scripts/live-checks/check801_test.sh",
+          "scripts/live-checks/check810.sh",
+          "scripts/live-checks/check810_test.sh",
+          "scripts/live-checks/check811.sh",
+          "scripts/live-checks/check811_test.sh",
           "scripts/live_checks_test.go",
           "docs/gcp-live-checklist.md"
         ]
@@ -449,6 +454,10 @@
           "internal/cli/setup.go",
           "internal/cli/run.go",
           "internal/cli/models_use.go",
+          "internal/cli/accounts.go",
+          "internal/cli/doctor_render.go",
+          "internal/cli/settings_managed.go",
+          "internal/cli/config_publish_managed.go",
           "website/content/cli-reference.md",
           "internal/cli/help_access_test.go"
         ]
@@ -468,7 +477,14 @@
           "internal/runner/access_stub.go",
           "internal/config/retired_readers_guard_test.go",
           "internal/cli/access_end_to_end_test.go",
-          "internal/e2e/update_test.go"
+          "internal/e2e/update_test.go",
+          "internal/agent/env.go",
+          "internal/craft/resolve.go",
+          "internal/infra/spec.go",
+          "internal/config/providers.go",
+          "internal/config/stage_accounts.go",
+          "internal/runner/routing.go",
+          "internal/cli/run.go"
         ]
       },
       "kind": "integration"
@@ -591,6 +607,7 @@
           "internal/config/layer.go",
           "internal/config/scope.go",
           "internal/config/retired.go",
+          "internal/runner/access_resolve.go",
           "schemas/fugaro.schema.json",
           "schemas/project-layer.schema.json",
           "schemas/schemas_test.go"
@@ -631,7 +648,8 @@
           "internal/cli/update_in_flight.go",
           "internal/gateway/service.go",
           "internal/gateway/gateway.go",
-          "internal/credsvc/cascade.go"
+          "internal/credsvc/cascade.go",
+          "scripts/live-checks/check193.sh"
         ]
       }
     },
@@ -647,9 +665,8 @@
         "paths": [
           "internal/config/craft.go",
           "internal/config/craft_cascade_pool_test.go",
-          "internal/credsvc/pool.go",
-          "internal/credsvc/pool_cascade_test.go",
-          "internal/cli/project_cmd.go"
+          "internal/cli/project_cmd.go",
+          "internal/cli/published_pools_cascade_test.go"
         ]
       }
     },
@@ -708,6 +725,21 @@
       }
     },
     {
+      "id": "CM36",
+      "title": "the service serves the cascade's pool as the cascade",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/pool.go",
+          "internal/credsvc/pool_cascade_test.go"
+        ]
+      }
+    },
+    {
       "id": "R-pool-members",
       "title": "amend the access contract: a pool's members in the record",
       "run": null,
@@ -731,7 +763,7 @@
       "reason": "the contract's names and interfaces"
     },
     {
-      "task": "CM5",
+      "task": "CM36",
       "needs": "C1",
       "reason": "the contract's names and interfaces"
     },
@@ -806,9 +838,39 @@
       "reason": "it writes the marker CM32 adds to a shared struct"
     },
     {
-      "task": "CM11",
+      "task": "CM14",
       "needs": "CM32",
       "reason": "it reads the marker CM32 adds to a shared struct"
+    },
+    {
+      "task": "CM5",
+      "needs": "CM2",
+      "reason": "it reads the block CM2 adds to a shared struct"
+    },
+    {
+      "task": "CM12",
+      "needs": "CM2",
+      "reason": "one file: internal/budget/rules/rules.json.tmpl"
+    },
+    {
+      "task": "CM36",
+      "needs": "CM6",
+      "reason": "it calls the read of the record CM6 adds to the service's store"
+    },
+    {
+      "task": "I1",
+      "needs": "CM36",
+      "reason": "integration joins every release 1 code task"
+    },
+    {
+      "task": "I1",
+      "needs": "CM20",
+      "reason": "nothing may be live on a file integration edits"
+    },
+    {
+      "task": "I1",
+      "needs": "CM23",
+      "reason": "nothing may be live on a file integration edits"
     },
     {
       "task": "I1",
@@ -1194,11 +1256,11 @@
     {
       "contract": "C1",
       "was": {
-        "task": "CM5",
-        "needs": "CM1"
+        "task": "CM36",
+        "needs": "CM5"
       },
       "integration": "I1",
-      "reason": "the record names what the crafts resolve to: it needs the answer's shape, not the function"
+      "reason": "the service needs the record's marker, not its writer"
     },
     {
       "contract": "C1",
