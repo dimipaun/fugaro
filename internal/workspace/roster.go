@@ -64,6 +64,7 @@ package workspace
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -398,13 +399,10 @@ func (r *Roster) Validate() error {
 	}
 	errs = append(errs, sortedUnique("domains", r.Domains)...)
 
-	grants := make([]string, 0, len(r.Grants))
 	for i, g := range r.Grants {
-		at := fmt.Sprintf("grants[%d]", i)
-		errs = append(errs, validateStoredGrant(at, g, byAddress))
-		grants = append(grants, g.Project+"/"+g.User)
+		errs = append(errs, validateStoredGrant(fmt.Sprintf("grants[%d]", i), g, byAddress))
 	}
-	errs = append(errs, sortedUnique("grants", grants)...)
+	errs = append(errs, sortedUniqueGrants(r.Grants)...)
 
 	return errors.Join(errs...)
 }
@@ -484,6 +482,26 @@ func validateAddress(at, address string) error {
 		return fmt.Errorf("%s: %q is not the canonical spelling %q, which is the spelling a node carries", at, address, canonical)
 	}
 	return nil
+}
+
+// sortedUniqueGrants reports the grants that repeat or stand out of order. A
+// grant is keyed by the PAIR -- project first, then user -- and never by the
+// two joined into one string: a project name may carry a hyphen, and `-` sorts
+// before the `/` a joined key would be compared at, so a joined comparison
+// holds `acme-app` to sort before `acme` and refuses a list every writer of
+// this plan sorted the documented way.
+func sortedUniqueGrants(grants []StoredGrant) []error {
+	var errs []error
+	for i := 1; i < len(grants); i++ {
+		prev, cur := grants[i-1], grants[i]
+		switch c := cmp.Or(strings.Compare(prev.Project, cur.Project), strings.Compare(prev.User, cur.User)); {
+		case c == 0:
+			errs = append(errs, fmt.Errorf("grants[%d]: %s/%s is listed twice", i, cur.Project, cur.User))
+		case c > 0:
+			errs = append(errs, fmt.Errorf("grants[%d]: %s/%s is out of order after %s/%s; the list is sorted by project and then by user", i, cur.Project, cur.User, prev.Project, prev.User))
+		}
+	}
+	return errs
 }
 
 // sortedUnique reports the entries of a key list that repeat or stand out of

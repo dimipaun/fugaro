@@ -354,6 +354,13 @@ func TestRosterRefuses(t *testing.T) {
 			first["user"] = "alice@example.com"
 			doc["grants"] = []any{c1Grant(t, doc, 0), first}
 		}},
+		{"grants out of order by project", false, func(doc map[string]any) {
+			first := maps.Clone(c1Grant(t, doc, 0))
+			first["project"], first["user"] = "acme-app", "alice@example.com"
+			second := maps.Clone(c1Grant(t, doc, 0))
+			second["project"], second["user"] = "acme", "alice@example.com"
+			doc["grants"] = []any{first, second}
+		}},
 		{"two grants of one project and user", false, func(doc map[string]any) {
 			dupe := maps.Clone(c1Grant(t, doc, 0))
 			doc["grants"] = []any{c1Grant(t, doc, 0), dupe}
@@ -370,6 +377,73 @@ func TestRosterRefuses(t *testing.T) {
 			}
 			if _, err := workspace.DecodeRoster(raw); err == nil {
 				t.Errorf("DecodeRoster accepts %s:\n%s", tc.name, raw)
+			}
+		})
+	}
+}
+
+// TestRosterGrantsSortByProjectThenByUser pins the grants' order to the pair
+// and not to a key the two halves are joined into. A project name may carry a
+// hyphen, and `-` sorts before the `/` a joined key would be compared at, so a
+// joined comparison holds `acme-app` to sort before `acme` and refuses the
+// order the contract states -- which is the order every writer of this plan
+// sorts by, so the reader would refuse the rosters it is written for (D2818's
+// mark).
+func TestRosterGrantsSortByProjectThenByUser(t *testing.T) {
+	sch := c1Schema(t, c1RosterSchemaFile)
+
+	for _, tc := range []struct {
+		name   string
+		grants []workspace.StoredGrant
+		sorted bool
+	}{
+		{"by project first", []workspace.StoredGrant{
+			{Project: "acme", User: "alice@example.com", Role: workspace.RoleViewer},
+			{Project: "acme-app", User: "bob@outside.test", Role: workspace.RoleOperator},
+		}, true},
+		{"by user inside one project", []workspace.StoredGrant{
+			{Project: "acme-app", User: "alice@example.com", Role: workspace.RoleViewer},
+			{Project: "acme-app", User: "bob@outside.test", Role: workspace.RoleOperator},
+		}, true},
+		{"a project after its longer name", []workspace.StoredGrant{
+			{Project: "acme-app", User: "alice@example.com", Role: workspace.RoleViewer},
+			{Project: "acme", User: "bob@outside.test", Role: workspace.RoleOperator},
+		}, false},
+		{"a user out of order inside one project", []workspace.StoredGrant{
+			{Project: "acme-app", User: "bob@outside.test", Role: workspace.RoleViewer},
+			{Project: "acme-app", User: "alice@example.com", Role: workspace.RoleOperator},
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := c1RosterFixture()
+			r.Grants = tc.grants
+			raw, err := workspace.EncodeRoster(r)
+
+			if !tc.sorted {
+				if err == nil {
+					t.Fatalf("EncodeRoster accepts grants that are not sorted by project and then by user: %+v", tc.grants)
+				}
+				if !strings.Contains(err.Error(), "the list is sorted by project and then by user") {
+					t.Errorf("EncodeRoster refuses an unordered grant list with %q, and the refusal names the order the list is in", err)
+				}
+				if err := r.Validate(); err == nil {
+					t.Errorf("Validate accepts grants that are not sorted by project and then by user: %+v", tc.grants)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("EncodeRoster refuses grants sorted project-first: %+v\n%v", tc.grants, err)
+			}
+			if err := c1Validate(t, sch, raw); err != nil {
+				t.Fatalf("schemas/%s refuses the document: %v\n%s", c1RosterSchemaFile, err, raw)
+			}
+			back, err := workspace.DecodeRoster(raw)
+			if err != nil {
+				t.Fatalf("DecodeRoster refuses a document EncodeRoster wrote: %v\n%s", err, raw)
+			}
+			if !slices.Equal(back.Grants, tc.grants) {
+				t.Errorf("the grants did not round trip:\n got %+v\nwant %+v", back.Grants, tc.grants)
 			}
 		})
 	}
