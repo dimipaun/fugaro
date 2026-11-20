@@ -282,6 +282,75 @@ func TestHandBackEntriesArriveRedacted(t *testing.T) {
 	}
 }
 
+// The hand-back is part of a document — a pr.md is a pull request body, a
+// followup.md the account a follow-up leaves — so a heading of the document's
+// own (`## Testing`, `## Summary`, the `# Title` of a part of it) stands
+// between the sections, and the bullets under it are that heading's: what the
+// run tested, what it summarised. Reading them as the section above would file
+// a run's summary as its deferrals and let LV5.1 judge a verification on
+// entries the agent never handed back.
+//
+// Mutation (recognise only the six, as a parser that let a foreign heading fall
+// through would): `## Testing` joins the entry above it as a line of text and
+// its bullets become Deferred entries, and this test fails.
+func TestHandBackEndsASectionAtAHeadingItDoesNotName(t *testing.T) {
+	hb, err := parseHandBack("## Deferred\n\n- the retry loop has no backoff\n\n## Testing\n\n- ran go test ./...\n- ran the flaky test 20 times\n\n## Open risks\n\n- the migration is not reversible in place\n", true)
+	if err != nil {
+		t.Fatalf("parseHandBack = %v", err)
+	}
+	want := HandBack{
+		Deferred:  HandBackSection{Entries: []string{"the retry loop has no backoff"}},
+		OpenRisks: HandBackSection{Entries: []string{"the migration is not reversible in place"}},
+	}
+	if !reflect.DeepEqual(hb, want) {
+		t.Fatalf("the hand-back =\n%+v\nwant\n%+v", hb, want)
+	}
+
+	// A level-one heading ends it too, whatever it names: the level decides
+	// whether a section can open, never whether the section before it goes on.
+	hb, err = parseHandBack("## Verification\n\n- the tests pass on the final commit\n\n# Summary\n\n- the run's own summary\n", true)
+	if err != nil {
+		t.Fatalf("parseHandBack(level one) = %v", err)
+	}
+	want = HandBack{Verification: HandBackSection{Entries: []string{"the tests pass on the final commit"}}}
+	if !reflect.DeepEqual(hb, want) {
+		t.Fatalf("the hand-back under a level-one heading =\n%+v\nwant\n%+v", hb, want)
+	}
+
+	// A section named again after a heading of the document's own is still the
+	// refusal it is anywhere else: two lists under one name are two answers,
+	// whoever wrote the text between them.
+	if _, err := parseHandBack("## Deferred\n\n- one\n\n## Summary\n\n- a summary\n\n## Deferred\n\n- two\n", true); err == nil {
+		t.Fatal("parseHandBack over a section named twice around a foreign heading = nil, want a refusal")
+	}
+}
+
+// A fence holds the agent's own text — a prompt quoted back, a diff, a body
+// its entry compares itself against — so a heading inside it opens no section
+// and a bullet inside it starts no entry. Without that, an entry quoting the
+// six becomes a section named twice (a refusal the file does not deserve) and
+// a quoted bullet splits the entry it sits in.
+//
+// Mutation (read headings and bullets inside a fence): the quoted `## Deferred`
+// is a second Deferred and the parse is refused, and this test fails.
+func TestHandBackIgnoresStructureInsideAFence(t *testing.T) {
+	body := "## Deferred\n\n- the report quotes the prompt back:\n```\n## Deferred\n- a quoted bullet\n```\n- the metric name is hardcoded\n\n## Verification\n\n- the tests pass on the final commit\n"
+	hb, err := parseHandBack(body, true)
+	if err != nil {
+		t.Fatalf("parseHandBack = %v", err)
+	}
+	want := HandBack{
+		Deferred: HandBackSection{Entries: []string{
+			"the report quotes the prompt back:\n```\n## Deferred\n- a quoted bullet\n```",
+			"the metric name is hardcoded",
+		}},
+		Verification: HandBackSection{Entries: []string{"the tests pass on the final commit"}},
+	}
+	if !reflect.DeepEqual(hb, want) {
+		t.Fatalf("the hand-back =\n%+v\nwant\n%+v", hb, want)
+	}
+}
+
 // A section named twice is a refusal rather than a merge: two lists under one
 // name are two answers to one question, and only the agent knew which it
 // meant, so the runner reports the file instead of guessing — LV4.3 files

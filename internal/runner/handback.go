@@ -113,7 +113,9 @@ func parseHandBack(redacted string, fromAgent bool) (HandBack, error) {
 // by the section's name. Everything before the first heading is ignored: a
 // first run's text is a pr.md body, which opens with whatever the agent put
 // above its first section — the pull request's own title, quoted lines, a
-// summary — and none of that is one of the six.
+// summary — and none of that is one of the six. A heading the six do not name
+// ends the section being read, and what is inside a fence is the agent's text
+// rather than the file's structure.
 func handBackEntries(redacted string) (map[string][]string, error) {
 	entries := make(map[string][]string, len(handBackHeadings))
 	seen := make(map[string]bool, len(handBackHeadings))
@@ -121,6 +123,7 @@ func handBackEntries(redacted string) (map[string][]string, error) {
 		section string
 		entry   []string
 		inEntry bool
+		inFence bool
 		col     int
 	)
 	// flush ends the entry being read, keeping it when it holds anything but
@@ -134,12 +137,37 @@ func handBackEntries(redacted string) (map[string][]string, error) {
 		entry, inEntry, col = nil, false, 0
 	}
 	for _, line := range strings.Split(redacted, "\n") {
-		if name, ok := handBackHeading(line); ok {
-			flush()
-			if seen[name] {
-				return nil, fmt.Errorf("the hand-back names %q twice", name)
+		fence := handBackFence(line)
+		if fence {
+			inFence = !inFence
+		}
+		// A fence line is part of the entry it was written under, and so is
+		// everything between the fences: a quoted `## Deferred` opens no
+		// section and a quoted bullet starts no entry, so the quote stays the
+		// text the agent wrote under the section it wrote it in.
+		if fence || inFence {
+			if inEntry {
+				entry = append(entry, strings.TrimRight(line, " \t\r"))
 			}
-			seen[name], section = true, name
+			continue
+		}
+		if name, level, ok := handBackHeading(line); ok {
+			flush()
+			// Only the contract's own heading opens a section. Any other one
+			// closes the section being read: a level-two heading the six do not
+			// name (`## Summary`, `## Testing`) and a level-one heading of the
+			// document's own both leave what follows them outside the hand-back,
+			// where reading it as the section above would file a run's summary
+			// as its deferrals.
+			section = ""
+			if level == 2 {
+				if canonical, isSection := handBackSection(name); isSection {
+					if seen[canonical] {
+						return nil, fmt.Errorf("the hand-back names %q twice", canonical)
+					}
+					seen[canonical], section = true, canonical
+				}
+			}
 			continue
 		}
 		if text, indent, ok := handBackBullet(line); ok {
@@ -166,22 +194,42 @@ func handBackEntries(redacted string) (map[string][]string, error) {
 	return entries, nil
 }
 
-// handBackHeading returns the section a heading line opens, and whether it
-// opens one at all. Only a level-two heading does — `##`, and the name after
-// it — because that is what the contract writes: a deeper heading is part of
-// the entry above it rather than a section of its own.
-func handBackHeading(line string) (string, bool) {
-	rest, ok := strings.CutPrefix(strings.TrimLeft(line, " \t"), "## ")
-	if !ok {
-		return "", false
+// handBackHeading returns the name a heading line carries and its level, and
+// whether the line is a heading at all. Only a level-one or level-two heading
+// is one — `#` or `##`, and the name after it, which is what a body writes for
+// a section and its title. A deeper heading is part of the entry above it
+// rather than a heading of its own: `### Deferred` names no section, and the
+// text under it belongs to the entry that holds it.
+func handBackHeading(line string) (string, int, bool) {
+	trimmed := strings.TrimLeft(line, " \t")
+	if rest, ok := strings.CutPrefix(trimmed, "## "); ok {
+		return strings.TrimSpace(rest), 2, true
 	}
-	name := strings.TrimSpace(rest)
+	if rest, ok := strings.CutPrefix(trimmed, "# "); ok {
+		return strings.TrimSpace(rest), 1, true
+	}
+	return "", 0, false
+}
+
+// handBackSection returns the section a heading's name is one of, whatever its
+// case: the agent copies the names its prompt spells, and a file that
+// capitalised one differently still names the section its writer meant.
+func handBackSection(name string) (string, bool) {
 	for _, h := range handBackHeadings {
 		if strings.EqualFold(name, h) {
 			return h, true
 		}
 	}
 	return "", false
+}
+
+// handBackFence reports whether line opens or closes a fenced code block: the
+// three backticks a body fences a quoted block with. What a fence holds is
+// whatever the agent pasted — a prompt, a diff, a section it is comparing its
+// own text against — and a heading or a bullet inside it is that text rather
+// than this file's structure.
+func handBackFence(line string) bool {
+	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
 }
 
 // handBackBullet returns the first line of an entry — a list bullet's text,
