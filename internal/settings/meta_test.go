@@ -6,6 +6,13 @@ import (
 	"testing"
 )
 
+// The keys this file registers and refuses are under `fixture.` and not under
+// a real block's prefix: the table is filled by the families' own package
+// inits before any test runs (SM1 to SM4 of
+// docs/console-improvements/implementation-plan.md), so a test that registered
+// `agent.review_rounds` would meet that family's entry rather than its own —
+// a duplicate it meant to create, and a key it meant to find missing.
+
 // register is Register with the entry dropped again when the test ends: the
 // table is package state, so a key a test registered would otherwise be seen by
 // another test of this package.
@@ -31,7 +38,7 @@ func goodMeta() Meta {
 }
 
 func TestMetaRegisterRefusesDuplicate(t *testing.T) {
-	const key = "agent.review_rounds"
+	const key = "fixture.review_rounds"
 	register(t, key, goodMeta())
 	if err := Register(key, goodMeta()); err == nil {
 		t.Fatalf("Register(%q, ...) a second time registered the key again", key)
@@ -39,7 +46,7 @@ func TestMetaRegisterRefusesDuplicate(t *testing.T) {
 }
 
 func TestMetaLookupMissingKey(t *testing.T) {
-	register(t, "agent.review_rounds", goodMeta())
+	register(t, "fixture.review_rounds", goodMeta())
 	if m, ok := MetaOf("agent.review_round"); ok {
 		t.Fatalf("MetaOf answered %+v for a key that was never registered", m)
 	}
@@ -54,9 +61,9 @@ func TestMetaLookupMissingKey(t *testing.T) {
 func TestMetaRegisterAndLookupRoundTrip(t *testing.T) {
 	want := goodMeta()
 	want.Type, want.Enum, want.Min = TypeEnum, []string{"auto", "always", "never"}, ""
-	register(t, "agent.first_line_review", want)
+	register(t, "fixture.first_line_review", want)
 
-	got, ok := MetaOf("agent.first_line_review")
+	got, ok := MetaOf("fixture.first_line_review")
 	if !ok {
 		t.Fatal("MetaOf found no metadata for a key Register was given")
 	}
@@ -66,7 +73,7 @@ func TestMetaRegisterAndLookupRoundTrip(t *testing.T) {
 	}
 
 	got.Enum[0] = "mutated"
-	if again, _ := MetaOf("agent.first_line_review"); again.Enum[0] != "auto" {
+	if again, _ := MetaOf("fixture.first_line_review"); again.Enum[0] != "auto" {
 		t.Fatalf("editing the answered enum changed the table's own: %v", again.Enum)
 	}
 }
@@ -83,31 +90,31 @@ func TestMetaRegisterRefusesMalformed(t *testing.T) {
 		mut  func(*Meta)
 	}{
 		{name: "no key", key: "", mut: func(*Meta) {}},
-		{name: "no label", key: "agent.review_rounds", mut: func(m *Meta) { m.Label = "" }},
-		{name: "no description", key: "agent.review_rounds", mut: func(m *Meta) { m.Description = "" }},
-		{name: "no group", key: "agent.review_rounds", mut: func(m *Meta) { m.Group = "" }},
-		{name: "an unknown group", key: "agent.review_rounds", mut: func(m *Meta) { m.Group = "Agents" }},
-		{name: "no type", key: "agent.review_rounds", mut: func(m *Meta) { m.Type = "" }},
-		{name: "an unknown type", key: "agent.review_rounds", mut: func(m *Meta) { m.Type = "integer" }},
-		{name: "an unknown format", key: "agent.review_rounds", mut: func(m *Meta) { m.Format = "semver" }},
+		{name: "no label", key: "fixture.review_rounds", mut: func(m *Meta) { m.Label = "" }},
+		{name: "no description", key: "fixture.review_rounds", mut: func(m *Meta) { m.Description = "" }},
+		{name: "no group", key: "fixture.review_rounds", mut: func(m *Meta) { m.Group = "" }},
+		{name: "an unknown group", key: "fixture.review_rounds", mut: func(m *Meta) { m.Group = "Agents" }},
+		{name: "no type", key: "fixture.review_rounds", mut: func(m *Meta) { m.Type = "" }},
+		{name: "an unknown type", key: "fixture.review_rounds", mut: func(m *Meta) { m.Type = "integer" }},
+		{name: "an unknown format", key: "fixture.review_rounds", mut: func(m *Meta) { m.Format = "semver" }},
 		{
 			name: "an enum with no value",
-			key:  "agent.first_line_review",
+			key:  "fixture.first_line_review",
 			mut:  func(m *Meta) { m.Type, m.Min = TypeEnum, "" },
 		},
 		{
 			name: "an enum on a non-enum type",
-			key:  "agent.review_rounds",
+			key:  "fixture.review_rounds",
 			mut:  func(m *Meta) { m.Enum = []string{"1", "2"} },
 		},
 		{
 			name: "a bound on a bool",
-			key:  "git.pr.early_draft",
+			key:  "fixture.early_draft",
 			mut:  func(m *Meta) { m.Type = TypeBool },
 		},
 		{
 			name: "a bound on a string",
-			key:  "commit_name",
+			key:  "fixture.commit_name",
 			mut:  func(m *Meta) { m.Type = TypeString },
 		},
 	}
