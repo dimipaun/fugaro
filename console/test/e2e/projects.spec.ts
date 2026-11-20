@@ -551,7 +551,11 @@ const MODELS: JSONDoc = {
  * that won, the state, the owner), so the pair last recorded in `660baae4`
  * draws `repo`/`set (project)`/`set (local)`/`default` and the sentence "Fugaro
  * Mailbox" where these rows draw `project`, `stale 3h`, `ok`, `local` and the
- * local config's compact JSON. Re-recording is the owner's, on macOS, with the
+ * local config's compact JSON. **The settings accordion is a second and larger
+ * reason** (the console-improvements plan's SU2a): the panel now draws a search
+ * box and the groups' headings with every group collapsed, and each row leads
+ * with its label, so the committed pair photographs a flat list that is no
+ * longer drawn at all. Re-recording is the owner's, on macOS, with the
  * command in this file's header; the frame is the same pixels on every run, so
  * that recording is the only thing that clears the comparison. The freshness
  * clock reads the theme directory and not the documents a spec mounts, so this

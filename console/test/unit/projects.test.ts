@@ -1661,6 +1661,18 @@ describe('the settings section', () => {
     expect(drawn(tree)).toContain('settings --json is version 2 and this console reads version 1')
   })
 
+  it('draws a document with no metadata at all as one `Other` section, by raw key', () => {
+    // The reduced case the plan names for this task: a CLI that emits none of
+    // the eight metadata members -- an older one, or a CLI this console does not
+    // know -- leaves every row with no label, no description and no group, so
+    // the panel draws one section and names each row by its dotted key. Nothing
+    // is invented, and no row is lost to the grouping.
+    const tree = settingsTree(settingsInputs())
+    expect(names(tree)).toEqual([SETTINGS_OTHER_GROUP])
+    expect(texts(tree, 'projects-settings-label')).toEqual([])
+    expect(settingsKeys(tree)).toEqual(['budget.per_run_usd', 'agent.models.coder', 'budget.mode'])
+  })
+
   it('files the rows under the contract’s groups, in the contract’s order', () => {
     const tree = settingsTree(settingsInputs({ raw: SETTINGS_GROUPED }))
     // The document names Credentials first and Runs second; the panel draws the
