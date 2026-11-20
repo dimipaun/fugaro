@@ -1052,6 +1052,74 @@ func TestNoDatabaseAnywhereIsNoInstallation(t *testing.T) {
 	}
 }
 
+// TestAHostThatDidNotAnswerIsNotAnAbsence: the hosts are three reads and not one
+// answer copied three times. A host whose answer D2205 does not name — a
+// redirect, a failure of the database's own — is neither an installation nor the
+// absence of one: the read goes on to the hosts after it, so a regional
+// installation is found when the legacy host answers something else (U8: what a
+// host says about a database that lives at another is not known, so this service
+// does not decide it from one answer), and a project with one host unreadable
+// and no database anywhere is refused as one this service did not check rather
+// than as one with no installation, because the person's fix is not the same.
+func TestAHostThatDidNotAnswerIsNotAnAbsence(t *testing.T) {
+	// The legacy host answers a redirect, which is not the refusal that says an
+	// installation is there, and the European host behind it answers as one: the
+	// binding proceeds on the answer that is an installation.
+	t.Run("a host that did not answer does not hide the one that does", func(t *testing.T) {
+		f := newBindingFixture(t)
+		f.probe.at(usCentralDatabase, probeAnswer{
+			status: http.StatusTemporaryRedirect,
+			body:   "the database is not at this address",
+		})
+		_, workspace, held := f.licensingWorkspace(t)
+
+		rec := f.bind(t, held.ID, exampleProject)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("binding an installation at a regional host answered %d, want 200: %s", rec.Code, rec.Body)
+		}
+		if saw := f.probe.sawHosts(); !slices.Equal(saw, []string{usCentralDatabase, europeDatabase}) {
+			t.Errorf("the binding read %v, want the legacy host and then europe-west1", saw)
+		}
+		if licensed, _ := f.workspace(workspace.ID); licensed.ProjectID == nil || *licensed.ProjectID != exampleProject {
+			t.Errorf("the workspace is %+v, want it bound to %s", licensed, exampleProject)
+		}
+	})
+
+	// One host failed and the other two hold no database. Not one of the three
+	// answered as an installation, and only a host that says it has no database
+	// is an absence — so this is a project nobody checked, which is a "try
+	// again" and not a `fugaro setup`.
+	t.Run("a host that did not answer is not the absence of one", func(t *testing.T) {
+		f := newBindingFixture(t)
+		f.probe.all(probeMissing)
+		f.probe.at(usCentralDatabase, probeAnswer{
+			status: http.StatusInternalServerError,
+			body:   "the database is having a bad day",
+		})
+		_, workspace, held := f.licensingWorkspace(t)
+
+		rec := f.bind(t, held.ID, exampleProject)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("binding a project with one unreadable host and no database anywhere answered %d, want 503: %s", rec.Code, rec.Body)
+		}
+		if code := f.refused(rec); code != "unreachable" {
+			t.Errorf("the refusal's code is %q, want unreachable: a host that did not answer is not an absence of an installation", code)
+		}
+		if saw := f.probe.sawHosts(); !slices.Equal(saw, []string{usCentralDatabase, europeDatabase, asiaDatabase}) {
+			t.Errorf("the binding read %v, want all three hosts: a host that did not answer does not end the read", saw)
+		}
+		if len(f.mints.answers) != 0 {
+			t.Errorf("a refused binding minted %d keys", len(f.mints.answers))
+		}
+		if bound, _ := f.entitlement(held.ID); bound.BoundAt != nil {
+			t.Errorf("the entitlement records a binding at %s, and nothing was bound", bound.BoundAt)
+		}
+		if after, _ := f.workspace(workspace.ID); after.ProjectID != nil {
+			t.Errorf("the workspace names the project %v, and nothing was bound", after.ProjectID)
+		}
+	})
+}
+
 // TestTheLegacyHostIsStillReadFirst: the legacy host is D2205's first read
 // (F13), and the two regional hosts follow it in the order a database's
 // locations are named. An installation at any of them is found, and the read
