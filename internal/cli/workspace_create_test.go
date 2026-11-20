@@ -820,6 +820,162 @@ func TestWorkspaceProjectStageConvergesACapWithoutAMember(t *testing.T) {
 	}
 }
 
+// wsBudget is the budget block an owner's config carries once
+// `fugaro update --firebase-project` has run in it: the two Firebase facts the
+// workspace's own credentials service reads before it serves anything
+// (workspaceServiceFacts). The tests that need the carry branches BEHIND that
+// question — a resolve, an image this release's — are the ones that have to
+// answer it first.
+const wsBudget = "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: https://proj-1234-default-rtdb.firebaseio.com }\n"
+
+// wsOtherImageSource is a config whose release images come from a host the
+// installation's remote repository cannot mirror (baseSourceHost is the only one
+// its upstream serves): the state a resolve is refused in, without a network.
+const wsOtherImageSource = "image_source: example.com/acme\n"
+
+// TestWorkspaceProjectStageCarriesTheRecordedBlockWhenItDeploysNothing is the
+// security property serviceBlock's carry exists for, in the four states that
+// deploy no service: the block the workdir already holds goes back exactly as it
+// stands — its image and its audience — because var.credentials_service's
+// default is null, and null plans the destruction of the running service with
+// its bundle accessor and every member's invoke grant. The root's cover admits
+// exactly one deletion (a member's grant, F25), so a run that deployed nothing
+// would either hand the operator a plan that is refused or, where nothing gated
+// it, take a working workspace's service away.
+//
+// Every other test that seeds a recorded block runs as the owner on a release,
+// so it reaches the deploy branch or the not-stale one. These four are the only
+// ones that reach carry, and each is reached with its own line:
+//
+//   - a coding agent's session (agentMarker),
+//   - a development build (releaseVersion),
+//   - a config that names no Firebase project and database
+//     (workspaceServiceFacts),
+//   - a release image this run cannot resolve through the installation's remote
+//     repository.
+//
+// The mutation the assertions below are for is the one assignment inside carry:
+// `s.svc = nil` writes `"credentials_service": null` into the tfvars of every
+// state here, and no other test in this file fails on it.
+func TestWorkspaceProjectStageCarriesTheRecordedBlockWhenItDeploysNothing(t *testing.T) {
+	// The block a previous release's run deployed, stale on purpose: this
+	// release's image is not what the workdir holds, so the resolve is worth
+	// attempting (credentialsImageStale) and a run that reached it would move the
+	// block — which is exactly what the carried states must not do.
+	stale := oldCredentialsRef("1.0.0")
+	// The block wsSeedRecorded wrote, field for field: what the workdir holds
+	// before the run, and what every assertion below reads back out of it.
+	recorded := workspaceServiceVar{
+		Service:         creds.WorkspaceServiceName,
+		Image:           stale,
+		Region:          "us-east5",
+		BundleSecret:    credsvc.WorkspaceBundleSecretID(wsProjectName),
+		FirebaseProject: wsProject,
+		RTDBURL:         "https://proj-1234-default-rtdb.firebaseio.com",
+		URL:             wsServiceURL,
+	}
+	for _, c := range []struct {
+		name string
+		// version is what this run is: a released fugaro (releaseVersion), or a
+		// build from a checkout, whose version is not a release number and whose
+		// carry is the dev-build line.
+		version string
+		extra   string
+		before  func(t *testing.T, g *wsCreateRig)
+		reason  string
+	}{
+		{
+			name:    "a coding agent's session",
+			version: "1.9.9",
+			extra:   wsOwnerTable + wsOwnerCap + wsBudget,
+			before: func(t *testing.T, g *wsCreateRig) {
+				t.Setenv(agentMarkers[0], "1")
+			},
+			reason: credentialsSessionHeld,
+		},
+		{
+			name:    "a development build",
+			version: "dev",
+			extra:   wsOwnerTable + wsOwnerCap + wsBudget,
+			reason:  credentialsDevBuildHeld,
+		},
+		{
+			name:    "a config that names no Firebase project and database",
+			version: "1.9.9",
+			extra:   wsOwnerTable + wsOwnerCap,
+			reason:  "budget.firebase_project",
+		},
+		{
+			name:    "a resolve this run cannot make",
+			version: "1.9.9",
+			extra:   wsOwnerTable + wsOwnerCap + wsBudget + wsOtherImageSource,
+			before: func(t *testing.T, g *wsCreateRig) {
+				// The engine every door builds carries the images stage, and the
+				// resolve reads the run's source through it (imagesStage.allow).
+				g.e.images = newImagesStage(g.e)
+			},
+			reason: "is pinned through the installation's remote repository",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			old := Version
+			Version = c.version
+			t.Cleanup(func() { Version = old })
+			g := newWSCreateRig(t, wsProjectName+"\n", c.extra)
+			wsSeedRecorded(t, wsProjectName, stale, wsServiceURL)
+			if c.before != nil {
+				c.before(t, g)
+			}
+			// The plan the carry's own document makes: this run holds the block the
+			// workdir carries, so the root it plans is converged and there is
+			// nothing for an apply to do.
+			g.noChanges(t)
+
+			g.check(t)
+			if _, err := g.plan(t, initflow.Env{Interactive: true}); err != nil {
+				t.Fatalf("plan: %v", err)
+			}
+
+			raw, err := os.ReadFile(filepath.Join(g.root(), infra.VarsFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), `"credentials_service": null`) {
+				t.Errorf("the workspace root's tfvars carry credentials_service: null after a run that deployed nothing, and null plans the destruction of the running service, its bundle accessor and every member's invoke grant:\n%s", raw)
+			}
+			v := g.tfvars(t)
+			if v.Service == nil {
+				t.Fatalf("a run that deploys nothing wrote no credentials_service at all: %s", raw)
+			}
+			// Field for field, because the block is a document a plan reads: the
+			// image is which revision serves, the url is the audience a member's
+			// run mints its ID token for, and the rest are the project, the
+			// database and the bundle the running revision was deployed with.
+			if got := *v.Service; got != recorded {
+				t.Errorf("the carried credentials_service = %+v, want the block the workdir held %+v: a run that deploys nothing moves no revision (the image) and takes no audience away (the url)", got, recorded)
+			}
+
+			out := g.out.String()
+			line := "the workspace's credentials service is not deployed: "
+			var said []string
+			for _, l := range strings.Split(out, "\n") {
+				if strings.HasPrefix(l, line) {
+					said = append(said, l)
+				}
+			}
+			if len(said) != 1 {
+				t.Errorf("the run printed the not-deployed line %d time(s), want one: a run deploys nothing once, and that one line is what tells the owner which state held it\n%s", len(said), out)
+			}
+			if len(said) == 1 && !strings.Contains(said[0], c.reason) {
+				t.Errorf("the not-deployed line does not carry this state's own reason (%q):\n%s", c.reason, said[0])
+			}
+			if applied := g.ri.ran(t, "apply"); len(applied) != 0 {
+				t.Errorf("a run that deploys nothing applied the workspace root: %q", applied)
+			}
+		})
+	}
+}
+
 // TestWorkspaceProjectStageNeverConfirmsByTheRunsOwnAnswer: what the stage
 // applies is an IAM GRANT, and the run's own answer covers no grant (spec §6) —
 // the typed word is the owner's. A coding agent's session is refused for the
