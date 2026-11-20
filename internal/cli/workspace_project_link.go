@@ -265,7 +265,7 @@ func workspaceLinkMember(sel localcfg.Selection, lc *localcfg.Config, what strin
 	}
 	pin := lc.WorkspacePin
 	if lc.Workspace == "" || pin.IsZero() {
-		return ref, userErr("this machine's config for %s joins no workspace: %s completes a membership that the member's OWN config states — the `workspace:` key and, beside it, the pin (the workspace's Firebase project, the issuer, the key it verifies, and the account that acts for it there), which `fugaro workspace add <workspace> …` writes (spec §2) — and this config states none. Nothing was done", lc.Name, what)
+		return ref, userErr("this machine's config for %s is not a member of any workspace: %s completes a membership that the member's OWN config states — the `workspace:` key and, beside it, the pin (the workspace's Firebase project, the issuer, the key it verifies, and the account that acts for it there), which `fugaro workspace add <workspace> …` writes (spec §2) — and this config states none. Nothing was done", lc.Name, what)
 	}
 	if lc.Name == pin.FirebaseProject {
 		return ref, userErr("this config is the workspace's own project and not a member's: %s is the workspace's own project, named after the workspace %s (D1290), and a workspace is not a member of itself. %s belongs on the machine that holds the MEMBER's own config; this one writes the workspace's member table instead (fugaro workspace project add <project>)", lc.Name, lc.Workspace, what)
@@ -335,7 +335,7 @@ func workspaceLinkPolicyReport(ctx context.Context, out io.Writer, deps workspac
 		fmt.Fprintf(out, "  now: %s hangs under %s, which carries %s\n", p, oneLine(parent), workspaceLinkOwners(owners))
 	}
 	fmt.Fprintf(out, "  after: they sit in the workspace's folder and carry its bindings: the workspace's admins hold an owner's authority over them (D2804), and the live binding names %s\n", workspaceLinkOwners(admins))
-	fmt.Fprintf(out, "  not read here: this machine has no reader for the ORGANIZATION policies either side applies — a key-creation ban, a domain restriction, an allowed-locations constraint — so they are named by neither side above, and linking cannot undo an inheritance it has changed (threat-model.md §7 item 10)\n")
+	fmt.Fprintf(out, "  not read here: this machine has no reader for the organization policies either side applies — a key-creation ban, a domain restriction, an allowed-locations constraint — so they are named by neither side above, and linking cannot undo an inheritance it has changed (threat-model.md §7 item 10)\n")
 	return nil
 }
 
