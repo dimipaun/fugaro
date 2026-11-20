@@ -75,7 +75,9 @@
         "paths": [
           "internal/creds/select.go",
           "internal/creds/select_provider_test.go",
-          "internal/credsvc/cascade.go"
+          "internal/credsvc/cascade.go",
+          "internal/creds/select_test.go",
+          "internal/credsvc/cascade_provider_test.go"
         ]
       }
     },
@@ -113,7 +115,9 @@
           "internal/gateway/service.go",
           "internal/runner/providers.go",
           "internal/runner/providerkey.go",
-          "internal/gateway/route_service_test.go"
+          "internal/gateway/route_service_test.go",
+          "internal/runner/poolchoice.go",
+          "internal/runner/providers_fact_test.go"
         ]
       }
     },
@@ -130,7 +134,13 @@
           "internal/config/providers.go",
           "internal/config/providers_auth_test.go",
           "internal/runner/routing.go",
-          "internal/cli/validate.go"
+          "internal/cli/validate.go",
+          "internal/cli/models_use.go",
+          "ee/ab/admit.go",
+          "internal/cli/docs_credentials_auth_list_test.go",
+          "internal/cli/docs_mixed_credentials_test.go",
+          "docs/design/mixed-credentials.md",
+          "docs/design/agent-env.md"
         ]
       }
     },
@@ -165,7 +175,8 @@
           "internal/runner/stage_account_test.go",
           "SECURITY.md",
           "website/content/security.md",
-          "internal/runner/agentenv.go"
+          "internal/runner/agentenv.go",
+          "internal/cli/docs_mixed_credentials_test.go"
         ]
       }
     },
@@ -190,7 +201,8 @@
           "internal/cli/accounts_add.go",
           "internal/cli/accounts_add_converge.go",
           "internal/cli/accounts_pool.go",
-          "internal/cli/creds.go"
+          "internal/cli/creds.go",
+          "internal/cli/recipes_skew.go"
         ]
       }
     },
@@ -209,7 +221,8 @@
           "internal/cli/init_stages.go",
           "internal/initflow/stage.go",
           "internal/cli/setup_refusals_test.go",
-          "internal/apply/steps.go"
+          "internal/apply/steps.go",
+          "internal/credsvc/dynamicsecrets.go"
         ]
       }
     },
@@ -232,7 +245,9 @@
           "docs/multi-model.md",
           "docs/credentials-service/runbook.md",
           "SECURITY.md",
-          "website/content/security.md"
+          "website/content/security.md",
+          "internal/cli/update_in_flight.go",
+          "docs/design/update-in-flight.md"
         ]
       }
     },
@@ -256,7 +271,14 @@
           "internal/config/providers.go",
           "deploy/terraform/terraform_test.go",
           "deploy/terraform/secret_readers_test.go",
-          "docs/secrets-brokering/secret-readers.md"
+          "docs/secrets-brokering/secret-readers.md",
+          "deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl",
+          "deploy/terraform/gcp/roots/repo/tests/testdata/*.tfvars.json",
+          "internal/infra/spec.go",
+          "internal/infra/readiness.go",
+          "internal/cli/update_mounts_gate.go",
+          "internal/cli/setup_refusals_test.go",
+          "deploy/terraform/proxied_git_test.go"
         ]
       }
     },
@@ -277,7 +299,10 @@
           "internal/cli/init_retire_test.go",
           "internal/cli/update_delete_keys_test.go",
           "internal/cli/update_converge_test.go",
-          "docs/design/config-transitions.md"
+          "docs/design/config-transitions.md",
+          "internal/cli/update_in_flight.go",
+          "docs/design/update-in-flight.md",
+          "docs/releases/*.md"
         ]
       }
     },
@@ -312,7 +337,8 @@
           "scripts/live-checks/check50*.sh",
           "scripts/live-checks/check780*.sh",
           "scripts/live-checks/check781*.sh",
-          "docs/gcp-live-checklist.md"
+          "docs/gcp-live-checklist.md",
+          "scripts/live_checks_test.go"
         ]
       }
     },
@@ -348,7 +374,25 @@
           "internal/localcfg/localcfg.go",
           "internal/infra/spec.go",
           "internal/cli/doctor_brokering.go",
-          "internal/cli/init_provider_served_test.go"
+          "internal/cli/init_provider_served_test.go",
+          "internal/infra/spec_provider_served_test.go"
+        ]
+      }
+    },
+    {
+      "id": "KS20",
+      "title": "Check 50's result is applied",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/select.go",
+          "internal/creds/select_provider_test.go",
+          "internal/cli/doctor.go",
+          "docs/gcp-live-checklist.md"
         ]
       }
     },
@@ -576,6 +620,31 @@
       "task": "I1",
       "needs": "KS19",
       "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "KS10",
+      "needs": "KS19",
+      "reason": "it reads the record KS19 writes"
+    },
+    {
+      "task": "KS10",
+      "needs": "KS6",
+      "reason": "both edit docs_mixed_credentials_test.go"
+    },
+    {
+      "task": "KS20",
+      "needs": "KS3",
+      "reason": "it edits the refusal KS3 narrows"
+    },
+    {
+      "task": "KS20",
+      "needs": "KS17",
+      "reason": "it records the result of the script KS17 writes; it also waits on the owner's run of Check 50"
+    },
+    {
+      "task": "I1",
+      "needs": "KS20",
+      "reason": "its second test asserts the result KS20 applied"
     }
   ],
   "decoupling": [

@@ -3,8 +3,9 @@
 Checked against `origin/main` at `45658d8a8` on 2026-11-19; the symbols review round 2 named were
 read again at `39344123a`. **Where this file disagrees with
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
-**D3000–D3012**, all answered by the owner (D3000–D3011 on 2026-11-19, D3012 on 2026-11-20;
-D3003–D3007 were added by review round 1, D3008–D3012 by round 2). **D3009 withdraws D3002 and D3004:** budget mode off is removed, under
+**D3000–D3015**, all answered by the owner (D3000–D3011 on 2026-11-19, D3012–D3015 on
+2026-11-20; D3003–D3007 were added by review round 1, D3008–D3012 by round 2, D3013–D3015 by
+round 3). **D3009 withdraws D3002 and D3004:** budget mode off is removed, under
 a spec of its own. It reverses **D1634** and **D1670**
 ([model crafts](../model-crafts/reconciliation.md)) and narrows the code behind **D150**
 ([credentials service](../credentials-service/reconciliation.md)); each is marked where it bites.
@@ -254,7 +255,8 @@ Only an installation with no database never mints.
 
 **F38 — Rule (the census taken for D3009).** Budget mode off is today's default and not an
 exception. `--budget-mode` defaults to unset, a setup with no `--firebase-project` builds no budget
-database, and the runner reads unset as off (`localcfg.BudgetMode`, `spendFromEnv`), though the
+database, and the runner reads unset as off (the local config's `BudgetMode` method, and
+`spendFromEnv` in `internal/runner/spend.go`), though the
 settings registry says unset means observe. About 32 Go files outside tests read the mode off,
 and `schemas/fugaro.schema.json` and `schemas/result.schema.json` list it. With a gateway running,
 a model with no price is refused at bootstrap, a provider model needs `enforce`, Vertex with
@@ -269,9 +271,50 @@ also needs `RoutingInertReason` (`internal/runner/routing.go`, `internal/cli/val
 tests that pin `CheckProviderAuth`. The refusal table's tests are `TestRefusalMatrix*`, and no
 gateway test matched `ProviderWire`. Consequence: each task as amended.
 
+**F40 — Wrong (review round 3), corrects D3000's consequence.** A Claude model routed through a
+provider works today on the mounted key: `doctor` only warns that its cost is unmeasured
+(`routingCacheMarkersUnmeasured`, `internal/cli/doctor.go`), and the one Check 50 refusal is the
+service's (`creds.checkCandidates`). Sending routed calls through the service would stop those
+runs in release A. Consequence: D3013, KS20.
+
+**F41 — Wrong (review round 3), corrects R10 and R12.** `ready` asked for less than R12's fact, so
+a mount could go while the gateway still fell back to it (a project with no allow-list). And a
+repository that never has a model mount, a Vertex one for instance, is never "ready", so D3012's
+stop as first written would stop every update. Consequence: KS13 and KS14 as amended.
+
+**F42 — Gap (review round 3).** With one Anthropic entry per repository, `narrowToRepoAuth` keeps
+every paid-tier candidate for an `api-key` repository, so one repository could be served
+another's key. Consequence: KS3 scopes it. An OAuth token belongs to an account that repositories
+share on purpose, and the bundle enters it by account name. Consequence: D3015.
+
+**F43 — Rule (review round 3).** Operators keep the right to add a version to a key's container
+until the container is deleted, and the copy follows a newer version. Consequence: D3014.
+
+**F44 — Gap (review round 3).** KS10 took the stage token away wherever the repository was ready,
+with nothing saying the deployed service could serve a stage account. Consequence: a second fact
+in C1, recorded by KS19.
+
+**F45 — Rule (review round 3).** The service takes a provider's address from the bundle entry
+(`providerRoute`). Nothing said it must never come from the call. Consequence: C1's rule and
+KS4's test.
+
+**F46 — Rule (review round 3).** `internal/credsvc/dynamicsecrets.go` states, as a rule of secrets
+brokering, that no value is ever copied from one store to the other. The copy of D3001 is the
+owner's exception to it. Consequence: KS12 amends the comment, and the independent security
+review of KS12 is asked to confirm the exception (O2).
+
+**F47 — Gap (review round 3): files and steps.** `internal/runner/poolchoice.go` reads a pool
+member's availability from the key in the environment (KS5). `CheckProviderAuth` is also called
+from `internal/cli/models_use.go` and `ee/ab/admit.go` and pinned by two documents tests (KS6).
+The mounts' variable also lives in the repository root's tests and fixtures and in
+`deploy/terraform/proxied_git_test.go` (KS14). `scripts/live_checks_test.go` lists every check
+script (KS17). The update's in-flight lines are counted under test (KS13, KS15). A deletion after
+a state removal passes no plan check, so it needs its own audit line (KS15). The review path's
+single `provider-key` entry (`reviewOfferings`) is left as it is.
+
 ## 4. Decisions
 
-All answered by the owner on 2026-11-19, D3012 on 2026-11-20.
+All answered by the owner on 2026-11-19, D3012 to D3015 on 2026-11-20.
 
 | # | Question | Answer | Mark |
 | --- | --- | --- | --- |
@@ -289,6 +332,9 @@ All answered by the owner on 2026-11-19, D3012 on 2026-11-20.
 | **D3010** | With off gone, does `observe` stay (F38)? | Yes. Two modes remain, and `fugaro update` rewrites off to `observe`, so no run starts being refused by a cap nobody chose | added by review round 2; as recommended |
 | **D3011** | Where does the removal of off live (F38)? | In a spec of its own, "always a budget", written next. This plan drops its budget-off tasks | added by review round 2; as recommended |
 | **D3012** | KS14 removes the Terraform that can mount a key. What does an update do where the owner's copy never ran, given D3006? | The update stops before the Terraform step, changes nothing, and says a project owner must run `fugaro update` once. Every repository keeps running on its mounts | added by review round 2; as recommended |
+| **D3013** | A Claude model through a provider works on the mount today and would stop in release A (F40). What then? | **The owner runs Check 50 before release A is cut**, and its result decides the gate | added by review round 3; **not the recommendation** (which was to serve it with today's warning) |
+| **D3014** | An operator can still add a version to a key's container, and the copy follows it (F43). Which wins until the containers are deleted? | The copy follows the newer version and prints one line naming the container. Owner-only becomes fully true when the containers are deleted | added by review round 3; as recommended |
+| **D3015** | Does D3008 reach an account's OAuth token (F42)? | No. A token stays entered once under its account's name; D3008 applies to Anthropic and provider keys | added by review round 3; as recommended; **it narrows D3008** |
 
 **What D3007 means here, and what it leaves open.** In this plan: a provider model may be pinned
 under every auth the service serves, and no check ties a provider key to a repository's auth mode
@@ -322,9 +368,11 @@ plan. It is O4, for the owner.
 - **R4. The copy.** *(Amended by review round 1.)* `fugaro update` gains one stage, after the stage
   that deploys the service, that for each model key the installation holds outside the bundle
   reads the newest version and writes it into the bundle, through the existing guard for an older
-  service (F22). A provider key goes under R2's name. A repository's own Anthropic key or OAuth
-  token goes under an entry that carries the repository, and the repository's record names it
-  (D3008). It holds the value only in memory and prints none of it. It is
+  service (F22). A provider key goes under R2's name. A repository's own Anthropic key goes under
+  an entry that carries the repository, which the service derives from the run's verified
+  repository as it does a provider's (D3008). An account's OAuth token goes under the account's
+  name, as today (D3015). Each entry the copy writes carries the container and version it came
+  from; when a container holds a newer one, the copy follows it and names it in one line (D3014). It holds the value only in memory and prints none of it. It is
   idempotent; it copies again when a container holds a newer version than the one it copied; it
   never overwrites a bundle entry it did not write without saying so. It runs only for a project
   owner: an operator's update skips it and says who must run it (D3006). It asks nothing.
@@ -347,15 +395,15 @@ plan. It is O4, for the owner.
   is not launched while a task of workspace service or secrets brokering that edits the same file
   is live, and whichever lands second rebases. The files are `internal/credsvc/cascade.go`,
   `forward.go` and `server.go`, `internal/gateway/service.go` and `gateway.go`,
-  `internal/runner/gateway.go` and `budget_session.go`, `internal/cli/creds.go`,
+  `internal/cli/creds.go`,
   `internal/config/providers.go`, `SECURITY.md`, the rules file, `secret-readers.md`,
   `deploy/terraform/terraform_test.go` and `modules/project`. No plan waits for another as a whole.
 - **R9. The stage account goes through the service.** The mixed variant's second account is
   selected by the service like any named account, through the gateway, so the runner holds no
   token for it (F6).
 - **R10. One switch for every auth but Vertex.** *(Amended by review rounds 1 and 2: F19, F30,
-  D3009.)* In release B (KS13) `ready` comes to mean that the bundle holds every key the
-  repository needs, the provider entries included, and a ready repository mounts no model key.
+  D3009; round 3: F41.)* In release B (KS13) `ready` comes to mean R12's facts in full, and a
+  ready repository mounts no model key.
   `CredentialsServiceServes` keeps its budget-mode argument in this plan; the plan that removes
   the mode removes the argument (R13).
 - **R11. The service checks the route itself.** The service builds the provider routes from the
@@ -369,7 +417,8 @@ plan. It is O4, for the owner.
   job is planned from the record, as the switch is. A run whose job carries the fact sends a routed
   call through the service; any other run uses its mounted key as today. Release A's `ready` does
   not change, so no switched repository is turned off. A launcher that sets the fact falsely gains
-  nothing: the service still refuses a credential it does not hold for that repository.
+  nothing: the service still refuses a credential it does not hold for that repository. A second
+  fact of the same kind, "the stage account is served", gates KS10 (F44).
 - **R13. A budget-off repository waits for the other plan.** *(Review round 2: D3009, D3011.)*
   Until "always a budget" lands, a repository in budget mode off, and an installation with no
   budget database, keep their mounted keys through both releases, as today, and
@@ -405,6 +454,12 @@ One tension was found and settled: D3006 (an operator's update keeps the mounts)
 - **O8.** D3008 multiplies the bundle's entries by the repositories that share a key, and rotating
   a shared key becomes one write per repository. `fugaro creds set` takes the repositories to
   write in one command (KS2), and KS1's worst case is counted that way (U5).
+- **O10.** D3013 puts an owner-run live check in front of release A. Until Check 50 is run and KS20
+  merged, release A cannot be cut, whatever else is ready.
+- **O11.** Review round 3's fixes are the last commit and were not reviewed again; the skill's cap
+  is three rounds.
+- **O12.** The graph cannot say that KS1 and KS19 wait for C1 (they build its other sides). A
+  launcher follows the plan's levels table.
 - **O9.** KS14 and KS15 wait on a plan that does not exist yet (R13). If "always a budget" is not
   written or not approved, release B stops after KS13 and KS11: no ready repository mounts a model
   key, and the Terraform that could mount one stays.
