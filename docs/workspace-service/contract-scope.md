@@ -91,8 +91,17 @@ constructor and gets either the workspace's resolver or a refusal, never a nil.
    is typed as it — a selection reads the six methods and never the record — so a route passes
    `scope.State()` straight to a selection, and an implementation that has to cast back to `creds.Store`
    or write an adapter supplying `RepoAuth` is a change request against this contract and not a local
-   workaround. The service holds no write on any member at all, which is a property of this split and
-   not a promise about it.
+   workaround. **The one call site that reads the record is WS1's to move, and it is named here
+   because the types do not cover it**: `cascade.go` reads it today as
+   `s.cfg.State.RepoAuth(ctx, id.Slug)`, and `Config.State` stays the wide `creds.Store` (`server.go`,
+   which also builds `creds.Selector` from it) — so in a workspace-mode process that line answers out
+   of the workspace's own database, and `narrowToRepoAuth`'s reading of an absent record is exactly
+   the failure this rule describes. WS1 changes that line to read `Scope.RepoAuth()`, the caller's
+   reader, and leaves `Config.State` wide so the installation's own store goes on answering the state
+   and the record. **WS1's acceptance names the scope's readers and not this call site, and its two
+   tests pass whichever database the record is read from**, so this sentence is what holds it until
+   the route reads through the scope. The service holds no write on any member at all, which is a
+   property of this split and not a promise about it.
 
 3. **The repository table is the caller's, and it is where R19 lands (R6, D2992, R19, F28).** An
    installation's table is every repository it serves. A workspace's holds the repositories of the
@@ -211,6 +220,10 @@ refusals are the stub's, and I1 deletes them.
   route this service has and `AcceptsSlip` true, which is today's behaviour; `Meter()` nil; `RepoAuth()`
   answered from its own database, which is where its own `fugaro update` wrote every record; and
   `Bitbucket()` answered with the legacy selector where its configuration wired no store (rule 10). It
+  also **moves the one read of the auth record to the scope**: `cascade.go`'s
+  `s.cfg.State.RepoAuth(ctx, id.Slug)` becomes a read through `Scope.RepoAuth()`, while `Config.State`
+  stays the wide `creds.Store` it is today, so the installation's own store goes on answering the state
+  and the record and no route reads the record through a state handle (rule 2). It
   may not read the scope's readers before the resolver has answered a scope, and it may not reach a
   `Config` field a route is supposed to take from the scope.
 - **The workspace's scope (WS2)** may rely on: the `MemberCall` `Workspace.Verify` produced as the one
