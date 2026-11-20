@@ -184,6 +184,7 @@ Subcommands:
 - `fugaro accounts add` -- Declare a named Claude account and the repositories its token may be used by
 - `fugaro accounts alias` -- Point a name at one named Claude account, so the keys naming it choose that account
 - `fugaro accounts allow` -- Add repositories to a named Claude account's allow-list (claude_accounts.NAME.allow_data_to)
+- `fugaro accounts cascade` -- State the credentials cascade this installation publishes to its project
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
 - `fugaro accounts craft` -- Point a craft at the credential or pool its calls go out on
 - `fugaro accounts deny` -- Remove repositories from a named Claude account's allow-list
@@ -415,6 +416,95 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for allow |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts cascade`
+
+State the credentials cascade this installation publishes to its project
+
+State what a run does when the credential it is calling with is exhausted.
+
+The cascade is the project's own policy and every run of the project reads it off
+the published node: it decides whether a run waits for the shared Claude token's
+reset and spends nothing, and what it does when the wait is longer than the
+project allows.
+
+`fugaro accounts cascade set` writes it in this installation's own config, under
+`credential_cascade`. Silence there keeps whatever the published node holds, and a
+member written here is what the next publish carries to it: nothing a member is
+set to reaches a run until the project's policy is published, which `fugaro update`
+does.
+
+Usage: `fugaro accounts cascade`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for cascade |
+
+Subcommands:
+
+- `fugaro accounts cascade set` -- Write the cascade's members in this installation's own config
+
+## `fugaro accounts cascade set`
+
+Write the cascade's members in this installation's own config
+
+Write credential_cascade.<member> in this installation's own config. A member
+left out keeps what the file already holds, so one flag changes one member and
+touches nothing else: every comment and every other byte of the file are kept.
+
+--fallback is the paid fallback, and it has two values (D152):
+
+  oauth-only  a run waits for the shared token's reset and never spends the
+              project's money. This is what an absent member means.
+  auto        a run whose credential is exhausted falls over to the project's
+              Anthropic API key and, where the third tier is on, to that one —
+              so this is the value that spends paid tiers, and the published
+              node admits it only where the budget enforces a per-run ceiling
+              above zero. Write the ceiling first, or the publish that carries
+              this value to the node is refused.
+
+--wait-threshold is how long a run waits for an exhausted credential's reset
+before failing over (15m by default, and ignored under oauth-only, where there
+is nothing to fail over to). --backoff-initial and --backoff-cap are the wait a
+credential is held for when its exhaustion came with no reset time: the first
+wait and the longest the doubling reaches (15m and 5h by default; a cap below
+the first wait is refused).
+
+--stop-after-exhaustion-per-window=false lets a run go on spending on a
+credential which has exhausted its window, and --concurrency-per-token=0 is no
+cap at all on how many runs may hold one shared credential. Both defaults are
+the protective answers (true and 1), so these two flags are spelled with their
+value in the flag's own word.
+
+The three members whose value moves the cascade the wider way — auto, false and
+0 — are the owner's own step, so a coding agent's session is refused them
+whatever the managed gate answers (D2617). Run this at your own terminal.
+
+--layer picks the layer the write lands in. The cascade is this installation's
+own statement of the project's policy, and a launcher who could write it into a
+shared file would be choosing everyone's spending, so the only layer it has is
+local; --layer with any other layer is refused naming the one it does have.
+
+Usage: `fugaro accounts cascade set [--fallback oauth-only|auto] [--wait-threshold DUR] [--backoff-initial DUR] [--backoff-cap DUR] [--stop-after-exhaustion-per-window=BOOL] [--concurrency-per-token N]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--backoff-cap` | string | "" | no | the longest that wait doubles to (a duration; default 5h, and a cap below the first wait is refused) |
+| `--backoff-initial` | string | "" | no | the first wait for a credential whose exhaustion came with no reset time (a duration; default 15m) |
+| `--concurrency-per-token` | int | `0` | no | how many runs may hold one shared credential at a time (default 1; 0 is no cap at all) |
+| `--fallback` | string | "" | no | the paid fallback: oauth-only (a run waits for the shared token's reset and never spends the project's money) or auto (a run falls over to the paid tiers, which spends it) |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--layer` | string | "" | no | the layer to write (local, project, repo); the cascade is this installation's own config, so local is the layer it has |
+| `--stop-after-exhaustion-per-window` | bool | `true` | no | stop the runs that need a credential which has exhausted its window (the default; --stop-after-exhaustion-per-window=false lets them spend past it) |
+| `--wait-threshold` | string | "" | no | how long a run waits for an exhausted credential's reset before failing over (a duration: 30m, 2h; default 15m, and ignored under oauth-only) |
 
 Subcommands:
 
