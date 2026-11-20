@@ -34,7 +34,8 @@
           "internal/runner/policy.go",
           "internal/runner/budget_session.go",
           "internal/runner/projectpolicy.go",
-          "internal/runner/budget_always_test.go"
+          "internal/runner/budget_always_test.go",
+          "internal/e2e/cloud_test.go"
         ]
       }
     },
@@ -97,6 +98,7 @@
           "internal/cli/init.go",
           "internal/cli/exec.go",
           "internal/cli/settings_cloud.go",
+          "website/content/cli-reference.md",
           "internal/cli/budget_always_cli_test.go"
         ]
       }
@@ -137,25 +139,6 @@
       }
     },
     {
-      "id": "AB6",
-      "title": "the backend's Terraform is unconditional",
-      "run": null,
-      "version": null,
-      "tier": "medium",
-      "size": 2,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "deploy/terraform/gcp/modules/installation/*.tf",
-          "deploy/terraform/gcp/roots/installation/main.tf",
-          "deploy/terraform/gcp/roots/installation/variables.tf",
-          "deploy/terraform/gcp/roots/installation/tests/*.tftest.hcl",
-          "internal/infra/tfvars.go",
-          "deploy/terraform/terraform_test.go"
-        ]
-      }
-    },
-    {
       "id": "AB7",
       "title": "fugaro update creates the database",
       "run": null,
@@ -170,6 +153,8 @@
           "internal/cli/init.go",
           "internal/cli/init_new_machine.go",
           "internal/cli/setup.go",
+          "internal/cli/init_images.go",
+          "internal/cli/init_review.go",
           "internal/infra/firebase.go",
           "internal/cli/setup_refusals_test.go",
           "internal/cli/init_firebase_always_test.go",
@@ -300,7 +285,9 @@
           "plugin/skills/setup/reference/decisions.md",
           "plugin/skills/setup/SKILL.md",
           "website/content/security.md",
-          "SECURITY.md"
+          "SECURITY.md",
+          "internal/cli/docs_security_test.go",
+          "docs/go-to-market/security-check.md"
         ]
       }
     },
@@ -341,6 +328,7 @@
           "internal/cli/init_credentials.go",
           "internal/cli/doctor_brokering.go",
           "internal/cli/run.go",
+          "internal/cli/budget_stops.go",
           "internal/infra/readiness_switch_test.go"
         ]
       }
@@ -356,6 +344,7 @@
         "prediction": true,
         "paths": [
           "internal/policy/policy.go",
+          "internal/policy/craft.go",
           "internal/config/config.go",
           "internal/localcfg/localcfg.go",
           "internal/cli/budget_always_end_to_end_test.go"
@@ -442,11 +431,6 @@
       "reason": "the refusal's fix must be able to build the database"
     },
     {
-      "task": "AB6",
-      "needs": "AB7",
-      "reason": "the resources may be unconditional only once the update builds the database"
-    },
-    {
       "task": "AB8b",
       "needs": "AB7",
       "reason": "both edit init_stages.go"
@@ -468,8 +452,18 @@
     },
     {
       "task": "AB13",
-      "needs": "AB7",
-      "reason": "the skill may name only flags the CLI takes"
+      "needs": "AB3",
+      "reason": "the skill may stop naming the flag value only once the CLI refuses it"
+    },
+    {
+      "task": "AB13",
+      "needs": "AB1b",
+      "reason": "the security statements become true only then"
+    },
+    {
+      "task": "AB15",
+      "needs": "AB8b",
+      "reason": "both edit budget_stops.go"
     },
     {
       "task": "AB15",
@@ -528,11 +522,6 @@
     },
     {
       "task": "I1",
-      "needs": "AB6",
-      "reason": "the end-to-end test needs it"
-    },
-    {
-      "task": "I1",
       "needs": "AB7",
       "reason": "the end-to-end test needs it"
     },
@@ -560,6 +549,21 @@
       "task": "I1",
       "needs": "AB8b",
       "reason": "the end-to-end test needs it"
+    },
+    {
+      "task": "I1",
+      "needs": "AB12",
+      "reason": "the release window closes at I1, so it merges first"
+    },
+    {
+      "task": "I1",
+      "needs": "AB13",
+      "reason": "the release window closes at I1, so it merges first"
+    },
+    {
+      "task": "I1",
+      "needs": "AB14",
+      "reason": "the release window closes at I1, so it merges first"
     },
     {
       "task": "R-mode-text",

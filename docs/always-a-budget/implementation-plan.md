@@ -9,10 +9,12 @@ lands on it (D3010); a model with no price is refused in every mode (D3020, not 
 recommendation); every Cloud Batch launch is refused with a stated reason (D3021); a repository's
 `fugaro.yaml` that says off is rejected at once (D3022, not the recommendation); one release, with
 the stop it brings accepted (D3023, not the recommendation); a database's own mode stands (D3024);
-the policy node keeps its version (D3025, not the recommendation).
+the policy node keeps its version (D3025, not the recommendation); no rule is written in terms of
+a repository's auth, and retiring that setting is a spec of its own (D3026, the owner's own
+answer). **AB6 is dropped** (F28); its number is not reused.
 
 **It ships in one release** (R1). No CLI release, a hotfix included, is cut from `main` between the
-first merge of a level 1 task and I1.
+merge of AB7 and I1.
 
 **What a user meets after the upgrade**, each with its fix in the refusal: an installation with no
 budget database launches nothing until a project owner runs `fugaro update`; a second machine
@@ -21,7 +23,7 @@ launches nothing until `fugaro update` is run for it.
 
 ## 1. Conventions every task follows
 
-Point, don't restate: `CLAUDE.md`, `.claude/rules/terraform.md` (AB5, AB6, AB7, AB15),
+Point, don't restate: `CLAUDE.md`, `.claude/rules/terraform.md` (AB5, AB7, AB15),
 `.claude/rules/credentials-service.md` (AB15), `docs/no-prompt-policy/`,
 `docs/design/update-in-flight.md`.
 
@@ -31,9 +33,10 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/terraform.md` (AB5, AB6, AB7, 
   refusal table (`TestRefusalMatrix*`), `internal/apply/steps.go` and the in-flight lines.
 - **Until I1.** Every task leaves `policy.ModeOff` and its aliases compiling. A task stops reading
   the mode; it does not delete the constant. I1 deletes it, and fails to build if a reader is left.
-- **Existing tests.** A task changes the existing tests its change makes false, in the packages it
-  edits, and they count as its files. It finds them by running, before its own filter,
-  `go test <its packages> -run 'Off|Budget|Mode|Gateway' -count=1`.
+- **Existing tests.** A task changes every existing test its change makes false, in whatever
+  package, and they count as its files. It finds them by running, beside its own filter,
+  `go test ./internal/... ./ee/... -run 'Off|Budget|Mode|Gateway|Mint|CliReference' -count=1`.
+  The ones already known are named in the task.
 - **Ask first.** A new dependency; a change to the contract's files (§7).
 - **Never.** A confirmation step; an edit under `.github/workflows/`; a secret-shaped literal; a
   live cloud call from a test or an agent; a second database where one exists.
@@ -44,17 +47,16 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/terraform.md` (AB5, AB6, AB7, 
 
 | Constraint | Pinned by |
 | --- | --- |
-| No run puts a model key in the agent's own environment | AB1b `TestNoRunPutsTheKeyInTheAgentsEnvironment` |
+| No run puts an API key in the agent's own environment for want of a gateway. An `oauth` run the credentials service does not serve is unchanged (D3026, R12) | AB1b `TestNoAPIKeyRunPutsTheKeyInTheAgentsEnvironment`, `TestAnOAuthRunIsUnchanged` |
 | Unset means observe in the local config, the job and the run | AB2 `TestUnsetModeIsObserve`; AB5 `TestTheJobAlwaysNamesItsMode`; AB1a `TestTheRunReadsUnsetAsObserve` |
-| `off` is accepted nowhere, and each refusal names the fix | AB2 `TestOffIsRefusedWithTheFix`; AB7 `TestBudgetModeOffFlagIsRefused` |
+| `off` is accepted nowhere, and each refusal names the fix | AB2 `TestOffIsRefusedWithTheFix`; AB3 `TestBudgetModeOffFlagIsRefused` |
 | An update never builds a second database, and never adopts one outside the installation's own project | AB7 `TestADatabaseUnknownHereIsAdopted`, `TestAStateNamingAForeignProjectIsNotAdopted` |
 | An update that cannot create the database leaves the cloud as it was and says who must run it | AB7 `TestAnUpdateThatCannotCreateTheDatabaseSaysWhoMust` |
-| A launch that cannot have an identity is refused by the launcher, with the fix, never by a runner | AB4 `TestALaunchWithNoDatabaseIsRefusedWithTheFix`, `TestALaunchOnAJobThatPredatesTheDatabaseIsRefused` |
+| A launch by this release's CLI that cannot have an identity is refused by the launcher, with the fix, never by a runner | AB4 `TestALaunchWithNoDatabaseIsRefusedWithTheFix`, `TestALaunchOnAJobThatPredatesTheDatabaseIsRefused` |
 | A local config or a policy that says off still loads for the update that rewrites it | AB8a `TestAnOffNodeStillLoadsForTheMigration`; AB8b `TestAnOffLocalConfigStillLoadsForTheMigration` |
-| No resource of an installation that has the backend is destroyed | AB6 `TestAnInstallationWithTheBackendPlansNoDestroy` |
 | The update names what will stop before it changes anything | AB8b `TestTheUpdateNamesWhatWillStopFirst` |
-| A run that started with the budget off finishes across the update | I1 `TestUpdateLeavesABudgetOffRunRunning` |
-| An installation at the previous release, with no database and mode off, converges through `fugaro update` alone | I1 `TestUpdateConvergesABudgetOffInstallation` |
+| A run that started with the budget off finishes across the update | I1 `TestUpdateLeavesARunStartedWithoutABudgetRunning` |
+| An installation at the previous release, with no database and mode off, converges through `fugaro update` alone | I1 `TestUpdateConvergesAnInstallationThatHadNoBudget` |
 | Old records that say off still read | AB11 `TestAnOldRecordWithModeOffStillValidates` |
 | The policy node is migrated in place and stays readable by a version 10 reader | AB8a `TestThePolicyMigrationRewritesOffInPlace`, `TestAMigratedNodeIsAValidVersion10Node` |
 
@@ -78,7 +80,7 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/terraform.md` (AB5, AB6, AB7, 
 
 ## 4. Slices and tasks
 
-**Slice 1, the database everywhere:** AB7, AB6. **Slice 2, the vocabulary:** AB2, AB3, AB11.
+**Slice 1, the database everywhere:** AB7. **Slice 2, the vocabulary:** AB2, AB3, AB11.
 **Slice 3, every run has a gateway:** AB1a, AB1b, AB4, AB5, AB15. **Slice 4, the migration:** AB8a,
 AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, AB14.
 **Integration:** I1.
@@ -90,7 +92,8 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
   for that repository); observe and enforce behave as today.
 - Files: `internal/runner/spend.go`, `internal/runner/policy.go`,
   `internal/runner/budget_session.go`, `internal/runner/projectpolicy.go`,
-  `internal/runner/budget_always_test.go` (new).
+  `internal/runner/budget_always_test.go` (new), `internal/e2e/cloud_test.go` (it runs the binary
+  with no mode and no database, which becomes a refusal).
 - Interfaces: consumes C1.
 - Tests: `TestTheRunReadsUnsetAsObserve`, `TestEveryRunOpensItsSession`,
   `TestARunWithNoDatabaseIsRefusedWithTheFix`.
@@ -101,8 +104,10 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 - Reviewer tier: opus, mandatory independent review.
 
 ### AB1b: the gateway always runs
-- Acceptance: `runner.GatewayOn` no longer reads the mode, and every cloud run starts its gateway;
-  `agent.BuildEnv` has no arm that puts a model key in the agent's environment;
+- Acceptance: `runner.GatewayOn` no longer reads the mode, and every cloud run that has a gateway
+  under observe today has one always; `agent.BuildEnv` has no arm that puts an API key in the
+  agent's environment for want of a gateway; its `oauth` arm and `OAuthStageEnv` are unchanged
+  (D3026, R12);
   `serviceSwitchModeRefusal`, the review-class refusal and the compression refusal for a missing
   gateway are deleted (F15); `VertexBudgetRefusal` names observe only (F11).
 - Files: `internal/runner/routing.go`, `internal/runner/gateway.go`, `internal/runner/runner.go`,
@@ -111,9 +116,10 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
   `internal/agent/env_always_test.go` (new). It is past five files because one predicate has that
   many readers.
 - Interfaces: none new.
-- Tests: `TestEveryCloudRunStartsItsGateway`, `TestNoRunPutsTheKeyInTheAgentsEnvironment`,
-  `TestTheVertexRefusalNamesObserveOnly`.
-- Command: `go test ./internal/runner/ -run 'EveryCloudRunStartsItsGateway|TheVertexRefusalNames|Routing' -count=1 && go test ./internal/agent/ -run 'NoRunPutsTheKey|Env' -count=1` (the first test is in the runner's new file, the second in the agent's).
+- Tests: `TestTheGatewayNoLongerReadsTheMode`, `TestTheVertexRefusalNamesObserveOnly` (the
+  runner's new file); `TestNoAPIKeyRunPutsTheKeyInTheAgentsEnvironment`, `TestAnOAuthRunIsUnchanged`
+  (the agent's new file).
+- Command: `go test ./internal/runner/ -run 'TheGatewayNoLongerReadsTheMode|TheVertexRefusalNames|Routing' -count=1 && go test ./internal/agent/ -run 'NoAPIKeyRunPutsTheKey|AnOAuthRunIsUnchanged|Env' -count=1`.
 - Red step: a run with an unset mode puts the key in the agent's environment.
 - Depends on: AB1a (kept, behaviour: the gateway needs the session).
 - Commit: `runner: the gateway always runs (AB1b, D3009, F15)`.
@@ -132,11 +138,10 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 - Interfaces: builds C1's other side (the validation).
 - Tests: `TestOffIsRefusedWithTheFix`, `TestUnsetModeIsObserve`,
   `TestTheRepositorySchemaListsTwoModes`, `TestAnEmptyModeIsNotOffForTheProviderCheck`.
-- Command: `go test ./internal/policy/ ./internal/localcfg/ ./internal/config/ -run 'OffIsRefusedWithTheFix|UnsetModeIsObserve|TheRepositorySchemaLists|AnEmptyModeIsNotOff|Schema' -count=1`.
+- Command: `go test ./internal/policy/ ./internal/localcfg/ ./internal/config/ -run 'OffIsRefusedWithTheFix|UnsetModeIsObserve|TheRepositorySchemaLists|AnEmptyModeIsNotOff|Schema' -count=1 && go test ./internal/projectpolicy/ -run AnOffNodeStillLoads -count=1 && go test ./internal/cli/ -run AnOffLocalConfigStillLoads -count=1`. The last two were written by AB8a and AB8b while off still validated; this task is where they would go red, and it runs them. Known tests in other packages that use off as a valid mode, and are this task's to change: in `internal/cli`, `project_policy_test.go`, `launch_budget_test.go`, `init_firebase_test.go` and `policy_record_test.go`; in `internal/runner`, `routing_internal_test.go`.
 - Red step: `ValidMode("off")` is true.
 - Depends on: AB8a and AB8b (kept, behaviour: validation may refuse the old word only once the
-  update can load and rewrite a config or a node that says it, F22). Through them it follows C1
-  and AB7.
+  update can load and rewrite a config or a node that says it, F22). It starts after C1 merges.
 - Commit: `policy: off is no longer a budget mode (AB2, D3009, D3022)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -148,13 +153,14 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 - Files: `internal/cli/validate.go`,
   `internal/cli/doctor.go`, `internal/cli/doctor_brokering.go`, `internal/cli/budget.go`,
   `internal/cli/init.go`, `internal/cli/exec.go`, `internal/cli/settings_cloud.go`,
+  `website/content/cli-reference.md` (the flag's help changes),
   `internal/cli/budget_always_cli_test.go` (new). It is past five files because the mode has that
   many readers in the CLI.
 - Interfaces: consumes C1.
 - Tests: `TestValidatePricesEveryMode`, `TestDoctorNamesWhatAlwaysABudgetStops`,
   `TestBudgetCommandRefusesTheOldWord`, `TestBudgetModeOffFlagIsRefused`,
   `TestDoctorNamesAPublishedPolicyThatSaysOff`.
-- Command: `go test ./internal/cli/ -run 'ValidatePricesEveryMode|DoctorNamesWhatAlwaysABudget|BudgetCommandRefusesTheOldWord|BudgetModeOffFlag|DoctorNamesAPublishedPolicy' -count=1`.
+- Command: `go test ./internal/cli/ -run 'ValidatePricesEveryMode|DoctorNamesWhatAlwaysABudget|BudgetCommandRefusesTheOldWord|BudgetModeOffFlag|DoctorNamesAPublishedPolicy|CliReferenceNames' -count=1 && go test ./ee/clidoc/ -run CliReferenceIsCurrent -count=1`.
 - Red step: `validate` skips the price rules for an unset mode.
 - Depends on: C1; AB7 (kept: both edit `init.go`); AB8b (kept: `doctor` prints the helper AB8b
   writes).
@@ -194,28 +200,6 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 - Commit: `infra: every job names its budget mode (AB5, R3, R6)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### AB6: the backend's Terraform is unconditional
-- Acceptance: `var.enable_budget` and every `count` and condition on it are gone from
-  `modules/installation` and from the installation root that passes it down; each resource whose
-  `count` goes has a `moved` block from its old address, so an installation that has the backend
-  plans no destroy (F23); the Go that sets the variable is gone; an installation applied with it
-  false converges with no destroy of anything it holds.
-- Files: `deploy/terraform/gcp/modules/installation/variables.tf`, `apis.tf`, `bucket.tf`,
-  `history.tf`, `coordinator.tf` and `outputs.tf` beside it,
-  `deploy/terraform/gcp/roots/installation/main.tf`, `variables.tf` and its
-  `tests/installation.tftest.hcl` and `tests/licence.tftest.hcl`, `internal/infra/tfvars.go`,
-  `deploy/terraform/terraform_test.go`, the golden plans. It is past five files because one
-  variable gates that many resources.
-- Interfaces: none.
-- Tests: `TestInstallationModuleHasNoBudgetSwitch`, `TestAnInstallationWithoutTheBackendConverges`,
-  `TestAnInstallationWithTheBackendPlansNoDestroy`.
-- Command: `go test ./deploy/terraform/ -count=1 && go test ./internal/infra/ -run Tfvars -count=1 && terraform fmt -check -recursive deploy/terraform`, and every check `.claude/rules/terraform.md` lists for a module change.
-- Red step: the module still declares the variable.
-- Depends on: AB7 (kept, behaviour: the resources may be unconditional only once the update
-  builds the database they need).
-- Commit: `terraform: the budget backend is unconditional (AB6, F3)`.
-- Reviewer tier: opus, mandatory independent review.
-
 ### AB7: `fugaro update` creates the database
 - Acceptance: the Firebase stage runs with no flag, on `setup` and `update`, in the installation's
   own project; it first probes for a database that exists and is unknown on this machine, by the
@@ -224,18 +208,24 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
   project's IAM changes; if so it creates the database in observe and records it; if not, or the
   project has no billing, the stage is skipped with one line saying who must run `fugaro update`
   or that billing must be linked, and the rest of the update carries on (R2); under the managed
-  gate the stage only adopts (R11, U5); `--firebase-project` keeps its one accepted value; the
-  stage asks nothing new.
+  gate the stage only adopts (R11, U5); before it creates, it lists the project's databases, so a
+  deleted state never leads to a second one (F32); the stages that were skipped with the flag run
+  with the database: the second installation stage, which deploys the history job and the shared
+  project jobs, the history image's mirror and the budget admins' review (F29); the variable
+  `enable_budget` is set once the database exists, as today; `--firebase-project` keeps its one
+  accepted value; the stage asks nothing new.
 - Files: `internal/cli/init_stages.go`, `internal/cli/init_firebase.go`, `internal/cli/init.go`,
-  `internal/cli/init_new_machine.go`, `internal/cli/setup.go`, `internal/infra/firebase.go`,
+  `internal/cli/init_new_machine.go`, `internal/cli/setup.go`, `internal/cli/init_images.go`,
+  `internal/cli/init_review.go`, `internal/infra/firebase.go`,
   `internal/cli/setup_refusals_test.go`, `internal/cli/init_firebase_always_test.go` (new),
   `website/content/cli-reference.md`. It is past five files for the stage's censuses.
 - Interfaces: none new.
 - Tests: `TestUpdateCreatesTheDatabaseWithNoFlag`, `TestADatabaseUnknownHereIsAdopted`,
   `TestAStateNamingAForeignProjectIsNotAdopted`,
   `TestAnUpdateThatCannotCreateTheDatabaseSaysWhoMust`, `TestAManagedProjectOnlyAdopts`,
-  `TestTheNewDatabaseStartsInObserve`.
-- Command: `go test ./internal/cli/ -run 'UpdateCreatesTheDatabase|ADatabaseUnknownHere|AStateNamingAForeignProject|AnUpdateThatCannotCreate|AManagedProjectOnlyAdopts|TheNewDatabaseStarts|RefusalMatrix|CliReferenceNames' -count=1`.
+  `TestTheNewDatabaseStartsInObserve`, `TestADeletedStateDoesNotLeadToASecondDatabase`,
+  `TestTheStagesBehindTheFlagRunWithTheDatabase`.
+- Command: `go test ./internal/cli/ -run 'UpdateCreatesTheDatabase|ADatabaseUnknownHere|AStateNamingAForeignProject|AnUpdateThatCannotCreate|AManagedProjectOnlyAdopts|TheNewDatabaseStarts|ADeletedStateDoesNotLead|TheStagesBehindTheFlag|RefusalMatrix|CliReferenceNames' -count=1 && go test ./ee/clidoc/ -run CliReferenceIsCurrent -count=1`.
 - Red step: an update with no flag skips the stage with "no --firebase-project given".
 - Depends on: none.
 - Commit: `update: the budget database is created on every installation (AB7, R2, F3)`.
@@ -330,8 +320,8 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 
 ### AB12: the documents and the operator notes
 - Acceptance: `README.md`, `docs/how-to/budgets.md`, `docs/design/m9-budget-and-dashboard.md`,
-  `docs/design/v1.md`, `docs/multi-model.md` and Check 47's row no longer present off as a mode or
-  as a rollback; the release notes' `### For operators` is "run `fugaro update`" and what it will
+  `docs/design/v1.md`, `docs/multi-model.md` and every row of the live checklist that presents off
+  (Check 47's budget-off variant among them) no longer present it as a mode or as a rollback; the release notes' `### For operators` is "run `fugaro update`" and what it will
   say: that it creates the budget database (about two dollars a month at the design's estimate,
   billing required), which repositories will stop and why, that a project owner must run it where
   an operator cannot, and that Cloud Batch can launch nothing.
@@ -341,7 +331,7 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 - Interfaces: none.
 - Tests: the Docs filter.
 - Command: `go test ./internal/cli/ -run Docs -count=1`.
-- Red step: a documents test that pins a sentence about off fails until its pin moves (U3).
+- Red step: `git grep -n 'budget-mode off' -- README.md docs/how-to` still finds the rollback.
 - Depends on: AB2 (kept: the statements become true only then); AB14 (kept: both edit
   `gcp-live-checklist.md`).
 - Commit: `docs: there is always a budget (AB12, F17, F18)`.
@@ -349,15 +339,20 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 
 ### AB13: the plugin and the website
 - Acceptance: `plugin/skills/setup/reference/decisions.md` no longer offers off, and the setup
-  skill says the budget database is built by setup; `website/content/security.md` no longer
-  describes a run without the gateway; the plugin's and the website's own tests pass.
+  skill says the budget database is built by setup; `SECURITY.md` and
+  `website/content/security.md` no longer say that budget mode defaults to off or describe a run
+  with the budget off, and say which runs still have no gateway (R12); the two sentences
+  `docs_security_test.go` pins move with their pins, and `docs/go-to-market/security-check.md`,
+  which quotes one, follows; the plugin's and the website's own tests pass.
 - Files: `plugin/skills/setup/reference/decisions.md`, `plugin/skills/setup/SKILL.md`,
-  `website/content/security.md`, `SECURITY.md` where it says the same.
+  `website/content/security.md`, `SECURITY.md`, `internal/cli/docs_security_test.go`,
+  `docs/go-to-market/security-check.md`. It is past five files for the pinned sentences.
 - Interfaces: none.
 - Tests: the plugin's tests; `npm run check` in `website/`; `go test ./internal/cli/ -run SecurityMd`.
 - Command: `go test ./plugin/... -count=1 && go test ./internal/cli/ -run 'SecurityMd|Docs' -count=1 && (cd website && npm run check)`.
 - Red step: the plugin's test finds the skill naming `--budget-mode off`, which the CLI refuses.
-- Depends on: AB7 (kept: the skill may name only flags the CLI takes).
+- Depends on: AB3 (kept, behaviour: the skill may stop naming `--budget-mode off` only once the
+  CLI refuses it); AB1b (kept, behaviour: the security statements become true only then).
 - Commit: `plugin, website: there is always a budget (AB13, F17)`.
 - Reviewer tier: opus, mandatory independent review (a plugin skill and `SECURITY.md`).
 
@@ -382,18 +377,20 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 - Acceptance: `infra.CredentialsServiceServes` no longer takes the budget mode, and its callers
   follow; the record of the switch comes out the same for every repository that was in observe or
   enforce; a repository that was in off now passes the switch where its bundle is ready, so its
-  next apply moves its model key to the service, as for every other repository (F26), and R8's
-  listing names it.
+  next apply moves its model key to the service, as for every other repository (F26), and this
+  task adds that line to R8's helper.
 - Files: `internal/infra/readiness.go`, `internal/infra/spec.go`, `internal/infra/spec_test.go`,
   `internal/cli/init_credentials.go`, `internal/cli/doctor_brokering.go`, `internal/cli/run.go`,
-  `internal/infra/readiness_switch_test.go` (new).
+  `internal/cli/budget_stops.go`, `internal/infra/readiness_switch_test.go` (new). It is past five
+  files because the function has that many callers.
 - Interfaces: none.
-- Tests: `TestTheSwitchNoLongerReadsTheMode`, `TestTheSwitchRecordIsUnchangedForObserveAndEnforce`;
+- Tests: `TestTheSwitchNoLongerReadsTheMode`, `TestTheSwitchRecordIsUnchangedForObserveAndEnforce`,
+  `TestTheUpdateNamesAKeyThatWillMoveToTheService`;
   the existing `TestServesNoAPIKeyOrOAuthWithBudgetOff` is removed with the case it held.
-- Command: `go build ./... && go test ./internal/infra/ -run 'TheSwitchNoLongerReadsTheMode|Serves' -count=1 && go test ./internal/cli/ -run 'TheSwitchRecordIsUnchanged' -count=1`.
+- Command: `go build ./... && go test ./internal/infra/ -run 'TheSwitchNoLongerReadsTheMode|Serves' -count=1 && go test ./internal/cli/ -run 'TheSwitchRecordIsUnchanged|TheUpdateNamesAKeyThatWillMove' -count=1`.
 - Red step: the function still has four parameters.
 - Depends on: AB5 (kept: both edit `infra/spec.go` and `readiness.go`); AB3 (kept: both edit
-  `doctor_brokering.go`); AB1b (kept, behaviour: the switch may ignore the mode only once every
+  `doctor_brokering.go`); AB8b (kept: both edit `budget_stops.go`); AB1b (kept, behaviour: the switch may ignore the mode only once every
   run has the gateway).
 - Commit: `infra: the credentials switch no longer reads the budget mode (AB15, F15)`.
 - Reviewer tier: opus, mandatory independent review.
@@ -406,16 +403,18 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
   policy and the local config say observe, the run in flight finishes, and a new run has a gateway
   and no key in the agent's environment.
 - Files: `internal/policy/policy.go`, `internal/config/config.go`, `internal/localcfg/localcfg.go`,
+  `internal/policy/craft.go` (a comment that names the constant),
   `internal/cli/budget_always_end_to_end_test.go` (new), and every test file that still names a
-  deleted constant (21 at this reading), each moved to the literal or deleted with the case it
-  held. It is past five files, and every such change is one line.
+  deleted constant as a word (11 at this reading), each moved to the literal or deleted with the
+  case it held. It is past five files, and every such change is one line.
 - Interfaces: consumes every side of C1.
-- Tests: `TestUpdateConvergesABudgetOffInstallation`, `TestUpdateLeavesABudgetOffRunRunning`,
+- Tests: `TestUpdateConvergesAnInstallationThatHadNoBudget`, `TestUpdateLeavesARunStartedWithoutABudgetRunning`,
   `TestNoCodeReadsTheRemovedMode`.
-- Command: `go build ./... && go vet ./... && git grep -n -E 'ModeOff|BudgetOff' -- '*.go'` (which must print nothing) `&& go test ./internal/cli/ -run 'UpdateConvergesABudgetOffInstallation|UpdateLeavesABudgetOffRunRunning' -count=1 && go test ./internal/policy/ -run NoCodeReadsTheRemovedMode -count=1`.
+- Command: `go build ./... && go vet ./... && ! git grep -n -w -E 'ModeOff|BudgetOff' -- '*.go' && go test ./internal/cli/ -run 'UpdateConvergesAnInstallationThatHadNoBudget|UpdateLeavesARunStartedWithoutABudget' -count=1 && go test ./internal/policy/ -run NoCodeReadsTheRemovedMode -count=1`.
 - Red step: the build fails on a reader of the deleted constant.
-- Depends on: C1 and every side of an edge it broke: AB2, AB1a, AB3, AB4, AB5, AB10; and AB1b,
-  AB6, AB7, AB8a, AB8b, AB9, AB11, AB15 (kept, behaviour: the end-to-end test needs them all).
+- Depends on: C1 and every side of an edge it broke: AB2, AB1a, AB3, AB4, AB5, AB10; AB1b, AB7,
+  AB8a, AB8b, AB9, AB11 and AB15 (kept, behaviour: the end-to-end test needs them all); AB12, AB13
+  and AB14 (kept: R1's window closes at I1, so the notes, the skill and the checks merge first).
 - Commit: `budget: off is gone end to end (I1, D3009)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -428,25 +427,26 @@ The decoupling pass is on (`planning.decoupling` is `true` for this repository).
 | Level | Tasks |
 | --- | --- |
 | 0 | C1, AB7, AB14 |
-| 1 | AB1a, AB4, AB5, AB6, AB8a, AB8b, AB10, AB13 |
+| 1 | AB1a, AB4, AB5, AB8a, AB8b, AB10 |
 | 2 | AB1b, AB2, AB3, AB9, AB11 |
-| 3 | AB12, AB15 |
+| 3 | AB12, AB13, AB15 |
 | 4 | I1 |
 
-**Critical path.** The graph read reports `critical path (5 tasks): AB7 -> AB8b -> AB3 -> AB15 -> I1`, and `gain: 5 broken, 16 kept, 3 added; before 6 tasks, weight 15; after 5 tasks, weight 12; improves`.
+**Critical path.** The graph read reports `critical path (5 tasks): AB7 -> AB8b -> AB2 -> AB12 -> I1`, and `gain: 5 broken, 17 kept, 3 added; before 6 tasks, weight 15; after 5 tasks, weight 12; improves`.
 
-**Where the graph and this table differ.** AB8a and AB8b read C1's names, and the graph format
-lets a task point at a contract only where the contract broke one of its edges. Theirs to AB2
-would be a cycle, since AB2 follows them, so they carry no edge to C1 in the graph and read there
-as ready at once. They are not: each starts after C1 merges.
+**Where the graph and this table differ.** AB8a and AB8b read C1's names, and AB2 builds its other
+side. The graph tool refuses an edge to a contract from a task that has no decoupling entry, and
+none of the three has one: AB8a and AB8b never waited on AB2 (AB2 waits on them). So the graph
+shows AB8a as ready at once and AB2 and AB8b as waiting only on other tasks. All three start after
+C1 merges.
 
 **Edges broken by C1 and rejoined in I1.** AB1a, AB3, AB4, AB5 and AB10 after AB2: each needs to
 know what a mode string means, not the validation's code.
 
 **Edges kept.** Each is stated in its task: behaviour (AB1b after AB1a; AB2 after AB8a and AB8b;
-AB3 after AB8b, whose helper it prints; AB4, AB6 and AB13 after AB7; AB9 after AB4; AB11 after
-AB1a; AB12 after AB2; AB15 after AB1b; I1 after the rest) and a shared file (AB3 and AB8b after
-AB7; AB12 after AB14; AB15 after AB3 and AB5).
+AB3 after AB8b, whose helper it prints; AB4 after AB7; AB9 after AB4; AB11 after AB1a; AB12 after
+AB2; AB13 after AB3 and AB1b; AB15 after AB1b; I1 after the rest) and a shared file (AB3 and AB8b
+after AB7; AB12 after AB14; AB15 after AB3, AB5 and AB8b).
 
 **Shared files.** No level holds two writers of one file.
 
@@ -464,9 +464,11 @@ AB7; AB12 after AB14; AB15 after AB3 and AB5).
 | `internal/cli/launch_budget.go`, `chain_continues.go`, `orchestrator_serve.go`, `craft.go` | AB4 (1) |
 | `internal/infra/spec.go`, `readiness.go` | AB5 (1), AB15 (3) |
 | `internal/infra/projectjobs.go` | AB5 (1) |
-| `internal/infra/tfvars.go`, `modules/installation/*.tf`, `roots/installation/*`, `deploy/terraform/terraform_test.go` | AB6 (1) |
 | `internal/cli/init_stages.go` | AB7 (0), AB8b (1) |
-| `internal/cli/init_firebase.go`, `init_new_machine.go`, `setup.go`, `setup_refusals_test.go`, `internal/infra/firebase.go`, `website/content/cli-reference.md` | AB7 (0) |
+| `internal/cli/init_firebase.go`, `init_new_machine.go`, `setup.go`, `init_images.go`, `init_review.go`, `setup_refusals_test.go`, `internal/infra/firebase.go` | AB7 (0) |
+| `website/content/cli-reference.md` | AB7 (0), AB3 (2) |
+| `internal/cli/budget_stops.go` | AB8b (1), AB15 (3) |
+| `internal/e2e/cloud_test.go` | AB1a (1) |
 | `internal/projectpolicy/migrate.go`, `policy.go`, `internal/cli/init_policy_migrate.go`, `project_cmd.go` | AB8a (1) |
 | `internal/cli/init_fugaroyaml.go`, `update_in_flight.go`, `docs/design/update-in-flight.md`, `internal/apply/steps.go` | AB8b (1) |
 | `internal/cli/init_credentials.go`, `run.go`, `internal/infra/spec_test.go` | AB15 (3) |
@@ -474,7 +476,7 @@ AB7; AB12 after AB14; AB15 after AB3 and AB5).
 | `ee/ab/admit.go`, `ee/coordinator/cli/declare.go` | AB10 (1) |
 | `internal/settings/registry.go`, `schemas/settings.schema.json`, `schemas/result.schema.json` | AB11 (2) |
 | `docs/gcp-live-checklist.md` | AB14 (0), AB12 (3) |
-| `website/content/security.md`, `SECURITY.md`, the setup skill | AB13 (1) |
+| `website/content/security.md`, `SECURITY.md`, `internal/cli/docs_security_test.go`, `docs/go-to-market/security-check.md`, the setup skill | AB13 (3) |
 | test files that name the deleted constants | their package's task, then I1 (4) |
 
 R10 lists the files the keys plan also writes.
@@ -483,10 +485,10 @@ R10 lists the files the keys plan also writes.
 
 As `fugaro plan graph --plan docs/always-a-budget/implementation-plan.md` printed it:
 
-`ready in 375–1500 min, no history yet for 20 tasks (20 tasks; seeds for 20; from the seeds: no history is cached on this machine yet)`
+`ready in 375–1500 min, no history yet for 19 tasks (19 tasks; seeds for 19; from the seeds: no history is cached on this machine yet)`
 
 It is informational and reserves no budget: it is what the tasks' tiers and this machine's history
-predict, and it moves as runs finish. The graph counts one node more than this plan's 19 runs: the
+predict, and it moves as runs finish. The graph counts one node more than this plan's 18 runs: the
 contract change of §7, which runs only if raised.
 
 ## 7. Contract changes anticipated
@@ -526,6 +528,12 @@ AB12's release notes say what the update prints.
   owner chose rejection at once.
 - **A carrier for the token on Cloud Batch, or removing the Batch backend** (D3021's other
   options).
+- **Removing the Terraform switch for the budget backend** (AB6, dropped): it would create project
+  IAM on every apply of the installation root, outside the update's probe, and move the addresses
+  of resources that exist (F28). The switch is set once the database exists, as today.
+- **A rule for `oauth` repositories the credentials service does not serve** (both options of
+  D3026): the owner wants no rule in terms of a repository's auth, and that setting retired under
+  its own spec (R12).
 - **Two releases, the database first** (the recommendation of D3023): the owner chose one release
   and accepted the stop.
 - **Lowering a database's mode to observe where a local config said off** (D3024's other option).
