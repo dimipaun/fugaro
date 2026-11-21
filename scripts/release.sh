@@ -86,9 +86,6 @@ cd "$repo_root"
 # The names that are the owner's own installation, refused by the precondition
 # below and by scripts/release-rehearsal.sh's own guard.
 . scripts/belong.sh
-# The one reading of "this is a coding agent's session", refused by the
-# precondition below.
-. scripts/agent-session.sh
 # The rule scripts/verify-release.sh holds a patch tag's own commits to, run in
 # run_hotfix while the branch is still a branch (scripts/hotfix-commits.sh).
 . scripts/hotfix-commits.sh
@@ -845,31 +842,6 @@ fi
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker is not on PATH, and the release's last step, scripts/verify-release.sh, pulls the images the release published (images/verify-public.sh) to prove they can be read without a login: install docker, then re-run \"$rerun\"" >&2
   exit 1
-fi
-
-# A coding agent's session cuts no release, on either path: it is checked here
-# with the other preconditions, ahead of the --hotfix branch below as well as of
-# the ordinary steps, so the refusal lands before the bump PR is opened, before
-# anything is pushed and before the tag: a refusal that landed after those would
-# leave the version bump merged to main with no tag on it, which is the half of
-# a release nobody can undo. --hotfix is the same release by another door
-# (release/X.Y, then a permanent tag), so a refusal that covered only the
-# ordinary path would leave the skill's own "the same command with --hotfix" a
-# way around it. The reading is scripts/agent-session.sh's
-# (internal/agentenv's markers). The pre-tag rehearsal at step 4 is not what
-# this fence is for, and holds no fence of its own: it builds in the sandbox
-# project only and tags nothing, so an agent's session may run it by hand
-# (scripts/release-rehearsal.sh, the owner's ruling of 2026-11-19) while the
-# release that would call it stays the person's. --dry-run is not refused: it
-# creates nothing outside its own scratch worktree and removes that however it
-# ends, which is exactly what the skill has an agent run, and --hotfix --dry-run
-# is covered by the same exemption.
-if [ "$dry_run" = 0 ]; then
-  agent_marker=$(agent_session_marker)
-  if [ -n "$agent_marker" ]; then
-    echo "$agent_marker says this is a coding agent's session, and a release is the person's to make: the pull request it opens merges the version bump to main and the tag it cuts is permanent, so an agent's session does neither. Nothing has been pushed, opened or merged. Run it at your own terminal — \"$rerun\" — or hand that command to the person. (The markers are internal/agentenv's: a courtesy against accidents, not a barrier — D1590.)" >&2
-    exit 1
-  fi
 fi
 
 # --hotfix is the other path from here: it owns every step from the branch on,
