@@ -585,6 +585,11 @@ func boundaryResolvedIntoDir(baseDir, p, dirName string) bool {
 	return resolved == dirName || strings.HasPrefix(resolved, dirName+"/")
 }
 
+// consoleDirLiteralRE is the literal floor: "console/" as its own path segment.
+// A name that merely ends in it -- docs/desktop-console/spec.md is a spec
+// folder, not the module's console directory -- is another directory.
+var consoleDirLiteralRE = regexp.MustCompile(`(^|[^A-Za-z0-9_-])` + consoleDirName + `/`)
+
 // consoleBoundaryMention reports whether a Go file mentions a path under the
 // module root's console directory -- the (a3) question, asked of one file.
 //
@@ -604,7 +609,7 @@ func boundaryResolvedIntoDir(baseDir, p, dirName string) bool {
 // quoted literals instead, since a broken fixture is exactly the kind of file
 // that would otherwise carry a reference past every check.
 func consoleBoundaryMention(file, src string) bool {
-	if strings.Contains(src, consoleDirName+"/") {
+	if consoleDirLiteralRE.MatchString(src) {
 		return true
 	}
 	f, err := parser.ParseFile(token.NewFileSet(), file, src, parser.ParseComments|parser.SkipObjectResolution)
