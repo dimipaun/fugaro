@@ -793,9 +793,10 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 			// present its own identity on is a run the service cannot serve
 			// at all. The metadata server is the only place the job's ID
 			// token comes from and the run's own token is the only identity
-			// the service verifies it by, so this is a halt -- like an
-			// unreachable service -- rather than one 502 per call until the
-			// stage's deadline. Nothing was sent: nothing to charge.
+			// the service verifies it by, so this is a halt -- where an
+			// unreachable service is waited for first, this one no wait can
+			// fix -- rather than one 502 per call until the stage's deadline.
+			// Nothing was sent: nothing to charge.
 			s.haltService(w, stateDetailUnidentified)
 			return zeroOutcome(p.model, false), false
 		}
@@ -1016,15 +1017,14 @@ var upstreamRetryDelay = 250 * time.Millisecond
 // the one answer it gives this gateway, and a service that cannot be reached at
 // all is the run's wait rather than a call this gateway sends again (D2983,
 // service.go's serviceUnreachable: the stage in flight ends, the runner waits
-// for the bound and resumes it, and a call that meets the spent bound halts the
-// run). That is the service's
-// calls and not the upstream's kind: a route the job holds the key for sits
-// beside the same service upstream (R6, D1634), such a call is the provider's
-// own and no one else's, and it is retried here exactly as it is beside the
-// Anthropic upstream — direct says which of the two this call is, because only
-// the caller holds the route. A SERVED route is the service's own call and not
-// one of these (KS5, R1/R12): it went to the service's provider route, and the
-// retry above is the service's there too.
+// for the bound and resumes it, and the call that meets the spent bound halts
+// the run). That is the service's calls and not the upstream's kind: a route
+// the job holds the key for sits beside the same service upstream (R6, D1634),
+// such a call is the provider's own and no one else's, and it is retried here
+// exactly as it is beside the Anthropic upstream — direct says which of the two
+// this call is, because only the caller holds the route. A SERVED route is the
+// service's own call and not one of these (KS5, R1/R12): it went to the
+// service's provider route, and the retry above is the service's there too.
 //
 // What the narrow form costs, stated: the first attempt may have reached an
 // upstream that then generated and answered nothing, and this gateway read no

@@ -1448,8 +1448,9 @@ func (s *Server) noteServiceReached() {
 // serviceUnreachableBound is how long a run waits for a credentials service it
 // cannot reach before it halts, naming the service (D2983). One constant covers
 // both services — an outage is a fact about the service and not about the route
-// that met it — and it is the bound gitforward.go's own retry uses too, because
-// the git paths have no stage to wait in (WS18).
+// that met it — and it is the bound gitforward.go's own retry is to reuse when
+// WS18 lands, because the git paths have no stage to wait in and would otherwise
+// spend a second one.
 //
 // What it is chosen for: it rides out what a service actually does (a revision
 // rollout, a cold start, a scale-to-zero revision waking, IAM propagation on a
