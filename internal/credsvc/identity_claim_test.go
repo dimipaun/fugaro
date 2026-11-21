@@ -649,34 +649,76 @@ func TestClaimRevalidatesTheRecord(t *testing.T) {
 }
 
 // TestClaimChecksTheRecordTheStoreReturns: the record the FENCE answers is the
-// record this service signs. The fence is one atomic step on the node and not a
-// lock over the handler's two calls, and the store answers the record as it
-// stands after the call — so a record that moved between the read and the fence
-// (LM1's Put, R6) is the one a signing off the returned record would use. What
-// is signed has to be what was checked: the claims are held to the path again
-// against the record the fence returned, and a record whose claims name another
-// run is refused with one line, before the signer is even built.
+// record this service signs, and it is held to every check the handler's own
+// read was. The fence is one atomic step on the node and not a lock over the
+// handler's two calls, and the store answers the record as it stands after the
+// call — so a record that moved between the read and the fence (LM1's Put
+// replaces one at the same path, R6) is the one a signing off the returned
+// record would use, while the fence itself is bound to the path and the claim
+// and to nothing else (C1's IssuanceStore.Claim is handed neither the ticket
+// nor the account this handler checked).
+//
+// Each case below is a field of the record the read answered replaced under the
+// claim, and each one alone is enough for the signature to be wrong: claims
+// naming another run sign an identity this run is not; a ticket the launcher
+// issued afterwards signs for a ticket that was killed (and burns the new one);
+// another expected account signs a job's identity for the account that was
+// meant to be refused; a record past its life signs a ticket that had expired
+// by the time the fence answered. Every one is refused with one line and
+// nothing signed.
 func TestClaimChecksTheRecordTheStoreReturns(t *testing.T) {
-	f := newClaimFixture(t)
-	ticket, _ := f.issued(t)
-	// The record as the fence sees it: replaced under this run's path by claims
-	// that name another run, which is the shape a database admin's own write has.
-	f.issuance.moved = func(rec *identitywire.Record) { rec.Claims.Run = otherRun() }
+	for _, tc := range []struct {
+		name  string
+		moved func(*testing.T, *claimFixture, *identitywire.Record)
+	}{
+		{
+			name: "the claims name another run",
+			moved: func(_ *testing.T, _ *claimFixture, rec *identitywire.Record) {
+				rec.Claims.Run = otherRun()
+			},
+		},
+		{
+			name: "the launcher issued a later ticket",
+			moved: func(t *testing.T, f *claimFixture, rec *identitywire.Record) {
+				rec.TicketHash = identitywire.Digest(f.ticket(t, f.slug, f.run))
+			},
+		},
+		{
+			name: "the launch named another job account",
+			moved: func(_ *testing.T, _ *claimFixture, rec *identitywire.Record) {
+				rec.ExpectedAccount = testOtherSA
+			},
+		},
+		{
+			name: "the record is past the ticket's life",
+			moved: func(_ *testing.T, _ *claimFixture, rec *identitywire.Record) {
+				rec.At = rec.At.Add(-2 * identityTicketLife)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newClaimFixture(t)
+			ticket, _ := f.issued(t)
+			f.issuance.moved = func(rec *identitywire.Record) { tc.moved(t, f, rec) }
 
-	resp, body := f.claimCall(t, identityClaimBody(t, ticket, testNonce))
-	wantRefusal(t, resp, body, StatusUnverified, identitywire.RefusalIdentityRefused)
+			resp, body := f.claimCall(t, identityClaimBody(t, ticket, testNonce))
+			wantRefusal(t, resp, body, StatusUnverified, identitywire.RefusalIdentityRefused)
 
-	lines := f.identityLines(t)
-	if len(lines) != 1 {
-		t.Fatalf("the refusal wrote %d audit lines, want exactly one", len(lines))
-	}
-	wantIdentityLine(t, lines[0], f.run, f.slug, ErrorUnverifiedRunIdentity)
-	f.wantNothingSigned(t)
-	// The fence WAS taken before the record was signed, as it is for the claims
-	// that fail R4: the run is refused and the ticket is spent, which is the
-	// state the run halts on.
-	if held := f.issuance.record(t, f.slug, f.run); held.Claimed.NonceHash != identitywire.Digest(testNonce) {
-		t.Errorf("the record's claim is %+v, want the fence taken before the record was signed", held.Claimed)
+			lines := f.identityLines(t)
+			if len(lines) != 1 {
+				t.Fatalf("the refusal wrote %d audit lines, want exactly one", len(lines))
+			}
+			wantIdentityLine(t, lines[0], f.run, f.slug, ErrorUnverifiedRunIdentity)
+			f.wantNothingSigned(t)
+			// The fence WAS taken before the record was signed, as it is for the
+			// claims that fail R4: the run is refused and the ticket is spent,
+			// which is the state the run halts on. Refusing this before the
+			// fence would need Claim to be handed the ticket and the account it
+			// was checked against, which is C1's interface and not this route's.
+			if held := f.issuance.record(t, f.slug, f.run); held.Claimed.NonceHash != identitywire.Digest(testNonce) {
+				t.Errorf("the record's claim is %+v, want the fence taken before the record was signed", held.Claimed)
+			}
+		})
 	}
 }
 

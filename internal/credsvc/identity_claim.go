@@ -363,15 +363,32 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 	// record this service signs: the fence is one atomic step on the node and not
 	// a lock over this handler's two calls, so what it returned is not necessarily
 	// the record the read above answered — LM1's Put replaces a record at the same
-	// path (R6). So the claims are held to the path again here, against the record
-	// the fence returned and not the one that was read, because the uid this
-	// service signs is derived from the record's path (R3) and a record that moved
-	// under the claim must not be signed into a token whose claims name another
-	// run. It is refused the way the store's own two decisions above are: the
-	// record is not the one this claim read, so the run has to be launched again.
-	if claimed.Claims.Slug != slug || claimed.Claims.Run != run {
+	// path (R6). And the fence is bound to that path and to the claim and to
+	// nothing else (C1's IssuanceStore.Claim is handed the path and the claim, and
+	// none of what this handler checked), so a record the ticket route replaced
+	// between the read and the fence is claimed and answered whatever it holds.
+	//
+	// The record the fence returned is therefore held to the checks the read was,
+	// field by field: the ticket the caller presented is still the record's, the
+	// caller is still the account the launch named, the ticket is inside its life,
+	// and the claims still name this run — the uid this service signs is derived
+	// from the record's path (R3). Without the first three, a record re-issued
+	// under the claim (a new ticket, a new account, a later launch) would be
+	// signed for the killed ticket that asked for it, which is R5's hole with the
+	// store's own writer as the cause. A record that fails any of them is refused
+	// the way the store's own two decisions above are: it is not the record this
+	// claim read, so the run has to be launched again.
+	//
+	// The fence was taken by then, so the ticket it claimed is spent and the run
+	// relaunches rather than retrying. Refusing this BEFORE the fence is what
+	// binding Claim to the ticket it was checked against would do, and that is
+	// C1's interface rather than this route's.
+	if claimed.TicketHash != identitywire.Digest(req.Ticket) ||
+		!strings.EqualFold(account, claimed.ExpectedAccount) ||
+		!now.Before(claimed.At.Add(identityTicketLife)) ||
+		claimed.Claims.Slug != slug || claimed.Claims.Run != run {
 		s.refuseIdentityCall(ctx, w, run, slug, StatusUnverified, identitywire.RefusalIdentityRefused,
-			"the record's claims are not this run's: the record was replaced under the claim, and the uid this service signs is derived from the record's path, so the run must be launched again")
+			"the run's issuance record is not the one this claim read: it was replaced under the claim, so the ticket, the account it expects or the claims it holds are not the ones this claim was checked against, and the run must be launched again")
 		return
 	}
 	signer, err := identitySignerFor(ctx, s.cfg.Identity.Signer)
