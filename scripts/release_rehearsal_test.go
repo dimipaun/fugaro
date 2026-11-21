@@ -95,9 +95,8 @@ func requireNoRehearsalCalls(t *testing.T, r *releaseRepo) {
 // back. The owner's ruling of 2026-11-19 is why: `run` builds in the sandbox
 // project only (guard_project) and tags nothing, so a session that runs it can
 // spoil nothing outward-facing. What stays the person's is the release around
-// it, and scripts/release.sh refuses a coding agent's session in its own
-// preconditions (TestReleaseRefusesToCutTheTagInACodingAgentsSession): from a
-// release this build is still the person's to run, by hand it is anybody's.
+// it, and scripts/release.sh no longer refuses a coding agent's session either
+// (TestReleaseRunsInACodingAgentsSession, the owner's order of 2026-11-21).
 //
 // The CLI's own gate is not such a fence either: it admits a coding agent's
 // session whose plan it admitted and prints AgentProceeded there
@@ -370,52 +369,22 @@ func TestReleaseRefusesTheTagOnARedRehearsal(t *testing.T) {
 	requireNoTag(t, r, res)
 }
 
-// TestReleaseRefusesToCutTheTagInACodingAgentsSession: an agent's session cuts
-// no release, and release.sh refuses it in its PRECONDITIONS -- ahead of the
-// release branch, the pull request, the merge and the tag. An agent that
-// followed the new-release skill that far would otherwise have put the version
-// bump on main with no tag -- the half of the release nobody can undo -- so the
-// test pins that nothing outward-facing happened at all: no branch on origin, no
-// pull request, no merge, main where it was, and not even the fake CLI called.
-//
-// The refusal is this script's, and it is the only fence on the path: the
-// rehearsal it runs at step 4 holds none (the owner's ruling of 2026-11-19, and
-// TestReleaseRehearsalRunsInACodingAgentsSession above), so an agent that calls
-// scripts/release-rehearsal.sh by hand is admitted and this is what keeps the
-// release itself the person's.
-func TestReleaseRefusesToCutTheTagInACodingAgentsSession(t *testing.T) {
+// TestReleaseRunsInACodingAgentsSession: the owner's order of 2026-11-21 removed
+// the refusal of a coding agent's session ("Remove the guard"; the release is
+// not the person's alone). A session that carries an agent's marker cuts the
+// tag the same as any other, and it builds the rehearsal once.
+func TestReleaseRunsInACodingAgentsSession(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("CLAUDECODE=1")
-	main := testutil.Git(t, r.bare, "rev-parse", "main")
 
 	res := runRelease(t, r, g, "", "0.12.0")
+	res.requireSuccess(t)
 
-	res.requireFailureContaining(t, "CLAUDECODE says this is a coding agent's session")
-	requireNoTag(t, r, res)
-	requireNoRehearsalCalls(t, r)
-	if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
-		t.Error("an agent's session left a record behind: the tag gate would then read it as a build that happened")
+	if !refExists(t, r.bare, "refs/tags/v0.12.0") {
+		t.Errorf("a coding agent's session did not reach the tag:\n%s", res.out)
 	}
-	if refExists(t, r.bare, "refs/heads/release/v0.12.0") {
-		t.Error("an agent's session pushed the release branch: the refusal is a precondition, ahead of the branch")
-	}
-	if n := countLog(t, g, "pr create"); n != 0 {
-		t.Errorf("an agent's session opened %d pull request(s): the refusal is ahead of the pull request", n)
-	}
-	if n := countLog(t, g, "pr merge"); n != 0 {
-		t.Errorf("an agent's session asked for %d merge(s): that is the version bump on main with no tag", n)
-	}
-	if now := testutil.Git(t, r.bare, "rev-parse", "main"); now != main {
-		t.Errorf("main moved from %s to %s in an agent's session:\n%s", main, now, res.out)
-	}
-
-	// --dry-run is the one thing an agent's session may run, and the refusal
-	// must not take it away: it creates nothing outside its own scratch
-	// worktree, which it removes however it ends.
-	dry := runRelease(t, r, g, "", "0.12.0", "--dry-run")
-	dry.requireSuccess(t)
-	if !strings.Contains(dry.out, "Dry run for v0.12.0") {
-		t.Errorf("--dry-run must still pass in a coding agent's session:\n%s", dry.out)
+	if calls := fugaroCalls(t, r); len(calls) != 1 {
+		t.Errorf("the release made %d catalog builds, want exactly one:\n%v", len(calls), calls)
 	}
 }
 
