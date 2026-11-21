@@ -13,8 +13,8 @@ This spec predates the folder layout. Its documents lived in `docs/design/` unti
 | File | What it is | Was |
 | --- | --- | --- |
 | [spec.md](spec.md) | The spec, as received (no typo fixed) | `docs/design/managed-flag-ergonomics.md` |
-| [reconciliation.md](reconciliation.md) | Findings F1–F19, the answers to D2211–D2219 and D3160, tension TN1 (ruled), resolutions R1–R9, Checks 860–861, UNVERIFIED. **Where it disagrees with spec.md, it wins** | new |
-| [implementation-plan.md](implementation-plan.md) | Tasks T0–T7 (with T2a, T2b and T2c) in five levels, critical path, shared files. Nothing in it is approved | new |
+| [reconciliation.md](reconciliation.md) | Findings F1–F19, the answers to D2211–D2219 and D3160 (open item: confirm D3160, amended after review), tension TN1 (ruled), resolutions R1–R10, Checks 860–861, UNVERIFIED. **Where it disagrees with spec.md, it wins** | new |
+| [implementation-plan.md](implementation-plan.md) | Twelve tasks (T0, T1, T2a–c, T3, T4, T5, T6, T7a–c) in six levels, critical path, shared files. Nothing in it is approved | new |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it | new |
 
 **The owner's principle, 2026-11-21:** Fugaro deals only with managed projects. Every command that writes to a project stops on an unmanaged one and names `fugaro managed flag` (D2217, TN1).

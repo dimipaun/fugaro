@@ -75,7 +75,7 @@ So once T2a creates an alert by default, every plain `update` plans its deletion
 
 **F16 — Wrong (found in round 2): `update`'s managed hook runs after the converge.** `selfFlagUnmanaged` is called from `internal/cli/init_stages.go`, "reached only by a run whose stages all succeeded". A stop that writes nothing has to sit at the head of the engine, before the first cloud write and before the local config is rewritten. T3 places it there.
 
-**F17 — Gap (found in round 2): `addCloudFlags` does not find every writing command.** `fugaro apply` registers its own `--config` and `--project` (`internal/cli/apply.go`), and other commands may open their clients some other way. A classification walk keyed on `addCloudFlags` would miss them. So T7 walks every runnable command in the tree. The fence itself sits in `openCloud` and `openCloudFor` (`internal/cli/cloud.go`), keyed on the command's annotation. Any command that writes without going through them is wired directly, and the run counts those (U3).
+**F17 — Gap (found in round 2): `addCloudFlags` does not find every writing command.** `fugaro apply` registers its own `--config` and `--project` (`internal/cli/apply.go`), and other commands may open their clients some other way. A classification walk keyed on `addCloudFlags` would miss them. So T7a walks every runnable command in the tree. The fence itself sits in `openCloud` and `openCloudFor` (`internal/cli/cloud.go`), keyed on the command's annotation. Any command that writes without going through them is wired directly, and the run counts those (U3).
 
 **F18 — Gap (found in round 2): a rewrite could replace a recorded currency.** Under D2211, `--budget 200` with no currency would take USD over a recorded EUR. Resolved as R6.
 
@@ -95,9 +95,9 @@ The spec reserved D2210–D2219. D2210 was answered in the spec; D2211–D2214 a
 | **D2215** | Can a later explicit `--budget` change a recorded amount? (F7) | Yes, on `update` (managed installations) and `managed flag`, conditioned on the read generation, printing old and new amounts. A default never overwrites | **2026-11-21: as recommended.** Amended after review, which leaves the intent unchanged: the rewrite stands behind the same agent-session and run-process refusals as the marking (the fences in `update_selfflag.go` sit after the early return the rewrite would use), and it accepts marker versions 2–4 (F15). |
 | **D2216** | Where does `--billing-account` come from on a creating run? (F6) | It defaults to the linked account (`--link-billing` or the wizard's pick). With none, record the amount and print the one command that adds the alert | **2026-11-21: as recommended.** It relies on R5: without the carry, the next update would plan the alert's deletion. |
 | **D2217** | How far does "any project we touch must be managed, else stop" reach? | Every command that writes to a project refuses an unmanaged one, through `managedRequired`, naming `fugaro managed flag`. The exemptions are setup's creating run, `managed flag`, and read-only commands and modes (A5). A test that walks the command tree keeps the classification complete | **2026-11-21: as recommended.** Later answers add exemptions: the in-run commands (D2219), `offboard` (D3160) and `managed unflag` (R8). |
-| **D2218** | When the managed read itself fails (a permission error, a network failure reading the marker or the label), what does a fenced command do? | Stop (fail closed), naming the read that failed | **2026-11-21: not the recommendation — warn and go on**, which is today's `update` behaviour. Followed through: T3 and T7 print the read's error as a warning and proceed, and a test pins it. A project the read *answers* is unmanaged still stops. |
+| **D2218** | When the managed read itself fails (a permission error, a network failure reading the marker or the label), what does a fenced command do? | Stop (fail closed), naming the read that failed | **2026-11-21: not the recommendation — warn and go on.** **Amended after review**, with the intent unchanged. Today `readUpdateGate` (`update_managed.go`) returns `managed=false` with no word on a read error, which is the same value an unmanaged project gets. So T3 makes the read report its error separately (`update_managed.go`, `managed_gate.go`). "Proceed" means the path an unmanaged project took before this plan, with its confirmations and its agent-session refusals, and **never** admission through the managed gate. A read that fails cannot open the gate, so making the read fail buys an attacker nothing the unmanaged path did not already allow. A project the read *answers* is unmanaged still stops. |
 | **D2219** | Are the commands a Fugaro job runs on itself fenced (`tell`, `mailbox`, `followups`, `escalation`)? | Exempt: they write only the run's own records, under the job's account, and the run was launched by a fenced `fugaro run` | **2026-11-21: as recommended.** |
-| **D3160** | Is `fugaro offboard` fenced on an unmanaged project? | Fenced: mark it first, as with every write | **2026-11-21: not the recommendation — exempt.** Tearing a repository's pieces down never needs the project marked first. T7 classifies it exempt with that reason. |
+| **D3160** | Is `fugaro offboard` fenced on an unmanaged project? | Fenced: mark it first, as with every write | **2026-11-21: not the recommendation — exempt.** **Amended after review:** the question described the command wrongly, as removing a repository's cloud pieces. The command is `fugaro user offboard EMAIL` (`internal/cli/offboard.go`), which takes one member's roster grants and stored secrets away. The answer is kept, because taking access away never waits on marking a project first, and the reason is restated in those terms. T7a classifies `fugaro user offboard` as exempt. **Open item: the owner confirms the answer for the command as it really is.** |
 
 ### Resolutions (one defensible answer)
 
@@ -108,20 +108,23 @@ The spec reserved D2210–D2219. D2210 was answered in the spec; D2211–D2214 a
 - **R5 (F13).** When no budget flag is passed, the budget block is carried from the previous run rather than dropped. R7 refines where it is carried from. An explicit trio replaces it. `flagHints`' "nothing records" sentence goes.
 - **R6 (F18).** On a rewrite, the currency defaults to the one recorded, and the amount has no default: a rewrite happens only on an explicit `--budget` (D2215).
 - **R7 (F19).** The marker is the source of truth for the amount and the currency. The billing account comes from the remote Terraform state's budget resource, never from the local work directory. So the carry works on any machine, and a rewrite by `managed flag` reaches the alert on the next `update`. On `update` with an explicit `--budget`, the marker is rewritten first, behind the fences, and then the apply runs. An apply that fails is corrected by the next run's carry. An explicit `--budget` with no `--billing-account` takes the carried account, so R2's trio check accepts a carried account as given.
-- **R8 (round 2).** `fugaro setup` on an existing installation (not a creating run) shares `update`'s engine and its stop (T3). `fugaro managed unflag` on an unmanaged project has nothing to do, so it is exempt with that reason. `fugaro allow-delete` writes the owner's delete list for managed applies, so it is fenced.
+- **R8 (round 2).** `fugaro setup` on an existing installation (not a creating run) shares `update`'s engine and its stop (T3). A resumed creation (`confirmResumedMark`, `wizardResumesCreation`) is a creating run: it is exempt from the stop, and it records its budget like any other creating run (T2a). `fugaro managed unflag` on an unmanaged project has nothing to do, so it is exempt with that reason. `fugaro allow-delete` writes the owner's delete list for managed applies, so it is fenced.
 - **R9 (round 2).** `RewriteBudget` is a library function with no fence of its own. A test pins that it is called only from the two fenced call sites, `update`'s and `managed flag`'s (task T2c, the last to land of the tasks that touch those files).
+- **R10 (round 3).** Once T0 makes the marker the source of the amount, an installation whose alert differs from its marker plans a change to `google_billing_budget` on its next update. That happens after an earlier `update --budget`, or after a rewrite by `managed flag`. The managed gate leaves that resource type out (`managed_cover.go`), so an agent session's `update` is refused there until the owner runs it once. The `### For operators` text says so, and Check 860 covers a drifted installation.
 
 ## Tension
 
 | # | Between | Ruling |
 | --- | --- | --- |
-| **TN1** | D2212 (default everywhere) against D1553 (`update` marks an installation when given its budget) | The first answer, given 2026-11-21, was "every update marks it". It was **superseded the same day** by the owner's principle: **`update` never marks a project. On an unmanaged installation it stops and names `fugaro managed flag`. D1553's self-marking step is removed.** Not the recommendation either way (the recommendation was to keep `--budget` as the trigger). Followed through in F11, D2217 and tasks T3 and T7. |
+| **TN1** | D2212 (default everywhere) against D1553 (`update` marks an installation when given its budget) | The first answer, given 2026-11-21, was "every update marks it". It was **superseded the same day** by the owner's principle: **`update` never marks a project. On an unmanaged installation it stops and names `fugaro managed flag`. D1553's self-marking step is removed.** Not the recommendation either way (the recommendation was to keep `--budget` as the trigger). Followed through in F11, D2217 and tasks T3 and T7a–c. |
 
 No tension is open.
 
 ## Open items
 
-None that block the plan. Checks 860 and 861 are the owner's.
+- **Confirm D3160** for `fugaro user offboard` as it really is (amended after review).
+
+Nothing else blocks the plan. Checks 860 and 861 are the owner's.
 
 This pull request leaves a dated pointer at each decision it amends, in that decision's own home: D1541 and D1553 in `docs/no-prompt-policy/reconciliation.md`, and D64 in `docs/managed-projects/spec.md`.
 
@@ -129,11 +132,12 @@ This pull request leaves a dated pointer at each decision it amends, in that dec
 
 The spec reserved none. This reconciliation takes Checks 860–869 and uses two.
 
-- **Check 860 (owner-run, after the release that ships T3, T4 and T7).** On an unmanaged sandbox installation:
+- **Check 860 (owner-run, after the release that ships T3, T4 and T7a–c).** On an unmanaged sandbox installation:
   1. `fugaro update` stops, writes nothing, and names `fugaro managed flag`.
   2. `fugaro managed flag` with no arguments records `{"amount":100,"currency":"USD"}` and the label.
   3. `fugaro update` then converges.
   4. A second plain `fugaro update` plans no change to the budget alert (R5).
+  5. On an installation whose alert differs from its marker, the first update changes the alert to the marker's figures, and an agent session's update is refused there until the owner has run it (R10).
 
   Run once with an EUR billing account, it also settles U1.
 - **Check 861 (owner-run, before upgrading to that release).** `fugaro managed status` on each of the owner's installations. Any that is unmanaged is flagged with `fugaro managed flag` first, so no upgrade meets the stop (F11).
@@ -142,4 +146,4 @@ The spec reserved none. This reconciliation takes Checks 860–869 and uses two.
 
 - **U1.** Whether Cloud Billing refuses a budget whose currency differs from the billing account's. Check 860 settles it.
 - **U2.** Whether any of the owner's installations is still unmanaged. Check 861 settles it.
-- **U3.** How many existing tests run a writing command against an unmanaged fake installation. Every one of them meets the new stop (T3 for `update`, T7 for the rest), and the reviewer counted many among the update tests. The run of each task counts them first, and makes managed the default of the shared fixture rather than editing each test. If the count is over five files, the run reports it, and the task is split into a fixture task and the refusal.
+- **U3.** How many existing tests run a writing command against an unmanaged fake installation. Every one of them meets the new stop (T3 for `update`, T7a–c for the rest), and the reviewer counted many among the update tests. The run of each task counts them first, and makes managed the default of the shared fixture rather than editing each test. If the count is over five files, the run reports it, and the task is split into a fixture task and the refusal.
