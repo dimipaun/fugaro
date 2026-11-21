@@ -56,6 +56,16 @@ package workspace
 // entry carries is the role the node RECORDS for it -- the plan D2806 says
 // `status` compares against the live IAM -- and the report keeps it there.
 //
+// Presence is not the whole of it, though, and the exception is the one role
+// RULE this comparison makes: a binding that comes with `roles/owner`,
+// `roles/editor` or the budget admin's role makes its holder an admin of the
+// member whatever else is true (D689, threat-model.md §3), and those are an
+// admin's roles -- `docs/design/roles.md` §2 gives an admin `roles/owner` and
+// `roles/editor` and the budget admin's write, and gives a viewer or an operator
+// none of them. So a principal the record states as viewer or operator that holds
+// one of them anyway is the member's admin with a row that does not say so, and
+// it is drift even though the record already names the person.
+//
 // Fugaro's own accounts are never drift (D2806, F17, R13): a binding placed
 // `PrincipalTerraform` (the member's job, build and history accounts) or
 // `PrincipalWorkspaceIAM` (`workspace_iam_account`, whose `roles/owner` is the
@@ -283,6 +293,11 @@ func ComputeDrift(ctx context.Context, src DriftSources, m MemberTarget) (DriftR
 	// set of statements drift looks a principal up in.
 	record := map[driftPair]bool{}
 	var recordStatements []driftStatement
+	// stated is the role each stated principal was given, the record's first and
+	// the member's own roster where the record is silent. It is what the implicit
+	// admin rule asks about a binding the record already names (see the live check
+	// below and consoleChanges).
+	stated := map[driftPair]Role{}
 	for _, g := range src.Node.Grants {
 		if !slices.Contains(projects, g.Project) {
 			continue
@@ -294,6 +309,7 @@ func ComputeDrift(ctx context.Context, src DriftSources, m MemberTarget) (DriftR
 		}
 		p := driftPair{g.Project, driftAddress(g.User)}
 		record[p] = true
+		stated[p] = g.Role
 		recordStatements = append(recordStatements, driftStatement{pair: p, role: g.Role, kind: PrincipalPerson, external: outsideDomains(g.User, src.Node.Domains)})
 	}
 	for _, person := range src.Node.People {
@@ -306,6 +322,7 @@ func ComputeDrift(ctx context.Context, src DriftSources, m MemberTarget) (DriftR
 			}
 			p := driftPair{pr.Project, driftAddress(person.Address)}
 			record[p] = true
+			stated[p] = pr.Role
 			recordStatements = append(recordStatements, driftStatement{pair: p, role: pr.Role, kind: PrincipalMachine})
 		}
 	}
@@ -322,7 +339,11 @@ func ComputeDrift(ctx context.Context, src DriftSources, m MemberTarget) (DriftR
 		// node does not state is D2805's unmapped binding on the project it names,
 		// not one widened into a second row.
 		for _, project := range memberProjects(m) {
-			roster[driftPair{project, driftAddress(g.User)}] = true
+			p := driftPair{project, driftAddress(g.User)}
+			roster[p] = true
+			if _, ok := stated[p]; !ok {
+				stated[p] = g.Role
+			}
 		}
 	}
 	live := map[driftPair]driftLive{}
@@ -358,15 +379,20 @@ func ComputeDrift(ctx context.Context, src DriftSources, m MemberTarget) (DriftR
 		})
 	}
 	// A binding the member's policy carries that neither the record nor the
-	// member's own roster explains.
+	// member's own roster explains -- and one they explain as a viewer's or an
+	// operator's while it carries an admin's roles, which names the person and not
+	// the authority that person holds over the member (see the file header).
 	for _, l := range liveBindings {
+		implicit := slices.Contains(driftImplicitAdminRoles, l.role)
 		if record[l.pair] || roster[l.pair] {
-			continue
+			if !implicit || stated[l.pair] == RoleAdmin {
+				continue
+			}
 		}
 		extra = append(extra, DriftBinding{
 			Project: l.pair.project, Principal: l.pair.principal, Role: l.role, Kind: l.kind,
 			External: l.kind == PrincipalPerson && outsideDomains(l.pair.principal, src.Node.Domains),
-			Implicit: slices.Contains(driftImplicitAdminRoles, l.role),
+			Implicit: implicit,
 		})
 	}
 	// What the record states and the member's policy does not carry: a stored
@@ -385,7 +411,7 @@ func ComputeDrift(ctx context.Context, src DriftSources, m MemberTarget) (DriftR
 	unmeasured, adminExtra := workspaceAdminDrift(src, m, admins, claimed)
 	extra = append(extra, adminExtra...)
 
-	changes, audit := consoleChanges(ctx, src, projects, record, roster, fugaro)
+	changes, audit := consoleChanges(ctx, src, projects, record, roster, fugaro, stated)
 	unmeasured = append(unmeasured, audit...)
 	if src.Changes == nil {
 		unmeasured = append(unmeasured, "Cloud Audit Logs: no reader was given, so no SetIamPolicy change was compared")
@@ -453,6 +479,12 @@ func workspaceAdminDrift(src DriftSources, m MemberTarget, admins []string, clai
 // named whoever made it -- a hand-edited roster applied by an update included,
 // which is exactly the unmapped binding D2805 makes visible.
 //
+// The exception is the implicit admin rule the live check makes (the file
+// header): a change that added `roles/owner`, `roles/editor` or the budget
+// admin's role to a principal the record states as viewer or operator IS drift,
+// so it is named -- and a change that added one of them to a stated ADMIN is
+// what that admin's role carries, so it is not.
+//
 // A change that added one of Fugaro's own accounts is not named either, and
 // `fugaro` is the set that answers it: those bindings are dropped from the live
 // side before anything is compared, so asking `live` would answer with silence
@@ -471,7 +503,7 @@ func workspaceAdminDrift(src DriftSources, m MemberTarget, admins []string, clai
 // Missing the caller asked for. The failure is named in the second result
 // instead, one entry per project, which the report carries as Unmeasured -- a
 // window nobody read is not a window that was clean.
-func consoleChanges(ctx context.Context, src DriftSources, projects []string, record, roster, fugaro map[driftPair]bool) ([]ConsoleChange, []string) {
+func consoleChanges(ctx context.Context, src DriftSources, projects []string, record, roster, fugaro map[driftPair]bool, stated map[driftPair]Role) ([]ConsoleChange, []string) {
 	if src.Changes == nil {
 		return nil, nil
 	}
@@ -493,8 +525,16 @@ func consoleChanges(ctx context.Context, src DriftSources, projects []string, re
 		}
 		for _, c := range changes {
 			pair := driftPair{c.Project, driftAddress(c.Member)}
-			if record[pair] || roster[pair] || fugaro[pair] {
+			if fugaro[pair] {
 				continue
+			}
+			if record[pair] || roster[pair] {
+				// Stated, so the change is the member's own update applying the
+				// record -- unless it is what makes a stated viewer or operator one
+				// of the member's admins, which the record does not say.
+				if !slices.Contains(driftImplicitAdminRoles, c.Role) || stated[pair] == RoleAdmin {
+					continue
+				}
 			}
 			if trailHolds(src.Trail, c) {
 				continue

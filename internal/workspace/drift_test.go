@@ -195,7 +195,7 @@ func TestDriftIgnoresFugaroAccounts(t *testing.T) {
 		[]string{wu12Alice}, []string{wu12Domains},
 		[]StoredGrant{wu12Person(wu12Member, wu12Alice, RoleOperator)})
 	bindings := []MemberBinding{
-		wu12Bound(wu12Member, wu12Alice, "roles/editor", PrincipalPerson),
+		wu12Bound(wu12Member, wu12Alice, "roles/firebasedatabase.viewer", PrincipalPerson),
 		wu12Bound(wu12Member, wu12JobAccount, "roles/owner", PrincipalTerraform),
 		wu12Bound(wu12Member, wu12BuildAccount, "roles/editor", PrincipalTerraform),
 		wu12Bound(wu12Member, wu12IAMAccount, "roles/owner", PrincipalWorkspaceIAM),
@@ -237,7 +237,7 @@ func TestDriftIgnoresARewrittenMirror(t *testing.T) {
 		[]StoredGrant{wu12Person(wu12Member, wu12Alice, RoleOperator)})
 	src := wu12Sources(node, wu12Authority{t: t, kind: AuthorityFolder, admins: []string{iamMember(wu12Alice)}})
 	src.Grants = []MemberGrant{{User: wu12Alice, Role: RoleOperator}}
-	src.Bindings = []MemberBinding{wu12Bound(wu12Member, wu12Alice, "roles/editor", PrincipalPerson)}
+	src.Bindings = []MemberBinding{wu12Bound(wu12Member, wu12Alice, "roles/firebasedatabase.viewer", PrincipalPerson)}
 	src.Mirror = []MirrorEntry{{Address: "mallory@evil.example", Kind: KindHuman, External: true}}
 	report := wu12Compute(t, src, wu12Target)
 	if len(report.Extra) != 0 || len(report.Missing) != 0 {
@@ -268,7 +268,7 @@ func TestDriftTrustsOnlyBoundAdmins(t *testing.T) {
 		})
 	src := wu12Sources(node, wu12Authority{t: t, kind: AuthorityFolder, admins: []string{iamMember(wu12Alice), iamMember(wu12Carol)}})
 	src.Bindings = []MemberBinding{
-		wu12Bound(wu12Member, wu12Alice, "roles/editor", PrincipalPerson),
+		wu12Bound(wu12Member, wu12Alice, "roles/firebasedatabase.viewer", PrincipalPerson),
 		wu12Bound(wu12Member, wu12Bob, "roles/owner", PrincipalPerson),
 	}
 	report := wu12Compute(t, src, wu12Target)
@@ -313,7 +313,7 @@ func TestDriftReportsAFolderOwnerWhoIsNotAnAdmin(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := wu12Sources(node, wu12Authority{t: t, kind: tc.kind, admins: []string{iamMember(wu12Alice), iamMember(rogue)}})
-			src.Bindings = []MemberBinding{wu12Bound(wu12Member, wu12Alice, "roles/editor", PrincipalPerson)}
+			src.Bindings = []MemberBinding{wu12Bound(wu12Member, wu12Alice, "roles/firebasedatabase.viewer", PrincipalPerson)}
 			report := wu12Compute(t, src, wu12Target)
 			if !reflect.DeepEqual(report.Extra, tc.want) {
 				t.Fatalf("a holder of the live admin binding who is not on the admin list (D2823, R13):\n got %+v\nwant %+v", report.Extra, tc.want)
@@ -340,7 +340,7 @@ func TestDriftChecksMachinesAgainstTheRecord(t *testing.T) {
 		[]string{wu12Alice}, []string{wu12Domains}, nil)
 	src := wu12Sources(node, wu12Authority{t: t, kind: AuthorityFolder, admins: []string{iamMember(wu12Alice)}})
 	src.Bindings = []MemberBinding{
-		wu12Bound(wu12Member, wu12CI, "roles/editor", PrincipalMachine),
+		wu12Bound(wu12Member, wu12CI, "roles/firebasedatabase.viewer", PrincipalMachine),
 		wu12Bound(wu12Member, wu12Stray, "roles/owner", PrincipalMachine),
 	}
 	report := wu12Compute(t, src, wu12Target)
@@ -374,7 +374,7 @@ func TestDriftExtraAndMissing(t *testing.T) {
 		{User: "mallory@corp.example", Role: RoleViewer},
 	}
 	src.Bindings = []MemberBinding{
-		wu12Bound(wu12Member, wu12Alice, "roles/editor", PrincipalPerson),
+		wu12Bound(wu12Member, wu12Alice, "roles/firebasedatabase.viewer", PrincipalPerson),
 		wu12Bound(wu12Member, "mallory@corp.example", "roles/viewer", PrincipalPerson),
 		wu12Bound(wu12Member, "casey@corp.example", "roles/browser", PrincipalPerson),
 		wu12Bound(wu12Member, "outsider@elsewhere.example", "roles/editor", PrincipalPerson),
@@ -396,6 +396,47 @@ func TestDriftExtraAndMissing(t *testing.T) {
 	}
 }
 
+// TestDriftNamesAnImplicitAdminOnAStatedPrincipal is D689 and R13 on the side
+// presence alone cannot see. `roles/owner`, `roles/editor` and the budget
+// admin's role are an ADMIN's roles -- docs/design/roles.md §2 gives an admin
+// `roles/owner` and `roles/editor` and the budget admin's write over /config, and
+// gives a viewer or an operator none of them -- so a principal the record states
+// as a viewer who holds roles/owner besides is an admin of the member that the
+// record does not say it made, and the change that did it is named. Bob, whom the
+// record states as an admin, holds the same role legitimately, and neither half
+// reports him: that is the rule and not a hole in it.
+func TestDriftNamesAnImplicitAdminOnAStatedPrincipal(t *testing.T) {
+	node := wu12Node(t,
+		[]Person{{Address: wu12Alice, Kind: KindHuman}, {Address: wu12Bob, Kind: KindHuman}},
+		[]string{wu12Alice}, []string{wu12Domains},
+		[]StoredGrant{
+			wu12Person(wu12Member, wu12Alice, RoleViewer),
+			wu12Person(wu12Member, wu12Bob, RoleAdmin),
+		})
+	at := wu12Now.Add(-time.Hour)
+	src := wu12Sources(node, wu12Authority{t: t, kind: AuthorityFolder, admins: []string{iamMember(wu12Alice)}})
+	src.Bindings = []MemberBinding{
+		wu12Bound(wu12Member, wu12Alice, "roles/firebasedatabase.viewer", PrincipalPerson),
+		wu12Bound(wu12Member, wu12Alice, "roles/owner", PrincipalPerson),
+		wu12Bound(wu12Member, wu12Bob, "roles/owner", PrincipalPerson),
+	}
+	src.Changes = &wu12Changes{changes: map[string][]SetIamPolicyChange{
+		wu12Member: {{
+			Project: wu12Member, Principal: "owner@corp.example", Member: iamMember(wu12Alice),
+			Role: "roles/owner", Entry: "hand-added-entry", At: at,
+		}},
+	}}
+	report := wu12Compute(t, src, wu12Target)
+	wantExtra := []DriftBinding{{Project: wu12Member, Principal: wu12Alice, Role: "roles/owner", Kind: PrincipalPerson, Implicit: true}}
+	if !reflect.DeepEqual(report.Extra, wantExtra) {
+		t.Fatalf("a stated viewer holding an admin's role is drift (D689, R13):\n got %+v\nwant %+v", report.Extra, wantExtra)
+	}
+	wantChanges := []ConsoleChange{{Project: wu12Member, Principal: "alice@corp.example", Role: "roles/owner", Entry: "hand-added-entry", At: at}}
+	if !reflect.DeepEqual(report.ConsoleChanges, wantChanges) {
+		t.Fatalf("the change that made a stated viewer an admin is named (D2811, R13):\n got %+v\nwant %+v", report.ConsoleChanges, wantChanges)
+	}
+}
+
 // TestDriftRosterExplainsTheFirebaseProject is F2 and R10 on the roster's side:
 // a member whose Firebase project is a project of its own derives that project's
 // bindings from the one roster it holds, so a person the roster names is not
@@ -411,7 +452,7 @@ func TestDriftRosterExplainsTheFirebaseProject(t *testing.T) {
 	src := wu12Sources(node, wu12Authority{t: t, kind: AuthorityFolder, admins: []string{iamMember(wu12Alice)}})
 	src.Grants = []MemberGrant{{User: wu12Alice, Role: RoleOperator}}
 	src.Bindings = []MemberBinding{
-		wu12Bound(wu12Member, wu12Alice, "roles/editor", PrincipalPerson),
+		wu12Bound(wu12Member, wu12Alice, "roles/firebasedatabase.viewer", PrincipalPerson),
 		// The three the member's Firebase root derives from the roster.
 		wu12Bound(wu12Firebase, wu12Alice, "roles/datastore.viewer", PrincipalPerson),
 		wu12Bound(wu12Firebase, wu12Alice, "roles/firebasedatabase.viewer", PrincipalPerson),
@@ -455,7 +496,7 @@ func TestDriftNamesConsoleChangeNotUpdate(t *testing.T) {
 	changes := &wu12Changes{changes: map[string][]SetIamPolicyChange{
 		wu12Member: {
 			// The member's own update: the record's grant, applied.
-			{Project: wu12Member, Principal: owner, Member: iamMember(wu12Alice), Role: "roles/editor", Entry: "update-entry", At: at},
+			{Project: wu12Member, Principal: owner, Member: iamMember(wu12Alice), Role: "roles/firebasedatabase.viewer", Entry: "update-entry", At: at},
 			// A change in Google's console that added somebody nobody states.
 			{Project: wu12Member, Principal: owner, Member: "user:mallory@corp.example", Role: "roles/editor", Entry: "console-entry", At: at.Add(time.Minute)},
 			// One this workspace's own trail recorded, so no cross-check is owed.
@@ -469,7 +510,7 @@ func TestDriftNamesConsoleChangeNotUpdate(t *testing.T) {
 	src := wu12Sources(node, wu12Authority{t: t, kind: AuthorityFolder, admins: []string{iamMember(wu12Alice)}})
 	src.Changes = changes
 	src.Bindings = []MemberBinding{
-		wu12Bound(wu12Member, wu12Alice, "roles/editor", PrincipalPerson),
+		wu12Bound(wu12Member, wu12Alice, "roles/firebasedatabase.viewer", PrincipalPerson),
 		wu12Bound(wu12Member, "dave@corp.example", "roles/viewer", PrincipalPerson),
 		wu12Bound(wu12Member, wu12JobAccount, "roles/owner", PrincipalTerraform),
 		wu12Bound(wu12Member, wu12IAMAccount, "roles/owner", PrincipalWorkspaceIAM),
