@@ -808,10 +808,16 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{}, err
 	}
 	switch {
+	// A declined stage applied nothing at all — the line is set on the two arms
+	// that return before the first apply — so it is read FIRST: the run's own
+	// result accumulates what the stages BEFORE this one did (a `setup` from
+	// nothing applies the installation root before the Firebase stage is
+	// reached), and a declined line that waited for those counters to be empty
+	// would never be the one the stage says.
+	case s.declined != nil && s.declined() != "":
+		return initflow.Outcome{Detail: s.declined()}, nil
 	case !s.applied && s.did != nil && s.did() != "":
 		return initflow.Outcome{Changed: true, Detail: s.did()}, nil
-	case !s.applied && s.declined != nil && s.declined() != "":
-		return initflow.Outcome{Detail: s.declined()}, nil
 	case !s.applied:
 		return initflow.Outcome{Detail: "No changes"}, nil
 	case s.changes != nil:
@@ -2040,7 +2046,10 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			if err := e.ensureCredentialsService(ctx); err != nil {
 				return err
 			}
-			if err := e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old); err != nil {
+			// &e.spec and not e.spec: the stage sets the `enable_budget` switch
+			// on the run's own spec once the database exists, so the stages
+			// behind this one carry it too (initFirebase).
+			if err := e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, &e.spec, e.path, e.old); err != nil {
 				return err
 			}
 			_, err := e.fillCredentialsAudience(ctx)

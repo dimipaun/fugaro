@@ -233,7 +233,11 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 //
 // Each apply has its own plan and confirmation, and so does the database
 // step. Nothing creates the Firebase project or links billing.
-func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, bin string, lc *localcfg.Config, spec infra.InstallationSpec, path string, old []byte) error {
+// specPtr is the ENGINE's spec, and every field this stage sets on it is set
+// there and not on the copy below: the switch the installation root's
+// `enable_budget` is outlives this stage (see the comment where it is set).
+func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, bin string, lc *localcfg.Config, specPtr *infra.InstallationSpec, path string, old []byte) error {
+	spec := *specPtr
 	// The project this stage works in. With the flag it is the flag's value,
 	// which checkFirebaseProject has already held to the installation's own
 	// project; with no flag (AB7, R2) it is the installation's own project,
@@ -250,22 +254,37 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	// leaves the installation exactly as it found it.
 	if r.o.firebase == "" {
 		done, err := r.noFlagBudgetDatabase(ctx, c, t, wd, bin, lc, spec, path, old, fp)
-		if err != nil || done {
+		if err != nil {
 			return err
 		}
-		// This run creates the database, and the installation root it is about
-		// to apply is what creates the history account, its custom role and the
-		// grant that binds them — the `enable_budget` variable the local config
-		// does not carry yet, because it is written at the END of this stage.
-		// F28 keeps the variable and sets it once the database exists, and this
-		// is the run that makes one exist: without it the first apply would
-		// answer no history account in its outputs, and the Firebase root's
-		// grant would have no member to name.
-		h, err := infra.History(lc)
-		if err != nil {
-			return initErr(err)
+		// r.declined is the whole of what a run that changed nothing has to say
+		// (R2), and its spec stays the engine's own: it has no database here, so
+		// the installation root creates no history account for the Firebase
+		// root's grant to name. Every other answer means the database is this
+		// run's — the state's own, which the local config now records, or one
+		// this run is about to create — and the installation root it is about to
+		// apply is what creates the history account, its custom role and the
+		// grant that binds them (F28: the `enable_budget` variable is kept and
+		// set once the database exists). Without it the first apply would answer
+		// no history account in its outputs, and the Firebase root's grant would
+		// have no member to name.
+		if r.declined == "" {
+			h, err := infra.History(lc)
+			if err != nil {
+				return initErr(err)
+			}
+			spec.EnableBudget, spec.History = true, &h
+			// The ENGINE's spec and not this function's copy: the stages after
+			// this one plan the same root — the credentials stage's apply, and
+			// the second installation stage's, which is the history job's — and
+			// a spec without the switch rebuilds the tfvars without the key and
+			// plans the history account and its custom role away in the very run
+			// that gave the installation its database.
+			*specPtr = spec
 		}
-		spec.EnableBudget, spec.History = true, &h
+		if done {
+			return nil
+		}
 	}
 	mode := r.o.budgetMode
 	if mode == "enforce" && (lc.Budget == nil || lc.Budget.PerRunUSD <= 0) {
