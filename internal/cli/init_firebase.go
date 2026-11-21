@@ -639,14 +639,12 @@ func (r *initRun) checkDatabase(ctx context.Context, lc *localcfg.Config, url, m
 //     them (R2, and U1 is the question itself).
 //  3. Can the project hold a database at all? One that does not exist, is not
 //     ACTIVE or has no billing account linked gets the line that names it.
-//  4. Would the stage's ordinary confirmation be answered? A run with no
-//     terminal that carries no answer — a coding agent's session, --json, a pipe
-//     — would meet the applies below as steps left for the user, with the
-//     installation already half-applied; such a run changes nothing and says its
-//     line instead (F4, R2). The question is asked without asking anything.
 //
 // What is left is the creation, and it ends where the flag's own path ends: the
-// same discovery, the same two confirmed applies, the same database steps.
+// same discovery, the same two confirmed applies, the same database steps. A run
+// whose ordinary confirmation nothing would answer never gets here at all: its
+// stage is skipped at the check, with the same one line and nothing applied
+// (F4, R2 — cannotCreateTheDatabase).
 func (r *initRun) noFlagBudgetDatabase(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, bin string, lc *localcfg.Config, spec infra.InstallationSpec, path string, old []byte, fp string) (done bool, err error) {
 	// F23: the probe is the Firebase STATE's and never the history account's.
 	has, err := infra.StateExists(ctx, c, spec.StateBucket, infra.StatePrefixFirebase)
@@ -681,16 +679,32 @@ func (r *initRun) noFlagBudgetDatabase(ctx context.Context, c *infra.Clients, t 
 	if len(urls) > 0 {
 		r.warn(fmt.Sprintf("project %s already has a Realtime Database (%s) and this machine records none: the Firebase root adopts what is there rather than creating a second one", fp, strings.Join(urls, ", ")))
 	}
-	// F4/R2: whether anything would answer the stage's ordinary confirmation.
-	// The managed gate is asked first: on a managed project this stage performs
-	// under it with no confirmation at all, a coding agent's session included
-	// (D3028, R11), so a run the gate stands in for is not a run that has
-	// nothing to answer with.
-	if !r.gateStandsIn() && r.stepConfirmation(true) == stepLeave {
-		r.declined = "no budget database was created: nothing answers this run's confirmation (no terminal, --json, a pipe and a coding agent never do); a project owner runs " + selfCommand() + " " + r.o.doorName() + " once"
-		return true, nil
-	}
+	// F4/R2's run never reaches this call: its stage is skipped at the check
+	// (cannotCreateTheDatabase, newFirebaseStage's skip), which is where the
+	// answer can be given before anything is applied. What is left here is the
+	// creation, and every run that reaches it has an answer to give.
 	return false, nil
+}
+
+// cannotCreateTheDatabase is F4/R2's answer, and whether it is this run's: a
+// run whose ordinary confirmation nothing would answer — a coding agent's
+// session, --json, a pipe, --non-interactive, and a run with no terminal —
+// creates no database, and says in one line who must. The rest of the run
+// carries on, which is the whole point of the line (R2).
+//
+// The managed gate is asked first and answers for the run: on a managed project
+// this stage performs under it with no confirmation at all, a coding agent's
+// session included (D3028, R11), so a run the gate stands in for is not a run
+// that has nothing to answer with.
+//
+// It is asked at the stage's own check and not in the arm below, because a run
+// it applies to never reaches the arm: the loop leaves a stage whose steps
+// nothing can confirm to the user, which is the stop this line replaces.
+func (r *initRun) cannotCreateTheDatabase() (string, bool) {
+	if r.gateStandsIn() || r.stepConfirmation(true) != stepLeave {
+		return "", false
+	}
+	return "no budget database was created: nothing answers this run's confirmation (no terminal, --json, a pipe and a coding agent never do); a project owner runs " + selfCommand() + " " + r.o.doorName() + " once", true
 }
 
 // adoptBudgetDatabase is the no-flag stage's adoption (R2): the installation's
@@ -704,6 +718,12 @@ func (r *initRun) noFlagBudgetDatabase(ctx context.Context, c *infra.Clients, t 
 // or not valid does NOT fall through to a creation: the database the state is
 // about may be right there, and a second one is the thing this whole path
 // exists to avoid (F32). The stage says its one line instead.
+//
+// The adoption needs no confirmation — it reads the state and writes this
+// machine's config — so it is the one half of the no-flag stage a run nothing
+// can confirm for would reach. It does not reach it: such a run's stage is
+// skipped at the check (cannotCreateTheDatabase), and a plan-only run, which
+// does reach it, writes nothing here.
 func (r *initRun) adoptBudgetDatabase(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, bin string, lc *localcfg.Config, spec infra.InstallationSpec, path string, old []byte, fp string) (done bool, err error) {
 	outs, err := r.readOutputs(ctx, c, t, wd, lc, spec)
 	if err != nil {
@@ -712,6 +732,13 @@ func (r *initRun) adoptBudgetDatabase(ctx context.Context, c *infra.Clients, t *
 	next := *lc
 	if ok, why := r.budgetDatabaseFromState(ctx, c, bin, spec.StateBucket, fp, &next); !ok {
 		r.declined = oneLineCLI("no budget database was recorded: " + why + "; this machine creates none over a Firebase root this installation already has, so a project owner runs " + selfCommand() + " " + r.o.doorName() + " once")
+		return true, nil
+	}
+	// --plan-only writes no config, as it writes nothing else (newMachineConfig
+	// is the same guard on the same write, one stage earlier): the reads above
+	// are read-only and the line says what the run that applies would record.
+	if r.o.planOnly {
+		fmt.Fprintf(r.w, "--plan-only: the budget database of project %s is the one this installation already has (Firebase project %s, %s); the run that applies records it in the local config and applies nothing\n", lc.Name, pluginwire.Printable(next.Budget.FirebaseProject), pluginwire.Printable(next.Budget.RTDBURL))
 		return true, nil
 	}
 	r.mutate = func(n *localcfg.Config) { n.Budget = next.Budget }

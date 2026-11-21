@@ -1998,8 +1998,9 @@ func (e *initEngine) budgetBackendOn() bool {
 // in the installation's own project, and where this run may not create one it
 // changes nothing and says so in one line (r.declined, which the stage reports
 // as what it has to say). It is skipped where this machine already records the
-// database (F34), and the flag's own path — the one value it could always take,
-// the installation's own project — is untouched.
+// database (F34) and where nothing would answer the confirmation a creation
+// needs (F4, cannotCreateTheDatabase), and the flag's own path — the one value
+// it could always take, the installation's own project — is untouched.
 func newFirebaseStage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Firebase,
 		skip: func() string {
@@ -2008,6 +2009,14 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			}
 			if e.budgetDatabaseKnown() {
 				return "the project config already records the budget database: this stage with no --firebase-project only adopts or creates one, and there is one"
+			}
+			// F4/R2's answer is asked HERE and not in the stage's own arm,
+			// because the arm is only reached by a run that can answer: the
+			// loop leaves a stage whose steps nothing can confirm to the user,
+			// which is the stop R2 replaces with one line and a run that
+			// carries on.
+			if why, yes := e.r.cannotCreateTheDatabase(); yes {
+				return why
 			}
 			return ""
 		},
