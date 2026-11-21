@@ -1300,6 +1300,9 @@ func runInit(r *initRun) error {
 		// Printed without a cloud call, so without discovery: stdout stays
 		// the tfvars alone.
 		fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsUngatedInstallation)
+		if spec.Budget == nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsNoBudget)
+		}
 		if o.firebase != "" {
 			if data, err = r.firebaseVars(data, spec, lc); err != nil {
 				return err
@@ -2110,11 +2113,32 @@ func (o *initOptions) check() error {
 			return userErr("--budget-mode %q must be off, observe or enforce", o.budgetMode)
 		}
 	}
-	if (o.budget != 0 || o.budgetCurrency != "" || o.billingAccount != "") && (o.budget <= 0 || o.budgetCurrency == "" || o.billingAccount == "") {
-		return userErr("a budget needs --budget (more than 0), --budget-currency and --billing-account together")
+	// A budget is declared by --budget and --budget-currency together, and the
+	// billing account with them wherever the run cannot take the carried one
+	// (carriesBudget): an explicit --budget with no --billing-account takes the
+	// account the installation's own state records (R7,
+	// docs/managed-flag-ergonomics/reconciliation.md), which is what lets the
+	// owner change the amount without knowing the account by heart. A run that
+	// reads no cloud has nothing to take it from, so there the three are still
+	// required together.
+	if o.budget != 0 || o.budgetCurrency != "" || o.billingAccount != "" {
+		if o.budget <= 0 || o.budgetCurrency == "" {
+			return userErr("a budget needs --budget (more than 0) and --budget-currency together")
+		}
+		if o.billingAccount == "" && !o.carriesBudget() {
+			return userErr("a budget needs --billing-account: this run reads no cloud, so it cannot take the account the installation's state records")
+		}
 	}
 	return nil
 }
+
+// carriesBudget is whether this run reads the installation's own budget
+// records, which is what an explicit --budget without --billing-account takes
+// the account from (R7). Two modes do not, and for a reason each:
+// --print-vars reads no cloud by design, so it has no state to read the
+// account out of, and --forget is the rollback, which carries nothing forward
+// at all.
+func (o *initOptions) carriesBudget() bool { return !o.printVars && !o.forget }
 
 // setProject records lc's project: its GCP ID for the Google calls, its
 // name for the account and the confirmations.
@@ -2997,6 +3021,73 @@ func (r *initRun) managedScope(ctx context.Context, c *infra.Clients) (bool, err
 	return ok, nil
 }
 
+// carriedBudget is the budget block this run's variables get: the installation's
+// own records where the run was given no budget flag (R5,
+// docs/managed-flag-ergonomics/reconciliation.md), and the billing account an
+// explicit --budget without one takes (R7). It is called by the two paths that
+// write the installation root's tfvars before a plan — installRoot, and
+// readOutputs, whose document a later stage of the same run rewrites — and by
+// neither of the two that do not carry: --print-vars reads no cloud by design,
+// and --forget is the rollback.
+//
+// It runs HERE, before prepare writes the variables, and not through
+// terraform's own read of the state: tf.ShowState needs an Init, and prepare is
+// what writes the backend an Init is given.
+//
+// A run given the whole trio reads nothing: the explicit flags replace what is
+// carried, and there is nothing left to take.
+func (r *initRun) carriedBudget(ctx context.Context, c *infra.Clients, spec infra.InstallationSpec) (infra.InstallationSpec, error) {
+	if spec.Budget != nil && spec.Budget.BillingAccount != "" {
+		return spec, nil
+	}
+	carried, err := r.budgetCarry(ctx, c, spec)
+	if err != nil {
+		return spec, err
+	}
+	block, err := carried.Block(spec.Budget)
+	if err != nil {
+		return spec, userErr("%v", err)
+	}
+	spec.Budget = block
+	return spec, nil
+}
+
+// budgetCarry reads the two records the carry is made of (R7): the project's
+// creation fact for the amount and the currency, and the installation root's
+// state object for the billing account. Neither is the local work directory,
+// which is empty on a fresh machine, after a clean, or for a console on another
+// host (F19) — so a run there carries the alert exactly as one whose workdir
+// holds it.
+//
+// A read that fails is the run's own failure and never "nothing carried": the
+// plan a dropped block produces is the alert's deletion, and the answer for a
+// read this program could not make is to stop rather than to plan that (Global
+// Constraint 3). A project whose name this run does not know has no creation
+// fact to read — the read proves the fact is about that name — and carries the
+// account alone, which is a run that reaches no plan of this root anyway
+// (--config-only recovering a config it has no name for).
+func (r *initRun) budgetCarry(ctx context.Context, c *infra.Clients, spec infra.InstallationSpec) (infra.CarriedBudget, error) {
+	var amount int64
+	var currency string
+	if r.projectName != "" {
+		answer, err := managed.ReadBudgetAnswer(ctx, c.Storage, c.CRM, r.projectName, r.gcpProject)
+		if err != nil {
+			return infra.CarriedBudget{}, initErr(fmt.Errorf("the budget this installation's variables carry could not be read from the creation fact of %s: %s", safetext.Field(r.projectName), safetext.Field(err.Error())))
+		}
+		if answer.OK {
+			amount, currency = answer.Budget.Amount, answer.Budget.Currency
+		}
+	}
+	account, ok, err := infra.ReadInstallationBudgetAccount(ctx, c, spec.StateBucket)
+	if err != nil {
+		return infra.CarriedBudget{}, initErr(err)
+	}
+	if !ok {
+		account = ""
+	}
+	return infra.CarriedBudget{Amount: amount, CurrencyCode: currency, BillingAccount: account}, nil
+}
+
 // prepare writes the root's tfvars, imports and backend configuration.
 //
 // verifiers is the effective verifier list this run's document must carry
@@ -3339,6 +3430,14 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// field and no other (RefreshProjectJobCredentialsService, G17), and it is
 	// a no-op for every run whose records have not moved.
 	spec.ProjectJobs = infra.RefreshProjectJobCredentialsService(spec.ProjectJobs, lc)
+	// The budget block this run's variables get, read from the installation's own
+	// two records and never from the workdir: the alert of a project created by
+	// --managed is what a later plain `fugaro update` carries, so that run plans
+	// no change to it (R5). It is read here, immediately before prepare, because
+	// the read is of the state object prepare's backend is what an Init reaches.
+	if spec, err = r.carriedBudget(ctx, c, spec); err != nil {
+		return outs, false, err
+	}
 	backend, err := prepare(wd, spec, im, verifiers, false)
 	if err != nil {
 		return outs, false, err
@@ -3849,6 +3948,14 @@ func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		return infra.InstallationOutputs{}, fmt.Errorf("%w gs://%s", errNoState, spec.StateBucket)
 	}
 	verifiers, err := r.effectiveVerifiers(ctx, lc)
+	if err != nil {
+		return infra.InstallationOutputs{}, err
+	}
+	// This prepare rewrites the installation root's tfvars from its spec, so the
+	// budget block is carried into it here too: a document left without the key
+	// by this stage is the alert's deletion in the next plan of this root, and
+	// the same rule as installRoot's read applies (carriedBudget).
+	spec, err = r.carriedBudget(ctx, c, spec)
 	if err != nil {
 		return infra.InstallationOutputs{}, err
 	}
@@ -5782,6 +5889,15 @@ const printVarsUngated = "these values are ungated: no discovery or readiness ch
 // values it prints skip discovery.
 const printVarsUngatedInstallation = "these values are ungated: no discovery ran, so adopt_legacy_registry is false even when the bootstrap's legacy registry exists and is ours " +
 	"(a plan from these values would try to create it, and nothing imports what exists); set up the installation through fugaro setup, not by applying these"
+
+// printVarsNoBudget is fugaro setup --print-vars's warning about the budget: an
+// ordinary run carries the block from the installation's own two records (R5,
+// docs/managed-flag-ergonomics/reconciliation.md), and this path reads no cloud
+// by design, so the values it prints hold no budget block even for an
+// installation that has an alert. Printed only where the run was given no
+// budget flag: with --budget the block is in the document, from the flags.
+const printVarsNoBudget = "the budget alert this installation holds is not in these values: --print-vars reads no cloud, so the amount and currency an ordinary run carries from the project's creation fact, " +
+	"and the billing account it carries from the installation's state, are missing (apply these and the alert would be deleted; pass --budget, --budget-currency and --billing-account to print it)"
 
 // loadRepoConfig selects the project config the first run wrote, with
 // --gcp-project and --region applied. The checkout that selects it is
