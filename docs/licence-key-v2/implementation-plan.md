@@ -294,6 +294,22 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
 
 - **K7.3 Remove the old key format.** Files: `ee/licence/key.go`, `store.go`, `key_test.go`, `testdata/vectors.json` (the old format: the verifier and its Go readers go, but **the fixture stays** -- the console's verifier of that format and the app's read it at module top level, so it leaves with those two readers and not with the Go verifier; `keyv1.go` renamed to the package's `Claims`/`Verify`). Tests: `go test ./ee/... -tags ee -count=1` compiles and passes with no reference to the old format. Depends on: K1.3, K2.1, K2.5, K3.1. Commit: `ee: the old licence key format is removed`. SECURITY.
 
+- **K7.4 The live-check scripts.** Files: `scripts/live-checks/check560.sh` … `check564.sh` (new), each with its
+  own `checkNNN_test.sh` (new; the fakes on `PATH`, no network, no account), `scripts/live_checks_test.go`
+  (their registration and its fakes paragraph), `docs/gcp-live-checklist.md` (their rows and their
+  `## Check 56N` sections). One command per check, run by the owner at their own terminal: each refuses a
+  coding agent's session, refuses a value naming `belong` **by name**, and refuses `fugaro-prod` unless
+  `--production` is given; each is driven by its own test against fakes. Check 561 takes `--part
+  revoke|unreachable`, because a revoked key is not the good key the other half needs, and Check 563 takes
+  `--approve|--expiry` for the same reason — one command each way. No script prints a key, a secret or a
+  token, and no agent runs any step of any of them. Tests: `go test ./scripts/ -run
+  'TestLiveCheckScripts/check56' -count=1` and every `bash scripts/live-checks/check56N_test.sh`.
+  Command: `go test ./scripts/ -run TestLiveCheckScripts -count=1` and
+  `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
+  Depends on: K2.4, K2.5, K3.3, K4.1, K4.2 — and, for Check 564's Paddle sandbox account, subscriptions
+  S8.5 (owner-run; the check refuses at once, naming it, until that account exists).
+  Commit: `scripts: the licence key v2 live checks`.
+
 ## Parallel execution
 
 Edges are the "Depends on" lines.
@@ -306,6 +322,7 @@ Edges are the "Depends on" lines.
 | 3 | K2.4, K3.2, K7.3 |
 | 4 | K3.3, K3.5, K4.1 |
 | 5 | K3.6, K4.2 (K6.1 dropped, 2026-11-16) |
+| 6 | K7.4 (the live checks read what levels 2 to 5 shipped) |
 | held | K3.4 (the owner's enforcement go, TN1), after level 3 |
 
 **Critical path:** K1.1 → K2.1 → K2.3 → K2.4 → K3.3 (five levels, since K6.1 was dropped on 2026-11-16; K2.3 → K3.2 → K3.5 → K3.6 is as long). The sequence K2.3 → K2.4 → K2.6 → K2.7 on
@@ -337,6 +354,7 @@ runtime is what the Terraform runs.
 | `ee/register/licence_login.go`, `ee/licence/login/login.go` | K3.3 (4) |
 | `deploy/terraform/.../installation/licence.tf`, `variables.tf`, `deployer.tf`, `internal/cli/update_licence.go` | K4.2 (5) |
 | `docs/licensing/implementation-plan.md`, `docs/subscriptions/implementation-plan.md`, `docs/key-signing-service/spec.md` | K7.2 (0) |
+| `scripts/live-checks/check560.sh` … `check564.sh` and their `_test.sh`, `scripts/live_checks_test.go`, `docs/gcp-live-checklist.md` (the 560–564 rows and their `## Check 56N` sections) | K7.4 (6) |
 
 No level holds two writers of one file. A change to any task's Files re-checks this table.
 
