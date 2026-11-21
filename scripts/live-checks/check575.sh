@@ -101,7 +101,11 @@
 # Needs:      bash, mktemp, python3 (every document is read with it), curl (the
 #             portal API) and gcloud, authenticated to an account that may read
 #             Cloud Logging and describe and run Cloud Scheduler jobs in
-#             --project. No `fugaro` command runs at all.
+#             --project, and a sign-in whose account is a member of the RESELLER
+#             organisation — plus, for the sale's workspace, one of: a membership
+#             of the operations organisation (the token's own account, on staging
+#             the owner's, seeded by P0.5) or --workspace-id. No `fugaro` command
+#             runs at all.
 # Where:      your own machine and the STAGING deployment (`fugaro-staging`)
 #             first. `fugaro-prod` is refused unless `--production` is given,
 #             because whoever reads a production reseller's month is reading real
