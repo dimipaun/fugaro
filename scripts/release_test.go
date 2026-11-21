@@ -3220,9 +3220,9 @@ func mainTip(t *testing.T, r *releaseRepo) string {
 
 // mainFullyGreen is a ci_runs line giving origin/main's commit one full run of
 // its own, green by the fixture's checks. A test that writes ci_runs at all
-// owns the fake's whole answer for every commit (see the file's header), and
-// this is the run the release's pre-merge gate reads on main -- without it the
-// gate would wait out its timeout for a run nobody dispatched.
+// owns the fake's whole answer for every commit (scripts/testdata/fake-gh.sh's
+// header), and this is the run the release's pre-merge gate reads on main --
+// without it the gate would wait out its timeout for a run nobody dispatched.
 func mainFullyGreen(t *testing.T, r *releaseRepo) string {
 	t.Helper()
 	sha := mainTip(t, r)
