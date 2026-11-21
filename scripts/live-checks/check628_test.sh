@@ -207,6 +207,20 @@ run)
 runs)
   case "$mode" in
   run-never-ends) cat "$FAKE_JSON_DIR/rows-running.json" ;;
+  # A run that is still working on the first poll and ended by the next one: the
+  # check has to read each poll's answer as its own document — an answer read on
+  # top of the one before it never looks ended.
+  run-ends-later)
+    polls=0
+    if [ -f "$FAKE_LOG_DIR/runs-polls" ]; then polls=$(cat "$FAKE_LOG_DIR/runs-polls"); fi
+    polls=$((polls + 1))
+    printf '%s\n' "$polls" >"$FAKE_LOG_DIR/runs-polls"
+    if [ "$polls" -le 1 ]; then
+      cat "$FAKE_JSON_DIR/rows-running.json"
+    else
+      cat "$FAKE_JSON_DIR/rows.json"
+    fi
+    ;;
   *) cat "$FAKE_JSON_DIR/rows.json" ;;
   esac
   ;;
@@ -636,6 +650,15 @@ test_a_launch_that_names_no_run_is_a_finding() {
   expect_contains "$out" "named no run" "a launch that names no run: the message says why"
 }
 
+test_a_run_that_ends_between_polls_settles() {
+  local dir=$work/ends-later
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=run-ends-later
+  expect_status "$status" 0 "a run that ends between polls"
+  expect_contains "$out" "FACT terminal: PASS" "a run that ends between polls: the second poll is read as the run's end"
+  expect_contains "$gcloud_calls" "storage cat" "a run that ends between polls: its record is read"
+}
+
 test_a_run_that_never_ends_is_not_measured() {
   local dir=$work/never-ends
   prepare "$dir"
@@ -836,6 +859,7 @@ t test_a_path_that_is_not_a_checkout_stops_the_check
 t test_a_doctor_without_a_project_line_is_not_measured
 t test_a_launch_that_fails_is_a_finding
 t test_a_launch_that_names_no_run_is_a_finding
+t test_a_run_that_ends_between_polls_settles
 t test_a_run_that_never_ends_is_not_measured
 t test_a_record_that_cannot_be_read_is_a_finding
 t test_a_record_of_another_run_is_a_finding

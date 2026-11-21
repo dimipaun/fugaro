@@ -588,6 +588,10 @@ step_terminal() {
   say "waiting for ${RUN_ID} to end (up to ${RUN_TIMEOUT}s; fugaro runs ls --repo ${LAUNCH_REPO} --json --limit 5)"
   local waited=0 run_status="" ended="" stage=""
   while [ "$waited" -lt "$RUN_TIMEOUT" ]; do
+    # run_bounded appends to its key's output, so each poll starts from an empty
+    # file: an answer read on top of the one before it is not one document, and a
+    # reader that cannot parse the listing can never see a run end.
+    : >"$SCRATCH/rows.out"
     run_bounded "$CLI_TIMEOUT" rows "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$LAUNCH_REPO" --json --limit 5
     run_status="" ended="" stage=""
     if [ "$BOUNDED_STATUS" = 0 ] && read_json rows "$SCRATCH/rows.out" "$SCRATCH/rows.txt"; then
