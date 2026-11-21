@@ -340,6 +340,10 @@ def moment(entry):
     return None
 
 
+def utc(seconds):
+    return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def cold(path, gap_seconds):
     with open(path) as fh:
         entries = json.load(fh)
@@ -360,9 +364,7 @@ def cold(path, gap_seconds):
     print("requests=%d" % len(requests))
     if not requests:
         return
-    print("span=%s..%s" % (
-        datetime.datetime.utcfromtimestamp(requests[0][0]).isoformat() + "Z",
-        datetime.datetime.utcfromtimestamp(requests[-1][0]).isoformat() + "Z"))
+    print("span=%s..%s" % (utc(requests[0][0]), utc(requests[-1][0])))
     steady = []
     for index, (at, ms) in enumerate(requests):
         if index == 0:
@@ -370,8 +372,7 @@ def cold(path, gap_seconds):
             continue
         silence = at - requests[index - 1][0]
         if silence >= gap_seconds:
-            print("cold=%s %d" % (
-                datetime.datetime.utcfromtimestamp(at).isoformat() + "Z", ms))
+            print("cold=%s %d" % (utc(at), ms))
         else:
             steady.append(ms)
     steady.sort()
@@ -593,7 +594,7 @@ step_outage_long() {
   detail=$(field_of halt_detail "$out")
   marker=$(field_of halt_workspace_refusal "$out")
   if [ -n "$OUTAGE_AT" ] && [ -n "$halt_at" ]; then
-    waited=$(wait_phrase "$OUTAGE_AT" "$halt_at")
+    waited=$(wait_phrase "$OUTAGE_AT" "$halt_at" || true)
   fi
   if [ -z "$halt_reason" ]; then
     fact outage-long FAIL "the run $(field_of run_id "$out") met the long outage and nothing stopped it (status $(field_of status "$out"), terminal $(field_of terminal "$out")): D2983 promises a bounded wait that ends in a halt naming the workspace's service, and a run that is still going after an outage longer than the bound has no bound at all. Every call it makes to an unreachable service is a call it will make again"
@@ -611,6 +612,8 @@ wait_phrase() {
   python3 -c '
 import sys, datetime
 def at(one):
+    if one.isdigit():
+        return datetime.datetime.fromtimestamp(int(one), datetime.timezone.utc)
     return datetime.datetime.fromisoformat(one.replace("Z", "+00:00"))
 try:
     seconds = (at(sys.argv[2]) - at(sys.argv[1])).total_seconds()
