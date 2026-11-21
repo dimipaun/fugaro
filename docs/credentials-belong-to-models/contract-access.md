@@ -94,7 +94,7 @@ It is asked in the order a reader of today's configuration gets, each step narro
 
 | The retired key | The access it means | Chosen? |
 | --- | --- | --- |
-| `model_grades.<grade>.access` (the task's grade, F38) | the access it writes, as written (D3062) | yes |
+| `model_grades.<grade>.access` (the task's grade, F38) | the access it writes, as written (D3062), for the **coder** and the **merge judge** alone | yes |
 | `agent.crafts.<craft>.access` | the access it writes, as written (D3062) | yes |
 | `agent.auth: oauth` + a stage's account | the account's credential (`claude-oauth`, served by the service) | yes |
 | `agent.auth: oauth` + `agent.oauth_token` | the file's account, the same way | yes |
@@ -113,7 +113,7 @@ whether or not the credentials block declares it, and such a repository runs on 
 name a retired `access` key wrote is different: a name no layer holds is a problem the config reports
 at the key that wrote it, and the rule answers nothing rather than inventing a type.
 
-Three more rules the table depends on:
+Four more rules the table depends on:
 
 - A stage account is a **stage's** key, and the caller hands the two account sources in as two fields:
   `LegacyInput.StageAccounts` holds `stages.<stage>.claude_account` alone, and
@@ -128,6 +128,11 @@ Three more rules the table depends on:
   and every other stage keeps the project's key. The stage's own key is served as written; the mix's
   account beyond the config's own keys — the review model, the coder's provider route, the budget
   mode, the allow-list — is the launch's to judge (CM14), never this rule's.
+- A grade's access reaches the **coder's craft and the merge judge's**, and no other: those are the two
+  crafts `applyGrade` writes it into today (`Crafts.Coder` and `Crafts.MergeJudge`,
+  `internal/runner/routing.go`), so a graded task's reviews keep their own crafts' accesses. Reading the
+  grade for every stage would move a graded task's reviews onto the coder's credential, which is the
+  move a migration may not make (R3).
 - `Chosen` is F35's second condition and nothing else: it is false **only** for the unsuffixed default
   account reached without a choice. Vertex, the project's key, a **mix** account a project named and
   the cascade's pool have no walk to be walked on and are chosen.

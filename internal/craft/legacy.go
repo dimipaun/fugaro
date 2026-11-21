@@ -42,8 +42,9 @@ import (
 //   - agent.crafts.<craft>.access is the access the file's craft chose (D3062:
 //     moved as written).
 //   - model_grades.<grade>.access is a grade's, and it wins over the craft's for
-//     a task that names that grade — which is what applyGrade does today (F38,
-//     and the project's key is the one that survives, CM34).
+//     a task that names that grade — for the coder's craft and the merge judge's
+//     alone, which is exactly where applyGrade writes it today (F38, and the
+//     project's key is the one that survives, CM34).
 //
 // The order is what a reader of today's configuration gets: the grade a task
 // names, then the craft's own access, then the retired auth value. Each is
@@ -131,13 +132,20 @@ type LegacyInput struct {
 //
 // grade is the task's own model grade (task.grade) where it names one, "" where
 // it names none: a grade's access is a second place an access may be written
-// (F38) and it reaches only the task that named the grade.
+// (F38), it reaches only the task that named the grade, and within that task
+// only the crafts the grade's access is written into (applyGrade).
 func LegacyAccess(in LegacyInput, stage, grade string) (Access, bool) {
 	name := stageCraft(stage)
 	if name == "" {
 		return Access{}, false
 	}
-	if grade != "" {
+	// The grade's access reaches the coder's craft and the merge judge's, and no
+	// other: that is what applyGrade writes it into today (Crafts.Coder and
+	// Crafts.MergeJudge, internal/runner/routing.go), so a graded task's reviews
+	// keep their own crafts' accesses. Taking the grade for every craft would
+	// move the reviews onto the coder's credential, which is the move a
+	// migration may not make (R3).
+	if grade != "" && (name == config.CraftCoder || name == config.CraftMergeJudge) {
 		if written := in.Grades.Of(grade).Access; written != "" {
 			return in.resolve(written)
 		}

@@ -300,6 +300,56 @@ func TestTheLegacyRuleAnswersEveryOldAuthValue(t *testing.T) {
 			ok: true,
 		},
 		{
+			// applyGrade writes a grade's access into the coder's craft and the
+			// merge judge's alone (Crafts.Coder, Crafts.MergeJudge,
+			// internal/runner/routing.go), so a graded task's review keeps its
+			// own craft's access: taking the grade here would move every review
+			// of a graded task onto the coder's credential (R3).
+			name: "a grade's access does not reach a review stage, which keeps its own craft's",
+			edit: func(in *LegacyInput) {
+				in.Auth = "oauth"
+				in.DefaultAccount = "bob"
+				in.Grades.Strong = &config.Craft{Access: "alice"}
+			},
+			stage: "review",
+			grade: config.GradeStrong,
+			want: Access{
+				Kind: AccessCredential, Name: "bob",
+				Members: credential("bob", config.CredentialTypeClaudeOAuth),
+				Chosen:  true,
+			},
+			ok: true,
+		},
+		{
+			name: "the grade's access reaches the merge judge, the other craft applyGrade writes it into",
+			edit: func(in *LegacyInput) {
+				in.Auth = "oauth"
+				in.Grades.Strong = &config.Craft{Access: "alice"}
+			},
+			stage: "merge_judge",
+			grade: config.GradeStrong,
+			want: Access{
+				Kind: AccessCredential, Name: "alice",
+				Members: credential("alice", config.CredentialTypeClaudeOAuth),
+				Chosen:  true,
+			},
+			ok: true,
+		},
+		{
+			// The judge spends model calls of its own (E6), so its stage answers
+			// the merge judge's craft: a rule with no craft for merge_judge would
+			// refuse the run (F49) instead of serving the judge.
+			name:  "the merge judge is a stage with a craft of its own, and it answers it",
+			edit:  withAuth("vertex"),
+			stage: "merge_judge",
+			want: Access{
+				Kind: AccessCredential, Name: config.CredentialVertex,
+				Members: credential(config.CredentialVertex, config.CredentialTypeVertex),
+				Chosen:  true,
+			},
+			ok: true,
+		},
+		{
 			name: "a task that names no grade reads no grade's access",
 			edit: func(in *LegacyInput) {
 				in.Auth = "oauth"
