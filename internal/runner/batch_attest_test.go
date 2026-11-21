@@ -4,10 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/identitywire"
@@ -134,6 +136,33 @@ func TestTheAttestationIsNeverPrinted(t *testing.T) {
 	}
 	if printed := r.redact(line); !strings.Contains(printed, "[REDACTED]") {
 		t.Errorf("the attestation was not redacted but dropped whole: %q", printed)
+	}
+}
+
+// TestTheTicketNeverReachesTheSession: the ticket arrives in the job's
+// environment — a Batch launch sets it as a job variable — and the run's own
+// stages are built from an allow-list that holds no FUGARO_* name
+// (internal/agent's BuildEnv, docs/agent-env/spec.md §4), so the session never
+// carries it. It is pinned here because the ticket is a new name and an
+// allow-list that grew one would be a change nothing else would notice
+// (BR4's acceptance: the ticket is stripped from the session's environment).
+func TestTheTicketNeverReachesTheSession(t *testing.T) {
+	const value = "ticket-fixture-never-a-real-ticket"
+	parent := append(batchRunEnv("127.0.0.1:1"), identitywire.TicketEnv+"="+value, "PATH=/bin")
+	env, _, err := agent.BuildEnv(parent, agent.EnvSpec{Auth: "api-key",
+		Gateway: &agent.Gateway{BaseURL: "http://127.0.0.1:1", Token: gatewayToken}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The environment is a real one: an allow-listed variable of the job's
+	// reaches the session, so the loop below is not passing over nothing.
+	if !slices.Contains(env, "PATH=/bin") {
+		t.Fatalf("the session's environment lost an allow-listed variable: %v", env)
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, identitywire.TicketEnv+"=") || strings.Contains(kv, value) {
+			t.Errorf("the session's environment carries the ticket: %q", kv)
+		}
 	}
 }
 
