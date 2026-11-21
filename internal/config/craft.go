@@ -761,8 +761,10 @@ func poolEmailProblem(email string) string {
 // ValidatePublishedPools reports every rule a policy node's craft_pools block
 // breaks: ValidatePools' rules, D1668's one-path rule (pathCrossingProblems,
 // which the node's own version-8 step converges a crossing pool with before this
-// read ever sees one) and the one only a PUBLISHED pool is held to — it names an
-// owner, or it carries the marker the migration wrote (D1936, D1942, F37).
+// read ever sees one) and the two only a PUBLISHED pool is held to — it names an
+// owner, or it carries the marker the migration wrote (D1936, D1942, F37), and
+// it carries no marker of the cascade's, which is the installation's alone
+// (D3064 as amended, R15).
 //
 // The two functions exist because the two documents are not the same thing. The
 // installation's own config is the owner's own pools and survives an upgrade
@@ -775,10 +777,27 @@ func ValidatePublishedPools(pools []Pool, creds []Credential) []Problem {
 	ps := ValidatePools(pools, creds)
 	ps = append(ps, pathCrossingProblems(pools, creds)...)
 	for _, p := range pools {
+		at := fmt.Sprintf("pools.%s", pluginwire.Printable(p.Name))
+		// The cascade's marker is the installation's own and the node never
+		// carries it (R15, D3064 as amended): the node's readers are job images
+		// and the service, and the pool they are served is the ordinary
+		// legacy_open one the publisher writes (publishedCraftPools). The key is
+		// refused here rather than ignored because ignoring it is how a node
+		// written by hand would keep a marker this reader then serves by a rule
+		// it may not apply — and before this field existed the same node was
+		// refused as an unknown key, so refusing it is what keeps this reader's
+		// answer to it what it has always been.
+		if p.Cascade {
+			ps = append(ps, Problem{Path: at + ".cascade", Message: "the cascade's marker is the installation's own: a published node is served the pool as an ordinary legacy_open one, because the marker says the pool is served although the subscription-spread switch is off, and no reader of this node may apply that rule (D3064 as amended, R15) — remove the key here and write it in the installation's config, where `fugaro update` writes it for the pool it migrated"})
+			// And no more of this pool: the owner rule below would answer a
+			// marked pool with the fix that keeps it (mark it legacy_open),
+			// which is not what a node carrying the marker needs to hear.
+			continue
+		}
 		if p.Name == "" || p.LegacyOpen || p.Owner != "" {
 			continue
 		}
-		ps = append(ps, Problem{Path: fmt.Sprintf("pools.%s", pluginwire.Printable(p.Name)), Message: "owner is required: a pool is served to its owner and to the users it names, so a pool with no owner serves nobody — name the pool's owner, or mark a pool that predates owners as legacy_open if it is one `fugaro update` migrated"})
+		ps = append(ps, Problem{Path: at, Message: "owner is required: a pool is served to its owner and to the users it names, so a pool with no owner serves nobody — name the pool's owner, or mark a pool that predates owners as legacy_open if it is one `fugaro update` migrated"})
 	}
 	return ps
 }

@@ -111,3 +111,29 @@ func TestAMarkedPoolsOwnerIsRefused(t *testing.T) {
 		t.Errorf("an unmarked pool's owner was refused: %s", problemsText(ps))
 	}
 }
+
+// TestPublishedPoolsCarryNoMarker: the marker is the installation's own key,
+// and the shared node carries none of it (R15, D3064 as amended) — what the
+// node holds is the ordinary legacy_open pool the publisher writes there. The
+// read refuses it rather than passing it over, because a reader that shrugged
+// at the key would let a node written by hand keep a marker whose whole meaning
+// is a rule the node's readers may not apply, and because this reader had an
+// answer to the key before the field existed: it was an unknown member of
+// craft_pools, and the node's decode refused it (DisallowUnknownFields).
+func TestPublishedPoolsCarryNoMarker(t *testing.T) {
+	creds := []Credential{{Name: "claude-sub", Type: CredentialTypeClaudeOAuth}}
+	marked := []Pool{{Name: "acme-cascade", Members: []string{"claude-sub"}, Cascade: true}}
+	ps := ValidatePublishedPools(marked, creds)
+	if len(ps) != 1 || ps[0].Path != "pools.acme-cascade.cascade" {
+		t.Fatalf("a published pool carrying the marker: %s, want one refusal at the key", problemsText(ps))
+	}
+	if !strings.Contains(ps[0].Message, "legacy_open") {
+		t.Errorf("the refusal does not say what the node is served instead: %s", ps[0].Message)
+	}
+	// The node's own pool, the one the publisher writes for the migration, is
+	// admitted: the marker is what is refused, never the pool.
+	served := []Pool{{Name: "acme-cascade", Members: []string{"claude-sub"}, LegacyOpen: true}}
+	if ps := ValidatePublishedPools(served, creds); len(ps) > 0 {
+		t.Errorf("the pool the node is served was refused: %s", problemsText(ps))
+	}
+}
