@@ -68,7 +68,7 @@ Merged since the last read (86 commits, read from `4ce11172f`; 2 are specs' own 
 
 | Spec | State |
 | --- | --- |
-| managed-flag-ergonomics | a design only, nothing built and no task approved (docs/managed-flag-ergonomics, moved from docs/design on 2026-11-21) |
+| managed-flag-ergonomics | planned 2026-11-21: decisions D2211-D2216 answered, 8 tasks (T1-T6), nothing built and no task approved (docs/managed-flag-ergonomics) |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
 | voice-module, collateral, backlog, plans, design | no plan or not a spec (plans holds v1's milestone plans M0 to M6, design holds v1 and update-in-flight) |
 

@@ -1,0 +1,207 @@
+{
+  "schema_version": 3,
+  "plan": "docs/managed-flag-ergonomics/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "T1",
+      "title": "rewrite a recorded budget amount",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/managed/marker.go",
+          "internal/infra/managed/marker_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T2a",
+      "title": "setup's budget defaults and the creation fact",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/managed/defaults.go",
+          "internal/cli/init.go",
+          "internal/cli/init_budget_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "T2b",
+      "title": "the wizard's budget question and the answers-file members",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/setup.go",
+          "internal/cli/setup_answers.go",
+          "schemas/setup-answers.schema.json",
+          "internal/cli/setup_wizard_test.go",
+          "internal/cli/setup_answers_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "T3",
+      "title": "update marks every unmanaged installation; an explicit budget rewrites",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_selfflag.go",
+          "internal/cli/update_selfflag_test.go",
+          "internal/cli/update_in_flight.go",
+          "internal/cli/update_converge_test.go",
+          "internal/cli/init.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "T4",
+      "title": "managed flag takes the project from the installation",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/managed_flag.go",
+          "internal/cli/managed_flag_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "T2c",
+      "title": "drop fugaro setup --managed",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init.go",
+          "internal/cli/init_project.go",
+          "internal/cli/restore.go",
+          "internal/**/*_test.go",
+          "plugin/skills/setup/SKILL.md",
+          "plugin/skills/setup/reference/managed.md",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "T5",
+      "title": "the skill, SECURITY.md and the website say what ships",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/setup/reference/managed.md",
+          "SECURITY.md",
+          "website/content/security.md",
+          "internal/cli/docs_security_test.go",
+          "internal/cli/docs_managed_deployer_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T6",
+      "title": "the console's first-run wizard asks for the budget",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/wizardrun.ts",
+          "console/src/renderer/entry.ts",
+          "console/src/shared/version.ts",
+          "console/test/unit/onboarding.test.ts"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "T3",
+      "needs": "T1",
+      "reason": "the rewrite's behaviour, which its tests run"
+    },
+    {
+      "task": "T4",
+      "needs": "T1",
+      "reason": "the rewrite's behaviour, which its tests run"
+    },
+    {
+      "task": "T3",
+      "needs": "T2a",
+      "reason": "the same file init.go, and the explicit-only trio check"
+    },
+    {
+      "task": "T2b",
+      "needs": "T2a",
+      "reason": "the default constant; breaking it gains nothing"
+    },
+    {
+      "task": "T4",
+      "needs": "T2a",
+      "reason": "the default constants; breaking it gains nothing"
+    },
+    {
+      "task": "T2c",
+      "needs": "T2a",
+      "reason": "behaviour: dropping --managed first would stop creations recording an amount; same file init.go"
+    },
+    {
+      "task": "T2c",
+      "needs": "T3",
+      "reason": "the same file init.go"
+    },
+    {
+      "task": "T6",
+      "needs": "T2b",
+      "reason": "the CLI version that reads the budget member"
+    },
+    {
+      "task": "T5",
+      "needs": "T2c",
+      "reason": "the same skill file"
+    },
+    {
+      "task": "T5",
+      "needs": "T3",
+      "reason": "the text describes its behaviour"
+    },
+    {
+      "task": "T5",
+      "needs": "T4",
+      "reason": "the text describes its behaviour"
+    }
+  ],
+  "decoupling": [],
+  "contract_changes": []
+}
