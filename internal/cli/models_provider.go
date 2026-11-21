@@ -199,7 +199,7 @@ func runModelsProviderSet(cmd *cobra.Command, name string, o *modelsProviderSetO
 		return nil
 	}
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "providers.%s carries %s now: next: fugaro update --repo . in each repository whose code should go down this route\n", name, strings.Join(wrote, ", "))
+	fmt.Fprintf(out, "providers.%s carries %s now, and the policy node this project publishes carries it: a run routes by the copy in its own job's environment, so each repository whose code should go down this route needs its own `fugaro update --repo .` in that checkout\n", name, strings.Join(wrote, ", "))
 	return runAfterWrite(cmd.Context(), cmd, afterWriteChange{Key: "providers." + name + "." + wrote[0], Store: settings.StoreLocal})
 }
 
@@ -625,7 +625,7 @@ func runModelsPriceSet(cmd *cobra.Command, id string, o *modelsPriceSetOptions) 
 	if !yamledit.Changed(old, next) {
 		return nil
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "model_prices.%s carries %s now: next: fugaro update, which publishes the policy node a run reads prices from\n", id, strings.Join(wrote, ", "))
+	fmt.Fprintf(cmd.OutOrStdout(), "model_prices.%s carries %s now: the policy node a run reads prices from carries it, so no further command is needed\n", id, strings.Join(wrote, ", "))
 	return runAfterWrite(cmd.Context(), cmd, afterWriteChange{Key: "model_prices." + id + "." + wrote[0], Store: settings.StoreLocal})
 }
 

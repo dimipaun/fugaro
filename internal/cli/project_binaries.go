@@ -149,7 +149,7 @@ func runProjectBinariesAllow(cmd *cobra.Command, pattern string) error {
 func projectBinariesAllowWhy(lc *localcfg.Config, pattern string) string {
 	why := fmt.Sprintf("this widens the project's binary admission by admitting every path %s matches: a run of the project may add a file there, within the cap, instead of failing finalize", safetext.Field(pattern))
 	if lc != nil && lc.Binaries == nil {
-		return why + "; this file states no binaries block yet, and the block it states now is the whole one the next fugaro update publishes: whatever paths the published node admits beside this one are replaced by the list this file carries"
+		return why + "; this file states no binaries block yet, and the block it states now is the whole one this command publishes: whatever paths the published node admits beside this one are replaced by the list this file carries"
 	}
 	return why
 }
@@ -280,7 +280,7 @@ func runProjectBinariesMaxBytes(cmd *cobra.Command, value string) error {
 // narrowing one and a session may make it.
 func projectBinariesMaxBytesDirection(lc *localcfg.Config, n int64) (bool, string) {
 	if lc == nil || lc.Binaries == nil {
-		return true, fmt.Sprintf("this writes binaries.max_bytes into a file that states no binaries block, and the block this file states is the whole one the next fugaro update publishes: the published grant's own cap is not read here, so the cap this write states is the owner's own step — raising it admits a larger file at every path the project admits, and the paths this file states are the whole list the node will carry")
+		return true, fmt.Sprintf("this writes binaries.max_bytes into a file that states no binaries block, and the block this file states is the whole one this command publishes: the published grant's own cap is not read here, so the cap this write states is the owner's own step — raising it admits a larger file at every path the project admits, and the paths this file states are the whole list the node will carry")
 	}
 	if lc.Binaries.MaxBytes != 0 && n > lc.Binaries.MaxBytes {
 		return true, fmt.Sprintf("this widens the project's binary admission by raising the cap from %d to %d bytes: a run may add a file it could not add before, at every path the project admits", lc.Binaries.MaxBytes, n)
