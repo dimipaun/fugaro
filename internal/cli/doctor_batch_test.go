@@ -1362,7 +1362,7 @@ func TestDoctorBatchNamesTheArtifactBoundary(t *testing.T) {
 	if c.Severity != "info" {
 		t.Errorf("the boundary's check has severity %q, want info: it is a decision and not a fault, and a warning would fail doctor --strict for every Batch installation", c.Severity)
 	}
-	for _, want := range []string{"artifact-runs.md", "§8.5", "D11", "cloud-run"} {
+	for _, want := range []string{"artifact-runs/spec.md", "§8.5", "D11", "cloud-run"} {
 		if !strings.Contains(c.Problem+c.Fix, want) {
 			t.Errorf("the boundary's text does not name %q: %s / %s", want, c.Problem, c.Fix)
 		}
