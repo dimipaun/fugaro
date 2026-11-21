@@ -41,18 +41,26 @@ import (
 type SecretManager struct {
 	svc     *secretmanager.Service
 	project string
+	// region is the installation's own region, which a container this creates
+	// is replicated in (D3082). It is empty on a service deployed before the
+	// variable existed (LP5a), and an empty one is automatic: a create carries
+	// one policy and no later call touches it, so the containers such a
+	// deployment already made keep what they have and its new ones are the
+	// ones it always made.
+	region string
 }
 
-// NewSecretManager connects to Secret Manager for project. The options are the
-// client's own (a test points them at internal/gcpfake; production passes
-// none, which is the environment's own credentials — the intake's service
-// account).
+// NewSecretManager connects to Secret Manager for project, creating a
+// container in region (empty for automatic: see the field above). The options
+// are the client's own (a test points them at internal/gcpfake; production
+// passes none, which is the environment's own credentials — the intake's
+// service account).
 //
 // A project with no name is refused here rather than at the first call: every
 // route of this service addresses a container by its project, so an intake
 // that does not know one is one that would answer every call with a failure of
 // its own making.
-func NewSecretManager(ctx context.Context, project string, opts ...option.ClientOption) (*SecretManager, error) {
+func NewSecretManager(ctx context.Context, project, region string, opts ...option.ClientOption) (*SecretManager, error) {
 	if project == "" {
 		return nil, errors.New("intake: no project: the containers this service writes live in the installation's GCP project")
 	}
@@ -60,7 +68,7 @@ func NewSecretManager(ctx context.Context, project string, opts ...option.Client
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Secret Manager: %w", err)
 	}
-	return &SecretManager{svc: svc, project: project}, nil
+	return &SecretManager{svc: svc, project: project, region: region}, nil
 }
 
 // Describe answers one container's metadata, and whether a container of this
@@ -93,8 +101,9 @@ func (s *SecretManager) Describe(ctx context.Context, id string) (Secret, bool, 
 
 // Create makes the container, or answers ErrExists. The labels are the
 // intake's own scope labels and the annotations are R10's, and the replication
-// is automatic: the shape a container the intake wrote has, which the check
-// before every later write holds it to.
+// is replicationIn's: the region the deployment named, or automatic where it
+// named none. Either way it is the shape a container the intake wrote has, and
+// only a create carries it — nothing here changes a container that exists.
 //
 // A 409 is ErrExists and not a failure: the caller of SecretStore is the write
 // path, which reads the container again and puts it to the shape check rather
@@ -103,7 +112,7 @@ func (s *SecretManager) Create(ctx context.Context, id string, annotations, labe
 	_, err := s.svc.Projects.Secrets.Create(s.parent(), &secretmanager.Secret{
 		Annotations: annotations,
 		Labels:      labels,
-		Replication: &secretmanager.Replication{Automatic: &secretmanager.Automatic{}},
+		Replication: replicationIn(s.region),
 	}).SecretId(id).Context(ctx).Do()
 	switch {
 	case isStatus(err, http.StatusConflict):
@@ -112,6 +121,28 @@ func (s *SecretManager) Create(ctx context.Context, id string, annotations, labe
 		return fmt.Errorf("creating secret %s: %w", id, err)
 	}
 	return nil
+}
+
+// replicationIn is the policy a container this creates carries: user-managed,
+// with one replica in the installation's own region, which is what the
+// intake's deployment tells it (intake.tf's FUGARO_REGION, read by
+// internal/cli's intakeServiceConfig). Automatic, which Google documents as
+// global, is what a deployment that names no region gets — a service deployed
+// before that variable existed, which must create the containers it always
+// made — and it is also the policy of every container such a deployment made
+// before, which is why nothing ever changes one.
+//
+// It mirrors internal/backend/gcp's helper of the same name rather than
+// importing it, for the reason this file's isStatus is a mirror too: the
+// intake's reach is DS2.2's grant and its own Secret Manager client, and it
+// links none of the CLI's cloud stack for four lines of policy (D3082).
+func replicationIn(region string) *secretmanager.Replication {
+	if region == "" {
+		return &secretmanager.Replication{Automatic: &secretmanager.Automatic{}}
+	}
+	return &secretmanager.Replication{UserManaged: &secretmanager.UserManaged{
+		Replicas: []*secretmanager.Replica{{Location: region}},
+	}}
 }
 
 // AddVersion stores value as a new version and answers its number. The value

@@ -126,6 +126,16 @@ func (d *wsDB) Get(_ context.Context, path string, out any) (bool, error) {
 	}
 	if r, ok := out.(*json.RawMessage); ok {
 		*r = raw
+		return true, nil
+	}
+	// The document readers that hand the raw bytes on (RTDBPolicy, RTDBOutcomes)
+	// take the RawMessage above; the ones that decode straight into their own
+	// value — budget.ReadKills' killNode, creds' per-repository record — take
+	// this. Both are the same node and neither may be answered "found" with
+	// nothing written into `out`, which is a call that would read an absent
+	// switch as an off one.
+	if err := json.Unmarshal(raw, out); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -142,10 +152,19 @@ func (d *wsDB) read(path string) bool {
 // wsFixture is one workspace's service, with two members, one owner person and
 // the clock under the test's control.
 type wsFixture struct {
-	t   *testing.T
-	now time.Time
-	run string
-	dbs map[string]*wsDB
+	t     *testing.T
+	now   time.Time
+	run   string
+	dbs   map[string]*wsDB
+	store *fakeStore
+	// own is the workspace's OWN database, and it is where the workspace's own
+	// stop switch is read from: `config/kill/global` there is the node `fugaro
+	// budget kill --workspace` writes (D1302). It is held apart from `store`
+	// because the two are two interfaces over that one database — the state is
+	// a creds.Store and the switch is a budget.KillGetter — and it is NOT one
+	// of `dbs`, which are the members': no member's database is ever the
+	// workspace's own.
+	own *wsDB
 	ws  *Workspace
 }
 
@@ -158,9 +177,11 @@ func newWSFixtureWith(t *testing.T, mutate func(*WorkspaceConfig)) *wsFixture {
 	t.Helper()
 	now := testNow()
 	f := &wsFixture{
-		t:   t,
-		now: now,
-		run: now.Format("20060102-150405") + "-ab12",
+		t:     t,
+		now:   now,
+		run:   now.Format("20060102-150405") + "-ab12",
+		store: newFakeStore(),
+		own:   &wsDB{url: "https://" + wsWorkspace + "-default-rtdb.firebaseio.com", nodes: map[string]any{}},
 		dbs: map[string]*wsDB{
 			wsMemberA: {url: "https://" + wsMemberA + "-default-rtdb.firebaseio.com", nodes: map[string]any{}},
 			wsMemberB: {url: "https://" + wsMemberB + "-default-rtdb.firebaseio.com", nodes: map[string]any{}},
@@ -182,6 +203,15 @@ func newWSFixtureWith(t *testing.T, mutate func(*WorkspaceConfig)) *wsFixture {
 		OwnerPeople: []string{wsOwner},
 		Keys:        staticKeys{testKid: &testKey().PublicKey},
 		JobKeys:     staticKeys{testJobKid: &testKey().PublicKey},
+		// R8: the workspace's OWN credential state. It is the one store a
+		// workspace call may write, and a call that wrote a member's would be
+		// a call this fixture hears about, since a member is opened as a
+		// Getter and nothing wider.
+		State: f.store,
+		// The workspace's own stop switch, read from the workspace's own
+		// database: the switch `fugaro budget kill --workspace` writes (D1302),
+		// which the scope reads beside the calling member's own pair.
+		Kills: f.own,
 		// The opener is the ONLY thing that decides which member's state a
 		// call can read, and it is asked for a URL: a deployment that opened a
 		// URL nothing derived is a deployment this test would hear about.
@@ -832,6 +862,8 @@ func TestNewWorkspaceOpensTheDatabaseTheMembersRegionNames(t *testing.T) {
 		OwnerPeople: []string{wsOwner},
 		Keys:        staticKeys{testKid: &testKey().PublicKey},
 		JobKeys:     staticKeys{testJobKid: &testKey().PublicKey},
+		State:       newFakeStore(),
+		Kills:       &wsDB{nodes: map[string]any{}},
 		Now:         func() time.Time { return now },
 	}
 	var opened []string
@@ -1307,37 +1339,41 @@ func TestWorkspaceSharedIsRefusedWhereTheRepositoriesOwnNodeDoesNotAdmitIt(t *te
 }
 
 // TestWorkspaceSharedReadsTheRepositoryOfTheRunIdentityNotTheCallers pins, in
-// both directions, the divergence docs/workspaces/spec.md §8's residual risk 7
-// states: the member's own two allow_repos legs ARE asked — over the canonical
-// name recovered from the verified slug — and what no reader carries is the
-// pairing of the calling job service account with the repository the identity
-// names.
+// both directions, which repository this function decides by: the slug the run
+// identity VERIFIED, canonicalised, and not anything the caller carries. Both
+// of the member's own allow_repos legs are asked over that name.
 //
-// What the confusion reaches is bounded by the member's own lists: the sibling
-// repository this call is served on is one the member's policy scopes the
-// credential to, which is the fixture's shape (setPolicyOn names both), and the
-// other half of that bound is
+// This function alone does not hold the slug to the calling job account, and it
+// does not need to: the workspace's ScopeResolver asks Workspace.Credential for
+// the caller first and answers Repos() — the repositories that caller's account
+// is declared on, one or several — which the front door holds the verified slug
+// to before any handler runs (F28, D2992, R19;
+// TestWorkspaceScopeHoldsTheSlugToTheCallingAccount calls the same shape through
+// a resolver and asserts the refusal). So what is pinned here is the half that
+// stays this function's own: the node that decides is the one the run identity
+// names, never a fallback to another of the member's repositories.
+//
+// The bound is the member's own lists: the sibling repository this call is
+// served on is one the member's policy scopes the credential to, which is the
+// fixture's shape (setPolicyOn names both), and the other half of that bound is
 // TestWorkspaceSharedIsRefusedWhereTheMembersAllowListNoLongerNamesTheRun, where
 // the same call is refused because those lists no longer name the run's
-// repository. So the pairing crosses no member and leaves no list the member
-// itself wrote — the column that would close it is what the review's N1 and
-// spec.md §8's residual risk 7 are about.
+// repository.
 //
-// The installation's own front door holds the two together — its table binds
-// each job account to the repository the service account was derived from, and
-// it refuses a run whose slug is another's (`!bound || ja.Slug != id.Slug`,
-// internal/credsvc/server.go:737). This deployment's per-member table names a
-// member's job accounts and no repository (WorkspaceCredentialMember), so there
-// is no slug to hold the verified one to and the node that decides is the one
-// the run names. The test exists so that the SHIPPED behaviour is asserted
-// rather than described: a change that closes risk 7 by carrying a repository
-// beside each account has to change this test, which is where the owner's
-// decision about the column is read — and a change that reached a repository
-// the identity did not name fails it.
+// The installation's own front door holds account and repository together the
+// same way — its table binds each job account to the repository the service
+// account was derived from, and it refuses a run whose slug is another's
+// (`!bound || ja.Slug != id.Slug`, internal/credsvc/server.go:737). The
+// workspace's per-member table names a member's job accounts, and the
+// repository half arrives in the published node (WorkspaceJobAccount.Repos),
+// which is where the scope reads it. The test exists so that the SHIPPED
+// behaviour of THIS function is asserted rather than described: a change that
+// made Shared reach a repository the identity did not name fails it.
 func TestWorkspaceSharedReadsTheRepositoryOfTheRunIdentityNotTheCallers(t *testing.T) {
 	f := newWSFixture(t)
 	// A's policy names BOTH repositories, so neither allow_repos leg decides
-	// anything here: the pairing is the whole of the gap this test pins.
+	// anything here: the node the slug names is the whole of what this test
+	// pins.
 	f.setPolicyOn(wsMemberA, []string{wsRepo, wsRepoOther}, wsShared)
 	f.setAdmissions(wsMemberA, wsSlug)                // A's own repository admits nobody
 	f.setAdmissions(wsMemberA, wsSlugOther, wsShared) // the other repository admits it
@@ -1360,7 +1396,7 @@ func TestWorkspaceSharedReadsTheRepositoryOfTheRunIdentityNotTheCallers(t *testi
 		t.Fatalf("Shared for a run on the other repository: %v", err)
 	}
 	if len(got) != 1 || got[0].Name != wsShared {
-		t.Errorf("Shared = %v, want the credential: the node read is the one the run identity's own slug names, which is what §8's residual risk 7 states and not what the account's repository would say", got)
+		t.Errorf("Shared = %v, want the credential: the node read is the one the run identity's own slug names, not the node of another repository the member's policy also allows", got)
 	}
 	if !f.dbs[wsMemberA].read(projectpolicy.PathRepo(wsSlugOther)) {
 		t.Error("the other repository's node was not read: the slug is the run identity's, and a service that read the member's repository instead would decide by something the account does not carry")
@@ -1506,10 +1542,14 @@ func TestWorkspaceServesThePaidKeyAMemberNamesByItsSentinel(t *testing.T) {
 //
 // The API is the test: no method of the service or of the caller it answers
 // with mentions a value-carrying type (bundle.Entry), and the values the pool
-// is spoken of in — creds.Credential — carry a name and a tier and nothing
-// else. A route that wanted a value would have to reach the bundle's own
-// accessor for the kind of credential it means, which is where the kinds are
-// kept apart (Q6).
+// is spoken of in — creds.Credential — carry names and a tier and nothing else:
+// the credential's own name, and, for a tier-C credential, the name of the
+// provider whose key it is (a project's named key is one provider's key and one
+// provider's alone, and the selection is what holds the two together — D3000,
+// R2). A NAME of a provider is no more a value than the name of an account is:
+// nothing here is a token, and a route that wanted a value would have to reach
+// the bundle's own accessor for the kind of credential it means, which is where
+// the kinds are kept apart (Q6).
 func TestWorkspaceServiceNeverReturnsACredentialValue(t *testing.T) {
 	entry := reflect.TypeOf(Entry{})
 	credential := reflect.TypeOf(creds.Credential{})
@@ -1527,9 +1567,9 @@ func TestWorkspaceServiceNeverReturnsACredentialValue(t *testing.T) {
 	}
 	for i := 0; i < credential.NumField(); i++ {
 		switch name := credential.Field(i).Name; name {
-		case "Name", "Tier":
+		case "Name", "Tier", "Provider":
 		default:
-			t.Errorf("creds.Credential carries a field %s: the pool is spoken of in names and tiers", name)
+			t.Errorf("creds.Credential carries a field %s: the pool is spoken of in names and tiers, and of the provider a tier-C key belongs to", name)
 		}
 	}
 	if mentions(reflect.TypeOf(WorkspaceCaller{}), entry) || mentions(reflect.TypeOf(WorkspaceMember{}), entry) {
@@ -1574,6 +1614,8 @@ func TestNewWorkspaceRefusesAConfigurationItCannotCheck(t *testing.T) {
 			OwnerPeople: []string{wsOwner},
 			Keys:        staticKeys{testKid: &testKey().PublicKey},
 			JobKeys:     staticKeys{testJobKid: &testKey().PublicKey},
+			State:       newFakeStore(),
+			Kills:       &wsDB{nodes: map[string]any{}},
 			Open:        func(string) (Getter, error) { return &wsDB{nodes: map[string]any{}}, nil },
 		}
 	}
@@ -1583,6 +1625,15 @@ func TestNewWorkspaceRefusesAConfigurationItCannotCheck(t *testing.T) {
 		"no caller keys":     func(c *WorkspaceConfig) { c.JobKeys = nil },
 		"no run keys":        func(c *WorkspaceConfig) { c.Keys = nil },
 		"no database opener": func(c *WorkspaceConfig) { c.Open = nil },
+		// R8: a workspace with no store of its own has nowhere to keep the
+		// marks and leases of the pool's credentials, and the one store it
+		// could reach for is a member's.
+		"no store of its own": func(c *WorkspaceConfig) { c.State = nil },
+		// D1302: a workspace with no switch of its own serves every
+		// shared-credential call of a workspace its owner has stopped — and
+		// that switch is the one control that does not depend on a member's
+		// honesty (spec.md §8).
+		"no stop switch of its own": func(c *WorkspaceConfig) { c.Kills = nil },
 		"a member with no job service account": func(c *WorkspaceConfig) {
 			c.Members[0].JobAccounts = nil
 		},

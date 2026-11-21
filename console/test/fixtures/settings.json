@@ -30,6 +30,12 @@
       "writable": true,
       "owner": "fugaro settings set",
       "target_layer": "repo",
+      "label": "Review rounds",
+      "description": "How many review rounds a run spends before it finalizes.",
+      "group": "Runs",
+      "type": "int",
+      "min": "0",
+      "max": "10",
       "levels": [{ "layer": "project", "value": "2", "outcome": "wins" }]
     },
     {
@@ -42,6 +48,10 @@
       "writable": true,
       "owner": "fugaro settings set",
       "target_layer": "local",
+      "label": "Choose an account automatically",
+      "description": "Let Fugaro pick which Claude account each run goes out on.",
+      "group": "Credentials",
+      "type": "bool",
       "levels": [{ "layer": "local", "value": "false", "outcome": "wins" }]
     },
     {
@@ -54,6 +64,10 @@
       "writable": false,
       "owner": "fugaro secrets",
       "target_layer": "local",
+      "label": "Mailbox keychain item",
+      "description": "The keychain item the subscription design names.",
+      "group": "Credentials",
+      "type": "string",
       "levels": [
         {
           "layer": "local",

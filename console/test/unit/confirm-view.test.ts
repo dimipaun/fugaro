@@ -43,12 +43,18 @@ import { describe, expect, it } from 'vitest'
 import {
   CANCEL_LABEL,
   CONFIRM_LABEL,
+  CONFIRM_UNDRAWABLE,
+  ENTRY_OK_LABEL,
+  ENTRY_RESET_LABEL,
+  ENTRY_RUNNING,
   NONE,
   SAVE_LABEL,
   TASK_HEADING,
   TICK_ID,
+  TITLE_ENTRY,
   TITLE_LAUNCH,
   TITLE_SETTINGS,
+  drawn,
   mountConfirm,
   taskSizeText,
 } from '../../src/renderer/confirm'
@@ -57,16 +63,22 @@ import type {
   ConfirmElement,
   ConfirmEvent,
   ConfirmFields,
+  SettingsEntryFields,
   SettingsFields,
 } from '../../src/renderer/confirm'
+import {
+  SETTINGS_ENTRY_ABOVE_MAX,
+  SETTINGS_ENTRY_CAVEAT,
+  SETTINGS_ENTRY_READONLY,
+} from '../../src/shared/settingsentry'
 import { SETTINGS_SHADOWED_SENTENCE, SETTINGS_TICK_LABEL } from '../../src/main/settingsview'
-import type { ConfirmBridge, ConfirmReply } from '../../src/preload/confirm'
+import type { ConfirmAnswer, ConfirmBridge, ConfirmReply } from '../../src/preload/confirm'
 
 // ---------------------------------------------------------------------------
 // A document, faked from the real one
 // ---------------------------------------------------------------------------
 
-/** FakeElement is one node: text, the two properties the view touches, a child
+/** FakeElement is one node: text, the four properties the view touches, a child
  * list, and the listeners a test can fire. It has **no markup slot**: a view
  * that reached for one is recorded here and throws, which is the whole point of
  * the headline case below. */
@@ -78,6 +90,10 @@ class FakeElement implements ConfirmElement {
    * and writes them on. */
   checked = false
   disabled = false
+  /** value is what a control holds -- a text or number field's text, a select's
+   * selected value, a toggle's `true`/`false` read through `checked` -- and the
+   * entry form reads it back off the control rather than keeping a copy. */
+  value = ''
   readonly attributes = new Map<string, string>()
   readonly children: FakeElement[] = []
   /** focused is whether `focus()` was called on this element. */
@@ -254,58 +270,72 @@ function aSettingsView(overrides: Partial<SettingsFields> = {}): SettingsFields 
 }
 
 /** fakeBridge is the confirmation window's whole surface, recording what it was
- * asked. */
+ * asked. The answer it records is the **object** the window sends (SU1): the
+ * three answers of the one channel, so a test reads back exactly what the main
+ * process would have received rather than a boolean this file interpreted. */
 function fakeBridge(
   options: {
     readonly fields?: ConfirmReply
+    readonly fieldsReplies?: readonly ConfirmReply[]
     readonly fieldsError?: Error
     readonly answerReply?: ConfirmReply
+    /** onAnswer runs while `answer` is being asked, which is the only moment a
+     * test can read the window as the operator saw it during the call: the entry
+     * form's status line is overwritten by the answer it is waiting for. */
+    readonly onAnswer?: () => void
   } = {},
 ): {
   readonly bridge: ConfirmBridge
-  readonly answered: readonly boolean[]
-  readonly ticks: readonly (boolean | undefined)[]
+  readonly answers: readonly ConfirmAnswer[]
   readonly calls: string[]
 } {
-  const answered: boolean[] = []
-  const ticks: (boolean | undefined)[] = []
+  const answers: ConfirmAnswer[] = []
   const calls: string[] = []
+  let reads = 0
   const bridge: ConfirmBridge = {
     fields: async () => {
       calls.push('fields')
       if (options.fieldsError !== undefined) throw options.fieldsError
-      return options.fields ?? { ok: true, data: aView() }
+      const queued = options.fieldsReplies?.[reads]
+      reads += 1
+      return queued ?? options.fields ?? { ok: true, data: aView() }
     },
-    answer: async (yes: boolean, ticked?: boolean) => {
+    answer: async (answer: ConfirmAnswer) => {
       calls.push('answer')
-      answered.push(yes)
-      ticks.push(ticked)
+      answers.push(answer)
+      options.onAnswer?.()
       return options.answerReply ?? { ok: true, data: { answered: true } }
     },
   }
-  return { bridge, answered, ticks, calls }
+  return { bridge, answers, calls }
 }
 
 /** mount builds the view over a fresh fake document, and returns the pieces a
  * test needs. Every test starts here. */
 async function mount(options: Parameters<typeof fakeBridge>[0] = {}) {
   const document = fakeDocument()
-  const { bridge, answered, ticks, calls } = fakeBridge(options)
+  const { bridge, answers, calls } = fakeBridge(options)
   await mountConfirm(document, bridge)
   return {
     document,
-    answered,
-    ticks,
+    answers,
     calls,
     element: (id: string): FakeElement => document.byId.get(id) as FakeElement,
   }
 }
 
-/** fieldValue is the `<dd>` a `<dt>` labels, or `null` when there is none. */
+/** fieldValue is the `<dd>` a `<dt>` labels, or `null` when there is none. A row
+ * whose value is not a bare text node -- the key and the command are a `<code>`
+ * inside the cell, and the form's control row holds the control and the inline
+ * error -- answers with its children's text, so an assertion reads what the
+ * operator reads rather than the cell's own text node. */
 function fieldValue(document: FakeDocument, label: string): string | null {
   const fields = document.byId.get('confirm-fields') as FakeElement
   const index = fields.children.findIndex((child) => child.tag === 'dt' && child.textContent === label)
-  return index === -1 ? null : (fields.children[index + 1]?.textContent ?? null)
+  if (index === -1) return null
+  const cell = fields.children[index + 1]
+  if (cell === undefined) return null
+  return cell.textContent ?? cell.children.map((child) => child.textContent ?? '').join('')
 }
 
 /** commandWords are the `<dd>`s under the command's `<dt>`, one word each. */
@@ -408,20 +438,20 @@ describe('the confirmation document and its view', () => {
     const keyboard = await mount()
     const keyboardActions = keyboard.element('confirm-actions')
     await keyboardActions.button(CONFIRM_LABEL).fire('click', 0)
-    expect(keyboard.answered).toEqual([])
+    expect(keyboard.answers).toEqual([])
     expect(keyboard.calls).toEqual(['fields'])
 
     const pointer = await mount()
     const pointerActions = pointer.element('confirm-actions')
     await pointerActions.button(CONFIRM_LABEL).fire('click', 1)
-    expect(pointer.answered).toEqual([true])
+    expect(pointer.answers).toEqual([{ answer: 'yes' }])
     expect(pointer.calls).toEqual(['fields', 'answer'])
 
     // Cancel answers on any click at all: it is the default, and the button a
     // keyboard reaches.
     const cancelled = await mount()
     await cancelled.element('confirm-actions').button(CANCEL_LABEL).fire('click', 0)
-    expect(cancelled.answered).toEqual([false])
+    expect(cancelled.answers).toEqual([{ answer: 'no' }])
   })
 
   it('draws the whole task text, never cut and never summarised', async () => {
@@ -471,7 +501,7 @@ describe('the confirmation document and its view', () => {
   it('draws the refusal’s own sentence and no confirming button', async () => {
     // A `fields()` that refused is not a window that may spawn: it shows why,
     // and the only control left is the one that declines.
-    const { element, answered, calls } = await mount({
+    const { element, answers, calls } = await mount({
       fields: { ok: false, reason: 'the confirmation window was opened for a launch this process no longer holds' },
     })
     expect(element('confirm-status').textContent).toBe(
@@ -481,7 +511,7 @@ describe('the confirmation document and its view', () => {
     expect(actions.children.map((child) => child.textContent)).toEqual([CANCEL_LABEL])
     expect(actions.children.some((child) => child.textContent === CONFIRM_LABEL)).toBe(false)
     await actions.button(CANCEL_LABEL).fire('click', 0)
-    expect(answered).toEqual([false])
+    expect(answers).toEqual([{ answer: 'no' }])
     expect(calls).toEqual(['fields', 'answer'])
   })
 
@@ -497,7 +527,7 @@ describe('the confirmation document and its view', () => {
     })
     const actions = refused.element('confirm-actions')
     await actions.button(CONFIRM_LABEL).fire('click', 1)
-    expect(refused.answered).toEqual([true])
+    expect(refused.answers).toEqual([{ answer: 'yes' }])
     expect(refused.element('confirm-status').textContent).toBe(
       'the confirmation window is not ready for an answer yet',
     )
@@ -646,22 +676,24 @@ describe('the settings question the same document draws', () => {
     expect(fieldValue(shadowed.document, 'Why the CLI asks')).toBeNull()
   })
 
-  it('draws every settings value as a literal text node', async () => {
+  it('draws every settings value as a literal text node, through its own class', async () => {
     // A key, an old value and the CLI's own sentence are text the CLI printed,
-    // and an old value is whatever the operator wrote last time: the same rule
-    // the launch's values are held to, asserted for this half of the union.
+    // and an old value is whatever the operator wrote last time: each is drawn as
+    // a text node through the class the Settings section draws the same value
+    // with (`projects.ts`'s `settingsRowLine`: a key is `branch`, a value is
+    // `label`, a sentence is `sentence`), so no element is ever built out of one.
     const { document } = await mount({
       fields: {
         ok: true,
         data: aSettingsView({
-          key: '<img src=x onerror=alert(1)>',
+          key: 'budget.cap_usd',
           oldValue: '<b>25</b>',
           newValue: 'javascript:alert(1)',
           sentence: '<script>alert(1)</script>',
         }),
       },
     })
-    expect(fieldValue(document, 'Setting')).toBe('<img src=x onerror=alert(1)>')
+    expect(fieldValue(document, 'Setting')).toBe('budget.cap_usd')
     expect(fieldValue(document, 'Current value')).toBe('<b>25</b>')
     expect(fieldValue(document, 'What this changes')).toBe('<script>alert(1)</script>')
     expect(document.created.filter((tag) => ['img', 'b', 'script', 'a'].includes(tag))).toEqual([])
@@ -670,8 +702,30 @@ describe('the settings question the same document draws', () => {
     expect([...new Set(document.created)].sort()).toEqual(['button', 'dd', 'dt'])
   })
 
+  it('draws the console’s own sentence for a value its class refuses, never the value', async () => {
+    // The other half of the rule above, and the mutation it catches: a key that
+    // is not what `branch` admits is **refused**, and a refusal is drawn as this
+    // view's own sentence rather than as the value (`drawn`, the same choice
+    // `installations.ts`'s `UNDRAWABLE` makes). A window that fell back to the raw
+    // string on a refusal would draw a value the sanitizer declined to vouch for.
+    const { document } = await mount({
+      fields: {
+        ok: true,
+        data: aSettingsView({ project: 'not a project', key: '<img src=x onerror=alert(1)>' }),
+      },
+    })
+    expect(fieldValue(document, 'Project')).toBe(CONFIRM_UNDRAWABLE)
+    expect(fieldValue(document, 'Setting')).toBe(CONFIRM_UNDRAWABLE)
+    // Neither value is anywhere in the window's text: what a refusal draws is the
+    // console's own sentence about the class and nothing else.
+    const fields = document.byId.get('confirm-fields') as FakeElement
+    const drawnText = fields.children.map((child) => child.textContent ?? '').join('\n')
+    expect(drawnText).not.toContain('onerror')
+    expect(drawnText).not.toContain('not a project')
+  })
+
   it('shapes a narrowing as one click: no tick, Confirm is the default and it answers', async () => {
-    const { element, answered, ticks } = await mount({ fields: { ok: true, data: aSettingsView() } })
+    const { element, answers } = await mount({ fields: { ok: true, data: aSettingsView() } })
     const actions = element('confirm-actions')
     expect(actions.children.map((child) => child.textContent)).toEqual([SAVE_LABEL, CANCEL_LABEL])
     const confirm = actions.button(SAVE_LABEL)
@@ -682,16 +736,18 @@ describe('the settings question the same document draws', () => {
     expect(confirm.focused).toBe(true)
     expect(confirm.tabIndex).toBe(-1)
     await confirm.fire('click', 0)
-    expect(answered).toEqual([])
+    expect(answers).toEqual([])
     await confirm.fire('click', 1)
-    expect(answered).toEqual([true])
-    // No tick was drawn, so the answer carries none: the channel's second member
-    // means "the widening's tick", and a narrowing has no box for one.
-    expect(ticks).toEqual([undefined])
+    // No tick was drawn, so the answer carries none: the member means "the
+    // widening's tick", and a narrowing has no box for one. It is **not** sent as
+    // `ticked: false` -- "no tick was drawn" and "the box is clear" are two
+    // different facts, and the main process refuses a widening's yes on the
+    // second (D1109).
+    expect(answers).toEqual([{ answer: 'yes' }])
   })
 
   it('shapes a widening as two answers: the tick, Confirm disabled until it is set, and Cancel focused', async () => {
-    const { element, answered, ticks } = await mount({
+    const { element, answers } = await mount({
       fields: {
         ok: true,
         data: aSettingsView({
@@ -736,8 +792,7 @@ describe('the settings question the same document draws', () => {
     await box.fire('change', 1)
     expect(confirm.disabled).toBe(false)
     await confirm.fire('click', 1)
-    expect(answered).toEqual([true])
-    expect(ticks).toEqual([true])
+    expect(answers).toEqual([{ answer: 'yes', ticked: true }])
   })
 
   it('carries the tick’s own state to the main process, which is where it is enforced', async () => {
@@ -745,7 +800,7 @@ describe('the settings question the same document draws', () => {
     // as well (`CONFIRM_TICK_NEEDED`, C3): this is the second half's input -- the
     // answer with the box still clear -- and the sentence a refusal draws is the
     // same path the launch's will-not-yet click takes.
-    const { element, answered, ticks } = await mount({
+    const { element, answers } = await mount({
       fields: {
         ok: true,
         data: aSettingsView({ widening: true, tick: SETTINGS_TICK_LABEL, confirmNeedsTick: true }),
@@ -754,10 +809,353 @@ describe('the settings question the same document draws', () => {
     })
     const actions = element('confirm-actions')
     await actions.button(SAVE_LABEL).fire('click', 1)
-    expect(answered).toEqual([true])
-    expect(ticks).toEqual([false])
+    expect(answers).toEqual([{ answer: 'yes', ticked: false }])
+    expect(answers).toEqual([{ answer: 'yes', ticked: false }])
     expect(element('confirm-status').textContent).toBe(
       'this confirmation raises a limit: tick the box that says so before confirming',
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The same document's third question: the entry form, and the dry run it runs
+// (SU1, D2902; R5, R6). **One window and two phases**: the form is what the
+// window is shown first, OK submits the typed value, and the main process then
+// settles the window with the dry run's own view -- so the diff is drawn by the
+// second describe's rows, in this same window, and the second button writes.
+//
+// The cases here are the acceptance text, one case each: the rows the modal
+// shows, the control the key's type calls for, OK disabled until the client
+// validation passes with the error drawn inline, the reset with R6's built-in
+// default, the read-only row with the command to copy, and the two phases.
+// ---------------------------------------------------------------------------
+
+/** anEntryView is the window's **third** subject: the form the main process
+ * builds from the read's own row (`settingsEntryView`). It is the shared
+ * module's type rather than a mirror, because the rule that decides whether OK
+ * is enabled travels with it. */
+function anEntryView(overrides: Partial<SettingsEntryFields> = {}): SettingsEntryFields {
+  return {
+    kind: 'settings-entry',
+    project: 'sandbox',
+    key: 'budget.cap_usd',
+    label: 'Budget cap',
+    description: 'What one run may spend.',
+    current: '25',
+    defaultValue: '25',
+    defaultUnset: '',
+    caveat: SETTINGS_ENTRY_CAVEAT,
+    control: 'number',
+    options: [],
+    min: '1',
+    max: '100',
+    format: '',
+    type: 'int',
+    command: '',
+    ...overrides,
+  }
+}
+
+/** entryValue is the text of one row's `<dd>`, and codeValue is the text of the
+ * `<code>` inside it -- the raw key and the command are drawn in a `<code>` of
+ * their own, which is what makes them legible as a value to copy. */
+function codeValue(document: FakeDocument, label: string): string | null {
+  const fields = document.byId.get('confirm-fields') as FakeElement
+  const index = fields.children.findIndex((child) => child.tag === 'dt' && child.textContent === label)
+  const box = index === -1 ? null : fields.children[index + 1]?.children.find((child) => child.tag === 'code')
+  return box?.textContent ?? null
+}
+
+/** controlOf is the one control the form drew, whatever the key's type called
+ * for, and it is found by the tags rather than by an id so that a view that drew
+ * the wrong control fails the type assertions rather than a lookup. */
+function controlOf(document: FakeDocument): FakeElement {
+  const fields = document.byId.get('confirm-fields') as FakeElement
+  const found = fields.children
+    .flatMap((child) => child.children)
+    .find((child) => child.tag === 'input' || child.tag === 'select')
+  if (found === undefined) throw new Error('the form drew no control')
+  return found
+}
+
+/** okButton is the entry form's OK, whatever the form drew beside it. */
+function okButton(document: FakeDocument): FakeElement {
+  return (document.byId.get('confirm-actions') as FakeElement).button(ENTRY_OK_LABEL)
+}
+
+describe('the entry form the same document draws', () => {
+  it('draws the label, the description, the raw key, the value, the default and R6’s caveat', async () => {
+    const { document, element } = await mount({ fields: { ok: true, data: anEntryView() } })
+
+    expect(element('confirm-title').textContent).toBe(TITLE_ENTRY)
+    expect(TITLE_ENTRY).not.toBe(TITLE_LAUNCH)
+    expect(element('confirm-task-heading').textContent).toBe('')
+    expect(element('confirm-task').textContent).toBeNull()
+
+    expect(fieldValue(document, 'Project')).toBe('sandbox')
+    expect(fieldValue(document, 'Name')).toBe('Budget cap')
+    expect(fieldValue(document, 'Description')).toBe('What one run may spend.')
+    expect(codeValue(document, 'Setting')).toBe('budget.cap_usd')
+    // The raw key is drawn as code **and** as its own row: the label is what a
+    // person calls the setting, and the key is what the command line takes, and
+    // the window draws both (D2908).
+    expect(fieldValue(document, 'Current value')).toBe('25')
+    expect(fieldValue(document, 'Built-in default')).toBe('25')
+    // R6's second half: the built-in default is named as such, and the window
+    // says that a lower layer may take over after a reset.
+    expect(fieldValue(document, 'After a reset')).toBe(SETTINGS_ENTRY_CAVEAT)
+    // None of the diff's rows and none of the launch's: this phase is the form.
+    for (const absent of ['Written at', 'Decides today', 'Run id', 'Title', 'Task size']) {
+      expect(fieldValue(document, absent), `the form drew ${absent}`).toBeNull()
+    }
+    expect(commandWords(document)).toEqual([])
+  })
+
+  it('draws the control the key’s type calls for, and R6’s sentence for a key with no default', async () => {
+    // A small enum is a select, and the value a run reads now is the selected
+    // one.
+    const select = await mount({
+      fields: {
+        ok: true,
+        data: anEntryView({
+          type: 'enum',
+          control: 'select',
+          options: ['off', 'warn', 'enforce'],
+          current: 'warn',
+          min: '',
+          max: '',
+          defaultValue: '',
+          defaultUnset: 'no opinion is recorded',
+        }),
+      },
+    })
+    const control = controlOf(select.document)
+    expect(control.tag).toBe('select')
+    expect(control.value).toBe('warn')
+    expect(control.children.map((child) => child.textContent)).toEqual(['off', 'warn', 'enforce'])
+    // R6's other spelling: a key with no built-in value draws the CLI's own
+    // sentence about what unset means.
+    expect(fieldValue(select.document, 'Built-in default')).toBe('no opinion is recorded')
+
+    // A bool is a real checkbox, checked from the value a run reads now.
+    const toggle = await mount({
+      fields: { ok: true, data: anEntryView({ type: 'bool', control: 'toggle', current: 'true', defaultValue: 'false' }) },
+    })
+    const box = controlOf(toggle.document)
+    expect(box.tag).toBe('input')
+    expect(box.attributes.get('type')).toBe('checkbox')
+    expect(box.checked).toBe(true)
+
+    // A number carries the metadata's own bounds as attributes, which is the
+    // browser's own stepping -- `settingsEntryError` is what gates the button.
+    const number = await mount({ fields: { ok: true, data: anEntryView() } })
+    const input = controlOf(number.document)
+    expect(input.attributes.get('type')).toBe('number')
+    expect(input.attributes.get('min')).toBe('1')
+    expect(input.attributes.get('max')).toBe('100')
+
+    // A duration is text and not a stepped number, and so is a key with no
+    // metadata at all: the fallback is the raw key and a text control (D2908).
+    for (const view of [
+      anEntryView({ type: 'duration', control: 'text', min: '', max: '', current: '14d', defaultValue: '14d' }),
+      anEntryView({ type: '', control: 'text', min: '', max: '' }),
+    ]) {
+      const bare = await mount({ fields: { ok: true, data: view } })
+      expect(controlOf(bare.document).attributes.get('type')).toBe('text')
+    }
+  })
+
+  it('leaves OK enabled while the value passes, and disables it with the sentence beside it when it does not', async () => {
+    // SU1's red step: "a test that a number outside `min..max` leaves OK disabled
+    // fails before the control exists". The rule is R5's client validation, and
+    // the sentence is drawn **inline**, beside the control it is about.
+    const { document } = await mount({ fields: { ok: true, data: anEntryView() } })
+    const control = controlOf(document)
+    const ok = okButton(document)
+    expect(ok.disabled).toBe(false)
+    expect(control.value).toBe('25')
+
+    control.value = '101'
+    await control.fire('input', 0)
+    expect(ok.disabled).toBe(true)
+    expect(fieldValue(document, 'New value')).toBe(`${SETTINGS_ENTRY_ABOVE_MAX}100)`)
+
+    // Back inside the bounds, the sentence goes and OK comes back: the form
+    // never needs a second window to correct a typo.
+    control.value = '100'
+    await control.fire('change', 0)
+    expect(ok.disabled).toBe(false)
+    expect(fieldValue(document, 'New value')).toBe('')
+
+    // An empty field is refused for the types that need a value.
+    control.value = ''
+    await control.fire('input', 0)
+    expect(ok.disabled).toBe(true)
+    expect(fieldValue(document, 'New value')).not.toBe('')
+  })
+
+  it('submits the control’s own value on OK, and the empty answer on Reset', async () => {
+    // The two buttons answer the **same** channel with the **same** shape
+    // (`{answer: 'submit', value}`), and the difference between them is the
+    // value: the typed one, and `null` for R6's reset (F8: a reset writes no
+    // value at all).
+    const typed = await mount({ fields: { ok: true, data: anEntryView() } })
+    const control = controlOf(typed.document)
+    control.value = '30'
+    await control.fire('input', 0)
+    // The entry form's buttons are the deliberate exception to the pointer-only
+    // rule: what they reach is the dry run, which writes nothing.
+    await okButton(typed.document).fire('click', 0)
+    expect(typed.answers).toEqual([{ answer: 'submit', value: '30' }])
+
+    const reset = await mount({ fields: { ok: true, data: anEntryView() } })
+    await (reset.document.byId.get('confirm-actions') as FakeElement).button(ENTRY_RESET_LABEL).fire('click', 0)
+    expect(reset.answers).toEqual([{ answer: 'submit', value: null }])
+  })
+
+  it('shows the dry run’s diff in the same window, and writes only on the second button', async () => {
+    // D2902's one modal, and rule 12's two steps: OK runs `settings set …
+    // --dry-run --json`, the main process settles this window with its result,
+    // and the same window then shows old/new/the two layers/the exact argv with
+    // the button that writes. A view that opened a second window, or that wrote
+    // on the first button, fails here.
+    const document = fakeDocument()
+    const seen: (string | null)[] = []
+    const { bridge, answers, calls } = fakeBridge({
+      fieldsReplies: [
+        { ok: true, data: anEntryView() },
+        { ok: true, data: aSettingsView({ sentence: SETTINGS_SHADOWED_SENTENCE, why: 'this raises the cap' }) },
+      ],
+      onAnswer: () => seen.push((document.byId.get('confirm-status') as FakeElement).textContent),
+    })
+    await mountConfirm(document, bridge)
+    const control = controlOf(document)
+    control.value = '30'
+    await control.fire('input', 0)
+    await okButton(document).fire('click', 1)
+
+    expect(calls).toEqual(['fields', 'answer', 'fields'])
+    expect(answers).toEqual([{ answer: 'submit', value: '30' }])
+    // The status says the dry run is out while it is: a button that went quiet
+    // with nothing said is a window that looks like it ignored the press.
+    expect(seen).toEqual([ENTRY_RUNNING])
+
+    // The form is gone and the diff is drawn in its place: the same `dl`, the
+    // same two classes of rows, and the argv word by word.
+    expect(fieldValue(document, 'Name')).toBeNull()
+    expect(fieldValue(document, 'Built-in default')).toBeNull()
+    expect(fieldValue(document, 'Current value')).toBe('25')
+    expect(fieldValue(document, 'New value')).toBe('30')
+    expect(fieldValue(document, 'Written at')).toBe('project')
+    expect(fieldValue(document, 'Decides today')).toBe('project')
+    expect(fieldValue(document, 'What this changes')).toBe(SETTINGS_SHADOWED_SENTENCE)
+    expect(fieldValue(document, 'Why the CLI asks')).toBe('this raises the cap')
+    expect(commandWords(document)).toEqual(SETTINGS_ARGV)
+    expect((document.byId.get('confirm-title') as FakeElement).textContent).toBe(TITLE_SETTINGS)
+
+    // The second button writes, it is the pointer-only one, and it answers the
+    // third shape of the answer: a plain yes, because this diff drew no tick.
+    const write = (document.byId.get('confirm-actions') as FakeElement).button(SAVE_LABEL)
+    expect(write.tabIndex).toBe(-1)
+    expect(write.textContent).toBe(SAVE_LABEL)
+    await write.fire('click', 0)
+    expect(answers).toEqual([{ answer: 'submit', value: '30' }])
+    await write.fire('click', 1)
+    expect(answers).toEqual([{ answer: 'submit', value: '30' }, { answer: 'yes' }])
+  })
+
+  it('leaves the form standing, with the sentence, when the dry run refuses', async () => {
+    // A submit the main process refused is not a decision: the operator reads
+    // why (`settingsEntryError` is a pre-check and the CLI's reader the
+    // authority), the form is exactly as they left it, and both buttons are live
+    // again -- a form left disabled is a form an operator has to reopen.
+    const { document, answers } = await mount({
+      fields: { ok: true, data: anEntryView() },
+      answerReply: { ok: false, reason: 'budget.cap_usd: this value takes --add' },
+    })
+    await okButton(document).fire('click', 0)
+    expect(answers).toEqual([{ answer: 'submit', value: '25' }])
+    expect((document.byId.get('confirm-status') as FakeElement).textContent).toBe(
+      'budget.cap_usd: this value takes --add',
+    )
+    expect(fieldValue(document, 'Name')).toBe('Budget cap')
+    expect(okButton(document).disabled).toBe(false)
+    expect((document.byId.get('confirm-actions') as FakeElement).button(ENTRY_RESET_LABEL).disabled).toBe(false)
+  })
+
+  it('draws a key this window does not write read-only, with the command to copy', async () => {
+    // R5's last sentence: "keys that take `--add`, `--remove` or `--add-entry`
+    // show read-only with the command to copy". The view carries no control for
+    // them, so this window draws none, offers no OK and no reset, and says why.
+    const { document } = await mount({
+      fields: {
+        ok: true,
+        data: anEntryView({
+          control: null,
+          command: 'fugaro config publish, which carries the layer file the key is stated in',
+        }),
+      },
+    })
+    expect(fieldValue(document, 'Project')).toBe('sandbox')
+    expect(codeValue(document, 'Command')).toBe('fugaro config publish, which carries the layer file the key is stated in')
+    expect((document.byId.get('confirm-status') as FakeElement).textContent).toBe(SETTINGS_ENTRY_READONLY)
+    const actions = document.byId.get('confirm-actions') as FakeElement
+    expect(actions.children.map((child) => child.textContent)).toEqual([CANCEL_LABEL])
+    // No control was built at all: the row is read-only, and a disabled input
+    // would still be a value the window looks like it could send.
+    expect(document.created.filter((tag) => tag === 'input' || tag === 'select')).toEqual([])
+  })
+
+  it('draws every entry value through its own class, and neither as markup nor raw when refused', async () => {
+    // The same rule the diff's rows are held to, asserted for the form: each
+    // string a document wrote goes through `sanitizeText` with the class the
+    // Settings section draws it with, and a refusal is the console's own
+    // sentence rather than the value.
+    const { document } = await mount({
+      fields: {
+        ok: true,
+        data: anEntryView({
+          label: '<b>the label</b>',
+          description: '<script>alert(1)</script>',
+          key: '<img src=x onerror=alert(1)>',
+          defaultValue: '<i>9</i>',
+        }),
+      },
+    })
+    expect(fieldValue(document, 'Name')).toBe('<b>the label</b>')
+    expect(fieldValue(document, 'Description')).toBe('<script>alert(1)</script>')
+    expect(fieldValue(document, 'Built-in default')).toBe('<i>9</i>')
+    expect(codeValue(document, 'Setting')).toBe(CONFIRM_UNDRAWABLE)
+    expect(document.created.filter((tag) => ['img', 'b', 'script', 'i', 'a'].includes(tag))).toEqual([])
+    // The non-vacuity: the sentence above is the refusal path, not every value's
+    // fate -- a key its class admits is drawn as itself.
+    expect(drawn('budget.cap_usd', 'branch', 'settings[].key')).toBe('budget.cap_usd')
+  })
+
+  it('draws a refused answer’s sentence, and nothing at all when the second read refuses', async () => {
+    // Two refusals the form can meet after a submit: an accepted submit whose
+    // re-read is refused (the main process's own sentence), and a settled answer
+    // that is not the diff this window drew the form for. Neither is guessed at.
+    const reread = await mount({
+      fieldsReplies: [
+        { ok: true, data: anEntryView() },
+        { ok: false, reason: 'the settings read answered no document' },
+      ],
+    })
+    await okButton(reread.document).fire('click', 1)
+    expect((reread.document.byId.get('confirm-status') as FakeElement).textContent).toBe(
+      'the settings read answered no document',
+    )
+    expect(okButton(reread.document).disabled).toBe(false)
+    expect(fieldValue(reread.document, 'Name')).toBe('Budget cap')
+
+    const unexpected = await mount({
+      fieldsReplies: [{ ok: true, data: anEntryView() }, { ok: true, data: aView() }],
+    })
+    await okButton(unexpected.document).fire('click', 1)
+    expect((unexpected.document.byId.get('confirm-status') as FakeElement).textContent).toBe(
+      'the dry run answered, but this window was not shown its result: nothing has been written',
+    )
+    expect(fieldValue(unexpected.document, 'Name')).toBe('Budget cap')
   })
 })

@@ -19,6 +19,7 @@ adds; that plan was read on branch `docs/always-a-budget` at `8bf13231f` and has
 | [reconciliation.md](reconciliation.md) | The amended spec: the module map, assumptions A1–A5, findings F1–F33, the threat model of each carrier, decisions D3100–D3112 with the owner's answers, resolutions R1–R17, open items O1–O20, UNVERIFIED U1–U9. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Contract C1, tasks BRS and BR0 to BR22, the contract change that carries the owner's answer after Check 830, integration I1 (27 runs), and one contract change that runs only if raised; levels, critical path, shared files; Checks 830 and 831 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
+| [contract-key-release.md](contract-key-release.md) | C1's prose half: the wrapped blob's envelope and its size bound, the three seal-key paths and their caller classes, the registration's two calls and its fields on the run's record, the interfaces `JobLink`, `KeyOpener` and `Registry`, the `batch:` block's two identity facts, the deploy input and the compute root's new names. The Go is `internal/budget/token/wrap_contract.go`, `internal/credsvc/sealkey_wire.go` and `internal/localcfg/batch_sealkey.go` |
 
 **Numbers reserved:** decisions **D3100–D3119** (D3100–D3112 used), checks **830–839** (830 and
 831 used). **Renumbered on 2026-11-20.** This spec first took D3060–D3079 and checks 810–819,

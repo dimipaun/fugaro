@@ -327,6 +327,9 @@ gives it a command — with the converge flag that changes it when the two doors
 | `batch.image` | — |
 | `batch.machine_type` | — |
 | `batch.network` | — |
+| `batch.opt_in` | — |
+| `batch.seal_key.public_key` | — |
+| `batch.seal_key.version` | — |
 | `batch.service_account` | — |
 | `batch.socket_gid` | — |
 | `batch.subnetwork` | — |
@@ -364,6 +367,10 @@ gives it a command — with the converge flag that changes it when the two doors
 | `layer_generation` | — |
 | `local.gcp_project` | `--gcp-project` |
 | `local.version` | — |
+| `locations.firestore` | — |
+| `locations.log_bucket` | — |
+| `locations.rtdb` | — |
+| `locations.secrets` | — |
 | `log_view` | — |
 | `name` | `--name` |
 | `policy_generation` | — |

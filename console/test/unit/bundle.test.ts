@@ -315,23 +315,34 @@ describe('the served root npm run build leaves', () => {
   it('holds the confirmation window’s bundle, the third entry (V2.5.1a), with its own closure and nothing else', () => {
     const confirmation = builtFile('bundle/confirm.js')
     const closure = moduleClosure(builtPath('renderer/confirm.js'))
-    // The view imports its preload's *type* and nothing else, and a type is
-    // erased: the confirmation window's closure is its own entry. That is the
-    // claim worth pinning -- the window runs the view and no shared module, and
-    // a bundle that grew one would be a change to what the window runs.
-    expect(closure.length, 'the confirmation closure is more than its own entry').toBe(1)
+    // This view imported its preload's *type* and nothing else, and a type is
+    // erased: the confirmation window's closure was its own entry, and that was
+    // the claim this case pinned -- the window runs the view and no shared
+    // module, and a bundle that grew one would be a change to what the window
+    // runs. **SU1 (D2902) is the task that changes it**, and this is the
+    // amendment rather than a removal: the entry form draws the read's and the
+    // dry run's strings through the display sanitizer and gates its own OK on
+    // the shared validation rule, and neither may be imported from `src/main/`
+    // because the renderer is sandboxed -- so the pin is now the exact set of
+    // shared modules this window may bundle, named rather than counted, and the
+    // reason is here beside it. A fourth module, a swap, or a shared module
+    // growing a dependency of its own still fails here.
+    expect(
+      closure.map((module) => module.key),
+      'the confirmation closure is not the entry, the display sanitizer and the shared entry rule',
+    ).toEqual(['/shared/sanitize.js', '/shared/settingsentry.js', '/renderer/confirm.js'])
     for (const module of closure) {
       expect(confirmation, `${module.key} is not in the confirmation bundle`).toContain(
         `registry[${JSON.stringify(module.key)}] = function (exports, require, module) {`,
       )
     }
     // The key is the module's path relative to the closure's deepest common
-    // directory, and this closure is one file: the root is the entry's own
-    // directory, so the key carries no `renderer/` segment. It is pinned
+    // directory, and this closure now spans `src/renderer` and `src/shared`: the
+    // root is `src`, so every key carries the segment under it. It is pinned
     // because the loader's keys are what the bundle is *read* by, and a reader
     // diffing this bundle against the others would otherwise have to work that
     // out from the tool.
-    expect(closure[closure.length - 1]?.key).toBe('/confirm.js')
+    expect(closure[closure.length - 1]?.key).toBe('/renderer/confirm.js')
     const specifiers = requireSpecifiers(confirmation)
     for (const specifier of specifiers) expect(isRelative(specifier ?? '')).toBe(true)
     expect(confirmation).not.toMatch(/\beval\s*\(/)
@@ -341,10 +352,10 @@ describe('the served root npm run build leaves', () => {
     // rather than as three `not.toContain`s, because each closure keys its
     // modules relative to its own root -- the dashboard's and the picker's span
     // `src/renderer` and `src/shared`, so theirs read `/renderer/…` and
-    // `/shared/…` while the confirmation's one module reads `/confirm.js`, and a
-    // leaked module is re-keyed to the *receiving* closure's root. A bundle that
-    // carried another window's modules would therefore still satisfy any fixed
-    // needle; it cannot satisfy this.
+    // `/shared/…` -- as the confirmation's three do now that it bundles two
+    // shared modules -- and a leaked module is re-keyed to the *receiving*
+    // closure's root. A bundle that carried another window's modules would
+    // therefore still satisfy any fixed needle; it cannot satisfy this.
     expect(registryKeysIn(confirmation)).toEqual(closure.map((module) => module.key))
   })
 })

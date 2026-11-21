@@ -184,6 +184,18 @@ type orchestratorDaemon struct {
 	tick     *orchestrator.Tick
 	cache    *orchestrator.BriefCacheWriter
 	launched *launchInFlight
+	// launcher is the launcher the tick starts runs through, kept here because
+	// the list of nodes it finds an item in moves with the plans (nodes,
+	// refreshNodes): the tick is built once and the launcher inside it must be
+	// handed the node a plan imported after that.
+	launcher *orchestratorLauncher
+	// nodes are the nodes beside the state node this daemon works: the standing
+	// backlog's, and one per plan the project has imported (D2735). They are
+	// read and written by the cycle (Tick.Nodes) and given to the launcher, and
+	// they are rebuilt every cycle because a plan the project has just imported
+	// is a plan this daemon has to work on its next wake rather than at its
+	// next start (refreshNodes).
+	nodes []orchestrator.Store
 	// orchestratorOff is the project's own switch as this daemon last read it
 	// (orchestrator_enabled, D2701, D2739): true while the project has turned
 	// its orchestrator off. It is kept across a caps read that failed — the caps
@@ -278,6 +290,13 @@ func (d *orchestratorDaemon) start(ctx context.Context) error {
 	if err := d.migrate(ctx); err != nil {
 		return d.abandon(ctx, err)
 	}
+	// The nodes beside the state node are built once before the first tick, so
+	// that a run this daemon adopts into a plan's node lands in a node the very
+	// first cycle reads.
+	if err := d.refreshNodes(ctx); err != nil {
+		return d.abandon(ctx, err)
+	}
+	d.adopt(ctx)
 	tick, err := d.newTick(ctx)
 	if err != nil {
 		return d.abandon(ctx, err)
@@ -519,6 +538,95 @@ func (d *orchestratorDaemon) migrate(ctx context.Context) error {
 	return nil
 }
 
+// adopt is R4's step, run once at start-up (D2702, D2721): the runs already in
+// flight are taken into the state as items this daemon folds and counts, and
+// approved by nobody.
+//
+// It is called after the lease is taken and before the first tick, which is the
+// order its own contract asks for: it writes only under the lease, and what the
+// first cycle reads is a node that already carries the work.
+//
+// A failure is one line and this daemon starts anyway. Nothing is half-written
+// for it to repair — a lister whose read failed leaves adoption writing no item
+// at all (Adopt's own rule) — and what it did not adopt is still in flight, so
+// the next start adopts it. A start that stopped here would stop the project's
+// orchestrator over the one step whose whole effect is to make work it does not
+// know about visible.
+func (d *orchestratorDaemon) adopt(ctx context.Context) {
+	n, err := orchestrator.Adopt(ctx, &orchestratorRunLister{lc: d.lc, env: d.env, warn: d.warn}, d.node)
+	if err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the runs already in flight were not adopted (%s); they are still in flight and the next start adopts them\n",
+			safetext.Field(d.id), safetext.OneLine(err.Error()))
+		return
+	}
+	if n > 0 {
+		fmt.Fprintf(d.out, "orchestrator %s: %d run(s) already in flight were adopted as items of this state\n", safetext.Field(d.id), n)
+	}
+}
+
+// refreshNodes rebuilds the list of nodes this daemon works beside the state
+// node: the standing backlog's and one per plan the project has imported
+// (D2735).
+//
+// It is called once before the first tick and again every cycle, because the
+// tick is built once and a plan is imported long after it: a session that
+// imports a plan while this daemon runs — which is the whole point of the
+// import's own command — writes a node this daemon has to work from its next
+// wake and not from its next start. The listing is one shallow read of the
+// plans parent (PlanNames), and a name no path of this release can be built for
+// is one that read has already left out.
+//
+// A plan node that was emptied or written by an older release is not skipped
+// for being unreadable: the cycle loads every node in this list, and a node
+// that cannot be read ends the cycle (tick's load), so a corrupted plan stops
+// this daemon with a line naming it rather than being quietly dropped — the
+// same answer the state node gets, and the one this daemon's caps can be
+// counted over (D2743).
+func (d *orchestratorDaemon) refreshNodes(ctx context.Context) error {
+	names, err := orchestrator.PlanNames(ctx, d.db, d.id)
+	if err != nil {
+		return dbErr(d.lc, err, false)
+	}
+	nodes := make([]orchestrator.Store, 0, 1+len(names))
+	backlog, err := d.shardNode(orchestrator.ShardBacklog)
+	if err != nil {
+		return err
+	}
+	nodes = append(nodes, backlog)
+	for _, name := range names {
+		n, err := d.shardNode(orchestrator.PlanShard(name))
+		if err != nil {
+			return err
+		}
+		nodes = append(nodes, n)
+	}
+	d.nodes = nodes
+	if d.tick != nil {
+		d.tick.Nodes = nodes
+	}
+	if d.launcher != nil {
+		// The launcher reads these for one write only — putting an item whose
+		// issue was edited back to queued (requeueBodyChanged) — and the item
+		// it was asked to start may stand in the state node as well as in one
+		// of these, so the state node is the first of them.
+		d.launcher.nodes = append([]orchestrator.Store{d.node}, nodes...)
+	}
+	return nil
+}
+
+// shardNode builds one of the nodes beside the state node, under the lease this
+// daemon holds and through the client it holds it through: which node it is, is
+// the shard and nothing else.
+func (d *orchestratorDaemon) shardNode(shard orchestrator.Shard) (*orchestrator.Node, error) {
+	node, err := orchestrator.NewNode(orchestrator.NodeOptions{
+		DB: d.db, AgentID: d.id, Role: orchestrator.RoleOrchestrator, Lease: d.lease, Shard: shard,
+	})
+	if err != nil {
+		return nil, userErr("%v", err)
+	}
+	return node, nil
+}
+
 // newTick builds the one tick this daemon runs every cycle: the node (with the
 // lease that fences its writes), the runs the state recorded, the launcher
 // that starts attempts over `fugaro run`'s path, and the guardrails the
@@ -540,30 +648,34 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 	if err != nil {
 		return nil, err
 	}
+	d.launcher = &orchestratorLauncher{
+		env: d.env, stderr: d.warn, started: d.launched,
+		// The ticket behind an item is read through the installation's
+		// credentials service (B9, D2720), and the one write a launch may
+		// make under the state — putting an item whose issue was edited back
+		// to queued — goes to the node this daemon works, stamped with the
+		// server's own clock. A daemon with no node here is one nothing
+		// launches from, and the launcher refuses that write rather than
+		// making it nowhere.
+		//
+		// The list is the state node and the nodes beside it (refreshNodes),
+		// because the launcher has to find the item it was asked to start in
+		// the node it is starting it from.
+		issues: issueReadSeam(d),
+		nodes:  append([]orchestrator.Store{d.node}, d.nodes...),
+		now:    d.db.ServerNow,
+	}
 	return &orchestrator.Tick{
 		Store: d.node,
-		Runs:  &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, warn: d.warn},
-		Launcher: &orchestratorLauncher{
-			env: d.env, stderr: d.warn, started: d.launched,
-			// The ticket behind an item is read through the installation's
-			// credentials service (B9, D2720), and the one write a launch may
-			// make under the state — putting an item whose issue was edited back
-			// to queued — goes to the node this daemon works, stamped with the
-			// server's own clock. A daemon with no node here is one nothing
-			// launches from, and the launcher refuses that write rather than
-			// making it nowhere.
-			//
-			// The list is the state node, which is the node an item was launched
-			// from today; whatever cycle comes to work several nodes (Tick.Nodes)
-			// hands them here too, because the launcher has to find the item it
-			// was asked to start in the node it is starting it from.
-			issues: issueReadSeam(d),
-			nodes:  []orchestrator.Store{d.node},
-			now:    d.db.ServerNow,
-		},
-		Mint:    func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
-		Caps:    caps,
-		Breaker: &orchestrator.Breaker{},
+		// The nodes beside the state node: the standing backlog's and one per
+		// imported plan (D2735), which refreshNodes has built before this tick
+		// was and rebuilds after it.
+		Nodes:    d.nodes,
+		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, warn: d.warn},
+		Launcher: d.launcher,
+		Mint:     func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
+		Caps:     caps,
+		Breaker:  &orchestrator.Breaker{},
 		// A tick has three things to say — a run it folded ended, it committed
 		// a question (O7), and it merged under a ceiling that tells somebody
 		// (D2030) — and the log sink is the channel slice 1 ships, one cleaned
@@ -583,6 +695,15 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		// cannot mint says so through the client's own refusal rather than
 		// labelling nothing quietly.
 		Labels: orchestratorLabelSeams(d),
+		// The merge read (G3, D2705): the state of the pull request each item
+		// waiting on a merge left, read through the same credentials service the
+		// labels are (orchestratorMergeSeams), which is what moves such an item
+		// to done once the pull request merged and to failed once it closed
+		// without merging. Empty where this installation has no service to read
+		// through; an item whose pull request is then never read stays in
+		// review, where its dependents wait, which is the direction this fails
+		// in.
+		Merge: orchestratorMergeSeams(d),
 		// The issue sync (B4, D2718): the open issues of the repositories the
 		// project's `issue_sync` names, ingested into the standing backlog's
 		// node through the installation's credentials service, which is the one
@@ -923,6 +1044,16 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 			return dbErr(d.lc, err, false)
 		}
 		d.refreshCaps(ctx)
+		// The plans are listed again every cycle: a plan imported while this
+		// daemon runs is a node it has to work from this wake (refreshNodes).
+		// A listing that failed leaves the nodes as the last one read them —
+		// the tick works what it has — and says so, because a daemon quietly
+		// working a stale set of plans is one nobody can see is not working the
+		// project.
+		if err := d.refreshNodes(ctx); err != nil {
+			fmt.Fprintf(d.warn, "orchestrator %s: the plans could not be listed, so this cycle works the nodes it worked last: %s\n",
+				safetext.Field(d.id), safetext.OneLine(err.Error()))
+		}
 		rep, err := orchestrator.StepWithCache(ctx, d.tick, d.cache)
 		d.report(rep, err)
 		d.publish(ctx)
@@ -1184,9 +1315,23 @@ func (d *orchestratorDaemon) wait(ctx context.Context) error {
 // every stamp under this subtree comes from (D1230), and the local clock only
 // until the first response has been read.
 func (d *orchestratorDaemon) wakeOptions(ctx context.Context) orchestrator.WakeOptions {
+	// The daemon's own nodes are the state node and the nodes beside it
+	// (D2735): a plan imported while this daemon runs, and an item a person adds
+	// to the standing backlog, are writes to one of these, and this stream is
+	// what brings either to the next cycle instead of the next interval. Both
+	// paths are built from the id the state node's own path was built from and
+	// cannot fail here; a path that somehow did is left out rather than streamed
+	// as the empty string, which would be the whole database.
+	own := []string{d.node.Path()}
+	if p, err := orchestrator.PathPlans(d.id); err == nil {
+		own = append(own, p)
+	}
+	if p, err := orchestrator.PathBacklog(d.id); err == nil {
+		own = append(own, p)
+	}
 	o := orchestrator.WakeOptions{
 		DB:  d.db,
-		Own: []string{d.node.Path()},
+		Own: own,
 		Now: func() time.Time {
 			if t, ok := d.db.ServerNow(); ok {
 				return t
@@ -1340,6 +1485,16 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 			// pass.
 			rep.Discovered = rec.Discovered
 			rep.ConflictPaths = rec.ConflictPaths
+		}
+		if rec != nil && rec.PR != nil && rec.PR.Number > 0 {
+			// The pull request the run left, which is the record's own answer
+			// (F25) and the whole of what tells a fold of a succeeded run that
+			// the item waits on a merge rather than being done (D2705). It is
+			// read here and never a second time: the merge read is handed the
+			// same number off this same report, because one attempt leaves one
+			// pull request and the item it left it for is the item the report
+			// is folded into.
+			rep.PRNumber = rec.PR.Number
 		}
 		if rec != nil && rec.Halt != nil {
 			// The halt travels whole, and the marker with it: the fold asks the

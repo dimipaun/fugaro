@@ -24,12 +24,20 @@ import (
 
 // issueItemSeed writes one issue item as the daemon: `external` and the body's
 // hash are the ingest's own fields, and no other class may write them (D2728),
-// so an issue item is seeded through the daemon's own upsert and not through the
-// session seedOrchestratorState makes. An empty bodySHA leaves the hash off,
-// which is the item that pins no body at all.
+// so an issue item is seeded through the daemon's own upsert. An empty bodySHA
+// leaves the hash off, which is the item that pins no body at all.
+//
+// The item lands in the standing backlog's node, which is where the ingest
+// writes one: an issue item carries no spec, and the backlog's items are the
+// project's spec-less ones (D2715). The approval that reads the issue names
+// `backlog` and lands there (patchShard).
 func issueItemSeed(t *testing.T, f *budgetFixture, id, external, bodySHA string) orchestrator.State {
 	t.Helper()
-	s := seedOrchestratorState(t, f)
+	s := orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion,
+		AgentID:       orchestratorTestID,
+		Role:          orchestrator.RoleOrchestrator,
+	}
 	op := workItemUpsert(id, "the issue's title as the ingest wrote it")
 	op.WorkItem.External = strPtr(external)
 	if bodySHA != "" {
@@ -44,7 +52,7 @@ func issueItemSeed(t *testing.T, f *budgetFixture, id, external, bodySHA string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.db.Set(orchestratorPath(t, orchestrator.StateNode), json.RawMessage(raw))
+	f.db.Set(orchestratorPath(t, orchestrator.BacklogNode), json.RawMessage(raw))
 	return next
 }
 
@@ -117,7 +125,7 @@ func TestApproveIssueItemShowsBodyAsData(t *testing.T) {
 	if got := issueGHCalls(t, calls); got != nil {
 		t.Errorf("a run with no terminal read the issue: %v", got)
 	}
-	if w, _ := storedOrchestratorState(t, f).Item("issue-1"); w.Approved != nil {
+	if w, _ := storedBacklogState(t, f).Item("issue-1"); w.Approved != nil {
 		t.Fatal("a run with no terminal approved the item")
 	}
 
@@ -153,7 +161,7 @@ func TestApproveIssueItemShowsBodyAsData(t *testing.T) {
 	if len(got) != 1 || got[0] != "issue view 12 --repo github.com/acme/repo --json title,body" {
 		t.Errorf("the read was %v, and the issue is read once through gh issue view", got)
 	}
-	w, _ := storedOrchestratorState(t, f).Item("issue-1")
+	w, _ := storedBacklogState(t, f).Item("issue-1")
 	if w.Approved == nil || w.Approved.By != orchestratorPerson {
 		t.Fatalf("the item carries %+v, and the confirmed patch approves it as the person", w.Approved)
 	}
@@ -276,7 +284,7 @@ func TestApproveIssueItemRefusesChangedBody(t *testing.T) {
 					t.Errorf("the refusal does not name %q: %v", w, err)
 				}
 			}
-			after := storedOrchestratorState(t, f)
+			after := storedBacklogState(t, f)
 			if after.Rev != s.Rev {
 				t.Errorf("the refused approval wrote something: rev %d, and the node was at %d", after.Rev, s.Rev)
 			}
@@ -306,7 +314,7 @@ func TestApproveIssueItemMakesNoWrite(t *testing.T) {
 	if _, _, err := runOrchestrator(t, "yes\n", "orchestrator", "patch", "-f", path); err == nil {
 		t.Fatal("a typed line that is not the project's name confirmed the patch")
 	}
-	if after := storedOrchestratorState(t, f); after.Rev != s.Rev {
+	if after := storedBacklogState(t, f); after.Rev != s.Rev {
 		t.Errorf("the unconfirmed run wrote the node: rev %d, and it read %d", after.Rev, s.Rev)
 	}
 
