@@ -353,7 +353,14 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 		return false
 	}
 	now := s.now()
-	marks, merr := s.cfg.State.Marks(ctx)
+	// The marks are the CALL's scope's (R1, C1, R8) — the same state the
+	// selector this probe was owed on was built over (ServeHTTP's sc.State()) —
+	// which is the workspace's own database for a workspace's call and this
+	// installation's for its own. A probe that read the deployment's state
+	// instead would decide on marks of a database the call never touched: on a
+	// workspace it would read the installation's marks, and the spend figure
+	// with them, where the workspace's own live.
+	marks, merr := scopeOfCall(ctx, s).State().Marks(ctx)
 	if merr != nil {
 		// The state could not be read, so which credential the probe is due on
 		// cannot be known. The selection's own refusal (an unreadable state,

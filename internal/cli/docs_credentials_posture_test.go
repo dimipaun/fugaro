@@ -58,6 +58,18 @@ var postureScanRoots = []string{
 // live documents in the same folders — `docs/gcp-live-checklist.md`,
 // `docs/release.md`, the terms — are NOT exempt, and the scan covers them.
 var postureRecordRoots = []string{
+	// The batch-run-identity plan's record, in the four-file shape this class
+	// is defined by: its docs task landed and this walk found it, which is how
+	// the spend-accuracy root reached `datedRecords` above. Its reconciliation
+	// writes its resolutions R1 to R17 as one paragraph, so the census reads
+	// R2's own opt-in fact -- the `batch:` block's, which that plan introduces
+	// and which no spelling of it can state without the phrase this list
+	// retires -- together with R17's sentences about this service. That
+	// paragraph decides where the compute root is applied, not whether the
+	// credentials service is optional, and the alternative to this entry is
+	// rewriting a plan's own resolution to avoid a word, which is the thing
+	// the dated rule forbids.
+	"docs/batch-run-identity/",
 	"docs/bitbucket-credentials/",
 	"docs/c39-review-identity/",
 	"docs/cloud-senior-review/",

@@ -55,6 +55,7 @@ in this order:
 | `0.121.0` | Raspberry |
 | `0.122.0` | Strawberry |
 | `0.123.0` | Tangerine |
+| `0.124.0` | Ugli |
 
 **Granny Smith, Golden Delicious and Crab are not on the list**, and neither is Lemon: a
 name that spells "Apple" puts the word in a console release's title, and the desktop app is

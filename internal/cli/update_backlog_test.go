@@ -31,7 +31,7 @@ import (
 
 // backlogItemFile writes one item file into root's docs/backlog/ folder, in the
 // format backlog.Parse reads: D26's `<id>-<slug>.md` name with the id repeated
-// in the front matter, D27's eight fields, and the two headings every item's
+// in the front matter, D27's nine fields, and the two headings every item's
 // body carries.
 func backlogItemFile(t *testing.T, root, id, slug, title, status string) {
 	t.Helper()
@@ -42,7 +42,8 @@ func backlogItemFile(t *testing.T, root, id, slug, title, status string) {
 	doc := "---\n" +
 		"id: " + id + "\n" +
 		"title: " + title + "\n" +
-		"mode: none\n" +
+		"level: none\n" +
+		"kind: deferred\n" +
 		"area: repo\n" +
 		"status: " + status + "\n" +
 		"filed-by: unknown\n" +

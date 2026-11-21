@@ -75,24 +75,27 @@ func TestRefusalNamesTheWorkingCommandLine(t *testing.T) {
 
 // TestRefusalForAKeyWithoutAWriterKeepsTheFamilySentence: the writer table is
 // the source of the line, and where it answers nothing the family's sentence
-// stays exactly as it is — the cascade block's six rows keep the `accounts`
-// token until K1 registers its command (D2613), and the write says so in the
-// family's own words rather than printing a line no command runs.
+// stays exactly as it is — the write says so in the family's own words rather
+// than printing a line no command runs.
+//
+// The cascade block's six rows were this test's own list until K1 registered
+// `fugaro accounts cascade set` for them (D2613), which is the day the family
+// sentence stopped being their answer: what is left are rows the `accounts`
+// family still owns with no command behind them — the craft's access at the
+// agent layer's own spelling, whose model half is `models`'s, and the alias
+// record, which no command of this release writes.
 func TestRefusalForAKeyWithoutAWriterKeepsTheFamilySentence(t *testing.T) {
 	for _, key := range []string{
-		"credentials.fallback",
-		"credentials.wait_threshold",
-		"credentials.backoff.initial",
-		"credentials.backoff.cap",
-		"credentials.stop_after_exhaustion_per_window",
-		"credentials.concurrency_per_token",
+		"agent.crafts.coder.access",
+		"layer.defaults.agent.crafts.review.access",
+		"claude_account_aliases",
 	} {
 		if w, ok := settings.WriterOf(key); ok && w.Label == "" && len(w.Argv) > 0 {
 			t.Fatalf("%s: a writer answers for it (`%s`), and this test is about the rows none answers for", key, strings.Join(w.ArgvFor(key), " "))
 		}
 		_, err := settingsWriteRow(key)
 		if err == nil {
-			t.Errorf("%s: the generic path writes it, and its owner is the accounts family's until K1 (D2613)", key)
+			t.Errorf("%s: the generic path writes it, and its owner is the accounts family's", key)
 			continue
 		}
 		if !strings.Contains(err.Error(), "is written by "+settingsFamilyCommands["accounts"]) {

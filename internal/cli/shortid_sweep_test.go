@@ -570,7 +570,7 @@ func TestMachineSurfacesKeepFullRunID(t *testing.T) {
 	t.Run("filed_in", func(t *testing.T) {
 		dir := t.TempDir()
 		item, err := backlog.Write(dir, backlog.New{
-			Title: "the sweep's item", Mode: "none", Area: "project",
+			Title: "the sweep's item", Level: "none", Kind: "deferred", Area: "project",
 			FiledBy: "dana", FiledIn: "run:" + id, Date: "2026-11-09",
 			Body: backlog.Body("what was left open", "why it was left open", "", nil),
 		})

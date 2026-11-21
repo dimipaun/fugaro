@@ -106,6 +106,81 @@ func personOnlyOps(before orchestrator.State, p orchestrator.Patch) int {
 	return n
 }
 
+// patchShard is the node a document is applied to (D2735): the one an op of it
+// names, or the state node when no op names one.
+//
+// Apply is handed one node's document and cannot see the others, which is what
+// makes `plan_approve` name the node whose items it approves and what makes an
+// item of another node unapprovable by it (itemOfNode, patch_plan.go). So the
+// node has to be chosen before Apply runs, and the document itself is what says
+// which: `plan_approve` is the only op of the vocabulary that names a node — a
+// plan folder, or the standing backlog (D2706, D2717) — and a document with no
+// approval op is the state node's, which is every document that was landed
+// before the plans had nodes of their own.
+//
+// A document that would have to land on two nodes is refused rather than
+// guessed at, and it is refused whole. One document lands on one node: an
+// approval that rode beside an op of another node would half land, and nothing
+// would say which half. So an approval travels on its own — a document that
+// approves a node's items carries that approval and no other op — and a
+// document naming two nodes (two plans, or a plan and the backlog) is refused
+// with both named. The names are compared as the paths they build, so a plan
+// written in two cases is one node here as it is everywhere else (PathPlan,
+// specName).
+func patchShard(lc *localcfg.Config, p orchestrator.Patch) (orchestrator.Shard, error) {
+	shard := orchestrator.ShardState
+	named, namedPath, others := "", "", 0
+	for _, op := range p.Ops {
+		if op.Op != orchestrator.OpPlanApprove || op.PlanApprove == nil {
+			others++
+			continue
+		}
+		name := op.PlanApprove.Node
+		s, path, err := patchShardOf(lc, name)
+		if err != nil {
+			return "", err
+		}
+		switch {
+		case named == "":
+			named, namedPath, shard = name, path, s
+		case path != namedPath:
+			return "", userErr("this document approves the items of two nodes (%s and %s), and one document lands on one node: send one document per node, and nothing was written", safetext.Field(named), safetext.Field(name))
+		}
+	}
+	if named == "" {
+		return shard, nil
+	}
+	if others > 0 {
+		return "", userErr("this document approves the items of %s and carries %d other %s beside it: an approval lands on %s's own node and every other op of the vocabulary lands on the state node, and one document lands on one node; send the approval on its own, and nothing was written",
+			safetext.Field(named), others, plural(others, "op", "ops"), safetext.Field(named))
+	}
+	return shard, nil
+}
+
+// patchShardOf is one node name as the shard it is and the path that shard
+// stands at: the standing backlog's, or a plan's. The name is checked here
+// rather than by the node's construction so that a document naming something
+// that is neither is refused with the fix printed and nothing read — the same
+// refusal Apply gives an approval op, one step earlier.
+func patchShardOf(lc *localcfg.Config, name string) (orchestrator.Shard, string, error) {
+	id, err := orchestratorID(lc)
+	if err != nil {
+		return "", "", err
+	}
+	if name == orchestrator.BacklogNode {
+		path, err := orchestrator.PathBacklog(id)
+		if err != nil {
+			return "", "", userErr("%v: nothing was written", err)
+		}
+		return orchestrator.ShardBacklog, path, nil
+	}
+	path, err := orchestrator.PathPlan(id, name)
+	if err != nil {
+		return "", "", userErr("an approval names %s as the node whose items it approves, and that is not a plan folder or the backlog: %v; nothing was written", safetext.Field(name), err)
+	}
+	return orchestrator.PlanShard(name), path, nil
+}
+
 // itemWords is a work item's digested spec under a head line: every field
 // SpecDigest covers and nothing else. That digest is what an approval binds,
 // and a person who approves a spec the terminal did not show them has approved
@@ -338,15 +413,23 @@ func runOrchestratorPatch(cmd *cobra.Command, o *orchestratorPatchOptions) error
 	if err != nil {
 		return userErr("the patch document is not one this release reads: %v", err)
 	}
-	lc, node, db, err := openOrchestrator(ctx, o.cloudOptions)
+	lc, db, err := openBudget(ctx, o.cloudOptions)
 	if err != nil {
 		return err
 	}
-	// The state node is written into the budget database, so this writer asks
-	// the one ownership question every writer into it asks (budgetDBUnadopted),
-	// before it reads anything: a patch is not a read of somebody else's
-	// installation that happens to have no effect.
+	// The nodes of one orchestrator are written into the budget database, so
+	// this writer asks the one ownership question every writer into it asks
+	// (budgetDBUnadopted), before it reads anything: a patch is not a read of
+	// somebody else's installation that happens to have no effect.
 	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was written"); err != nil {
+		return err
+	}
+	shard, err := patchShard(lc, p)
+	if err != nil {
+		return err
+	}
+	node, err := orchestratorNodeShard(lc, db, shard)
+	if err != nil {
 		return err
 	}
 	s, etag, err := node.Load(ctx)

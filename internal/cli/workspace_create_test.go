@@ -69,7 +69,7 @@ func newWSCreateRig(t *testing.T, stdin, extra string) *wsCreateRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := strings.Replace(string(b), "name: aurora", "name: "+wsProjectName, 1)
+	cfg := wsWithRepos(strings.Replace(string(b), "name: aurora", "name: "+wsProjectName, 1))
 	if err := os.WriteFile(ri.cfg, []byte(cfg+extra), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -157,6 +157,18 @@ func wsAccountChange(actions ...string) planChange {
 		"address": "google_service_account.workspace", "mode": "managed", "type": "google_service_account",
 		"change": map[string]any{"actions": actions, "after": map[string]any{
 			"project": wsProject, "account_id": tf.WorkspaceServiceAccountID}},
+	}
+}
+
+// wsIAMAccountChange is the SA fallback's IAM account as the root plans it
+// (WU3, D2803): the second account the root creates, whose id is the root's own
+// literal rather than one of its variables. It is the ONLY change an
+// installation that already has the service account and its one grant plans.
+func wsIAMAccountChange(actions ...string) planChange {
+	return planChange{
+		"address": "google_service_account.workspace_iam", "mode": "managed", "type": "google_service_account",
+		"change": map[string]any{"actions": actions, "after": map[string]any{
+			"project": wsProject, "account_id": tf.WorkspaceIAMAccountID}},
 	}
 }
 
@@ -332,7 +344,7 @@ func splitWorkspaceOwnerConfig(t *testing.T) {
 	if text == string(b) {
 		t.Fatalf("the fixture's config does not name budget.firebase_project %s:\n%s", initProject, b)
 	}
-	if err := os.WriteFile(path, []byte(text+wsOwnerTable+wsOwnerCap), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(wsWithRepos(text)+wsOwnerTable+wsOwnerCap), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -500,6 +512,68 @@ func TestWorkspaceProjectStageConvergesTheWorkspacesOwnProject(t *testing.T) {
 	}
 	if applied := g.ri.ran(t, "apply"); len(applied) != 1 {
 		t.Errorf("the second run applied: %q", applied)
+	}
+}
+
+// TestWorkspaceProjectStageNamesTheIAMAccountWhenThePlanCreatesOnlyIt: on an
+// installation whose workspace already converges — the service account and its
+// one grant are in the cloud — the ONLY change this stage's plan carries is
+// creating the SA fallback's IAM account (WU3, D2803), the identity a member's
+// owner gives roles/owner on their own project. The stage's own rule beside the
+// confirmation (workspaceAccount) is that the sentence the owner types names
+// the identity being created, so a sentence naming the service account alone
+// would ask the owner to type their project's name for a change it never
+// described — and would leave out the account that ends up holding authority
+// over every linked member.
+func TestWorkspaceProjectStageNamesTheIAMAccountWhenThePlanCreatesOnlyIt(t *testing.T) {
+	fakeTerminal(t)
+	g := newWSCreateOwnerRig(t, wsProjectName+"\n")
+	g.ri.setPlanAt(t, "workspace", wsIAMAccountChange("create"))
+	iamAccount := tf.WorkspaceIAMAccountID + "@" + wsProject + ".iam.gserviceaccount.com"
+
+	st := g.check(t)
+	if st.State != initflow.Todo {
+		t.Fatalf("check = %v (%s), want a todo", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, iamAccount) {
+		t.Errorf("the todo does not name the account the plan creates (%s): %s", iamAccount, st.Detail)
+	}
+
+	if _, err := g.plan(t, initflow.Env{Interactive: true}); err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	oc, err := g.apply(t, initflow.Env{Interactive: true})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !oc.Changed {
+		t.Errorf("apply = %+v, want the IAM account created", oc)
+	}
+	// The sentence the owner types is the CONFIRM line, read on its own: the
+	// success line below names the same accounts, so a check over the whole
+	// output would pass with the confirmation unchanged.
+	var confirmation, created string
+	for _, line := range strings.Split(g.out.String(), "\n") {
+		switch {
+		case strings.HasPrefix(line, "⚠ CONFIRM "):
+			confirmation = line
+		case strings.HasPrefix(line, "created "):
+			created = line
+		}
+	}
+	if confirmation == "" {
+		t.Fatalf("the stage asked nothing: no CONFIRM line in the run's output:\n%s", g.out.String())
+	}
+	for _, want := range []string{workspaceAccount(wsProject), tf.WorkspaceDatabaseRole(wsProject), iamAccount} {
+		if !strings.Contains(confirmation, want) {
+			t.Errorf("the sentence the operator types does not name %q:\n%s", want, confirmation)
+		}
+	}
+	if created == "" || !strings.Contains(created, iamAccount) {
+		t.Errorf("the line the run prints after the apply does not name the account it created (%s): %q", iamAccount, created)
+	}
+	if !strings.Contains(oc.Detail, iamAccount) {
+		t.Errorf("the apply's own detail does not name the account it created (%s): %s", iamAccount, oc.Detail)
 	}
 }
 

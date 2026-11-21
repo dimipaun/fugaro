@@ -200,6 +200,16 @@ export interface SectionRead {
    * a slow earlier read must never overwrite a later one.
    */
   settle(token: number): boolean
+  /**
+   * current answers whether this token is still the newest one asked for, and
+   * **changes nothing**. It is `settle`'s question without its answer: a read
+   * that draws in several parts (`stream.ts`'s chunked rows) asks it between the
+   * parts and stops drawing where it is no longer the section's, where `settle`
+   * would take the busy state down on the first part -- and a stream is a read
+   * that is still going. It is the same fact `mark` reads when it decides
+   * whether to draw at all, so a caller's own guard and this one cannot disagree.
+   */
+  current(token: number): boolean
   /** end clears the busy state without settling it, for a screen the operator
    * has left: nothing is in flight for it any more. */
   end(): void
@@ -280,6 +290,9 @@ export function sectionRead(options: {
       if (mine !== token) return false
       end()
       return true
+    },
+    current(mine: number): boolean {
+      return mine === token
     },
     end,
   }

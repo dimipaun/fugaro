@@ -29,6 +29,67 @@ func secretCall(t *testing.T, f *Secrets, method, path string) (int, string) {
 	return resp.StatusCode, string(body)
 }
 
+// createCall asks the fake to create id with rep as the request's
+// replication policy, verbatim, and answers what the client sees.
+func createCall(t *testing.T, f *Secrets, id, rep string) (int, string) {
+	t.Helper()
+	body := `{"labels":{"fugaro":"managed"},"replication":` + rep + `}`
+	resp, err := http.Post(f.URL+"/v1/projects/p/secrets?secretId="+id, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, string(out)
+}
+
+// TestTheFakeChecksAUserManagedPolicy: a create carries the replication policy
+// the API takes — automatic, or user-managed with a location for every replica
+// — the fake stores it with the container and answers it back on every read of
+// it, and a policy named any other way is refused, so a client sending a shape
+// the real API refuses fails here instead of passing.
+func TestTheFakeChecksAUserManagedPolicy(t *testing.T) {
+	f := NewSecrets(t)
+	regional := `{"userManaged":{"replicas":[{"location":"europe-west1"}]}}`
+	if code, body := createCall(t, f, "regional", regional); code != http.StatusOK || !strings.Contains(body, `"location":"europe-west1"`) {
+		t.Fatalf("a user-managed create: %d %s", code, body)
+	}
+	if got := f.Replication("regional"); !slices.Equal(got, []string{"europe-west1"}) {
+		t.Fatalf("Replication = %v, want the location the create named", got)
+	}
+	if code, body := secretCall(t, f, http.MethodGet, "/v1/projects/p/secrets/regional"); code != http.StatusOK || !strings.Contains(body, `"location":"europe-west1"`) {
+		t.Fatalf("the get of a user-managed container: %d %s", code, body)
+	}
+	// Automatic is still accepted: it is what every container made before
+	// Fugaro wrote a regional policy carries, and a Terraform-managed or
+	// seeded one is not this fake's create at all.
+	if code, body := createCall(t, f, "global", `{"automatic":{}}`); code != http.StatusOK || !strings.Contains(body, `"automatic"`) {
+		t.Fatalf("an automatic create: %d %s", code, body)
+	}
+	if got := f.Replication("global"); got != nil {
+		t.Fatalf("an automatic container's replication = %v, want none", got)
+	}
+
+	// The policies the API refuses, each of which makes no container.
+	for _, c := range []struct{ name, rep string }{
+		{"neither", ``},
+		{"both", `{"automatic":{},"userManaged":{"replicas":[{"location":"europe-west1"}]}}`},
+		{"no replica", `{"userManaged":{"replicas":[]}}`},
+		{"no location", `{"userManaged":{"replicas":[{"location":""}]}}`},
+	} {
+		id := "refused-" + strings.ReplaceAll(c.name, " ", "-")
+		if code, body := createCall(t, f, id, c.rep); code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s, want 400", c.name, code, body)
+		}
+		if code, _ := secretCall(t, f, http.MethodGet, "/v1/projects/p/secrets/"+id); code != http.StatusNotFound {
+			t.Fatalf("%s: the refused create made a container", c.name)
+		}
+	}
+}
+
 // A fresh fake has taken nothing away, and the two destructive calls are
 // recorded: "Fugaro never deletes a secret or a secret version" is asserted
 // through these, so a run that made one cannot pass.

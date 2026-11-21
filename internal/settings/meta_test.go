@@ -9,6 +9,12 @@ import (
 // register is Register with the entry dropped again when the test ends: the
 // table is package state, so a key a test registered would otherwise be seen by
 // another test of this package.
+//
+// The keys here and below are this file's own `probe.` names rather than
+// registry keys: the families register their real keys in init (meta_git.go is
+// the first), and a test that registered `agent.review_rounds`, or asked
+// MetaOf("git.pr.early_draft") for a key it never registered, would be reading
+// a family's entry rather than testing Register's own rules.
 func register(t *testing.T, key string, m Meta) {
 	t.Helper()
 	if err := Register(key, m); err != nil {
@@ -31,7 +37,7 @@ func goodMeta() Meta {
 }
 
 func TestMetaRegisterRefusesDuplicate(t *testing.T) {
-	const key = "agent.review_rounds"
+	const key = "probe.review_rounds"
 	register(t, key, goodMeta())
 	if err := Register(key, goodMeta()); err == nil {
 		t.Fatalf("Register(%q, ...) a second time registered the key again", key)
@@ -39,8 +45,8 @@ func TestMetaRegisterRefusesDuplicate(t *testing.T) {
 }
 
 func TestMetaLookupMissingKey(t *testing.T) {
-	register(t, "agent.review_rounds", goodMeta())
-	if m, ok := MetaOf("agent.review_round"); ok {
+	register(t, "probe.review_rounds", goodMeta())
+	if m, ok := MetaOf("probe.review_round"); ok {
 		t.Fatalf("MetaOf answered %+v for a key that was never registered", m)
 	}
 	if m, ok := MetaOf(""); ok {
@@ -54,9 +60,9 @@ func TestMetaLookupMissingKey(t *testing.T) {
 func TestMetaRegisterAndLookupRoundTrip(t *testing.T) {
 	want := goodMeta()
 	want.Type, want.Enum, want.Min = TypeEnum, []string{"auto", "always", "never"}, ""
-	register(t, "agent.first_line_review", want)
+	register(t, "probe.first_line_review", want)
 
-	got, ok := MetaOf("agent.first_line_review")
+	got, ok := MetaOf("probe.first_line_review")
 	if !ok {
 		t.Fatal("MetaOf found no metadata for a key Register was given")
 	}
@@ -66,7 +72,7 @@ func TestMetaRegisterAndLookupRoundTrip(t *testing.T) {
 	}
 
 	got.Enum[0] = "mutated"
-	if again, _ := MetaOf("agent.first_line_review"); again.Enum[0] != "auto" {
+	if again, _ := MetaOf("probe.first_line_review"); again.Enum[0] != "auto" {
 		t.Fatalf("editing the answered enum changed the table's own: %v", again.Enum)
 	}
 }
@@ -83,31 +89,31 @@ func TestMetaRegisterRefusesMalformed(t *testing.T) {
 		mut  func(*Meta)
 	}{
 		{name: "no key", key: "", mut: func(*Meta) {}},
-		{name: "no label", key: "agent.review_rounds", mut: func(m *Meta) { m.Label = "" }},
-		{name: "no description", key: "agent.review_rounds", mut: func(m *Meta) { m.Description = "" }},
-		{name: "no group", key: "agent.review_rounds", mut: func(m *Meta) { m.Group = "" }},
-		{name: "an unknown group", key: "agent.review_rounds", mut: func(m *Meta) { m.Group = "Agents" }},
-		{name: "no type", key: "agent.review_rounds", mut: func(m *Meta) { m.Type = "" }},
-		{name: "an unknown type", key: "agent.review_rounds", mut: func(m *Meta) { m.Type = "integer" }},
-		{name: "an unknown format", key: "agent.review_rounds", mut: func(m *Meta) { m.Format = "semver" }},
+		{name: "no label", key: "probe.review_rounds", mut: func(m *Meta) { m.Label = "" }},
+		{name: "no description", key: "probe.review_rounds", mut: func(m *Meta) { m.Description = "" }},
+		{name: "no group", key: "probe.review_rounds", mut: func(m *Meta) { m.Group = "" }},
+		{name: "an unknown group", key: "probe.review_rounds", mut: func(m *Meta) { m.Group = "Agents" }},
+		{name: "no type", key: "probe.review_rounds", mut: func(m *Meta) { m.Type = "" }},
+		{name: "an unknown type", key: "probe.review_rounds", mut: func(m *Meta) { m.Type = "integer" }},
+		{name: "an unknown format", key: "probe.review_rounds", mut: func(m *Meta) { m.Format = "semver" }},
 		{
 			name: "an enum with no value",
-			key:  "agent.first_line_review",
+			key:  "probe.first_line_review",
 			mut:  func(m *Meta) { m.Type, m.Min = TypeEnum, "" },
 		},
 		{
 			name: "an enum on a non-enum type",
-			key:  "agent.review_rounds",
+			key:  "probe.review_rounds",
 			mut:  func(m *Meta) { m.Enum = []string{"1", "2"} },
 		},
 		{
 			name: "a bound on a bool",
-			key:  "git.pr.early_draft",
+			key:  "probe.toggle",
 			mut:  func(m *Meta) { m.Type = TypeBool },
 		},
 		{
 			name: "a bound on a string",
-			key:  "commit_name",
+			key:  "probe.name",
 			mut:  func(m *Meta) { m.Type = TypeString },
 		},
 	}

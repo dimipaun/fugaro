@@ -274,6 +274,17 @@ func installationPlan(t *testing.T, spec InstallationSpec, dropModule ...string)
 // does not have.
 func installationPlanWith(t *testing.T, spec InstallationSpec, extra map[string]any, dropModule ...string) (*tf.Plan, map[string]plannedResource) {
 	t.Helper()
+	return installationPlanAgainst(t, spec, extra, nil, dropModule...)
+}
+
+// installationPlanAgainst is installationPlanWith planning against a PRIOR
+// STATE: state builds the terraform state document the plan diffs against from
+// the tfvars it is handed, and a nil state is a plan of a project that holds
+// nothing (every other plan in these tests). It is what a test of a plan the
+// owner's installation meets uses — a change that must leave what exists alone
+// can only be judged against a state that exists.
+func installationPlanAgainst(t *testing.T, spec InstallationSpec, extra map[string]any, state func(vars map[string]any) map[string]any, dropModule ...string) (*tf.Plan, map[string]plannedResource) {
+	t.Helper()
 	bin, err := exec.LookPath("terraform")
 	if err != nil {
 		t.Fatalf("this test needs terraform on PATH: %v", err)
@@ -315,6 +326,24 @@ func installationPlanWith(t *testing.T, spec InstallationSpec, extra map[string]
 			t.Fatal(err)
 		}
 	}
+	planArgs := []string{"-input=false", "-no-color", "-out=plan.bin", "-var-file=terraform.tfvars.json"}
+	if state != nil {
+		doc := map[string]any{}
+		if err := json.Unmarshal(vars, &doc); err != nil {
+			t.Fatal(err)
+		}
+		b, err := json.Marshal(state(doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "prior.tfstate"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// -refresh=false: the state is the test's own document, and reading it
+		// back from Google would need credentials the plan deliberately has none
+		// of. Nothing here compares state with the cloud.
+		planArgs = append(planArgs, "-refresh=false", "-state=prior.tfstate")
+	}
 	tfdata := filepath.Join(dir, "tfdata")
 	home := filepath.Join(dir, "home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
@@ -347,7 +376,7 @@ func installationPlanWith(t *testing.T, spec InstallationSpec, extra map[string]
 		"https_proxy=http://127.0.0.1:9", "http_proxy=http://127.0.0.1:9",
 		"NO_PROXY=", "no_proxy=",
 	)
-	run(planEnv, "plan", "-input=false", "-no-color", "-out=plan.bin", "-var-file=terraform.tfvars.json")
+	run(planEnv, append([]string{"plan"}, planArgs...)...)
 	show := run(planEnv, "show", "-json", "plan.bin")
 	// tf.Plan is the package's own decoding of the document (its
 	// UnmarshalJSON keeps the top-level keys beside the fields), so what the
