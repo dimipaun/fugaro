@@ -106,15 +106,17 @@ func outsideWords(p place.Place) string {
 
 // locationPlace is the place a location lies in. place.Of answers for a region
 // and for nothing else, and the record can hold names that are not regions and
-// are still in a place: a Firestore database adopted as nam5 or nam7 is in the
-// US and one as eur3 is in the EU, and the run log bucket's us and eu are the
-// two multi-regions the mapping falls back to. global is in no place, and
-// neither is anything this Fugaro does not know.
+// are still in a place: a Firestore database adopted as nam5 is in the US and
+// one as eur3 is in the EU, and the run log bucket's us and eu are the two
+// multi-regions the mapping falls back to. It answers by the prefix, as
+// place.Of does, so a multi-region Google adds tomorrow is in its place with
+// no change here. global is in no place, and neither is anything else this
+// Fugaro does not know.
 func locationPlace(loc string) place.Place {
-	switch loc {
-	case "us", "nam5", "nam7":
+	switch {
+	case loc == "us" || strings.HasPrefix(loc, "nam"):
 		return place.US
-	case "eu", "eur3":
+	case loc == "eu" || strings.HasPrefix(loc, "eur"):
 		return place.EU
 	}
 	return place.Of(loc)

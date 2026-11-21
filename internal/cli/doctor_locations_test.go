@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/place"
 )
 
 // writeLocations puts a locations record into the rig's config, for an
@@ -121,6 +123,39 @@ func TestADatabaseOutsideThePlaceIsInformation(t *testing.T) {
 	}
 	if out != "fugaro doctor: ok — everything checked is ok\n" {
 		t.Errorf("a clean installation with a database outside its place printed:\n%s", out)
+	}
+}
+
+// TestARecordedLocationInAMultiRegion: the record holds what the cloud
+// answered, and what the cloud answers for a database is not always a region.
+// A multi-region is in a place all the same, and the marker a reader acts on
+// must not call one of those outside the place it is inside. A location in no
+// place — global, and a region in neither US nor EU, which D3081 promises
+// nothing about — is neither marked nor guessed at: the row prints it as the
+// cloud named it, and marks only a thing that lies in a place which is not the
+// installation's.
+func TestARecordedLocationInAMultiRegion(t *testing.T) {
+	for _, tc := range []struct {
+		loc  string
+		p    place.Place
+		want string
+	}{
+		{"nam5", place.US, "nam5"},
+		{"nam7", place.US, "nam7"},
+		{"eur3", place.EU, "eur3"},
+		{"us", place.US, "us"},
+		{"eu", place.EU, "eu"},
+		{"us-east5", place.US, "us-east5"},
+		{"nam5", place.EU, "nam5 (outside the EU)"},
+		{"eur3", place.US, "eur3 (outside the US)"},
+		{"eu", place.US, "eu (outside the US)"},
+		{"asia-southeast1", place.US, "asia-southeast1"},
+		{"global", place.EU, "global"},
+		{"us-east5", place.None, "us-east5"},
+	} {
+		if got := locatedWords(tc.loc, tc.p); got != tc.want {
+			t.Errorf("locatedWords(%q, %s) = %q, want %q", tc.loc, tc.p, got, tc.want)
+		}
 	}
 }
 
