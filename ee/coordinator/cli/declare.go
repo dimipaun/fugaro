@@ -8,7 +8,6 @@ import (
 
 	"github.com/dimipaun/fugaro/ee/coordinator"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
-	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -22,9 +21,12 @@ import (
 //
 //   - The declaration follows the launch's own database switch. The coordinator
 //     keeps its state in the same database the budget uses, and a launch that
-//     was told not to use it declares nothing: budget.mode: off and a project
-//     with no budget.rtdb_url are that switch in the config, and
-//     --no-budget-check is the operator saying it for this launch. Nothing is
+//     was told not to use it declares nothing: a project with no
+//     budget.rtdb_url is that switch in the config, and --no-budget-check is
+//     the operator saying it for this launch. The mode is not part of the
+//     switch: there is always a budget and no mode is off any more
+//     (docs/always-a-budget/contract-mode.md, C1, D3009), so a launch that
+//     names a database declares into it whatever mode it runs under. Nothing is
 //     lost by it: the declaration is advisory, and the view the sweep renders
 //     reads the runs bucket, where the launch's own record lands whatever
 //     happens here.
@@ -46,7 +48,7 @@ import (
 //     refuse is not.
 func Declare(ctx context.Context, c *fcli.Cloud, slug string, spec *task.Spec) error {
 	lc := c.Config()
-	if lc.BudgetMode() == localcfg.BudgetOff || lc.Budget == nil || lc.Budget.RTDBURL == "" ||
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" ||
 		c.NoBudgetCheck() || spec.RequestedBy == "" {
 		return nil
 	}
