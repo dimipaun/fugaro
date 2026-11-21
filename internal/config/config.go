@@ -1243,7 +1243,16 @@ const AnthropicSecret = "anthropic-api-key"
 // the two cannot say different things, and both name the fix that actually
 // works: store a key and rerun `fugaro update` (the mount is planned at
 // deploy), or route the model through a provider.
-const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro update, or route the model through a provider"
+//
+// The third sentence is the SHARED PROJECT JOB's, whose mount is not this
+// remedy's to restore: a profile whose switch is on mounts no Anthropic key at
+// all (config.SharedJobServedClasses, B5.7), so a run of one cannot be fixed
+// from a checkout's secrets and a re-apply of its root — the credential it is
+// served with is the installation's credentials service's to hand it, and what
+// the service holds for the project is the key `fugaro creds set` stores.
+// Saying so is the difference between a reader who fixes the run and one who
+// reruns the same update twice.
+const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro update, or route the model through a provider. A run on a shared project job mounts no key of its own where its profile is served by the credentials service: there the key the service hands back is the project's own (`fugaro creds set anthropic-api-key`), and a job of a profile the service does not serve yet is put on it from one of the profile's repositories (`fugaro update --repo` in its checkout, with agent.auth: cascade)"
 
 // BitbucketSecret is the logical secret that holds a Bitbucket credential:
 // normally a repository access token, issued for one repository and unusable

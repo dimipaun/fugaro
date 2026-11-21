@@ -2281,9 +2281,14 @@ var runAccountGrants = setOf(
 	// shared job reads is sealed ciphertext (budget-token-channel.md §7.2).
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
 	// A project job account's (phase 3, modules/project/sa.tf): the same
-	// shape, its secrets keyed by the profile's mounts; its bucket grant is
-	// the workflow job's key above, under the widened condition.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset(values(var.job.secret_env)) | perms=`,
+	// shape, its secrets keyed by the profile's mounts — less the model
+	// credentials a profile the credentials service serves gives up, which is
+	// the comprehension local.job_secret_names holds since B5.7's flip (the
+	// class list and the two clauses that read it are pinned by
+	// deploy/terraform's TestSharedJobServedClassesMatchTheModule) — and its
+	// bucket grant is the workflow job's key above, under the widened
+	// condition.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.job.secret_env : logical if !local.is_shared_job_served_model[env] ])] | perms=`,
 
 	// The build account's (a build's credential): its secrets, its own
 	// registry, the shared ones read-only, builds/ under its condition, actAs
