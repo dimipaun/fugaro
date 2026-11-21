@@ -3244,9 +3244,11 @@ func ciYAML(inputs string) string {
 	return body + "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n"
 }
 
-// ciFullAndLiveScripts is ci.yml's shape once the selector (CS6) has landed: the
-// `full` input and #3301's `live_scripts`, whose `auto` -- its default -- could
-// skip the live-script runners, which is not a gate a release can be cut on.
+// ciFullAndLiveScripts is a ci.yml declaring both inputs: the selector's `full`
+// (CS6) and #3301's `live_scripts`, whose `auto` -- its default -- could skip the
+// live-script runners, which is not a gate a release can be cut on. A ref carries
+// both only between CS6's copy and the removal of `live_scripts` (R9), and it is
+// what makes a dispatch pass each flag its own file declares, and no other.
 var ciFullAndLiveScripts = ciYAML(`      full:
         description: run every leg
         type: boolean
@@ -3344,8 +3346,8 @@ func TestReleaseDispatchesAFullRunForTheMergeCommit(t *testing.T) {
 	if !strings.Contains(res.out, "dispatched a full ci run on main") {
 		t.Errorf("the release did not say it dispatched the run its gate reads:\n%s", res.out)
 	}
-	if dispatched := workflowRunLines(t, g); len(dispatched) != 1 || dispatched[0] != "workflow run ci -f full=true" {
-		t.Errorf("want exactly one `workflow run ci -f full=true`, got %q:\n%s", dispatched, g.log(t))
+	if dispatched := workflowRunLines(t, g); len(dispatched) != 1 || dispatched[0] != "workflow run ci -f full=true -f live_scripts=always" {
+		t.Errorf("want exactly one `workflow run ci -f full=true -f live_scripts=always`, got %q:\n%s", dispatched, g.log(t))
 	}
 	merge := strings.TrimSpace(g.read(t, "pr_merge_sha"))
 	if tagged := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}"); tagged != merge {
@@ -3375,14 +3377,15 @@ func TestReleaseReadsAnExistingFullRunInsteadOfDispatch(t *testing.T) {
 	}
 }
 
-// TestReleaseOnAMainWithoutTheFullInputDispatchesNoInput: main's ci.yml between
-// #3301 and the selector (CS6) declares live_scripts and no `full`, and GitHub
-// refuses a dispatch that passes an input its workflow does not declare (422), so
-// `-f full=true` there would stop every ordinary release at step 4, before the
-// run it waits for could start. The release dispatches as that main always did --
-// `gh workflow run ci`, no input -- and the bare `ci` title of a ci.yml without
-// run-name: is a run the gate reads as full (R1).
-func TestReleaseOnAMainWithoutTheFullInputDispatchesNoInput(t *testing.T) {
+// TestReleaseOnAMainWithoutTheFullInputPassesLiveScripts: main's ci.yml between
+// #3301 and the selector (CS6) declares live_scripts and no `full`. GitHub refuses
+// a dispatch that passes an input its workflow does not declare (422), so
+// `-f full=true` there would stop every ordinary release at step 4, before the run
+// it waits for could start -- and `live_scripts` must still be passed, because
+// `auto`, that input's default, may skip the live-script runners, and a gate run
+// that skipped them is not one a tag can be cut on (R9). The run is titled `ci`,
+// which the gate reads as full (R1).
+func TestReleaseOnAMainWithoutTheFullInputPassesLiveScripts(t *testing.T) {
 	r := releaseMainWithCI(t, ciLiveScriptsOnly)
 	g := newGHState(t, r, greenChecks())
 	ciRuns(t, g, mainFullyGreen(t, r), "@merge\tci (selected)\t@merge-selected")
@@ -3390,8 +3393,8 @@ func TestReleaseOnAMainWithoutTheFullInputDispatchesNoInput(t *testing.T) {
 	res := runRelease(t, r, g, "y\n", "0.12.0")
 	res.requireSuccess(t)
 
-	if dispatched := workflowRunLines(t, g); len(dispatched) != 1 || dispatched[0] != "workflow run ci" {
-		t.Errorf("want exactly one bare `workflow run ci` on a main that declares no full input, got %q:\n%s", dispatched, g.log(t))
+	if dispatched := workflowRunLines(t, g); len(dispatched) != 1 || dispatched[0] != "workflow run ci -f live_scripts=always" {
+		t.Errorf("want exactly one `workflow run ci -f live_scripts=always` on a main that declares no full input, got %q:\n%s", dispatched, g.log(t))
 	}
 	merge := strings.TrimSpace(g.read(t, "pr_merge_sha"))
 	if tagged := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}"); tagged != merge {

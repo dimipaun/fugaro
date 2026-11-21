@@ -65,11 +65,12 @@
 # the tag started.
 #
 # The ordinary path's step 4 dispatches the same run on the merge commit itself
-# when that commit has none (`gh workflow run ci`, with `-f full=true` when main's
-# own ci.yml declares that input, R12): CI starts on no commit by itself, and the
-# release gate reads the checks of a full run. A dispatch runs a workflow at its
-# ref's tip, so when main has moved past the merge the run lands elsewhere and the
-# release is refused, naming the commit and a command that puts a full run on it.
+# when that commit has none (`gh workflow run ci`, with `-f full=true` and `-f
+# live_scripts=always` when main's own ci.yml declares those inputs, R12): CI
+# starts on no commit by itself, and the release gate reads the checks of a full
+# run. A dispatch runs a workflow at its ref's tip, so when main has moved past the
+# merge the run lands elsewhere and the release is refused, naming the commit and a
+# command that puts a full run on it.
 #
 # A dropped connection to GitHub does not end it: read-only gh and git calls,
 # and the release gate's polling, are retried a bounded number of times
@@ -396,26 +397,23 @@ wait_for_ci_full_run() {
 # dispatch of a re-run of this release -- gets no second: the gate reads the
 # newest full run, so a second would only cost a runner.
 #
-# The dispatch may pass an input only when the ci.yml it runs declares it --
-# GitHub refuses an unknown one with a 422 -- and a dispatch with no --ref runs
-# the file on the default branch, which is origin/main here. `full` is CS6's
-# input, and until it lands main's file declares only #3301's live_scripts, so a
-# release in that window is dispatched as `gh workflow run ci` and nothing else:
-# a 422 would stop every ordinary release at this step, and the bare `ci` title
-# of a ci.yml without run-name: is one the gate reads as full (R1) anyway. Nothing
-# is passed on a tree older than both, exactly as before.
+# What the dispatch may pass is what the ci.yml it runs declares, and a dispatch
+# with no --ref runs the file on the default branch, which is origin/main here:
+# `-f full=true` wherever main has the selector (CS6), so the run the gate reads is
+# the full variant, and `-f live_scripts=always` wherever main still has #3301's
+# input, because `auto` -- that input's default -- may skip the live-script
+# runners, and a run that skipped them is not a gate a tag can be cut on (R9).
+# Before either lands the dispatch passes nothing, exactly as it always did, and
+# the bare `ci` title of a ci.yml without run-name: is one the gate reads as full
+# (R1) all the same.
 ensure_full_ci_run() {
-  local sha=$1 existing row before main_inputs ci_inputs dispatch_err
+  local sha=$1 existing row before ci_inputs dispatch_err
   existing=$(full_ci_run_on "$sha") || return 1
   if [ -n "$existing" ]; then
     echo "ci run #$existing on $sha is a full one; the release gate reads it"
     return 0
   fi
-  main_inputs=$(git show "origin/main:.github/workflows/ci.yml" 2>/dev/null | workflow_dispatch_inputs)
-  ci_inputs=""
-  if printf '%s\n' "$main_inputs" | grep -qx full; then
-    ci_inputs=" -f full=true"
-  fi
+  ci_inputs=$(git show "origin/main:.github/workflows/ci.yml" 2>/dev/null | workflow_dispatch_inputs | ci_dispatch_flags)
   row=$(latest_ci_run) || return 1
   before=$(run_number_of "$row")
   # shellcheck disable=SC2086 # word splitting is the point: $ci_inputs is the flags
@@ -454,6 +452,27 @@ workflow_dispatch_inputs() {
         print key
       }
     }'
+}
+
+# ci_dispatch_flags prints the `-f name=value` flags a `gh workflow run ci` may
+# pass, given the input names of the ci.yml it runs on stdin: `-f full=true` for
+# the selector's `full` (CS6) and `-f live_scripts=always` for #3301's
+# `live_scripts`, each only when that file declares it -- GitHub refuses an input
+# a workflow does not declare with a 422 -- and nothing at all for a ci.yml that
+# declares neither, which is a tree older than both. `live_scripts=always` is what
+# R9 asks for: `auto`, that input's default, may skip the live-script runners,
+# which is not a gate a release can be cut on.
+ci_dispatch_flags() {
+  local declared flags
+  declared=$(cat)
+  flags=""
+  if printf '%s\n' "$declared" | grep -qx full; then
+    flags="$flags -f full=true"
+  fi
+  if printf '%s\n' "$declared" | grep -qx live_scripts; then
+    flags="$flags -f live_scripts=always"
+  fi
+  printf '%s' "$flags"
 }
 
 # hotfix_scratch is the scratch worktree --hotfix builds the maintenance branch
@@ -721,20 +740,11 @@ $missing_text"
   # What a dispatch on $branch may pass is what the branch's own ci.yml declares:
   # a workflow_dispatch runs the workflow file on the ref it names, and a
   # maintenance branch is cut from the line's last tag, so its ci.yml may predate
-  # main's. `full` is CS6's input (the selector's full variant, and the run-name:
-  # the gate reads as a full run); `live_scripts` is #3301's, whose `auto` -- its
-  # default -- skips the live-script runners when what they read did not change,
-  # which is not a gate a release can be cut on (R9, R12). GitHub refuses an input
-  # the workflow does not declare (422), so each is passed only when the branch
-  # declares it, and a branch older than both is dispatched exactly as before.
-  branch_inputs=$(git -C "$hotfix_scratch/tree" show "HEAD:.github/workflows/ci.yml" 2>/dev/null | workflow_dispatch_inputs)
-  ci_inputs=""
-  if printf '%s\n' "$branch_inputs" | grep -qx full; then
-    ci_inputs="$ci_inputs -f full=true"
-  fi
-  if printf '%s\n' "$branch_inputs" | grep -qx live_scripts; then
-    ci_inputs="$ci_inputs -f live_scripts=always"
-  fi
+  # main's -- `full` may be absent where main has it (CS6) and `live_scripts`
+  # present where main has already dropped it. ci_dispatch_flags passes each only
+  # when this branch declares it, and nothing to a branch older than both, which is
+  # dispatched exactly as it always was.
+  ci_inputs=$(git -C "$hotfix_scratch/tree" show "HEAD:.github/workflows/ci.yml" 2>/dev/null | workflow_dispatch_inputs | ci_dispatch_flags)
 
   if [ "$dry_run" = 1 ]; then
     cat <<EOF
@@ -1093,7 +1103,7 @@ Nothing else was changed.
 Without --dry-run this would:
   2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), record $version as the cli stream's current in docs/release-streams.yaml (moving its next name when the release opens a new minor), rewrite the two doc lines that name the released version, commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
   3. wait up to ${timeout_minutes}m for that PR to merge
-  4. dispatch a full ci run on the merge commit when it has none (gh workflow run ci, with -f full=true when main's ci.yml declares it), then wait up to ${timeout_minutes}m for its test, terraform and rules checks, and require them to pass (the release gate)
+  4. dispatch a full ci run on the merge commit when it has none (gh workflow run ci, with -f full=true and -f live_scripts=always where main's ci.yml declares them), then wait up to ${timeout_minutes}m for its test, terraform and rules checks, and require them to pass (the release gate)
   4b. build this repository's own go catalog entry for real in the sandbox project (FUGARO_LIVE_GCP_PROJECT), with the CLI built from the merge commit (scripts/release-rehearsal.sh run: ONE billable Cloud Build, judged against the project's caps before it is submitted), and refuse the tag unless the record it writes is green for that commit (scripts/release-rehearsal.sh check): the build 0.26.0 left to the owner's next "fugaro update", and the last thing this run does before the tag
   5. create and push the tag $tag (no prompt: the green release gate on the verified merge commit is the safeguard)
 EOF
