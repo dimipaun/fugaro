@@ -49,13 +49,22 @@ import (
 // claim is the run's first call. The two together are D3136's "recorded,
 // unstarted attempt"; this file is the record half of it.
 //
-// ONE THING THE RECORD DOES SHOW, AND THE GATE AGREES ABOUT. The item the
-// attempt belongs to must be one the record has NOT finished (Phase.Done: done
-// or cancelled). That is the orchestrator's own gate read from this side:
-// `reissuable` refuses to start an attempt of an item that is done or
-// cancelled, so a launcher with a modified CLI must not be able to ask the
-// issuer for what that gate refuses — work a person called off is not
-// re-issued.
+// WHAT THE RECORD SHOWS, AND THE GATE AGREES ABOUT — BY BEING ASKED. The whole
+// of the launcher's own judgement of an attempt is asked of the record here,
+// through orchestrator.ReissuableAttempt, which is `reissuable`'s record half:
+// the item the attempt names, the open intent that is exactly this attempt
+// under this run id, an item the record has not finished (done or cancelled),
+// an item still the spec the attempt was committed for, and an approval that
+// covers the attempt or is the one it spent. One function rather than a second
+// copy of those checks, because a copy is where the two come apart: a launcher
+// with a modified CLI must not be able to ask the issuer for what the launcher
+// itself refuses. Work a person called off is not re-issued, an item edited
+// since the attempt was committed is not started under the spec the person
+// withdrew, and an approval a person has replaced since is not spent again —
+// and none of those waits on the daemon's own abandon of the intent
+// (`recovery`, whose notes say which of the three closed it): the intent stays
+// open in the record until the daemon writes that, and the issuer refuses it
+// whether or not the daemon has got there.
 //
 // THE TWO SIDES ARE SPELLED DIFFERENTLY, AND ONE OF THEM IS DERIVED. An item
 // carries its repository canonically — `owner/name`, as
@@ -101,10 +110,12 @@ type OrchestratorRecord interface {
 }
 
 // ErrOrchestratedAsk is the refusal of an ask in the orchestrator's class that
-// the orchestrator's own record does not carry: a run id the record never
-// recorded, an attempt that is not the one that run id belongs to, an attempt
-// of an item the record has finished or one that has ended, an attempt of
-// another repository, or an ask that names a context repository at all
+// the orchestrator's own record does not carry as one its gate would start: a
+// run id the record never recorded, an attempt that is not the one that run id
+// belongs to, an item the record does not carry, an item the record has
+// finished (done or cancelled) or edited since the attempt was committed, an
+// approval a person has replaced since, an attempt that has ended, an attempt
+// of another repository, or an ask that names a context repository at all
 // (D3136).
 //
 // It is one value because the route's answer is one: every one of those is the
@@ -224,18 +235,18 @@ func (c orchestratedScope) checkOrchestrated(ctx context.Context, caller Identit
 		}
 	}
 	attempt := string(ask.Attempt)
-	item, ok := state.Item(orchestrator.IntentItem(attempt))
-	if !ok {
-		return fmt.Errorf("%w: %q names the attempt %q, and the orchestrator's record carries no work item for it", ErrOrchestratedAsk, safetext.OneLine(ask.Run), safetext.OneLine(attempt))
-	}
-	if item.Phase.Done() {
-		// The item is finished: a person called the work off (cancelled) or it
-		// is over (done), and the orchestrator's own gate refuses to start an
-		// attempt of such an item (`reissuable`, internal/orchestrator). What
-		// the class may be issued is an attempt of work the record has not
-		// finished, so the issuer gives the gate's own answer rather than
-		// starting a run for work a person called off.
-		return fmt.Errorf("%w: the attempt %q belongs to an item the record has finished (%s), and only an attempt of work that is not called off is re-issued", ErrOrchestratedAsk, safetext.OneLine(attempt), safetext.OneLine(string(item.Phase)))
+	item, err := orchestrator.ReissuableAttempt(state, attempt, ask.Run)
+	if err != nil {
+		// The record does not carry this attempt as one the orchestrator's own
+		// gate would start. The judgement is the gate's own
+		// (orchestrator.ReissuableAttempt, which is reissuable's record half),
+		// so a launcher with a modified CLI cannot ask the issuer for what the
+		// launcher itself refuses — and the gate's sentence is carried into
+		// this one, so the operator reads which of them it was: no such work
+		// item, no open attempt recorded under that run id, an item the record
+		// has finished (done or cancelled), an item edited since the attempt
+		// was committed, or an approval a person has replaced since.
+		return fmt.Errorf("%w: the orchestrator's record does not carry the attempt %q of run %q as one its own gate would start: %v", ErrOrchestratedAsk, safetext.OneLine(attempt), safetext.OneLine(ask.Run), err)
 	}
 	if !askNamesTheItemsRepo(ask.Slug, item.Repo) {
 		// The attempt is a recorded one, and it is the record's for another
@@ -244,24 +255,7 @@ func (c orchestratedScope) checkOrchestrated(ctx context.Context, caller Identit
 		// attempt at another repository's run is refused.
 		return fmt.Errorf("%w: the attempt %q is the record's for %q, and the ask's slug %q is not that repository's", ErrOrchestratedAsk, safetext.OneLine(attempt), safetext.OneLine(item.Repo), safetext.OneLine(ask.Slug))
 	}
-	for _, it := range state.Intents {
-		if it.ID != attempt {
-			continue
-		}
-		if it.RunID != ask.Run {
-			// The attempt is recorded under another run id: the run the ask
-			// names is not the one the record minted for that attempt, and a
-			// run id no intent carries is a run nothing committed.
-			return fmt.Errorf("%w: the attempt %q is recorded under run %q, and the ask names %q", ErrOrchestratedAsk, safetext.OneLine(attempt), safetext.OneLine(it.RunID), safetext.OneLine(ask.Run))
-		}
-		if it.Outcome != "" {
-			// The attempt has ended: the run reported, and what is left is the
-			// item's history and never a launch (orchestrator.Outcome).
-			return fmt.Errorf("%w: the attempt %q has ended (%s), and only an attempt nothing has reported on is re-issued", ErrOrchestratedAsk, safetext.OneLine(attempt), safetext.OneLine(string(it.Outcome)))
-		}
-		return nil
-	}
-	return fmt.Errorf("%w: the orchestrator's record carries no attempt %q for run %q", ErrOrchestratedAsk, safetext.OneLine(attempt), safetext.OneLine(ask.Run))
+	return nil
 }
 
 // askNamesTheItemsRepo reports whether askSlug is a storage slug of itemRepo:
