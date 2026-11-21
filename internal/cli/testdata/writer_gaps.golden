@@ -291,6 +291,7 @@ repos.acme/web.workflows	open:writer-unproven
 review_floor	open:no-writer
 rigor.areas	open:writer-unproven
 rigor.default	open:writer-unproven
+rigor.repos	label:file
 rigor_pending	label:plumbing
 routing.claude.models	open:no-writer
 routing.claude.via	open:no-writer

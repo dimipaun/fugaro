@@ -976,6 +976,16 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool, bt
 		// republish the coverage needs (T11).
 		bitbucketWriteLines(w, name, btRec, btRes)
 	}
+	// The bundle is this command's to write and the credential ROUTE is not:
+	// where each repository's credentials are served from is derived from the
+	// document just written, per repository and per kind, by the next `fugaro
+	// update` (update_route.go, WS9/D2982) — a member's own publish and never
+	// this one's. So a write that changes what the bundle holds is a write the
+	// published route no longer agrees with, and nothing else republishes it: a
+	// coding agent's session may not write the cloud, and a run reads the route
+	// rather than making one. The line is last because it names the one thing
+	// of this write the person still owes.
+	fmt.Fprintf(w, "the credential route of this project's repositories — which of them take a credential from a workspace's service and which from this project's own copy — is published by %s: run it to republish the route this write changes\n", selfCommand()+" update")
 	return err
 }
 

@@ -386,6 +386,15 @@ var yamlMeta = map[string]Row{
 		Doc:     "docs/rigor-modes/spec.md",
 	},
 	"rigor.areas": {Owner: "rigor", Merge: Union, Default: unset("no area rules"), Doc: "docs/rigor-modes/spec.md"},
+	// The project layer's per-repository level (LD4, LF4): the key is the
+	// layer's alone — a repository's fugaro.yaml may not state it at all, and
+	// says the level it runs at with its own rigor.default — and the file it is
+	// stated in is the layer, which `fugaro config publish` carries. That is why
+	// the owner is not "rigor", the family that edits an area rule's own fields,
+	// and why it is not the fallback `settings set`: the generic path's allowlist
+	// is the keys a repository is edited into, and it refuses this one, which is
+	// the F13 shape the four header keys above are.
+	"rigor.repos": {Owner: "config", Doc: docRigor},
 
 	// The security list is rigor.areas' twin in the two fields a Scopes row
 	// cannot answer. Its merge is Union and not the default Replace (D1506):
@@ -784,6 +793,21 @@ var layerRows = []Row{
 	layerRow("defaults.rigor.areas.*.name", "none", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.match", "none", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.level", "none", "rigor", docRigor),
+	// What an area of the project layer is made of (LD4): each member is a
+	// repository of the project, or a repository with the paths of it that are
+	// in the area. No command of the settings surface writes them yet — a
+	// project area is written by hand, or by the project's own tooling — so the
+	// row names the generic writer and the write refuses the spelling, exactly
+	// as the other rows of a shape no family owns do.
+	layerRow("defaults.rigor.areas.*.members.*.repo", "none", "settings set", docRigor),
+	layerRow("defaults.rigor.areas.*.members.*.paths", "none", "settings set", docRigor),
+	// The project layer's per-repository level, one entry per repository of the
+	// project it names one by one (LD4). Written by hand like the members above:
+	// the key a repository sets about itself is its own rigor.default, and
+	// `fugaro rigor set --layer repo` writes that one. Its row under the
+	// fugaro.yaml spelling is yamlMeta's, which names `config` as the owner
+	// because a repository's own file may not set the key at all.
+	layerRow("defaults.rigor.repos", "none", "settings set", docRigor),
 	// The planning pass's switch, read the way defaults.git.pr.early_draft
 	// above is: a layer that states nothing leaves it as the fugaro.yaml row
 	// says (docs/contract-first-decoupling, D1813).

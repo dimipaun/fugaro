@@ -341,8 +341,18 @@ const (
 // are the same family as that switch — the `project` one, whose writer is
 // `fugaro update` and never the generic path — so the allowlist reaches
 // neither of them and the rows without a generic writer move by the two.
+//
+// LV3.1 of docs/rigor-modes/ is the last mover after them, and the first mover this
+// paragraph records whose rows are mostly the generic path's: the project
+// layer's per-repository levels (LD4, LF4) are `rigor.repos` in the block's own
+// spelling — a row config.Scopes derives, whose handful of other rows all carry
+// InRepo and this one does not, so its owner is the layer file's token rather
+// than the generic writer's — beside the layer's `defaults.rigor.repos` row and
+// the two rows an area rule's members are (LF4). The three layer rows are
+// reached by the `layer.defaults.` prefix and the block's own is not carried, so
+// four rows and three of them move the allowlist's figure.
 const (
-	cfmRegistryRows   = 522
+	cfmRegistryRows   = 526
 	cfmAllowlistNamed = 121
 )
 

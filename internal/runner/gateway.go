@@ -418,12 +418,23 @@ func (r *run) servedAuth() string {
 // because the gateway is what reaches the service and the gateway exists only
 // in observe and enforce. The remedy is the operator's, either way: raise the
 // mode, or take the repository off the switch from its own checkout.
+//
+// A SHARED PROJECT JOB has the mode and nothing else, and the sentence says so:
+// its switch is its profile's (B5.7, internal/cli's credentialsServiceLaunchEnv
+// reads the same answer), so one repository cannot take it off — while any
+// repository the profile admits is on, every job of that profile is on, and so
+// is every other repository's run on it. A remedy naming `fugaro update --repo`
+// there would be one no checkout can carry out.
 func (r *run) serviceSwitchModeRefusal() error {
 	mode := r.spend.Mode
 	if mode == "" {
 		mode = policy.ModeOff
 	}
-	return fmt.Errorf("agent.auth is %s and this job carries the credentials service's URL (%s), so this repository is on the switch, and this installation's budget mode is %s: the service is reached through the gateway, which only budget.mode %s or %s starts, so this run has no way to the credential the installation serves it and does not fall back to one of its own (D2071, D143) — set budget.mode to %s or %s in the project policy and publish it (fugaro project policy publish), or take this repository off the switch (fugaro update --repo) and its runs keep their own credential", r.modelAuth(), credentialsServiceURLEnv, mode, policy.ModeObserve, policy.ModeEnforce, policy.ModeObserve, policy.ModeEnforce)
+	remedy := fmt.Sprintf("set budget.mode to %s or %s in the project policy and publish it (fugaro project policy publish), or take this repository off the switch (fugaro update --repo) and its runs keep their own credential", policy.ModeObserve, policy.ModeEnforce)
+	if job, shared := r.projectJob(); shared {
+		remedy = fmt.Sprintf("set budget.mode to %s or %s in the project policy and publish it (fugaro project policy publish) — the mode is the only one of the two remedies that reaches this job, whose switch is its profile %s's and not this repository's: `fugaro update --repo` in a checkout takes a repository off the switch, and this job stays on it while any other repository the profile admits is on", policy.ModeObserve, policy.ModeEnforce, job.Profile)
+	}
+	return fmt.Errorf("agent.auth is %s and this job carries the credentials service's URL (%s), so this repository is on the switch, and this installation's budget mode is %s: the service is reached through the gateway, which only budget.mode %s or %s starts, so this run has no way to the credential the installation serves it and does not fall back to one of its own (D2071, D143) — %s", r.modelAuth(), credentialsServiceURLEnv, mode, policy.ModeObserve, policy.ModeEnforce, remedy)
 }
 
 // gateway is where the agent's model calls go, nil until the gateway runs.
