@@ -358,6 +358,35 @@ rigor:
 	}
 }
 
+// TestAHotfixRequestIsTheRunsOwnAndLastsOneRun: the owner's ruling of
+// 2026-11-20 (point 4) puts no gate, no second approval and no question over
+// `--mode hotfix` — who may ask is the door that already exists — and it writes
+// the cost down the other way: the lowering is recorded on the run and belongs
+// to it. The record names `request` as the layer that decided the mode, and a
+// later run of the same repository that asks for nothing resolves its own
+// layers again, because the request is a field of one task (task.Spec.Rigor)
+// and never a value written where a repository keeps one (D12, D834).
+func TestAHotfixRequestIsTheRunsOwnAndLastsOneRun(t *testing.T) {
+	base := `version: 1
+project: aurora
+git: { provider: github }
+rigor: { default: pro }
+` + workflowsYAML
+	files := map[string]string{"README.md": "hello\n", "fugaro.yaml": base}
+
+	asked, _ := rigorRun(t, files, nil, &task.Spec{Rigor: rigor.Hotfix})
+	asked.bootstrapRigor(context.Background())
+	if rg := asked.rec.Rigor; rg == nil || rg.LevelOf() != rigor.Hotfix || rg.From != rigor.FromRequest {
+		t.Fatalf("the asking run's block = %+v, want hotfix from %q: the lowering is recorded on the run", rg, rigor.FromRequest)
+	}
+
+	next, _ := rigorRun(t, files, nil, &task.Spec{})
+	next.bootstrapRigor(context.Background())
+	if got := next.reachedRigor(); got != rigor.Pro {
+		t.Errorf("the next run resolved %q, want pro from the repository's own block: a request lasts one run", got)
+	}
+}
+
 // TestRigorFloorHoldsTheRowAHotfixRequestReads: a request lowers a mode and
 // never a floor (D8, LF5), and the owner's ruling of 2026-11-20 says which row
 // that leaves a run the flag took off the axis. The floor is read off the mode
