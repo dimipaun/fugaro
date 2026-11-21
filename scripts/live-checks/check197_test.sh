@@ -289,7 +289,7 @@ elif args[:1] == ["project"] and args[1:2] == ["policy"]:
                                   "allow_repos": ["bitbucket/%s" % bb], "claude_accounts": []}
     policy = {"version": 10, "allow_repos": project_allow, "profiles": profiles}
     if mode != "policy-no-mode":
-        policy["budget"] = {"mode": "off" if mode == "mode-off" else "observe"}
+        policy["budget"] = {"mode": "observe"}
     policy["bitbucket_token"] = block
     print(json.dumps({"policy": policy}))
 else:
@@ -803,16 +803,6 @@ test_a_profile_of_another_provider_is_a_failure() {
   no_launch "$dir" "other provider"
 }
 
-test_a_budget_mode_of_off_is_a_failure() {
-  local dir=$work/modeoff
-  prepare "$dir"
-  run197 "$dir" FAKE_FUGARO_MODE=mode-off
-  expect_status "$status" 1 "mode off: the verdict"
-  expect_contains "$out" "FACT policy: FAIL" "mode off: the row"
-  expect_contains "$out" "budget mode is 'off'" "mode off: the row says which"
-  no_launch "$dir" "mode off"
-}
-
 test_a_policy_with_no_budget_mode_leaves_the_rows_unmeasured() {
   local dir=$work/nomode
   prepare "$dir"
@@ -820,7 +810,7 @@ test_a_policy_with_no_budget_mode_leaves_the_rows_unmeasured() {
   expect_status "$status" 2 "no budget mode: the verdict"
   expect_contains "$out" "FACT policy: FAIL" "no budget mode: the row"
   expect_contains "$out" "carries no budget mode" "no budget mode: the row says so"
-  expect_contains "$out" "is not off" "no budget mode: the row says what it is not"
+  expect_contains "$out" "a mode the document does not carry is neither" "no budget mode: why it is not a finding"
   no_launch "$dir" "no budget mode"
 }
 
@@ -1396,7 +1386,6 @@ t test_a_repository_the_project_does_not_admit_is_a_failure
 t test_a_repository_no_profile_admits_is_a_failure
 t test_a_repository_two_profiles_admit_leaves_the_rows_unmeasured
 t test_a_profile_of_another_provider_is_a_failure
-t test_a_budget_mode_of_off_is_a_failure
 t test_a_policy_with_no_budget_mode_leaves_the_rows_unmeasured
 t test_no_shared_job_of_the_profile_leaves_the_rows_unmeasured
 t test_a_shared_job_without_the_service_url_is_a_failure

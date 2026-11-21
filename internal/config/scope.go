@@ -221,6 +221,12 @@ var Scopes = []ScopeRow{
 	// union, not a replacement (D20c).
 	{Key: "rigor.default", In: InProject | InRepo},
 	{Key: "rigor.areas", In: InProject | InRepo},
+	// The project layer's per-repository level (LD4, LF4): one repository of
+	// the project and the level it runs at, which only a layer that speaks
+	// for more than one repository can state. A repository's own file says
+	// the same thing about itself with rigor.default, so the key has no
+	// repository half.
+	{Key: "rigor.repos", In: InProject, Why: "it is the level one repository of the project runs at, which the project layer states for repositories it does not own; a repository's own level is its own rigor.default"},
 	// The planning pass (docs/contract-first-decoupling, D1813): a project
 	// turns it off for every repository of it, and a repository decides for
 	// itself — the key is a preference, so the narrower layer replaces the

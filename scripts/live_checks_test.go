@@ -398,7 +398,7 @@ import (
 // resolved config (a mode for a `profiles:` key of its own, a workflow that is
 // not baked, no workflow at all and an auth that is neither an API key nor
 // Vertex), the published policy (a profiles block, a default account that does
-// not admit the repository, a budget mode of `off`, no mode at all), the job list
+// not admit the repository, no budget mode at all), the job list
 // (no implicit job, two of them, one without the service's address, one naming
 // the secret env or mounting a secret volume, one on another image, one beside a
 // coding project job), the launch document (another job, a named account, no run,
@@ -411,6 +411,103 @@ import (
 // not the document's first, a line of another run, and a read that fails. The
 // four UNVERIFIED items of the plan are one row each, and every case asserts on
 // that row's own sentence.
+// Check 830 is Batch's own VM-to-job link, the probe the plan blocks BR3 on: one
+// throwaway Batch job in `fugaro-dev` whose container reads the metadata server
+// itself (the instance it is on, its project, the instance's attributes and an
+// identity token in full format), a second job that tries to write the first
+// job's identity into every launcher-controlled field it has (its own labels,
+// the labels Batch puts on the VMs, and the task's variables), and one plain
+// Compute Engine VM for O8's avenue. Its fake `gcloud` is a small model of Batch
+// and Compute driven by files the case writes -- the jobs that exist, each job's
+// uid, state and object, the instance each job ran on, the instance objects, one
+// task-log answer per uid, the project-wide log answer, the CreateJob audit
+// record, and every job configuration the check submits, so a case can read the
+// body it sent, including the marker variable's stand-in value, which the test
+// asserts never reaches the block or the progress log. A `compute instances
+// create` builds the object Compute would report out of the labels and metadata
+// the call carried, so the plain VM's row measures what a launcher can write
+// rather than what the test chose. The tree is a fixture too: the case writes the
+// log filter into internal/backend/batch/logs.go, the managed label pair into
+// internal/backend/gcp/names.go and the wrapped variable's name into
+// docs/batch-run-identity/, and two cases bend those files to prove the check
+// reads them out of the tree rather than remembering them.
+
+// Checks 50, 780 and 781 are the keys-through-service work's owner-run checks,
+// and the three are the ones whose fakes have to hold STATE rather than answer
+// reads, because what each check measures is what its own commands changed.
+// Check 50's fakes are a fake `gcloud`, `git` and `fugaro` over a small model
+// of installation `fugaro` (GCP project `fugaro-dev`, the sandbox repository
+// `edgeappinc/fugarosandbox`) that the check MUTATES: `models add` and `models
+// rm` move a provider route's claim on a Claude ID through the operator's own
+// config -- which is what the real `project policy publish` rebuilds the node
+// from, so a publish naming a model no entry claims is REFUSED here the way it
+// is there -- `project routing set` writes the switch, `update` writes
+// `FUGARO_MODEL_PRICES` into the job's environment, `secrets versions
+// disable/enable` move one numbered version, and `run` writes a record and the
+// reviewer stage's own `model call` lines for the mode the case asked for
+// (direct, routed, `auto` with and without the key), with a bend per way a case
+// breaks one reading: a direct run that carries `route`, a routed run that
+// carries none, a reviewer stage that produced no line at all, a priced pin
+// that RUNS, a validate that accepts an unclaimed one, a safeguard naming no
+// switch or another one, a publish that accepts the switch without the claim, a
+// repository config that tolerates a routing key, a version that cannot be
+// re-enabled or was never enabled, and each of step 7's three restore arms --
+// so a case says what the check recorded, what it refused, and what it put
+// back, on a project that is bent away from `fugaro-dev`, a checkout that is
+// not the sandbox's and an installation that is not `fugaro` alike.
+// Check 780's fakes are the same three over an installation still at the
+// release before Release A: a repository whose jobs are fed from a model
+// credential, the container behind that mount and no bundle, and a fake `fugaro
+// update` that is the one thing which changes it -- writing the run's row
+// terminal, the job without its mount, the container gone and a bundle version
+// created now, and printing the lines the real update prints -- so a case bends
+// an update that fails, one that copies nothing, a job that keeps its mount, a
+// container left behind, one another job still mounts, a deletion the
+// transcript never names, a run that never finishes and an operator's
+// transcript that claims a deletion, and says which of them the check recorded
+// as its row. Check 781's are a fake `gcloud` and a fake `fugaro` over one
+// installation whose credentials service serves every model call: the fake
+// `fugaro` answers `doctor --json`, launches a run and answers the runs list,
+// and the fake `gcloud` serves the secrets list with the one bundle, the run's
+// record, the job's environment and the two log reads (the gateway's `model
+// call` lines and the service's own `credsvc: audit` line), so a case bends no
+// bundle, a job that still mounts a provider key, a job with no service URL,
+// calls that all went direct, a routed call nobody reported, an audit line
+// whose forward was denied, a run that never ends and a record that is another
+// run's, and says what the check charged the provider's reported cost against.
+// Checks 570 to 575 are the portal's live checks (P9.4), and each has fakes of
+// its own: Check 570's are a fake `fugaro` and a fake portal behind a fake
+// `curl`, over one installation and the licence it buys, so a case says what the
+// check paid for, what it minted and what a renewal read. Check 571's is a fake
+// `gcloud` serving one project's IAM policy and the run services it enumerates,
+// so a case says which account reaches the signing key and which does not. Check
+// 572's is a fake `curl` serving the portal's own anonymous 401, the admitted
+// entitlements read and the two refusals the SSO rule gives an email-link
+// account, recording whether an authorization config was carried. Check 573's is
+// a fake `curl` that verifies a webhook delivery the way the service does --
+// HMAC-SHA256 over `ts:<body>` under the case's own secret -- and answers the
+// operations queue, so a case says what the check sent, what a redelivery left
+// in the ledger and what a replay outside the window was refused with. Check
+// 574's are a fake `gcloud` and a fake `fugaro` over one project's keyring and a
+// released build that verifies a licence key the way the build does, recording
+// whether FUGARO_LICENCE_KEY was in each child's environment, so a case says
+// which id the build's ring holds and what a production build did with a
+// staging-signed key. Check 575's are a fake `curl` that serves a reseller's own
+// terms, customers, keys, statements, the operations area's workspaces and the
+// credit limit's refusal, and a fake `gcloud` that serves the API's revision, the
+// scheduler job, the fire and the run line api_statements.go logs -- so a case
+// bends a sale the credit limit must refuse, a sale whose workspace the mint
+// cannot resolve (the project id a key carries against the workspace document id
+// the mint reads), a token that may not read the operations area, a month whose
+// lines do not sum and a token minted for the wrong audience, and says what the
+// check recorded of each.
+// Check 760's fakes are a fake `fugaro` answering `doctor --json` and the four
+// `runs ls` reads it times, over a window that names two pull requests -- one of
+// them with no index entry, so its read falls back to the scan -- and a fake
+// `git` that fails every call: the fake can sleep a plan, so a case says the
+// figure a row prints is the MIDDLE of the three samples it also prints, and a
+// read that never answers is held to the check's own deadline and killed with its
+// process group.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -434,6 +531,7 @@ var liveCheckScripts = []struct {
 	{"check193.sh", "check193_test.sh"},
 	{"check194.sh", "check194_test.sh"},
 	{"check195.sh", "check195_test.sh"},
+	{"check196.sh", "check196_test.sh"},
 	{"check197.sh", "check197_test.sh"},
 	{"check291.sh", "check291_test.sh"},
 	{"check292.sh", "check292_test.sh"},
@@ -493,6 +591,24 @@ var liveCheckScripts = []struct {
 	{"check610.sh", "check610_test.sh"},
 	{"check611.sh", "check611_test.sh"},
 	{"check640.sh", "check640_test.sh"},
+	{"check770.sh", "check770_test.sh"},
+	{"check771.sh", "check771_test.sh"},
+	{"check772.sh", "check772_test.sh"},
+	{"check773.sh", "check773_test.sh"},
+	{"check50.sh", "check50_test.sh"},
+	{"check780.sh", "check780_test.sh"},
+	{"check781.sh", "check781_test.sh"},
+	{"check570.sh", "check570_test.sh"},
+	{"check571.sh", "check571_test.sh"},
+	{"check572.sh", "check572_test.sh"},
+	{"check573.sh", "check573_test.sh"},
+	{"check574.sh", "check574_test.sh"},
+	{"check575.sh", "check575_test.sh"},
+	{"check-760-runs-ls-speed.sh", "check-760-runs-ls-speed_test.sh"},
+	{"check790.sh", "check790_test.sh"},
+	{"check791.sh", "check791_test.sh"},
+	{"check-830.sh", "check-830_test.sh"},
+	{"check-840.sh", "check-840_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
@@ -557,8 +673,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 222 items on one runner (74 scripts, three shards each) and under
-// The suite is 219 items on one runner (73 scripts, three shards each) and under
+// The suite is 288 items on one runner (96 scripts, three shards each) and under
 // a minute each; a split that dropped one, ran one twice or fell back to
 // everything would show up as a green run that tested less, which is the failure
 // this pins.

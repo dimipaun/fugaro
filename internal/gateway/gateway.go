@@ -101,7 +101,10 @@ type Upstream struct {
 	// It is also what admits Routes beside this upstream: an api-key
 	// declaration is a switched api-key run, whose provider keys stay on the
 	// runner path (R6, D1634), so the models its routes claim are the
-	// provider's and the rest are the service's (validateRoutes).
+	// provider's and the rest are the service's (validateRoutes). A SERVED
+	// route (Route.Served) is admitted beside this upstream whatever this
+	// declares: its key is the service's, so it is the service that serves it
+	// and the declaration has nothing to say about it (KS5).
 	AuthMode string
 	// Account names the Claude account an oauth run goes out on, declared
 	// beside AuthMode (HeaderAuthAccount) and empty for every other auth. The
@@ -111,20 +114,118 @@ type Upstream struct {
 	Account string
 }
 
+// Workspace is the run's second upstream (D2980, D2981): the workspace's
+// credentials service, which serves the kinds of credential the run's own
+// repository's project does not serve itself.
+//
+// **Where the address comes from.** It is the address the run's own
+// credential-route record carries — the record the member's `fugaro update`
+// published for that one repository and the run read once at its start (C2, R4)
+// — and never one from the run's environment (R3, F32): an address a launcher
+// supplies is an address a launcher can move, and this gateway mints for
+// whatever address it reads an ID token whose audience is that address, so the
+// two are read from one place and cannot drift apart.
+//
+// **What a call to it carries, and what it cannot carry.** The job's Google
+// identity and the run's own token, and nothing else of the member's: there is
+// no slip field here and no declaration, so no call this gateway builds for it
+// can present one (R18). A member's slip claim secret is its own, and the
+// workspace's service is outside the member.
+//
+// **Why the kinds are not named here.** Which kinds are served from the
+// workspace is the record's own answer, read once by the runner with
+// creds.Route.Holder and handed over as the one fact this package acts on
+// (Options.ModelFromWorkspace): a record's holder per kind is one thing, held
+// in one package, and this package does not respell it. It could not read the
+// record for itself in any case: internal/creds imports internal/budget, which
+// imports this package, so the import is a cycle and the record's types cannot
+// be named here at all.
+type Workspace struct {
+	// Address is the workspace's credentials service, exactly as the run's route
+	// record carries it: a scheme and a host only, https or http on a loopback
+	// address (validate refuses anything else). Every call to it, and the ID
+	// token minted for it, is minted for this address and no other.
+	Address string
+	// IDToken mints the job service account's Google ID token for the
+	// audience it is called with — the address above, which is the audience
+	// Cloud Run IAM checks on the workspace's service. It is called once per
+	// request, with that address rather than with a value this package holds,
+	// so a call cannot be made with a token minted for a destination other
+	// than the one it is sent to. An error means the call is not sent.
+	//
+	// It is called from concurrent calls, so it must be safe for that.
+	IDToken func(ctx context.Context, audience string) (string, error)
+	// RunIDToken is the run's own Firebase ID token, the budget identity the
+	// launcher minted (HeaderRunIdentity), which is also the identity the
+	// workspace's service verifies the run by (F30, O4). It is read per request
+	// — the session's token changes under it — and an empty value means the
+	// call is not sent: a call to the workspace's service under this run's
+	// other identity is not a call this gateway makes.
+	//
+	// It is called from concurrent calls, so it must be safe for that.
+	RunIDToken func() string
+	// Job is the Cloud Run job name the run reports it is in (HeaderRunJob):
+	// the claim the service holds to the job-name rule and decides nothing
+	// from. validate refuses one that could not be a job name.
+	Job string
+}
+
+// upstream is Workspace as this package serves it: the service kind (C1.15's
+// paths, headers and refusals), at the address the record carries, with the
+// job's identity and the run's own token. The Service it builds holds no slip
+// and the Upstream declares no auth mode or account, which is R18 held
+// structurally rather than by a rule a later edit could forget: there is no
+// field here to set one from.
+func (w *Workspace) upstream() Upstream {
+	address := w.Address
+	return Upstream{
+		Kind:    KindService,
+		BaseURL: address,
+		Service: &Service{
+			Job:        w.Job,
+			RunIDToken: w.RunIDToken,
+			IDToken:    func(ctx context.Context) (string, error) { return w.IDToken(ctx, address) },
+		},
+	}
+}
+
 // Options configure a gateway.
 type Options struct {
 	Upstream Upstream
 	// Routes send the models they claim to a provider, each with its own
 	// credential; every other model goes to Upstream. Only with the
-	// anthropic upstream, or with a service upstream that declares api-key
-	// (B2.2: a switched api-key run's provider keys stay on the runner path,
-	// R6/D1634).
+	// anthropic upstream, or with a service upstream — of which a route that
+	// declares api-key is a switched run's, whose provider keys stay on the
+	// runner path (B2.2, R6/D1634), and one that is Served is the
+	// credentials service's own (KS5, R1/R12).
 	Routes []Route
-	Prices *pricing.Table
-	Mode   Mode
-	Cap    pricing.Micros // enforce: > 0; observe: 0 accounts only
-	Log    *slog.Logger   // the runner's, which redacts; nil discards
-	Client *http.Client   // nil: a default with no overall timeout (streams are long)
+	// Workspace, when set, is the run's second upstream: the workspace's
+	// credentials service (D2981), which the run reaches for the kinds its own
+	// project does not serve. It is built whenever the run's route moves any
+	// kind there — a run may call it at all only for a kind the record moved —
+	// and the model upstream this gateway serves is Upstream or Workspace
+	// depending on ModelFromWorkspace below. nil is a run with no record and a
+	// record that moves nothing, which is a run with no second service at all.
+	Workspace *Workspace
+	// ModelFromWorkspace is the run's own route record's answer for the model
+	// kind: the run read the record once at its start and
+	// creds.Route.Holder(creds.KindModel) answered creds.HolderWorkspace
+	// (C2, D2982). The record's types cannot be named in this package (see
+	// Workspace), so the runner reads it there and hands over this one fact.
+	//
+	// It is what makes the routing decision final: with it true the model
+	// upstream IS Workspace, for the whole run, so a model call goes to the
+	// service the route names and never to the other one — when that service
+	// has no credential the run waits for it rather than falling through to
+	// the service the project serves (D2989). With it false, and with a
+	// Workspace set for some other kind, the model calls go to Upstream
+	// exactly as they do in a run that never read a record.
+	ModelFromWorkspace bool
+	Prices             *pricing.Table
+	Mode               Mode
+	Cap                pricing.Micros // enforce: > 0; observe: 0 accounts only
+	Log                *slog.Logger   // the runner's, which redacts; nil discards
+	Client             *http.Client   // nil: a default with no overall timeout (streams are long)
 	// Lease, when set, is where the gateway's budget comes from: it holds
 	// only what the lease granted, asks for more when a call doesn't fit,
 	// and releases what is unused at Close. Cap is then ignored (the lease
@@ -385,7 +486,12 @@ type Ledger struct {
 
 // Server is a running gateway.
 type Server struct {
-	o      Options
+	o Options
+	// wsModel is the route's answer for the model kind (Options.ModelFromWorkspace),
+	// kept here because two things ask it after the start: which upstream the
+	// model calls went to, and which service's refusal a halt is worded for.
+	wsModel bool
+
 	log    *slog.Logger
 	token  string
 	url    string
@@ -469,6 +575,13 @@ type Server struct {
 	granted       pricing.Micros // lease: the sum of what the lease granted, less what was released
 	flight        *topUp         // lease: the top-up in flight, if any
 	stage         *stageState
+	// unreachableSince is when the outage the run is in began, for the service
+	// its calls go to (D2983): the first call that could not reach it, and zero
+	// once any answer arrives from it (noteServiceReached, service.go). The
+	// wait an unreachable call is answered with is measured from here, so a
+	// stage that meets the same outage again waits for that outage to be over
+	// rather than for a bound of its own (noteUnreachable).
+	unreachableSince time.Time
 	// ended are the reports of the stages this gateway has ended, by the name
 	// each ran under: what a stage limit reads to compare one stage with
 	// another (the review ratio's implement stage). A gateway with no limit
@@ -508,6 +621,16 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 	if err := o.validate(); err != nil {
 		return nil, err
 	}
+	// The route the run read at its start is applied here, once, before
+	// anything downstream is built from the upstream: with the model kind
+	// served from the workspace, the workspace's upstream replaces the one the
+	// run built for itself, for the whole run and with nothing to fall back to.
+	// A model call is answered by the service the route names, or the run waits
+	// for it (D2982, D2989).
+	wsModel := o.ModelFromWorkspace
+	if wsModel {
+		o.Upstream = o.Workspace.upstream()
+	}
 	o.Routes = copyRoutes(o.Routes)
 	var tok [32]byte
 	if _, err := rand.Read(tok[:]); err != nil {
@@ -519,13 +642,14 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 		return nil, fmt.Errorf("gateway: listen: %w", err)
 	}
 	s := &Server{
-		o:      o,
-		log:    o.Log,
-		token:  hex.EncodeToString(tok[:]),
-		url:    "http://" + ln.Addr().String(),
-		client: upstreamClient(o.Client),
-		ln:     ln,
-		haltCh: make(chan Halt, 1),
+		o:       o,
+		wsModel: wsModel,
+		log:     o.Log,
+		token:   hex.EncodeToString(tok[:]),
+		url:     "http://" + ln.Addr().String(),
+		client:  upstreamClient(o.Client),
+		ln:      ln,
+		haltCh:  make(chan Halt, 1),
 
 		modelTokens: map[string]pricing.Usage{},
 		reportedBy:  map[string]pricing.Micros{},
@@ -581,12 +705,27 @@ func (o Options) validate() error {
 	default:
 		return fmt.Errorf("gateway: unknown mode %q", o.Mode)
 	}
+	// The run's own upstream, before the route is applied to it: it is what the
+	// routes a run pins are held to (B2.2, R6/D1634), and a run whose model
+	// kind is served from the workspace still pins them with its own key.
 	u := o.Upstream
 	if err := checkBaseURL(u.BaseURL); err != nil {
 		return err
 	}
 	if err := validateRoutes(u, o.Routes); err != nil {
 		return err
+	}
+	// The second upstream (C2, D2981), and the one combination of the two that
+	// is not a run at all: a route that serves the model from the workspace with
+	// no upstream for it is a gateway that would send the model calls to the
+	// service the route says is not theirs.
+	if o.ModelFromWorkspace && o.Workspace == nil {
+		return errors.New("gateway: the run's route serves the model from the workspace and no workspace upstream was built for it")
+	}
+	if o.Workspace != nil {
+		if err := o.Workspace.validate(); err != nil {
+			return err
+		}
 	}
 	switch u.Kind {
 	case "anthropic":
@@ -659,6 +798,34 @@ func (o Options) validate() error {
 		}
 	default:
 		return fmt.Errorf("gateway: unknown upstream %q", u.Kind)
+	}
+	return nil
+}
+
+// validate holds the workspace's second upstream to what Options.validate's
+// service arm requires of an upstream, minus the two things this one cannot
+// carry: there is no credential of the job's to refuse beside it, and no slip to
+// come in halves — the Service Workspace.upstream builds holds none.
+//
+// The address is required and is held to checkBaseURL, the same rule the run's
+// own upstream is: a routed call carries the run's own token to whatever is
+// here, so an address that is not a scheme and a host, or that travels in the
+// clear off loopback, is a credential sent somewhere nobody chose.
+func (w *Workspace) validate() error {
+	if w.Address == "" {
+		return errors.New("gateway: the workspace upstream has no address: the run's route record carries one for every record, and an empty one is a route this gateway will not call")
+	}
+	if err := checkBaseURL(w.Address); err != nil {
+		return err
+	}
+	if w.IDToken == nil {
+		return errors.New("gateway: the workspace upstream has no job identity (the ID token Cloud Run IAM admits)")
+	}
+	if w.RunIDToken == nil {
+		return errors.New("gateway: the workspace upstream has no run identity")
+	}
+	if !validJobName(w.Job) {
+		return errors.New("gateway: the workspace upstream reports no Cloud Run job name")
 	}
 	return nil
 }
