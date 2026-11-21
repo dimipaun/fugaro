@@ -100,7 +100,7 @@ func doctorFakeTerraform(t *testing.T, dir string) {
 func putSecret(t *testing.T, sm *gcpfake.Secrets, project, slug, name string, value []byte) {
 	t.Helper()
 	ctx := context.Background()
-	s, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: project, Endpoints: gcp.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}})
+	s, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: project, Region: "us-east5", Endpoints: gcp.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1942,7 +1942,7 @@ func seedProjectSecret(t *testing.T, sm *gcpfake.Secrets, fugaroProject, name st
 func putProjectSecret(t *testing.T, sm *gcpfake.Secrets, fugaroProject, name string, value []byte) string {
 	t.Helper()
 	ctx := context.Background()
-	s, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: "proj-1234", Endpoints: gcp.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}})
+	s, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: "proj-1234", Region: "us-east5", Endpoints: gcp.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}})
 	if err != nil {
 		t.Fatal(err)
 	}

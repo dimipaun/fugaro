@@ -52,11 +52,11 @@ func TestHugeDiffThreshold(t *testing.T) {
 // this test fails.
 func TestReviewPromptHugeNoteIsUpFrontAndNamesTheBase(t *testing.T) {
 	const base = "integration-0.9.6"
-	small := ReviewPrompt("", "", "origin/"+base, DiffSize{Files: hugeDiffFiles, Lines: hugeDiffLines}, false)
+	small := ReviewPrompt("", "", "origin/"+base, DiffSize{Files: hugeDiffFiles, Lines: hugeDiffLines}, false, "")
 	if strings.Contains(small, "huge") {
 		t.Fatalf("a diff at the threshold is warned about:\n%s", small)
 	}
-	big := ReviewPrompt("", "", "origin/"+base, DiffSize{Files: hugeDiffFiles + 1}, false)
+	big := ReviewPrompt("", "", "origin/"+base, DiffSize{Files: hugeDiffFiles + 1}, false, "")
 	note, scope, ok := strings.Cut(big, "Review the changes on this branch against ")
 	if !ok {
 		t.Fatalf("the scope line is gone:\n%s", big)
@@ -151,13 +151,13 @@ func TestBaseValidationOnABareRun(t *testing.T) {
 // fallback and scoping the reviewer to the branch's own commits; absent when
 // the base was read.
 func TestReviewPromptSaysTheBaseCouldNotBeRead(t *testing.T) {
-	unread := ReviewPrompt("", "", "origin/main", DiffSize{}, true)
+	unread := ReviewPrompt("", "", "origin/main", DiffSize{}, true, "")
 	for _, want := range []string{"base branch could not be read", "git log origin/main..HEAD"} {
 		if !strings.Contains(unread, want) {
 			t.Errorf("the prompt lacks %q:\n%s", want, unread)
 		}
 	}
-	if strings.Contains(ReviewPrompt("", "", "origin/main", DiffSize{}, false), "could not be read") {
+	if strings.Contains(ReviewPrompt("", "", "origin/main", DiffSize{}, false, ""), "could not be read") {
 		t.Error("a readable base is warned about")
 	}
 }
@@ -170,7 +170,7 @@ func TestReviewPromptSaysTheBaseCouldNotBeRead(t *testing.T) {
 // Mutation (drop ownRangeNote from ReviewPrompt): this test fails.
 func TestReviewPromptNamesTheCommitTheRunsOwnRangeStartsAfter(t *testing.T) {
 	const sha = "0123456789abcdef0123456789abcdef01234567"
-	got := ReviewPrompt("", "", sha, DiffSize{}, false)
+	got := ReviewPrompt("", "", sha, DiffSize{}, false, "")
 	note, scope, ok := strings.Cut(got, "Review the changes on this branch against ")
 	if !ok {
 		t.Fatalf("the scope line is gone:\n%s", got)
@@ -184,7 +184,7 @@ func TestReviewPromptNamesTheCommitTheRunsOwnRangeStartsAfter(t *testing.T) {
 	if strings.Contains(got, "origin/") {
 		t.Errorf("the prompt names a branch:\n%s", got)
 	}
-	if strings.Contains(ReviewPrompt("", "", "origin/main", DiffSize{}, false), "own commits start after") {
+	if strings.Contains(ReviewPrompt("", "", "origin/main", DiffSize{}, false, ""), "own commits start after") {
 		t.Error("a branch range carries the own-range note")
 	}
 }

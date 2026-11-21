@@ -69,10 +69,22 @@ export interface ManageColumn {
  * The row carries no status of its own: "status" in the spec's list view is a
  * column like any other, so a kind that has one names it in `columns` and fills
  * it here, and a kind whose document has none does not draw one.
+ *
+ * **`actions` is the row's own, and it is a member of the row for a reason.**
+ * The command D2903 puts on the clipboard names the row it came from -- `fugaro
+ * project repos rm github/acme/app` is one repository's, `fugaro user grant
+ * ana@example.invalid` is one person's -- and the value it names is a value of
+ * that row's document, which the kind is the only thing holding. A command
+ * declared on the kind alone could only be one that names no repository, person
+ * or key at all, so a kind whose rows each need their own declares them here
+ * (MO-C and MO-P are the first), and a row that leaves the member out draws the
+ * kind's own `actions` and nothing else (MG0's descriptor, whose `actions` is
+ * what a kind offers beside every row it decodes).
  */
 export interface ManageRow {
   readonly key: string
   readonly cells: Readonly<Record<string, string>>
+  readonly actions?: readonly ManageAction[]
 }
 
 /**
@@ -87,6 +99,26 @@ export interface ManageRow {
 export interface CopyCommandAction {
   readonly kind: 'copy-command'
   readonly argv: readonly string[]
+  /**
+   * consequence is the fixed sentence the shell draws beside the Copy, and the
+   * empty string for a command that destroys nothing (`secrets set`, an
+   * enrolment).
+   *
+   * It is the console's own words and never a document's sentence:
+   * `buildCopyCommand` takes it as an argument, so the composition is text a
+   * kind's author wrote. The one part of it a document supplies is a value the
+   * sentence names -- the repository a removal is about, the allow-list entry
+   * that still admits it -- and a kind reads such a value through its
+   * `TEXT_CLASSES` class before it interpolates it (`manage/kinds/repos.ts`),
+   * because the copy alphabets are about a word a shell will run and this is a
+   * sentence a person reads. What it must state is the CLI's own account of what
+   * the command does -- spec section 8
+   * asks a destructive action to state its consequences, and D2909 gives a
+   * removal no confirmation window to state them in: the operator's next step
+   * after the copy is the terminal, so the sentence travels with the command.
+   * The argv beside it is what a person runs; this is what they read first.
+   */
+  readonly consequence: string
 }
 
 /**

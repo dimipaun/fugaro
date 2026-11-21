@@ -159,7 +159,10 @@ func runSettings(cmd *cobra.Command, args []string, o settingsOptions) error {
 	if o.jsonOut {
 		return writeSettingsJSON(cmd.OutOrStdout(), r, rows, now)
 	}
-	return writeSettingsTable(cmd.OutOrStdout(), rows, o.why)
+	// `settings get` is the subcommand that names one key, so it is the one that
+	// prints the setting's own name and description above the table (D2908); a
+	// positional key is the wide read narrowed, and it prints the table alone.
+	return writeSettingsTable(cmd.OutOrStdout(), rows, o.why, cmd.Name() == "get")
 }
 
 // selectSettingsKeys resolves the positional arguments against the registry:

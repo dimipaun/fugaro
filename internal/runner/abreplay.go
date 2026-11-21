@@ -258,7 +258,7 @@ func (r *run) runReviewReplay(ctx context.Context) {
 		r.failReplayRead(ctx, err)
 		return
 	}
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable())
+	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable(), r.reviewerPersona())
 	// The task the champion's pull request was written for, on the prompt the
 	// challenger's reviewer reads (RA2, R15): the pair is a comparison of two
 	// readings of one change, and the champion's own round was handed the task

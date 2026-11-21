@@ -318,7 +318,14 @@ const (
 // admitted by its own name and the row an entry write is about is built from its
 // leaves rather than counted here.
 //
-// KS19 of docs/keys-through-service/ is the last mover, by two rows and by
+// LP0 of docs/location-preference/ moved it by four rows and by none:
+// the local project config gains the `locations` block, the record of where this
+// machine read the installation's Firestore database, its Realtime Database, the
+// replication of its secret containers and its run-log bucket to be (D3087), and
+// it is one machine's own — never published, never an input — so no name and no
+// prefix in the allowlist reaches any of its four rows.
+//
+// KS19 of docs/keys-through-service/ is the last mover after it, by two rows and by
 // none: the record `fugaro update` writes on a repository's entry gains R12's
 // two facts beside the switch it already carries
 // (`repos.*.provider_keys_served`, `repos.*.stage_account_served`), and they
@@ -326,7 +333,7 @@ const (
 // `fugaro update` and never the generic path — so the allowlist reaches
 // neither of them and the rows without a generic writer move by the two.
 const (
-	cfmRegistryRows   = 515
+	cfmRegistryRows   = 519
 	cfmAllowlistNamed = 121
 )
 

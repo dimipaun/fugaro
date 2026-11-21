@@ -345,7 +345,7 @@ func TestAReviewRoundSaysWhenAFixMovedTheBranchOffTheNarrowedCommit(t *testing.T
 		repo:       repo,
 		narrowBase: tip,
 	}
-	prompt := ReviewPrompt("", "", r.reviewRev(ctx), DiffSize{}, false)
+	prompt := ReviewPrompt("", "", r.reviewRev(ctx), DiffSize{}, false, "")
 	if got := r.reviewPromptWithInput(ctx, prompt); strings.Contains(got, "moved this branch off") {
 		t.Fatalf("a round on the narrowed range says it moved:\n%s", got)
 	}

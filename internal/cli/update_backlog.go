@@ -202,8 +202,8 @@ func foldWroteNote(written, total int) string {
 // The state model's own cap still bounds it, as it bounds every brief the state
 // holds (orchestrator.MaxBriefRunes).
 //
-// The folder's `mode`, `area`, `filed-by`, `filed-in` and `date` are not
-// carried: none of them is a work item's field, an item's rigor is its
+// The folder's `level`, `kind`, `area`, `filed-by`, `filed-in` and `date` are
+// not carried: none of them is a work item's field, an item's rigor is its
 // rigor_tier (D2711), and the record of which run filed what is the folder's own
 // file, which the fold leaves where it is. The two fields the state model
 // requires of every item and that no item here declares — its recipe and its

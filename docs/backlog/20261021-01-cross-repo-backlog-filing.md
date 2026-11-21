@@ -1,7 +1,8 @@
 ---
 id: 20261021-01
 title: A run cannot file a backlog item into a repository other than its own
-mode: none
+level: none
+kind: deferred
 area: project
 status: open
 filed-by: dimipaun

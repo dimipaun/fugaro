@@ -1,0 +1,8 @@
+version: 1
+name: by-level-budget
+by_level:
+  pro:
+    roles: { reviewer: coder }
+    budget: 5
+steps:
+  - review: {}
