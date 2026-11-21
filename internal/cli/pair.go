@@ -287,18 +287,21 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedAllowlistUnreadable), err)
 	}
 
-	signer, err := (&cloudEnv{lc: lc}).tokenSigner(ctx)
-	if err != nil {
-		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedUnreachable), err)
-	}
-	pairingToken, uid, err := token.MintPairing(ctx, signer, o.timeout, now)
+	// The one-shot pairing token comes from the installation's credentials
+	// service, or — where the service has no identity half to answer with, is a
+	// release behind, or is not configured at all — from this operator's own
+	// credential, which is what this command did before the issuer existed
+	// (LM10, R7).
+	issuer := newPairIssuer(lc, now, o.timeout)
+	minted, err := issuer.Pairing(ctx)
 	if err != nil {
 		if errors.Is(err, token.ErrNotMinter) {
-			return pairRefuse(ev, o, pairRefusedMinter,
-				fmt.Errorf("%s; pairing mints the one-shot pairing token with your own credential, which needs the fugaroTokenMinter role on the signer account %s (the installation's launchers and operators hold it)", oneLine(err.Error()), lc.Budget.TokenSigner))
+			return pairRefuse(ev, o, pairRefusedMinter, pairMinterRefusal(lc, err))
 		}
-		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedUnreachable), err)
+		return pairRefuse(ev, o, pairIssuerCode(err), err)
 	}
+	pairingToken, uid := minted.Token, minted.UID
+	expiresAt := minted.ExpiresAt.UTC().Format(time.RFC3339)
 
 	payload, err := json.Marshal(pairQR{
 		V:           pairQRVersion,
@@ -308,12 +311,11 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		APIKey:      lc.Budget.FirebaseAPIKey,
 		Token:       pairingToken,
 		UID:         uid,
-		ExpiresAt:   now.Add(token.PairingLifetime(o.timeout)).UTC().Format(time.RFC3339),
+		ExpiresAt:   expiresAt,
 	})
 	if err != nil {
 		return userErr("building the QR payload: %v", err)
 	}
-	expiresAt := now.Add(token.PairingLifetime(o.timeout)).UTC().Format(time.RFC3339)
 
 	out := cmd.OutOrStdout()
 	if o.asJSON {
@@ -388,9 +390,12 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	// §7.1 steps 6 and 7, M4: the device token is minted and then the node
 	// exists before anything is delivered, so no token exists that the rules
 	// do not yet admit.
-	device, err := token.MintDevice(ctx, signer, now)
+	device, err := issuer.Device(ctx)
 	if err != nil {
-		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedMinter), err)
+		if errors.Is(err, token.ErrNotMinter) {
+			return pairRefuse(ev, o, pairRefusedMinter, pairMinterRefusal(lc, err))
+		}
+		return pairRefuse(ev, o, pairIssuerCode(err), err)
 	}
 	node := pairDeviceNode{Name: o.name, Email: email, Role: string(role), At: now.UTC().Format(time.RFC3339)}
 	if err := db.Patch(ctx, rules.PathDevices, map[string]any{device.UID: node}); err != nil {
@@ -545,7 +550,7 @@ type pairDeliveryNode struct {
 // names localcfg accepts. A pairing that cannot name its item is a pairing
 // that cannot store a key, so the prefix is what gives way.
 func pairItemName(project, deviceUID string) string {
-	return project + "-" + strings.TrimPrefix(deviceUID, "m~")
+	return project + "-" + strings.TrimPrefix(deviceUID, pairDeviceUIDPrefix)
 }
 
 // pairStoreMACKey draws this pairing's MAC key (D171) and stores it at item,

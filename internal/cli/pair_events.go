@@ -63,6 +63,8 @@ const (
 	pairRefusedIdentity            = "caller_identity_unknown"
 	pairRefusedEmail               = "email_unverified"
 	pairRefusedMinter              = "minter_role_missing"
+	pairRefusedIssuer              = "identity_issuer_refused"
+	pairRefusedIssuerAnswer        = "identity_issuer_answer"
 	pairRefusedDatabaseAdmin       = "database_admin_missing"
 	pairRefusedUnreachable         = "database_unreachable"
 	pairRefusedNoKey               = "no_key_before_timeout"
