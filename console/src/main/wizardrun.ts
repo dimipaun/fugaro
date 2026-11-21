@@ -226,8 +226,10 @@ export interface SetupAnswersHeld {
  * which main adds when it serialises), and a required question that is missing
  * or outside its grammar is refused with the CLI's own rule.
  *
- * `name` and `bake_repos` may still be **absent**, and the two absences mean
- * different things. A switch nobody answered is the CLI's own default, which for
+ * `name` and `bake_repos` may still be **unanswered** -- absent, or, for `name`,
+ * the blank string a renderer sends for the field it drew empty, which is the
+ * same statement to the CLI's reader -- and the two mean different things. A
+ * switch nobody answered is the CLI's own default, which for
  * `bake_repos` is **yes** -- only a written `false` turns the bake off -- so it
  * is held as unanswered and never flattened into `false`. A name nobody gave is
  * a refusal the CLI makes itself: on this door (`--json`, and no terminal) it
@@ -259,7 +261,15 @@ export function validateSetupAnswers(raw: unknown): SetupAnswersHeld {
     refuseAnswers(SETUP_RIGOR_REFUSAL)
   }
   const name = record['name']
-  if (name !== undefined && name !== null) {
+  // A **blank** name is the wire's own spelling of "unanswered", not a malformed
+  // one, so it is not refused: the renderer sends the field it drew, and an
+  // operator who left the name empty sends `''`. The CLI reads it as unanswered
+  // exactly this way (`setupAnswers.answer`: `name` is answered when it is not
+  // the empty string) and the answers file's schema makes `name` optional for
+  // the same reason, so refusing `''` here would refuse a state the CLI is
+  // designed to take -- and would take away the `left_for_you` line naming
+  // `--name` that is how the console hands a first setup's naming back.
+  if (name !== undefined && name !== null && name !== '') {
     if (typeof name !== 'string' || !SETUP_NAME_RE.test(name)) refuseAnswers(SETUP_NAME_REFUSAL)
   }
   const bake = record['bake_repos']
@@ -366,8 +376,10 @@ export function setupFeedFailure(lines: readonly JSONObject[]): string | null {
  * serialiseSetupAnswers writes the answers file the CLI decodes
  * (`schemas/setup-answers.schema.json`, ST1): the schema's `version` first, then
  * the five answers in the order `SETUP_ANSWERS_FILE_KEYS` names them. A member
- * with no answer is left out rather than written empty -- `name: ""` is a name
- * that is not a name, which the CLI's own reader refuses -- with **one**
+ * with no answer is left out rather than written empty -- an empty `name` is
+ * read as unanswered by the CLI either way (`setupAnswers.answer`), and the
+ * schema's `name` is optional, so the key is omitted rather than written blank:
+ * one spelling of "nobody named this" instead of two -- with **one**
  * exception: `bake_repos` is written whenever it was answered, `false`
  * included, because an absent key is not "no" to any reader of that field but
  * the CLI's default, which is **yes**. Only a written `false` turns baking off.

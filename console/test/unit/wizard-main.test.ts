@@ -558,6 +558,11 @@ describe('the answers main accepts', () => {
       bake_repos: undefined,
     })
     expect(validateSetupAnswers(anAnswers({ name: null })).name).toBe('')
+    // A **blank** name is the same statement as an absent one (`''` is what a
+    // renderer sends for the field it drew empty, and the CLI's reader takes it
+    // as unanswered: `setupAnswers.answer`), so it is held as empty rather than
+    // refused as a name outside the grammar.
+    expect(validateSetupAnswers(anAnswers({ name: '' })).name).toBe('')
     expect(validateSetupAnswers(anAnswers({ bake_repos: null })).bake_repos).toBeUndefined()
     // The three states survive validation: absent is neither yes nor no.
     expect(validateSetupAnswers(anAnswers({ bake_repos: true })).bake_repos).toBe(true)
@@ -632,8 +637,9 @@ describe('the bytes the child is given', () => {
       'bake_repos',
     ])
     expect(declined['bake_repos']).toBe(false)
-    // `name: ""` is a name that is not a name, which the CLI's own reader
-    // refuses, so an unanswered name is left out rather than written empty.
+    // A name nobody answered is left out rather than written blank: the CLI's
+    // reader takes both spellings as unanswered (`setupAnswers.answer`), so the
+    // file keeps one of them.
     expect(declined).not.toHaveProperty('name')
     // A switch nobody answered is left out too, and that is a different
     // statement: it is the CLI's own default, which is yes.
@@ -918,6 +924,35 @@ describe('setup.plan', () => {
       new TextDecoder().decode((calls[0] as SpawnCall).child.bytes[0] as Uint8Array),
     ) as Record<string, unknown>
     expect(document['bake_repos']).toBe(false)
+  })
+
+  it('takes a blank name as unanswered: held empty, no key, and `none` on the row', async () => {
+    const { wizard, confirmer, calls } = aWizard({ floor: '0.120.0' })
+    await wizard['setup.plan'](planArgs(anAnswers({ name: '' })))
+    const subject = confirmer.opened[0]?.subject
+    if (subject?.kind !== 'setup') throw new Error('the window was not shown a setup')
+    // The renderer sends the field it drew, so a name the operator left **empty**
+    // arrives as the empty string -- and that is *unanswered*, not malformed: the
+    // CLI's own reader says so (`setupAnswers.answer`: `name` is answered when it
+    // is not the empty string), and the answers file's schema makes `name`
+    // optional for the same reason. Refusing it would refuse a state the CLI is
+    // designed to take, and would take away the `left_for_you` line naming
+    // `--name`, which is how a setup nobody named is handed back to the operator.
+    expect(subject.name).toBe('')
+    // The bytes leave the key out rather than writing it blank, so one state has
+    // one spelling in the file.
+    const document = JSON.parse(
+      new TextDecoder().decode((calls[0] as SpawnCall).child.bytes[0] as Uint8Array),
+    ) as Record<string, unknown>
+    expect(Object.keys(document)).toEqual(['version', 'gcp_project', 'region', 'rigor', 'bake_repos'])
+    expect(document).not.toHaveProperty('name')
+    // And the row is drawn through the renderer's own constant: a name row left
+    // blank is a field an operator reads as "the console lost it", where `none`
+    // says the answers left the naming to the CLI's own line.
+    const rendered = fakeDocument()
+    await mountConfirm(rendered, fakeBridge(subject).bridge)
+    expect(fieldValue(rendered, 'Name')).toBe(NONE)
+    expect(NONE).toBe('none')
   })
 
   it('serialises the answers once, and reuses that buffer', async () => {
