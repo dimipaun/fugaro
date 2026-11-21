@@ -4,8 +4,8 @@
   "stream": "cli",
   "nodes": [
     {
-      "id": "T1",
-      "title": "rewrite a recorded budget amount",
+      "id": "T0",
+      "title": "carry the budget block between runs",
       "run": null,
       "version": null,
       "tier": "small",
@@ -13,6 +13,25 @@
       "footprint": {
         "prediction": true,
         "paths": [
+          "internal/infra/tfvars.go",
+          "internal/infra/tfvars_test.go",
+          "internal/infra/installation.go",
+          "internal/cli/init.go",
+          "internal/cli/init_budget_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T1",
+      "title": "the budget defaults, and rewriting a recorded amount",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/managed/defaults.go",
           "internal/infra/managed/marker.go",
           "internal/infra/managed/marker_test.go"
         ]
@@ -28,9 +47,9 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/infra/managed/defaults.go",
           "internal/cli/init.go",
           "internal/cli/init_budget_test.go",
+          "internal/cli/init_managed_test.go",
           "website/content/cli-reference.md"
         ]
       }
@@ -46,6 +65,7 @@
         "prediction": true,
         "paths": [
           "internal/cli/setup.go",
+          "internal/cli/wizard_stage.go",
           "internal/cli/setup_answers.go",
           "schemas/setup-answers.schema.json",
           "internal/cli/setup_wizard_test.go",
@@ -56,19 +76,20 @@
     },
     {
       "id": "T3",
-      "title": "update marks every unmanaged installation; an explicit budget rewrites",
+      "title": "update stops on an unmanaged installation; an explicit budget rewrites",
       "run": null,
       "version": null,
-      "tier": "small",
+      "tier": "medium",
       "size": 1.5,
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/cli/update_selfflag.go",
           "internal/cli/update_selfflag_test.go",
-          "internal/cli/update_in_flight.go",
+          "internal/cli/update_in_flight_test.go",
           "internal/cli/update_converge_test.go",
           "internal/cli/init.go",
+          "docs/design/update-in-flight.md",
           "website/content/cli-reference.md"
         ]
       }
@@ -85,7 +106,26 @@
         "paths": [
           "internal/cli/managed_flag.go",
           "internal/cli/managed_flag_test.go",
+          "internal/managed/budget.go",
+          "internal/managed/budget_test.go",
           "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "T7",
+      "title": "every writing command refuses an unmanaged project",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/root.go",
+          "internal/cli/managed_require.go",
+          "internal/cli/cloud.go",
+          "internal/cli/managed_require_test.go"
         ]
       }
     },
@@ -102,6 +142,9 @@
           "internal/cli/init.go",
           "internal/cli/init_project.go",
           "internal/cli/restore.go",
+          "internal/cli/setup.go",
+          "internal/cli/update.go",
+          "internal/cli/managed_unflag.go",
           "internal/**/*_test.go",
           "plugin/skills/setup/SKILL.md",
           "plugin/skills/setup/reference/managed.md",
@@ -111,7 +154,7 @@
     },
     {
       "id": "T5",
-      "title": "the skill, SECURITY.md and the website say what ships",
+      "title": "the skills, SECURITY.md and the website say what ships",
       "run": null,
       "version": null,
       "tier": "small",
@@ -147,34 +190,44 @@
   ],
   "edges": [
     {
-      "task": "T3",
-      "needs": "T1",
-      "reason": "the rewrite's behaviour, which its tests run"
+      "task": "T2a",
+      "needs": "T0",
+      "reason": "the same file init.go, and the carry the default alert needs"
     },
     {
-      "task": "T4",
+      "task": "T2a",
       "needs": "T1",
-      "reason": "the rewrite's behaviour, which its tests run"
-    },
-    {
-      "task": "T3",
-      "needs": "T2a",
-      "reason": "the same file init.go, and the explicit-only trio check"
+      "reason": "the default constants"
     },
     {
       "task": "T2b",
-      "needs": "T2a",
-      "reason": "the default constant; breaking it gains nothing"
+      "needs": "T1",
+      "reason": "the default constant"
     },
     {
       "task": "T4",
+      "needs": "T1",
+      "reason": "the constants and the rewrite's behaviour"
+    },
+    {
+      "task": "T3",
+      "needs": "T1",
+      "reason": "the rewrite's behaviour"
+    },
+    {
+      "task": "T3",
       "needs": "T2a",
-      "reason": "the default constants; breaking it gains nothing"
+      "reason": "the same file init.go"
+    },
+    {
+      "task": "T7",
+      "needs": "T4",
+      "reason": "the bare command the refusal names must work"
     },
     {
       "task": "T2c",
       "needs": "T2a",
-      "reason": "behaviour: dropping --managed first would stop creations recording an amount; same file init.go"
+      "reason": "behaviour: dropping --managed first would stop creations recording an amount; init.go"
     },
     {
       "task": "T2c",
@@ -182,9 +235,19 @@
       "reason": "the same file init.go"
     },
     {
-      "task": "T6",
+      "task": "T2c",
       "needs": "T2b",
-      "reason": "the CLI version that reads the budget member"
+      "reason": "setup.go and setup_wizard_test.go"
+    },
+    {
+      "task": "T2c",
+      "needs": "T4",
+      "reason": "shared test files"
+    },
+    {
+      "task": "T2c",
+      "needs": "T7",
+      "reason": "shared test files"
     },
     {
       "task": "T5",
@@ -194,12 +257,22 @@
     {
       "task": "T5",
       "needs": "T3",
-      "reason": "the text describes its behaviour"
+      "reason": "describes its behaviour"
     },
     {
       "task": "T5",
       "needs": "T4",
-      "reason": "the text describes its behaviour"
+      "reason": "describes its behaviour"
+    },
+    {
+      "task": "T5",
+      "needs": "T7",
+      "reason": "describes its behaviour"
+    },
+    {
+      "task": "T6",
+      "needs": "T2b",
+      "reason": "the answers-file members, in a tagged CLI release"
     }
   ],
   "decoupling": [],
