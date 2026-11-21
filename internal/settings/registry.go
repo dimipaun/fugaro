@@ -1498,6 +1498,16 @@ var localRows = []Row{
 	// the same reason: every key a config file can hold is one a settings
 	// read has to be able to name.
 	loc("repos.*.credentials_service_ready", "false: no update has applied this repository's root with the service on — its bundle holds no model credential, or its agent.auth is not the cascade", "project", docSetup),
+	// The two facts the same record carries beside the switch (R12, KS19):
+	// whether the bundle holds an entry for every provider credential this
+	// repository's config names — the fact a routed call is sent through the
+	// service for — and whether a stage account of this repository is one the
+	// service serves. Both are machine-written like the switch, both are read
+	// back by the plan a repository's root is built with (infra's
+	// providerKeysServed/stageAccountServed) and both are written off as
+	// well as on, so a row here for the same reason the switch has one.
+	loc("repos.*.provider_keys_served", "false: no update has found this repository's bundle holding an entry for every provider credential its config names, or the deployed service is not at the release that serves one, or the project publishes no allow-list", "project", docSetup),
+	loc("repos.*.stage_account_served", "false: no update has found a stage account this repository mixes with a provider key, or the deployed service is not at the release that serves one", "project", docSetup),
 
 	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all seventeen of
 	// them local-only: the pin is the member's own trust and the member table
