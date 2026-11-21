@@ -411,6 +411,49 @@ import (
 // not the document's first, a line of another run, and a read that fails. The
 // four UNVERIFIED items of the plan are one row each, and every case asserts on
 // that row's own sentence.
+// Checks 50, 780 and 781 are the keys-through-service work's owner-run checks,
+// and the three are the ones whose fakes have to hold STATE rather than answer
+// reads, because what each check measures is what its own commands changed.
+// Check 50's fakes are a fake `gcloud`, `git` and `fugaro` over a small model
+// of installation `fugaro` (GCP project `fugaro-dev`, the sandbox repository
+// `edgeappinc/fugarosandbox`) that the check MUTATES: `models add` and `models
+// rm` move a provider route's claim on a Claude ID through the operator's own
+// config -- which is what the real `project policy publish` rebuilds the node
+// from, so a publish naming a model no entry claims is REFUSED here the way it
+// is there -- `project routing set` writes the switch, `update` writes
+// `FUGARO_MODEL_PRICES` into the job's environment, `secrets versions
+// disable/enable` move one numbered version, and `run` writes a record and the
+// reviewer stage's own `model call` lines for the mode the case asked for
+// (direct, routed, `auto` with and without the key), with a bend per way a case
+// breaks one reading: a direct run that carries `route`, a routed run that
+// carries none, a reviewer stage that produced no line at all, a priced pin
+// that RUNS, a validate that accepts an unclaimed one, a safeguard naming no
+// switch or another one, a publish that accepts the switch without the claim, a
+// repository config that tolerates a routing key, a version that cannot be
+// re-enabled or was never enabled, and each of step 7's three restore arms --
+// so a case says what the check recorded, what it refused, and what it put
+// back, on a project that is bent away from `fugaro-dev`, a checkout that is
+// not the sandbox's and an installation that is not `fugaro` alike.
+// Check 780's fakes are the same three over an installation still at the
+// release before Release A: a repository whose jobs are fed from a model
+// credential, the container behind that mount and no bundle, and a fake `fugaro
+// update` that is the one thing which changes it -- writing the run's row
+// terminal, the job without its mount, the container gone and a bundle version
+// created now, and printing the lines the real update prints -- so a case bends
+// an update that fails, one that copies nothing, a job that keeps its mount, a
+// container left behind, one another job still mounts, a deletion the
+// transcript never names, a run that never finishes and an operator's
+// transcript that claims a deletion, and says which of them the check recorded
+// as its row. Check 781's are a fake `gcloud` and a fake `fugaro` over one
+// installation whose credentials service serves every model call: the fake
+// `fugaro` answers `doctor --json`, launches a run and answers the runs list,
+// and the fake `gcloud` serves the secrets list with the one bundle, the run's
+// record, the job's environment and the two log reads (the gateway's `model
+// call` lines and the service's own `credsvc: audit` line), so a case bends no
+// bundle, a job that still mounts a provider key, a job with no service URL,
+// calls that all went direct, a routed call nobody reported, an audit line
+// whose forward was denied, a run that never ends and a record that is another
+// run's, and says what the check charged the provider's reported cost against.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -494,6 +537,9 @@ var liveCheckScripts = []struct {
 	{"check610.sh", "check610_test.sh"},
 	{"check611.sh", "check611_test.sh"},
 	{"check640.sh", "check640_test.sh"},
+	{"check50.sh", "check50_test.sh"},
+	{"check780.sh", "check780_test.sh"},
+	{"check781.sh", "check781_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
@@ -558,8 +604,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 222 items on one runner (74 scripts, three shards each) and under
-// The suite is 219 items on one runner (73 scripts, three shards each) and under
+// The suite is 243 items on one runner (81 scripts, three shards each) and under
 // a minute each; a split that dropped one, ran one twice or fell back to
 // everything would show up as a green run that tested less, which is the failure
 // this pins.
