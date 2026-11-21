@@ -3073,9 +3073,15 @@ func (r *initRun) carriedBudget(ctx context.Context, c *infra.Clients, spec infr
 // account alone, which is a run that reaches no plan of this root anyway
 // (--config-only recovering a config it has no name for).
 func (r *initRun) budgetCarry(ctx context.Context, c *infra.Clients, spec infra.InstallationSpec) (infra.CarriedBudget, error) {
+	// This read is the first one this run makes out of the state bucket — the
+	// carry is resolved before prepare, and the bucket's own check comes after
+	// it — so a bucket that cannot be read at all surfaces here. The sentence
+	// names the state bucket for the same reason that check's does: what the
+	// operator has to reach is the bucket, whether a disabled Storage API, a
+	// revoked role or a bucket of another project is why.
 	account, ok, err := infra.ReadInstallationBudgetAccount(ctx, c, spec.StateBucket)
 	if err != nil {
-		return infra.CarriedBudget{}, initErr(err)
+		return infra.CarriedBudget{}, initErr(fmt.Errorf("the installation's state bucket gs://%s could not be read while this run's variables were being written: %s", safetext.Field(spec.StateBucket), safetext.Field(err.Error())))
 	}
 	if !ok {
 		return infra.CarriedBudget{}, nil
