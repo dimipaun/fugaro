@@ -1166,6 +1166,7 @@ probe account carries predefined grants only).
 | 640 | The status labels on a real pull request ([`docs/forge-labels/`](forge-labels/implementation-plan.md), its task **CK** and the block it reserves — **640–649**, 640 used; **U1** and **U3** are the two questions nothing offline can answer, and **D2437**'s table with **D2439**'s token and **D2440**'s create-on-first-use are what the labels' colours and the route's behaviour rest on): with the installation's orchestrator daemon running and **one approved task** launched, the pull request the run opens carries **`fugaro:running`** while the run is in flight and, once it has ended, **no** status label (a run that ended `succeeded` or `cancelled`) or **`fugaro:failed`** — plus the **`spec:<name>`** label its item's own spec asks for, in D2437's grey. **U1** — whether the dogfood installation's GitHub App really holds `pull_requests: write` — is read from the **credentials service's own audit lines** (`gcloud logging read`, purpose `label`), which are the service's record of the act and never the run's word; **U3** — what GitHub does with a label name that carries a **colon** — is read from the repository's own label table (`gh label list`). Run by **you**, on the **dogfood installation `fugaro`** (GCP project `fugaro-dev`, region `us-east5`, never `belong`), at your own terminal, as **one command**: `bash scripts/live-checks/check640.sh --installation fugaro`, with the test that drives it against fakes, `scripts/live-checks/check640_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** It reads and writes nothing anywhere, launches no run and costs nothing billable; the one conditional owner step is the plan's: if the check shows the App lacks `pull_requests: write`, you raise it on the App's settings page, which an agent cannot. **OWNER-RUN, NOT RUN.** |
 | 780 | **One project owner's `fugaro update` across a run in flight** ([`docs/keys-through-service/`](keys-through-service/implementation-plan.md), its **Check 780** and task **KS17**; the reconciliation's **R4**, **R7**, **U3**, **D3001**, **D3005** and **D3006**): on an installation that was still at the release before **Release A**, one project owner's `fugaro update` of a sandbox repository copies the model keys into the installation's one credentials bundle, drops that repository's model mounts and deletes the old secret containers — **with a run already in flight, which finishes and succeeds** — while an operator's update of the same repository copies nothing, deletes nothing and says who must run it | See "Check 780" below; **the script is how you run it**: `bash scripts/live-checks/check780.sh --sandbox <a sandbox repository checkout>`, with the test that drives every step of it against fakes, `scripts/live-checks/check780_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, authenticated as a **project owner** of the installation, on a **sandbox installation, project and repository only** (**never `belong`**), and **no agent runs any step of it** | The premise is read first, and ends the check as one that could not measure when it does not hold: the repository's jobs still MOUNT a model credential and the containers behind those mounts are still there — an installation no project owner has updated since Release A is not in the state this check is about. Then: the bundle gained a version written **inside the update's own window**; no job of the repository is fed from a model credential of any kind afterwards; every model container **no job of the installation mounts any more** is gone (one another job still mounts is **kept**, KS15's own rule, and recorded as kept); each deletion is **named** in the update's transcript and no value of it is printed; the run launched before the update is terminal, succeeded, and started **before** the repository's jobs were last updated. The operator's half is a transcript you hand the check (`--operator-transcript <file>`) from an update made by an account that is **not** a project owner **before** you run it; with none handed, that row is one the check could **not measure** and its text is the instruction for making one. **OWNER-RUN, NOT RUN.** |
 | 781 | **A non-Claude provider model served through the credentials service, end to end** ([`docs/keys-through-service/`](keys-through-service/implementation-plan.md), its **Check 781** and task **KS17**; the reconciliation's **R6**, **F13** and **D3005**): after Release A, a real run of a sandbox repository whose job mounts **no** model key at all — the job carries the credentials service's address instead — whose provider call was served **from the installation's one bundle**, and which was charged the **provider's own reported cost** | See "Check 781" below; **the script is how you run it**: `bash scripts/live-checks/check781.sh --sandbox <a sandbox repository checkout>`, with the test that drives every step of it against fakes, `scripts/live-checks/check781_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on a **sandbox installation, project and repository only** (**never `belong`**), and **no agent runs any step of it** | One sandbox run, followed to a terminal state, then read four ways and never for a value: the job the run's execution names is **fed from no model credential** — no `credential-<name>-key` container, no `anthropic-api-key`, no `claude-oauth-token*`, no `FUGARO_PROVIDER_KEY_*` variable with a value — while the service's own address **is** in its environment; the gateway's `model call` lines for that execution carry `route`, which only a call that went to a provider ever emits, with their `serving_model`, `priced_as` and the provider's `reported_micros`; `result.json`'s `cost.reported_usd`, `cost.route_by` and `cost.model_usd` agree with them; and the service's own `credsvc: audit` line for the run names the credential it served, its tier and its purpose `forward` with status `ok`, which is the service saying the key came from the bundle. A bundle that is missing, a job that still mounts a provider key, a job with no service address, calls that all went direct, a routed call nobody reported, a denied forward, a run that never ends and a record that is another run's are each a row of their own. **OWNER-RUN, NOT RUN.** |
+| 740 | **Messaging a run that is going**, live ([`docs/run-messages/`](run-messages/implementation-plan.md), its **Check 740** and task **RM8**; the reconciliation's **U2**, **U3** and **U4**, and **D2941**'s read-only prefix): one real run of a repository you name, sent a plain message and a `--now` message while its implement stage is going, and read four ways — the plain message **`delivered`** at the next coder stage; the `--now` message delivered into that same stage carrying **no reason** on its fate, which is the runner finding a quiet point **and** going on in the same session, so `no quiet point in 10m` and `session lost at forced stop` are exactly what **U2** and **U3** answer with when the answer is no; the **IAM Policy Troubleshooter** asked whether the **real** job account of the run's execution — and, where the installation has one, the account of a shared project job — holds `storage.objects.create` on a `tokens/<slug>/<run>/messages/<seq>.msg.json` object, which must be **denied** (**D2941**), a throwaway account given only `objectViewer` proving nothing because the role cannot write by definition; and the runs bucket's **lifecycle configuration**, where the `.msg.json` rule must select the messages and leave the sealed `budget-token` beside them alone (**U4**) | See "Check 740" below; **the script is how you run it**: `bash scripts/live-checks/check-740-run-messages.sh --installation <name> --repo <owner/name>`, with the test that drives every step of it against fakes, `scripts/live-checks/check-740-run-messages_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on a **scratch installation you own** (**never `belong`**), after the release and `fugaro update`, and **no agent runs any step of it** | It launches **one real run** of the repository you name: that run's own model spend, one branch and one pull request, plus the two small objects `fugaro tell` writes under `tokens/`, which expire by the bucket's own rule. Everything else is a read (`fugaro doctor`, `fugaro version`, `fugaro runs ls`, `gcloud run jobs describe`/`list`, `gcloud storage cat`/`buckets describe`, the troubleshooter). It changes nothing anywhere else: the run it launched stays, the `restore` row says the scratch directory went, and no credential value is read. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -22502,3 +22503,121 @@ assertion or a Ctrl-C. It costs one sandbox run and the provider credit that cal
 **OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
 `scripts/live-checks/check781_test.sh`, which drives every step of it against fake tools — a fake `gcloud`
 and a fake `fugaro`, no cloud, no installation and no run — and is run by `go test ./scripts`.
+
+## Check 740: messaging a run that is going (a scratch installation you name, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **RM8** of
+[docs/run-messages/implementation-plan.md](run-messages/implementation-plan.md) — its "### RM8: Check 740,
+the owner's live check" — and **run by the owner**, at their own terminal, **after the release and after
+`fugaro update`**, on a scratch installation they name (**never `belong`**, the owner's own development
+installation). It is the live half of the run-messages work: **D2940** to **D2947** ship in the release the
+check names, RM1, RM4 and RM6 are merged, and every offline test of them runs against a fake agent, a fake
+store or `terraform test`. **No agent runs any step of it** — it launches a real run on the owner's
+installation — and the script refuses a coding agent's session by name (`CLAUDECODE` and the four other
+markers that say an agent, and not a person, is driving the shell; the editor extension's own marker is
+dropped rather than refused).
+
+**What it settles.** Four readings, and nothing else in this repository takes any of them:
+
+- **A plain message is delivered at the next coder stage** (step 1). `fugaro tell <run> "…"` writes one
+  object under `tokens/<slug>/<run>/messages/NNNN.msg.json` — the one prefix a job account may only read
+  (**D2941**) — and the run's runner reads it at its next coder stage's boundary. The check reads the fate
+  the **run's own record** writes for that message (the `messages` block in `result.json`): `delivered` at
+  a coder stage is the message having reached the agent, and a message whose run ended before it did is
+  `undelivered`.
+- **U2 and U3 — does a `--now` stop find a quiet point, and does the same session go on from it?** The
+  check sends the plain message first and a `--now` message second, a few seconds later, **while implement
+  is going**: the stop drains both into the stage it stopped, so the second message's fate is read at
+  `stage=implement` and its **reason** is the answer. The runner writes a reason only where the stop did
+  **not** land as the rule reads it — `no quiet point in 10m` when its own ten-minute bound was reached
+  (`agent.YieldAtBound`) and `session lost at forced stop` when a forced stop left a session that could not
+  be resumed (`internal/runner/yield.go`) — so an **empty** reason on a `delivered` fate at that stage is
+  the runner's own statement that a quiet point **was** found and that the turn after it ran in the
+  **same** session. Either reason is this row failing, and the row quotes it.
+- **D2941's fence, asked about the real accounts** (step 3). The check takes the account the run really ran
+  as — the record's own `execution` (`projects/<project>/locations/<location>/jobs/<job>/executions/<execution>`),
+  then `gcloud run jobs describe` for `spec.template.spec.template.spec.serviceAccountName` — and, where
+  the installation deploys one, the account of its shared **project job** (`gcloud run jobs list`, matched
+  by the `fugaro_profile` label). It asks the **IAM Policy Troubleshooter** whether each of those accounts
+  holds `storage.objects.create` on a message object
+  (`gcloud policy-troubleshooter iam troubleshoot --permission=storage.objects.create`), and **denied** is
+  the pass: both accounts hold `roles/storage.objectViewer` on `tokens/`, which carries no write at all. A
+  throwaway account given only `objectViewer` would prove nothing — the role cannot write **by definition**
+  — which is why the accounts this check asks about are the installation's own. An answer that is neither
+  GRANTED nor NOT_GRANTED (UNKNOWN, UNKNOWN_INFO_DENIED) is written **not measured**, never a pass, and
+  GRANTED is a failure naming the account and the object.
+- **U4 — the bucket's rule for the message objects** (step 4). `gcloud storage buckets describe` reads the
+  runs bucket's lifecycle configuration, and the check requires a rule whose action is **Delete**, whose
+  `age` is the installation's `messages_days`, and which carries `matches_prefix = ["tokens/"]` with
+  `matches_suffix = [".msg.json"]`. RM6's `terraform test` is the offline half of that rule; this is the
+  **applied** bucket, and the rule it reads must leave the sealed `budget-token` beside the messages alone
+  — GCS matches a prefix and a suffix and never a middle segment, which is what keeps a `.msg.json` suffix
+  off the token. A bucket with no such rule is a failure, because a message object is a person's own words
+  and a bucket with no rule for it keeps them until something else deletes them.
+
+**The command.** It is **one command**, run at your own terminal, with `--repo` naming the repository the
+small run is launched in:
+
+```sh
+bash scripts/live-checks/check-740-run-messages.sh --installation <name> --repo <owner/name>
+```
+
+`--repo` takes the `owner/name` form `fugaro run --repo` takes from anywhere, so no checkout of it is
+needed; a value without a slash is refused. `--recipe <name>` runs the launched run under a named recipe
+(the repository's own otherwise), `--dry-run` makes every guard and prints every command it would run,
+calling nothing, and `--help` prints the script's header. **Prerequisites.** `fugaro`, `gcloud`, `bash`,
+`mktemp` and `python3` on PATH (a missing one stops the run with one line naming it); a `gcloud` login that
+may read Cloud Run jobs on the installation's project (`roles/run.viewer` or better), the runs bucket's
+metadata (`roles/storage.objectViewer` on it, or the bucket's own describe permission) and the IAM Policy
+Troubleshooter; and the installation at the release or later. `fugaro version` and `fugaro tell --help` are
+probed **first**: a build carrying no run-messages channel is stopped before anything is launched, because
+the messages below could not be sent at all, and the `release` row says so rather than failing every row
+after it. The repository you name is a **real** launch of it: the run pushes a branch and opens a pull
+request, and its task asks for one small file at the repository root, so pick a repository whose pull
+requests you do not mind seeing.
+
+**Reading the `CHECK 740 RESULT` block.** Progress goes to stderr; ONE block on stdout, headed
+`CHECK 740 RESULT` and ending `CHECK 740 RESULT: <verdict> (exit N)`, is what you copy back. Its keys, in
+the order it prints them, are `installation`, `belong`, `release`, `bound`, `run-launched`,
+`message-plain`, `message-now`, `run-ended`, `record`, `iam-workflow-job`, `iam-project-job`, `lifecycle`,
+`agent-session`, `xtrace` and `restore`, followed by `fugaro-version` and — if an internal error ended the
+run — `aborted`. A criterion the check never reached prints `FAIL — not reached` with the reason, so a
+block is never short and a key missing from it is a key the version you ran does not know. The last line is
+the verdict and it is the exit status: **0** when every criterion passed; **1** when a criterion was
+measured and failed; **2** when the check stopped before it could measure everything (a guard stopped it, a
+tool is missing, an error ended it); **3** when it ran to the end with at least one row **UNVERIFIED**.
+Only an all-PASS block is a PASS: a check that measured most of its criteria and left one unmeasured is
+INCOMPLETE, not a pass.
+
+**What it reads, and what it never reads.** Names, ids, stages, status words, a reason, a decision word and
+a count: the installation and its project, the accounts it asks about, a run id and its slug, the two
+message sequence numbers and the fate of each, the job the run landed on, the troubleshooter's decision,
+and the lifecycle rules' fields. **No credential value is read by any step**, and no message **text** is
+printed: the record reader prints a fixed vocabulary — a name, an id, a stage, a status word, a yes/no, a
+number and the record's own reason for a fate — and every value is clipped to that vocabulary with
+`[A-Za-z0-9 ._/@:+-]`, so a document that echoed back something else (a token in an error body, a message
+a service wrote) cannot reach the block. And no trace: `bash -x` prints every command as it runs, so the
+check **refuses** a run whose shell arrived with tracing on rather than printing the installation's own
+names.
+
+**What it does not put back.** It launches **one real run** of the repository you name: that run's own
+model spend (its implement stage, its review rounds and whatever fixes follow, under the repository's and
+the installation's own caps), one branch and one pull request in that repository, and the two small objects
+`fugaro tell` writes under `tokens/`, which expire by the bucket's own message rule. Everything else it
+does is a read — `fugaro doctor`, `fugaro version`, `fugaro runs ls`, `gcloud run jobs describe`/`list`,
+`gcloud storage cat`/`buckets describe`, the troubleshooter — and the check **writes nothing anywhere
+else**: the run it launched stays, because the run is what the check is a reading of, and the `restore` row
+says whether its scratch directory (holding the task file and every document it read) really was removed
+from the exit trap, on a failed assertion and on a Ctrl-C as well.
+
+**The knobs.** `CHECK740_INSTALLATION`, `CHECK740_REPO`, `CHECK740_RECIPE` and `CHECK740_DRY_RUN` are the
+inputs, beside the bindings this check's own test and an owner's own patience use:
+`CHECK740_CALL_SECONDS`, `CHECK740_LAUNCH_SECONDS`, `CHECK740_RUN_SECONDS`, `CHECK740_POLL_SECONDS`,
+`CHECK740_IMPLEMENT_SECONDS`, `CHECK740_SEND_GAP_SECONDS`, `CHECK740_RUNS_LIMIT` and
+`CHECK740_JOBS_LIMIT`. None of them can point a call at another project or another host, and none is
+needed to run the check as the register writes it.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check-740-run-messages_test.sh`, which drives every step of it against fake tools — a
+fake `fugaro` and a fake `gcloud`, no cloud, no installation and no run — and is run by
+`go test ./scripts`.
