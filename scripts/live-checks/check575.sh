@@ -28,9 +28,22 @@
 #     cannot sell (`resellers.schema.json`);
 #   * **the customers and their keys** (`GET /api/resellers/customers`, `GET
 #     /api/resellers/customers/{id}/keys`): one customer, and the newest key it
-#     holds with the workspace that key is bound to — the sale below names that
-#     workspace, and F5 is why this is all of the key a reseller sees (metadata
-#     and never a key);
+#     holds, which is bound to the Firebase project the sale below has to be
+#     composed for. F5 is why this is all of the key a reseller sees: metadata
+#     and never a key;
+#   * **the workspace the sale names** (`GET
+#     /api/ops/workspaces?organisation_id={customer}`, or `--workspace-id`): the
+#     key's own `workspace_id` is the Firebase PROJECT id it is bound to (TN2),
+#     while the mint reads the sale's `workspace_id` as a portal workspace
+#     DOCUMENT id (`accrual.go`'s `mintResellerLicence` loads
+#     `workspaces/{workspace_id}`), so one has to be resolved into the other. No
+#     reseller route answers a portal workspace id, so the check reads the
+#     operations area's own list of the customer's workspaces and takes the one
+#     whose `project_id` is the key's project id. That read needs an account that
+#     is a member of the operations organisation — the owner's own is, on
+#     staging, P0.5 — and it writes the operations log's own line (D456), so
+#     `--workspace-id` names the workspace instead, for a token that is a
+#     reseller's and nothing else;
 #   * **the job** (`gcloud scheduler jobs describe`): P1.5's monthly statement job
 #     — its method and path, the account its OIDC token is minted for, the
 #     audience that token carries, and whether the deployment has lifted the pause
@@ -48,14 +61,18 @@
 #     this reseller holds. This is the accrual read as the month it was billed in
 #     rather than recomputed here;
 #   * **the refused sale** (`POST /api/resellers/customers/{id}/keys`): the check
-#     composes a sale of its own arithmetic — a row, a seat count and a span whose
-#     cost is strictly greater than the WHOLE credit limit, so that no state of
-#     the accrual can admit it — and holds the answer to 409 `over_credit_limit`
+#     composes a sale of its own arithmetic — the customer's workspace resolved
+#     above, a row, a seat count and a span whose cost is strictly greater than
+#     the WHOLE credit limit, so that no state of the accrual can admit it — and
+#     holds the answer to 409 `over_credit_limit`
 #     with the sentence `This sale would pass the credit limit operations set for
 #     this reseller. The licences it already holds are unchanged.` The customer's
 #     keys are read before and after it: that sentence's own claim, measured.
 #
-# What it creates: **the run it fires, and nothing else.** The refused sale writes
+# What it creates: **the run it fires, and the operations log's own line for the
+# workspace read** (`/api/ops/workspaces` is one of the operations area's reads,
+# and every one of them is written into that log before it answers, D456) —
+# nothing else, and `--workspace-id` skips even that. The refused sale writes
 # nothing, and the check writes no customer, no term and no licence of its own.
 # Firing P1.5's job is the one act here, and it is the act the deployment does by
 # itself once a month (the first of the month, 03:00 UTC): the run is idempotent
@@ -75,6 +92,10 @@
 #             Microsoft. --customer names the customer to read (the newest link by
 #             default), --row the policy row the refused sale is made on
 #             (team-annual by default), --days the span it asks for,
+#             --workspace-id the portal workspace id the refused sale names (read
+#             from the customer's own workspaces through the operations read when
+#             it is not given: the token's account has to be a member of the
+#             operations organisation for that, and a reseller's own is not),
 #             --api-service the API's Cloud Run service and --statement-job
 #             P1.5's own job.
 # Needs:      bash, mktemp, python3 (every document is read with it), curl (the
@@ -121,7 +142,10 @@
 # Knobs, all read with a default so an unset shell runs it as written:
 # CHECK575_PROJECT, CHECK575_TOKEN_FILE, CHECK575_API (the portal's origin; the
 # staging default is the `fugaro-portal` hosting site's own Firebase domain, P9.2),
-# CHECK575_CUSTOMER, CHECK575_ROW (team-annual: a row whose seats the caller
+# CHECK575_CUSTOMER, CHECK575_WORKSPACE_ID (empty: the sale's workspace is read
+# from the customer's own workspaces — the one bound to the key's Firebase project
+# id — and this names it instead when the token's account is not a member of the
+# operations organisation), CHECK575_ROW (team-annual: a row whose seats the caller
 # names, so the sale can be sized to the limit), CHECK575_DAYS (29: the span the
 # refused sale is asked for — inside the monthly row's own 30 days and inside the
 # annual rows'), CHECK575_SEATS (0: computed from the limit and the rate),
@@ -230,6 +254,7 @@ LOG_FRESHNESS=15m
 CUSTOMER_ID=""
 CUSTOMER_NAME=""
 WORKSPACE_ID=""
+KEY_PROJECT_ID=""
 KEYS_BEFORE=""
 JOB_ACCOUNT=""
 API_ENV_ACCOUNT=""
@@ -293,7 +318,7 @@ finish() {
 # printed in this order whatever happened, one that was never reached reads
 # `FAIL — not reached`, and any other recorded key follows in the order the run
 # recorded it.
-BLOCK_KEYS=(xtrace agent-session project belong api token signin terms customers keys service job run statements limit restore scratch)
+BLOCK_KEYS=(xtrace agent-session project belong api token signin terms customers keys workspace service job run statements limit restore scratch)
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   local facts=$1 status=$2
@@ -459,6 +484,40 @@ if doc:
     print("tier=%s" % (newest.get("tier") or ""))
     print("seats=%s" % (newest.get("seats") or 0))
     print("paid_through=%s" % (newest.get("paid_through") or ""))
+PY
+}
+
+# ops_workspaces_fields FILE PROJECT_ID — one organisation's workspaces as the
+# operations area answers them (WireWorkspace), held to the one thing this check
+# needs from them: which of them is bound to a Firebase project id. `match` is that
+# workspace's portal id and is empty when none of them carries the project, and
+# `held` is every workspace the list names with its project, which is what an
+# unmeasured row is read against.
+ops_workspaces_fields() { # ops_workspaces_fields FILE PROJECT_ID
+  python3 - "$1" "$2" <<'PY'
+import json, sys
+
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception as exc:
+    print("error=%s" % exc)
+    raise SystemExit(0)
+if not isinstance(doc, list):
+    print("error=not the workspaces list this route answers")
+    raise SystemExit(0)
+project = sys.argv[2]
+held, match = [], ""
+for row in doc:
+    if not isinstance(row, dict) or not (row.get("id") or ""):
+        print("error=an entry is not a workspace this check can read")
+        raise SystemExit(0)
+    bound = row.get("project_id") or ""
+    held.append("%s=%s" % (row.get("id"), bound or "<unbound>"))
+    if bound and bound == project:
+        match = row.get("id")
+print("count=%d" % len(doc))
+print("match=%s" % match)
+print("held=%s" % ",".join(held))
 PY
 }
 
@@ -864,8 +923,9 @@ step_customers() {
 
 # step_keys: the customer's keys as a reseller may see them (F5: metadata and
 # never a key). One is needed for two reasons: a month's accrual is priced from
-# the licences a reseller sold, and the sale below has to name a workspace of this
-# customer's organisation, which is the workspace its key is bound to.
+# the licences a reseller sold, and its Firebase project id is what the workspace
+# the sale names is resolved from — the key's own `workspace_id` is that project
+# id (TN2), and step_workspace holds it to the workspace the mint reads.
 step_keys() {
   local code
   code=$(api_call GET "/api/resellers/customers/$CUSTOMER_ID/keys" keys)
@@ -892,13 +952,71 @@ step_keys() {
     stop "the customer holds no key, so there is no workspace to name and no sale the accrual is priced from"
   fi
   if [ -z "$workspace" ]; then
-    unmeasured keys "the customer's $count key(s) carry no workspace_id: a key is bound to a Firebase project id (TN2), and the sale below names that workspace. This is a document this check cannot compose a sale from"
-    stop "the customer's keys name no workspace, so the refused sale has nothing to name"
+    unmeasured keys "the customer's $count key(s) carry no workspace_id: a key's workspace_id is the Firebase project id it is bound to (TN2), and the workspace the sale below names is resolved from it. This is a document this check cannot compose a sale from"
+    stop "the customer's keys name no Firebase project, so the refused sale's workspace could not be resolved"
   fi
-  WORKSPACE_ID="$workspace"
+  KEY_PROJECT_ID="$workspace"
   KEYS_BEFORE="$digest"
   COUNT_BEFORE="$count"
-  fact keys PASS "the customer ${CUSTOMER_ID} holds $count key(s) (ids digest $digest), the newest of them $newest bound to the workspace $workspace — ${tier:-<no tier>}, ${seats:-?} seat(s), paid through ${paid_through:-<none>}. This is F5's whole: metadata and never a key. The workspace is what the refused sale names, and this digest is what the after row compares"
+  fact keys PASS "the customer ${CUSTOMER_ID} holds $count key(s) (ids digest $digest), the newest of them $newest bound to the Firebase project $workspace — ${tier:-<no tier>}, ${seats:-?} seat(s), paid through ${paid_through:-<none>}. This is F5's whole: metadata and never a key. This project is what the workspace the sale names is resolved from, and this digest is what the after row compares"
+}
+
+# step_workspace: the workspace the refused sale is composed for, which is the one
+# field of the sale this check has to translate rather than read. A key's own
+# `workspace_id` is the Firebase PROJECT id it is bound to (TN2), and the mint
+# reads the sale's `workspace_id` as a portal workspace DOCUMENT id
+# (`mintResellerLicence` loads `workspaces/{workspace_id}` and refuses a workspace
+# that is not there or is another organisation's as `not_found`, BEFORE it compares
+# anything against the credit limit): posting the project id is a sale the route
+# 404s, which measures no ceiling at all. No reseller route answers a portal
+# workspace id — the customers, the keys and the terms carry none — so the check
+# reads the operations area's list of this customer's workspaces and takes the one
+# whose `project_id` is the key's own. That read is the operations membership's,
+# and it writes that area's own line in the log (D456); `--workspace-id` names the
+# workspace instead, which is what a token that is a reseller's and nothing else
+# is run with.
+step_workspace() {
+  if [ -n "$WORKSPACE_ARG" ]; then
+    WORKSPACE_ID="$WORKSPACE_ARG"
+    fact workspace PASS "--workspace-id names the portal workspace ${WORKSPACE_ID} as the one the refused sale is composed for, and nothing was read to resolve it. The sale's workspace_id is a workspace DOCUMENT id and the key's own is the Firebase project id it is bound to (TN2), so this is the one field of the sale that is named rather than read — a workspace id this customer does not hold is a sale the route answers 404 'not_found' ('mintResellerLicence' resolves the workspace before it compares anything against the limit)"
+    return 0
+  fi
+  local code
+  code=$(api_call GET "/api/ops/workspaces?organisation_id=$CUSTOMER_ID" opsworkspaces)
+  if [ "$code" != 200 ]; then
+    fault_fields "$SCRATCH/opsworkspaces.body" >"$SCRATCH/opsworkspaces.txt"
+    local fault_code message
+    fault_code=$(field "$SCRATCH/opsworkspaces.txt" code)
+    message=$(field "$SCRATCH/opsworkspaces.txt" message)
+    if [ "$code" = 403 ] && [ "$fault_code" = not_operations ]; then
+      unmeasured workspace "GET /api/ops/workspaces?organisation_id=$CUSTOMER_ID answered 403 'not_operations': the workspace the sale below names is a portal workspace document id and no reseller route answers one, so it is read from the operations area's list of the customer's workspaces — and the account this token belongs to is not a member of the operations organisation in $PROJECT. Pass --workspace-id <the portal workspace id of the customer's workspace bound to the Firebase project $KEY_PROJECT_ID> (the operations screen lists one organisation's workspaces with their project ids), then run the check again"
+    elif [ "$code" = 404 ]; then
+      unmeasured workspace "GET /api/ops/workspaces?organisation_id=$CUSTOMER_ID answered 404 '${fault_code:-none}' ('$message'): the customer ${CUSTOMER_ID} is not an organisation this deployment holds, so its workspaces — one of which the sale below names — could not be read. This is the customer the reseller's own customers read answered, so the two reads disagree about it. Pass --workspace-id with the customer's own workspace id, then run the check again"
+    else
+      unmeasured workspace "GET /api/ops/workspaces?organisation_id=$CUSTOMER_ID answered ${code:-nothing} with code '${fault_code:-none}' ('$message') rather than the customer's workspaces: the sale below names a portal workspace document id, which no reseller route answers, so this row could not be measured. Pass --workspace-id <the customer's own portal workspace id>, then run the check again"
+    fi
+    stop "the workspace the refused sale names could not be resolved"
+  fi
+  ops_workspaces_fields "$SCRATCH/opsworkspaces.body" "$KEY_PROJECT_ID" >"$SCRATCH/opsworkspaces.txt"
+  local error count match held
+  error=$(field "$SCRATCH/opsworkspaces.txt" error)
+  if [ -n "$error" ]; then
+    unmeasured workspace "GET /api/ops/workspaces?organisation_id=$CUSTOMER_ID answered 200 and a document this check cannot read as a workspaces list ($error): the shape is a list of workspaces.workspace (id, organisation_id, project_id, bound_at), which is what the operations area answers"
+    stop "the workspaces document is not the shape this check reads"
+  fi
+  count=$(field "$SCRATCH/opsworkspaces.txt" count)
+  match=$(field "$SCRATCH/opsworkspaces.txt" match)
+  held=$(field "$SCRATCH/opsworkspaces.txt" held)
+  if [ "${count:-0}" = 0 ]; then
+    unmeasured workspace "the customer ${CUSTOMER_ID} holds no workspace at all: the sale below names one, and a customer with a key bound to the Firebase project $KEY_PROJECT_ID has the workspace that key was minted into. Pass --workspace-id with that workspace's portal id, then run the check again"
+    stop "the customer holds no workspace, so the refused sale has nothing to name"
+  fi
+  if [ -z "$match" ]; then
+    unmeasured workspace "the customer ${CUSTOMER_ID} holds $count workspace(s) ($held) and none of them is bound to the Firebase project $KEY_PROJECT_ID, which is the project the key this check read is bound to: the sale below is composed for the workspace that key was minted into, and one of the two reads is about something else. Pass --workspace-id with the customer's own workspace id, then run the check again"
+    stop "no workspace of the customer is bound to the project its key is bound to, so the sale's workspace could not be resolved"
+  fi
+  WORKSPACE_ID="$match"
+  fact workspace PASS "the refused sale is composed for the workspace ${WORKSPACE_ID} of the customer ${CUSTOMER_ID} — the one of its $count workspace(s) whose project_id is $KEY_PROJECT_ID, the Firebase project its key is bound to. It is read rather than assumed because the mint resolves the sale's workspace_id as a portal workspace DOCUMENT id while a key's own workspace_id is the project id (TN2), and no reseller route answers a portal workspace id: this is the operations area's own read of the customer's workspaces (GET /api/ops/workspaces), which writes that area's line in the log (D456)"
 }
 
 # step_service: the API's own revision, and the two values its SchedulerVerifier
@@ -1104,8 +1222,10 @@ PY
   fact statements PASS "the reseller's newest statement is $month: $lines line(s) summing to $accrued micros, exactly what it says it accrued, each line positive and each one a customer this reseller holds ($orgs), and its state '$state' follows the two amounts ($paid paid of $accrued). D2189's accrual read as the month it was billed in"
 }
 
-# step_limit: the refused sale. The check composes a sale whose cost is strictly
-# greater than the WHOLE credit limit — days times seats times the wholesale rate,
+# step_limit: the refused sale, composed for the workspace step_workspace resolved
+# (a portal workspace DOCUMENT id, which is what the mint reads that field as). The
+# check composes a sale whose cost is strictly greater than the WHOLE credit limit
+# — days times seats times the wholesale rate,
 # with the seats read off the limit and the rate — so that no state of the accrual
 # can admit it: `used > limit || cost > limit - used` is satisfied by `cost >
 # limit` alone, whatever the reseller already owes. A sale that lands instead is
@@ -1164,6 +1284,9 @@ PY
   elif [ "$code" = 422 ]; then
     unmeasured limit "the sale was refused with 422 '${fault_code:-none}' ('$message'): this is a row the request itself failed, not the credit limit — the row the check named carries its own seats, the span is outside the row's term, or the check interval is not one F28 allows. Pass --row with a row whose seats the caller names and --days inside its term (the terms route names every row this reseller is priced for), then run the check again"
     stop "the composed sale was refused for a reason of its own, so the credit limit was not measured"
+  elif [ "$code" = 404 ]; then
+    unmeasured limit "POST /api/resellers/customers/$CUSTOMER_ID/keys answered 404 '${fault_code:-none}' ('$message'): the mint resolves the sale's workspace_id as a portal workspace DOCUMENT id (accrual.go's mintResellerLicence loads workspaces/{workspace_id}) and answers a workspace that is not there, or is another organisation's, as not_found — BEFORE it compares anything against the credit limit — so a sale naming the key's Firebase project id instead is this answer and no ceiling is measured by it. The sale this check composed names the workspace $WORKSPACE_ID, resolved from the key's own project id $KEY_PROJECT_ID: if that pair is wrong, pass --workspace-id with the customer's own workspace id, then run the check again"
+    stop "the composed sale's workspace was not one the mint resolves, so the credit limit was not measured"
   else
     unmeasured limit "POST /api/resellers/customers/$CUSTOMER_ID/keys answered $code with code '${fault_code:-none}' ('$message') rather than 409 'over_credit_limit': this is not the refusal D2189's ceiling is"
     stop "the composed sale was answered $code '${fault_code:-none}', which is not the ceiling's refusal"
@@ -1188,11 +1311,11 @@ PY
     fact limit FAIL "the refused sale changed the customer's keys: they read digest $KEYS_BEFORE before it and $digest_after after it ($count_after key(s), ids $(field "$SCRATCH/keys_after.txt" ids)). The refusal's own sentence is that the licences the reseller already holds are unchanged, and a refusal that wrote one is a sale nobody admitted and everybody bills"
     stop "the refused sale wrote a licence, which the refusal's own sentence says it did not"
   fi
-  fact limit PASS "a $ROW sale of $seats seat(s) over $days day(s), costing $cost micros — strictly more than this reseller's whole credit limit of $limit — is refused with 409 'over_credit_limit': '$message'. The customer's keys are the same $count_after key(s) after it as before it (digest $digest_after), which is the sentence's own 'the licences it already holds are unchanged' measured rather than read. This is D2189's ceiling at the route a reseller mints by, composed so that no state of the accrual could have admitted it"
+  fact limit PASS "a $ROW sale of $seats seat(s) over $days day(s) into the customer's workspace $WORKSPACE_ID, costing $cost micros — strictly more than this reseller's whole credit limit of $limit — is refused with 409 'over_credit_limit': '$message'. The customer's keys are the same $count_after key(s) after it as before it (digest $digest_after), which is the sentence's own 'the licences it already holds are unchanged' measured rather than read. This is D2189's ceiling at the route a reseller mints by, composed so that no state of the accrual could have admitted it"
 }
 
 step_restore() {
-  fact restore PASS "nothing this check wrote is left in $PROJECT: the refused sale wrote nothing (the customer's keys are the $COUNT_BEFORE key(s) they were), no terms, customer or licence was written, and the scratch directory holding this check's own copy of the composed sale is removed from the exit trap. What the run above did is the deployment's own monthly work — a month a reseller was owed, issued and mailed once — and undoing it is a write this check does not make"
+  fact restore PASS "nothing this check wrote is left in $PROJECT: the refused sale wrote nothing (the customer's keys are the $COUNT_BEFORE key(s) they were), no terms, customer or licence was written, and the scratch directory holding this check's own copy of the composed sale is removed from the exit trap. The one entry this run caused is the operations log's own line for its read of the customer's workspaces (D456), which is the deployment's record of a read rather than a thing to undo. What the run above did is the deployment's own monthly work — a month a reseller was owed, issued and mailed once — and undoing it is a write this check does not make"
 }
 
 plan() {
@@ -1200,7 +1323,12 @@ plan() {
   say "  [network, read-only] GET ${API}/api/workspaces with no sign-in — 401 'unauthenticated', which says the origin is the portal's API"
   say "  [local, no network] decode the token file's payload in the scratch directory — provider (an SSO one), aud against ${PROJECT}, expiry; no claim that names the person is read"
   say "  [network, read-only] GET ${API}/api/resellers/terms — the credit limit and the wholesale prices operations set"
-  say "  [network, read-only] GET ${API}/api/resellers/customers, then .../customers/<id>/keys — the customer the sale names and the workspace its newest key is bound to (F5: metadata, never a key)"
+  say "  [network, read-only] GET ${API}/api/resellers/customers, then .../customers/<id>/keys — the customer the sale names and the Firebase project its newest key is bound to (F5: metadata, never a key)"
+  if [ -n "$WORKSPACE_ARG" ]; then
+    say "  [local, nothing read] the sale's workspace is the one --workspace-id names (${WORKSPACE_ARG}): the mint reads a sale's workspace_id as a portal workspace DOCUMENT id while a key's own is the Firebase project id (TN2), so it is named rather than resolved"
+  else
+    say "  [network, read-only, WRITES THE OPERATIONS LOG LINE] GET ${API}/api/ops/workspaces?organisation_id=<the customer> — the portal workspace bound to the key's Firebase project id, which is what the mint reads a sale's workspace_id as; no reseller route answers one, so this is the operations area's read and it needs a member of that organisation (D456's log line is written by the read itself)"
+  fi
   say "  [gcloud, read-only] scheduler jobs describe ${STATEMENT_JOB} --location ${REGION} — the method and path it posts, the account and audience of its OIDC token, and whether the pause has been lifted"
   say "  [gcloud, THE ONE ACT] scheduler jobs run ${STATEMENT_JOB} — the monthly statement run, fired by hand: it issues the months the resellers are owed and mails each statement once (idempotent per month, statement_sends)"
   say "  [gcloud, read-only] logging read resource.type=\"cloud_run_revision\" AND textPayload:\"the statement run as\" — the API's own line for what the run did (issued N, mailed M), within ${RUN_SECONDS}s of the fire"
@@ -1226,6 +1354,7 @@ main() {
   step_terms
   step_customers
   step_keys
+  step_workspace
   step_service
   step_job
   step_run
@@ -1242,13 +1371,14 @@ PROJECT_CLI=""
 API_CLI=""
 TOKEN_CLI=""
 CUSTOMER_ARG=""
+WORKSPACE_ARG=""
 ROW_CLI=""
 DAYS_CLI=""
 SEATS_ARG=0
 SERVICE_CLI=""
 JOB_CLI=""
 REGION_CLI=""
-USAGE="check575.sh --project <p> --token-file <file> [--api <origin>] [--api-service <name>] [--customer <org id>] [--row <policy row>] [--days <n>] [--seats <n>] [--statement-job <name>] [--region <region>] [--production] [--dry-run]"
+USAGE="check575.sh --project <p> --token-file <file> [--api <origin>] [--api-service <name>] [--customer <org id>] [--workspace-id <workspace id>] [--row <policy row>] [--days <n>] [--seats <n>] [--statement-job <name>] [--region <region>] [--production] [--dry-run]"
 usage() {
   sed -n '2,/^set -Eeuo/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&3
 }
@@ -1272,6 +1402,11 @@ while [ $# -gt 0 ]; do
   --customer)
     [ $# -ge 2 ] || die "--customer needs a customer organisation id. usage: $USAGE"
     CUSTOMER_ARG=$2
+    shift 2
+    ;;
+  --workspace-id)
+    [ $# -ge 2 ] || die "--workspace-id needs a portal workspace id. usage: $USAGE"
+    WORKSPACE_ARG=$2
     shift 2
     ;;
   --row)
@@ -1329,6 +1464,7 @@ DRY_RUN=${CHECK575_DRY_RUN:-${DRY_RUN_CLI:-}}
 KEEP_SCRATCH=${CHECK575_KEEP_SCRATCH:-}
 API=${CHECK575_API:-${API_CLI:-}}
 CUSTOMER_ARG=${CHECK575_CUSTOMER:-${CUSTOMER_ARG:-}}
+WORKSPACE_ARG=${CHECK575_WORKSPACE_ID:-${WORKSPACE_ARG:-}}
 ROW=${CHECK575_ROW:-${ROW_CLI:-team-annual}}
 DAYS=${CHECK575_DAYS:-${DAYS_CLI:-29}}
 SEATS_ARG=${CHECK575_SEATS:-${SEATS_ARG:-0}}

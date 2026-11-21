@@ -118,6 +118,11 @@ fi
 printf 'curl %s %s (in %s config=%s mode=%s auth=%s)\n' "$method" "$path" "$PWD" "${cfg:-none}" "$cmod" "$auth" >>"$dir/logs/curl.calls"
 case "$method $path" in
 "GET /api/workspaces") name=anonymous ;;
+# The operations area's own read of one organisation's workspaces, which is the
+# only route that answers a portal workspace id (a key's own workspace_id is the
+# Firebase project id, TN2): the query names the organisation and is recorded with
+# the call, so a case says which customer was asked about.
+"GET /api/ops/workspaces"*) name=opsworkspaces ;;
 "GET /api/resellers/terms") name=terms ;;
 "GET /api/resellers/customers") name=customers ;;
 "GET /api/statements") name=statements ;;
@@ -297,6 +302,24 @@ write("keys.body", [
      "kind": "paid", "seats": 5, "issued_at": "2026-09-02T00:00:00Z",
      "paid_through": "2026-10-02T00:00:00Z", "last_seen": "2026-10-02T00:00:00Z"},
 ])
+# The workspaces the operations area answers for one organisation, which is where
+# the check resolves the portal workspace id its sale names from the key's own
+# Firebase project id (ws-alpha, ws-beta): a key's workspace_id is the project id
+# (TN2) and the mint reads the sale's workspace_id as a workspace DOCUMENT id, so
+# the two spellings are held to each other here. The file holds both customers'
+# workspaces because the fake `curl` serves one document for the read and the check
+# holds it to the key's own project id; a case that bends it is a case about a
+# workspace the customer's key is not bound to, or about a token that may not read
+# the operations area at all.
+write("opsworkspaces.body", [
+    {"id": "wsalpha-portal", "organisation_id": "org-alpha", "name": "Alpha",
+     "project_id": "ws-alpha", "entitlement_id": "ent-alpha",
+     "created_at": "2026-08-01T00:00:00Z", "bound_at": "2026-08-02T00:00:00Z"},
+    {"id": "wsbeta-portal", "organisation_id": "org-beta", "name": "Beta",
+     "project_id": "ws-beta", "entitlement_id": "ent-beta",
+     "created_at": "2026-08-01T00:00:00Z", "bound_at": "2026-08-02T00:00:00Z"},
+])
+
 # The mint: the refusal D2189's ceiling gives, and the status the screen branches
 # on. A case that bends it is a case about a build that admitted the sale.
 write("mint.body", fault("over_credit_limit",
@@ -464,8 +487,10 @@ test_happy_path() {
   expect_row signin "google.com" "the happy path: the provider"
   expect_row terms "5000000 micros" "the happy path: the credit limit"
   expect_row customers "org-alpha" "the happy path: the customer read"
-  expect_row keys "ws-alpha" "the happy path: the workspace the sale names"
+  expect_row keys "ws-alpha" "the happy path: the Firebase project the key is bound to"
   expect_row keys "digest" "the happy path: the before digest"
+  expect_row workspace "wsalpha-portal" "the happy path: the workspace the sale names"
+  expect_row workspace "ws-alpha" "the happy path: the project it was resolved from"
   expect_row service "FUGARO_SCHEDULER_AUDIENCE" "the happy path: the API's own pair"
   expect_row service "fugaro-portal-api-00007-chk" "the happy path: the revision"
   expect_row job "ENABLED" "the happy path: the job"
@@ -489,8 +514,13 @@ test_happy_path() {
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "run services describe fugaro-portal-api" "the happy path: the API revision read"
   # The composed sale: seats read off the limit and the rate, so that its cost is
   # strictly greater than the whole credit limit.
+  expect_contains "$(cat "$dir/logs/curl.calls")" "/api/ops/workspaces?organisation_id=org-alpha" "the happy path: the customer's workspaces read"
   expect_contains "$(cat "$dir/logs/mint.request.json")" '"seats":9' "the happy path: the seats the limit forces"
-  expect_contains "$(cat "$dir/logs/mint.request.json")" '"workspace_id":"ws-alpha"' "the happy path: the workspace"
+  # The sale names the portal workspace DOCUMENT id, never the key's own Firebase
+  # project id: the mint resolves that field as a document and 404s the project id,
+  # which would measure no ceiling at all.
+  expect_contains "$(cat "$dir/logs/mint.request.json")" '"workspace_id":"wsalpha-portal"' "the happy path: the workspace"
+  expect_absent "$(cat "$dir/logs/mint.request.json")" '"workspace_id":"ws-alpha"' "the happy path: the project id is never posted as the workspace"
   expect_contains "$(cat "$dir/logs/mint.request.json")" '"row":"team-annual"' "the happy path: the row"
   expect_contains "$(cat "$dir/logs/mint.request.json")" '"check_interval":"P1D"' "the happy path: the interval"
   python3 - "$dir/logs/mint.request.json" "$limit" "$days" "$rate" <<'PY' || fail "the happy path: the composed sale is not beyond the limit"
@@ -705,6 +735,71 @@ PY
   run_check "$dir"
   expect_status "$status" 2 "a key with no workspace"
   expect_row keys "carry no workspace_id" "a key with no workspace: the row"
+}
+
+test_a_workspace_named_by_hand_is_used() {
+  local dir=$work/workspace-by-hand
+  prepare "$dir"
+  run_check "$dir" -- --workspace-id wsalpha-by-hand
+  expect_status "$status" 0 "a workspace named by hand"
+  expect_row workspace "wsalpha-by-hand" "a workspace named by hand: the row"
+  expect_absent "$(cat "$dir/logs/curl.calls")" "/api/ops/workspaces" "a workspace named by hand: nothing was read to resolve it"
+  expect_contains "$(cat "$dir/logs/mint.request.json")" '"workspace_id":"wsalpha-by-hand"' "a workspace named by hand: the sale names it"
+}
+
+test_a_workspace_that_is_not_bound_to_the_key_is_unmeasured() {
+  local dir=$work/no-binding
+  prepare "$dir"
+  python3 - "$dir" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1] + "/opsworkspaces.body"))
+for row in doc:
+    row["project_id"] = None
+json.dump(doc, open(sys.argv[1] + "/opsworkspaces.body", "w"))
+PY
+  run_check "$dir"
+  expect_status "$status" 2 "a workspace the key's project is not bound to"
+  expect_row workspace "none of them is bound" "a workspace the key's project is not bound to: the row"
+  expect_row workspace "--workspace-id" "a workspace the key's project is not bound to: what to do"
+  expect_row limit "not reached" "a workspace the key's project is not bound to: no sale was composed"
+  [ ! -f "$dir/logs/mint.request.json" ] || fail "a workspace the key's project is not bound to: the sale was posted"
+}
+
+test_a_token_that_may_not_read_the_operations_area_is_unmeasured() {
+  local dir=$work/not-operations
+  prepare "$dir"
+  python3 - "$dir" <<'PY'
+import json, sys
+json.dump({"error": {"code": "not_operations",
+                     "message": "These screens are the operations team's, and this sign-in is not one of them."}},
+          open(sys.argv[1] + "/opsworkspaces.body", "w"))
+open(sys.argv[1] + "/opsworkspaces.code", "w").write("403")
+PY
+  run_check "$dir"
+  expect_status "$status" 2 "a token that may not read the operations area"
+  expect_row workspace "not_operations" "a token that may not read the operations area: the row"
+  expect_row workspace "--workspace-id" "a token that may not read the operations area: what to do"
+  [ ! -f "$dir/logs/mint.request.json" ] || fail "a token that may not read the operations area: the sale was posted"
+}
+
+test_a_sale_whose_workspace_the_mint_cannot_resolve_is_unmeasured() {
+  # The failure the workspace resolution exists for: the mint reads the sale's
+  # workspace_id as a workspace DOCUMENT id, so a sale naming the key's own Firebase
+  # project id is answered 404 'not_found' before the credit limit is compared —
+  # which measures no ceiling at all. A run given the project id is here held to
+  # reading that answer as its own row rather than as a refusal over the limit.
+  local dir=$work/mint-unresolved
+  prepare "$dir"
+  python3 - "$dir" <<'PY'
+import json, sys
+json.dump({"error": {"code": "not_found", "message": "This customer does not exist."}},
+          open(sys.argv[1] + "/mint.body", "w"))
+open(sys.argv[1] + "/mint.code", "w").write("404")
+PY
+  run_check "$dir" -- --workspace-id ws-alpha
+  expect_status "$status" 2 "a sale the mint cannot resolve a workspace for"
+  expect_row limit "404" "a sale the mint cannot resolve a workspace for: the row"
+  expect_row limit "--workspace-id" "a sale the mint cannot resolve a workspace for: what to do"
 }
 
 test_a_revision_without_the_scheduler_pair_is_unmeasured() {
@@ -1173,6 +1268,10 @@ t test_a_customer_the_check_was_not_given_is_unmeasured
 t test_the_named_customer_is_the_one_read
 t test_a_customer_with_no_key_is_unmeasured
 t test_a_key_with_no_workspace_is_unmeasured
+t test_a_workspace_named_by_hand_is_used
+t test_a_workspace_that_is_not_bound_to_the_key_is_unmeasured
+t test_a_token_that_may_not_read_the_operations_area_is_unmeasured
+t test_a_sale_whose_workspace_the_mint_cannot_resolve_is_unmeasured
 t test_a_revision_without_the_scheduler_pair_is_unmeasured
 t test_a_revision_the_account_cannot_read_is_unmeasured
 t test_a_job_that_is_not_there_is_unmeasured
