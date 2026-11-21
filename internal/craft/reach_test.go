@@ -280,4 +280,14 @@ func TestAnAccessThatCannotReachItsModelIsAProblem(t *testing.T) {
 	if got, ps := ByReach(r); got != "acme-router" || len(ps) != 0 {
 		t.Errorf("a craft with no model answers %q with %v, want its access as written and no problem", got, ps)
 	}
+
+	// An unset access is not refused either, and this is the ordinary case
+	// rather than a corner one: agent.models.* stays the rungs a craft's model
+	// is read from (D1662, D1666), so a project that wrote no craft model
+	// resolves no model for any craft — and with no model there is nothing for
+	// a credential to reach, so nothing is the answer (F17).
+	r.Crafts = config.Crafts{}
+	if got, ps := ByReach(r); got != "" || len(ps) != 0 {
+		t.Errorf("an unset access on a craft with no model answers %q with %v, want no answer and no problem", got, ps)
+	}
 }

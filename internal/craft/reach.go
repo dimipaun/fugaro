@@ -123,7 +123,19 @@ func writtenAccess(r Reach) (string, string) {
 // nothing after it, so a run never moves from a subscription to a paid key by an
 // order nobody wrote (F43; moving on needs a pool someone wrote). Nothing
 // reaching it is a refusal naming the two fixes.
+//
+// A craft the project gives no model is where the scan cannot start and the
+// refusal must not fire: there is no model for a credential to reach, so nothing
+// is this function's answer and the stages are the role slot's (F17, the
+// carve-out accessRefusal makes for the same reason). It is the ordinary case
+// and not a corner one: a craft's model is what the craft keys write, and where
+// they write none it is read from the rungs agent.models.* stays as (D1662,
+// D1666), so a project that wrote no craft model resolves no model for any
+// craft.
 func unsetAccess(r Reach) (string, []config.Problem) {
+	if r.Model == "" {
+		return "", nil
+	}
 	for _, c := range r.Declared {
 		if c.Name == config.CredentialVertex {
 			continue
