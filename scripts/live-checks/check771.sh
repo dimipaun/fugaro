@@ -348,13 +348,13 @@ def log(path, marks):
         request = entry.get("httpRequest") if isinstance(entry.get("httpRequest"), dict) else {}
         status = str(request.get("status") or "")
         if status:
-            print("status=%s %s" % (status, at))
+            print("status=%s %s" % (at, status))
         if not text:
             continue
         for mark in marks:
             if mark and mark in text:
                 kept += 1
-                print("line=%s %s %s" % (mark, at, text[:400]))
+                print("line=%s %s %s" % (at, mark, text[:400]))
                 break
     print("entries=%d" % len(entries))
     print("marked=%d" % kept)
@@ -569,12 +569,12 @@ step_removed() {
   fi
   local codes named
   codes=$(lines_of status "$LOG_OUT")
-  named=$(statuses_in_grace "$codes" "$REMOVED_AT" "$GRACE_SECONDS" '^4[0-9][0-9] ')
+  named=$(statuses_in_grace "$codes" "$REMOVED_AT" "$GRACE_SECONDS" '^4[0-9][0-9]$')
   if [ -z "$named" ]; then
     unmeasured removed "no 4xx request follows the moment you named (CHECK771_REMOVED_AT=${REMOVED_AT}) within ${GRACE_SECONDS}s: either the removed member's call was SERVED — the finding, because R13 says the service re-reads its node within a minute — or the call was never made, or the moment is the wrong one. Remove the member, call once from that member's job account, and read the log by hand: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $P --freshness=5m --format=json"
     return 0
   fi
-  fact removed PASS "the first 4xx after the member was removed arrived $(grace_phrase "$REMOVED_AT" "$GRACE_SECONDS"): status $(printf '%s' "$named" | head -n 1 | cut -d' ' -f1) at $(printf '%s' "$named" | head -n 1 | cut -d' ' -f2). The service re-reads its own node when it is older than 60 seconds (R13), so the removal took effect with no new revision and no update — and a call refused before its identity is verified writes neither the audit line nor the refusal line by design, which is why the status is the whole of this reading"
+  fact removed PASS "the first 4xx after the member was removed arrived $(grace_phrase "$REMOVED_AT" "$GRACE_SECONDS"): status $(printf '%s' "$named" | head -n 1 | cut -d' ' -f2) at $(printf '%s' "$named" | head -n 1 | cut -d' ' -f1). The service re-reads its own node when it is older than 60 seconds (R13), so the removal took effect with no new revision and no update — and a call refused before its identity is verified writes neither the audit line nor the refusal line by design, which is why the status is the whole of this reading"
 }
 
 # refusals_in_grace LINES MOMENT SECONDS: the lines whose timestamp falls in
@@ -590,20 +590,24 @@ statuses_in_grace() {
   local lines=$1 moment=$2 seconds=$3 want=$4
   local epoch
   epoch=$(moment_epoch "$moment") || return 0
-  printf '%s\n' "$lines" | grace_filter "$epoch" "$seconds" | grep -E "$want" || true
+  # The status is the line's SECOND field: the first is the moment, so that a
+  # line's own text may carry spaces (the marks this check reads do).
+  printf '%s\n' "$lines" | grace_filter "$epoch" "$seconds" | awk -v want="$want" '$2 ~ want' || true
 }
 
-grace_filter() { # grace_filter EPOCH SECONDS — stdin: `<key> <timestamp> <text...>`
+grace_filter() { # grace_filter EPOCH SECONDS — stdin: `<timestamp> <rest...>`
+  # Prints the lines whose own moment falls in [EPOCH, EPOCH+SECONDS). The
+  # timestamp is the FIRST field of every line the reader prints, so a line whose
+  # text carries spaces — both marks this check greps for do — stays readable.
   python3 -c '
 import sys, datetime
 epoch = int(sys.argv[1]); seconds = int(sys.argv[2])
 for raw in sys.stdin:
-    parts = raw.split(" ", 3)
-    if len(parts) < 2 or not parts[1]:
+    head = raw.strip().split(" ", 1)
+    if not head or not head[0]:
         continue
-    stamp = parts[1].replace("Z", "+00:00")
     try:
-        at = datetime.datetime.fromisoformat(stamp).timestamp()
+        at = datetime.datetime.fromisoformat(head[0].replace("Z", "+00:00")).timestamp()
     except ValueError:
         continue
     if epoch <= at < epoch + seconds:
