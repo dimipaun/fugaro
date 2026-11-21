@@ -227,7 +227,7 @@ cleanup() {
   stop_call
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
   if [ "$SCRATCH_KEPT" = yes ]; then
-    say "the scratch directory is kept: $SCRATCH"
+    say "CHECK760_KEEP_SCRATCH is set: $SCRATCH is kept (the readings, the window listing, every call's own output and the reader are in it)"
   else
     remove_scratch
   fi
@@ -270,6 +270,8 @@ finish() {
   # their removal is READ, not assumed.
   if [ -z "$SCRATCH" ]; then
     facts="${facts}"$'\n'"restore|PASS|nothing was created: the run stopped before it made a scratch directory, so there is nothing to remove"
+  elif [ "$SCRATCH_KEPT" = yes ]; then
+    facts="${facts}"$'\n'"restore|PASS|the scratch directory is KEPT at $SCRATCH, because CHECK760_KEEP_SCRATCH=yes asked for that: nothing was put back BY REQUEST, and removing the directory is yours (its files: the doctor's answer, the window listing, one stdout and one stderr per timed read, and the reader). This check wrote nothing else anywhere: it creates, changes and deletes nothing on the installation, in the project or in the runs bucket"
   else
     facts="${facts}"$'\n'"restore|$([ "$SCRATCH_REMOVED" = yes ] && echo PASS || echo FAIL)|the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself") (its files: the doctor's answer, the window listing, one stdout and one stderr per timed read, and the reader). This check wrote nothing else anywhere: it creates, changes and deletes nothing on the installation, in the project or in the runs bucket"
   fi
@@ -806,9 +808,9 @@ print_block() {
 # ------------------------------------------------------------------- the plan
 print_plan() {
   cat <<PLAN_EOF
-Check 760 — how long 'fugaro runs ls' takes on a REAL installation. This is the
-PLAN. --dry-run touches nothing: no call is made, nothing is read, no file of
-yours is opened.
+Check 760 — how long 'fugaro runs ls' takes on a REAL installation.
+This is the PLAN. --dry-run touches nothing: no call is made, nothing is read,
+no file of yours is opened.
 
   installation   ${INSTALLATION}   (read with 'fugaro doctor', timed with 'fugaro runs ls')
   pull request   ${PR_WANT:-the newest the 7-day window names}
