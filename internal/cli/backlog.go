@@ -342,10 +342,10 @@ func newBacklogIndexCmd() *cobra.Command {
 		Long: "Regenerate the index of docs/backlog/, the folder the backlog was before it\n" +
 			"became the project's work items.\n\n" +
 			"The index lists one row per item — the id linked to its file, the title,\n" +
-			"the mode, the area, the status, who filed it and the date — sorted by id,\n" +
-			"with the closed and dropped rows grouped under the open ones, under a\n" +
-			"count line (D28). It is written to <dir>/README.md, and it is the only\n" +
-			"file this command touches.\n\n" +
+			"the level, the kind, the area, the status, who filed it and the date —\n" +
+			"sorted by id, with the closed and dropped rows grouped under the open ones,\n" +
+			"under a count line (D28). It is written to <dir>/README.md, and it is the\n" +
+			"only file this command touches.\n\n" +
 			"The document is a pure function of the item files: every date in it comes\n" +
 			"from the item that carries it and no clock is read, so regenerating an\n" +
 			"unchanged folder rewrites the same bytes and a regeneration in review\n" +

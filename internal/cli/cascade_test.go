@@ -1077,6 +1077,7 @@ workflows:
 // installation that has no service at all.
 func TestCascadeRefusedWithoutService(t *testing.T) {
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	projectJobCheckoutYAML(t, cascadeLaunchYAML)
 	const run = "20261022-090000-ca5c"
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature")

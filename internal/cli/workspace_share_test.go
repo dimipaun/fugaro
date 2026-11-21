@@ -171,17 +171,21 @@ func TestMemberAddTakesRegionAndRepositories(t *testing.T) {
 	}
 	workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
 
-	// A region is optional, and an entry that names none is a member whose
-	// database is in its project's default region. What this reads is the file:
-	// the chain behind a replacement is this fixture's own answer, which
-	// workspaceAssertSavedNotLive holds beside it.
+	// A region is optional on the command line, and this declaration names none:
+	// where the member's database is comes from the member's own budget.rtdb_url,
+	// which this fixture's member config does not write. So the region the entry
+	// already records stands — the declaration is not a statement that the member
+	// moved to the default location, and reading it as one would move where the
+	// workspace's service reads that member's database (LP9, D3084). What this
+	// reads is the file: the chain behind a replacement is this fixture's own
+	// answer, which workspaceAssertSavedNotLive holds beside it.
 	execute(t, workspaceMemberAddArgs()...)
 	lc, err = localcfg.Parse([]byte(readFileString(t, owner)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if region := (*lc.WorkspaceMembers)["aurora"].DatabaseRegion; region != "" {
-		t.Errorf("database region = %q, and the declaration named none", region)
+	if region := (*lc.WorkspaceMembers)["aurora"].DatabaseRegion; region != "europe-west1" {
+		t.Errorf("database region = %q, want europe-west1, the region the entry already recorded", region)
 	}
 }
 

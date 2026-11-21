@@ -301,7 +301,14 @@ func TestFollowUpUpdatesSamePR(t *testing.T) {
 	if impl.Resume || !strings.Contains(impl.Prompt, "Please rename the helper to fooBar.") || !strings.Contains(impl.Prompt, followup.DefaultInstructions) {
 		t.Fatalf("implement request = %+v", impl)
 	}
-	if !strings.Contains(impl.AppendSystemPrompt, "followup.md") || strings.Contains(impl.AppendSystemPrompt, "pr.md") || strings.Contains(impl.AppendSystemPrompt, "pull request description") {
+	// The first run's hand-back rule is the one d.FollowUp replaces, and it is
+	// named by its own words rather than by the file it writes: the level's
+	// persona names `pr.md` too, as the first-run half of a pair it tells the
+	// coder to pick between (internal/rigor/personas), so the file name is no
+	// longer the follow-up rule's mark.
+	if !strings.Contains(impl.AppendSystemPrompt, "followup.md") ||
+		strings.Contains(impl.AppendSystemPrompt, "- Write the pull request title on the first line of") ||
+		strings.Contains(impl.AppendSystemPrompt, "explain them in the pull request description") {
 		t.Fatalf("system prompt:\n%s", impl.AppendSystemPrompt)
 	}
 	data, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"comments.json")

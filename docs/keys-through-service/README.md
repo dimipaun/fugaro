@@ -14,10 +14,25 @@ path where a key must sit in the job, is removed under a spec of its own (D3009,
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's ruling; no typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A5, findings F1–F47, decisions D3000–D3015 with the owner's answers, resolutions R1–R13, open items O1–O12, UNVERIFIED U1–U7. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Contract C1, tasks KS1–KS20 (KS7 and KS8 dropped, their numbers not reused), integration I1 (20 runs over two releases, and one contract change that runs only if raised); levels, critical path, shared files; Checks 50, 780 and 781 |
-| [contract-provider.md](contract-provider.md) | C1's prose half: what a routed call carries, the two refusals, the bundle's family for a named provider entry and its naming rule, the accessor, R12's two facts and where they are recorded. The Go is `internal/credsvc/provider_wire.go`, `internal/gateway/providerwire.go` and `internal/config/provider_served.go` |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A5, findings F1–F51, decisions D3000–D3015 with the owner's answers, resolutions R1–R13, open items O1–O13, UNVERIFIED U1–U7. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Contract C1, tasks KS1–KS20 (KS6, KS9 and KS10 withdrawn, KS7 and KS8 dropped; their numbers not reused), integration I1 (17 runs over two releases, and one contract change that runs only if raised); levels, critical path, shared files; Checks 50, 780 and 781 |
+| [contract-provider.md](contract-provider.md) | C1's prose half: what a routed call carries, the two refusals, the bundle's family for a named provider entry and its naming rule, the accessor, R12's fact and where it is recorded (the second fact C1 named is not needed, F50). The Go is `internal/credsvc/provider_wire.go`, `internal/gateway/providerwire.go` and `internal/config/provider_served.go` |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
+
+**Amended 2026-11-20 by [credentials belong to models](../credentials-belong-to-models/README.md).**
+That plan retires `agent.auth`, and the tasks here that admitted a provider pin by a repository's
+auth mode or served a stage account beside one have no auth mode left to work in. **KS6, KS9 and
+KS10 are withdrawn**, and what they planned is that plan's: **KS6 by its CM16 and CM15** (a model
+judged by what reaches it, and the launch refusal KS6 planned), **KS9 by its CM6** (the service
+narrows by the repository's access record) and **KS10 by its CM9** (a subscription token leaves
+the agent's environment for every subscription, not only a stage's). **KS13 waits on that plan's
+I1 in their place** (its F37, F50), so keys release B cannot drop a mount before that plan's
+release 1 is integrated. **C1's second fact, "the stage account is served", is not needed** (its
+F20): one fact per repository, "its credentials are served", covers it. **KS3's clause that offers
+a provider credential "under every auth the service serves" is CM6's** (its F21); KS3 keeps the
+narrowed Check 50 gate and the per-repository Anthropic entry. The owner stopped KS6, KS9 and KS10
+on 2026-11-20 (that plan's O11), so none of them runs meanwhile; this folder says so from here on,
+in its reconciliation (F48 to F51) and its plan.
 
 **Numbers reserved:** decisions **D3000–D3019** (D3000–D3015 used), checks **780–789** (780 and
 781 used; 782 withdrawn and not reused). Read on 2026-11-19: the highest decision on `main` and in the open pull requests was D2992,
@@ -46,6 +61,7 @@ are the last commit and were not reviewed again.
 
 **What a reader should not take from here:** no task is approved; each needs the owner's go by name.
 Release A is not cut before the owner has run Check 50 and KS20 has merged. Release B (KS13,
-KS11, KS14 to KS16) is not launched before release A is cut. KS14 and KS15 also
+KS11, KS14 to KS16) is not launched before release A is cut, and KS13 not before credentials
+belong to models' I1 has merged. KS14 and KS15 also
 wait on the plan that removes budget mode off, which is not written yet, and KS16 on secrets
 brokering's B5.7, which is not started. Checks 50, 780 and 781 are owner-run.

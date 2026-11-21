@@ -184,6 +184,7 @@ Subcommands:
 - `fugaro accounts add` -- Declare a named Claude account and the repositories its token may be used by
 - `fugaro accounts alias` -- Point a name at one named Claude account, so the keys naming it choose that account
 - `fugaro accounts allow` -- Add repositories to a named Claude account's allow-list (claude_accounts.NAME.allow_data_to)
+- `fugaro accounts cascade` -- State the credentials cascade this installation publishes to its project
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
 - `fugaro accounts craft` -- Point a craft at the credential or pool its calls go out on
 - `fugaro accounts deny` -- Remove repositories from a named Claude account's allow-list
@@ -415,6 +416,95 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for allow |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts cascade`
+
+State the credentials cascade this installation publishes to its project
+
+State what a run does when the credential it is calling with is exhausted.
+
+The cascade is the project's own policy and every run of the project reads it off
+the published node: it decides whether a run waits for the shared Claude token's
+reset and spends nothing, and what it does when the wait is longer than the
+project allows.
+
+`fugaro accounts cascade set` writes it in this installation's own config, under
+`credential_cascade`. Silence there keeps whatever the published node holds, and a
+member written here is what the next publish carries to it: nothing a member is
+set to reaches a run until the project's policy is published, which `fugaro update`
+does.
+
+Usage: `fugaro accounts cascade`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for cascade |
+
+Subcommands:
+
+- `fugaro accounts cascade set` -- Write the cascade's members in this installation's own config
+
+## `fugaro accounts cascade set`
+
+Write the cascade's members in this installation's own config
+
+Write credential_cascade.<member> in this installation's own config. A member
+left out keeps what the file already holds, so one flag changes one member and
+touches nothing else: every comment and every other byte of the file are kept.
+
+--fallback is the paid fallback, and it has two values (D152):
+
+  oauth-only  a run waits for the shared token's reset and never spends the
+              project's money. This is what an absent member means.
+  auto        a run whose credential is exhausted falls over to the project's
+              Anthropic API key and, where the third tier is on, to that one —
+              so this is the value that spends paid tiers, and the published
+              node admits it only where the budget enforces a per-run ceiling
+              above zero. Write the ceiling first, or the publish that carries
+              this value to the node is refused.
+
+--wait-threshold is how long a run waits for an exhausted credential's reset
+before failing over (15m by default, and ignored under oauth-only, where there
+is nothing to fail over to). --backoff-initial and --backoff-cap are the wait a
+credential is held for when its exhaustion came with no reset time: the first
+wait and the longest the doubling reaches (15m and 5h by default; a cap below
+the first wait is refused).
+
+--stop-after-exhaustion-per-window=false lets a run go on spending on a
+credential which has exhausted its window, and --concurrency-per-token=0 is no
+cap at all on how many runs may hold one shared credential. Both defaults are
+the protective answers (true and 1), so these two flags are spelled with their
+value in the flag's own word.
+
+The three members whose value moves the cascade the wider way — auto, false and
+0 — are the owner's own step, so a coding agent's session is refused them
+whatever the managed gate answers (D2617). Run this at your own terminal.
+
+--layer picks the layer the write lands in. The cascade is this installation's
+own statement of the project's policy, and a launcher who could write it into a
+shared file would be choosing everyone's spending, so the only layer it has is
+local; --layer with any other layer is refused naming the one it does have.
+
+Usage: `fugaro accounts cascade set [--fallback oauth-only|auto] [--wait-threshold DUR] [--backoff-initial DUR] [--backoff-cap DUR] [--stop-after-exhaustion-per-window=BOOL] [--concurrency-per-token N]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--backoff-cap` | string | "" | no | the longest that wait doubles to (a duration; default 5h, and a cap below the first wait is refused) |
+| `--backoff-initial` | string | "" | no | the first wait for a credential whose exhaustion came with no reset time (a duration; default 15m) |
+| `--concurrency-per-token` | int | `0` | no | how many runs may hold one shared credential at a time (default 1; 0 is no cap at all) |
+| `--fallback` | string | "" | no | the paid fallback: oauth-only (a run waits for the shared token's reset and never spends the project's money) or auto (a run falls over to the paid tiers, which spends it) |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--layer` | string | "" | no | the layer to write (local, project, repo); the cascade is this installation's own config, so local is the layer it has |
+| `--stop-after-exhaustion-per-window` | bool | `true` | no | stop the runs that need a credential which has exhausted its window (the default; --stop-after-exhaustion-per-window=false lets them spend past it) |
+| `--wait-threshold` | string | "" | no | how long a run waits for an exhausted credential's reset before failing over (a duration: 30m, 2h; default 15m, and ignored under oauth-only) |
 
 Subcommands:
 
@@ -1550,10 +1640,10 @@ Regenerate the index of docs/backlog/, the folder the backlog was before it
 became the project's work items.
 
 The index lists one row per item — the id linked to its file, the title,
-the mode, the area, the status, who filed it and the date — sorted by id,
-with the closed and dropped rows grouped under the open ones, under a
-count line (D28). It is written to <dir>/README.md, and it is the only
-file this command touches.
+the level, the kind, the area, the status, who filed it and the date —
+sorted by id, with the closed and dropped rows grouped under the open ones,
+under a count line (D28). It is written to <dir>/README.md, and it is the
+only file this command touches.
 
 The document is a pure function of the item files: every date in it comes
 from the item that carries it and no clock is read, so regenerating an
@@ -2073,6 +2163,17 @@ own price table, and covers the runs that started today and recorded a
 result: a run still in flight has recorded none, so today's is partial, and
 a repository whose runs recorded no estimate is null, never 0.
 
+--stream, with --json, prints the caps listing as newline-delimited JSON instead
+of as one document: a line per repository, each carrying one element of the
+document's repos array unchanged under `row`, then the project's kill switch as
+a row of its own, then a line saying how many rows the feed carried (`end`). A
+consumer draws the caps table as its lines arrive rather than holding the whole
+document, and a feed with no end line is a read that was interrupted. A feed
+that stopped after its first line writes an `error` line with the sentence the
+command would have printed, and exits non-zero. --repo, --all and --compute mean
+here what they mean without it, so the feed carries the rows of the listing they
+ask for.
+
 Usage: `fugaro budget show`
 
 Flags:
@@ -2088,6 +2189,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
+| `--stream` | bool | `false` | no | with --json: one line per repository and per kill switch, then a line saying how many there were |
 
 Subcommands:
 
@@ -7667,6 +7769,17 @@ run_hours, runs, calls, tokens}], totals, warnings}; *_usd are exact decimal
 strings and null means n/a or not recorded for that breakdown (an unreadable
 row carries null money).
 
+--stream, with --json, prints that document as newline-delimited JSON
+instead of whole: a line per row, each carrying one element of --json's rows
+array unchanged under `row`, then a line saying how many rows the feed
+carried and carrying the document's `totals` (`end`). A consumer draws a row
+as its line arrives rather than holding the whole document, and a feed with
+no end line is a read that was interrupted. A feed that stopped after its
+first row writes an `error` line with the sentence the command would have
+printed, and exits non-zero. The document's own header, notice and warnings
+are not part of the feed; --by, --since, --until and --repo mean here what
+they mean without it.
+
 A project without Firestore history says so and shows run-record totals instead
 (from the runs bucket, not budget history).
 
@@ -7686,6 +7799,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name) |
 | `--since` | string | `30d` | no | first day: YYYY-MM-DD (UTC) or Nd, the last N days |
+| `--stream` | bool | `false` | no | with --json: one line per row, then the line that ends the feed |
 | `--until` | string | "" | no | last day, YYYY-MM-DD (UTC; default today) |
 
 Subcommands:
@@ -10227,6 +10341,7 @@ Flags:
 | `--coordinator` | bool | `false` | no | with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
 | `--create-project` | bool | `false` | no | create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of setup always creates its project, so the flag only says so explicitly. Fugaro only starts fresh: an ID that already exists is refused, unless an earlier run of setup created it (the resume). Billing is not linked unless --link-billing is also given; without it setup prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing |
 | `--display-name` | string | "" | no | on a first run, which creates the project: its display name (default: its ID) |
+| `--events` | bool | `false` | no | write the run to stdout as newline-delimited events instead of the one --json document: one `step` line as the run reaches a stage, one `stage` line as a stage settles (its name, state, detail and the stage it waited for), one `left_for_you` line for each thing only you can do — with the one line to run — and one last line that ends the feed: `done` with the run's exit code, or `error` naming the stage the run stopped at. A run that ends with steps left for you ends `done` with exit code 1 — it did not fail, and the steps are the left_for_you lines above it — which is the hand-off a surface draws rather than an error. It needs --json: the feed takes the document's place on stdout, and the run's own progress stays on stderr where --json already puts it. Nothing here confirms a step: --json confirms none, so every step that needs a confirmation arrives as left_for_you for you to run in your own terminal window |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it setup trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
 | `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
@@ -10522,6 +10637,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |
 | `--coordinator` | bool | `false` | no | with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
+| `--events` | bool | `false` | no | write the run to stdout as newline-delimited events instead of the one --json document: one `step` line as the run reaches a stage, one `stage` line as a stage settles (its name, state, detail and the stage it waited for), one `left_for_you` line for each thing only you can do — with the one line to run — and one last line that ends the feed: `done` with the run's exit code, or `error` naming the stage the run stopped at. A run that ends with steps left for you ends `done` with exit code 1 — it did not fail, and the steps are the left_for_you lines above it — which is the hand-off a surface draws rather than an error. It needs --json: the feed takes the document's place on stdout, and the run's own progress stays on stderr where --json already puts it. Nothing here confirms a step: --json confirms none, so every step that needs a confirmation arrives as left_for_you for you to run in your own terminal window |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it update trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
 | `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config |
 | `--forget` | bool | `false` | no | roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state. An installation that holds the managed deployer's fence has no rollback and this is refused there: the state removal would leave the seven scoped roles and their seven conditioned bindings live in the project, accounted for by nothing, and taking the project out of managed mode does not remove them (docs/design/managed-projects.md §10.2, "Rolling back") |
@@ -11426,10 +11542,13 @@ asked for, because a pattern is a promise about what the account may be a job of
 rather than the jobs it is.
 
 --database-region is where the member's Realtime Database lives, and it is
-optional: a database in the project's default region needs none. It is never
-whose database it is — that is derived from the Firebase project the verified
-iss names, so an owner cannot pair one member's accounts with another's
-database — and this says only where in that project it lives.
+optional: left out, it is read from the member's own budget.rtdb_url, which that
+installation's fugaro update writes, so a member in europe-west1 is linked at
+its own host with no flag — and it wins when it is given. It is never whose
+database it is — that is derived from the Firebase project the verified iss
+names, so an owner cannot pair one member's accounts with another's database —
+and this says only where in that project it lives. A database in the project's
+default region records no region either way.
 
 A member the table already declares is replaced whole: the entry ends up
 holding the four values given, the accounts with their repositories, the
@@ -11450,7 +11569,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--database-region` | string | "" | no | the region of the member's Realtime Database; omit it for a database in the project's default region |
+| `--database-region` | string | "" | no | the region of the member's Realtime Database; omit it to read it from the member's own budget.rtdb_url (a database in the project's default region has none) |
 | `--exchange-url` | string | "" | no | the member's exchange endpoint, where the workspace's signer mints a member-bound assertion for |
 | `--firebase-project` | string | "" | no | the member's Firebase project ID, which the caller's token is issued under |
 | `--fp` | string | "" | no | the member's Fugaro project name, which the token's fp claim must be |

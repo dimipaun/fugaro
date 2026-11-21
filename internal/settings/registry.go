@@ -512,6 +512,10 @@ func scopeLayers(in config.Scope) []string {
 const (
 	docSetup = "docs/gcp-setup.md"
 	docLayer = "docs/project-layer.md"
+	// docLocations is the record's own document (LP0 of
+	// docs/location-preference/, D3087): what the block is, that it is one
+	// machine's own, and that nothing reads it as an input (R5).
+	docLocations = "docs/location-preference/record.md"
 	// docGovernance is docLayer plus the one fact about a governance key the
 	// table has no column for (F12): the guardrails are enforced by a build with
 	// the `ee` tag, so an untagged build reads the block and holds no run to it
@@ -616,8 +620,8 @@ const (
 	// backoff's two ends and the two owner-headroom knobs are named in the
 	// credentials service's plan, and the spec of the service (its README's
 	// sibling) is the design of the service rather than of the policy an
-	// operator writes. K1's command and the carrier N1 adds take the rows over
-	// the day they land.
+	// operator writes. K1's command and the carrier N1 adds are what state the
+	// rows now.
 	docCredentialsCascade = "docs/credentials-service/implementation-plan.md"
 	// docOrchestratorGraph is the document that states the orchestrator's
 	// switch and the project's issue adapter (D2701, D2733, D2739): both keys
@@ -915,6 +919,19 @@ var localRows = []Row{
 	loc("backend", "cloud-run", "setup", "docs/backends.md"),
 	loc("log_view", "the project's default logs", "setup", docSetup),
 	loc("scheduler_region", "the region the jobs run in", "setup", docSetup),
+	// The locations record (LP0 of docs/location-preference/, D3087): where
+	// this installation's located things already are, as the converge read
+	// them from the cloud. One row per member, and each is local-only — the
+	// record is never published, because the shared config decodes strictly
+	// and a teammate's older CLI would refuse the key — and written by the
+	// two converge doors from what the cloud holds rather than by any
+	// editor: no flag states a location, because nothing that exists is
+	// given a place by a rule — what already is somewhere is read from the
+	// cloud (R5) — and an absent member means no converge has read it yet.
+	locLocal("locations.firestore", "not known yet: no converge has read where the project's Firestore database is", "setup", docLocations),
+	locLocal("locations.log_bucket", "not known yet: no converge has read where the installation's run log bucket is", "setup", docLocations),
+	locLocal("locations.rtdb", "not known yet: no converge has read where the project's Realtime Database is", "setup", docLocations),
+	locLocal("locations.secrets", "not known yet: no converge has read what the installation's own secret containers do", "setup", docLocations),
 	loc("user", "none", "setup", docSetup),
 	// The keys of the installation a repository's own settings file also holds
 	// say `settings set` where the allowlist carries them (D1178): commit_name,
@@ -1607,13 +1624,22 @@ var cloudRows = []Row{
 // one of the three file layers would send the read and the write at a file the
 // key is not in.
 //
-// The spelling is `credentials.<leaf>`, which is §4.4's own name for the
-// block — `credentials.` is one of the generic path's prefixes — and the owner
-// is the `accounts` family's, so the generic path refuses every one of the six
-// in that family's name rather than writing an operator's node policy as a
-// local setting (D2603, R1 of docs/config-ownership). K1 registers
-// `fugaro accounts cascade set` as their writer; until it lands the six are
-// testdata/writer_gaps.golden's.
+// The spelling is `credentials.<leaf>`, which is §4.4's own name for the block,
+// and the owner is the `accounts` family's, so the generic path refuses every
+// one of the six in that family's name rather than writing an operator's node
+// policy as a local setting (D2603, R1 of docs/config-ownership). `credentials.`
+// left the generic path's prefixes with K1, which registers `fugaro accounts
+// cascade set` as their writer, so a refusal now names that command.
+//
+// The six stay testdata/writer_gaps.golden's, and the carrier's six beside
+// them. A registered writer is measured where the row spells the key, and these
+// six are the node's own spelling while the write lands in this machine's
+// carrier (`credential_cascade.<leaf>`, writers_cascade.go) — and the carrier's
+// six owe the publish the write ends on (D2615), which a hermetic installation
+// cannot complete, so the command exits non-zero after the bytes land. That is
+// the gap every semantic family's rows show for the same reason (pools',
+// providers' and the crafts' among them): the golden lists them until I1's
+// strict ratchet has a rig that can run a stage.
 //
 // Every default is a sentence naming the constant the node's own reader falls
 // back to (projectpolicy.FallbackValue, WaitThresholdDuration,
@@ -1647,8 +1673,8 @@ var policyRows = []Row{
 	// What the family does *not* have is a carrier for either: no key of the
 	// local config states the switch or the adapter (D2701, D2733), so a person
 	// writes the node's own member and `publish` carries it from the node
-	// forward — which is why the two are testdata/writer_gaps.golden's, the
-	// cascade's six before K1.
+	// forward — which is why the two are testdata/writer_gaps.golden's, as the
+	// cascade's own twelve are.
 	//
 	// The switch merges by Tighten, and it is the rule rather than a figure
 	// here: false is its stricter value and the only one that can undo the

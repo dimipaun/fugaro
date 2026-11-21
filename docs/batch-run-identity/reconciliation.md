@@ -387,7 +387,7 @@ One defensible answer each; stated, not asked.
   machine selects, and an installation nobody opted in is left alone, block or no block. The
   fact is not withdrawn by a machine that selects `cloud-run` again; only R16's command
   withdraws it. Until then the root keeps being applied, so a later tightening reaches every
-  opted-in installation. An installation whose block says "in" and whose compute root was never
+  installation whose block says "in". An installation whose block says "in" and whose compute root was never
   provisioned is skipped with one line naming `fugaro setup --provision-batch`: the update does
   not do the first provisioning. A person who is not
   an operator can select the backend locally and cannot opt the installation in; `update` on

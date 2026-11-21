@@ -318,7 +318,14 @@ const (
 // admitted by its own name and the row an entry write is about is built from its
 // leaves rather than counted here.
 //
-// C1 of docs/batch-run-identity/ is the last mover, by three rows and by none:
+// LP0 of docs/location-preference/ moved it by four rows and by none:
+// the local project config gains the `locations` block, the record of where this
+// machine read the installation's Firestore database, its Realtime Database, the
+// replication of its secret containers and its run-log bucket to be (D3087), and
+// it is one machine's own — never published, never an input — so no name and no
+// prefix in the allowlist reaches any of its four rows.
+//
+// C1 of docs/batch-run-identity/ is the last mover after it, by three rows and by none:
 // the `batch:` block gains its two identity facts — the opt-in fact
 // (`batch.opt_in`) and the key fact, which is one fact in two fields
 // (`batch.seal_key.version`, `batch.seal_key.public_key`, R13) — each owned by
@@ -327,7 +334,7 @@ const (
 // and no prefix of it reaches the three, so the rows without a generic writer
 // move by the three.
 const (
-	cfmRegistryRows   = 516
+	cfmRegistryRows   = 520
 	cfmAllowlistNamed = 121
 )
 

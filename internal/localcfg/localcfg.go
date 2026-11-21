@@ -193,6 +193,17 @@ type Config struct {
 	// SchedulerRegion is where the daily image check's Cloud Scheduler
 	// jobs live, which need not be the region the jobs run in.
 	SchedulerRegion string `yaml:"scheduler_region,omitempty"`
+	// Locations is where this installation's located things are, as one
+	// machine read them from the cloud (D3087 of
+	// docs/location-preference/): the Firestore location, the Realtime
+	// Database's, the secrets' replication and the run log bucket's. It is
+	// this machine's own and never an input — the mapping answers only for a
+	// thing that does not exist, and every plan reads what the cloud holds —
+	// so Shared drops it and ParseShared refuses the key besides. An absent
+	// block means no converge has read the cloud on this machine yet, and an
+	// absent member means its own thing is not known yet. Its document is
+	// docs/location-preference/record.md (LP0).
+	Locations *Locations `yaml:"locations,omitempty"`
 	// Budget is the project's model spend guard (design §5.6); no block
 	// means off.
 	Budget *Budget `yaml:"budget,omitempty"`
@@ -3611,6 +3622,7 @@ func (c *Config) validate() error {
 			bad("repos.%s.claude_accounts: this repository names accounts and no provider, and a published account entry is provider-qualified (owner/name is published as provider/owner/name): write the repository's provider here, which is the only place a per-repository job's provider is stated", repo)
 		}
 	}
+	validateLocations(c, bad)
 	validateWorkspace(c, bad)
 	return errors.Join(errs...)
 }

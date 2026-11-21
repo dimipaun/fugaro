@@ -1661,6 +1661,86 @@ func TestOnPreviewSeesTheStagesOfAnApplyingRunOnly(t *testing.T) {
 	}
 }
 
+// A caller rendering the run is handed the run and not the review screen: an
+// applying run's preview records the stage a failed check stopped at, and the
+// execution pass behind it resets the result and records that stage again, so
+// OnStage must fire once per stage — and a stage's line must not arrive before
+// the step line for it, which is what a line drawn from the throwaway preview
+// does (it is recorded before converge has reached its first step).
+//
+// The failure is a check's, because that is the one a preview reaches: a stage
+// whose Apply fails is never applied twice.
+func TestOnStageFiresOncePerStageWhenAPreviewCheckFails(t *testing.T) {
+	for _, planOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("plan-only=%v", planOnly), func(t *testing.T) {
+			var log []string
+			var lines []string   // the two hooks in one order, as a caller sees them
+			var stepped []string // every step line, so a stage line's step can be placed
+			stages := []Stage{
+				&checkErr{fake: &fake{name: Preflight, log: &log}},
+				&fake{name: Installation, log: &log},
+			}
+			res, err := Run(context.Background(), stages, Options{
+				Yes: true, PlanOnly: planOnly, Terminal: true, Out: &bytes.Buffer{},
+				OnStep: func(stage string) { lines = append(lines, "step "+stage); stepped = append(stepped, stage) },
+				OnStage: func(r StageResult) {
+					lines = append(lines, "stage "+r.Name+" "+string(r.State))
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Failed == nil || res.Failed.Stage != Preflight {
+				t.Fatalf("the run did not stop at the failing check: %+v", res.Failed)
+			}
+			// What the hooks were handed is the run's own account: the same
+			// stages, in the same order, with the same states, once each.
+			var got []string
+			for _, ln := range lines {
+				if strings.HasPrefix(ln, "stage ") {
+					got = append(got, strings.TrimPrefix(ln, "stage "))
+				}
+			}
+			var want []string
+			for _, s := range res.Stages {
+				want = append(want, s.Name+" "+string(s.State))
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("OnStage was handed %v, the run's own stages are %v (the lines were %v)", got, want, lines)
+			}
+			twice := map[string]int{}
+			for _, ln := range got {
+				twice[strings.Fields(ln)[0]]++
+			}
+			for name, n := range twice {
+				if n != 1 {
+					t.Errorf("OnStage was handed %s %d times, want once: a preview that stops at a check is not the run's account", name, n)
+				}
+			}
+			// And a stage's line comes after the step line for it, never before:
+			// in an applying run the throwaway preview's row would be the first
+			// line of them all, ahead of any step.
+			if !planOnly && len(lines) > 0 && strings.HasPrefix(lines[0], "stage ") {
+				t.Errorf("the first line is a stage's, before the run reached any step: %v", lines)
+			}
+			for i, ln := range lines {
+				if !strings.HasPrefix(ln, "stage ") {
+					continue
+				}
+				name := strings.Fields(ln)[1]
+				if !slices.Contains(stepped, name) {
+					continue // a plan-only run has no step lines, and says so
+				}
+				// The step for this stage is somewhere ahead of its line.
+				first := slices.Index(lines, "step "+name)
+				if first > i {
+					t.Errorf("the line for %s comes before its step: %v", name, lines)
+				}
+			}
+		})
+	}
+}
+
 // TestBillingPauseLetsLocalStagesFinish: a stage that pauses for billing
 // (BillingPausedError) is not a failure and does not stop the run: it is
 // recorded as billing-pending with its Left, every later stage that needs
