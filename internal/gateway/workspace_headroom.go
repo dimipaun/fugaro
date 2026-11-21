@@ -22,11 +22,13 @@ import (
 // Every answer of a metered scope carries it: the service's paid-call path
 // writes it off the workspace's own room, on a served call and on a refusal
 // alike (internal/credsvc/forward.go's answer and refuseMeter, pinned by
-// internal/credsvc/meter_test.go). No service this tree builds resolves a
-// caller to a workspace yet — that scope is WS2's and does not exist here — so
-// in a live deployment the header arrives with WS2, and the member's gateway
-// reads "none" until then. The constant, the writer and the reader are all
-// here, which is what makes the delivery a wiring and not a design.
+// internal/credsvc/meter_test.go). A workspace's own deployment is what answers
+// such a call, and this tree builds it: internal/credsvc's WS2 scope resolves
+// the caller to the workspace and `fugaro update` deploys that service from
+// deploy/terraform/gcp/roots/workspace, and every answer that deployment gives
+// carries the header. An installation's scope has no meter and no room to
+// report, so it writes none. The constant, the writer and the reader are all here, which is
+// what makes the delivery a wiring and not a design.
 //
 // The value is micro-dollars, decimal: what the workspace's own ceiling still
 // leaves, this month, across all of its members — budget.WorkspaceRoom, read

@@ -123,12 +123,14 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		// every paid call the workspace's own service answers — the probe
 		// included, since a probe is a call the workspace pays for — the
 		// settle's failure refuses the call, a subscription token's call
-		// spends nothing of the workspace's money, and a scope with no meter
-		// is an installation and is unchanged in every behavior.
+		// spends nothing of the workspace's money, and an INSTALLATION's scope
+		// is the one with no meter, unchanged in every behavior. The sentence
+		// has to name which of the two deployments that scope is, because this
+		// tree builds both.
 		"the probe a cascade owes a backed-off credential included",
 		"refusing the call when that settle cannot be written",
 		"serving a call on a subscription token unmetered because it spends none of the workspace's money",
-		"a scope with no meter, which reserves nothing, settles nothing, writes no header and is unchanged in every one of its behaviors",
+		"it reserves nothing, settles nothing and writes no header",
 		// And the one path where the fail-closed rule above does not hold. A
 		// streamed answer has already reached the run when its usage is known,
 		// so a settle that cannot be written there is a log line and the
@@ -138,15 +140,15 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		// does not cover.
 		"**A streamed answer is the one path where a failed settle does not refuse the call, and it is stated rather than hidden**",
 		"released with its amount never reaching the month's settled spend",
-		// And the limits this release does not hide. The meter binds on the
-		// one path that reaches it and the deployment that answers a
-		// workspace's calls is WS2's and is not built here, so the cap is
-		// still not a fence over any call a member makes today -- a different
-		// reason from the one this section gave while the meter was unwired,
-		// and the sentence has to say the one that is true.
+		// And the limits this release does not hide. Both deployments are built
+		// here and the meter binds over the workspace's own, so the sentence
+		// has to say what the cap DOES reach -- the deployment, the route that
+		// leads a member's run to it -- and leave the limits that are real (the
+		// stream, the alarm, the missing per-member share) as the limits.
 		"**And the limit this release does not hide.**",
-		"the service this tree builds answers every call as an **installation**",
-		"still not a fence over any call a member makes today",
+		"**What the wiring reaches, and what it does not, is worth stating exactly.**",
+		"the workspace owner's `fugaro update` applies it with no other step",
+		"reaches that service where the route its own `fugaro update` published says a kind is served from the workspace",
 		// The alarm, which is the cap's second half and is still hosted
 		// nowhere: the section states the design's alarm above and has to say
 		// that nothing runs it, or a reader takes it as live while residual
@@ -316,12 +318,22 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		// the workspace's project, and a section that kept the older wording
 		// would tell a reader no member's account reaches the workspace at all.
 		"because no member holds a grant on the workspace's project",
-		// The meter, which is machinery on this tree and wired to the
-		// workspace's own service's paid-call path, and still not a fence
-		// over a member's call: the deployment that answers one is WS2's.
+		// The meter, which is machinery on this tree and wired to the paid-call
+		// path of the workspace's own deployment -- which is built here and
+		// which `fugaro update` applies -- so the cap IS a fence over a
+		// member's metered call. What is wider than the tree is the word
+		// "every": a kind served from the project's own copy is not metered,
+		// and a subscription token's call reserves nothing.
 		"the workspace's cap is enforced on every shared-credential call",
 		"every shared-credential call is metered",
+		// The stale spellings this section carried while the meter was unwired
+		// or the deployment unbuilt. All three are now false in the other
+		// direction, and a section that kept one would tell a reader the cap
+		// is not a fence at all when it is.
 		"**a workspace's cap binds nothing today**",
+		"still not a fence over any call a member makes today",
+		"does not exist on this tree yet",
+		"answers every call as an **installation**",
 		"no code path takes them on this tree",
 	} {
 		if strings.Contains(flattenDoc(s), banned) {

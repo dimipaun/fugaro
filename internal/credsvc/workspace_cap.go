@@ -29,14 +29,15 @@ import (
 // metered scope. Its tests are meter_test.go, one per promise, and its own
 // task is WS8 of docs/workspace-service/implementation-plan.md.
 //
-// What no deployment of this tree reaches yet is the meter itself: the
-// workspace's own scope is WS2's and does not exist here (scope_stub.go answers
-// with an installation's scope), and Scope.Meter is nil for an installation, so
-// every service this tree builds serves its calls unmetered — which is the
-// installation's behavior and is exactly what R1 keeps: one code path serves
-// both deployments, and the meter in the scope is the whole of what differs.
-// meter_test.go stands in for WS2 by handing the forwarding path a scope with a
-// meter over it.
+// BOTH DEPLOYMENTS THIS TREE BUILDS REACH IT. The workspace's own scope is
+// WS2's (scope_workspace.go, whose init assigns the real constructor over C1's
+// stub), the workspace's own service is deployed by `fugaro update` from
+// deploy/terraform/gcp/roots/workspace (WS5, WS6, WS7), and Scope.Meter is
+// non-nil for it — so a service in workspace mode reserves every paid call and
+// settles it. Scope.Meter is nil for an installation, and that is exactly what
+// R1 keeps: one code path serves both deployments, and the meter in the scope
+// is the whole of what differs. meter_test.go drives the forwarding path
+// through a scope with a meter over it.
 //
 // Three things about the shape are the design and not an accident:
 //
@@ -206,13 +207,13 @@ func SetWorkspaceHeadroom(h http.Header, room budget.WorkspaceRoom) {
 // are the meter's own refusals, and the wiring above writes both: a call at the
 // ceiling carries `cap` and a call whose cost could not be recorded carries
 // `settle` (forward.go's refuseMeter). The stop is not written by anything this
-// tree runs: it is answered by the workspace's own deployment of this service,
-// which this tree does not build (NewWorkspace has no non-test caller, and the
-// service cannot tell its two deployments apart until one names the
-// workspace), and the plan that cuts the work declines to wire it — ending a
-// run on the workspace's stop needs a halt reason the run record's closed
-// vocabulary does not have, a wire change with its own readers, and it stays
-// the workspaces design's open check U4
+// tree runs, and the missing thing is not a deployment: the workspace's own
+// deployment exists and the service tells its two apart by
+// creds.WorkspaceModeEnv (NewWorkspace's caller is the workspace mode in
+// internal/cli), so what declines to write it is the plan, which decides that
+// ending a run on the workspace's stop needs a halt reason the run record's
+// closed vocabulary does not have — a wire change with its own readers — and
+// leaves it the workspaces design's open check U4
 // (docs/workspace-service/implementation-plan.md §10). So a member's run
 // records the marker only against a service that writes it, and the tests
 // beside this file stand in for the stop.
