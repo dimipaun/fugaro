@@ -76,7 +76,7 @@ and gets a reader or a refusal, never a nil.
    workspace's service answers is admitted against the **workspace's** roster, over Google's ID-token
    keys: a member's admins can forge their own project's launcher list and can mint their own
    project's identities (D1943), so a slip of the workspace's that they could obtain would be a slip
-   over the workspace's money signed by the party spending it (F14). What the class admits is R3's: a
+   over the workspace's money signed by the party spending it (D2970). What the class admits is R3's: a
    verified person whose address is a `human` of the roster — a service account is never a launcher
    (F12), and a person added since the workspace owner's last `fugaro update` waits for the next one
    (D2971).

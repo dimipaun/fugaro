@@ -108,7 +108,8 @@ type PersonScope interface {
 // verifier holds, with no run identity, no job account and no reader of an
 // installation's state.
 //
-// **It is a narrow interface declared here and not Verifier used**, and the
+// **It is a narrow interface declared here, and not the service's Verifier
+// used whole**, and the
 // reason is the one the intake's own Caller states: the workspace's class is
 // built from a roster and Google's ID-token keys and holds none of the rest
 // (launchers.go's LauncherConfig), so a construction that demanded the
