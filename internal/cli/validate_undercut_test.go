@@ -40,7 +40,10 @@ func TestValidateWarnsUndercut(t *testing.T) {
 	if !strings.Contains(out, "is valid") {
 		t.Errorf("validate did not say the file is valid:\n%s", out)
 	}
-	if want := "warning: model_prices.deepseek/deepseek-v4.1-flash.cache_read_per_m: is $0.000588 per million tokens and the cheapest endpoint the built-in price catalog prices for it on the zdr tier is $0.002 per million tokens (checked 2026-10-23): the override undercuts the catalog"; !strings.Contains(errOut, want) {
+	// The date is the shipped catalog's own checked_at, which 0.27.0 regenerated
+	// to 2026-11-21: the sentence this pins carries the day the row was checked,
+	// so it moves whenever the catalog is re-checked and the figures do not.
+	if want := "warning: model_prices.deepseek/deepseek-v4.1-flash.cache_read_per_m: is $0.000588 per million tokens and the cheapest endpoint the built-in price catalog prices for it on the zdr tier is $0.002 per million tokens (checked 2026-11-21): the override undercuts the catalog"; !strings.Contains(errOut, want) {
 		t.Errorf("validate did not print:\n%s\ngot:\n%s", want, errOut)
 	}
 
