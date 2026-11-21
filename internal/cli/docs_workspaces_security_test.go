@@ -131,6 +131,12 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"refusing the call when that settle cannot be written",
 		"serving a call on a subscription token unmetered because it spends none of the workspace's money",
 		"it reserves nothing, settles nothing and writes no header",
+		// The headroom's delivery, narrowed to the answers that really carry it:
+		// answer() and refuseMeter write it, and a refusal that never reached the
+		// meter — refuseSelection's wait, the call a credential was already sent
+		// to — writes none, which nothing reads as a ceiling of zero.
+		"the headroom rides the answers the service writes itself",
+		"a refusal that never reached the meter",
 		// And the one path where the fail-closed rule above does not hold. A
 		// streamed answer has already reached the run when its usage is known,
 		// so a settle that cannot be written there is a log line and the
