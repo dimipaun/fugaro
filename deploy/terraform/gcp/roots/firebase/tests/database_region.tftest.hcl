@@ -11,9 +11,9 @@
 # not.
 #
 # It is a file of its own rather than two more runs of firebase.tftest.hcl for
-# two reasons: the pair applies the module, so it leaves a state behind, and a
-# file is its own test run, so that state reaches nothing else; and a run in
-# that file plans no state at all.
+# two reasons: the pair APPLIES the module, and only a file's own runs share
+# the state that leaves behind; and an apply needs the mock_resource overrides
+# below, which would be in force for every run of the file they sat in.
 #
 # What this cannot say is what the REAL provider plans for an instance it
 # already manages and whose mapping has since changed, which is the case every
