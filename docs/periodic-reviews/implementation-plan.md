@@ -94,12 +94,16 @@ ends at the gates below.
   [README.md](README.md)). **Amended 2026-11-17:** a second number is **claimed** by this plan —
   **Check 343**, R9's own live check (§P8) — and it is not written here either: at R9's merge its task
   writes the register's row and its `## Check 343` section, so until then **340 is still the only
-  section this work has written** and 343 is a claim like 341 and 342.
+  section this work has written** and 343 is a claim like 341 and 342. **Amended 2026-11-21:** the
+  register now carries a summary row and a `## Check N` section for **all four** — 340, which
+  **PASSED** on 2026-11-13, and 341, 342 and 343, each written by the task that registers it — so none
+  of this plan's numbers is a claim any more; 341, 342 and 343 are **NOT RUN**, and each section says
+  what is not written yet with it.
 
 | Level | Tasks | Needs |
 | --- | --- | --- |
-| 0 | R0, R12, R13 | R0: nothing. R12: **the listing check's result** (its own owner-run live check, before the grants are written) — and nothing in this plan. R13: nothing |
-| 1 | R1, R7 | R1: R0. R7: R12 (the module, the conditions and the guard), R13 (the two `paused` settings) and, through R12, the listing check's result |
+| 0 | R0, R12, R13 | R0: nothing. R12: **the listing check's result** (its own owner-run live check, before the grants are written) — **in since 2026-11-13** (Check 340, §P8: **PASS**, the attribute carries the request's own relative prefix, `runs/` and `reports/`) — and nothing in this plan. R13: nothing |
+| 1 | R1, R7 | R1: R0. R7: R12 (the module, the conditions and the guard), R13 (the two `paused` settings) and, through R12, the listing check's result — **which is in** (Check 340, §P8) |
 | 2 | R2, R4 | R1 |
 | 3 | R3, R11, R14 | R3: R4 (the skill's rule list names the rules R4 adds) and #1488 landed; R11: R7 (the job's spec and its own assignment) and R4 (the rules' source, E7); R14: nothing of this plan (the release slot is its only outside dependency) |
 | 4 | R6, R8, R9, R15 | R6: R1–R4, R7 and R12, and #1488; R8: R11 (the job's own loop); R9: R11 (what it stored) **and R14 (the designation it reads)**; R15: R14 (the rows are the member's own surface) — **one level below it, because a task sits below every task it depends on** |
@@ -1342,8 +1346,12 @@ from being a formality:
 - **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/backend/gcp ./internal/infra/tf -run
   'Reports' -count=1`.
 - **Depends on:** **Check 340's result** (§P8) — nothing in either work may be enabled before the
-  grant is proven. **Red step:** the condition tests fail while `names.go` has no builder, and the
-  join test fails against the `&&` shape. **Reviewer:** opus + mandatory independent review. **Commit:**
+  grant is proven. **The result is in, and it is a PASS**: the owner ran the check on 2026-11-13, and
+  the register's row and its `## Check 340` section record it — the attribute carries the request's
+  own relative prefix, so the two listing clauses are written `runs/` and `reports/`, and nothing
+  about this task waits any more. **Red step:** the condition tests fail while `names.go` has no
+  builder, and the join test fails against the `&&` shape. **Reviewer:** opus + mandatory independent
+  review. **Commit:**
   `feat(infra): the reports job, its account and its grants`.
 
 **R13 — the jobs' paused setting, in the layer (slice P).** Part I, `## R13`.
@@ -1403,8 +1411,8 @@ from being a formality:
 - **Tests, and the command:** `GOFLAGS=-p=2 go test -tags terraform ./internal/infra/... -run
   'ReportsJob|BucketLifecycle|InstallationAtThePreviousVersionConverges' -count=1`.
 - **Depends on:** R12 (the module, the conditions and the guard) and R13 (the two `paused` settings),
-  and through R12 on Check 340. **Red step:** `TestUpdatePlansTheReportsJobPaused` fails while the
-  node is not rendered. **Reviewer:** opus + mandatory independent review. **Commit:**
+  and through R12 on Check 340 — **whose result is in** (§P8, 2026-11-13: **PASS**). **Red step:**
+  `TestUpdatePlansTheReportsJobPaused` fails while the node is not rendered. **Reviewer:** opus + mandatory independent review. **Commit:**
   `feat(infra): fugaro update plans the reports job, paused`.
 
 **FC2 — one writer for the terminal status and class (slice F).** The design, `### FC2`.
@@ -1779,7 +1787,8 @@ ordering:**
 `internal/runner` become one call, in a package whose suite costs about 25 minutes — which is why
 FC2's test is a guard over the tree and not a fixture per site. **R12 is the union's widest gate**:
 it waits on an owner-run check (Check 340, §P8), and neither work's schedule may be enabled before
-its grants are proven. **R9 is on the path now and lengthens nothing**: the 2026-11-17 answer
+its grants are proven — **and that check has answered: it PASSED on 2026-11-13**, so the two prefix
+forms are proven and nothing in either work waits on it any more. **R9 is on the path now and lengthens nothing**: the 2026-11-17 answer
 unblocked it, so it sits at 4 with **R16** after it at 5 and **R14** before it at 3 — and **R15**,
 which waits on that same R14, sits at 4 rather than beside it at 3 — and
 **the 2026-11-17 tasks add no edge between the works at all** — R9's being the fourth writer of
@@ -1850,7 +1859,11 @@ one that names a section rather than only a number (the `Checks 340–349` row o
 ([reconciliation.md](reconciliation.md) §7.3), so the block's three and R9's one are claimed, 344–349
 stay reserved and unused, and the register is still untouched — the task that implements a check
 writes its row and its section, which for 340 and 343 alike is a task of this work rather than this
-design.
+design. **Amended 2026-11-21:** **all four are written now** — the register carries a summary row and
+a `## Check N` section for 340, 341, 342 and 343 alike, written by the task that registers each check
+under the register's own rule — and one of them has answered: **Check 340 PASSED on 2026-11-13**, so
+its `list-prefix` string (`runs/` and `reports/`) is recorded for R12's builder. 341, 342 and 343
+remain **NOT RUN**, and each of their sections says so and what is not written yet with it.
 
 **Check 340 — the prefix-limited listing grant (R12's, and it gates R12).** The owner proves that the
 job's read grant lists the FOUR prefixes the reports job lists — `runs/<slug>/`, `reports/<slug>/`,
@@ -1862,8 +1875,14 @@ carries the request's own RELATIVE prefix (`runs/`, `reports/`) — under the fu
 listing was refused — and the bare `reports/` prefix it was refused (with the binding read back as
 present) is a DIAGNOSTIC row, because the job never lists it.** **If a listing the job makes does not
 hold, R12's Terraform does not land and the plan stops and
-asks** (E4). Owner-run, **NOT RUN** — the revision the third run's reading produced has not itself
-been run.
+asks** (E4). Owner-run, and **PASS on 2026-11-13**: the fourth run — the revision the third run's
+reading produced — held every criterion with a clean Restore, so the register's row reads **USER-RUN,
+PASS (2026-11-13)** and its section prints the string R12's builder writes: `runs/` for the runs
+binding and `reports/` for the reports binding, each in
+`api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith("<prefix>/")`. Its
+`reports-bare-diagnostic` came back answered three ways (the plain listing refused naming
+`storage.objects.list`, the wildcard listing allowed, the JSON API's delimiter listing `200`), so the
+bare prefix R12 never lists needs no change and gates nothing.
 
 **Check 341 — the reports job's first firing, and what it stored.** The owner sets
 `jobs.reports.paused: false`, runs `fugaro update`, lets the schedule fire once and reads what
