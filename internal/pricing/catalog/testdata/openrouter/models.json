@@ -3,9 +3,25 @@
   {
    "id": "deepseek/deepseek-v4.1-flash",
    "pricing": {
-    "completion": "0.00000066",
-    "input_cache_read": "0.000000006",
-    "prompt": "0.000000165"
+    "completion": "0.0000001992",
+    "input_cache_read": "0.000000000996",
+    "prompt": "0.0000000498"
+   }
+  },
+  {
+   "id": "deepseek/deepseek-v4-flash",
+   "pricing": {
+    "completion": "0.00000018",
+    "input_cache_read": "0.000000018",
+    "prompt": "0.00000009"
+   }
+  },
+  {
+   "id": "deepseek/deepseek-v4-pro",
+   "pricing": {
+    "completion": "0.0000015",
+    "input_cache_read": "0.0000002",
+    "prompt": "0.0000009"
    }
   },
   {
@@ -19,25 +35,9 @@
   {
    "id": "moonshotai/kimi-k3",
    "pricing": {
-    "completion": "0.000011936",
-    "input_cache_read": "0.00000021",
-    "prompt": "0.000000239"
-   }
-  },
-  {
-   "id": "deepseek/deepseek-v4-pro",
-   "pricing": {
-    "completion": "0.00000191052",
-    "input_cache_read": "0.000000079605",
-    "prompt": "0.00000095526"
-   }
-  },
-  {
-   "id": "deepseek/deepseek-v4-flash",
-   "pricing": {
-    "completion": "0.000000182",
-    "input_cache_read": "0.0000000182",
-    "prompt": "0.000000091"
+    "completion": "0.000016",
+    "input_cache_read": "0.00000019",
+    "prompt": "0.0000002"
    }
   }
  ]
