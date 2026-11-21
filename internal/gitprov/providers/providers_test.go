@@ -205,6 +205,79 @@ func TestGitHubKeylessWhenServiceOn(t *testing.T) {
 	}
 }
 
+// TestServiceHeldGitHubOpensKeyless: the other door into the same keyless
+// provider FromEnv opens when the installation's own credentials service is on
+// (WS18, D2979). A run whose own route serves the github kind from a
+// workspace's service may name no EnvCredentialsServiceURL at all -- what says
+// the kind is served remotely is the route record (R3, F32), which only the
+// runner reads -- so this opener is picked on the route and nothing else, and
+// it must open the provider without reading an App key of the job's own: the
+// key that signs the mint is the workspace's (C2.1, D145).
+//
+// Every spelling of the key the platform would inject when the key IS the
+// job's own is planted here with a value that could not be read into a
+// provider, so an opener that reached for one would fail here rather than open.
+func TestServiceHeldGitHubOpensKeyless(t *testing.T) {
+	env := []string{
+		EnvGitHubAppID + "=1234",
+		EnvGitHubAppKey + "=not-a-pem-key",
+		EnvGitHubAppKeyFile + "=/nonexistent/app-key.pem",
+	}
+	p, secrets, err := ServiceHeldGitHub(env, nil, nil)(ctx, gitprov.KindGitHub, "acme/web")
+	if err != nil {
+		t.Fatalf("opening the keyless github provider of a run routed to a workspace: %v", err)
+	}
+	if _, ok := p.(*github.Provider); !ok {
+		t.Fatalf("provider %T, want *github.Provider", p)
+	}
+	if len(secrets) != 0 {
+		t.Errorf("the opener reported %d static secrets, want none: the key is the workspace's and is not read here", len(secrets))
+	}
+	if _, err := p.GitAuth(ctx, 0); !errors.Is(err, github.ErrServiceTokensIdentity) {
+		t.Errorf("a keyless provider with no service installed gave %v, want a refusal", err)
+	}
+	src := fakeSource{token: "ghs_fixture_installed"}
+	setter, ok := p.(gitprov.ServiceTokenSetter)
+	if !ok {
+		t.Fatalf("the keyless provider is not a gitprov.ServiceTokenSetter")
+	}
+	setter.UseServiceTokens(src)
+	a, err := p.GitAuth(ctx, 0)
+	if err != nil {
+		t.Fatalf("GitAuth with the service installed: %v", err)
+	}
+	if a.Token != src.token || a.Env["GH_TOKEN"] != src.token {
+		t.Errorf("auth = %+v, want the installed source's token", a)
+	}
+}
+
+// TestServiceHeldGitHubRefusals: the opener reaches github and nothing else,
+// because the arm that picked it is the github fact alone and every other kind
+// has its own opener for the same situation (a Bitbucket credential served
+// from a workspace's service is proxied, not opened here). A refusal builds no
+// provider and reports no secret.
+func TestServiceHeldGitHubRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, repo string
+		env              []string
+		want             string
+	}{
+		{"another kind", gitprov.KindBitbucket, "acme/web", []string{EnvGitHubAppID + "=1"}, "unknown git provider"},
+		{"no app id", gitprov.KindGitHub, "acme/web", nil, EnvGitHubAppID},
+		{"a repo that does not look like owner/name", gitprov.KindGitHub, "web", []string{EnvGitHubAppID + "=1"}, "owner/name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, secrets, err := ServiceHeldGitHub(tc.env, nil, nil)(ctx, tc.kind, tc.repo)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("(%T, %d secrets, %v) does not name %q", p, len(secrets), err, tc.want)
+			}
+			if p != nil || secrets != nil {
+				t.Errorf("the refusal came with a provider %T and %d secrets", p, len(secrets))
+			}
+		})
+	}
+}
+
 // TestGitHubReadsTheKeyWhenServiceOff: with the service off the App's key is
 // the job's own, exactly as before: no service URL means the in-job mint, and
 // the key is the static secret the caller must redact.
