@@ -667,3 +667,64 @@ func TestCatalogCheckSpecCarriesPausedFalse(t *testing.T) {
 		t.Error("the layer's paused: false did not reach the variable: enabling a job would need the gcloud command the layer replaced")
 	}
 }
+
+// TestCatalogCheckFollowsTheOwnCopyThatHoldsTheToken: a repository whose own
+// credential container holds a live version is the one every build resolves,
+// so it is the one the build identity is granted even when the project's copy
+// is planned too. Granting the project's copy alone left a catalog build
+// unable to read the token it clones with.
+func TestCatalogCheckFollowsTheOwnCopyThatHoldsTheToken(t *testing.T) {
+	lc := parseLC(t, catalogCheckLocal)
+	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true, nil)
+	if err != nil || cc == nil {
+		t.Fatalf("CatalogCheck: %v, %v", cc, err)
+	}
+	projectCopy := gcp.ProjectSecretID("aurora", config.GitHubAppKeySecret)
+	s := InstallationSpec{
+		RunsBucket:     "fugaro-runs-proj-1234",
+		CatalogCheck:   cc,
+		ProjectSecrets: map[string]string{config.GitHubAppKeySecret: projectCopy},
+	}
+	s, err = s.WithPlannedProjectSecrets(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ownID string
+	for _, r := range s.CatalogCheck.Repositories {
+		if r.GitSecretID == projectCopy {
+			ownID = gcp.SecretID(r.Slug, config.GitHubAppKeySecret)
+		}
+	}
+	if ownID == "" {
+		t.Fatal("no repository is granted the project's copy; the fixture no longer shows the case")
+	}
+	s.OwnGitSecrets = map[string]bool{ownID: true}
+	s, err = s.WithPlannedProjectSecrets(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, r := range s.CatalogCheck.Repositories {
+		if gcp.SecretID(r.Slug, config.GitHubAppKeySecret) == ownID {
+			found = true
+			if r.GitSecretID != projectCopy {
+				t.Errorf("the first grant moved to %s, want %s kept so the plan only adds one", r.GitSecretID, projectCopy)
+			}
+			if r.OwnGitSecretID != ownID {
+				t.Errorf("second grant names %q, want the repository's own %s", r.OwnGitSecretID, ownID)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("repository vanished")
+	}
+	var job CatalogCheckJobSpec
+	if err := json.Unmarshal([]byte(s.CatalogCheck.Env[CatalogCheckSpecEnv]), &job); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range job.Repositories {
+		if gcp.SecretID(r.Slug, config.GitHubAppKeySecret) == ownID && r.GitSecretID != ownID {
+			t.Errorf("the job's spec names %s, want the repository's own %s", r.GitSecretID, ownID)
+		}
+	}
+}

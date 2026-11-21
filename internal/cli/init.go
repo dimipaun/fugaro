@@ -3209,6 +3209,9 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	spec.ProjectSecrets = im.ProjectSecrets
 	// The catalog check's git credentials name a project container only when
 	// the plan holds it, which is known only now.
+	if spec.OwnGitSecrets, err = infra.LiveGitSecrets(ctx, c, lc); err != nil {
+		return outs, false, initErr(err)
+	}
 	if spec, err = spec.WithPlannedProjectSecrets(lc); err != nil {
 		return outs, false, err
 	}
