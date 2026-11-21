@@ -67,7 +67,7 @@ BR6), `docs/no-prompt-policy/`, `docs/design/update-in-flight.md`.
 | The claim admits the job classes and the roster service account, and refuses the rest (R1, R20) | BR2 |
 | Each refusal after the caller is verified writes exactly one audit line, and none carries the ticket or the attestation (R7) | BR2 |
 | The ticket is a variable of the Batch job, in no run record and in no line Fugaro writes (D3115, R7) | BR1, BR4 |
-| A job carrying both the ticket and a sealed entry stops the launch (R5) | BR1 |
+| A Batch job carrying a sealed entry stops the launch (R5, R8; AB9's own rule, and the ticket is not one) | BR1 |
 | The service unreachable stops the run after a bounded retry; it never proceeds without an identity (F23) | BR1, BR4 |
 | Where the block's opt-in fact is absent or withdrawn the launch is refused before anything is created, with opting in and `fugaro update` as its fix; no launch reads the cloud to decide (R3) | BR1, BR7 |
 | `fugaro update` on an installation at the previous version converges, with a Batch run in flight keeping everything it holds (R9, R16) | BR6, BR21, I1 |
@@ -143,16 +143,17 @@ that finds the contract wrong raises a contract change (section 7).
 
 ## 4. Slices and tasks
 
-**Slice 0, inert:** C1, BRS, BR0. Nothing a user can meet changes. C1 rewrites nothing a user
-meets, because its sides do not exist yet; BRS and BR0 are merged.
-**Slice 1, the sides:** BR1 to BR9, BR11 to BR14, BR16, BR17, BR19, BR23. They are not all inert:
-BR6 and BR16 change what `fugaro update` applies, and BR1 with BR16 turns the refusal into a launch
-that cannot yet be claimed. So no CLI release is cut from `main` between the merge of BR1, BR6,
-BR16, BR18 or BR22 and I1, BR23's retirement included — a release that ships half of this pair
-would ship a Batch launch that no service can serve.
-**Slice 2:** BR10, BR15, BR18, BR20, BR21, BR22.
-**Slice 3:** I1. After it, and after the launcher plan's own I1, an updated installation on Batch
-launches.
+**Slice 0, inert:** C1, BRS, BR0 — the level-0 tasks. C1 rewrites nothing a user meets, because its
+sides do not exist yet; BRS and BR0 are merged.
+**Slice 1, the sides:** the level-1 tasks, BR1, BR2, BR4, BR6, BR7, BR8, BR9, BR11, BR13, BR14,
+BR19 and the contract change. They are not all inert: BR6 and BR16 change what `fugaro update`
+applies, and BR1 with BR16 turns the refusal into a launch that cannot yet be claimed. So no CLI
+release is cut from `main` between the merge of BR1, BR6, BR16, BR18 or BR22 and I1, BR23's
+retirement included — a release that ships half of this pair would ship a Batch launch that no
+service can serve.
+**Slice 2** is levels 2 and 3 (BR3, BR5, BR10, BR12, BR16, BR17, BR15, BR18, BR21, BR22, BR23) and
+**slice 3** is level 4 (BR20) with I1. After I1, and after the launcher plan's own I1, an updated
+installation on Batch launches.
 
 **Every task F18 of the launcher plan lists is rewritten, kept or dropped one by one, from its own
 Depends line, in [reconciliation.md](reconciliation.md)'s "Task by task, from each Depends line"** —
@@ -927,7 +928,7 @@ here: nothing starts until the owner approves the amended answers and tasks by n
 The second runs only if raised and is not counted.
 
 **The waits into the launcher plan.** An edge or a change request may only name a node of this
-plan (that plan's O11), so these seven waits stand in prose and in each task's `Depends on` line.
+plan (that plan's O11), so these eight waits stand in prose and in each task's `Depends on` line.
 They are also why D3113 is asked: the two plans share files, and neither graph can hold the other's
 nodes.
 
@@ -962,8 +963,8 @@ behind wrote into the block, feeds the root the project job accounts, and deploy
 the switch the claim's two refusals read. Choosing Batch (`fugaro backends use cloud-batch`, at an
 operator's own terminal) is an opt-in to a feature and is described in the feature notes, not as an
 upgrade step. It asks nothing. Nothing this plan creates is a secret or a key, and nothing per run
-is created at all; the key ring the release behind would have created is **not** created, and an
-installation that already has one keeps it — this plan neither deletes it nor asks anyone to.
+is created at all; the KMS key and key ring the plan asked for before the amendment are **not**
+created, by this plan or by the release behind it, and nothing asks anyone to delete one.
 
 The launcher plan's own after-deploy steps (its LM14's grant move, its LM18's removal of the
 bridge) are its own and are not repeated here; its release notes are the ones that carry them.

@@ -89,7 +89,7 @@ let go on.
 
 | Task | Built on the key or on C1? | What the amendment does |
 | --- | --- | --- |
-| C1 | it *is* the contract | **Re-cut.** The wire, the release route and the key fact go; the opt-in fact and the classes stay; the delta (the attestation, the ticket's job, the job route) takes its place. Rewritten, same id, same level |
+| C1 | it *is* the contract | **Re-cut.** The wire, the release route and the key fact go; the opt-in fact and the classes stay; the delta (the attestation, the ticket's job, the job route) takes their place, in a new document, `contract-batch-claim.md`, while `contract-key-release.md` becomes BR23's to delete. Rewritten, same id, same level |
 | BR1 | yes (C1, the block's key fact) | **Rewritten.** The Batch launch carries the ticket and refuses a sealed entry; it no longer wraps |
 | BR2 | yes (the release route) | **Rewritten.** The route becomes the attestation the claim route calls; same id and level, new object |
 | BR3 | yes (`JobLink`) | **Rewritten.** The link is unchanged in substance — it is what decides a claim now — and is written against the delta |
@@ -110,7 +110,7 @@ let go on.
 | BR22 | yes (C1) | **Rewritten.** The service still refuses where Batch is off; the refusal moves to the ticket and the registration, before any job exists |
 | `R-C1-link-permission` | yes (the wire and the document) | **Kept.** It writes Check 830's fact and O1's read into the re-cut contract; the file it writes changes, its object does not |
 | `R-C1-project-job-account` | yes (the document) | **Kept**, and still runs only if BR10 raises it |
-| I1 | it wires them | **Rewritten.** It wires the attestation and proves the claim end to end; the merged code's retirement is BR23, so I1 no longer deletes a stub |
+| I1 | it wires them | **Rewritten.** It wires the attestation and proves the claim end to end; the merged key-release code's retirement is BR23, so the only stub I1 deletes is the re-cut C1's own (`internal/credsvc/identity_stub.go`) |
 | **BRS** | **free** | **Merged** (#3379). Kept exactly as merged: the four helpers, the deployed-job name |
 | **BR0** | **free** | **Kept**, and its Check 830 is more load-bearing than it was: the link is now the whole of the claim, not one guard on a key release |
 | **BR8, BR9, BR10, BR11** | **free** | **Kept as written.** F8, F9, F10 and D3103/D3104 are untouched by the claim; each still depends on BRS alone (BR10 on BR8) |
@@ -780,10 +780,13 @@ R13 is dropped with the key it was about.**
   then claim as the run it launched — which is the same power it has on Cloud Run.
 - **R21 (`claim-attestation`). What retires, and when (BR23).** The merged key-release code is
   deleted in one task after the sides stop using it: the envelope, the wire and its stub, the key
-  fact with its parser, the settings entry and its schema and golden, and the contract document.
-  The names that stay are the opt-in fact's, the deploy input's and the job-name shape's, all of
-  which the re-cut C1 holds. Until BR23 runs, the code is in the tree and no acceptance depends on
-  it; the plan states that rather than shipping a plan whose C1 and its own tree disagree.
+  fact with its parser, the block's key field and its validation, the settings entry with its
+  schema and golden, the two `batch.seal_key.*` writer rows, and the contract document. The names
+  that stay are the opt-in fact's, which BR23 keeps in the block's file (renamed from
+  `batch_sealkey.go`), the deploy input's and the job-name shape's, which the re-cut C1 holds,
+  moved out of the wire it deletes. Until BR23 runs, the code is in the tree and no acceptance
+  depends on it; the plan states that rather than shipping a plan whose C1 and its own tree
+  disagree.
 
 ## Open tensions
 
