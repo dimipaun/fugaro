@@ -3327,6 +3327,131 @@ run "credentials_service_url_must_be_an_https_host" {
   expect_failures = [var.credentials_service]
 }
 
+# An empty signer_account is admitted, and this run is what that state renders:
+# the installation whose runs' signer the update has not handed over yet
+# carries no issuer at all and its service still starts, so the check the three
+# runs below hold must not be read as "a signer is required" — a deployment
+# refused a plan because its signer is not known yet is the failure to avoid.
+run "credentials_service_signer_account_may_be_empty" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+      signer_account = ""
+    }
+  }
+
+  assert {
+    condition     = length([for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e if e.name == "FUGARO_SIGNER_ACCOUNT"]) == 0
+    error_message = "an installation whose signer_account is empty renders no FUGARO_SIGNER_ACCOUNT: the entry arrives with the account the update hands over, and the process reads its absence as no issuer rather than as an installation that named nobody (LM12, R7)"
+  }
+}
+
+# Each of the identity half's three is a BARE ADDRESS, and these three runs are
+# what holds the module's own validation to that: the service compares each
+# value against the `email` claim of a caller's own Google ID token, so the IAM
+# member spelling the roster takes (user:someone@example.com,
+# serviceAccount:someone@example.com) matches nobody — a deployment that is
+# wrong rather than one the service discovers at its first call (LM12, D3123,
+# R16). One run per member, because a member whose check is dropped is one
+# nobody notices: credentials_service_on's exact map is where the address
+# shapes the three really carry are asserted.
+run "credentials_service_signer_account_must_be_a_bare_address" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+      signer_account = "user:fugaro-signer@aurora-fp.iam.gserviceaccount.com"
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+run "credentials_service_roster_service_accounts_must_be_bare_addresses" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+      roster_service_accounts = ["serviceAccount:pipeline@proj-1234.iam.gserviceaccount.com"]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+run "credentials_service_implicit_admins_must_be_bare_addresses" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+      implicit_admins = ["user:owner@example.com"]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
 # The secrets intake's container, and the one name this release adds to its
 # environment: the region a container the intake creates is replicated in
 # (D3082). The intake runs in the cloud with no project config and no
