@@ -254,11 +254,19 @@ elif what == "crafts":
             row.get("access") or "", row.get("access_from") or "", yes(row.get("inert")),
             yes(row.get("model_servable")), row.get("model_problem") or ""))
 elif what == "node":
-    pools = doc.get("craft_pools") or []
-    creds = doc.get("craft_credentials") or []
-    crafts = doc.get("crafts") or {}
-    print("version=%s" % doc.get("version", ""))
-    print("allowed_models=%s" % ";".join(doc.get("allowed_models") or []))
+    # `fugaro project policy show --json` prints {"project": ..., "policy": ...}:
+    # every block of the node is a member of `policy`, and read at the top level
+    # each one is null — an allow-list read that way is always empty, so the row
+    # below measures nothing.
+    policy = doc.get("policy")
+    policy = policy if isinstance(policy, dict) else {}
+    budget = policy.get("budget")
+    budget = budget if isinstance(budget, dict) else {}
+    pools = policy.get("craft_pools") or []
+    creds = policy.get("craft_credentials") or []
+    crafts = policy.get("crafts") or {}
+    print("version=%s" % policy.get("version", ""))
+    print("allowed_models=%s" % ";".join(budget.get("allowed_models") or []))
     print("pools=%d" % len(pools))
     print("credentials=%d" % len(creds))
     for p in pools:

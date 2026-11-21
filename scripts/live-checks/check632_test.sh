@@ -366,15 +366,17 @@ JSON
 JSON
 }
 
+# Each node document is what `fugaro project policy show --json` prints: the
+# node's blocks are members of `policy`, under the object's project.
 write_nodes() { # json-dir
   cat >"$1/node-before.json" <<JSON
-{"version":8,"craft_credentials":[{"name":"claude-oauth-work","type":"anthropic"}],"craft_pools":[{"name":"coder-pool","strategy":"failover","members":["claude-oauth-work"]}],"crafts":{"coder":{"model":"$model","access":"coder-pool"}}}
+{"project":"$installation","policy":{"version":8,"craft_credentials":[{"name":"claude-oauth-work","type":"anthropic"}],"craft_pools":[{"name":"coder-pool","strategy":"failover","members":["claude-oauth-work"]}],"crafts":{"coder":{"model":"$model","access":"coder-pool"}}}}
 JSON
   cat >"$1/node-after.json" <<JSON
-{"version":9,"craft_credentials":[{"name":"claude-oauth-work","type":"anthropic"}],"craft_pools":[{"name":"coder-pool","strategy":"failover","members":["claude-oauth-work"]}],"crafts":{"coder":{"model":"$model","access":"coder-pool"}}}
+{"project":"$installation","policy":{"version":9,"craft_credentials":[{"name":"claude-oauth-work","type":"anthropic"}],"craft_pools":[{"name":"coder-pool","strategy":"failover","members":["claude-oauth-work"]}],"crafts":{"coder":{"model":"$model","access":"coder-pool"}}}}
 JSON
   cat >"$1/node-after-old.json" <<JSON
-{"version":7,"craft_credentials":[{"name":"claude-oauth-work","type":"anthropic"}],"craft_pools":[{"name":"coder-pool","strategy":"failover","members":["claude-oauth-work"]}],"crafts":{"coder":{"model":"$model","access":"coder-pool"}}}
+{"project":"$installation","policy":{"version":7,"craft_credentials":[{"name":"claude-oauth-work","type":"anthropic"}],"craft_pools":[{"name":"coder-pool","strategy":"failover","members":["claude-oauth-work"]}],"crafts":{"coder":{"model":"$model","access":"coder-pool"}}}}
 JSON
 }
 

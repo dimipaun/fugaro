@@ -300,21 +300,23 @@ coder-pool  failover  $first_member, $second_member  OpenRouter (api key)
 TXT
 }
 
+# Each node document is what `fugaro project policy show --json` prints: the
+# node's blocks are members of `policy`, under the object's project.
 write_nodes() { # json-dir
   cat >"$1/node.json" <<JSON
-{"version":10,"craft_credentials":[{"name":"$first_member","type":"openrouter"},{"name":"$second_member","type":"openrouter"}],"craft_pools":[{"name":"$pool","strategy":"failover","members":["$first_member","$second_member"]}],"crafts":{"coder":{"model":"$model","access":"$pool"}}}
+{"project":"$installation","policy":{"version":10,"craft_credentials":[{"name":"$first_member","type":"openrouter"},{"name":"$second_member","type":"openrouter"}],"craft_pools":[{"name":"$pool","strategy":"failover","members":["$first_member","$second_member"]}],"crafts":{"coder":{"model":"$model","access":"$pool"}}}}
 JSON
   cat >"$1/node-other-order.json" <<JSON
-{"version":10,"craft_credentials":[{"name":"$first_member","type":"openrouter"},{"name":"$second_member","type":"openrouter"}],"craft_pools":[{"name":"$pool","strategy":"failover","members":["$second_member","$first_member"]}],"crafts":{"coder":{"model":"$model","access":"$pool"}}}
+{"project":"$installation","policy":{"version":10,"craft_credentials":[{"name":"$first_member","type":"openrouter"},{"name":"$second_member","type":"openrouter"}],"craft_pools":[{"name":"$pool","strategy":"failover","members":["$second_member","$first_member"]}],"crafts":{"coder":{"model":"$model","access":"$pool"}}}}
 JSON
   cat >"$1/node-no-pools.json" <<JSON
-{"version":10,"craft_credentials":[{"name":"$first_member","type":"openrouter"},{"name":"$second_member","type":"openrouter"}],"crafts":{"coder":{"model":"$model","access":"$pool"}}}
+{"project":"$installation","policy":{"version":10,"craft_credentials":[{"name":"$first_member","type":"openrouter"},{"name":"$second_member","type":"openrouter"}],"crafts":{"coder":{"model":"$model","access":"$pool"}}}}
 JSON
   cat >"$1/node-no-credential.json" <<JSON
-{"version":10,"craft_credentials":[{"name":"$first_member","type":"openrouter"}],"craft_pools":[{"name":"$pool","strategy":"failover","members":["$first_member","$second_member"]}],"crafts":{"coder":{"model":"$model","access":"$pool"}}}
+{"project":"$installation","policy":{"version":10,"craft_credentials":[{"name":"$first_member","type":"openrouter"}],"craft_pools":[{"name":"$pool","strategy":"failover","members":["$first_member","$second_member"]}],"crafts":{"coder":{"model":"$model","access":"$pool"}}}}
 JSON
   cat >"$1/node-no-crafts.json" <<JSON
-{"version":10,"craft_credentials":[{"name":"$first_member","type":"openrouter"},{"name":"$second_member","type":"openrouter"}],"craft_pools":[{"name":"$pool","strategy":"failover","members":["$first_member","$second_member"]}],"crafts":{}}
+{"project":"$installation","policy":{"version":10,"craft_credentials":[{"name":"$first_member","type":"openrouter"},{"name":"$second_member","type":"openrouter"}],"craft_pools":[{"name":"$pool","strategy":"failover","members":["$first_member","$second_member"]}],"crafts":{}}}
 JSON
 }
 

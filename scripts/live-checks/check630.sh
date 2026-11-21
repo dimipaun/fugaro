@@ -205,10 +205,16 @@ if what == "creds":
         print("cred\t%s\t%s\t%s" % (
             c.get("name") or "", c.get("type") or "", c.get("serving_path") or ""))
 elif what == "node":
-    pools = doc.get("craft_pools") or []
-    creds = doc.get("craft_credentials") or []
-    crafts = doc.get("crafts") or {}
-    print("version=%s" % doc.get("version", ""))
+    # `fugaro project policy show --json` prints {"project": ..., "policy": ...}:
+    # every block of the node is a member of `policy`, and read at the top level
+    # each one is null — a node row built from those nulls calls a correct
+    # installation broken.
+    policy = doc.get("policy")
+    policy = policy if isinstance(policy, dict) else {}
+    pools = policy.get("craft_pools") or []
+    creds = policy.get("craft_credentials") or []
+    crafts = policy.get("crafts") or {}
+    print("version=%s" % policy.get("version", ""))
     print("pools=%d" % len(pools))
     print("credentials=%d" % len(creds))
     print("crafts=%d" % len(crafts))
@@ -223,13 +229,18 @@ elif what == "node":
         print("nodecraft\t%s\t%s\t%s" % (
             name, row.get("model") or "", row.get("access") or ""))
 elif what == "crossing":
+    # The crossed pool is a member of `policy` in this document too: read from
+    # the top level there is no credential and no pool, so every node would read
+    # as carrying no crossing at all.
+    policy = doc.get("policy")
+    policy = policy if isinstance(policy, dict) else {}
     types = {}
-    for c in doc.get("craft_credentials") or []:
+    for c in policy.get("craft_credentials") or []:
         types[c.get("name") or ""] = c.get("type") or ""
     if "vertex" not in types:
         types["vertex"] = "vertex"
     crossed = []
-    for p in doc.get("craft_pools") or []:
+    for p in policy.get("craft_pools") or []:
         seen = {}
         for m in p.get("members") or []:
             path = PATHS.get(types.get(m, ""), "")

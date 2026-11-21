@@ -207,6 +207,24 @@ func TestDocsModelCraftsChecksStatesWhatOnlyTheRunSettles(t *testing.T) {
 	}
 }
 
+// TestDocsModelCraftsChecksReadThePolicyThroughItsOwnMember: `fugaro project
+// policy show --json` prints {"project": ..., "policy": ...} — the document is
+// an object whose only members are those two — and each of these checks reads
+// the node's blocks (`craft_credentials`, `craft_pools`, `crafts`, and 628's
+// allow-list under the policy's budget) out of it. Taken off the top level each
+// one is null, so the row is built from nothing: 629's own `node-blocks` row
+// then reports a correct installation as one the publish did not write. The
+// cascade checks' test (docs_credentials_cascade_checks_test.go, checks 94/95
+// and 99) pins the same defect in the sections that quote their reader.
+func TestDocsModelCraftsChecksReadThePolicyThroughItsOwnMember(t *testing.T) {
+	for _, c := range modelCraftsChecks {
+		script := "scripts/live-checks/check" + c.number + ".sh"
+		if !strings.Contains(readRepoFile(t, script), `doc.get("policy")`) {
+			t.Errorf("%s does not read the policy node through the document's `policy` member, which is where `fugaro project policy show --json` puts it: read at the top level every block of the node is null, and a row built from those nulls calls a correct installation broken", script)
+		}
+	}
+}
+
 // TestDocsModelCraftsChecksNameEveryBlockKey: each section's "Reading the
 // `CHECK NNN RESULT` block." paragraph is what the owner diffs a pasted block
 // against, so it names every key the block prints, and what the block prints is

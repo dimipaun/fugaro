@@ -223,10 +223,16 @@ elif what == "credentials":
         print("cred\t%s\t%s\t%s" % (
             c.get("name") or "", c.get("type") or "", c.get("serving_path") or ""))
 elif what == "node":
-    pools = doc.get("craft_pools") or []
-    creds = doc.get("craft_credentials") or []
-    crafts = doc.get("crafts") or {}
-    print("version=%s" % doc.get("version", ""))
+    # `fugaro project policy show --json` prints {"project": ..., "policy": ...}:
+    # every block of the node is a member of `policy`, and read at the top level
+    # each one is null — a node row built from those nulls calls a correct
+    # installation broken.
+    policy = doc.get("policy")
+    policy = policy if isinstance(policy, dict) else {}
+    pools = policy.get("craft_pools") or []
+    creds = policy.get("craft_credentials") or []
+    crafts = policy.get("crafts") or {}
+    print("version=%s" % policy.get("version", ""))
     print("pools=%d" % len(pools))
     print("credentials=%d" % len(creds))
     print("crafts=%d" % len(crafts))

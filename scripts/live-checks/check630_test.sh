@@ -309,18 +309,20 @@ $crossed_pool           round-robin  $runner_member, $credsvc_member  the creden
 TXT
 }
 
+# Each node document is what `fugaro project policy show --json` prints: the
+# node's blocks are members of `policy`, under the object's project.
 write_nodes() { # json-dir
   cat >"$1/node.json" <<JSON
-{"version":10,"craft_credentials":[{"name":"$runner_member","type":"openrouter"},{"name":"$credsvc_member","type":"anthropic"},{"name":"$oauth_member","type":"claude-oauth"}],"craft_pools":[{"name":"coder-pool","strategy":"failover","members":["$runner_member"]},{"name":"claude-pool","strategy":"failover","members":["$oauth_member"]}],"crafts":{"coder":{"model":"deepseek/deepseek-v4","access":"coder-pool"}}}
+{"project":"$installation","policy":{"version":10,"craft_credentials":[{"name":"$runner_member","type":"openrouter"},{"name":"$credsvc_member","type":"anthropic"},{"name":"$oauth_member","type":"claude-oauth"}],"craft_pools":[{"name":"coder-pool","strategy":"failover","members":["$runner_member"]},{"name":"claude-pool","strategy":"failover","members":["$oauth_member"]}],"crafts":{"coder":{"model":"deepseek/deepseek-v4","access":"coder-pool"}}}}
 JSON
   cat >"$1/node-after-split.json" <<JSON
-{"version":11,"craft_credentials":[{"name":"$runner_member","type":"openrouter"},{"name":"$credsvc_member","type":"anthropic"},{"name":"$oauth_member","type":"claude-oauth"}],"craft_pools":[{"name":"$crossed_pool-claude","strategy":"round-robin","members":["$credsvc_member","$oauth_member"]},{"name":"$crossed_pool-provider","strategy":"round-robin","members":["$runner_member"]}],"crafts":{"coder":{"model":"deepseek/deepseek-v4","access":"$crossed_pool-provider"}}}
+{"project":"$installation","policy":{"version":11,"craft_credentials":[{"name":"$runner_member","type":"openrouter"},{"name":"$credsvc_member","type":"anthropic"},{"name":"$oauth_member","type":"claude-oauth"}],"craft_pools":[{"name":"$crossed_pool-claude","strategy":"round-robin","members":["$credsvc_member","$oauth_member"]},{"name":"$crossed_pool-provider","strategy":"round-robin","members":["$runner_member"]}],"crafts":{"coder":{"model":"deepseek/deepseek-v4","access":"$crossed_pool-provider"}}}}
 JSON
   cat >"$1/node-still-crossing.json" <<JSON
-{"version":11,"craft_credentials":[{"name":"$runner_member","type":"openrouter"},{"name":"$credsvc_member","type":"anthropic"}],"craft_pools":[{"name":"$crossed_pool","strategy":"failover","members":["$runner_member","$credsvc_member"]}],"crafts":{"coder":{"model":"deepseek/deepseek-v4","access":"$crossed_pool"}}}
+{"project":"$installation","policy":{"version":11,"craft_credentials":[{"name":"$runner_member","type":"openrouter"},{"name":"$credsvc_member","type":"anthropic"}],"craft_pools":[{"name":"$crossed_pool","strategy":"failover","members":["$runner_member","$credsvc_member"]}],"crafts":{"coder":{"model":"deepseek/deepseek-v4","access":"$crossed_pool"}}}}
 JSON
   cat >"$1/node-version-down.json" <<JSON
-{"version":8,"craft_credentials":[{"name":"$runner_member","type":"openrouter"},{"name":"$credsvc_member","type":"anthropic"}],"craft_pools":[{"name":"coder-pool","strategy":"failover","members":["$runner_member"]}],"crafts":{"coder":{"model":"deepseek/deepseek-v4","access":"coder-pool"}}}
+{"project":"$installation","policy":{"version":8,"craft_credentials":[{"name":"$runner_member","type":"openrouter"},{"name":"$credsvc_member","type":"anthropic"}],"craft_pools":[{"name":"coder-pool","strategy":"failover","members":["$runner_member"]}],"crafts":{"coder":{"model":"deepseek/deepseek-v4","access":"coder-pool"}}}}
 JSON
 }
 

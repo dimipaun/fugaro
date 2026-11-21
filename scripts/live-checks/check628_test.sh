@@ -284,18 +284,21 @@ JSON
   esac
 }
 
+# The node documents are what `fugaro project policy show --json` prints: an
+# object whose only members are the project and the policy, with every block of
+# the node a member of `policy` — the allow-list under its budget.
 write_nodes() { # json-dir
   cat >"$1/node.json" <<JSON
-{"version":10,"craft_credentials":[{"name":"$credential","type":"openrouter"}],"craft_pools":[],"crafts":{"coder":{"model":"$model","access":"$credential"}},"allowed_models":["$model","claude-sonnet-5"],"subscription_spread":"allowed"}
+{"project":"$installation","policy":{"version":10,"budget":{"allowed_models":["$model","claude-sonnet-5"]},"craft_credentials":[{"name":"$credential","type":"openrouter"}],"craft_pools":[],"crafts":{"coder":{"model":"$model","access":"$credential"}},"subscription_spread":"allowed"}}
 JSON
   cat >"$1/node-no-allow-list.json" <<JSON
-{"version":10,"craft_credentials":[{"name":"$credential","type":"openrouter"}],"craft_pools":[],"crafts":{"coder":{"model":"$model","access":"$credential"}}}
+{"project":"$installation","policy":{"version":10,"budget":{},"craft_credentials":[{"name":"$credential","type":"openrouter"}],"craft_pools":[],"crafts":{"coder":{"model":"$model","access":"$credential"}}}}
 JSON
   cat >"$1/node-other-allow-list.json" <<'JSON'
-{"version":10,"craft_credentials":[{"name":"deepseek-key","type":"openrouter"}],"craft_pools":[],"crafts":{"coder":{"model":"deepseek/deepseek-v4","access":"deepseek-key"}},"allowed_models":["claude-sonnet-5"]}
+{"project":"sandbox","policy":{"version":10,"budget":{"allowed_models":["claude-sonnet-5"]},"craft_credentials":[{"name":"deepseek-key","type":"openrouter"}],"craft_pools":[],"crafts":{"coder":{"model":"deepseek/deepseek-v4","access":"deepseek-key"}}}}
 JSON
   cat >"$1/node-pool.json" <<JSON
-{"version":10,"craft_credentials":[{"name":"$credential","type":"openrouter"},{"name":"openrouter-x","type":"openrouter"}],"craft_pools":[{"name":"coder-pool","strategy":"failover","members":["$credential","openrouter-x"]}],"crafts":{"coder":{"model":"$model","access":"coder-pool"}},"allowed_models":["$model"]}
+{"project":"$installation","policy":{"version":10,"budget":{"allowed_models":["$model"]},"craft_credentials":[{"name":"$credential","type":"openrouter"},{"name":"openrouter-x","type":"openrouter"}],"craft_pools":[{"name":"coder-pool","strategy":"failover","members":["$credential","openrouter-x"]}],"crafts":{"coder":{"model":"$model","access":"coder-pool"}}}}
 JSON
 }
 

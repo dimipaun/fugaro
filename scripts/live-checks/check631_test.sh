@@ -267,7 +267,7 @@ project)
       printf 'fugaro: the node could not be read back\n' >&2
       exit 1
     fi
-    printf '{"version":10,"project":"%s","craft_credentials":[{"name":"%s","type":"anthropic"}],"craft_pools":[{"name":"%s","strategy":"failover","members":["%s"]}],"crafts":{"%s":{"model":"deepseek/deepseek-v4","access":"%s"}}}\n' \
+    printf '{"project":"%s","policy":{"version":10,"craft_credentials":[{"name":"%s","type":"anthropic"}],"craft_pools":[{"name":"%s","strategy":"failover","members":["%s"]}],"crafts":{"%s":{"model":"deepseek/deepseek-v4","access":"%s"}}}}\n' \
       "$installation" "$anthropic" "$pool" "$anthropic" "$craft" "$pool"
     ;;
   *) printf 'fugaro: unexpected policy subcommand\n' >&2; exit 1 ;;
