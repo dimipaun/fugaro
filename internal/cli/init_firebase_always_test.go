@@ -157,8 +157,13 @@ func TestAStateNamingAForeignProjectIsNotAdopted(t *testing.T) {
 	r := alwaysRig(t)
 	mayCreate(t, r)
 	r.firebaseState(t)
+	// The triple is self-consistent and names other-fp in all three parts, so
+	// the project pin in CheckFirebaseOutputsFor is the ONLY check that can
+	// refuse it: an rtdb_url naming yet another project would be refused by
+	// that function's URL branch just as well, and this test would pass with
+	// the pin removed, which is the one thing it exists to pin.
 	r.script["output@firebase"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
-		"rtdb_url": "https://someone-elses-default-rtdb.firebaseio.com", "firebase_api_key": fpAPIKey,
+		"rtdb_url": "https://other-fp-default-rtdb.firebaseio.com", "firebase_api_key": fpAPIKey,
 		"token_signer": "fugaro-token-signer@other-fp.iam.gserviceaccount.com", "firebase_project": "other-fp",
 	})}
 	r.save(t)
