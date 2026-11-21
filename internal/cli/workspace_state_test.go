@@ -668,12 +668,12 @@ func TestStateSaveHostIsTheRepositorysOwn(t *testing.T) {
 	}
 	ran := wu15Calls(t, gitCalls, ghCalls)
 	for _, want := range []string{
-		"repo view acme/state --json visibility",
+		"repo view github.com/acme/state --json visibility",
 		"clone --quiet -- https://github.com/acme/state.git",
 		"checkout --quiet -b fugaro/state-20261121-093000",
 		"add -- docs/state/members/acme-app.json",
 		"push --quiet origin fugaro/state-20261121-093000",
-		"pr create --repo acme/state --head fugaro/state-20261121-093000 --base main",
+		"pr create --repo github.com/acme/state --head fugaro/state-20261121-093000 --base main",
 	} {
 		if !strings.Contains(ran, want) {
 			t.Errorf("the save never ran %q. Everything it ran:\n%s", want, ran)
@@ -703,6 +703,73 @@ func TestStateSaveHostIsTheRepositorysOwn(t *testing.T) {
 	}
 	if url := statePRURL("opened a pull request\n"); url != "" {
 		t.Errorf("statePRURL read %q off an answer that holds no URL, want nothing so the save refuses", url)
+	}
+}
+
+// TestStateSaveGHHostCannotMoveTheRepository: the repository a save's fence
+// reads and the repository it pushes to are the same one, whatever the
+// environment says. Both gh calls write the host into the repository argument
+// (the [HOST/]OWNER/REPO form gh takes), and gh is handed GHEnv's environment,
+// with GH_HOST and GH_REPO dropped.
+//
+// The scenario this holds off (F22, the same one issues.GHEnv and
+// internal/watch's ask guard against): a person logged in to an enterprise
+// GitHub as well, with GH_HOST exported. A
+// bare owner/name is resolved against that default host, so the visibility read
+// would be about ghe.corp's acme/state — private — while the clone and the push
+// went to github.com/acme/state, which may be public: the fence would pass and
+// the snapshot, which carries the addresses the project reaches (D2824), would
+// land in a public repository, with `gh pr create` failing only afterwards.
+func TestStateSaveGHHostCannotMoveTheRepository(t *testing.T) {
+	t.Setenv("GH_HOST", "ghe.corp.example")
+	t.Setenv("GH_REPO", "someone/else")
+
+	gitCalls := wu15FakeGit(t)
+	ghCalls := wu15FakeGH(t)
+
+	s := wu15New(t, "")
+	s.des.d = stateDesignation{Repo: "acme/state", Dir: "docs/state", Provider: gitprov.KindGitHub, Source: "the project layer"}
+	s.w.hosts = stateHostsFor("")
+
+	if _, err := s.w.Save(context.Background(), wu15Member()); err != nil {
+		t.Fatalf("a save through the GitHub host failed: %v", err)
+	}
+	ran := wu15Calls(t, ghCalls)
+	for _, want := range []string{
+		"repo view github.com/acme/state --json visibility",
+		"pr create --repo github.com/acme/state --head",
+	} {
+		if !strings.Contains(ran, want) {
+			t.Errorf("the save never ran %q, so with GH_HOST exported its gh resolved the repository against the wrong host. Everything gh ran:\n%s", want, ran)
+		}
+	}
+	// The other direction: a bare repository is what GH_HOST moves, so neither
+	// call may name one — that is the mutation this test exists for.
+	for _, bare := range []string{"view acme/state", "--repo acme/state"} {
+		if strings.Contains(ran, bare) {
+			t.Errorf("the save ran gh with %q, which its default host resolves. Everything gh ran:\n%s", bare, ran)
+		}
+	}
+	// The clone and the push are the other half: they go to github.com whatever
+	// GH_HOST says, which is the repository the fence above has to have been
+	// about.
+	if cloned := wu15Calls(t, gitCalls); !strings.Contains(cloned, "clone --quiet -- https://github.com/acme/state.git") {
+		t.Errorf("the save's clone did not name github.com:\n%s", cloned)
+	}
+	// And the environment itself, for both calls: an inherited GH_HOST or
+	// GH_REPO is dropped, and GH_PROMPT_DISABLED is set, because no command of
+	// this tree may leave anything able to ask a person a question
+	// (docs/no-prompt-policy).
+	for _, sub := range []string{"repo", "pr"} {
+		env := wu15GHEnv(t, ghCalls, sub)
+		for _, name := range []string{"GH_HOST", "GH_REPO"} {
+			if v, ok := env[name]; ok {
+				t.Errorf("the save handed the `gh %s` call %s=%q, want it dropped: gh would resolve the repository against it", sub, name, v)
+			}
+		}
+		if got := env["GH_PROMPT_DISABLED"]; got != "1" {
+			t.Errorf("the save ran `gh %s` with GH_PROMPT_DISABLED=%q, want 1: a gh that could ask would wait on a terminal", sub, got)
+		}
 	}
 }
 
@@ -1017,9 +1084,30 @@ const wu15GitEnvFile = "env"
 // what the fake is run with and dumps.
 func wu15GitEnv(t *testing.T, calls string) map[string]string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(calls), wu15GitEnvFile))
+	return wu15EnvNamed(t, calls, wu15GitEnvFile)
+}
+
+// wu15GHEnvPrefix is the stem of the file the fake gh dumps its environment
+// into, with the subcommand's first word appended: "ghenv-repo" for the
+// visibility read, "ghenv-pr" for the pull request. Both are read because both
+// are handed an environment of their own, and a save that got it right for one
+// call and not the other would otherwise pass.
+const wu15GHEnvPrefix = "ghenv-"
+
+// wu15GHEnv is the environment the gh of one subcommand family was handed, by
+// name. sub is that word: "repo" or "pr".
+func wu15GHEnv(t *testing.T, calls, sub string) map[string]string {
+	t.Helper()
+	return wu15EnvNamed(t, calls, wu15GHEnvPrefix+sub)
+}
+
+// wu15EnvNamed reads the environment a fake dumped into name, beside the calls
+// it recorded.
+func wu15EnvNamed(t *testing.T, calls, name string) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(calls), name))
 	if err != nil {
-		t.Fatalf("the fake git recorded no environment, so a save's git was handed none: %v", err)
+		t.Fatalf("the fake recorded no environment in %s, so the command was handed none of its own: %v", name, err)
 	}
 	env := map[string]string{}
 	for _, kv := range strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n") {
@@ -1054,7 +1142,9 @@ exit 0
 
 // wu15FakeGH puts a `gh` on PATH that answers the two calls a save makes: the
 // repository's visibility as JSON (`gh repo view --json` is real), and the pull
-// request as the plain URL `gh pr create` prints.
+// request as the plain URL `gh pr create` prints. It records the environment it
+// was run with, one file per subcommand, which is what tells apart the
+// environment one call was handed from the other's (wu15GHEnv).
 //
 // It is gh's behaviour over the flag it does NOT have, though, that a save has
 // to be held to: `gh pr create` has no --json, and the real gh refuses the whole
@@ -1065,6 +1155,7 @@ exit 0
 func wu15FakeGH(t *testing.T) string {
 	t.Helper()
 	return testutil.FakeCommand(t, stateGH, `
+env > "${0%/*}/`+wu15GHEnvPrefix+`$1"
 case "$1 $2" in
 "repo view") echo '{"visibility":"PRIVATE"}' ;;
 "pr create")

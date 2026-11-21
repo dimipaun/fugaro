@@ -49,6 +49,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
+	"github.com/dimipaun/fugaro/internal/issues"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/procgroup"
@@ -579,12 +580,32 @@ func statePRBody(s workspace.Snapshot, taken time.Time) string {
 // of its own would be a second identity pushing a person's state.
 type stateGitHubHost struct{}
 
-// Visibility implements stateHost: `gh repo view <repo> --json visibility`.
+// stateGitHubRepo is the repository as a save names it to gh and to git: the
+// host written out with the slug, in the [HOST/]OWNER/REPO form gh's --repo
+// takes. A bare owner/name is resolved against gh's DEFAULT host, and GH_HOST
+// is what sets that default.
+//
+// That is the whole hazard (F22; issues.GHEnv and internal/watch's own ask
+// handle it the same way). An operator who is logged in to an enterprise GitHub
+// as well, with GH_HOST exported, would have `gh repo view` read the visibility
+// of THEIR enterprise's acme/state while the clone and the push go to
+// github.com/acme/state. The fence would pass on another host's private
+// repository and the snapshot — which carries the addresses the project reaches
+// (D2824) — would land in a public one, with `gh pr create` failing only after
+// the push. The host is stateHostName's github.com, the one map of provider and
+// host this tree has, so the clone URL, the gh argument and the target line a
+// save prints before pushing cannot drift apart.
+func stateGitHubRepo(repo string) string {
+	return stateHostName(gitprov.KindGitHub) + "/" + repo
+}
+
+// Visibility implements stateHost: `gh repo view github.com/<repo> --json
+// visibility`, with GHEnv's environment, which drops GH_HOST and GH_REPO.
 func (h stateGitHubHost) Visibility(ctx context.Context, repo string) (stateVisibility, error) {
 	var answer struct {
 		Visibility string `json:"visibility"`
 	}
-	if err := stateRunJSON(ctx, nil, "", &answer, stateGH, "repo", "view", repo, "--json", "visibility"); err != nil {
+	if err := stateRunJSON(ctx, issues.GHEnv(os.Environ()), "", &answer, stateGH, "repo", "view", stateGitHubRepo(repo), "--json", "visibility"); err != nil {
 		return stateVisibilityUnknown, err
 	}
 	switch strings.ToUpper(answer.Visibility) {
@@ -612,12 +633,12 @@ func (h stateGitHubHost) Visibility(ctx context.Context, repo string) (stateVisi
 // (`unknown flag: --json`), after the branch was already pushed, leaving a
 // branch on the host and no pull request to tell anyone about it.
 func (h stateGitHubHost) Publish(ctx context.Context, p statePublish) (string, error) {
-	base, err := stateCloneAndCommit(ctx, nil, p, "https://github.com/"+p.Repo+".git")
+	base, err := stateCloneAndCommit(ctx, nil, p, "https://"+stateGitHubRepo(p.Repo)+".git")
 	if err != nil {
 		return "", err
 	}
-	out, err := stateOutput(ctx, nil, "", stateGH, "pr", "create",
-		"--repo", p.Repo, "--head", p.Branch, "--base", base,
+	out, err := stateOutput(ctx, issues.GHEnv(os.Environ()), "", stateGH, "pr", "create",
+		"--repo", stateGitHubRepo(p.Repo), "--head", p.Branch, "--base", base,
 		"--title", p.Subject, "--body", p.Body)
 	if err != nil {
 		return "", err
