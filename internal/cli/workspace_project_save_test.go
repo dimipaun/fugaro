@@ -41,7 +41,9 @@ func wu23NoAgent(t *testing.T) {
 
 // wu23Owner is the config of the project the workspace is named after: the
 // member table D2821 puts on the owner's machine, one entry per member named
-// here, each with the Firebase project the member's own config declares.
+// here, each with the Firebase project the member's own config declares. The
+// names given are the table's keys, which are the members' Fugaro project names
+// — the names a snapshot is filed under, and not GCP project ids.
 func wu23Owner(members ...string) *localcfg.Config {
 	table := make(map[string]localcfg.WorkspaceMember, len(members))
 	for _, m := range members {
@@ -246,6 +248,35 @@ func TestProjectSaveRefusesInAnAgentSession(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), agentMarkers[0]) {
 		t.Errorf("the refusal does not name the marker that made the session an agent's: %v", err)
+	}
+}
+
+// TestProjectSaveRefusesHTTP2Debug: every cloud command of this repository
+// refuses to run while GODEBUG holds http2debug, because Go then prints HTTP/2
+// requests — the OAuth bearer token of the owner's own ADC included — to
+// stderr, and GODEBUG is read before main runs so it cannot be unset in time
+// (refuseHTTP2Debug). A save reads the workspace's roster through C1's Store and
+// hands the owner's credentials to a writer that pushes with them, and it
+// resolves the workspace's own project rather than selecting one, so it never
+// passes through openCloud or openBudgetDB, which is where the project scopes
+// get the refusal: without its own it is the one save that leaks the token.
+func TestProjectSaveRefusesHTTP2Debug(t *testing.T) {
+	w := &wu23FakeWriter{}
+	deps := workspaceProjectSaveDeps{
+		Owner:  wu23Owner("member-a", "member-b"),
+		Store:  &wu23FakeStore{raw: wu23Roster(t), found: true},
+		Writer: w,
+	}
+	t.Setenv("GODEBUG", "http2debug=2")
+
+	for _, args := range [][]string{{"member-a"}, {}, {"--audit"}} {
+		out, err := wu23Run(t, deps, args...)
+		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") {
+			t.Errorf("project save %v under GODEBUG=http2debug: %v (printed %q), want the refusal every cloud command makes: Go would print the owner's bearer token to stderr", args, err, out)
+		}
+	}
+	if len(w.saved) != 0 {
+		t.Errorf("a save that ran under GODEBUG=http2debug wrote snapshots: %+v", w.saved)
 	}
 }
 

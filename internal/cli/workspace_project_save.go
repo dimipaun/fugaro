@@ -127,6 +127,18 @@ agent's session, and it asks nothing.`,
 }
 
 func runWorkspaceProjectSave(cmd *cobra.Command, deps workspaceProjectSaveDeps, args []string, o workspaceProjectSaveOptions) error {
+	// First, before anything is read: GODEBUG=http2debug makes Go print HTTP/2
+	// requests with their headers — the OAuth bearer token of the owner's own
+	// ADC, which is what the roster read and the writer's push both
+	// authenticate with — to stderr, and GODEBUG is read before main runs, so
+	// it cannot be unset in time. This command resolves the workspace's own
+	// project and its own database rather than passing through openCloud or
+	// openBudgetDB, which is where the project scopes get the refusal, so it
+	// has to make it here (refuseHTTP2Debug, the rule every cloud command of
+	// this repository follows).
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return err
+	}
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		return userErr("nothing was saved: a state snapshot carries a member's own settings, its spend and the addresses the workspace reaches it by, and it is filed with your own credentials, so a save is your own step at your own terminal (D2824): %s", initflow.AgentRefusal(m))
 	}
@@ -198,11 +210,20 @@ func workspaceSaveTargets(lc *localcfg.Config) (string, []workspace.MemberTarget
 	members := make([]workspace.MemberTarget, 0, len(table))
 	for _, member := range slices.Sorted(maps.Keys(table)) {
 		members = append(members, workspace.MemberTarget{
+			// The table is keyed by the member's Fugaro project name -- the
+			// name the published record's members[].project carries and the
+			// workspace's credentials node is read by (spec.md §5) -- and that
+			// is the name a snapshot is filed under, which is the name
+			// Snapshot.Member's Project holds for a save. It is NOT the
+			// member's GCP project: the owner's machine holds none (the table
+			// declares the member's Firebase project and its fp, which is this
+			// same name), and no snapshot reaches a member's GCP project.
 			Project: member,
-			// The member's Firebase project travels beside its GCP project on
-			// every call that reaches the member (F2, R10); it is the empty
-			// name for a member whose Firebase project is its GCP project,
-			// which is the declaration the table itself makes.
+			// The member's Firebase project travels beside it on every call
+			// that reaches the member (F2, R10), and it is the project the
+			// member's own settings and spend summary are read from; it is the
+			// empty name for a member whose Firebase project is its GCP
+			// project, which is the declaration the table itself makes.
 			Firebase: table[member].FirebaseProject,
 		})
 	}
