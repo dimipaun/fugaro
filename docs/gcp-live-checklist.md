@@ -23796,9 +23796,11 @@ reached, and the first thing it reads is the opposite. Each of the four checkout
 writes its own old `agent.auth` (`oauth`, `api-key`, `cascade`, `vertex`); the database's `creds` node carries
 the four old records (`creds/repoauth/<slug>`) and **no** access record (`creds/repoaccess`) at all. Any leg
 failing is a row reading FAIL and a **STOP (exit 2)** — the check launches **five billable runs**, and every
-row below would be a row about nothing. The database's URL comes out of `fugaro doctor --json`, or from
-`--rtdb-url` when doctor names none: an installation whose records cannot be read is a stop too, because no row
-below can be measured without them. The check launches **no run** before the premise holds.
+row below would be a row about nothing. The database's URL comes out of the installation's own local project
+config (`${XDG_CONFIG_HOME:-$HOME/.config}/fugaro/projects/<installation>.yaml`, key `budget.rtdb_url`), or from
+`--rtdb-url` when that file names none — `fugaro doctor --json` carries no database address, so it is not a
+source. An installation whose records cannot be read is a stop too, because no row below can be measured
+without them. The check launches **no run** before the premise holds.
 
 **Prerequisites.** An installation **at the previous release** that you may upgrade, and four **git checkouts**
 of its repositories — one on a subscription, one on an Anthropic key, one on the cascade, one on Vertex — each
@@ -23848,8 +23850,9 @@ owner**), `curl`, `git`, `python3` and `mktemp` on PATH; nothing is installed an
 `CHECK810_INSTALLATION`, `CHECK810_OAUTH`, `CHECK810_API_KEY`, `CHECK810_CASCADE`, `CHECK810_VERTEX`,
 `CHECK810_JOB`, `CHECK810_GCP_PROJECT`, `CHECK810_REGION`, `CHECK810_RTDB_URL`, `CHECK810_ACCESS_HEADER`,
 `CHECK810_SIGNER`, `CHECK810_SERVICE` (the credentials service's name, `fugaro-credentials` by default),
-`CHECK810_DRY_RUN`, and the polling, logging and curl knobs the test uses to keep a case short
-(`CHECK810_POLLS`, `CHECK810_POLL_SECONDS`, `CHECK810_LOG_AGE`, `CHECK810_LOG_LIMIT`,
+`CHECK810_CONFIG` (the installation's local project config file, when it does not sit at the path the premise
+paragraph names), `CHECK810_DRY_RUN`, and the polling, logging and curl knobs the test uses to keep a case
+short (`CHECK810_POLLS`, `CHECK810_POLL_SECONDS`, `CHECK810_LOG_AGE`, `CHECK810_LOG_LIMIT`,
 `CHECK810_LOG_POLL_SECONDS`, `CHECK810_LOG_WAIT_SECONDS`, `CHECK810_CURL_SECONDS`). The command line itself
 takes `--installation`, `--oauth`, `--api-key`, `--cascade`, `--vertex`, `--job`, `--gcp-project`, `--region`,
 `--rtdb-url`, `--access-header`, `--signer`, `--service`, `--dry-run` and `--help`; `--dry-run` prints the
@@ -23940,9 +23943,11 @@ about what it writes:
 repository can be matched (its origin's slug), whose **committed** and **working** `fugaro.yaml` write **no**
 retired key — release 2 refuses a launch from a file that does, so every row below would be about a launch
 that cannot happen — and whose repository the installation's `creds` node carries an **access** record for
-(`creds/repoaccess/<slug>`), which is the state release 1 left. A leg failing is a row reading FAIL, and a
-database that cannot be read is UNVERIFIED; both **stop the check (exit 2)** before the one paid run is
-launched.
+(`creds/repoaccess/<slug>`), which is the state release 1 left. The database's URL comes out of the
+installation's own local project config (`${XDG_CONFIG_HOME:-$HOME/.config}/fugaro/projects/<installation>.yaml`,
+key `budget.rtdb_url`), or from `--rtdb-url` when that file names none — `fugaro doctor --json` carries no
+database address, so it is not a source. A leg failing is a row reading FAIL, and a database that cannot be
+read is UNVERIFIED; both **stop the check (exit 2)** before the one paid run is launched.
 
 **Prerequisites.** An installation release 1 has reached and release 2 is reaching, with `creds/repoaccess`
 written for the repository whose checkout you name, and a run of it you may spend on. `--job` is that
@@ -23989,13 +23994,14 @@ reads **UNVERIFIED** rather than being skipped silently. `fugaro`, `gcloud` (aut
 **The knobs.** Every one of them is read from the environment and none of them is asked for:
 `CHECK811_INSTALLATION`, `CHECK811_SUBSCRIPTION`, `CHECK811_JOB`, `CHECK811_GCP_PROJECT`, `CHECK811_REGION`,
 `CHECK811_RTDB_URL`, `CHECK811_RETIRED_KEY`, `CHECK811_OLD_IMAGE`, `CHECK811_SERVICE` (the credentials
-service's name, `fugaro-credentials` by default), `CHECK811_DRY_RUN`, and the polling, logging, retry and curl
-knobs the test uses to keep a case short (`CHECK811_LIVE_TRIES`, `CHECK811_POLLS`, `CHECK811_POLL_SECONDS`,
-`CHECK811_LOG_AGE`, `CHECK811_LOG_LIMIT`, `CHECK811_LOG_POLL_SECONDS`, `CHECK811_LOG_WAIT_SECONDS`,
-`CHECK811_CURL_SECONDS`). The command line itself takes `--installation`, `--subscription`, `--job`,
-`--gcp-project`, `--region`, `--rtdb-url`, `--retired-key`, `--old-image`, `--service`, `--dry-run` and
-`--help`; `--dry-run` prints the plan, makes **no call at all** — no `gcloud`, no `fugaro`, no run, no update,
-nothing spent — and touches nothing.
+service's name, `fugaro-credentials` by default), `CHECK811_CONFIG` (the installation's local project config
+file, when it does not sit at the path the premise paragraph names), `CHECK811_DRY_RUN`, and the polling,
+logging, retry and curl knobs the test uses to keep a case short (`CHECK811_LIVE_TRIES`, `CHECK811_POLLS`,
+`CHECK811_POLL_SECONDS`, `CHECK811_LOG_AGE`, `CHECK811_LOG_LIMIT`, `CHECK811_LOG_POLL_SECONDS`,
+`CHECK811_LOG_WAIT_SECONDS`, `CHECK811_CURL_SECONDS`). The command line itself takes `--installation`,
+`--subscription`, `--job`, `--gcp-project`, `--region`, `--rtdb-url`, `--retired-key`, `--old-image`,
+`--service`, `--dry-run` and `--help`; `--dry-run` prints the plan, makes **no call at all** — no `gcloud`,
+no `fugaro`, no run, no update, nothing spent — and touches nothing.
 
 **Reading the `CHECK 811 RESULT` block.** One block of `FACT`-shaped lines, in this order, and the same block
 is what you paste back: `premise`, `launch`, `old-record`, `token`, `record-gone`, `retired-key`, `old-image`,

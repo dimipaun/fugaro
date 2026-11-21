@@ -26,6 +26,11 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 script=$here/check811.sh
 work=$(mktemp -d)
+# The installation's own local project config lives outside the case's own
+# directory tree ($work/config unless a case says otherwise), because the check
+# finds it through XDG_CONFIG_HOME and a case must never be able to read the
+# config of the machine the test runs on.
+confighome=$work/config
 cleanup_all() {
   if [ -n "${CHECK811_TEST_KEEP:-}" ]; then echo "kept: $work" >&2; else rm -rf "$work"; fi
 }
@@ -138,9 +143,6 @@ printf 'fugaro %s (in %s)\n' "$*" "$PWD" >>"${FAKE811_LOG:?}"
 dir=${FAKE811_DIR:?}
 name=$(basename "$PWD")
 case "${1:-}" in
-doctor)
-  cat "$dir/doctor.json"
-  ;;
 run)
   status=$(cat "$dir/launch-status-$name" 2>/dev/null || printf 0)
   if [ "$status" != 0 ]; then
@@ -426,7 +428,14 @@ case_dir() { # case_dir <name>
   # A checkout whose repository's job image is older than release 1: the
   # `old-image` row launches in it and reads the refusal.
   mkdir -p "$oldimage"
-  printf '{"rtdb":"https://db.invalid"}\n' >"$answers/doctor.json"
+  # The installation's own local project config, which is where the check reads
+  # the database's URL from (`budget.rtdb_url`): `fugaro doctor --json` carries no
+  # such member, so a case that invented one in a doctor document would be
+  # testing a source the check does not have.
+  confighome=$root/config
+  mkdir -p "$confighome/fugaro/projects"
+  printf 'project: test\nbudget:\n  rtdb_url: https://db.invalid\n' \
+    >"$confighome/fugaro/projects/test.yaml"
   job_json "$answers/job.json"
   creds_json "$answers/creds-before.json" before
   creds_json "$answers/creds-mid.json" mid
@@ -458,6 +467,7 @@ run811_raw() { # run811_raw <args...>
   out=$(env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE \
     -u CURSOR_AGENT -u AI_AGENT \
     PATH="$fakebin:$PATH" FAKE811_LOG="${CALLS:-/dev/null}" FAKE811_DIR="${answers:-$work}" \
+    XDG_CONFIG_HOME="$confighome" CHECK811_CONFIG= \
     CHECK811_LIVE_TRIES="${CHECK811_LIVE_TRIES:-1}" CHECK811_POLLS="${CHECK811_POLLS:-1}" \
     CHECK811_POLL_SECONDS=0 CHECK811_LOG_POLL_SECONDS=0 CHECK811_LOG_WAIT_SECONDS=0 \
     CHECK811_CURL_SECONDS=5 \
@@ -603,17 +613,17 @@ test_a_providers_own_auth_is_not_a_retired_key() {
   expect_row "$out" premise PASS "a provider's own auth"
 }
 
-test_a_doctor_with_no_database_url_stops_the_check() {
+test_a_local_config_with_no_database_url_stops_the_check() {
   case_dir no_rtdb
-  printf '{}\n' >"$answers/doctor.json"
+  printf 'project: test\n' >"$confighome/fugaro/projects/test.yaml"
   run811
-  expect_status "$status" 2 "a doctor with no database URL"
-  expect_row "$out" premise UNVERIFIED "a doctor with no database URL"
+  expect_status "$status" 2 "a local config with no database URL"
+  expect_row "$out" premise UNVERIFIED "a local config with no database URL"
 }
 
 test_an_rtdb_url_that_is_given_is_used() {
   case_dir rtdb_given
-  printf '{}\n' >"$answers/doctor.json"
+  printf 'project: test\n' >"$confighome/fugaro/projects/test.yaml"
   run811 --rtdb-url https://db.invalid
   expect_status "$status" 0 "an rtdb url that is given"
   expect_contains "$(cat "$CALLS")" "curl https://db.invalid/creds.json" "an rtdb url that is given"
@@ -999,7 +1009,7 @@ t test_a_committed_file_that_still_writes_a_retired_key_stops_the_check
 t test_a_working_file_that_still_writes_a_retired_key_stops_the_check
 t test_a_craft_access_is_a_retired_key_too
 t test_a_providers_own_auth_is_not_a_retired_key
-t test_a_doctor_with_no_database_url_stops_the_check
+t test_a_local_config_with_no_database_url_stops_the_check
 t test_an_rtdb_url_that_is_given_is_used
 t test_a_creds_node_that_cannot_be_read_stops_the_check
 t test_a_repository_with_no_access_record_stops_the_check

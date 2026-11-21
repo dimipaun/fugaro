@@ -22,6 +22,11 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 script=$here/check810.sh
 work=$(mktemp -d)
+# The installation's own local project config lives outside the case's own
+# directory tree ($work/config unless a case says otherwise), because the check
+# finds it through XDG_CONFIG_HOME and a case must never be able to read the
+# config of the machine the test runs on.
+confighome=$work/config
 cleanup_all() {
   if [ -n "${CHECK810_TEST_KEEP:-}" ]; then echo "kept: $work" >&2; else rm -rf "$work"; fi
 }
@@ -139,9 +144,6 @@ printf 'fugaro %s (in %s)\n' "$*" "$PWD" >>"${FAKE810_LOG:?}"
 dir=${FAKE810_DIR:?}
 name=$(basename "$PWD")
 case "${1:-}" in
-doctor)
-  cat "$dir/doctor.json"
-  ;;
 run)
   status=$(cat "$dir/launch-status-$name" 2>/dev/null || printf 0)
   if [ "$status" != 0 ]; then
@@ -479,7 +481,14 @@ case_dir() { # case_dir <name>
   make_sandbox "$key" key-app api-key
   make_sandbox "$cascade" cascade-app cascade
   make_sandbox "$vertex" vertex-app vertex
-  printf '{"rtdb":"https://db.invalid"}\n' >"$answers/doctor.json"
+  # The installation's own local project config, which is where the check reads
+  # the database's URL from (`budget.rtdb_url`): `fugaro doctor --json` carries no
+  # such member, so a case that invented one in a doctor document would be
+  # testing a source the check does not have.
+  confighome=$root/config
+  mkdir -p "$confighome/fugaro/projects"
+  printf 'project: test\nbudget:\n  rtdb_url: https://db.invalid\n' \
+    >"$confighome/fugaro/projects/test.yaml"
   job_json "$answers/job.json"
   printf 'https://credsvc.invalid\n' >"$answers/service-url.txt"
   printf '{"signedJwt":"fake810-custom-token"}\n' >"$answers/signjwt.json"
@@ -552,6 +561,7 @@ run810_raw() { # run810_raw <args...>
   out=$(env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE \
     -u CURSOR_AGENT -u AI_AGENT \
     PATH="$fakebin:$PATH" FAKE810_LOG="${CALLS:-/dev/null}" FAKE810_DIR="${answers:-$work}" \
+    XDG_CONFIG_HOME="$confighome" CHECK810_CONFIG= \
     CHECK810_POLLS="${CHECK810_POLLS:-2}" CHECK810_POLL_SECONDS=0 \
     CHECK810_LOG_POLL_SECONDS=0 CHECK810_LOG_WAIT_SECONDS=0 CHECK810_CURL_SECONDS=5 \
     ${RUN810_ENV[@]+"${RUN810_ENV[@]}"} \
@@ -977,17 +987,17 @@ test_a_call_that_does_not_answer_leaves_the_audit_row_unverified() {
   expect_contains "$out" "did not answer" "a call that does not answer"
 }
 
-test_a_doctor_with_no_database_url_stops_the_check() {
+test_a_local_config_with_no_database_url_stops_the_check() {
   case_dir no_rtdb
-  printf '{}\n' >"$answers/doctor.json"
+  printf 'project: test\n' >"$confighome/fugaro/projects/test.yaml"
   run810
-  expect_status "$status" 2 "a doctor with no database URL"
-  expect_row "$out" premise UNVERIFIED "a doctor with no database URL"
+  expect_status "$status" 2 "a local config with no database URL"
+  expect_row "$out" premise UNVERIFIED "a local config with no database URL"
 }
 
 test_an_rtdb_url_that_is_given_is_used() {
   case_dir rtdb_given
-  printf '{}\n' >"$answers/doctor.json"
+  printf 'project: test\n' >"$confighome/fugaro/projects/test.yaml"
   run810 --rtdb-url https://db.invalid
   expect_status "$status" 0 "an rtdb url that is given"
   expect_contains "$(cat "$CALLS")" "curl https://db.invalid/creds.json" "an rtdb url that is given"
@@ -1053,7 +1063,7 @@ t test_a_mint_that_fails_leaves_the_audit_row_unverified
 t test_an_exchange_that_fails_leaves_the_audit_row_unverified
 t test_a_service_with_no_url_leaves_the_audit_row_unverified
 t test_a_call_that_does_not_answer_leaves_the_audit_row_unverified
-t test_a_doctor_with_no_database_url_stops_the_check
+t test_a_local_config_with_no_database_url_stops_the_check
 t test_an_rtdb_url_that_is_given_is_used
 t test_an_unknown_argument_is_refused
 

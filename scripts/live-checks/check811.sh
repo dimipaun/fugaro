@@ -68,8 +68,9 @@
 #                             where the token would be.
 #             --gcp-project   the installation's GCP project (also CHECK811_GCP_PROJECT).
 #             --region        the Cloud Run region (also CHECK811_REGION).
-#             --rtdb-url      the Realtime Database URL, when `fugaro doctor
-#                             --json` does not answer with it.
+#             --rtdb-url      the Realtime Database URL, when the installation's
+#                             own local project config (budget.rtdb_url) does not
+#                             name it.
 #             --retired-key   a checkout whose `fugaro.yaml` still writes a
 #                             retired key (`agent.auth`, `agent.oauth_token`, a
 #                             craft's `access` or a grade's `access`): the row
@@ -324,7 +325,7 @@ Check 811 plan (nothing is called: no gcloud, no fugaro, no run, no update)
   region:        ${REGION:-<not given>}
   subscription:  ${SUBSCRIPTION:-<not given>}
   job:           ${JOB:-<not given>}
-  rtdb url:      ${RTDB_URL:-<read from 'fugaro doctor --json'>}
+  rtdb url:      ${RTDB_URL:-<read from the local project config of the installation: budget.rtdb_url>}
   retired key:   ${RETIRED_KEY:-<not given: the retired-key row is UNVERIFIED without it>}
   old image:     ${OLD_IMAGE:-<not given: the old-image row is UNVERIFIED without it>}
   service:       ${SERVICE}
@@ -559,6 +560,18 @@ if len(parts) < 2:
 repo = re.sub(r"\.git$", "", "/".join(parts[-2:]))
 print("".join(c.lower() if "A" <= c <= "Z" else c for c in repo))
 PY
+}
+
+# local_rtdb_url INSTALLATION prints the Realtime Database URL out of the
+# installation's OWN local project config (`budget.rtdb_url`), or the empty
+# string. `fugaro doctor --json` is not a source: its document carries the
+# installation's project block and no database address at all, so a check that
+# read one out of it would stop at its premise on every run that was not given
+# --rtdb-url.
+local_rtdb_url() { # local_rtdb_url <installation>
+  local cfg=${CHECK811_CONFIG:-${XDG_CONFIG_HOME:-${HOME:-}/.config}/fugaro/projects/$1.yaml}
+  [ -r "$cfg" ] || return 0
+  sed -n 's/^[[:space:]]*rtdb_url:[[:space:]]*//p' "$cfg" | tr -d "\"'" | tr -d '[:space:]' | head -1
 }
 
 # record_read NODE OUT fetches one node of the installation's Realtime Database
@@ -960,10 +973,9 @@ step_premise() {
     stop "the subscription checkout's working file still writes a retired key"
   fi
   if [ -z "$RTDB_URL" ]; then
-    (cd "$SUBSCRIPTION" && fugaro doctor --json) >"$SCRATCH/doctor.json" 2>"$SCRATCH/doctor.json.err" || true
-    RTDB_URL=$(jget "$SCRATCH/doctor.json" rtdb)
+    RTDB_URL=$(local_rtdb_url "$INSTALLATION" || true)
     if [ -z "$RTDB_URL" ]; then
-      fact premise UNVERIFIED "'fugaro doctor --json' named no Realtime Database URL, so the installation's records cannot be read and NOTHING below was measured: $(head -c 300 "$SCRATCH/doctor.json.err" 2>/dev/null). Give the URL with --rtdb-url and run the check again"
+      fact premise UNVERIFIED "the installation's own local project config names no Realtime Database URL (${CHECK811_CONFIG:-${XDG_CONFIG_HOME:-${HOME:-}/.config}/fugaro/projects/${INSTALLATION}.yaml}, key budget.rtdb_url), so the installation's records cannot be read and NOTHING below was measured. Give the URL with --rtdb-url and run the check again"
       stop "no database URL could be read — nothing is launched on an installation nobody read"
     fi
   fi
