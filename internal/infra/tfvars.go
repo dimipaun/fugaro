@@ -1904,9 +1904,8 @@ func CarriedManagedDeployerScoped(vars, prev []byte) ([]byte, error) {
 const OrchestratorKey = "orchestrator"
 
 // CarriedOrchestrator returns vars with the orchestrator block the document prev
-// carried, when vars carry none of their own: prepare's fifth carry, beside the
-// credentials service's, the intake's, the implicit review job's and the
-// deployer's scope.
+// carried: prepare's fifth carry, beside the credentials service's, the intake's,
+// the implicit review job's and the deployer's scope.
 //
 // The block is the design's section 4.3 table and nothing else — the account
 // fugaro-orch, the launcher's project role, the runs bucket's conditioned write
@@ -1931,9 +1930,17 @@ const OrchestratorKey = "orchestrator"
 // run re-deciding the account's grants (the service and the tick are force-new
 // names, and the pairing container carries prevent_destroy). It is carried as it
 // is found, present or absent, so an installation that never opted in is
-// unchanged rather than given a block by a run that decided nothing; and a
-// document that carries the key of its own stands, which is what the writer's
-// own read-modify-write of the key on disk relies on.
+// unchanged rather than given a block by a run that decided nothing.
+//
+// The block from prev WINS over one vars already carry, and that is not a
+// detail: prev is each document of the pair below in turn, so the LAST one read
+// is the tfvars the workdir holds NOW — where the run's own writers put what
+// they write, the opt-in's block and the image the credentials-service stage
+// re-pinned inside it — and a carry that kept the snapshot's answer would let
+// the older document, the one from before the run, revert both. CarriedIntake
+// and carriedCredentialsService take the previous document's block the same way,
+// for the same reason (init.go's prepare says which two documents they are, in
+// which order).
 //
 // prev is the same pair of documents the carries beside it take —
 // infra.Workdir.PrevVars, the snapshot from before the run, and the tfvars the
@@ -1955,9 +1962,6 @@ func CarriedOrchestrator(vars, prev []byte) ([]byte, error) {
 	doc, err := varsDoc(vars)
 	if err != nil {
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
-	}
-	if _, own := doc[OrchestratorKey]; own {
-		return vars, nil // the caller's own answer stands
 	}
 	doc[OrchestratorKey] = block
 	return sortedJSON(doc)
