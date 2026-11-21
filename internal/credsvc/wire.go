@@ -455,6 +455,28 @@ const (
 	// The message is the gateway's own sentence and it says that nothing was
 	// read; no credential value is in it, because none was touched.
 	ErrorRequestRefused = "request_refused"
+	// ErrorIssueGone is the issue route's read of an issue its repository does
+	// not hold: the number names no issue GitHub has — the ticket is deleted or
+	// moved — and asking again cannot clear it, which is what tells this answer
+	// from every other refusal of that route (B9, D2720). It is the one failure
+	// of those acts that is not an outage, and the daemon's issue client reads
+	// the status beside it rather than this code: the code is for the operator's
+	// own line.
+	ErrorIssueGone = "issue_gone"
+	// ErrorNoReadConsumer is a read of a Bitbucket pull request refused for
+	// want of the installation's read consumer: the bundle holds no
+	// BitbucketReadConsumerSecret, so the service has no read-scoped token to
+	// mint and no pull request of that repository can be read until one is set
+	// (`fugaro creds set bitbucket-read-consumer`, F21, D2736).
+	//
+	// It is a type of its own and not ErrorStateUnavailable, which every other
+	// failure of that read answers with, because the caller acts on the two
+	// differently: an outage is retried on the next cadence, while this stands
+	// until a person sets the credential, so the daemon records it once per
+	// repository as a fact naming the fix (credsvc's label route, G3's
+	// merge read). The status is the unavailability's — the service cannot read
+	// a pull request now — and this code is what tells the two apart.
+	ErrorNoReadConsumer = "no_read_consumer"
 	// ErrorNoCandidateCredentials is a call the cascade was asked for and could
 	// hand no credential to: the narrowing this service applies — the crafts
 	// where the installation publishes them, O4's tier-A admission, the
@@ -477,12 +499,16 @@ const (
 // answer now is 503, and the body's error type says which. A request the
 // gateway's own rules refuse is 400 — the status the gateway answers the same
 // body with — so a caller that is refused for what it sent is not told to try
-// again.
+// again. The issue route's read of an issue its repository does not hold is the
+// one answer that is neither: 404, the status the daemon's issue client tells a
+// ticket that is gone from an outage by (D2720), spelled as that client spells
+// it (creds.IssueGoneStatus) and held there by TestIssueRouteGoneMatchesClient.
 const (
 	StatusUnverified       = http.StatusForbidden
 	StatusUnavailable      = http.StatusServiceUnavailable
 	StatusExhaustedUntil   = http.StatusServiceUnavailable
 	StatusRequestRefused   = http.StatusBadRequest
+	StatusIssueGone        = http.StatusNotFound
 	contentTypeJSON        = "application/json"
 	maxCredentialNameBytes = 200
 	maxHeaderTokenBytes    = 512

@@ -236,7 +236,8 @@ func TestRunsGroupByAllGreenWindowPrintsNoBlock(t *testing.T) {
 // the whole document, not of the key -- so a groups block the watch path never
 // asked for is the app rendering degraded-as-nothing (F14, D1458).
 func TestWatchDocumentCarriesNoGroups(t *testing.T) {
-	f := newCloudFixture(t) // no budget backend: the degraded document
+	f := newCloudFixture(t)
+	f.noBudget(t) // no budget backend: the degraded document
 	f.run.Project, f.run.Region = "proj-1234", "us-east5"
 	// A failed run, so the block would be non-empty if the watch path emitted
 	// one: absence is the shape, not an empty window.

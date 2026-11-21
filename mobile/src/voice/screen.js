@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The voice screen: the interrupt switch, the queue it gates, the offline
-// refusal and the lease (mobile plan, Task P3.5; D122, D127, D126, D118).
+// refusal and the lease (mobile plan, Task P3.5; D122, D127, D126, D118), and
+// the indicator's place and the per-utterance engine tag (Task P5.3.7; the
+// design is docs/mobile/design/voice-evaluation-switch.md §4.2 and §4.4).
 //
 // **What this module is.** P3.4 shipped the audio interfaces and their fakes;
 // P3.6 shipped the mailbox client, the app's only writer; P1.2, P1.3 and P1.4
@@ -24,15 +26,39 @@
 //   4. **D122's degradation** -- the OS refusing the microphone is shown, so
 //      the "tap to speak" control has something to be built on.
 //
-// **What it deliberately does not do.** No engine (D123/D46: on-device only,
-// chosen by a bake-off -- owner-run check 85), no spoken confirmation (P6.12,
-// which builds on this task later: the seam is `accept` and the pipeline's
-// events, and none of it is implemented here), no prompt queue (P6.5, which is
-// not a dependency of this task -- see `interrupt.js` on the one place the two
+// **What it deliberately does not do.** No spoken confirmation (P6.12, which
+// builds on this task later: the seam is `accept` and the pipeline's events, and
+// none of it is implemented here), no prompt queue (P6.5, which is not a
+// dependency of this task -- see `interrupt.js` on the one place the two
 // disagree), and no writing of its own: **every** write goes through the client
 // (`accept` calls `client.send`, and asks `client.licenceRefusal` before its own
 // offline refusal so the licence's answer wins -- a question, not a write),
 // which is what keeps D113's "one write path" true.
+//
+// **And it chooses no engine** (D123/D46: on-device only, chosen by a bake-off
+// -- owner-run check 85). What P5.3.7 adds here is the two places the switch and
+// the egress path need a *screen*, and neither of them is a choice about where
+// an utterance goes:
+//
+//   1. **The indicator has its place** (§4.2, and the plan's own sentence). The
+//      screen holds the badge the voice switch answered, for each of the two
+//      directions, and shows P5.3.6's fail-closed badge until the switch answers
+//      at all -- §4.2's "until that first answer arrives the app shows
+//      `local — checking`, never a guess". It draws nothing itself: the words,
+//      the engine, the provider and `send` are P5.3.6's `renderIndicator`, and
+//      the badge is not dismissible because that module says so. It is asked
+//      once here and again whenever the app asks (`refreshIndicator`), which is
+//      §4.4 point 7's own list -- the switch changing, the app coming to the
+//      foreground, a pairing -- and never a timer this file keeps.
+//   2. **Every utterance in the transcript is tagged with the engine that
+//      produced it** (§4.2), so the evaluation has a per-utterance record and
+//      not only a badge. The tag is read from a port at the moment the words
+//      arrive -- an utterance's engine is a fact about that utterance, and
+//      reading it later would tag the fifth line with the sixth route.
+//
+// Both are ports, and both are optional: a screen built without them is P3.5's
+// screen, with no badge source to ask and the on-device engine as the only
+// engine a transcript can have come from.
 //
 // **The queue is bounded and refuses rather than evicting.** A queue that
 // dropped its oldest entry to make room would lose an update silently, which is
@@ -53,7 +79,9 @@
 import { SEVERITY_ORDER } from '../../../shared/digest/index.js';
 import { emptyLeaseState, readLease, releaseLease as release, takeLease as take } from '../../../shared/lease/index.js';
 import { STATE } from '../../../shared/presence/index.js';
+import { ENGINE } from '../../../shared/voice-switch/index.js';
 import { isVoicePipeline } from '../audio/index.js';
+import { DIRECTIONS, INDICATOR_FIELDS, failClosedIndicator } from '../voice-switch/index.js';
 import { INTERRUPT_SWITCH, interruptDecision } from './interrupt.js';
 
 /** The refusal codes this module answers with. */
@@ -85,6 +113,12 @@ export const SCREEN_CODES = Object.freeze({
    * the state's own word, so a screen can render it without a second table.
    */
   OFFLINE: 'offline',
+  /**
+   * No badge has arrived from the voice switch -- it has not been asked yet, or
+   * the source threw. A badge is still owed (§4.2), so the fail-closed one
+   * stands and this code is what says it is a stand-in rather than an answer.
+   */
+  NO_BADGE: 'no-badge',
 });
 
 /**
@@ -110,6 +144,33 @@ function freezeList(items) {
 }
 
 /**
+ * The badge a direction shows when the switch has not answered, built by the
+ * voice switch's own fail-closed function rather than drawn here: the words
+ * (`local — checking`), the engine (`local`) and `send: false` are P5.3.6's, and
+ * a second place that could spell them would be a second place they could
+ * drift. What this file adds is the refusal in it, which says the badge is a
+ * stand-in rather than an answer.
+ */
+function noBadge(direction) {
+  return failClosedIndicator({ direction }, { code: SCREEN_CODES.NO_BADGE, field: 'indicator' });
+}
+
+/**
+ * Whether a switch's answer is a badge this screen may render.
+ *
+ * The field set is `INDICATOR_FIELDS` exactly -- P5.3.6's own constant -- so a
+ * badge carrying a field this screen does not know is refused here rather than
+ * rendered as if the extra field were part of the badge. An answer that is not
+ * a badge at all (a refusal, a string, `undefined`) is refused the same way.
+ */
+function isBadge(answer) {
+  if (answer === null || typeof answer !== 'object' || Array.isArray(answer)) return false;
+  const fields = Object.keys(answer);
+  return fields.length === INDICATOR_FIELDS.length
+    && INDICATOR_FIELDS.every((field) => Object.hasOwn(answer, field));
+}
+
+/**
  * Build the voice screen.
  *
  * Everything is a port or a value: the pipeline (P3.4), the mailbox client
@@ -128,6 +189,12 @@ function freezeList(items) {
  * @param {(text: string) => Promise<object>} [options.utterance] P6.12's spoken
  *   dialogue, which routes a final transcript instead of accepting it as a
  *   message; absent means every final is a message
+ * @param {(direction: string) => Promise<object>} [options.indicator] the voice
+ *   switch's badge for one direction (P5.3.6's `createVoiceSwitch(...).indicator`);
+ *   absent means the screen has no switch to ask and shows the fail-closed badge
+ * @param {() => string} [options.engine] the engine that produced the utterance
+ *   now arriving (P5.3.7's route: `local`, or the provider's name); absent means
+ *   this device's own engine, which is the only one P3.5's pipeline has
  * @returns {object} the screen
  * @throws {TypeError} for a port, a value source or a setting that cannot be used
  */
@@ -139,6 +206,8 @@ export function createVoiceScreen({
   switch: setting = INTERRUPT_SWITCH.OFF,
   queueCap = QUEUE_CAP,
   utterance: dialogue = null,
+  indicator: badgeSource = null,
+  engine: engineOf = null,
 } = {}) {
   if (!isVoicePipeline(pipeline)) throw new TypeError('pipeline is a VoicePipeline');
   // `licenceRefusal` is the third name this screen needs (S6.3): the offline
@@ -157,6 +226,12 @@ export function createVoiceScreen({
   if (!Number.isInteger(queueCap) || queueCap < 1) throw new TypeError('queueCap is a positive whole number');
   if (dialogue !== null && typeof dialogue !== 'function') {
     throw new TypeError('utterance is the voice dialogue (P6.12), or absent');
+  }
+  if (badgeSource !== null && typeof badgeSource !== 'function') {
+    throw new TypeError('indicator is the voice switch\'s badge source, or absent');
+  }
+  if (engineOf !== null && typeof engineOf !== 'function') {
+    throw new TypeError('engine is a function answering the last utterance\'s engine, or absent');
   }
 
   /** D127's setting, in memory and nowhere else: it is never written down. */
@@ -190,6 +265,16 @@ export function createVoiceScreen({
   /** P1.2's lease state, and the last time a lease call refused. */
   let leaseState = null;
   let leaseRefused = null;
+  /**
+   * The badge per direction, as the switch last answered it, and P5.3.6's
+   * fail-closed badge before and instead of an answer: §4.2's "until that first
+   * answer arrives the app shows `local — checking`, never a guess". Both slots
+   * are filled before anything is asked, so a snapshot a screen renders always
+   * has a badge in it -- a blank where a promise about the owner's speech
+   * belongs is the one thing the indicator may not be.
+   */
+  const badges = {};
+  for (const direction of DIRECTIONS) badges[direction] = noBadge(direction);
 
   /** P1.4 says the orchestrator is not there. Only `offline` is `offline`. */
   const offline = () => presence !== null && presence.state === STATE.OFFLINE;
@@ -198,6 +283,61 @@ export function createVoiceScreen({
   function noteRefusal(refusal) {
     lastRefused = Object.freeze({ code: refusal.code, field: refusal.field ?? null });
     return refusal;
+  }
+
+  /** The two badges, frozen, for the snapshot. */
+  const frozenBadges = () => Object.freeze({ ...badges });
+
+  /**
+   * Ask the voice switch for each direction's badge, and keep what it answers.
+   *
+   * The two directions are asked **one after the other** and not with
+   * `Promise.all`: a badge source that throws must not leave the second
+   * direction's ask unanswered, and one `await` in a loop is a sentence a
+   * reader can check. A source that refuses or throws leaves the fail-closed
+   * badge standing, which is the same thing the screen shows before it has
+   * asked at all -- §4.2's `local — checking`, never a guess -- and an answer
+   * that is not a badge is refused the same way rather than rendered.
+   *
+   * **It is not a poll and it is not a timer.** §4.4 point 7 names when the app
+   * asks: the switch changing, the app coming to the foreground, a pairing.
+   * Every one of those is the app's own event, and this screen keeps no clock
+   * over it.
+   */
+  async function refreshIndicator() {
+    for (const direction of DIRECTIONS) {
+      let answer = null;
+      try {
+        answer = badgeSource === null ? null : await badgeSource(direction);
+      } catch {
+        // Thrown values are not carried: a source that threw is no answer, and
+        // what it threw may be anything the phone holds.
+        answer = null;
+      }
+      badges[direction] = isBadge(answer) ? answer : noBadge(direction);
+    }
+    return frozenBadges();
+  }
+
+  /**
+   * The engine that produced the utterance arriving now.
+   *
+   * With no port this device's own engine is the only one P3.5's pipeline has,
+   * so the tag is `local` (D123/D46). A tag that is not a non-empty string -- a
+   * source that threw, or answered something else -- is **no tag at all** and
+   * not `local`: a line that said `local` about words that may have reached a
+   * provider would be the one lie the badge exists to prevent, and the
+   * transcript is the per-utterance half of that badge (§4.2).
+   */
+  function readEngineTag() {
+    if (engineOf === null) return ENGINE.LOCAL;
+    let tag = null;
+    try {
+      tag = engineOf();
+    } catch {
+      tag = null;
+    }
+    return typeof tag === 'string' && tag.length > 0 ? tag : null;
   }
 
   /**
@@ -260,9 +400,12 @@ export function createVoiceScreen({
     else void dialogue(event.message.text);
     drain();
   });
-  // The user's words, as they arrive: what §5's screen shows.
+  // The user's words, as they arrive: what §5's screen shows. The engine is read
+  // here, once, and not later: it is a fact about **this** utterance, and a
+  // snapshot that read the route when it was rendered would tag the third line
+  // with the fourth utterance's engine.
   pipeline.on('transcript', (event) => {
-    transcript = Object.freeze({ text: event.text, final: event.final });
+    transcript = Object.freeze({ text: event.text, final: event.final, engine: readEngineTag() });
   });
   // D122: the OS refused the microphone or the background audio mode.
   pipeline.on('unavailable', (event) => {
@@ -347,6 +490,13 @@ export function createVoiceScreen({
     drain();
     return Object.freeze({ ok: true });
   }
+
+  // The badge is in place before anything is spoken (§4.2), so the screen asks
+  // the switch once as it is built. Nothing waits on this one: the badge it
+  // replaces is the fail-closed one, which is already renderable -- and an app
+  // that wants to render *after* the switch has answered awaits
+  // `refreshIndicator` itself, off the returned screen.
+  void refreshIndicator();
 
   return {
     /** Accept a message, from the pipeline's `message` event or a text screen. */
@@ -543,6 +693,14 @@ export function createVoiceScreen({
     },
 
     /**
+     * Ask the voice switch for both badges and keep the answers (§4.2, §4.4
+     * point 7). The app calls this when the switch changes, when it comes to
+     * the foreground and after a pairing; this screen asks once by itself, when
+     * it is built, so the indicator is in place before anything is spoken.
+     */
+    refreshIndicator,
+
+    /**
      * Everything a screen renders, in one frozen snapshot. It reads the
      * pipeline for what is happening now (`speaking`, `turn`) rather than
      * caching it, so the snapshot cannot say something the pipeline would not.
@@ -560,6 +718,7 @@ export function createVoiceScreen({
         speaking: pipeline.speaking(),
         turn: pipeline.turn(),
         transcript,
+        indicator: frozenBadges(),
         refused: lastRefused,
       });
     },

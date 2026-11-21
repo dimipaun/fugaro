@@ -780,6 +780,181 @@ func VaultFetchesClass(class string) bool {
 	return slices.Contains(VaultFetchedSecretClasses, class)
 }
 
+// BuildSecretClassGit and BuildSecretClassBuild name the two classes of secret
+// a repository's BUILDS read (B4.9, the S4 flip; D2076, D2077).
+//
+// A build is the one reader that is not a job: it runs in Cloud Build, as the
+// repository's build account, and Cloud Build hands it its secrets through the
+// request's own availableSecrets rather than through a Cloud Run mount. The
+// two classes are what that request carries — the git credential a build
+// clones and asks for an installation token with, and each workflow's own
+// `secrets:`, which the build step mounts as BuildKit file secrets — and the
+// daily image check, which runs as the same build account, reads the git
+// credential too.
+const (
+	// BuildSecretClassGit is the class of the repository's git credential:
+	// the provider credential a build's clone reads, the one the check job
+	// mounts, and the one the credentials service mints an installation token
+	// from (D2076).
+	BuildSecretClassGit = "git"
+	// BuildSecretClassBuild is the class of a workflow's OWN build secrets
+	// (`secrets:`, the class VaultSecretClassWorkflow names for a job's
+	// mounts), the ones a build mounts for its build step (D2077).
+	BuildSecretClassBuild = "build"
+)
+
+// BuildServedSecretClasses are the classes of secret the credentials service
+// SERVES to a repository's builds (B4.9, the S4 flip; D2076, D2077): a class
+// listed here is served, so a switched repository's build request names none
+// of that class's secrets (internal/backend/gcp's BuildRequest), Cloud Build's
+// request carries no availableSecrets for them, and the build account keeps no
+// secretAccessor (modules/repo/build.tf) — the credential step asks the
+// installation's credentials service for the git credential, and for the
+// workflow's own build secrets with it (B4.5's fetch), which is where they come
+// from instead.
+//
+// G22's shape, one list at a time, exactly as VaultFetchedSecretClasses is: it
+// says nothing about ServiceHeldSecretNames, ProxiedGitSecretNames,
+// ServiceServedAuths or VaultFetchedSecretClasses, and which repositories are
+// switched at all is infra.CredentialsServiceServes' answer, read where the
+// drop happens (internal/infra's spec, and the build paths in internal/cli
+// that hand a build its service address).
+//
+// The class list is a list rather than a boolean so a class can be added or
+// held back one at a time, and it carries both classes since the flip's second
+// commit filled it — the state this release ships, with B4.5's fetch (which is
+// what reads from the service) a release behind it. The inert state is the
+// empty list: with it empty no build
+// names a service, every request mounts exactly what it mounted before, and
+// the tree plans and runs what the release before this one did (D147's "with
+// it off nothing changes"). Filled, what it moves is one build account's
+// accessor list and one check job's mount per SWITCHED repository, and it
+// moves nothing on its own — a repository the switch holds off keeps every
+// accessor, every mount and every requested secret, before and after (G9,
+// G17).
+//
+// Terraform cannot ask Go, so the same classes are a literal in
+// modules/repo/build.tf's build_served_secret_classes, held to this list by
+// deploy/terraform's TestBuildServedClassesMatchTheModule, and the two are
+// filled in one commit.
+//
+// What keeps the fill from stranding a build is the order `fugaro update`
+// takes: the repository root that drops the accessor and the mount is applied
+// only for a repository whose own switch is on (so the build account may
+// invoke the service and the service is deployed), and the request names the
+// service's address in the same tfvars answer.
+var BuildServedSecretClasses = []string{BuildSecretClassGit, BuildSecretClassBuild}
+
+// BuildServesClass reports whether the credentials service serves the secrets
+// of this class to a repository's builds. A class this release does not know
+// answers false, which is the same answer an empty list gives: the request
+// mounts the secret and the build account keeps the accessor.
+func BuildServesClass(class string) bool {
+	return slices.Contains(BuildServedSecretClasses, class)
+}
+
+// SharedJobClassModel names the one class of secret the credentials service
+// serves to a SHARED project job: D145's first family — the model credentials,
+// which are identified by the variable each is mounted as and not by a logical
+// name (IsModelSecretEnv).
+const SharedJobClassModel = "model"
+
+// SharedJobServedClasses are the classes of secret the credentials service
+// SERVES to a SHARED project job (B5.7, the S5 flip; D505, D2078): a class
+// listed here is served, so a switched profile's shared job mounts none of that
+// class's credentials (projectJobMounts, projectAccountMount, and the module's
+// own two clauses) and its account keeps no secretAccessor on them
+// (modules/project/sa.tf) — and the profile's every account job gives up its
+// own account's token with them, which is the mount the class is mostly made of
+// on this side.
+//
+// G22's shape, one list at a time, exactly as VaultFetchedSecretClasses and
+// BuildServedSecretClasses are: it says nothing about ServiceHeldSecretNames
+// (the GitHub App's key, whose drop is its own flip, #907), ProxiedGitSecretNames
+// (a proxied repository's git credential), ServiceServedAuths or the two lists
+// above, and which profiles are switched at all is
+// projectJobServesTheCredentialsService' answer, read where the drop happens.
+//
+// The carrying class is the model credentials, and it is the WHOLE class on a
+// shared job: a profile's repositories are served as a profile rather than one
+// by one (B5.1, B5.2), so there is no per-repository auth arm here as
+// ModelSecretServedAll/Anthropic/None is for a repository's own job, and no
+// stage-account exception either — the stages that reach Anthropic on their own
+// job's token are a repository's, and a shared job mounts the token of the
+// ACCOUNT its name carries, which is the run's own credential on every stage.
+//
+// The App key is deliberately not here, and that is G22 rather than an
+// oversight: it is ServiceHeldSecretNames' own name, its drop is that list's
+// flip (#907, C2.3) and a job that gave it up before the runner stopped reading
+// it is a job whose every GitHub run dies in the credential. Filling this list
+// moves no accessor and no mount of the App key — TestFilledSharedJobListKeepsTheAppKey
+// pins exactly that.
+//
+// The class is filled whole and the drop is not: IsSharedJobServedModelEnv
+// holds a provider's key back, because nothing serves one yet — see that
+// function, and the keys-through-service plan's KS16 for the drop that follows
+// there.
+//
+// The class list is a list rather than a boolean so a class can be added or
+// held back one at a time, and it carries the model class since the flip's
+// second commit filled it — the state this release, 0.27.0, ships, one release
+// after the address did (B5.2). The inert state is the empty list: with it
+// empty neither side drops anything, and the tree plans and runs what the
+// release before this one did (D147's "with it off nothing changes"). Filled,
+// what it moves is the model mounts of one profile's jobs — every job of it,
+// one per (profile, provider, account) — and only for a profile whose own
+// switch is on, so a profile the switch holds off keeps every mount and every
+// accessor, before and after (G9, D147).
+//
+// The order is what keeps the fill from stranding a run: the profile's
+// repositories are admitted to the service (B5.1) and its jobs' accounts may
+// invoke it (B5.2, the release the address landed in), which is G17's rule that
+// no mount is lost before the service serves that credential to the image the
+// job runs. The owner gave the go on 2026-11-18 with the other three flips of
+// the chain, waiving B5.6's PASS and moving Check 197's owner-run checks to
+// after the flip (B5.8); removing the class is the owner's go read backwards.
+//
+// Terraform cannot ask Go, so the same class is a literal in
+// modules/project/sa.tf's shared_job_served_secret_classes, held to this list
+// by deploy/terraform's TestSharedJobServedClassesMatchTheModule, and the two
+// are filled in one commit.
+var SharedJobServedClasses = []string{SharedJobClassModel}
+
+// SharedJobServesClass reports whether the credentials service serves the
+// secrets of this class to a shared project job. A class this release does not
+// know answers false, which is the same answer an empty list gives: the job
+// mounts the credential and its account keeps the accessor.
+func SharedJobServesClass(class string) bool {
+	return slices.Contains(SharedJobServedClasses, class)
+}
+
+// IsSharedJobServedModelEnv reports whether a shared job's variable carries a
+// mount the credentials service serves that job: one of the two NAMED model
+// credentials (ModelSecretEnvs — the Claude account token and the Anthropic
+// key), while the class list above names "model".
+//
+// A provider's key is deliberately not dropped here, although it is a model
+// credential everywhere else (IsModelSecretEnv): nothing serves one yet. The
+// runner reads a provider's key from its own environment (internal/runner's
+// ProviderCredential) and the gateway sends a routed call to the provider with
+// the job's own key, so a shared job that gave the key up would have no model
+// credential at all for a provider-model run. Serving one is the work of the
+// keys-through-service plan: KS5 wires the provider route through the service,
+// and the drop follows in KS16, whose acceptance, red step and file list are
+// written for exactly this state ("the shared job still mounts the profile's
+// provider key", docs/keys-through-service/implementation-plan.md, which names
+// this flip as what it waits on). Till then a shared job keeps every provider
+// key it mounted, and its account keeps the accessor that reads it (R6, D1634).
+//
+// It is the one predicate both halves of the deployer's drop read
+// (projectJobMounts for the profile's own mounts, projectAccountMount for the
+// account's token), and the module's own per-mount local is its mirror: the two
+// have to answer the same per variable, because a mount the job's account keeps
+// no accessor on is a job Cloud Run refuses to create (C2.3).
+func IsSharedJobServedModelEnv(env string) bool {
+	return SharedJobServesClass(SharedJobClassModel) && slices.Contains(ModelSecretEnvs, env)
+}
+
 // ProxiedGitSecretNames are the git credential logical names a job gives up
 // once its repository is a PROXIED one: the published node's block admits the
 // repository with `proxy: true`, the credentials service fetches the

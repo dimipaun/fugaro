@@ -42,14 +42,16 @@ var renderHeadings = []struct{ status, heading string }{
 }
 
 // renderColumns is the table's header row and separator: one row per item,
-// with the id linked to its file (D28).
-const renderColumns = "| id | title | mode | area | status | filed-by | date |\n" +
-	"| --- | --- | --- | --- | --- | --- | --- |\n"
+// with the id linked to its file (D28), and a column each for the level the
+// item was left open under and the kind of item it is (LD5).
+const renderColumns = "| id | title | level | kind | area | status | filed-by | date |\n" +
+	"| --- | --- | --- | --- | --- | --- | --- | --- |\n"
 
 // Render returns the index the item files render to (D28): one row per item —
-// the id linked to its file, the title, the mode, the area, the status, who
-// filed it and the date — sorted by id, which is to say by date, plus a count
-// line, with the closed and dropped rows grouped under the open ones.
+// the id linked to its file, the title, the level, the kind, the area, the
+// status, who filed it and the date — sorted by id, which is to say by date,
+// plus a count line, with the closed and dropped rows grouped under the open
+// ones.
 //
 // It is a pure function of its argument. Every date in the document comes
 // from an item, and it reads no clock, no network and no environment, so two
@@ -81,9 +83,9 @@ func Render(items []Item) string {
 		b.WriteString("\n" + group.heading + "\n\n")
 		b.WriteString(renderColumns)
 		for _, it := range rows {
-			fmt.Fprintf(&b, "| [%s](%s) | %s | %s | %s | %s | %s | %s |\n",
-				it.ID, itemName(it.Path), cell(it.Title), cell(it.Mode), cell(it.Area),
-				it.Status, cell(it.FiledBy), it.Date)
+			fmt.Fprintf(&b, "| [%s](%s) | %s | %s | %s | %s | %s | %s | %s |\n",
+				it.ID, itemName(it.Path), cell(it.Title), cell(it.Level), cell(it.Kind),
+				cell(it.Area), it.Status, cell(it.FiledBy), it.Date)
 		}
 	}
 	return b.String()

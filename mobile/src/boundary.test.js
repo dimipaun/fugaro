@@ -45,9 +45,28 @@
 //      microphone; the demo's absence from the list is the assertion F10 and
 //      D212 ask this task for -- it is text-only by construction, and it has no
 //      session to enter a voice screen with.
+//   6. the network -- `fetch(`, `WebSocket`, `XMLHttpRequest` and
+//      `EventSource`, the four doors this platform opens one through, and the
+//      same four the module scans in `src/audio/index.test.js` and
+//      `src/voice/index.test.js` name (P5.3.7). It may be opened from
+//      `src/voice-switch/hop.js` and nowhere else, so the one file that can put
+//      a byte in front of a third party is a file a reviewer reads whole, and a
+//      second call site is a failing test rather than a new egress path. **In
+//      any spelling**: `fetch(`, `globalThis.fetch(`, `window.fetch(` and
+//      `self.fetch(` are one call under four names, and a rule that caught only
+//      the first would leave three ways to open the network unwatched -- which
+//      is exactly what it did before this rule named the other three doors. The
+//      scan below it (rule 7, which has no pattern list of its own) holds §5's
+//      fifth rule over the same directory: the egress half keeps no timer, no
+//      file and no store between one utterance and the next.
+//
+// Rules 6 and 7 are P5.3.7's; the five above them are P3.1's and VS1.3's, and a
+// rule added here is a decision about what may grow -- which is why each one's
+// `why` is written as the sentence a reviewer would otherwise have to
+// reconstruct.
 //
 // **The self-exemption and the positive controls.** This file contains all
-// four tokens, so it exempts itself by name -- once, visibly -- and every rule
+// six tokens, so it exempts itself by name -- once, visibly -- and every rule
 // is asserted against a planted example as well as against the tree. Without
 // the controls, a typo in a pattern would turn the whole file green while
 // checking nothing, which is the one way a scan can lie.
@@ -114,6 +133,21 @@ const RULES = [
     allow: ['index.js', 'src/voice-session/session.js'],
     why: 'VS1.3: the controller is declared in `session.js` and built in `index.js`, and a second construction site would be a second session over one microphone',
   },
+  {
+    name: 'the network is opened in one file, and it is the hop',
+    // A call and not a mention, for the one door that is a function: `\b` is a
+    // boundary between the identifier and whatever precedes it, so `prefetch(`
+    // and `refetch(` are not this rule's while `globalThis.fetch(`,
+    // `window.fetch(` and `self.fetch(` are -- the same call through a global's
+    // name, and a lookbehind that excluded `.` would let all three through. The
+    // other three doors are constructors, so the name itself is the offence:
+    // `new WebSocket(`, `new XMLHttpRequest()` and `new EventSource(` each open
+    // a connection, and a rule that watched only the call shape would watch
+    // none of them.
+    pattern: /\bfetch\s*\(|\b(WebSocket|XMLHttpRequest|EventSource)\b/,
+    allow: ['src/voice-switch/hop.js'],
+    why: 'P5.3.7: the egress path is the only thing in the app that talks to a third party, and a second file that could open the network is a second place a byte could leave from',
+  },
 ];
 
 /**
@@ -159,6 +193,11 @@ test('the scan walks the app, and not an empty list', () => {
     // purpose: the everyday rules below then cover it like any other file, and
     // a directory that stopped being walked is a failure rather than silence.
     'src/voice-switch/index.js',
+    // ... and the egress half (P5.3.7) with it: the hop client is the one file
+    // that opens the network, and the rules are the last thing between a spoken
+    // sentence and a third party.
+    'src/voice-switch/hop.js',
+    'src/voice-switch/egress.js',
   ]) {
     assert.ok(files.includes(expected), `${expected} is in the walk`);
   }
@@ -183,6 +222,79 @@ for (const rule of RULES) {
   });
 }
 
+// **Rule 7: the egress half keeps nothing.** §5's fifth rule is that "there is
+// no queue, no spool, no file and no buffer", and D118's answer is that a
+// remote failure is answered locally rather than retried from a store. A scan
+// is what can hold that: the alternative -- a promise in a test that the
+// directory holds no spool -- is a claim about today's code, and what the rule
+// forbids is the code somebody adds next month. So the whole directory is
+// judged, and not only the two files that exist now.
+//
+// **Why the directory and not the app.** A timer, a file and a store are all
+// legitimate elsewhere in this app (the lease keeps a timer, the accounts keep a
+// store), which is exactly why the rule has to name its scope: what may not
+// happen *here* is that anything is held between one utterance and the next.
+
+/**
+ * The primitives a spool, a file or a store is made of: a timer, a store's
+ * name, a file module, a file call's async spelling -- and, because a file
+ * primitive is **one call under two names**, any `*Sync` call at all, which is
+ * what catches `writeFileSync(`, `appendFileSync(`, `readFileSync(` and every
+ * spelling a later hand adds.
+ */
+const SPOOL = /\b(setTimeout|setInterval|setImmediate|requestAnimationFrame|AsyncStorage|SecureStore|localStorage|sessionStorage|indexedDB)\b|\b(fs|FileSystem|expo-file-system)\b|\b(writeFile|appendFile|createWriteStream|createReadStream|readFile|unlink|mkdir|rmdir)\w*\s*\(|\b\w*Sync\s*\(/;
+
+test('the egress half holds nothing between turns — no timer, no file, no store', () => {
+  // The positive control: the pattern must flag real code, or a green run below
+  // would mean only that the pattern matches nothing at all.
+  for (const line of [
+    'const t = setTimeout(flush, 0)',
+    'setInterval(flush, 1000)',
+    'await writeFile(path, text)',
+    'fs.writeFileSync(file, text)',
+    'await appendFileSync(path, text)',
+    'await FileSystem.writeAsStringAsync(file, text)',
+    "await AsyncStorage.setItem('m', text)",
+  ]) {
+    assert.ok(SPOOL.test(line), line);
+  }
+
+  const files = sourceFiles().filter((file) => file.startsWith('src/voice-switch/') && !isTest(file));
+  // A scope that found nothing would pass for the wrong reason.
+  assert.ok(files.length >= 6, `expected the voice switch's files, found ${files.length}`);
+  for (const file of files) {
+    assert.equal(
+      SPOOL.test(code(readFileSync(join(ROOT, file), 'utf8'))),
+      false,
+      `${file}: §5 rule 5 and D118 — a failure is answered locally, never spooled for later`,
+    );
+  }
+});
+
+// **Rule 6's four doors, one line each.** The rule's control is a single line
+// and a single line can hold all four tokens, which would let a dropped
+// alternative pass: the line would still match through the names that remain.
+// So each door is asserted on a line of its own -- and the near misses with it,
+// because `\b` is the whole reason `prefetch(` is not the network being opened.
+test('every door this platform opens a network through is the rule’s business', () => {
+  const rule = RULES[5];
+  const offence = (line) => offences(rule, new Map([['src/app/offender.js', `function offence() { ${line}; }\n`]]));
+  const innocent = (line) => offences(rule, new Map([['src/app/innocent.js', `function innocent() { ${line}; }\n`]]));
+
+  for (const line of [
+    "const answer = await fetch(url, { method: 'POST' })",
+    "const answer = await globalThis.fetch(url, { method: 'POST' })",
+    "const socket = new WebSocket('wss://example.invalid/voice')",
+    'const request = new XMLHttpRequest()',
+    'const events = new EventSource(url)',
+  ]) {
+    assert.deepEqual(offence(line), ['src/app/offender.js'], line);
+  }
+  for (const line of ['const p = prefetch(url)', 'const r = refetch(url)', 'const c = fetchAll(url)']) {
+    assert.deepEqual(innocent(line), [], line);
+  }
+});
+
 /** A line of code the rule's own pattern matches. */
 function control(rule) {
   switch (rule.name) {
@@ -194,6 +306,10 @@ function control(rule) {
       return "const KEY = 'fugaro.account.'";
     case RULES[4].name:
       return 'const session = createVoiceSession({ machine, screen, pipeline, native });';
+    case RULES[5].name:
+      // Both spellings: the bare call, and the same call through a global --
+      // the spelling a bare-name pattern misses.
+      return "const answer = await fetch(url); globalThis.fetch(url, { method: 'POST' })";
     default:
       return "console.log('x')";
   }

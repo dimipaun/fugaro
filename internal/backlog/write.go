@@ -30,12 +30,13 @@ import (
 // slug is cut to a length a listing can show rather than the title's own.
 const MaxSlugRunes = 60
 
-// New is an item a caller is filing: D27's eight fields less the id, which the
+// New is an item a caller is filing: D27's nine fields less the id, which the
 // folder allocates, and less the status, which is always `open` — an item is
 // filed open and closed by the pull request that fixes it (D31).
 type New struct {
 	Title   string // the filer's words, one line
-	Mode    string // the resolved mode a run ran under; "none" for a hand-filed item
+	Level   string // the resolved rigor level a run ran under; "none" for a hand-filed item
+	Kind    string // one of Kinds: `deferred` or `open-risk` (LD5)
 	Area    string // the matched areas, strictest first, comma-separated; "project" or "repo" for a whole layer
 	FiledBy string // the run's launcher, or the filer's login
 	FiledIn string // "run:<run id>", "pr:<number>" or "hand"
@@ -209,8 +210,9 @@ func render(n New, id string) string {
 	var b strings.Builder
 	b.WriteString("---\n")
 	for _, f := range []struct{ key, value string }{
-		{"id", id}, {"title", n.Title}, {"mode", n.Mode}, {"area", n.Area},
-		{"status", "open"}, {"filed-by", n.FiledBy}, {"filed-in", n.FiledIn}, {"date", n.Date},
+		{"id", id}, {"title", n.Title}, {"level", n.Level}, {"kind", n.Kind},
+		{"area", n.Area}, {"status", "open"}, {"filed-by", n.FiledBy},
+		{"filed-in", n.FiledIn}, {"date", n.Date},
 	} {
 		fmt.Fprintf(&b, "%s: %s\n", f.key, oneLine(f.value))
 	}
@@ -253,14 +255,17 @@ func (n New) check() error {
 		return err
 	}
 	for _, f := range []struct{ key, value string }{
-		{"mode", n.Mode}, {"area", n.Area}, {"filed-by", n.FiledBy},
+		{"level", n.Level}, {"kind", n.Kind}, {"area", n.Area}, {"filed-by", n.FiledBy},
 	} {
 		switch {
 		case strings.TrimSpace(f.value) == "":
-			return fmt.Errorf("an item needs a %s: every one of D27's eight fields is required", f.key)
+			return fmt.Errorf("an item needs a %s: every one of D27's nine fields is required", f.key)
 		case strings.ContainsFunc(f.value, unicode.IsControl):
 			return fmt.Errorf("the %s carries a control character: it is one line (D27)", f.key)
 		}
+	}
+	if !contains(Kinds, n.Kind) {
+		return fmt.Errorf("kind %q is not one of %s: an item is a deferral or an open risk, and there is no third kind (D27 as amended by LD5)", n.Kind, strings.Join(Kinds, ", "))
 	}
 	if !dateRE.MatchString(n.Date) {
 		return fmt.Errorf("date %q is not `YYYY-MM-DD` (D27)", n.Date)

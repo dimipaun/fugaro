@@ -118,6 +118,22 @@ type Config struct {
 	// the file with KnownFields and refuses it on the key alone). Like
 	// RepoRigor it is never part of the file or of SHA256.
 	RepoRigorSet bool `yaml:"-" json:"-"`
+	// RepoRigorLevelSet is whether the repository's own file writes the
+	// `level:` key of one of its rigor area rules: the spelling this release
+	// adds beside the `mode:` every release reads (rigor.Area's UnmarshalYAML
+	// folds the two into the rule's level, so the parsed rules cannot answer
+	// this). It is the question RepoRigorSet asks, one key deeper, because a
+	// runner older than rigorSpellingSince refuses `level:` as a field it does
+	// not know in a file it decodes with KnownFields. Like the fields above it
+	// is never part of the file or of SHA256.
+	RepoRigorLevelSet bool `yaml:"-" json:"-"`
+	// RepoRigorScalarSet is whether the repository's own file writes the rigor:
+	// key as a scalar — the shorthand `rigor: critical`, which says what a
+	// block carrying only default says. Rigor cannot answer it: the two forms
+	// decode to the same block, while a runner older than rigorSpellingSince
+	// refuses the scalar outright ("cannot unmarshal !!str into config.Rigor").
+	// Like the fields above it is never part of the file or of SHA256.
+	RepoRigorScalarSet bool `yaml:"-" json:"-"`
 	// RepoGovernanceSet is whether the repository's own file wrote the
 	// governance: key at all, at any value, the question RepoRigorSet answers
 	// for rigor: Governance cannot answer for an explicit null (`governance:`,
@@ -177,6 +193,16 @@ type Config struct {
 	// (internal/cli). Like the fields above it is never part of the file or of
 	// SHA256.
 	RepoTriageSet bool `yaml:"-" json:"-"`
+	// RepoReviewAgainstTaskSet is whether the repository's own file wrote the
+	// agent.review_against_task key at all, at any value: the question
+	// RepoRigorSet answers for rigor:, and Agent.ReviewAgainstTask can answer
+	// neither half of it — the key written false and the key absent both read
+	// off, and a runner older than reviewSpecSince refuses the key itself,
+	// whatever it says (internal/cli). The gates that judge a job image read
+	// this, and the runner's own answer to whether the check runs reads the
+	// value (ReviewAgainstTaskOn). Like the fields above it is never part of the
+	// file or of SHA256.
+	RepoReviewAgainstTaskSet bool `yaml:"-" json:"-"`
 	// RepoModelGradesSet is whether the repository's own file wrote the
 	// model_grades key at all, at any value: the question RepoRigorSet answers
 	// for rigor:, and ModelGrades cannot answer it — the block written empty
@@ -244,21 +270,66 @@ type Planning struct {
 func (p *Planning) DecouplingOn() bool { return p == nil || p.Decoupling == nil || *p.Decoupling }
 
 // Rigor is fugaro.yaml's rigor: block and the project layer's defaults.rigor
-// (D20): the mode a repository runs at when nothing narrower decides, and
+// (D20): the level a repository runs at when nothing narrower decides, and
 // the named area rules that decide it from the paths a run touches. Both
 // keys may be set in either layer (docs/project-layer.md §5).
 type Rigor struct {
-	// Default is the mode this layer sets; "" sets none, so a layer below
+	// Default is the level this layer sets; "" sets none, so a layer below
 	// decides (the built-in default is rigor.Default, D19). A narrower layer
-	// may set a *lower* mode than a wider one (D21): this is a default, and a
+	// may set a *lower* level than a wider one (D21): this is a default, and a
 	// project that wants a floor says so with a floor.
-	Default rigor.Mode `yaml:"default,omitempty"`
-	// Areas are this layer's area rules (D20c). A rule sets the mode for the
+	Default rigor.Rigor `yaml:"default,omitempty"`
+	// Areas are this layer's area rules (D20c). A rule sets the level for the
 	// paths it matches; the repository's list and the project layer's are
 	// both in effect, never one replacing the other (the merge rule §4
 	// otherwise gives a list), which is RepoRigor's reason to exist.
 	Areas []rigor.Area `yaml:"areas,omitempty"`
 }
+
+// rigorBlockKeys are the keys the block form accepts, the set
+// UnmarshalYAML refuses anything else by (the strict decoder's own job for
+// every other block: a type with an unmarshaler opts out of Decoder.KnownFields).
+var rigorBlockKeys = map[string]bool{"default": true, "areas": true}
+
+// UnmarshalYAML reads the block form (default:, areas:) and the scalar
+// shorthand, `rigor: critical`, which says the same thing as a block carrying
+// only default (D20; reconciliation item 8's shorthand half, the owner's
+// ruling of 2026-11-18).
+//
+// One way to write a thing is usually the better rule, and the shorthand is the
+// exception for the same reason the block has a default at all: the level a
+// repository runs at is the whole of what most repositories have to say, and
+// making them write four lines of block for it is what the block's own name
+// exists to avoid. The block stays for the repositories that also name areas.
+func (r *Rigor) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		lvl, ok := rigor.Parse(node.Value)
+		if !ok {
+			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: rigor must be one of %s", node.Line, rigor.RigorList())}}
+		}
+		*r = Rigor{Default: lvl}
+		return nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: rigor must be one of %s, or a mapping of default and areas", node.Line, rigor.RigorList())}}
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if k := node.Content[i]; !rigorBlockKeys[k.Value] {
+			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: field %s not found in type %s", k.Line, k.Value, rigorType)}}
+		}
+	}
+	type plain Rigor // no methods: decodes the fields without recursing into this one
+	var v plain
+	if err := node.Decode(&v); err != nil {
+		return err
+	}
+	*r = Rigor(v)
+	return nil
+}
+
+// rigorType is Rigor's own type name, for the unknown-field refusal above:
+// UnmarshalYAML builds the message yaml.v3's strict mode would have built.
+var rigorType = reflect.TypeOf(Rigor{})
 
 // Security is fugaro.yaml's security: block (D1500): this repository's own
 // list of named patterns. It is one block whose list is security.patterns and
@@ -290,8 +361,9 @@ func (c *Config) RigorConfig() rigor.Config {
 	return out
 }
 
-// ProjectRigor is the project layer's half alone: defaults.rigor.default and
-// its areas, with the repository's rigor: block left out. It is what a run
+// ProjectRigor is the project layer's half alone: defaults.rigor.default,
+// its areas and its per-repository map, with the repository's rigor: block
+// left out. It is what a run
 // falls back to when the base branch's own fugaro.yaml cannot be read
 // (internal/runner, D25): the layer came with the task and is no branch's, so
 // it is the one part of the configuration that is still true when no branch
@@ -301,6 +373,7 @@ func (c *Config) ProjectRigor() rigor.Config {
 	var out rigor.Config
 	if c.Layer != nil {
 		out.Project, out.ProjectAreas = c.Layer.Defaults.Rigor.Default, c.Layer.Defaults.Rigor.Areas
+		out.ProjectRepos = c.Layer.Defaults.Rigor.Repos
 	}
 	return out
 }
@@ -637,6 +710,27 @@ type Agent struct {
 	// the launch's own gate judges the job image on (internal/cli's
 	// triageSince).
 	Triage *bool `yaml:"triage,omitempty" json:"Triage,omitempty"`
+	// ReviewAgainstTask is whether every review stage is given the task the
+	// pull request was written for and asked whether the change does what it
+	// asks (docs/review-against-task/): true, false, or nil for the default,
+	// which is on. It is a pointer for Triage's reason: the key's absence and
+	// `review_against_task: false` are two answers, and the field cannot tell
+	// them apart otherwise.
+	//
+	// The repository is the only layer that may name it — config.Scopes gives
+	// the key InRepo and nothing else, Triage's own refusal, so a project layer
+	// or a profile (the same launcher-writable bucket object) cannot, and a
+	// task's own embedded layer cannot turn the check off after the base branch
+	// turned it on. The value is read from the **base** configuration and never
+	// from the run's branch (R7), so a run's own agent cannot switch off the
+	// review of its own work; a nil base configuration counts as on, the strict
+	// direction. The owner's published policy node is the other home
+	// (policy.Layer.ReviewAgainstTask, where `true` forces the check on and
+	// `false` is a project-wide default off, D2935), read beside this key as a
+	// separate gate. Binaries before 0.27.0 refuse the key (strict decoder),
+	// whatever it says, which is what the launch's own gate judges the job
+	// image on (internal/cli's reviewSpecSince).
+	ReviewAgainstTask *bool `yaml:"review_against_task,omitempty" json:"ReviewAgainstTask,omitempty"`
 	// Recipe names the task loop that follows implement
 	// (docs/design/recipes.md): a recipe in .fugaro/recipes/, the project's,
 	// or the catalog's. "" is default. fugaro run --recipe wins over it.
@@ -684,11 +778,28 @@ type Agent struct {
 // repository's answer lands (Resolve); the policy node's arrives beside it as
 // policy.Effective.TriageOff, which the runner merges — a true there is not a
 // way to put the stage back either.
-func (a Agent) TriageOn(mode rigor.Mode) bool {
+func (a Agent) TriageOn(mode rigor.Rigor) bool {
 	if !TriageMode(mode) {
 		return false
 	}
 	return a.Triage == nil || *a.Triage
+}
+
+// ReviewAgainstTaskOn reports whether the repository's own configuration has
+// every review stage checked against the task the pull request was written for
+// (docs/review-against-task/, R7): false only when the key is written false,
+// and true when it is absent — the default the spec asks for (§1).
+//
+// It is the repository's half of the answer and not the whole of it. The
+// owner's published policy node arrives beside it as the runner's ceiling
+// (RA8a), which reads this field as one gate of two: a published true forces
+// the check on whatever this says, and a published false is a project-wide
+// default off that this field's true overrides (D2935). The reader that has to
+// agree on that order is internal/runner's reviewAgainstTaskOn; this method is
+// what it asks for the file's own value, so no second reading of the pointer
+// exists.
+func (a Agent) ReviewAgainstTaskOn() bool {
+	return a.ReviewAgainstTask == nil || *a.ReviewAgainstTask
 }
 
 // TriageMode reports whether mode is one of the two modes the triage stage
@@ -697,7 +808,7 @@ func (a Agent) TriageOn(mode rigor.Mode) bool {
 // that spend review rounds on a run's own output want and the others do not —
 // POC and Critical judge findings by the mode's own table, and Hotfix's table
 // blocks the ones the judge could move.
-func TriageMode(mode rigor.Mode) bool {
+func TriageMode(mode rigor.Rigor) bool {
 	return mode == rigor.Startup || mode == rigor.Pro
 }
 
@@ -1132,7 +1243,16 @@ const AnthropicSecret = "anthropic-api-key"
 // the two cannot say different things, and both name the fix that actually
 // works: store a key and rerun `fugaro update` (the mount is planned at
 // deploy), or route the model through a provider.
-const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro update, or route the model through a provider"
+//
+// The third sentence is the SHARED PROJECT JOB's, whose mount is not this
+// remedy's to restore: a profile whose switch is on mounts no Anthropic key at
+// all (config.SharedJobServedClasses, B5.7), so a run of one cannot be fixed
+// from a checkout's secrets and a re-apply of its root — the credential it is
+// served with is the installation's credentials service's to hand it, and what
+// the service holds for the project is the key `fugaro creds set` stores.
+// Saying so is the difference between a reader who fixes the run and one who
+// reruns the same update twice.
+const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro update, or route the model through a provider. A run on a shared project job mounts no key of its own where its profile is served by the credentials service: there the key the service hands back is the project's own (`fugaro creds set anthropic-api-key`), and a job of a profile the service does not serve yet is put on it from one of the profile's repositories (`fugaro update --repo` in its checkout, with agent.auth: cascade)"
 
 // BitbucketSecret is the logical secret that holds a Bitbucket credential:
 // normally a repository access token, issued for one repository and unusable

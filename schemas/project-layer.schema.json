@@ -90,14 +90,20 @@
         "rigor": {
           "type": "object",
           "additionalProperties": false,
-          "description": "The rigor mode every repository of this project runs at, and the area rules in effect for all of them (docs/rigor-modes/spec.md D20). Both keys may also be set in a repository's own rigor: block, and the two areas lists are a union, not a replacement: a repository's own rules never switch the project's off. Fugaro before 0.11.0 refuses the key, in every repository of the project.",
+          "description": "The rigor level every repository of this project runs at, the levels of the repositories it names one by one, and the areas in effect for them (docs/rigor-modes/spec.md D20 as amended). An area of the project layer names the repositories it is made of (LD4), and the repositories own paths inside them; a repository's own rigor: block may set its own level and its own path rules beside the project's, and where it does the repository's value wins, so a project that wants a level no repository may lower declares a floor instead (D20 as amended, D8). Fugaro before 0.11.0 refuses the key, in every repository of the project.",
           "properties": {
-            "default": { "$ref": "#/$defs/rigorMode", "description": "The mode a run of any repository of this project resolves to when the repository sets none. Needs fugaro 0.11.0." },
+            "default": { "$ref": "#/$defs/rigorLevel", "description": "The level a run of any repository of this project resolves to when the repository sets none. Needs fugaro 0.11.0." },
             "areas": {
               "type": ["array", "null"],
               "maxItems": 100,
-              "description": "The project's named path rules, in effect beside each repository's own. Needs fugaro 0.11.0.",
+              "description": "The project's named areas, in effect beside each repository's own path rules. An area of this layer names what it is made of with members, or, in the shape that shipped before LD4, a doublestar glob in effect for every repository of the project; a member is a whole repository or a repository with the paths of it that are in the area. A repository's own path rules are a different list, in effect at the same time. Needs fugaro 0.11.0.",
               "items": { "$ref": "#/$defs/rigorArea" }
+            },
+            "repos": {
+              "type": ["object", "null"],
+              "propertyNames": { "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", "maxLength": 200 },
+              "additionalProperties": { "$ref": "#/$defs/rigorLevel" },
+              "description": "The level one repository of the project runs at, keyed by owner/name, for repositories this layer names one by one instead of an area. A repository's own rigor.default still wins over it (D20 as amended). The name is only checked for shape here, like the layer's own decoder: the published allow_repos decides whether a name is a repository of this project, and fugaro doctor warns about a name the published policy does not admit. Needs fugaro 0.27.0."
             }
           }
         },
@@ -142,9 +148,9 @@
         "judge_model": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*\\*?$", "maxLength": 100, "description": "The model a pair's blind judge run uses (D553). The owner's alone, like challengers." },
         "exchange_rate": {
           "type": ["object", "null"],
-          "propertyNames": { "$ref": "#/$defs/rigorMode" },
+          "propertyNames": { "$ref": "#/$defs/rigorLevel" },
           "additionalProperties": { "type": ["number", "null"], "minimum": 0 },
-          "description": "The extra median cost a pair may carry, as a fraction of the champion's median cost, before the mode keeps the champion (D565). A mode left out takes the figure Fugaro ships: 0 for POC, 0.25 for Startup, 0.5 for Pro, 2 for Critical (and hotfix, which is never sampled, 0)."
+          "description": "The extra median cost a pair may carry, as a fraction of the champion's median cost, before the level keeps the champion (D565). A level left out takes the figure Fugaro ships: 0 for POC, 0.25 for Startup, 0.5 for Pro, 2 for Critical (and hotfix, which is never sampled, 0)."
         }
       }
     },
@@ -295,20 +301,46 @@
         "max_subagents": { "type": ["integer", "null"], "minimum": 0, "maximum": 100, "description": "How far one stage of a run of this tier may fan out, at most the same 100 governance.max_subagents is bounded by. 0 or null sets nothing." }
       }
     },
-    "rigorMode": {
+    "rigorLevel": {
       "type": "string",
       "enum": ["poc", "startup", "pro", "critical", "hotfix"],
-      "description": "A rigor mode, spelled exactly as fugaro's own vocabulary spells it (internal/rigor). See fugaro.schema.json's rigorMode; the two layers' blocks carry the same keys and the same values."
+      "description": "A rigor level, spelled exactly as fugaro's own vocabulary spells it (internal/rigor). See fugaro.schema.json's rigorLevel; the two layers' blocks carry the same keys and the same values."
     },
     "rigorArea": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "match", "mode"],
-      "description": "One rigor.areas rule: a name to print, a doublestar path glob relative to the repository root, and the mode it sets. The same shape as fugaro.schema.json's.",
+      "required": ["name"],
+      "allOf": [
+        { "anyOf": [{ "required": ["level"] }, { "required": ["mode"] }] },
+        { "anyOf": [{ "required": ["match"] }, { "required": ["members"] }] }
+      ],
+      "description": "One rule of the project layer's defaults.rigor.areas: a name to print, what the area is made of, and the level it sets. An area of this layer is a named part of the project (LD4, D20 as amended), made of members — each a repository of the project, or a repository with the paths of it that are in the area — and one repository may be a member of two areas on disjoint paths, which is what semantic areas are for. A rule that writes `match:` instead is the shape that shipped before LD4: a doublestar glob inside one repository, which a published layer still carries and this one still loads. A repository's own rigor.areas rules are the same shape as this one minus `members` (fugaro.schema.json), because a repository's own rule is already about that repository's paths. The level's key was `mode:` until LD2 renamed the axis, and that spelling is still read: v0.11.0 shipped rigor.areas with it, and the `fugaro rigor set --area` of that release wrote it into this file, so a layer nobody has rewritten loads, with the decoder preferring `level:` where a rule carries both. Write `level:`.",
       "properties": {
         "name": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$", "description": "The rule's name, which the run record, the pull request body and fugaro watch print when they say which rule decided. 1 to 40 characters of letters, digits, space, dash, underscore and dot, starting with a letter or a digit." },
-        "match": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^/\\s]", "not": { "pattern": "(^|/)\\.\\.(/|$)" }, "description": "A doublestar path glob relative to the repository root. Not empty, not absolute, no \"..\" component, and a pattern doublestar validates." },
-        "mode": { "$ref": "#/$defs/rigorMode", "description": "The mode this rule sets for the paths it matches." }
+        "match": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^/\\s]", "not": { "pattern": "(^|/)\\.\\.(/|$)" }, "description": "A doublestar path glob relative to the repository root, the shape a project area had before LD4: the area is then in effect for that glob in every repository of the project. Not empty, not absolute, no \"..\" component, and a pattern doublestar validates." },
+        "members": {
+          "type": ["array", "null"],
+          "maxItems": 100,
+          "description": "What the area of a project layer is made of, each member a repository or a repository with paths (LD4). At least one member, and a rule with neither members nor a match says nothing about which paths it is for. Needs fugaro 0.27.0.",
+          "items": { "$ref": "#/$defs/rigorMember" }
+        },
+        "level": { "$ref": "#/$defs/rigorLevel", "description": "The level this rule sets for the paths it matches. A rule that writes it and the old `mode:` is read as this one says." },
+        "mode": { "$ref": "#/$defs/rigorLevel", "description": "The key the level was written under before LD2 renamed the axis, read as the rule's level when the rule writes no `level:`. Write `level:`." }
+      }
+    },
+    "rigorMember": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo"],
+      "description": "One member of a project area: a repository of the project, named owner/name (LD4). A member with paths is only in the area for those paths of that repository; a member without them is in it whole. Every path must stay inside its own repository: a member is a part of it, so \"..\" and an absolute path are both refused. The repository is checked for shape here, as the layer's own decoder checks it: whether the name is an admitted repository of the project is the published allow_repos' answer, which fugaro doctor warns about. Needs fugaro 0.27.0.",
+      "properties": {
+        "repo": { "type": "string", "minLength": 3, "maxLength": 200, "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", "description": "The repository this member is of, as owner/name — letters, digits, dot, dash and underscore in each of two segments." },
+        "paths": {
+          "type": ["array", "null"],
+          "maxItems": 100,
+          "description": "The paths of that repository which are in the area, each a doublestar glob relative to the repository root. Without them the whole repository is in the area.",
+          "items": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^/\\s]", "not": { "pattern": "(^|/)\\.\\.(/|$)" }, "description": "A doublestar path glob relative to the member's own repository root. Not empty, not absolute, no \"..\" component — a member is a part of its repository, so its paths stay inside it — and a pattern doublestar validates." }
+        }
       }
     },
     "duration": { "type": "string", "minLength": 2, "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$" },

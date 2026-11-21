@@ -8,7 +8,9 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -21,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // catalogEntryRow is one entry of `fugaro image ls` (D1143): the name, the
@@ -324,6 +327,7 @@ func newImageAddCmd() *cobra.Command {
 		dockerfile, branch         string
 		inline, image, description string
 		def                        bool
+		dryRun, asJSON             bool
 		// noApply is the flag addNoApplyFlag registers, read by the run: the
 		// helper both declares the flag and hands back the value it holds, and
 		// that happens after the command is built (D1565).
@@ -349,10 +353,14 @@ func newImageAddCmd() *cobra.Command {
 			"and --branch reads an entry's Dockerfile from a branch no review here has\n" +
 			"vouched for, which a session may have pushed itself. --dockerfile alone is\n" +
 			"allowed there as it is anywhere else: it reads the project's own repository\n" +
-			"at its base branch, where the file was committed and reviewed.",
+			"at its base branch, where the file was committed and reviewed.\n\n" +
+			"--dry-run prints what the add would do and writes nothing: no catalog entry,\n" +
+			"no build, and no step recorded for fugaro apply. --json prints that document,\n" +
+			"in the shape schemas/image-add-plan.schema.json describes, and is accepted\n" +
+			"only with --dry-run.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runImageAdd(cmd, o, args[0], tags, dockerfile, branch, inline, image, description, def, *noApply)
+			return runImageAdd(cmd, o, args[0], tags, dockerfile, branch, inline, image, description, def, *noApply, dryRun, asJSON)
 		},
 	}
 	f := cmd.Flags()
@@ -363,6 +371,8 @@ func newImageAddCmd() *cobra.Command {
 	f.StringVar(&image, "image", "", "a prebuilt image reference, such as ghcr.io/owner/image:1.2: nothing is built and the image is used as it is")
 	f.StringVar(&description, "description", "", "what the entry is for, printed by fugaro image ls")
 	f.BoolVar(&def, "default", false, "the entry a job whose repositories name no needs runs (one entry, or none)")
+	f.BoolVar(&dryRun, "dry-run", false, "print what the add would do and write nothing")
+	f.BoolVar(&asJSON, "json", false, "print the dry run's document (with --dry-run)")
 	noApply = addNoApplyFlag(cmd)
 	addCloudFlags(cmd, &o)
 	return cmd
@@ -412,8 +422,16 @@ func imageAddAgentRefusal(cmd *cobra.Command, inline, image, branch string, def 
 // image's build, the redeploy of the checkout's repository — which pins the
 // digest that build produced — and the publication of the catalog every run of
 // the project is admitted by.
-func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string, dockerfile, branch, inline, image, description string, def, noApply bool) error {
+//
+// Under --dry-run the same path is walked — the entry built from the flags and
+// every refusal asked in the order above — and the run stops before the write,
+// printing the plan document instead of writing, building or queueing anything
+// (O4).
+func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string, dockerfile, branch, inline, image, description string, def, noApply, dryRun, asJSON bool) error {
 	ctx := cmd.Context()
+	if err := imageAddDryRunFlags(dryRun, asJSON); err != nil {
+		return err
+	}
 	// The read of the project config is the operator's own and may fetch the
 	// shared one, so the GODEBUG that prints requests with their credentials
 	// is refused before anything is read (the rule every such command keeps).
@@ -469,6 +487,19 @@ func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string,
 	if err := imageCatalogGate(onDisk, "the catalog entry "+pluginwire.Printable(e.Name), cmd.ErrOrStderr()); err != nil {
 		return err
 	}
+	// The dry run stops here, once every refusal the real command would give
+	// has been asked: the entry the flags describe and the steps the change
+	// owes, in one document, with the file, the build and the record all
+	// untouched (O4). It is deliberately after the gates and not before them —
+	// a caller that sees a document reads it as "this add would land", and one
+	// printed for an add the gates refuse would say exactly the opposite.
+	if dryRun {
+		plan, err := imageAddPlanDocument(e, onDisk.Name, noApply)
+		if err != nil {
+			return err
+		}
+		return writeImageAddPlanDoc(cmd.OutOrStdout(), plan, asJSON)
+	}
 	if err := userSave(cmd.OutOrStdout(), path, old, next); err != nil {
 		return err
 	}
@@ -489,6 +520,134 @@ func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string,
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Image %s added and now available to your jobs.\n", pluginwire.Printable(e.Name))
 	return nil
+}
+
+// imageAddDryRunFlags refuses the flag combination a dry run does not take:
+// --json is the dry run's own shape, and a caller that asked for a document
+// must not silently get a table instead (settingsDryRunFlags' rule, one command
+// family over).
+func imageAddDryRunFlags(dryRun, asJSON bool) error {
+	if !dryRun && asJSON {
+		return userErr("--json is the dry run's document: pass --dry-run with it, or read the catalog with `fugaro image ls --json`")
+	}
+	return nil
+}
+
+// imageAddPlanVersion is the dry run's document version (D848: members are only
+// ever added within a version, and removing or retyping one bumps this number).
+// schemas/image-add-plan.schema.json is the contract.
+const imageAddPlanVersion = 1
+
+// imageAddPlanEntry is the catalog entry the dry run would add: the members
+// `fugaro image ls` prints, with the definition's source in the same one-line
+// form it prints (catalogSourceLine). An inline definition's Dockerfile text is
+// deliberately not carried: the document names the entry, and it is printed to
+// a terminal and shown in a window rather than being a second copy of a file
+// that is not this program's.
+type imageAddPlanEntry struct {
+	Name        string   `json:"name"`
+	Tags        []string `json:"tags"`
+	Description string   `json:"description"`
+	Default     bool     `json:"default"`
+	Source      string   `json:"source"`
+}
+
+// imageAddPlanStep is one step the add owes (D1561): the step table's own name
+// (internal/apply) and whether --no-apply left it to `fugaro apply` instead of
+// running it here. The build, the repository's redeploy and the policy
+// publication are the catalog's three, in the order they run.
+type imageAddPlanStep struct {
+	Name  string `json:"name"`
+	Saved bool   `json:"saved"`
+}
+
+// imageAddPlanDoc is what `fugaro image add --dry-run` prints: the entry the
+// add would write and the steps it owes, with nothing written (O4). It is the
+// document the console's confirmation window is drawn from, so every member is
+// one this CLI produced and a consumer computes nothing — the steps are named
+// here rather than re-derived, and the entry is the one catalogEntryFromFlags
+// built and every gate above has passed.
+//
+// Every string goes through safetext.Field, the way the settings dry run's
+// document does: a name, a description and a source are the command line's and
+// the config's, and a document a terminal prints and a window draws carries
+// none of the characters this program drops from what it prints.
+type imageAddPlanDoc struct {
+	Version int                `json:"version"`
+	Command string             `json:"command"`
+	Project string             `json:"project"`
+	Entry   imageAddPlanEntry  `json:"entry"`
+	Steps   []imageAddPlanStep `json:"steps"`
+}
+
+// imageAddPlanDocument is the dry run's document for the entry it would add.
+// project is the config's own name and saved is --no-apply's answer: the
+// document says the add is saved and not run, which is what --no-apply makes of
+// it, rather than claiming a run a dry run never performs.
+func imageAddPlanDocument(e config.Entry, project string, saved bool) (imageAddPlanDoc, error) {
+	names, err := chainSteps([]apply.Change{{Kind: apply.Resource, Key: apply.ResourceImage}})
+	if err != nil {
+		return imageAddPlanDoc{}, err
+	}
+	steps := make([]imageAddPlanStep, 0, len(names))
+	for _, name := range names {
+		steps = append(steps, imageAddPlanStep{Name: safetext.Field(name), Saved: saved})
+	}
+	return imageAddPlanDoc{
+		Version: imageAddPlanVersion,
+		Command: imageAddDoor,
+		Project: safetext.Field(project),
+		Entry: imageAddPlanEntry{
+			Name:        safetext.Field(e.Name),
+			Tags:        nonNil(e.Tags),
+			Description: safetext.Field(e.Description),
+			Default:     e.Default,
+			Source:      safetext.Field(catalogSourceLine(e.Source)),
+		},
+		Steps: steps,
+	}, nil
+}
+
+// writeImageAddPlanDoc prints the dry run's document: the versioned document
+// with --json, and the same facts as a table without it — one shape's facts or
+// the table is a second contract, and a second contract is the one that drifts
+// (writeSettingsWriteDoc's rule).
+func writeImageAddPlanDoc(w io.Writer, doc imageAddPlanDoc, jsonOut bool) error {
+	if jsonOut {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(doc)
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "FIELD\tVALUE")
+	for _, row := range [][2]string{
+		{"version", strconv.Itoa(doc.Version)},
+		{"command", doc.Command},
+		{"project", doc.Project},
+		{"name", doc.Entry.Name},
+		{"tags", strings.Join(doc.Entry.Tags, ", ")},
+		{"description", doc.Entry.Description},
+		{"default", strconv.FormatBool(doc.Entry.Default)},
+		{"source", doc.Entry.Source},
+		{"steps", imageAddPlanStepsString(doc.Steps)},
+	} {
+		fmt.Fprintf(tw, "%s\t%s\n", row[0], row[1])
+	}
+	return tw.Flush()
+}
+
+// imageAddPlanStepsString renders the steps as the one cell a table carries
+// them in: each step's name and whether it is saved, comma-separated.
+func imageAddPlanStepsString(steps []imageAddPlanStep) string {
+	pairs := make([]string, 0, len(steps))
+	for _, s := range steps {
+		word := "run"
+		if s.Saved {
+			word = "saved"
+		}
+		pairs = append(pairs, s.Name+"="+word)
+	}
+	return strings.Join(pairs, ", ")
 }
 
 // catalogEntryFromFlags builds the entry the flags describe, refusing what is

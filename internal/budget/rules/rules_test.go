@@ -1529,19 +1529,26 @@ func TestRegistrationFieldValidatorsCarryTheKindGate(t *testing.T) {
 // TestUserReadGrantsAreExactlyTheNamedFamilies: the read grants D112's answer
 // adds, and nothing else. The user claim reads the eight expressions a run
 // token already carried (each now `… || USER`), the two nodes of its own
-// mailbox, — since coordinator plan task P3 — the coordinator's subtree, and —
-// since O2 of the stateless orchestrator plan — the orchestrator's.
+// mailbox, — since coordinator plan task P3 — the coordinator's subtree, — since
+// O2 of the stateless orchestrator plan — the orchestrator's, and — since
+// mobile identity-pairing task J1 (F30, D2797, O3) — the single node
+// `outcomes/$day/$slug/$run`, granted to `USER` alone so that the app can name
+// a run that is still going without a run's own read widening with it.
 // A grant anywhere else, on a family tension (b1) struck or on a parent that
 // would cascade to one, fails here as well as in the golden.
 //
 // F11's property is the half this pins from the other side: those families are
 // the only ones a signed-in user reaches, so an account with no mu claim reads
 // nothing (admitted nowhere), and no family of the run's own slices — agents
-// and outcomes above all — was widened by this change.
+// above all, and the parents and siblings of the one outcome node J1 opened —
+// was widened by this change.
 func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 	paths := generatedPaths(t)
-	// The eleven, and the two mailbox nodes, which are scoped to the mailbox
-	// the claim owns.
+	// The ten families granted on a family-wide expression — the eight a run
+	// token already carried, the coordinator's and the orchestrator's — the two
+	// mailbox nodes, which are scoped to the mailbox the claim owns, and the one
+	// outcome node of J1: a single location, reached by the app with the day,
+	// the slug and the run it already holds from its spend read.
 	// generatedPaths spells $slug as slugForPath (it is the one wildcard the
 	// tests substitute), so the keys below do too.
 	// The ninth is the coordinator's subtree (coordinator plan task P3): the
@@ -1559,6 +1566,7 @@ func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 		"spend/$day/global":                        true,
 		"spend/$day/repos/" + slugForPath:          true,
 		"spend/$day/runs/" + slugForPath + "/$run": true,
+		"outcomes/$day/" + slugForPath + "/$run":   true,
 		"mailbox/$mb/outbox":                       true,
 		"mailbox/$mb/heartbeat":                    true,
 		"coordinator":                              true,
@@ -2109,19 +2117,26 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 // O2, "we added the orchestrator subtree", whose addition is the top-level
 // /orchestrator node and nothing under it, or for its T8, "we added the build
 // lease family", whose addition is likewise its own node and nothing under it
-// (isNamedAddition).
+// (isNamedAddition) — or, for WS22, "we added the credential route", whose
+// addition is the route subtree and one repository's record under it.
 //
-// One rule already there is allowed to change, and it is named: the outcome's
-// status validator gains the run status 'unreviewed' (isNamedRuleChange,
-// docs/binary-allow-rule's NV0, D994). It is the one change of that shape here
-// because it is what keeps the database true about a status a release adds:
-// every other path stays as it was, and the widening is exact — the one clause
-// and nothing else.
+// Two rules already there are allowed to move, and both are named. One is a
+// change: the outcome's status validator gains the run status 'unreviewed'
+// (isNamedRuleChange, docs/binary-allow-rule's NV0, D994), the one change of
+// that shape because it is what keeps the database true about a status a
+// release adds, and the widening is exact — the one clause and nothing else.
+// The other is an *addition to a rule*: the node the outcome itself sits at
+// gains the paired device's read (isNamedReadGrant, mobile identity-pairing J1,
+// F30, D2797, O3), which is a new attribute on a path generation 3 already
+// carried and therefore neither an addition path nor a changed validator. It is
+// exact in the same way: one attribute, at one named path, holding one named
+// expression, with every attribute beside it byte for byte what it was.
 //
 // Hand mutation this fails on: editing any existing rule (a loosened bound, a
 // dropped conjunct) while adding the new nodes, widening the outcome's status
 // validator by anything but that one clause (a second word, a bound instead of
-// an equality), or dropping the new node from the template (the addition check
+// an equality), a read granted at a second path or to an expression other than
+// the user claim, or dropping the new node from the template (the addition check
 // below).
 func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 	raw, err := os.ReadFile("testdata/rules.generation3.json")
@@ -2153,7 +2168,7 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 			continue
 		}
 		if !maps.Equal(want, got) {
-			if isNamedRuleChange(p, want, got) {
+			if isNamedRuleChange(p, want, got) || isNamedReadGrant(p, want, got) {
 				continue
 			}
 			t.Errorf("/%s changed:\n  was %v\n  now %v", p, want, got)
@@ -2306,7 +2321,7 @@ func isNamedRuleChange(p string, want, got map[string]any) bool {
 	if !named || len(want) != len(got) {
 		return false
 	}
-	if !maps.Equal(withoutValidate(want), withoutValidate(got)) {
+	if !maps.Equal(withoutAttr(want, ".validate"), withoutAttr(got, ".validate")) {
 		return false
 	}
 	ws, wok := want[".validate"].(string)
@@ -2317,13 +2332,51 @@ func isNamedRuleChange(p string, want, got map[string]any) bool {
 	return strings.Contains(gs, clause) && strings.Replace(gs, clause, "", 1) == ws
 }
 
-// withoutValidate is m without its `.validate`, so the attributes beside it are
+// outcomeReadPath is the one existing rule J1 *adds* an attribute to, spelled as
+// generatedPaths spells it: the outcome node itself, not its status child.
+const outcomeReadPath = "outcomes/$day/" + slugForPath + "/$run"
+
+// namedReadGrants is the whole of what this document may add to a rule that
+// already existed: each path, and the read expression the addition puts on it.
+// J1 (mobile identity-pairing, F30, D2797, O3) is the one entry, and it is what
+// lets a paired phone name a run that is still going — a running run is a
+// `spend/$day/runs/$slug/$run` entry with no `outcomes` entry beside it. The
+// expression is the user claim and nothing else: `RUN || USER` would widen the
+// run's own reach with the device's, and `USER` on any parent of this node
+// (outcomes, outcomes/$day) would hand the app a list rather than a run.
+var namedReadGrants = map[string]string{
+	outcomeReadPath: userClaim,
+}
+
+// isNamedReadGrant reports whether the change to the rule at p — from want
+// (generation 3) to got (what this branch generates) — is one of the named read
+// grants and nothing besides: exactly one attribute more than generation 3 had,
+// that attribute `.read`, holding byte for byte the named expression, and every
+// attribute beside it unchanged.
+//
+// It is deliberately not isNamedRuleChange's shape: that one requires the
+// attribute *count* to be equal, because widening a validator rewrites a string
+// that was already there. A read is a new attribute on a node whose other rules
+// do not move, so the count is what rises, and the rest is compared as a whole.
+func isNamedReadGrant(p string, want, got map[string]any) bool {
+	grant, named := namedReadGrants[p]
+	if !named || len(got) != len(want)+1 {
+		return false
+	}
+	if r, ok := got[".read"].(string); !ok || r != grant {
+		return false
+	}
+	return maps.Equal(want, withoutAttr(got, ".read"))
+}
+
+// withoutAttr is m without one attribute, so the attributes beside it are
 // compared on their own: isNamedRuleChange allows the validator to move and
-// nothing else about the rule.
-func withoutValidate(m map[string]any) map[string]any {
+// nothing else about the rule, and isNamedReadGrant allows a read to be added
+// and nothing else.
+func withoutAttr(m map[string]any, key string) map[string]any {
 	out := map[string]any{}
 	for k, v := range m {
-		if k != ".validate" {
+		if k != key {
 			out[k] = v
 		}
 	}
@@ -2356,7 +2409,8 @@ func withoutValidate(m map[string]any) map[string]any {
 func isNamedAddition(p string) bool {
 	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth ||
 		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p) || isNewVoicePath(p) ||
-		isNewRegistrationPath(p) || isNewEscalationReadPath(p) || isNewSpendAccuracyPath(p)
+		isNewRegistrationPath(p) || isNewEscalationReadPath(p) || isNewSpendAccuracyPath(p) ||
+		isNewRoutePath(p)
 }
 
 // escalationLedgerPath is the ladder's ledger node as the rules spell it (E7,
@@ -2550,6 +2604,41 @@ func isNewVoicePath(p string) bool {
 		p == projectpolicy.PathVoiceRepos() || p == projectpolicy.PathVoiceRepo(slugForPath)
 }
 
+// isNewRoutePath reports whether p is one of the two locations the credential
+// route adds (workspace-service task WS22, decisions D2980–D2982, resolutions
+// R3 and R4): the subtree's own node and one repository's record. Both are
+// equalities and not prefixes, for isNewCredsPath's reason — the record's
+// members are the service's address and the holder of each kind, so a path
+// *under* a repository's node is a change to what a run reads, and it belongs
+// here as a diff a reviewer sees rather than as a match this function waves
+// through.
+//
+// The subtree's own node is in the list because the template spells it and
+// because it is the one path a grant on which would reach every repository's
+// record: the grants are per repository, and an RTDB read grant cascades down.
+//
+// The path is spelled here rather than taken from a constant, because the
+// contract that owns it is internal/creds (RoutePath, C2's wire contract): its
+// import allow-list admits internal/creds, internal/credsvc and internal/cli
+// and nothing else (TestCredsIsNotReachableFromARun), so this package may not
+// import it, and a second spelling of the path in this package would be a
+// second contract. The two agree because internal/creds'
+// TestRoutePathIsGrantedInTheDeployedRules walks this document's own golden at
+// creds.RoutePath and fails if the rule there is not the one this template
+// writes.
+func isNewRoutePath(p string) bool {
+	return p == routeSubtree || p == routeSubtree+"/"+slugForPath
+}
+
+// routeSubtree is the credential route's subtree as the template spells it,
+// above one repository's record. The records' own paths are creds.RoutePath's
+// (C2's wire contract) and the segment under this subtree is budget.Key of the
+// raw slug — the spelling the rule compares a token's `fs` claim with, so a
+// path keyed another way is a node no run asks for and no rule admits. It is
+// declared here rather than in the emulator test so that the path the shape
+// test names and the path the emulator drives are one spelling.
+const routeSubtree = "config/policy/route"
+
 // isNewWorkspacePath reports whether p is one of the paths the workspace family
 // adds (docs/workspaces/implementation-plan.md W3, workspace.go): the record and
 // its four children, the admitted-token hashes, and the meter and the rollup by
@@ -2646,7 +2735,18 @@ func isNewCredsPath(p string) bool {
 //     `tlo` and `thi` under `spend/$day/repos/$slug/byModel/$model`, D2648 as
 //     amended by D2650) are a reach a *client* holds, and RTDB applies a
 //     multi-path update atomically, so under the document behind the whole
-//     stage report is refused rather than one leaf of it.
+//     stage report is refused rather than one leaf of it. J1 (mobile
+//     identity-pairing, F30, D2797, O3) moves it to 8 for P3's reason: the
+//     paired device's read of `outcomes/$day/$slug/$run` is a **grant**, one
+//     node a signed-in phone may read and did not before, and this time the
+//     grant is to `USER` alone — the run token's own read set does not move — so
+//     the phone's running-jobs view (J2) names a run that is still going. WS22
+//     (workspace-service, D2982, R3 and R4) moves it to 9 for P5.3.1's reason:
+//     the credential-route leaf (`config/policy/route/$slug`, which
+//     `creds.RoutePath` builds and `TestRoutePathIsGrantedInTheDeployedRules`
+//     holds this document to) is a **grant** to a run token too — the run reads
+//     its route before its first call, and did not read this leaf before — so a
+//     run under the document behind is refused a read the routing depends on.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -2665,8 +2765,8 @@ func isNewCredsPath(p string) bool {
 // Hand mutation this fails on: bumping any of the four (or lowering one of the
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 7 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 7: the generation that carries the four day-counter leaves a stage report writes per model (spend-accuracy D2648, D2650)", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 9 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 9: the generation that carries the credential-route leaf config/policy/route/$slug and the run token's read of it (workspace-service WS22, D2982, R3, R4)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)

@@ -716,18 +716,26 @@ span.live-meter-word {
 }
 
 /* The hour line is drawn where `screens.css` draws the burn line's own `ol`,
- * because the redesign's tokens are this file's: the height, the tick width and
- * the gap's mark are the same three facts, in the palette the rest of the panel
- * is painted on. */
+ * because the redesign's tokens are this file's: the height, the box's width, the
+ * tick's cap and floor, the gap's mark **and the box** are the same facts, in the
+ * palette the rest of the panel is painted on. The hour line's window is the
+ * wider of the two and so the one that reaches a cap first
+ * (`LIVE_HOUR_MAX_SAMPLES`), which is why the fixed box and the clip are stated
+ * here rather than left to the burn line's own rule: a tick a person cannot see
+ * costs nothing, and a tick that widens the panel costs a figure (D2901). */
 ol.live-hour {
   display: flex;
   align-items: flex-end;
+  justify-content: flex-end;
   gap: 1px;
+  width: calc(8 * var(--row-height));
   height: var(--row-height);
+  overflow: hidden;
 }
 
 li.live-hour-bar {
   flex: 1 1 0;
+  min-width: 1px;
   max-width: 12px;
   height: 100%;
   overflow: hidden;
@@ -904,8 +912,16 @@ button.live-reap {
 
 /* ---- The runs table ------------------------------------------------------ */
 
+/* The rows are bounded and scroll (F3, D2901): a repository with a busy day has
+ * more runs than the panel can show, and before this box the list ran down the
+ * page and pushed the repositories under it away. The bound is the box's rather
+ * than a limit on the rows drawn, so a taller window shows more of them instead
+ * of the console deciding which runs a person may see -- and it is the same
+ * `max-height` the logs windows already use (the two `ol.run-log-*` rules). */
 div.live-runs {
+  max-height: 320px;
   overflow-x: auto;
+  overflow-y: auto;
   border: var(--rule-width) solid var(--line-subtle);
   border-radius: var(--radius-lg);
 }
@@ -3020,32 +3036,37 @@ button.graph-fit:hover {
   color: var(--text);
 }
 
-/* The pane is the canvas's own scroll area, and it is the floor under the
- * picture's scale (D735). The canvas carries its minimum size as geometry --
- * `minimumCanvas`, the whole picture at `GRAPH_MIN_SCALE`, which is 195 px of a
- * 260 px card -- so the pane has something to overflow exactly when the panel is
- * narrower than that. Above it there is nothing to scroll: `width: auto` with
- * `min-width: 100%` then draws the canvas at the panel's own width, which is
- * what the element did before the pane existed.
+/* The pane **never scrolls across** (D2900, the owner, 2026-11-18). What the
+ * width cannot hold, the canvas is **scaled** to (`width: 100%` below) rather
+ * than the reader scrolling sideways: a picture read sideways is one the window
+ * has to be wide for, which is the shape step 6a had and this ruling reversed.
+ * The picture is read top to bottom instead, and it is the **page**
+ * (`main.console-page`) that carries it down, not this box: nothing bounds the
+ * pane's height, so the pane grows with the picture. `overflow-y` is written out
+ * as `auto` rather than left out because that is what `overflow-x: hidden`
+ * computes it to anyway -- a `visible` axis beside a non-`visible` one is not
+ * `visible` -- and the pair reads better together.
  *
  * **It wraps the canvas and nothing else**, so a screen with no picture -- the
  * list, or the coordinator scope -- grows no scroll area it never uses. */
 div.graph-canvas-pane {
-  overflow-x: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
-/* The canvas takes the panel's width while the panel is at least as wide as the
- * picture's own floor, and the picture's ratio decides its height, which is what
- * `viewBox` is for. Under the floor the element keeps the `width`/`height`
- * geometry `graph.ts` wrote on it (`minimumCanvas`) and overflows the pane
- * instead of shrinking: a card drawn narrower than 195 px is a title nobody can
- * read, and a picture read sideways is still a picture. The ground is the page's
- * own `--bg` rather than a surface, so the cards and the bands are the only
- * raised things in the picture. */
+/* The canvas **is the pane's width**: the picture's ratio decides its height,
+ * which is what `viewBox` is for, and everything drawn on it keeps its place in
+ * the picture's own coordinates. The two `width`/`height` attributes `graph.ts`
+ * writes (`minimumCanvas`, the whole picture at `GRAPH_MIN_SCALE`, which is
+ * 195 px of a 260 px card) are the element's intrinsic size -- what gives it that
+ * ratio when this stylesheet is absent, and what `graph.test.ts` reads the
+ * picture's floor off -- and a `width` in this rule wins over the attribute, so
+ * the picture is drawn at the pane's width and scaled with it. The ground is the
+ * page's own `--bg` rather than a surface, so the cards and the bands are the
+ * only raised things in the picture. */
 section.graph svg.graph-canvas {
   display: block;
-  width: auto;
-  min-width: 100%;
+  width: 100%;
   height: auto;
   background-color: var(--bg);
   background-image: radial-gradient(var(--line) 1px, transparent 1px);

@@ -434,20 +434,22 @@ const FULL_ROW: JSONDoc = Object.freeze({
   // The run's own record of the paths it changed (console v2 design D27, F17;
   // `runstore.ChangedFiles`): absent for a run that recorded none.
   changed_files: { paths: ['console/src/shared/schema.ts', 'internal/runview/runview.go'], total: 2 },
-  // The mode the run resolved, the layer that decided it and the areas that
-  // matched, each with the mode it sets and the moment it was applied at
+  // The level the run resolved, the layer that decided it and the areas that
+  // matched, each with the level it sets and the moment it was applied at
   // (0.11.0, docs/rigor-modes D23/D24/D25; `runstore.RigorRecord`, between
   // `changed_files` and `artifact_count` in the struct). Accepted and not read
-  // -- no screen draws a run's mode yet -- and carried here so the
-  // classification walk sees its string keys: `from` is an enum of the
-  // resolver's own layers, the areas' `mode` is the same enum as the block's,
-  // and `revision` is a git ref.
+  // -- no screen draws a run's level yet -- and carried here so the
+  // classification walk sees its string keys: `level` is the axis's key since
+  // LD2 and `mode` the name it went by before, both always written with the same
+  // value, `from` is an enum of the resolver's own layers, the areas' `level` and
+  // `mode` are the same enum as the block's, and `revision` is a git ref.
   rigor: {
+    level: 'critical',
     mode: 'critical',
     from: 'area',
     areas: [
-      { name: 'payments', mode: 'critical', at: 'bootstrap' },
-      { name: 'docs', mode: 'poc', at: 'finalize' },
+      { name: 'payments', level: 'critical', mode: 'critical', at: 'bootstrap' },
+      { name: 'docs', level: 'poc', mode: 'poc', at: 'finalize' },
     ],
     at: 'finalize',
     revision: 'origin/main',

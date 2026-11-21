@@ -19,7 +19,7 @@ import (
 // empty mode leaves the block out, which is the record of a run that resolved
 // none: one written before the field existed, or one that died before
 // bootstrap.
-func seedRootRigor(t *testing.T, f *cloudFixture, id string, mode rigor.Mode) {
+func seedRootRigor(t *testing.T, f *cloudFixture, id string, mode rigor.Rigor) {
 	t.Helper()
 	seedSpec(t, f, firstRunSpec(id), false)
 	rec := prRecord(id, "", 7, 1)
@@ -119,7 +119,7 @@ func TestFollowUpKeepsTheRecordedMode(t *testing.T) {
 func TestFollowUpTakesHotfix(t *testing.T) {
 	for _, c := range []struct {
 		name     string
-		recorded rigor.Mode
+		recorded rigor.Rigor
 	}{
 		{"a PR recorded at pro", rigor.Pro},
 		{"a PR with no recorded mode", ""},
@@ -141,7 +141,7 @@ func TestFollowUpTakesHotfix(t *testing.T) {
 // TestStoredFollowUpKeepsAHotfixRequest: a stored follow-up task that asks for
 // hotfix launches as it is. --retry and a repeated --run-id reuse the stored
 // task, and recheckFollowUp re-applies the raise-only rule to the request that
-// task carries; the rule does not judge hotfix (rigor.Mode.PerRun), or a
+// task carries; the rule does not judge hotfix (rigor.Rigor.PerRun), or a
 // follow-up the operator launched with --mode hotfix could not be retried —
 // the stored request ranks below the PR's recorded mode, and the refusal would
 // name a lowering nobody asked for.
@@ -167,7 +167,7 @@ func TestStoredFollowUpKeepsAHotfixRequest(t *testing.T) {
 // a mode a follow-up inherits. The runs on a PR can record it — an operator
 // asked for it on one — and a follow-up that inherited it would reach it
 // through a launch that asked for nothing, which is not the explicit per-run
-// choice the mode is (rigor.Mode.PerRun). The record imposes nothing instead,
+// choice the mode is (rigor.Rigor.PerRun). The record imposes nothing instead,
 // so the launch asks for none and the runner resolves from the layers; a
 // follow-up that wants hotfix says so, and --mode hotfix is accepted on one
 // (TestFollowUpTakesHotfix).
@@ -199,7 +199,7 @@ func TestFollowUpNeverKeepsARecordedHotfix(t *testing.T) {
 func TestStoredFollowUpReappliesTheRaiseOnlyRule(t *testing.T) {
 	for _, c := range []struct {
 		name       string
-		stored     rigor.Mode
+		stored     rigor.Rigor
 		wantPhrase string
 	}{
 		{"a stored request below the recorded mode", rigor.POC, "asks for poc, lower than critical"},
@@ -340,7 +340,7 @@ func TestFollowUpIgnoresAnUnreadableRigorBlock(t *testing.T) {
 	seedSpec(t, f, firstRunSpec(rootID), false)
 	rec := prRecord(rootID, "", 7, 1)
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
-	rec.Rigor = &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.Layer("whoever"), At: runstore.RigorAtFinalize}
+	rec.Rigor = &runstore.RigorRecord{Level: rigor.Critical, From: rigor.Layer("whoever"), At: runstore.RigorAtFinalize}
 	writeRecord(t, f, rootID, rec)
 	writeBuildRecord(t, f, appSlug, "web", release0111)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--mode", "poc", "also rename x"); err != nil {
@@ -359,7 +359,7 @@ func TestFollowUpWithNoRecordedModeImposesNothing(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		args []string
-		want rigor.Mode
+		want rigor.Rigor
 	}{
 		{"the flag stands", []string{"--mode", "poc"}, rigor.POC},
 		{"no flag asks for none", nil, ""},
@@ -449,11 +449,11 @@ func TestFollowUpCommentCannotSetTheMode(t *testing.T) {
 	if opens != 1 || closes != 1 {
 		t.Errorf("the block has %d opening and %d closing delimiters, want one of each: the body forged one", opens, closes)
 	}
-	modeType := reflect.TypeOf(rigor.Mode(""))
+	modeType := reflect.TypeOf(rigor.Rigor(""))
 	for _, typ := range []reflect.Type{reflect.TypeOf(followup.Selection{}), reflect.TypeOf(followup.PromptData{})} {
 		for _, f := range reflect.VisibleFields(typ) {
 			if f.Type == modeType || (f.Type.Kind() == reflect.Slice && f.Type.Elem() == modeType) {
-				t.Errorf("%s.%s carries a rigor.Mode, so a comment has a route to the mode (F13, T5.2)", typ, f.Name)
+				t.Errorf("%s.%s carries a rigor.Rigor, so a comment has a route to the mode (F13, T5.2)", typ, f.Name)
 			}
 		}
 	}

@@ -840,6 +840,100 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 	})
 
+	t.Run("a marker of the spend leaves' generation, below the outcome read's", func(t *testing.T) {
+		// Generation 7 already carries the four leaves a stage report writes per
+		// model, so the sentence for it must not send the operator after a leaf
+		// the deployed rules already hold: what 8 adds is the paired device's
+		// read of a run's outcome, and that is what it names. Generation 7 is the
+		// marker every installation on the release behind this one reports, so
+		// this is the state the sentence is read in — and the state the app's
+		// jobs list meets, since a phone under those rules sees a running run's
+		// spend and not the run (mobile identity-pairing task J1, F30, D2797).
+		if rulesSpendLeavesGeneration >= projectpolicy.RulesVersion {
+			t.Fatalf("rulesSpendLeavesGeneration = %d and RulesVersion = %d: this case is about a marker between them", rulesSpendLeavesGeneration, projectpolicy.RulesVersion)
+		}
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), rulesSpendLeavesGeneration)
+		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		if c.Problem != rulesMarkerOlderText(rulesSpendLeavesGeneration) {
+			t.Errorf("the body is not rulesMarkerOlderText:\n got %q\nwant %q", c.Problem, rulesMarkerOlderText(rulesSpendLeavesGeneration))
+		}
+		for _, want := range []string{fmt.Sprintf("generation %d", rulesSpendLeavesGeneration), "outcomes/$day/$slug/$run", fmt.Sprintf("generation %d or newer", projectpolicy.RulesVersion)} {
+			if !strings.Contains(c.Problem, want) {
+				t.Errorf("the body does not carry %q: %q", want, c.Problem)
+			}
+		}
+		// The earlier generations' own absences are what must not appear: this
+		// marker already carries every one of them, and a sentence that named one
+		// would send the operator after a grant the deployed rules hold. The
+		// words that name them as *present* ("the four day-counter leaves") are
+		// the sentence's own, so the list is the claims of absence, not the
+		// nouns.
+		for _, bad := range []string{"fugaro pair", "by hand", "no run reads a published policy", coordpath.PathRoot + "/"} {
+			if strings.Contains(c.Problem, bad) {
+				t.Errorf("the body for a generation-%d marker carries %q, which is about rules it already has: %q", rulesSpendLeavesGeneration, bad, c.Problem)
+			}
+		}
+		if !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "--firebase-project") {
+			t.Errorf("the check does not name the owner's fix: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "read of a run's outcome") || strings.Contains(c.Fix, "stage report") || strings.Contains(c.Fix, "registration") || strings.Contains(c.Fix, "voice") || strings.Contains(c.Fix, "coordinator") {
+			t.Errorf("the fix for a generation-%d marker does not name what the redeploy adds (the paired device's read of a run's outcome): %q", rulesSpendLeavesGeneration, c.Fix)
+		}
+	})
+
+	t.Run("a marker of the outcome read's generation, below the route's", func(t *testing.T) {
+		// Generation 8 already carries the paired device's read of a run's
+		// outcome, so the sentence for it must not send the operator after a
+		// grant the deployed rules already hold: what generation 9 adds is the
+		// credential route a run reads at bootstrap, one node per repository
+		// granted to that repository's own run token (workspace-service task
+		// WS22, R3 and R4). Generation 8 is the marker every installation on the
+		// release behind this one reports, so this is the state the sentence is
+		// read in — and the state a member that pinned a workspace meets: a run
+		// under those rules reads no route, so it is served by the project's own
+		// credential until the deploy.
+		if rulesOutcomeGeneration >= projectpolicy.RulesVersion {
+			t.Fatalf("rulesOutcomeGeneration = %d and RulesVersion = %d: this case is about a marker between them", rulesOutcomeGeneration, projectpolicy.RulesVersion)
+		}
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), rulesOutcomeGeneration)
+		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		if c.Problem != rulesMarkerOlderText(rulesOutcomeGeneration) {
+			t.Errorf("the body is not rulesMarkerOlderText:\n got %q\nwant %q", c.Problem, rulesMarkerOlderText(rulesOutcomeGeneration))
+		}
+		for _, want := range []string{fmt.Sprintf("generation %d", rulesOutcomeGeneration), "config/policy/route/$slug", fmt.Sprintf("generation %d or newer", projectpolicy.RulesVersion)} {
+			if !strings.Contains(c.Problem, want) {
+				t.Errorf("the body does not carry %q: %q", want, c.Problem)
+			}
+		}
+		// The earlier generations' own absences are what must not appear, for
+		// the reason the case above gives, and this marker's sentence claims the
+		// one thing 9 adds: the credential route.
+		for _, bad := range []string{"fugaro pair", "by hand", "no run reads a published policy", coordpath.PathRoot + "/"} {
+			if strings.Contains(c.Problem, bad) {
+				t.Errorf("the body for a generation-%d marker carries %q, which is about rules it already has: %q", rulesOutcomeGeneration, bad, c.Problem)
+			}
+		}
+		if !strings.Contains(c.Problem, "which adds the credential route") {
+			t.Errorf("the body for a generation-%d marker does not name what the redeploy adds (the credential route a run reads): %q", rulesOutcomeGeneration, c.Problem)
+		}
+		if !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "--firebase-project") {
+			t.Errorf("the check does not name the owner's fix: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "credential route") || strings.Contains(c.Fix, "run's outcome") || strings.Contains(c.Fix, "stage report") || strings.Contains(c.Fix, "registration") || strings.Contains(c.Fix, "voice") || strings.Contains(c.Fix, "coordinator") {
+			t.Errorf("the fix for a generation-%d marker does not name what the redeploy adds (the credential route a run reads): %q", rulesOutcomeGeneration, c.Fix)
+		}
+	})
+
 	t.Run("a marker that is a negative generation", func(t *testing.T) {
 		// A negative marker is an integer, so this check's gen < RulesVersion
 		// branch took it as an old deployment and printed

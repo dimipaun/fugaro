@@ -137,6 +137,15 @@ var Scopes = []ScopeRow{
 	// the owner's published policy node as the other home; that one arrives as
 	// the runner's ceiling (policy.Layer.Triage) and is not this table's.
 	{Key: "agent.triage", In: InRepo, Why: "it turns a review round's own stage off, and a launcher writes the task and the project layer that travels in it; only the repository's own, PR-reviewed fugaro.yaml — read from the base branch — may set it, the reason agent.compression and agent.oauth_token are refused to a layer"},
+	// The review-against-task switch (R7 of docs/review-against-task/): the
+	// repository's own reviewed file and nothing else, for the triage switch's
+	// reason one step sharper — the key decides whether a review judges a run's
+	// own work against what was asked, so a layer a launcher writes is the one
+	// home that could turn the check off from the revision under review. D2935
+	// admits the owner's published policy node as the other home; that one
+	// arrives as the runner's ceiling (policy.Layer.ReviewAgainstTask) and is
+	// not this table's.
+	{Key: "agent.review_against_task", In: InRepo, Why: "it turns off the check every review stage makes of a run's own work, and a launcher writes the task and the project layer that travels in it; only the repository's own, PR-reviewed fugaro.yaml — read from the base branch — may set it, the reason agent.triage beside it and agent.compression are refused to a layer"},
 	{Key: "budget.mode", In: InRepo, Why: whyPolicy},
 	{Key: "budget.per_run_usd", In: InRepo, Why: whyPolicy},
 	{Key: "budget.allowed_models", In: InRepo, Why: whyPolicy},
@@ -212,6 +221,12 @@ var Scopes = []ScopeRow{
 	// union, not a replacement (D20c).
 	{Key: "rigor.default", In: InProject | InRepo},
 	{Key: "rigor.areas", In: InProject | InRepo},
+	// The project layer's per-repository level (LD4, LF4): one repository of
+	// the project and the level it runs at, which only a layer that speaks
+	// for more than one repository can state. A repository's own file says
+	// the same thing about itself with rigor.default, so the key has no
+	// repository half.
+	{Key: "rigor.repos", In: InProject, Why: "it is the level one repository of the project runs at, which the project layer states for repositories it does not own; a repository's own level is its own rigor.default"},
 	// The planning pass (docs/contract-first-decoupling, D1813): a project
 	// turns it off for every repository of it, and a repository decides for
 	// itself — the key is a preference, so the narrower layer replaces the

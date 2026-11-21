@@ -228,7 +228,7 @@ func (e *initEngine) redaction() func() []string {
 func (e *initEngine) options() initflow.Options {
 	r, o := e.r, e.r.o
 	e.slots() // built once: the loop, the stage and the log share the slots
-	return initflow.Options{
+	opts := initflow.Options{
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: r.stdinTerminal(), JSON: o.asJSON, Agent: agentMarker(os.Getenv, r.stdinTerminal()), Out: r.w,
 		Program: o.loopProgram(),
@@ -246,6 +246,15 @@ func (e *initEngine) options() initflow.Options {
 		// mark on account of this line.
 		ManagedGate: e.managedStage,
 	}
+	// The event feed (setup_events.go): a run told to write one hands the loop
+	// the three moments a consumer renders — a stage reached, a stage settled,
+	// and a step left for the user — and a run without --events hands it
+	// nothing at all, which leaves the hooks nil and is exactly the run the CLI
+	// had before the flag existed.
+	if r.events != nil {
+		opts.OnStep, opts.OnStage, opts.OnLeft = r.events.step, r.events.stage, r.events.left
+	}
+	return opts
 }
 
 // initStages is the stages converge() runs, in the canonical order, built
@@ -329,6 +338,15 @@ func initStages(e *initEngine) []initflow.Stage {
 	// database to publish the record in.
 	e.r.workspaceStage = workspace
 	stages = append(stages, workspace)
+	// The credential route right after the workspace record and before the
+	// layer: it is the MEMBER's own published document, derived from the policy
+	// node the run has just published (which accounts and forge credentials the
+	// member's own policy admits) and from the membership key and pin the
+	// workspace stage's own subjects declare (update_route.go, WS9). A project
+	// in no workspace registers it and publishes nothing, removing whatever a
+	// former membership left behind — which is what makes leaving a workspace
+	// converge with no step of its own.
+	stages = append(stages, newCredentialsRouteStage(e))
 	// The layer stage after the policy one: the project layer this run would
 	// publish is read under the node the policy stage just moved in place, so a
 	// layer whose claims the older node could not carry is judged by the same
@@ -433,6 +451,15 @@ func stagesNamed(e *initEngine, names ...string) (stages []initflow.Stage, unans
 // decides is what is applied and in what order — the canonical one
 // (initflow.Names), not the order the questions were asked in.
 func (e *initEngine) converge(ctx context.Context) error {
+	// The owner's own local config, read before anything else this run does and
+	// before the first stage plans (update_catalog_guard.go): every image
+	// catalog entry this release will refuse is named here, and the one entry
+	// whose fix is unambiguous — a pin to a branch the repository no longer has
+	// whose file the default branch also has — is fixed in the file itself. It
+	// touches nothing in the installation's cloud and it can fail nothing, so it
+	// is safe with runs in flight and never a step the one command the upgrade
+	// is can be stopped at.
+	e.guardCatalogEntries(ctx)
 	e.announceAlreadySetUp()
 	stages := initStages(e)
 	e.r.review = &runReview{cover: e.cover, firebase: e.firebaseVerified, owner: e.owner, screen: e.reviewScreen}
@@ -588,6 +615,17 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// this run leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
+	// And D2965's, the seventh: the runs that opened, followed or reviewed a
+	// pull request before this release wrote an entry as it came to be on one,
+	// so `runs ls --pr N` finds them in the index instead of scanning the
+	// repository
+	// (update_prindex.go). It is here for the reason the six above are — the
+	// converge applied everything it had, so the runs it walks are the ones this
+	// run leaves behind — and it is beside writeAdminList because it is the
+	// other object of this run's that a later read of the installation takes:
+	// both are derived from what the installation holds and neither fails an
+	// update (the HARD RULE).
+	e.backfillPRIndex(ctx)
 	// And D2716's: the checkout's docs/backlog/ folder, folded into the
 	// project's standing backlog once (update_backlog.go). It is here for the
 	// reason the four above are — the converge has applied everything it had, so
@@ -614,10 +652,21 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// an issue on GitHub needs (`gh`), and that nothing else about issues does.
 	e.announceGhHint()
 	if len(res.Left) > 0 && !o.planOnly {
-		return userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))
+		return &notFinished{userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))}
 	}
 	return nil
 }
+
+// notFinished is a run's own end with steps left for the user: it applied
+// everything it had, the steps that remain are the person's, and that is exit
+// 1 and not a failure. It is a type of its own rather than a plain userErr
+// because the event feed tells the two apart with it (setup_events.go): a run
+// with steps left ends its feed `done` with exit 1 — the hand-off a wizard
+// draws — where a refusal ends it `error`, and this error and the refusals
+// above it are otherwise the same error with the same code.
+type notFinished struct{ error }
+
+func (e *notFinished) Unwrap() error { return e.error }
 
 // planned is the one-line summary of the installation plan the engine
 // just showed, if it showed one.

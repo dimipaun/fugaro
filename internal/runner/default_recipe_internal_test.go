@@ -50,7 +50,7 @@ func planKinds(plan []planStep) []recipe.StepKind {
 // precedence. Every case below builds its plan from this answer rather than
 // from a hand-written Levels, so what it pins is the plan the levels a run
 // really has produce.
-func levelsOf(t *testing.T, rcp *recipe.Recipe, derived bool, mode rigor.Mode, a config.Agent, providers map[string]config.ModelProvider, floor []policy.Level, task *config.ReviewLevels) config.Levels {
+func levelsOf(t *testing.T, rcp *recipe.Recipe, derived bool, mode rigor.Rigor, a config.Agent, providers map[string]config.ModelProvider, floor []policy.Level, task *config.ReviewLevels) config.Levels {
 	t.Helper()
 	levels, _, err := config.ResolveLevels(config.LevelInputs{
 		Config: &config.Config{Agent: a}, Mode: mode, Floor: floor, Task: task,

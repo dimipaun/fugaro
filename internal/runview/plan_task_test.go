@@ -38,8 +38,27 @@ var planTaskNaming = regexp.MustCompile(`\bPlanTask\b|plan_task`)
 var planTaskReaders = map[string]string{
 	// The field's own definition and its shape rule.
 	"internal/task/task.go": "defines task.Spec.PlanTask and PlanTaskProblem, the shape the launcher applies on write and task.Parse on read",
+	// The copy a launched review's spec carries (docs/review-against-task R2):
+	// the launcher copies the id off the root task onto the spec the review job
+	// is handed, because that job holds no other run of its own (F3), and the
+	// runner then quotes the section of the plan it names, as data, to the
+	// reviewer (D2932). The plan is matched by id against an enumerated list of
+	// the plan graphs the operator holds -- never a path built from this text,
+	// and never an authorisation -- so the worst a forged id can reach is the
+	// text of a plan document a person already has, shown to a reviewer. It
+	// admits no run, budgets nothing and grants nothing.
+	"internal/task/reviewspec.go": "defines task.ReviewSpec.PlanTask, the copy the launcher carries onto a launched review's spec so its job can quote that plan task's section",
 	// The launch record it is read from, which is the untrusted object.
 	"internal/runstore/launch.go": "defines runstore.Launch.PlanTask, the launch.json field itself",
+	// The launcher that carries the copy above (docs/review-against-task RA5a,
+	// R2): it reads the id off the root run's stored task and puts it on the
+	// spec a launched review is handed, and it applies task.PlanTaskProblem to
+	// it before it does. It decides nothing else by the id -- no path is built
+	// from it, nothing is matched on it -- so what it can reach is what the
+	// copy it writes reaches: the text of a plan document the operator already
+	// holds, shown to a reviewer, and it admits no run, budgets nothing and
+	// grants nothing.
+	"internal/cli/reviewspec.go": "copies the root task's id onto a launched review's spec, after applying task.PlanTaskProblem to it",
 	// The id a run carries out in its own record, which is the field and not a
 	// read of it. runstore.DiscoveredItem.PlanTask is what the run's own agent
 	// reported discovering, bounded at write and again at read, and the daemon
@@ -59,6 +78,14 @@ var planTaskReaders = map[string]string{
 	// key it writes an entry under, and reads nothing at all.
 	"internal/runner/discovered.go": "reads the id the run's own agent reported into the record's block, bounded and redacted, and decides nothing by it",
 	"internal/runner/prompts.go":    "the coder's brief names the key an entry is written under; a text instructing a model reads nothing",
+	// The review's own read of the id (docs/review-against-task R2, D2932): the
+	// runner copies it out of the task or the launch record it is already
+	// reading and matches it against an enumerated list of the plan graphs the
+	// operator holds -- never a path built from this text, so the worst a forged
+	// id can reach is the text of a plan document a person already has, quoted
+	// to a reviewer behind a nonce fence. It admits no run, budgets nothing and
+	// launches nothing.
+	"internal/runner/taskspec.go": "resolves the task a review is checked against and quotes the plan task's section out of the plan the id matches, by id over the tree's own listing",
 	// The one writer of both records: fugaro run stores the id in the task
 	// (so --retry and the recovery path keep it) and in launch.json, and
 	// gates the launch on the image whose runner can read it.
@@ -119,6 +146,14 @@ var planTaskReaders = map[string]string{
 	// item is written unapproved by construction, and the ladder will not
 	// enter the rung that merges one (D2702).
 	"internal/orchestrator/adopt.go": "files the record of a run in flight under the plan node its launch named, and names that plan in one fact (D2702, D2721, D2746)",
+	// Adoption's reader of the runs bucket (R4, D2702): the plan task a run's
+	// own launch record carries is read out here and into RunInFlight, which is
+	// the record adoption files -- so the id decides exactly what it decides
+	// inside internal/orchestrator/adopt.go and nothing more: which plan's node
+	// one in-flight run is filed under, under the same fold and bound
+	// (specName, PathPlan), leaving the item unapproved by construction. It
+	// admits no run, budgets nothing, grants nothing and launches nothing.
+	"internal/cli/orchestrator_runlister.go": "reads the plan task a run's own launch record carries into RunInFlight, which is what adoption files under the plan node the id names (D2702)",
 	// The item's id on its way to the launch (B7): the declaration the state
 	// digests carries it into the spec the launcher is handed, and the daemon's
 	// launcher passes it through the command's own resolution, which is what

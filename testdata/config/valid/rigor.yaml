@@ -4,7 +4,7 @@ git: { provider: github }
 rigor:
   default: critical
   areas:
-    - { name: payments, match: "internal/payments/**", mode: critical }
-    - { name: docs, match: "docs/**", mode: poc }
+    - { name: payments, match: "internal/payments/**", level: critical }
+    - { name: docs, match: "docs/**", level: poc }
 workflows:
   server: { commands: { build: make, test: make test } }

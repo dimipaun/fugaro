@@ -505,14 +505,22 @@ func TestBrokenNeverSelected(t *testing.T) {
 	}
 }
 
-// Tier C is reserved: this release does not select a third-party route for a
-// Claude model (D150, C3.6). A caller offering one is refused rather than
-// quietly served from another tier.
+// Tier C is a named provider key, and D3000's gate is the Claude one: a call
+// whose only credential is a provider's, for a Claude model, waits for Check 50
+// (D150, C3.6, R3). It is refused rather than quietly served from another tier
+// — there is none to be served from — and the refusal names the credential, the
+// reason and the decision.
+//
+// The model is the caller's and not this package's (Selector.Model), and the
+// non-Claude half of the same rule is select_provider_test.go's
+// (TestANonClaudeProviderModelIsServed).
 func TestSelectRefusesReservedTierC(t *testing.T) {
 	st := newFakeStore()
-	_, _, err := selector(st, noWindow()).Select(ctx, run, []Credential{b1, {Name: "openrouter", Tier: TierC}})
+	s := selector(st, noWindow())
+	s.Model = claudeModel
+	_, _, err := s.Select(ctx, run, []Credential{{Name: "openrouter", Tier: TierC}})
 	if err == nil || errors.Is(err, ErrNoCredential) {
-		t.Fatalf("a tier C candidate was not refused: %v", err)
+		t.Fatalf("a tier C candidate was not refused for a Claude model: %v", err)
 	}
 	// Refused by name, and for the reason it was not built: a caller that
 	// offered a tier C route is told that, and not merely that its tier is
@@ -1658,10 +1666,65 @@ func TestTheStickyPathRefreshesTheLease(t *testing.T) {
 	}
 }
 
+// MayServe is Select's judgement with the recording left out, and the two halves
+// of that are what this test states: it answers what Select answers about a
+// credential — here a tier-C one, so the model and the provider are the rules it
+// meets — and the run's placement is exactly where it was afterwards.
+//
+// The placement is the reason the entry point exists. Current and the lease are
+// ONE fact, where this run is (SetPlacement), and a caller whose credential is
+// DERIVED — the credentials service's provider route, whose entry comes from the
+// run's verified repository and the provider's name — has no decision to record:
+// placing it would move a run that is halfway through a Claude call off the
+// subscription account it is on and take that account's lease (D142's slot) with
+// it, while the next Claude call found no current credential to stay on (D154).
+func TestMayServeAnswersWithoutPlacingTheRun(t *testing.T) {
+	st := newFakeStore()
+	// The run is where a cascade call left it: on a shared token, holding it.
+	st.setPlacement(run, a1.Name, Lease{Credential: a1.Name, Until: now.Add(DefaultLeaseTTL)})
+	held, _ := st.lease(run)
+
+	s := selector(st, noWindow())
+	s.Model = otherModel
+	s.Provider = openrouter.Provider
+	if err := s.MayServe(ctx, run, openrouter); err != nil {
+		t.Fatalf("MayServe on a provider key for the model it serves = %v; want the judgement Select makes over the same list", err)
+	}
+	if cur, _, err := st.Current(ctx, run); err != nil || cur != a1.Name {
+		t.Fatalf("MayServe left the run on %q, %v; want %q: a judgement places nothing", cur, err, a1.Name)
+	}
+	if l, ok := st.lease(run); !ok || l != held {
+		t.Fatalf("MayServe left the lease %+v, %v; want the %+v the run was holding: the slot and the stickiness are one fact and neither moved", l, ok, held)
+	}
+	if st.updates != 0 || st.rr != 0 {
+		t.Fatalf("MayServe wrote state (mark updates %d, tie-break counter %d); want none", st.updates, st.rr)
+	}
+
+	// The judgement itself is Select's, and the refusals are the same two a
+	// selection of one answers with: the class gate for a Claude model, and the
+	// wait a mark that will lift is answered with.
+	s.Model = claudeModel
+	if err := s.MayServe(ctx, run, openrouter); err == nil || !strings.Contains(err.Error(), "Check 50") {
+		t.Fatalf("MayServe on a provider key for a Claude model = %v; want Check 50's refusal", err)
+	}
+	s.Model = otherModel
+	st.setMark(openrouter.Name, Mark{State: StateExhausted, Since: now, Until: now.Add(5 * time.Minute)})
+	_, _, err := s.Select(ctx, run, []Credential{openrouter})
+	if err == nil {
+		t.Fatal("the control selection is served a mark-held credential: there is no wait for this test to compare against")
+	}
+	err = s.MayServe(ctx, run, openrouter)
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) || eu.Wait != 5*time.Minute {
+		t.Fatalf("MayServe on a mark-held provider key = %v; want the same wait a selection of one answers with (5m)", err)
+	}
+}
+
 // failStore is a Store that refuses one chosen call, so the selection's
 // fail-closed guards can be exercised: a call is never sent on a decision the
 // service could not read, or on one it could not record. Review finding N2 —
 // every guard on a store error was unreachable from the tests.
+
 type failStore struct {
 	*fakeStore
 	marksErr, leasesErr, currentErr, rrErr, placeErr error

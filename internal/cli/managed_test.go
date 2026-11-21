@@ -1007,6 +1007,7 @@ var initFlagCases = map[string]string{
 	"allow-job-delete": "OUTSIDE the property: changes what a --repo plan holds, not whether it is confirmed",
 	"check":            "OUTSIDE the property: the read-only mode, which runs no step of any stage, so nothing is confirmed and --yes is refused beside it (refuseConvergeFlags, update_check.go). It is `fugaro update`'s alone (D948, U4 of docs/plugin-user-scope/implementation-plan.md) and `fugaro setup` declares it hidden and refuses it by name (setupDoor.foreign), the shape --forget has on that door",
 	"print-vars":       "no cloud call and no confirmation (canAsk is false under it)",
+	"events":           "OUTSIDE the property: it chooses the shape of the run's output (setup_events.go, ST2/D2904 of docs/console-improvements) and changes no step. It is only ever a --json run's flag — without --json it is refused by name before any stage — and a --json run confirms nothing in the first place (unconfirmedWhy), so every step that needs a person still arrives as left_for_you: the flag adds no confirmation and takes none away",
 	"no-build":         "only drops the first image build's offer (a step only the person's own answer gives); takes nothing away from a confirmation",
 	"provision-batch":  "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the person's own (no answer a run carries reaches it), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
 	"coordinator":      "the coordinator's opt-in (P5): it is an apply of the installation's own roots whose steps confirm through ask (covered), but --yes is refused beside it (checkCoordinator), and a coding agent's session and a run with no terminal are refused before anything is read (refuseCoordinatorUnattended, an inline site, covered)",
@@ -1019,7 +1020,14 @@ var initFlagCases = map[string]string{
 	// refused by name on a converge, whose write is the layer stage's — the
 	// confirmation it reaches is confirmStageWrite's, which the property
 	// already covers.
-	"admin": "value", "alert-email": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
+	// answers-file (ST1 of docs/console-improvements/implementation-plan.md;
+	// D2904) is the third: the wizard's five questions as one document, whose
+	// answers are written onto those five flags' own fields, so it reaches the
+	// confirmations they reach and none of its own. The steps that are a
+	// person's — the project's creation, the billing link, the Firestore
+	// location, every secret value — have no member in the document, which is
+	// what a member for one is refused by name for.
+	"admin": "value", "alert-email": "value", "answers-file": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",
 	"display-name": "value", "expect-digest": "value", "gcp-project": "value", "github-app-id": "value",
 	"image-source": "value", "name": "value", "no-log-isolation": "value",

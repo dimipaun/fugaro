@@ -105,6 +105,28 @@ type Options struct {
 	// appear in any output, error or JSON; they are replaced before
 	// anything is recorded or printed.
 	Redact []string
+	// OnStep, OnStage and OnLeft, when set, are the run as it happens,
+	// handed to a caller that renders it while it goes rather than reading
+	// its result afterwards: the console's setup wizard spawns `fugaro
+	// setup --events` and draws each line as it arrives
+	// (docs/console-improvements ST2, D2904).
+	//
+	// OnStep is a stage the run has reached and is about to work on — the
+	// moment a line goes up for it — and it is the one fact the results
+	// cannot give a reader, because a stage's check is seconds and the
+	// apply behind it is minutes. OnStage is a stage the run settled, once
+	// per stage, with the state, the detail and the wait it settled in.
+	// OnLeft is a thing only the user can do, recorded where the run
+	// records it, with the step's own one line to run: a surface with no
+	// terminal hands it back rather than waiting for one.
+	//
+	// They are nil in every caller but that one, and a nil one changes
+	// nothing at all: what is handed out is what the run already records
+	// for --json, and no hook here is a step, a confirmation or a word the
+	// run would not otherwise take.
+	OnStep  func(stage string)
+	OnStage func(StageResult)
+	OnLeft  func(Left)
 }
 
 // StageResult is one stage's line in the result.
@@ -317,19 +339,69 @@ func oneLine(s string) string {
 	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "\\"))
 }
 
-func (l *loop) left(stage string, lf Left) Left {
+// left is one step a stage leaves for the person, as the run records it: the
+// stage's name, a kind and a first line that are always there, and the reason
+// the step was not done — the detail the caller passes, when the step carries
+// none of its own (a stage that only said "run this in your own terminal" has
+// said what it owes and not why).
+//
+// The callers that read a stage's check pass that check's detail: the stop a
+// needs-you check makes, and the pause a billing-pending one makes. The
+// applying path passes none, because the detail of a stage that applied work
+// is its success line — "No changes", "installed v0.26.0" — and a success
+// line is not why the step beside it was left; a step on that path carries a
+// reason only where the stage set one itself.
+func (l *loop) left(stage string, lf Left, why string) Left {
 	lf.Stage = stage
 	if lf.Kind == "" {
 		lf.Kind = LeftCommand
 	}
-	lf.Text = l.redact(oneLine(lf.Text))
-	if len(lf.Commands) > 0 {
-		lf.Commands = l.redactAll(lf.Commands)
-		for i, c := range lf.Commands {
-			lf.Commands[i] = oneLine(c)
-		}
+	if len(lf.Why) == 0 {
+		lf.Why = why
 	}
+	lf.one(l.redact, l.redactAll)
+	l.emitLeft(lf)
 	return lf
+}
+
+// stepUp tells the caller's OnStep that the run has reached a stage and is
+// about to work on it: the moment a line goes up for it, and the one fact a
+// reader of the results cannot place afterwards, because a stage's check and
+// plan are seconds and the apply behind them is minutes.
+func (l *loop) stepUp(stage string) {
+	if l.o.OnStep != nil {
+		l.o.OnStep(stage)
+	}
+}
+
+// emitStage hands a settled stage to the caller's OnStage. It is called where
+// the run's own result is built — the execution pass (record, which a failure
+// enters through fail), and the preview of a plan-only run, which is that
+// run's whole account — so what a caller rendering the run sees is the run,
+// and never the review screen an applying run throws away.
+//
+// The guard is the one emitLeft carries and it is load-bearing: an applying
+// run's preview records the stage a failed check stopped at (fail), and the
+// execution pass behind it resets that result and records the stage again, so
+// without it a caller is handed the same stage twice — a `stage ... failed`
+// line from the throwaway pass, ahead of the step line of the run's own pass,
+// and then that stage again where converge records it.
+func (l *loop) emitStage(r StageResult) {
+	if l.o.OnStage == nil || !(l.executing || l.o.PlanOnly) {
+		return
+	}
+	l.o.OnStage(r)
+}
+
+// emitLeft hands a step only the user can do to the caller's OnLeft, and it is
+// the same rule as emitStage's: the preview of an applying run records lefts
+// for the review screen and drops them when the execution pass starts, so a
+// caller is handed the ones the run keeps and not the ones the screen showed.
+func (l *loop) emitLeft(lf Left) {
+	if l.o.OnLeft == nil || !(l.executing || l.o.PlanOnly) {
+		return
+	}
+	l.o.OnLeft(lf)
 }
 
 // preview checks every stage (read-only) and, in a plan-only run, plans the
@@ -367,7 +439,7 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 			if st.Left != nil {
 				lf = *st.Left
 			}
-			l.res.Left = append(l.res.Left, l.left(name, lf))
+			l.res.Left = append(l.res.Left, l.left(name, lf, st.Detail))
 			if st.State == BillingPending {
 				// Not a stop, and not what the stages after it wait for:
 				// converge pauses there and lets the stages billing does not
@@ -421,6 +493,14 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 			}
 		}
 		l.res.Stages = append(l.res.Stages, r)
+		if l.o.PlanOnly {
+			// A plan-only run's preview IS the run: it applies nothing, so
+			// the stages settled here are the ones it reports, and a caller
+			// rendering it as it goes sees each one as its check comes back.
+			// An applying run's rows are the review screen instead, and the
+			// execution pass behind them owns the account (see below).
+			l.emitStage(r)
+		}
 	}
 	if !l.o.PlanOnly {
 		l.view(l.res.Stages)
@@ -586,6 +666,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		l.pastStops(s, name, stops)
 		// The line in flight goes up before the stage is looked at: its check
 		// and its plan are seconds, and the apply behind them is minutes.
+		l.stepUp(name)
 		l.openStep(name)
 		if l.cancelled(ctx, name) {
 			return nil
@@ -715,8 +796,15 @@ func (l *loop) applied(stage string, out Outcome) {
 	// The Left first: the stage's own line is a left-for-you marker when the
 	// stage applied what this session may do and left the rest (G3), and the
 	// line prints the moment it is recorded.
+	//
+	// No reason is taken from the detail here, and that is the rule rather
+	// than an omission: a stage that applied work says a success line in it
+	// ("No changes", "installed v0.26.0 for this machine"), which is not why
+	// the step was left. A step on this path carries a reason only where the
+	// stage set one itself — the images stage's catalog half does, where what
+	// it left is a stale image and not a success.
 	if out.Left != nil {
-		l.res.Left = append(l.res.Left, l.left(stage, *out.Left))
+		l.res.Left = append(l.res.Left, l.left(stage, *out.Left, ""))
 	}
 	l.record(r)
 }
@@ -822,12 +910,12 @@ func (l *loop) agentApplied(ctx context.Context, s Stage) (done bool, err error)
 // billingPending records a stage that paused for billing: its Left is the
 // step left for you, and it is not a failure.
 func (l *loop) billingPending(stage, detail string, lf Left) {
-	l.res.Left = append(l.res.Left, l.left(stage, lf))
+	l.res.Left = append(l.res.Left, l.left(stage, lf, detail))
 	l.record(StageResult{Name: stage, State: BillingPending, Detail: l.redact(oneLine(detail))})
 }
 
 func (l *loop) needsYou(stage, detail string, lf Left) {
-	l.res.Left = append(l.res.Left, l.left(stage, lf))
+	l.res.Left = append(l.res.Left, l.left(stage, lf, detail))
 	l.record(StageResult{Name: stage, State: NeedsYou, Detail: detail})
 }
 
@@ -850,6 +938,7 @@ func (l *loop) record(r StageResult) {
 		}
 	}
 	l.res.Stages = append(l.res.Stages, r)
+	l.emitStage(r)
 	if l.o.Report == nil || !l.executing {
 		return
 	}
@@ -1137,13 +1226,23 @@ func (l *loop) finish() {
 		// screen can be given (G5). The loop's own account — no reporter at all,
 		// a caller that has not moved onto one — prints the block, which is what
 		// it printed before.
+		brief := len(lf.Brief) > 0 && (l.o.Report == nil || l.o.Report.KeepsLog())
 		lines := []string{lf.Text}
-		if len(lf.Brief) > 0 && (l.o.Report == nil || l.o.Report.KeepsLog()) {
+		if brief {
 			lines = lf.Brief
 		}
 		fmt.Fprintf(l.o.Out, "left for you (%s, %s): %s\n", lf.Stage, lf.Kind, lines[0])
 		for _, extra := range lines[1:] {
 			fmt.Fprintf(l.o.Out, "    %s\n", extra)
+		}
+		// The reason the step was not done, under the step: a person reads
+		// what the run leaves them and, on the next line, why it is theirs
+		// rather than the run's — the line the stage printed in flight is
+		// gone from the view a reader of the log or of `--json` has. A
+		// refusal's own three lines (Brief) already are that reason and are
+		// not said twice.
+		if lf.Why != "" && !brief {
+			fmt.Fprintf(l.o.Out, "    %s\n", lf.Why)
 		}
 		for _, c := range lf.Commands {
 			fmt.Fprintf(l.o.Out, "    %s\n", c)

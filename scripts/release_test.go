@@ -28,6 +28,12 @@ import (
 type releaseRepo struct {
 	bare  string
 	local string
+	// recordDir is where scripts/release-rehearsal.sh writes its record
+	// (RELEASE_REHEARSAL_DIR), and fugaroState the directory the fake fugaro
+	// logs its calls to (FAKE_FUGARO_DIR): the pre-tag rehearsal runs on the
+	// path to every tag these tests cut, so every run gets both.
+	recordDir   string
+	fugaroState string
 }
 
 func newReleaseRepo(t *testing.T) *releaseRepo {
@@ -88,7 +94,7 @@ func newReleaseRepo(t *testing.T) *releaseRepo {
 
 	local := filepath.Join(root, "work")
 	testutil.Git(t, root, "clone", "--quiet", bare, local)
-	return &releaseRepo{bare: bare, local: local}
+	return &releaseRepo{bare: bare, local: local, recordDir: t.TempDir(), fugaroState: t.TempDir()}
 }
 
 func writeHighlights(t *testing.T, dir, version, body string) {
@@ -363,13 +369,14 @@ func releaseProcs(pgid int) string {
 }
 
 // fakeBinDir returns a directory on PATH ahead of the real one, holding the
-// fakes for gh and docker (and nothing else: git, bash, sed, awk, sort, date
-// stay real). The fake docker answers images/verify-public.sh's three calls,
-// which scripts/verify-release.sh makes for every image a release published.
+// fakes for gh, docker and fugaro (and nothing else: git, bash, sed, awk, sort,
+// date stay real). The fake docker answers images/verify-public.sh's three
+// calls, which scripts/verify-release.sh makes for every image a release
+// published; the fake fugaro is the CLI the pre-tag rehearsal runs.
 func fakeBinDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"gh", "docker"} {
+	for _, name := range []string{"gh", "docker", "fugaro"} {
 		src, err := os.ReadFile(filepath.Join(testutil.ModuleRoot(), "scripts", "testdata", "fake-"+name+".sh"))
 		if err != nil {
 			t.Fatal(err)
@@ -418,6 +425,42 @@ func streamsHelper(t *testing.T) string {
 		t.Fatalf("every release.sh run reads the catalogue through this helper, and it did not build: %v", streamsBin.err)
 	}
 	return streamsBin.path
+}
+
+// rehearsalSandbox is the sandbox project name every release.sh run in this
+// package is handed: the pre-tag rehearsal builds in it and nowhere else, so a
+// run without it refuses before the branch (scripts/release.sh).
+const rehearsalSandbox = "fake-sandbox"
+
+// rehearsalEnv is what a release.sh run needs for the pre-tag rehearsal
+// (scripts/release-rehearsal.sh): the sandbox project's name, the directory its
+// record goes in, and the fake fugaro -- the CLI the rehearsal would otherwise
+// build from the commit, which the fixture checkout cannot (it holds no go
+// module, the same reason RELEASE_SH_STREAMS_CMD exists). A test that wants a
+// red, missing or other-commit record overrides these with g.with(...) or by
+// writing the record file itself.
+//
+// It also clears the coding-agent markers release.sh's own precondition refuses
+// on (internal/agentenv's list, scripts/agent-session.sh): the fixture is a
+// person at a terminal, and the machine running these tests may itself be an
+// agent's session, where every run here would otherwise be refused before it
+// started. The rehearsal reads no markers itself -- an agent's session runs it
+// (the owner's ruling of 2026-11-19) -- so this is release.sh's refusal alone.
+// A test that means to be an agent's session sets one of them last
+// (g.with("CLAUDECODE=1"), or extra in runRehearsal), which wins over this.
+func rehearsalEnv(r *releaseRepo, bin string) []string {
+	return []string{
+		"FUGARO_LIVE_GCP_PROJECT=" + rehearsalSandbox,
+		"RELEASE_REHEARSAL_DIR=" + r.recordDir,
+		"RELEASE_REHEARSAL_FUGARO=" + filepath.Join(bin, "fugaro"),
+		"FAKE_FUGARO_DIR=" + r.fugaroState,
+		"CLAUDECODE=",
+		"CLAUDE_CODE_ENTRYPOINT=",
+		"CLAUDE_CODE_REMOTE=",
+		"CLAUDE_CODE_SSE_PORT=",
+		"CURSOR_AGENT=",
+		"AI_AGENT=",
+	}
 }
 
 // releaseEnv is what a release.sh run needs on top of the process environment:
@@ -480,6 +523,7 @@ func runRelease(t *testing.T, r *releaseRepo, g *ghState, stdin string, args ...
 	// The helper first and the test's own environment after it, so a test can
 	// unset RELEASE_SH_STREAMS_CMD (an empty value is the default `go run`).
 	cmd.Env = append(cmd.Env, releaseEnv(t)...)
+	cmd.Env = append(cmd.Env, rehearsalEnv(r, bin)...)
 	cmd.Env = append(cmd.Env, g.env...)
 	cmd.Stdin = strings.NewReader(stdin)
 	var out bytes.Buffer
@@ -740,6 +784,7 @@ func TestPreconditionFailures(t *testing.T) {
 func TestGHNotInstalled(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
+	bin := fakeBinDir(t)
 	cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "0.12.0")
 	cmd.Dir = r.local
 	// A PATH with no gh at all (just enough for git, bash's builtins, etc).
@@ -747,6 +792,12 @@ func TestGHNotInstalled(t *testing.T) {
 	cmd.Env = append(os.Environ(), "PATH="+realPath)
 	cmd.Env = append(cmd.Env, g.env...)
 	cmd.Env = append(cmd.Env, releaseEnv(t)...)
+	// The pre-tag rehearsal's environment too, although this run can never
+	// reach it: the refusal this test is about is 'gh is not installed', and a
+	// precondition ahead of it (the sandbox project the release refuses
+	// without) would otherwise be the sentence it fails on -- on exactly the
+	// machines this test runs on, since it skips wherever gh is installed.
+	cmd.Env = append(cmd.Env, rehearsalEnv(r, bin)...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	// Only meaningful if gh truly isn't already on PATH; skip otherwise.
@@ -1384,7 +1435,7 @@ func TestResumeAfterMerge(t *testing.T) {
 	// A fresh checkout, as if the user re-ran release.sh after pulling.
 	local2 := filepath.Join(t.TempDir(), "work2")
 	testutil.Git(t, filepath.Dir(local2), "clone", "--quiet", r.bare, local2)
-	r2 := &releaseRepo{bare: r.bare, local: local2}
+	r2 := &releaseRepo{bare: r.bare, local: local2, recordDir: t.TempDir(), fugaroState: t.TempDir()}
 
 	g := newGHState(t, r2, greenChecks())
 	g.write(t, "pr_number", "1")
@@ -1500,6 +1551,7 @@ func TestInterruptPrintsResumeInstructions(t *testing.T) {
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
 	cmd.Env = append(cmd.Env, g.env...)
 	cmd.Env = append(cmd.Env, releaseEnv(t)...)
+	cmd.Env = append(cmd.Env, rehearsalEnv(r, bin)...)
 	var out lockedBuffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	cmd.WaitDelay = 5 * time.Second
@@ -2001,9 +2053,18 @@ func TestReleaseGateAcceptsTheMobileStreamsTag(t *testing.T) {
 }
 
 // runGate runs scripts/release-gate.sh from r.local against the commit sha, with
-// the fake gh on PATH and g's checks: the gate reads the tag's check-runs, so
-// its answer depends on the same state a release.sh run would see.
+// the fake gh on PATH and g's checks: the gate reads the ci runs on the tag's
+// commit and their check suites, so its answer depends on the same state a
+// release.sh run would see.
 func runGate(t *testing.T, r *releaseRepo, g *ghState, sha, tag string) runResult {
+	t.Helper()
+	return runGateEnv(t, r, g, sha, tag)
+}
+
+// runGateEnv is runGate with extra environment appended after the gate's own
+// defaults, for a test that has to move one of them (GATE_WAIT_SECONDS, or the
+// console release's GATE_REQUIRE_CONSOLE=1).
+func runGateEnv(t *testing.T, r *releaseRepo, g *ghState, sha, tag string, extra ...string) runResult {
 	t.Helper()
 	bin := fakeBinDir(t)
 	cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release-gate.sh"), tag)
@@ -2016,10 +2077,190 @@ func runGate(t *testing.T, r *releaseRepo, g *ghState, sha, tag string) runResul
 		"GATE_POLL_SECONDS=1",
 	)
 	cmd.Env = append(cmd.Env, g.env...)
+	cmd.Env = append(cmd.Env, extra...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()
 	return runResult{out: out.String(), err: err}
+}
+
+// ciRuns writes the fake's ci_runs state file: one "<sha><TAB><title><TAB>
+// <suite>" line per `ci` run on that commit, which is what the gate's read of
+// the commit's runs answers with. An optional fourth field is the run's
+// run_number, which is what orders the runs when a commit has more than one --
+// the gate reads the newest full one -- and defaults to the line's position. A
+// commit the file does not name has no `ci` run at all -- what a tag on a commit
+// nobody dispatched CI on looks like.
+func ciRuns(t *testing.T, g *ghState, lines ...string) {
+	t.Helper()
+	body := ""
+	if len(lines) > 0 {
+		body = strings.Join(lines, "\n") + "\n"
+	}
+	g.write(t, "ci_runs", body)
+}
+
+// tagCommit is the commit these gate tests cut their tag on: the fixture's
+// HEAD, which is origin/main's tip, so the gate's dispatch hint names `main`.
+func tagCommit(t *testing.T, r *releaseRepo) string {
+	t.Helper()
+	return strings.TrimSpace(testutil.Git(t, r.local, "rev-parse", "HEAD"))
+}
+
+// commitTree is the git tree id of a commit in dir, which the identical-tree
+// fallback compares between the tag's commit and a pull request head.
+func commitTree(t *testing.T, dir, sha string) string {
+	t.Helper()
+	return strings.TrimSpace(testutil.Git(t, dir, "rev-parse", sha+"^{tree}"))
+}
+
+// TestGateCountsAFullRunsChecks: `test`, `terraform` and `rules` come from the
+// check suite of the full `ci` run on the tag's commit, and from nothing else
+// (R1, D3040). A selected run on the same commit is not merged in -- its suite
+// answers failed for every required name in the fake, so a gate that read it
+// could not pass -- and a red check in the full run's own suite is the refusal.
+func TestGateCountsAFullRunsChecks(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks())
+	runGate(t, r, g, sha, "v0.12.0").requireSuccess(t)
+
+	ciRuns(t, g, sha+"\tci (full)\t"+sha, sha+"\tci (selected)\t"+sha+"-selected")
+	runGate(t, r, g, sha, "v0.12.0").requireSuccess(t)
+
+	red := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_TEST=failed")
+	runGate(t, r, red, sha, "v0.12.0").requireFailureContaining(t, "required check 'test' is failed")
+}
+
+// TestGateIgnoresASelectedRun: a `ci (selected)` run does not vouch for a tag.
+// The commit's own check runs used to be enough, and a selected run's `test` was
+// one of them; now the gate refuses at once -- it does not wait out
+// GATE_WAIT_SECONDS for a full run's checks to appear -- and prints the command
+// that dispatches the full run, naming main because the commit is main's tip.
+func TestGateIgnoresASelectedRun(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, sha+"\tci (selected)\t"+sha+"-selected")
+
+	start := time.Now()
+	res := runGateEnv(t, r, g, sha, "v0.12.0", "GATE_WAIT_SECONDS=45")
+	if res.err == nil {
+		t.Fatalf("the gate accepted a tag on a commit whose only ci run is selected:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "gh workflow run ci --ref main -f full=true") {
+		t.Errorf("the refusal does not print the command that dispatches a full run on main's tip:\n%s", res.out)
+	}
+	if elapsed := time.Since(start); elapsed > 20*time.Second {
+		t.Errorf("the gate waited %s on a commit whose ci runs can never satisfy it: it must refuse at once", elapsed)
+	}
+}
+
+// TestGateAcceptsTheOldTitle: every run a ci.yml without a run-name: produced is
+// titled exactly `ci`, and a tag cut before that change lands must still pass the
+// gate. A third title names no full run, so it does not.
+func TestGateAcceptsTheOldTitle(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, sha+"\tci\t"+sha)
+	runGate(t, r, g, sha, "v0.12.0").requireSuccess(t)
+
+	ciRuns(t, g, sha+"\tci (nightly)\t"+sha)
+	res := runGate(t, r, g, sha, "v0.12.0")
+	if res.err == nil {
+		t.Fatalf("the gate accepted a title that names neither `ci (full)` nor `ci`:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "no ci run on that commit is a full one") {
+		t.Errorf("the refusal does not say why the commit's runs do not count:\n%s", res.out)
+	}
+}
+
+// TestGateReadsTheNewestFullRun: only the newest full run's checks count, so a
+// re-dispatch that went green clears a red full run before it -- the reading
+// this replaces took the latest run per name, and a commit-level merge of every
+// full run's suite would block the tag for good. The rows come back in the order
+// the api listed them, which is why the fake writes the red run first: a gate
+// that took the first full row instead of the highest run number would refuse
+// here. The newest run being the red one is still the refusal.
+func TestGateReadsTheNewestFullRun(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks())
+
+	ciRuns(t, g,
+		sha+"\tci (full)\t"+sha+"-red\t7",
+		sha+"\tci (full)\t"+sha+"\t8")
+	runGate(t, r, g, sha, "v0.12.0").requireSuccess(t)
+
+	ciRuns(t, g,
+		sha+"\tci (full)\t"+sha+"\t8",
+		sha+"\tci (full)\t"+sha+"-red\t7")
+	runGate(t, r, g, sha, "v0.12.0").requireSuccess(t)
+
+	ciRuns(t, g,
+		sha+"\tci (full)\t"+sha+"\t7",
+		sha+"\tci (full)\t"+sha+"-red\t8")
+	runGate(t, r, g, sha, "v0.12.0").requireFailureContaining(t, "required check 'test' is failed")
+}
+
+// TestGateFallbackAppliesTheTitleRule: the identical-tree fallback reads the
+// merged pull request head's checks with the same rule as the target's, so a
+// head whose only `ci` run is selected vouches for nothing -- and one whose run
+// is full does. The target has no `ci` run of its own at all, which is the state
+// the fallback exists for.
+func TestGateFallbackAppliesTheTitleRule(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	// The head of the pull request merged as the target: an empty commit, so the
+	// same tree, pushed on the branch the fake reports as the PR's head.
+	testutil.Git(t, r.local, "checkout", "--quiet", "-b", "release/v0.12.0")
+	testutil.Git(t, r.local, "commit", "--quiet", "--allow-empty", "-m", "the pull request head")
+	head := strings.TrimSpace(testutil.Git(t, r.local, "rev-parse", "HEAD"))
+	testutil.Git(t, r.local, "push", "--quiet", "origin", "HEAD:refs/heads/release/v0.12.0")
+	testutil.Git(t, r.local, "checkout", "--quiet", "main")
+	if headTree, targetTree := commitTree(t, r.local, head), commitTree(t, r.local, sha); headTree != targetTree {
+		t.Fatalf("the fixture head's tree is %s, not the target's %s: the fallback is about identical trees", headTree, targetTree)
+	}
+
+	g := newGHState(t, r, greenChecks()).with("FAKE_GH_IDENTICAL_PR=1")
+	g.write(t, "pr_branch", "release/v0.12.0")
+	g.write(t, "pr_merge_sha", sha)
+
+	ciRuns(t, g, head+"\tci (full)\t"+head)
+	res := runGate(t, r, g, sha, "v0.12.0")
+	res.requireSuccess(t)
+	if !strings.Contains(res.out, "using the checks of "+head+" (identical tree)") {
+		t.Errorf("the fallback did not use the full run on the head:\n%s", res.out)
+	}
+
+	ciRuns(t, g, head+"\tci (selected)\t"+head+"-selected")
+	res = runGate(t, r, g, sha, "v0.12.0")
+	if res.err == nil {
+		t.Fatalf("the gate let a selected run on the pull request head vouch for the tag:\n%s", res.out)
+	}
+	if strings.Contains(res.out, "identical tree") {
+		t.Errorf("a selected run's checks must not vouch:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "required check 'test' is missing on "+sha) {
+		t.Errorf("the gate refused for the wrong reason:\n%s", res.out)
+	}
+}
+
+// TestGateKeepsTheConsoleLegsReading: with GATE_REQUIRE_CONSOLE=1 the console
+// release's gate requires the two matrix legs as it always did, and reads them
+// from the commit's own check runs: they come from console-tests.yml, and no
+// `ci` run's suite carries them -- a gate that looked for them in one could not
+// pass at all.
+func TestGateKeepsTheConsoleLegsReading(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks())
+	runGateEnv(t, r, g, sha, "v0.12.0", "GATE_REQUIRE_CONSOLE=1").requireSuccess(t)
+
+	red := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_CONSOLE_MACOS=failed")
+	runGateEnv(t, r, red, sha, "v0.12.0", "GATE_REQUIRE_CONSOLE=1").
+		requireFailureContaining(t, "required check 'console (macos-latest)' is failed")
 }
 
 // TestLatestTagIgnoresNonStrictTags: -rc and four-part tags never count as
@@ -2087,6 +2328,7 @@ func TestSignalsLeaveMain(t *testing.T) {
 			cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "0.12.0")
 			cmd.Dir = r.local
 			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
+			cmd.Env = append(cmd.Env, rehearsalEnv(r, bin)...)
 			cmd.Env = append(cmd.Env, g.env...)
 			cmd.Env = append(cmd.Env, releaseEnv(t)...)
 			var out bytes.Buffer
@@ -2868,6 +3110,19 @@ func TestReleaseGateAcceptsAPatchOnItsMaintenanceBranch(t *testing.T) {
 	}
 	runGate(t, r, g, git("rev-parse", "main"), "v1.2.1").requireSuccess(t)
 
+	// A patch whose only `ci` run is a selected one is refused at once, and the
+	// command it prints names the branch the commit is on rather than main: a
+	// dispatch is by ref, and release/1.2 is the ref that points at the fix.
+	sel := newGHState(t, r, greenChecks())
+	ciRuns(t, sel, fix+"\tci (selected)\t"+fix+"-selected")
+	selected := runGate(t, r, sel, fix, "v1.2.1")
+	if selected.err == nil {
+		t.Fatalf("the gate accepted a patch whose only ci run is a selected one:\n%s", selected.out)
+	}
+	if want := "gh workflow run ci --ref release/1.2 -f full=true"; !strings.Contains(selected.out, want) {
+		t.Errorf("want %q in:\n%s", want, selected.out)
+	}
+
 	// A commit on a branch that is not the line's own, cut from the same tag.
 	git("checkout", "--quiet", "-b", "scratch", "v1.2.0")
 	git("commit", "--quiet", "--allow-empty", "-m", "unrelated work")
@@ -2931,5 +3186,311 @@ func TestReleaseGateAcceptsAPatchOnItsMaintenanceBranch(t *testing.T) {
 	}
 	if !strings.Contains(backport.out, "a newer line exists (v1.6.0)") {
 		t.Errorf("the backport was refused for the wrong reason:\n%s", backport.out)
+	}
+}
+
+// ---- CS7b: a release dispatches its own full run -------------------------
+//
+// CI starts on no commit by itself (the owner's ruling of 2026-11-07: dispatch
+// by hand, in batches), and the gate reads the checks of the full `ci` run on a
+// commit and of nothing else, so a release that waited for CI on its own merge
+// commit would wait out --timeout-minutes for checks that never appear.
+// scripts/release.sh therefore puts that run on the commit it is about to tag
+// (R12), and these tests read what it dispatched: the ordinary path on the merge
+// commit, --hotfix on the maintenance branch, with only the inputs the ci.yml the
+// dispatch runs declares -- main's own file for the ordinary path, the branch's
+// for --hotfix. An input a workflow does not declare is a 422 from GitHub, which
+// would stop the release before the run it waits for could even start.
+
+// workflowRunLines is the fake gh's record of the `gh workflow run` calls a run
+// made, one per line, in the order it made them, and nothing when it made none.
+func workflowRunLines(t *testing.T, g *ghState) []string {
+	t.Helper()
+	body := strings.TrimSpace(g.read(t, "workflow_run"))
+	if body == "" {
+		return nil
+	}
+	return strings.Split(body, "\n")
+}
+
+// mainTip is origin/main's commit in the fixture: the merge commit's parent
+// while the release is being prepared, which is what the pre-merge gate reads.
+func mainTip(t *testing.T, r *releaseRepo) string {
+	t.Helper()
+	return strings.TrimSpace(testutil.Git(t, r.bare, "rev-parse", "main"))
+}
+
+// mainFullyGreen is a ci_runs line giving origin/main's commit one full run of
+// its own, green by the fixture's checks. A test that writes ci_runs at all
+// owns the fake's whole answer for every commit (scripts/testdata/fake-gh.sh's
+// header), and this is the run the release's pre-merge gate reads on main --
+// without it the gate would wait out its timeout for a run nobody dispatched.
+func mainFullyGreen(t *testing.T, r *releaseRepo) string {
+	t.Helper()
+	sha := mainTip(t, r)
+	return sha + "\tci (full)\t" + sha
+}
+
+// ciYAML renders a .github/workflows/ci.yml whose `on: workflow_dispatch:` block
+// declares the given inputs, at the shape scripts/release.sh reads the names out
+// of. Only the names matter to it: a dispatch may pass an input only when the
+// workflow it runs declares it, because GitHub refuses an unknown one with a
+// 422.
+func ciYAML(inputs string) string {
+	body := "name: ci\non:\n  workflow_dispatch:\n"
+	if inputs != "" {
+		body += "    inputs:\n" + inputs
+	}
+	return body + "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n"
+}
+
+// ciFullAndLiveScripts is a ci.yml declaring both inputs: the selector's `full`
+// (CS6) and #3301's `live_scripts`, whose `auto` -- its default -- could skip the
+// live-script runners, which is not a gate a release can be cut on. A ref carries
+// both only between CS6's copy and the removal of `live_scripts` (R9), and it is
+// what makes a dispatch pass each flag its own file declares, and no other.
+var ciFullAndLiveScripts = ciYAML(`      full:
+        description: run every leg
+        type: boolean
+        default: false
+      live_scripts:
+        description: the live-script runners
+        type: choice
+        options: [auto, always]
+        default: auto
+`)
+
+// ciLiveScriptsOnly is ci.yml's shape on main today, the one #3301 left: a
+// maintenance branch cut from a tag between #3301 and CS6 carries it, and its
+// dispatch may pass `live_scripts` and no `full`.
+var ciLiveScriptsOnly = ciYAML(`      live_scripts:
+        description: the live-script runners
+        type: choice
+        options: [auto, always]
+        default: auto
+`)
+
+// ciNoInputs is the shape older than both: a bare workflow_dispatch, which a
+// dispatch may pass nothing to.
+var ciNoInputs = ciYAML("")
+
+// releaseMainWithCI is newReleaseRepo whose origin/main carries the given
+// ci.yml. A dispatch with no --ref runs the workflow file on the repository's
+// default branch, so main's own file is what an ordinary release's dispatch runs
+// and the only thing that says which inputs it may pass. The plain fixture has
+// no .github/ at all, which is why a test about that dispatch builds it here.
+func releaseMainWithCI(t *testing.T, ci string) *releaseRepo {
+	t.Helper()
+	r := newReleaseRepo(t)
+	commitCIYAML(t, r.local, ci)
+	testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
+	return r
+}
+
+// commitCIYAML writes ci.yml into dir's .github/workflows and commits it there,
+// the way a repository carries the workflow a release dispatches.
+func commitCIYAML(t *testing.T, dir, ci string) {
+	t.Helper()
+	workflows := filepath.Join(dir, ".github", "workflows")
+	if err := os.MkdirAll(workflows, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workflows, "ci.yml"), []byte(ci), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "ci: the workflow a release dispatches")
+}
+
+// hotfixLineWithCI is the hotfix fixture -- a line 0.12 that shipped from main,
+// with the 0.12.1 plugin bump on main -- whose v0.12.0 tree carries the given
+// ci.yml. A maintenance branch is cut from the line's last tag, so the file a
+// dispatch on release/0.12 runs, and the inputs it may pass, are the tag's.
+func hotfixLineWithCI(t *testing.T, ci string) *hotfixRepo {
+	t.Helper()
+	r := newReleaseRepo(t)
+	git := func(args ...string) string { return strings.TrimSpace(testutil.Git(t, r.local, args...)) }
+	commitCIYAML(t, r.local, ci)
+	git("tag", "-a", "v0.12.0", "-m", "Fugaro v0.12.0")
+	git("push", "--quiet", "origin", "refs/tags/v0.12.0")
+	first := git("rev-parse", "v0.12.0^{commit}")
+	bump := exec.Command("bash", filepath.Join(r.local, "scripts", "bump-plugin-version.sh"), "0.12.1")
+	bump.Dir = r.local
+	if out, err := bump.CombinedOutput(); err != nil {
+		t.Fatalf("bumping the fixture plugin to 0.12.1: %v\n%s", err, out)
+	}
+	git("add", "-A")
+	git("commit", "--quiet", "-m", "plugin: 0.12.1")
+	git("push", "--quiet", "origin", "main")
+	return &hotfixRepo{releaseRepo: r, first: first, bump: git("rev-parse", "HEAD")}
+}
+
+// TestReleaseDispatchesAFullRunForTheMergeCommit: the ordinary path's step 4
+// puts the full `ci` run its gate reads on the merge commit itself, because the
+// commit has none -- nothing dispatches CI for a merge -- and then waits for the
+// run it started, which is the one on the commit being tagged. main's ci.yml
+// there is the selector's shape (CS6), so the dispatch asks for the full variant
+// of the run the gate reads; without that input it is a bare `ci` run, which the
+// gate reads as full too (R1).
+func TestReleaseDispatchesAFullRunForTheMergeCommit(t *testing.T) {
+	r := releaseMainWithCI(t, ciFullAndLiveScripts)
+	g := newGHState(t, r, greenChecks())
+	// The merge commit has runs -- a selected one -- and no full one, which is
+	// what a merge commit looks like. Its sha is the fake's `@merge`: the squash
+	// merge a release makes does not exist when a test writes this file.
+	ciRuns(t, g, mainFullyGreen(t, r), "@merge\tci (selected)\t@merge-selected")
+
+	res := runRelease(t, r, g, "y\n", "0.12.0")
+	res.requireSuccess(t)
+
+	if !strings.Contains(res.out, "dispatched a full ci run on main") {
+		t.Errorf("the release did not say it dispatched the run its gate reads:\n%s", res.out)
+	}
+	if dispatched := workflowRunLines(t, g); len(dispatched) != 1 || dispatched[0] != "workflow run ci -f full=true -f live_scripts=always" {
+		t.Errorf("want exactly one `workflow run ci -f full=true -f live_scripts=always`, got %q:\n%s", dispatched, g.log(t))
+	}
+	merge := strings.TrimSpace(g.read(t, "pr_merge_sha"))
+	if tagged := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}"); tagged != merge {
+		t.Errorf("the tag is on %s, want the merge commit the run was dispatched for (%s)", tagged, merge)
+	}
+}
+
+// TestReleaseReadsAnExistingFullRunInsteadOfDispatch: a merge commit that
+// already has a full run -- a person's dispatch, or a re-run of this release --
+// gets no second one: the gate reads the newest full run, so a second would only
+// cost a runner. A bare `ci` counts as full too, which is the title a ci.yml
+// without run-name gives every run (the file main carries today).
+func TestReleaseReadsAnExistingFullRunInsteadOfDispatch(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, mainFullyGreen(t, r), "@merge\tci\t@merge")
+
+	res := runRelease(t, r, g, "y\n", "0.12.0")
+	res.requireSuccess(t)
+
+	merge := strings.TrimSpace(g.read(t, "pr_merge_sha"))
+	if !strings.Contains(res.out, "ci run #2 on "+merge+" is a full one") {
+		t.Errorf("the release did not say it read the run the commit already had:\n%s", res.out)
+	}
+	if dispatched := workflowRunLines(t, g); len(dispatched) != 0 {
+		t.Errorf("the release dispatched a run the commit already had: %q", dispatched)
+	}
+}
+
+// TestReleaseOnAMainWithoutTheFullInputPassesLiveScripts: main's ci.yml between
+// #3301 and the selector (CS6) declares live_scripts and no `full`. GitHub refuses
+// a dispatch that passes an input its workflow does not declare (422), so
+// `-f full=true` there would stop every ordinary release at step 4, before the run
+// it waits for could start -- and `live_scripts` must still be passed, because
+// `auto`, that input's default, may skip the live-script runners, and a gate run
+// that skipped them is not one a tag can be cut on (R9). The run is titled `ci`,
+// which the gate reads as full (R1).
+func TestReleaseOnAMainWithoutTheFullInputPassesLiveScripts(t *testing.T) {
+	r := releaseMainWithCI(t, ciLiveScriptsOnly)
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, mainFullyGreen(t, r), "@merge\tci (selected)\t@merge-selected")
+
+	res := runRelease(t, r, g, "y\n", "0.12.0")
+	res.requireSuccess(t)
+
+	if dispatched := workflowRunLines(t, g); len(dispatched) != 1 || dispatched[0] != "workflow run ci -f live_scripts=always" {
+		t.Errorf("want exactly one `workflow run ci -f live_scripts=always` on a main that declares no full input, got %q:\n%s", dispatched, g.log(t))
+	}
+	merge := strings.TrimSpace(g.read(t, "pr_merge_sha"))
+	if tagged := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}"); tagged != merge {
+		t.Errorf("the tag is on %s, want the merge commit the run was dispatched for (%s)", tagged, merge)
+	}
+}
+
+// TestReleaseRefusesARunTheDispatchPutOnAnotherCommit: a workflow_dispatch runs
+// a workflow at the ref's tip, so when main moves on between the merge and the
+// dispatch, the run the release started is on a commit that is not the one it is
+// releasing, and reading it would vouch for a commit nobody released. The
+// release refuses instead, names the commit and the one command that would put a
+// full run on it, and creates no ref of its own: that command names a branch a
+// person makes.
+func TestReleaseRefusesARunTheDispatchPutOnAnotherCommit(t *testing.T) {
+	r := releaseMainWithCI(t, ciFullAndLiveScripts)
+	g := newGHState(t, r, greenChecks()).with("FAKE_GH_ADVANCE_AFTER_MERGE=1")
+	ciRuns(t, g, mainFullyGreen(t, r), "@merge\tci (selected)\t@merge-selected")
+
+	res := runRelease(t, r, g, "y\n", "0.12.0")
+
+	merge := strings.TrimSpace(g.read(t, "pr_merge_sha"))
+	res.requireFailureContaining(t, "gh workflow run ci --ref <a branch that points at "+merge+"> -f full=true")
+	if !strings.Contains(res.out, "main had moved past the release's merge commit") {
+		t.Errorf("the refusal does not say why the run landed elsewhere:\n%s", res.out)
+	}
+	// The command it prints names a ref a person makes: this run created none of
+	// its own.
+	heads := strings.Split(strings.TrimSpace(testutil.Git(t, r.bare, "for-each-ref", "--format=%(refname:short)", "refs/heads")), "\n")
+	sort.Strings(heads)
+	if strings.Join(heads, ",") != "main,release/v0.12.0" {
+		t.Errorf("the release left branches %q, want only main and its release branch", heads)
+	}
+	requireNoTag(t, r, res)
+}
+
+// TestHotfixDispatchesAFullRun: --hotfix dispatches the run its own gate reads
+// on the maintenance branch, and what it may pass is what the branch's ci.yml
+// declares -- the workflow a dispatch runs is the file on the ref it names, and
+// a maintenance branch is cut from the line's last tag, so its ci.yml may be
+// older than main's. GitHub refuses an input a workflow does not declare (422),
+// so each is passed only when the branch declares it.
+func TestHotfixDispatchesAFullRun(t *testing.T) {
+	for name, tc := range map[string]struct{ ci, want string }{
+		"a branch that declares both inputs": {
+			ci:   ciFullAndLiveScripts,
+			want: "workflow run ci --ref release/0.12 -f full=true -f live_scripts=always",
+		},
+		"a branch from before the full input (main's shape today)": {
+			ci:   ciLiveScriptsOnly,
+			want: "workflow run ci --ref release/0.12 -f live_scripts=always",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := hotfixLineWithCI(t, tc.ci)
+			g := r.state(t)
+
+			// The first run builds and pushes the branch and then stops: the
+			// release's own text is not on it yet. A release that has not got
+			// there yet dispatches nothing.
+			first := runHotfix(t, r, g, "0.12.1")
+			first.requireFailureContaining(t, "docs/releases/v0.12.1.md")
+			if dispatched := workflowRunLines(t, g); len(dispatched) != 0 {
+				t.Fatalf("the run that stopped for the release's own text dispatched CI: %q", dispatched)
+			}
+			commitHotfixText(t, r, "0.12.1")
+
+			second := runHotfix(t, r, g, "0.12.1")
+			second.requireSuccess(t)
+			if dispatched := workflowRunLines(t, g); len(dispatched) != 1 || dispatched[0] != tc.want {
+				t.Errorf("want exactly one %q, got %q:\n%s", tc.want, dispatched, second.out)
+			}
+			tip := testutil.Git(t, r.bare, "rev-parse", "release/0.12")
+			if tagged := r.git(t, "rev-parse", "refs/tags/v0.12.1^{commit}"); tagged != tip {
+				t.Errorf("tag v0.12.1 (%s) is not on the branch tip (%s)", tagged, tip)
+			}
+		})
+	}
+}
+
+// TestHotfixOnAnOlderBranchPassesNoInput: a line whose tag predates both inputs
+// is dispatched exactly as before -- no -f at all -- because its ci.yml declares
+// neither and a dispatch passing one is refused by GitHub with a 422. The run it
+// starts is titled a bare `ci`, which is what a ci.yml without run-name gives
+// every run, and that is the title the gate reads as a full run.
+func TestHotfixOnAnOlderBranchPassesNoInput(t *testing.T) {
+	r := hotfixLineWithCI(t, ciNoInputs)
+	g := r.state(t)
+
+	first := runHotfix(t, r, g, "0.12.1")
+	first.requireFailureContaining(t, "docs/releases/v0.12.1.md")
+	commitHotfixText(t, r, "0.12.1")
+
+	second := runHotfix(t, r, g, "0.12.1")
+	second.requireSuccess(t)
+	if dispatched := workflowRunLines(t, g); len(dispatched) != 1 || dispatched[0] != "workflow run ci --ref release/0.12" {
+		t.Errorf("want exactly one `workflow run ci --ref release/0.12` and no input, got %q:\n%s", dispatched, second.out)
 	}
 }

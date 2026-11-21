@@ -678,6 +678,71 @@ func TestAdoptGoesToThePlanNode(t *testing.T) {
 	}
 }
 
+// TestAdoptLeavesBacklogRunsToTheirItems is D2702 at the node a standing
+// backlog item lives in (D2735, W1): a run the daemon launched from the standing
+// backlog carries no plan task, so adoption's own shardOf sends it to the state
+// node — while the item it is already under stands in the backlog's node and
+// nowhere else. The claim is read off every node this call loads, and the
+// backlog's is one of them, so the run is left to the item working it instead of
+// being written a second time into the state node: a duplicate running item and
+// a duplicate intent, folded and counted twice, on every start over a run the
+// daemon itself launched.
+//
+// Mutation: read the nodes the runs name and the state node alone, and a run
+// launched from the backlog is adopted into the state node beside its own item.
+func TestAdoptLeavesBacklogRunsToTheirItems(t *testing.T) {
+	at := o6Now()
+	ctx := context.Background()
+	f := gcpfake.NewRTDB(t)
+	f.SetClock(func() time.Time { return at })
+
+	// The item the daemon launched from the backlog before this start: running,
+	// with its own run under it, and with no plan task — which is every item
+	// `fugaro backlog add` and the issue ingest write (D2715).
+	launched := orchestrator.WorkItem{
+		ID: runA, Title: "a standing backlog item", Repo: "owner/repo",
+		Recipe: "default", RigorTier: "small",
+		Brief: "the brief the daemon launched it with",
+		Phase: orchestrator.PhaseRunning, RunID: runA, Attempts: 1,
+	}
+	backlog := mustShardNode(t, rtdbClient(t, f), &stubLease{held: true}, orchestrator.ShardBacklog)
+	_, etag, err := backlog.Load(ctx)
+	if err != nil {
+		t.Fatalf("reading the empty backlog node: %v", err)
+	}
+	seeded := orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion,
+		AgentID:       daemonID,
+		Role:          orchestrator.RoleOrchestrator,
+		WorkItems:     []orchestrator.WorkItem{launched},
+		Intents: []orchestrator.Intent{{
+			ID: orchestrator.IntentID(runA, 1), RunID: runA, SpecDigest: orchestrator.SpecDigest(launched),
+			ApprovalAt: at, At: at,
+		}},
+	}
+	if err := backlog.Save(ctx, seeded, etag); err != nil {
+		t.Fatalf("seeding the backlog node with the item the daemon launched: %v", err)
+	}
+
+	node := adoptNode(t, f, at, &stubLease{held: true})
+	lister := &adoptLister{runs: []orchestrator.RunInFlight{adoptRun(runA, "")}}
+	got, err := orchestrator.Adopt(ctx, lister, node)
+	if err != nil {
+		t.Fatalf("adoption ended as %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("adoption wrote %d item(s) for a run the backlog's node already carries as its item", got)
+	}
+	after := nodeState(t, node)
+	if len(after.WorkItems) != 0 || len(after.Intents) != 0 || len(after.Facts) != 0 {
+		t.Fatalf("the state node carries %d items, %d intents and %d facts, and a run already an item of the backlog's node is nothing adoption writes into it",
+			len(after.WorkItems), len(after.Intents), len(after.Facts))
+	}
+	if kept := nodeState(t, backlog); len(kept.WorkItems) != 1 || kept.WorkItems[0].RunID != runA {
+		t.Fatalf("the backlog node carries %+v, and adoption writes nothing into the node whose item is working the run", kept.WorkItems)
+	}
+}
+
 // TestAdoptBoundedInMainNode is the bound on the shared node (D2702): twenty
 // runs go into the state node and the rest are named in one fact, because a
 // first start over a checkout a person drove by hand must not fill the node

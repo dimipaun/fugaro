@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -111,5 +112,137 @@ func TestWorkspaceBundleIsOneSecretWithOneGrant(t *testing.T) {
 	}
 	if WorkspaceShared(nil, node) != nil {
 		t.Error("WorkspaceShared with no bundle = a pool, want none: a name with no value behind it is not a credential")
+	}
+}
+
+// TestThePoolCarriesForgeEntries: the pool is every kind of credential the
+// service serves and not the model ones alone (D2978, D2984, F15).
+//
+// A workspace's bundle is one container holding every kind its runs are served
+// from — the model credentials, the GitHub App's key and the Bitbucket tokens —
+// and the owner's node declares which of them is shared, to whom, and, for a
+// forge credential, which repositories it reaches (U2, C3's `covers`). So the
+// pool a member's call is offered has to carry a forge entry with its kind and
+// that coverage, and a forge entry the bundle does not hold is skipped exactly
+// as a model one is: there is no value to attach, so it is not offered.
+func TestThePoolCarriesForgeEntries(t *testing.T) {
+	legacy := config.BitbucketSecret
+	named := config.BitbucketTokenKey("acme")
+	gone := config.BitbucketTokenKey("gone")
+	if named == "" || gone == "" {
+		t.Fatalf("config.BitbucketTokenKey refused a name of its own family: %q, %q", named, gone)
+	}
+	doc := config.GitHubAppKeySecret + ": " + fakeCred(t, "appkey") + "\n" +
+		legacy + ": " + fakeCred(t, "legacy") + "\n" +
+		named + ": " + fakeCred(t, "acme") + "\n"
+	b, err := ParseBundle([]byte(doc))
+	if err != nil {
+		t.Fatalf("ParseBundle: %v", err)
+	}
+	node := &projectpolicy.WorkspaceCredentials{
+		Name: wsWorkspace,
+		// The node's entries are in name order, which is what Validate asks of
+		// them: the legacy key, the family's two members, then the App key.
+		Shared: []projectpolicy.WorkspaceShared{
+			{Name: legacy, Kind: gitprov.KindBitbucket, Projects: []string{wsMemberA, wsMemberB}, Covers: []string{"bitbucket/acme/app"}},
+			{Name: named, Kind: gitprov.KindBitbucket, Projects: []string{wsMemberA}, Covers: []string{"bitbucket/acme/app", "bitbucket/acme/other"}},
+			// A credential the owner declared shared and the bundle does not
+			// hold: no value to attach, so it is not offered.
+			{Name: gone, Kind: gitprov.KindBitbucket, Projects: []string{wsMemberA}, Covers: []string{"bitbucket/acme/app"}},
+			{Name: config.GitHubAppKeySecret, Kind: gitprov.KindGitHub, Projects: []string{wsMemberB}, Covers: []string{"github/acme/app"}},
+		},
+	}
+	if err := node.Validate(); err != nil {
+		t.Fatalf("the test's own node is not one C3 accepts: %v", err)
+	}
+	got := WorkspaceShared(b, node)
+
+	// Every entry the bundle holds, in the node's order, each carrying the kind
+	// it is and the coverage the owner declared — and no tier, because a forge
+	// credential is spent nowhere (Entry's own rule).
+	want := []creds.Shared{
+		{Credential: creds.Credential{Name: legacy}, Projects: []string{wsMemberA, wsMemberB}, Kind: gitprov.KindBitbucket, Covers: []string{"bitbucket/acme/app"}},
+		{Credential: creds.Credential{Name: named}, Projects: []string{wsMemberA}, Kind: gitprov.KindBitbucket, Covers: []string{"bitbucket/acme/app", "bitbucket/acme/other"}},
+		{Credential: creds.Credential{Name: config.GitHubAppKeySecret}, Projects: []string{wsMemberB}, Kind: gitprov.KindGitHub, Covers: []string{"github/acme/app"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("WorkspaceShared =\n%+v\nwant\n%+v\nthe pool carries every kind of credential the bundle holds and the owner shared, with the kind and the coverage the node declares, and a forge entry the bundle does not hold is skipped as a model one is", got, want)
+	}
+	for _, s := range got {
+		if s.Name == gone {
+			t.Errorf("WorkspaceShared offered %q, which the bundle does not hold: a name with no value behind it is not a credential", gone)
+		}
+	}
+
+	// A node entry whose kind and whose name disagree names no credential this
+	// bundle holds: the App key's name under a Bitbucket kind is a skip and
+	// never the other forge's credential.
+	confused := &projectpolicy.WorkspaceCredentials{
+		Name:   wsWorkspace,
+		Shared: []projectpolicy.WorkspaceShared{{Name: config.GitHubAppKeySecret, Kind: gitprov.KindBitbucket, Projects: []string{wsMemberA}, Covers: []string{"bitbucket/acme/app"}}},
+	}
+	if got := WorkspaceShared(b, confused); len(got) != 0 {
+		t.Errorf("WorkspaceShared offered %+v for an entry whose kind and name disagree: the kind is what tells the service which route may serve the entry (C3's rule 4), so the two have to name one credential", got)
+	}
+
+	// No value, anywhere in the answer: a forge credential is a name, a kind
+	// and a coverage, and its token is in the container alone.
+	rendered := fmt.Sprint(got)
+	for _, e := range b.Entries() {
+		if v := e.Value(); v != "" && strings.Contains(rendered, v) {
+			t.Fatal("the pool's answer renders a credential's value: rule 2 is that no run, no CLI and no person is handed one")
+		}
+	}
+}
+
+// TestAModelEntryIsUnchanged: version 2's columns are a FORGE entry's, and a
+// model entry is what it always was — a name, a tier and its allow-list (D2978,
+// F15, and the acceptance's "a model entry is unchanged").
+//
+// The claim has two halves, and the second is the one that would break a member
+// silently: the pool a call is offered now carries forge entries beside the
+// model ones, and the list the model cascade is offered — SharedFor's — is
+// still the model credentials and only them. A Bitbucket token in a model
+// candidate list is a candidate the cascade cannot attach, so the pool growing
+// a kind must not grow that list.
+func TestAModelEntryIsUnchanged(t *testing.T) {
+	accountKey := config.ClaudeAccountSecret("team")
+	accountName, kind, tier, ok := CredentialKey(accountKey)
+	if !ok || kind != KindModel {
+		t.Fatalf("CredentialKey(%q) = (%q, %v, %v, %v), want a model credential", accountKey, accountName, kind, tier, ok)
+	}
+	doc := accountKey + ": " + fakeCred(t, "team") + "\n" +
+		config.BitbucketSecret + ": " + fakeCred(t, "legacy") + "\n"
+	b, err := ParseBundle([]byte(doc))
+	if err != nil {
+		t.Fatalf("ParseBundle: %v", err)
+	}
+	node := &projectpolicy.WorkspaceCredentials{
+		Name: wsWorkspace,
+		Shared: []projectpolicy.WorkspaceShared{
+			{Name: config.BitbucketSecret, Kind: gitprov.KindBitbucket, Projects: []string{wsMemberA}, Covers: []string{"bitbucket/acme/app"}},
+			{Name: accountName, Kind: projectpolicy.SharedKindModel, Projects: []string{wsMemberA}},
+		},
+	}
+	if err := node.Validate(); err != nil {
+		t.Fatalf("the test's own node is not one C3 accepts: %v", err)
+	}
+	got := WorkspaceShared(b, node)
+	if len(got) != 2 {
+		t.Fatalf("WorkspaceShared = %+v, want the forge entry and the model one: the pool carries every kind the owner shared", got)
+	}
+
+	// The model entry, byte for byte: what it was before version 2's columns
+	// existed.
+	want := creds.Shared{Credential: creds.Credential{Name: accountName, Tier: tier}, Projects: []string{wsMemberA}}
+	if !reflect.DeepEqual(got[1], want) {
+		t.Fatalf("the pool's model entry = %+v, want %+v: a model entry carries its name, its tier and its allow-list and nothing of version 2's", got[1], want)
+	}
+
+	// The cascade's list, unchanged by the pool carrying a forge entry beside
+	// the model one.
+	candidates := creds.SharedFor(wsMemberA, got, func(string) bool { return true })
+	if len(candidates) != 1 || candidates[0] != want.Credential {
+		t.Fatalf("the model candidates = %+v, want just %+v: a forge entry is not a model candidate, so the pool carrying one must not put it in the cascade's list", candidates, want.Credential)
 	}
 }

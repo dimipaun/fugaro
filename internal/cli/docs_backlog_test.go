@@ -26,12 +26,13 @@ package cli
 // docs_in_job_review_test.go for docs/in-job-review/.
 //
 // The items are held by this file reading the bytes: it parses the front
-// matter itself and asserts the eight keys D27 names, the four body headings,
-// the three-word status vocabulary and the id/file-name agreement, so a format
-// rule is checked against the document rather than against the parser that
-// happens to implement it. It also asserts internal/backlog's own Parse accepts
-// every file, which is the other direction: a file the folder's pin reads as
-// well-formed and the tool refuses is a file `fugaro backlog index` cannot show.
+// matter itself and asserts the nine keys D27 names, the four body headings,
+// the three-word status vocabulary, LD5's two-word kind and the id/file-name
+// agreement, so a format rule is checked against the document rather than
+// against the parser that happens to implement it. It also asserts
+// internal/backlog's own Parse accepts every file, which is the other
+// direction: a file the folder's pin reads as well-formed and the tool refuses
+// is a file `fugaro backlog index` cannot show.
 //
 // The closing rule is D31's, and it is the folder's pin that holds it (plan
 // T4.7): a `closed` item carries a `## Closed by` section naming the pull
@@ -156,11 +157,12 @@ func backlogBodyHeadings(doc string) []string {
 
 // TestDocsBacklogItemsFollowTheFormat is the folder's own pin on the items:
 // every file beside FORMAT.md and README.md is one item, named as D26 names
-// it, carrying the eight front-matter fields D27 requires and no ninth, a
-// status from D27's three-word vocabulary, and the body headings the format
-// names with the first two required. Written red first, against a folder that
-// did not exist (plan T4.3's red step), and independent of the tool: the
-// parser's own acceptance is asserted separately, below.
+// it, carrying the nine front-matter fields D27 requires and no tenth, a
+// status from D27's three-word vocabulary, a kind from LD5's two-word one, and
+// the body headings the format names with the first two required. Written red
+// first, against a folder that did not exist (plan T4.3's red step), and
+// independent of the tool: the parser's own acceptance is asserted separately,
+// below.
 func TestDocsBacklogItemsFollowTheFormat(t *testing.T) {
 	names := backlogItemFiles(t)
 	if len(names) == 0 {
@@ -177,8 +179,8 @@ func TestDocsBacklogItemsFollowTheFormat(t *testing.T) {
 		doc := readDoc(t, path)
 		fm := backlogFrontMatter(t, path, doc)
 
-		// The eight fields, exactly: a missing one is a field a reader cannot
-		// trust, and a ninth is a field nobody decided.
+		// The nine fields, exactly: a missing one is a field a reader cannot
+		// trust, and a tenth is a field nobody decided.
 		for _, key := range backlog.Fields {
 			if _, ok := fm[key]; !ok {
 				t.Errorf("%s: the front matter does not carry the required field %q (D27)", path, key)
@@ -186,12 +188,12 @@ func TestDocsBacklogItemsFollowTheFormat(t *testing.T) {
 		}
 		for key := range fm {
 			if !slices.Contains(backlog.Fields, key) {
-				t.Errorf("%s: the front matter carries %q, which is not one of D27's eight fields", path, key)
+				t.Errorf("%s: the front matter carries %q, which is not one of D27's nine fields", path, key)
 			}
 		}
 		for key, value := range fm {
 			if value == "" {
-				t.Errorf("%s: the front matter's %q is empty: every one of the eight is required (D27)", path, key)
+				t.Errorf("%s: the front matter's %q is empty: every one of the nine is required (D27)", path, key)
 			}
 		}
 
@@ -210,10 +212,14 @@ func TestDocsBacklogItemsFollowTheFormat(t *testing.T) {
 			seen[id] = path
 		}
 
-		// D27's status is three words and no fourth, its date is a day, and its
-		// filed-in is one of the three things that can have filed an item.
+		// D27's status is three words and no fourth, LD5's kind is two words and
+		// no third, its date is a day, and its filed-in is one of the three
+		// things that can have filed an item.
 		if status := fm["status"]; status != "" && !slices.Contains(backlog.Statuses, status) {
 			t.Errorf("%s: status %q is not one of %s (D27)", path, status, strings.Join(backlog.Statuses, ", "))
+		}
+		if kind := fm["kind"]; kind != "" && !slices.Contains(backlog.Kinds, kind) {
+			t.Errorf("%s: kind %q is not one of %s: an item is a deferral or an open risk, and there is no third kind (LD5)", path, kind, strings.Join(backlog.Kinds, ", "))
 		}
 		if date := fm["date"]; date != "" && !backlogDateRE.MatchString(date) {
 			t.Errorf("%s: date %q is not `YYYY-MM-DD`: the date is the record's own finish time, never a clock read at regeneration (D27)", path, date)
@@ -425,7 +431,8 @@ func backlogItemDoc(id, title, status, body string) string {
 	return "---\n" +
 		"id: " + id + "\n" +
 		"title: " + title + "\n" +
-		"mode: none\n" +
+		"level: none\n" +
+		"kind: deferred\n" +
 		"area: repo\n" +
 		"status: " + status + "\n" +
 		"filed-by: dimipaun\n" +
@@ -438,6 +445,9 @@ func backlogItemDoc(id, title, status, body string) string {
 // states the four things the plan's T4.3 asks it to state — the front-matter
 // table, the id rule, the body headings and the closing rule (D26, D27, D31)
 // — by name, so a reader who meets an item has the rule it follows beside it.
+// LD5's two words are named beside the three statuses, because the kind is the
+// other closed vocabulary a reader of an item meets and the one the promote
+// task reads an item by.
 func TestDocsBacklogFolderStatesItsFormat(t *testing.T) {
 	doc := readDoc(t, backlogFormat)
 	for _, want := range []string{
@@ -450,6 +460,8 @@ func TestDocsBacklogFolderStatesItsFormat(t *testing.T) {
 		"open",
 		"closed",
 		"dropped",
+		"deferred",
+		"open-risk",
 		"## Closed by",
 	} {
 		if !strings.Contains(doc, want) {
@@ -507,6 +519,20 @@ func backlogIndexLinks(doc string) map[string]string {
 	for _, line := range strings.Split(doc, "\n") {
 		if m := backlogIndexRowRE.FindStringSubmatch(line); m != nil {
 			out[m[1]] = m[2]
+		}
+	}
+	return out
+}
+
+// backlogIndexRowLines returns the id -> whole row line of every row the index
+// document carries, so a guard can read the cells a row states — the level and
+// the kind LD5 added — off the committed document rather than off the renderer
+// that wrote it.
+func backlogIndexRowLines(doc string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(doc, "\n") {
+		if m := backlogIndexRowRE.FindStringSubmatch(line); m != nil {
+			out[m[1]] = line
 		}
 	}
 	return out
@@ -570,8 +596,8 @@ func TestDocsBacklogIndexIsCurrent(t *testing.T) {
 // other kind: it reads the folder and the committed index and derives both
 // sides from the tree and the document, so it holds even if the generator
 // stopped listing an item, renamed a link or dropped a section. A row per item
-// file, each linked to the file it names, and no row for a file that is not
-// there.
+// file, each linked to the file it names, each stating its item's own level and
+// kind, and no row for a file that is not there.
 //
 // Mutation (verified, run and restored): delete a row from the committed index
 // — this fails naming the id the document does not list. Delete the count
@@ -609,12 +635,29 @@ func TestDocsBacklogIndexCoversEveryItemInTheTree(t *testing.T) {
 		}
 	}
 
-	// The count line, derived from the folder rather than from the generator:
-	// the statuses read out of the items' own front matter, counted here.
+	// The cells of each row, derived from the folder rather than from the
+	// generator: the row has to state the item's own level and kind, which are
+	// the two fields LD5 put in front of a reader — a row that dropped one is
+	// exactly the drift this guard reads the tree for. In the same pass, the
+	// count line: the statuses read out of the items' own front matter,
+	// counted here.
+	rowLines := backlogIndexRowLines(doc)
 	counts := map[string]int{}
 	for _, name := range tree {
 		fm := backlogFrontMatter(t, backlogDir+"/"+name, readDoc(t, backlogDir+"/"+name))
 		counts[fm["status"]]++
+		row, ok := rowLines[fm["id"]]
+		if !ok {
+			continue
+		}
+		for _, cell := range []struct{ field, what string }{
+			{"level", "the level the item was left open under (LD2)"},
+			{"kind", "the kind of item it is, `deferred` or `open-risk` (LD5)"},
+		} {
+			if fm[cell.field] != "" && !strings.Contains(row, "| "+fm[cell.field]+" |") {
+				t.Errorf("%s's row for %s does not carry %s: the index lists it, so a reader meets the two fields the promote task reads an item by (LD5): %q", backlogIndex, fm["id"], cell.what, row)
+			}
+		}
 	}
 	line := fmt.Sprintf("%d items: %d open, %d closed, %d dropped.",
 		len(tree), counts["open"], counts["closed"], counts["dropped"])

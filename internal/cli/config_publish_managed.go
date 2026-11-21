@@ -216,7 +216,7 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, loca
 // it, and a record that named it would claim a rule that never ran.
 func layerAdmittedRules(local bool, marker string) []string {
 	rules := []string{
-		"every key of the document is one the settings registry knows",
+		"every key of the document is one the settings registry knows, or the released `mode:` of a rigor area rule",
 		"the document names no reserved key",
 		"the document is one this program can publish",
 		"no key that runs as shell changes, whatever the command line says",
@@ -304,7 +304,7 @@ func layerDocumentRules(data []byte) []string {
 // layerKeyPaths is the document's key paths, one per leaf, one per key the
 // registry knows and one per empty block: the paths the two rules above are
 // decided over. `*` stands in for an element of a list of blocks, which is how
-// the registry spells one (`defaults.rigor.areas.*.mode`). See layerWalkKeys
+// the registry spells one (`defaults.rigor.areas.*.level`). See layerWalkKeys
 // for the walk itself.
 func layerKeyPaths(data []byte) ([][]string, bool) {
 	var paths [][]string
@@ -468,6 +468,12 @@ func layerPathKey(path []string) string { return "layer." + strings.Join(path, "
 // whose key varies — `layer.profiles.*.commands.test` is the test command of any
 // profile — is matched by its pattern rather than by its spelling, through
 // internal/settings's own rule for that question.
+//
+// A rigor area rule's own keys are the one place the registry is not the whole
+// answer, and layerAreaKey is why: the registry carries the rows this release's
+// `settings set` writes, while the loader reads one key more. The document under
+// judgement is the document the loader will read, so a key it takes is a key no
+// session is refused over.
 func layerRegistryExact(path []string) bool {
 	key := layerPathKey(path)
 	if _, ok := settings.Lookup(key); ok {
@@ -478,7 +484,30 @@ func layerRegistryExact(path []string) bool {
 			return true
 		}
 	}
-	return false
+	return layerAreaKey(path)
+}
+
+// layerAreaKeys is the keys one rigor area rule carries, from the loader itself
+// (rigor.AreaKeys): `name`, `match`, `level` and `mode` — the spelling the level
+// was released under and is still read under. Read once, the way the registry
+// rows above are, so a document is judged against one answer.
+var layerAreaKeys = rigor.AreaKeys()
+
+// layerAreaKey reports whether path is one of an area rule's keys, under the
+// registry's own spelling of such a rule: `layer.defaults.rigor.areas.*.<key>`,
+// the shape of the registry's `defaults.rigor.areas.*.level` row. Exactly one
+// segment deep, so `areas.*.level.extra` is still a key nothing reads; and the
+// keys are the loader's own, so the gate and the decoder cannot disagree about
+// what a rule may write — a document carrying `mode:` is one this program loads
+// and runs, which a layer an older release's `fugaro rigor set --area` wrote
+// into a managed project is.
+func layerAreaKey(path []string) bool {
+	const areaRule = "layer.defaults.rigor.areas.*."
+	name, ok := strings.CutPrefix(layerPathKey(path), areaRule)
+	if !ok || name == "" || strings.Contains(name, ".") {
+		return false
+	}
+	return slices.Contains(layerAreaKeys, name)
 }
 
 // layerRegistryExtends reports whether some registry key lies under this path,
@@ -536,7 +565,7 @@ func layerReservedRun(path []string) []string {
 
 // layerRigorRules names every rigor floor the layer removes: a
 // defaults.rigor.default lowered or dropped, and a defaults.rigor.areas rule
-// lowered or dropped, both compared by rigor.Mode.Rank().
+// lowered or dropped, both compared by rigor.Rigor.Rank().
 //
 // This is one of the two directions the gate refuses for admitting LESS rather
 // than more — the review rounds a run spends are the other (layerRoundsRules,
@@ -566,9 +595,9 @@ func layerRigorRules(prev, next *config.ProjectLayer) []string {
 			add("lowers defaults.rigor.default from " + string(was) + " to " + string(now))
 		}
 	}
-	was := make(map[string]rigor.Mode, len(prev.Defaults.Rigor.Areas))
+	was := make(map[string]rigor.Rigor, len(prev.Defaults.Rigor.Areas))
 	for _, a := range prev.Defaults.Rigor.Areas {
-		was[a.Name] = a.Mode
+		was[a.Name] = a.Level
 	}
 	for _, a := range next.Defaults.Rigor.Areas {
 		held, ok := was[a.Name]
@@ -577,10 +606,10 @@ func layerRigorRules(prev, next *config.ProjectLayer) []string {
 		}
 		delete(was, a.Name)
 		switch {
-		case a.Mode == "":
-			add("removes the rigor rule " + safetext.Field(a.Name) + "'s mode, which was " + string(held))
-		case a.Mode.Rank() < held.Rank():
-			add("lowers the rigor rule " + safetext.Field(a.Name) + " from " + string(held) + " to " + string(a.Mode))
+		case a.Level == "":
+			add("removes the rigor rule " + safetext.Field(a.Name) + "'s level, which was " + string(held))
+		case a.Level.Rank() < held.Rank():
+			add("lowers the rigor rule " + safetext.Field(a.Name) + " from " + string(held) + " to " + string(a.Level))
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(was)) {

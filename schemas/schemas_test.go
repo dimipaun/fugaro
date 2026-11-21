@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/settings"
@@ -40,6 +41,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/tier"
 	"github.com/dimipaun/fugaro/internal/triage"
 	"github.com/dimipaun/fugaro/internal/verify"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // compile loads a schema file and compiles it under its $id.
@@ -302,6 +304,34 @@ func TestFugaroSchemaCorpus(t *testing.T) {
 	}
 }
 
+// TestRigorScalarShorthandIsBothASchemaAndALoaderForm: the repository's rigor
+// block may be written as the level alone beside the mapping (the owner's
+// ruling of 2026-11-18 on item 8's shorthand half), so the two spellings have
+// to agree in both
+// places a document is judged: a schema that took only the mapping would fail a
+// `rigor: critical` a run accepted, and one that took any string would pass a
+// level the loader refuses. The project layer's own defaults.rigor is not here:
+// it takes the mapping alone, every key of that layer being a fugaro.yaml key
+// its own command writes.
+func TestRigorScalarShorthandIsBothASchemaAndALoaderForm(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	const scalar = "version: 1\nproject: aurora\ngit: { provider: github }\nrigor: critical\n" +
+		"workflows: { server: { commands: { build: make, test: make test } } }\n"
+	if err := sch.Validate(yamlInstance(t, []byte(scalar))); err != nil {
+		t.Errorf("fugaro.schema.json rejects the scalar rigor shorthand: %v", err)
+	}
+	if _, ps := config.Parse([]byte(scalar)); len(ps) > 0 {
+		t.Errorf("config.Parse rejects the scalar rigor shorthand: %v", ps)
+	}
+	bad := strings.Replace(scalar, "rigor: critical", "rigor: paranoid", 1)
+	if err := sch.Validate(yamlInstance(t, []byte(bad))); err == nil {
+		t.Error("fugaro.schema.json accepts a rigor level outside the vocabulary")
+	}
+	if _, ps := config.Parse([]byte(bad)); len(ps) == 0 {
+		t.Error("config.Parse accepts a rigor level outside the vocabulary")
+	}
+}
+
 // schemaDescriptionAt walks file's raw JSON (not through the jsonschema
 // compiler, which drops "description") down path and returns the
 // "description" string at the end of it.
@@ -431,7 +461,7 @@ func TestTaskSchemaCorpus(t *testing.T) {
 }
 
 // TestTaskSchemaRigorRequestMatchesTheGoRules ties the task schema's `rigor`
-// and `paths` properties to the Go rules they mirror (rigor.Modes,
+// and `paths` properties to the Go rules they mirror (rigor.Rigors,
 // task.MaxDeclaredPaths, task.MaxDeclaredPathBytes): the schema's enum and
 // bounds are separate copies of both, so without this a mode added to the
 // vocabulary, or a bound moved, would drift from the published schema with
@@ -461,12 +491,12 @@ func TestTaskSchemaRigorRequestMatchesTheGoRules(t *testing.T) {
 	} else if err := json.Unmarshal(raw, &mode); err != nil {
 		t.Fatal(err)
 	}
-	want := make([]string, 0, len(rigor.Modes))
-	for _, m := range rigor.Modes {
+	want := make([]string, 0, len(rigor.Rigors))
+	for _, m := range rigor.Rigors {
 		want = append(want, string(m))
 	}
 	if !slices.Equal(mode.Enum, want) {
-		t.Errorf("schema rigor enum %v != rigor.Modes %v", mode.Enum, want)
+		t.Errorf("schema rigor enum %v != rigor.Rigors %v", mode.Enum, want)
 	}
 	var paths struct {
 		MaxItems int `json:"maxItems"`
@@ -592,6 +622,79 @@ func TestTaskSchemaInputs(t *testing.T) {
 		if err := validate(head + tc.lit + `}`); err == nil {
 			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
 		}
+	}
+}
+
+// TestTaskSchemaReports pins the task schema's `reports` property (plan task
+// R16, D2754): the project's stored reports a `fugaro run --commit-reports`
+// launch hands its run, as the commit_reports step reads them. The schema is
+// additionalProperties: false, so without this property every commit run
+// writes a task.json the published schema rejects — and the schema is what
+// every other reader of a task (the console, the history, anything that never
+// links this binary) checks that task against.
+//
+// The shape is `inputs`'s, one member per report, and the two are deliberately
+// not one property: an input is a file the launcher attached for a mode:
+// artifact run to download into inputs/, and a report is an object the launcher
+// read from the project's store for the commit step to commit. What the members
+// carry is the same rule each, and Spec.Validate states it for both.
+//
+// The ONE rule this test does not ask the schema for is the name's shape: what
+// a report name may be is the mirror's (digest.ParseMirrorPath), applied where
+// the name becomes a path in the repository, and refusing the mirror's shape
+// here would make that check unreachable, since the decoder runs first
+// (Spec.Validate's own note).
+//
+// Mutation (drop the reports property from schemas/task.schema.json, or rename
+// the Go field's json tag): the marshalled task below is rejected as an unknown
+// key.
+func TestTaskSchemaReports(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(lit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	head := `{"version":1,"run_id":"20261119-100000-c4a1","repo":"acme/app","ref":"main","task":"commit the stored reports"`
+	sha := strings.Repeat("a", 64)
+	// The name below is a real mirror name, the repository's day report, and
+	// the aggregate's shape is accepted beside it: neither level of the mirror
+	// is a schema rule, so both must pass here.
+	ok := head + `,"reports":[{"name":"acme-app-dc4d4e59e884fc44/2026/2026-10-20.md","bytes":1024,"sha256":"` + sha + `"},{"name":"2026/2026-W43.md","bytes":2048,"sha256":"` + sha + `"}]` + `}`
+	if err := validate(ok); err != nil {
+		t.Fatalf("schema rejects a task carrying reports: %v", err)
+	}
+	if err := validate(head + `}`); err != nil {
+		t.Fatalf("schema rejects a task carrying none: %v", err)
+	}
+	for _, tc := range []struct{ name, lit string }{
+		{"not an array", `,"reports":{}`},
+		{"empty name", `,"reports":[{"name":"","bytes":1,"sha256":"` + sha + `"}]`},
+		{"whitespace-only name", `,"reports":[{"name":"   ","bytes":1,"sha256":"` + sha + `"}]`},
+		{"negative bytes", `,"reports":[{"name":"2026/2026-10-20.md","bytes":-1,"sha256":"` + sha + `"}]`},
+		{"short sha256", `,"reports":[{"name":"2026/2026-10-20.md","bytes":1,"sha256":"abc"}]`},
+		{"upper-case sha256", `,"reports":[{"name":"2026/2026-10-20.md","bytes":1,"sha256":"` + strings.Repeat("A", 64) + `"}]`},
+		{"unknown key", `,"reports":[{"name":"2026/2026-10-20.md","bytes":1,"sha256":"` + sha + `","content_type":"text/markdown"}]`},
+		{"missing sha256", `,"reports":[{"name":"2026/2026-10-20.md","bytes":1}]`},
+	} {
+		if err := validate(head + tc.lit + `}`); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
+		}
+	}
+	// The property's name is the Go field's own json tag, so the two cannot
+	// drift silently: the launcher writes this member and nothing else reads
+	// this document.
+	data, err := json.Marshal(task.Spec{
+		Version: 1, RunID: "20261119-100000-c4a1", Repo: "acme/app", Ref: "main", Task: "commit the stored reports",
+		Reports: []task.InputFile{{Name: "2026/2026-10-20.md", Bytes: 1, SHA256: sha}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"reports":`) {
+		t.Fatalf("task.Spec marshals its reports as %s, and schemas/task.schema.json calls the member \"reports\"", data)
 	}
 }
 
@@ -832,10 +935,10 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		// And the rigor block (docs/rigor-modes/implementation-plan.md T1.2):
 		// the mode the run resolved, the layer that won, the areas that
 		// matched with the moment each was applied, and the revision it read.
-		Rigor: &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
+		Rigor: &runstore.RigorRecord{Level: rigor.Critical, From: rigor.FromArea,
 			Areas: []runstore.RigorArea{
-				{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap},
-				{Name: "docs", Mode: rigor.POC, At: runstore.RigorAtRound},
+				{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtBootstrap},
+				{Name: "docs", Level: rigor.POC, At: runstore.RigorAtRound},
 			},
 			At:       runstore.RigorAtFinalize,
 			Revision: "origin/main"},
@@ -897,6 +1000,21 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 				{Dimension: runstore.Time, From: 2700, To: 5400},
 			},
 		}},
+		// And the message channel's block (docs/run-messages, F13, F24, F25):
+		// whether the run reads messages, the format and flags its runner
+		// knows, and one entry per message it saw — every state, so a record
+		// with any of them is one the schema accepts.
+		Messages: &runmsg.Record{
+			Accepting: true, Format: runmsg.Format, Flags: []string{runmsg.FlagNow, runmsg.FlagWrapUp},
+			Messages: []runmsg.Delivery{
+				{Seq: 1, SentAt: &at, SentBy: "someone@example.com", Flags: []string{runmsg.FlagNow},
+					State: runmsg.StateDelivered, Stage: "implement", DeliveredAt: &finished},
+				{Seq: 2, SentAt: &at, SentBy: "someone@example.com", State: runmsg.StateUndelivered,
+					Reason: "the run reached finalize before a coder stage"},
+				{Seq: 3, State: runmsg.StateMissing},
+				{Seq: 4, State: runmsg.StateRefused, Reason: "the text is 5000 bytes and the cap is 4096"},
+			},
+		},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -996,10 +1114,12 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		{"an area's moment outside D22's three", `"at":"round"`, `"at":"lunchtime"`},
 		{"a revision that is not text", `"revision":"origin/main"`, `"revision":5`},
 		{"an area with no name", `"name":"payments"`, `"match":"internal/payments/**"`},
-		{"an area with no mode", `"mode":"critical","at":"bootstrap"`, `"at":"bootstrap"`},
-		{"an area's mode outside the vocabulary", `"mode":"critical","at":"bootstrap"`, `"mode":"paranoid","at":"bootstrap"`},
+		{"an area with no mode", `{"name":"payments","mode":"critical","level":"critical","at":"bootstrap"}`, `{"name":"payments","level":"critical","at":"bootstrap"}`},
+		{"an area's mode outside the vocabulary", `"name":"payments","mode":"critical"`, `"name":"payments","mode":"paranoid"`},
+		{"an area's level outside the vocabulary", `"name":"payments","mode":"critical","level":"critical"`, `"name":"payments","mode":"critical","level":"paranoid"`},
 		{"a name that is not one", `"name":"payments"`, `"name":"../../etc/passwd"`},
 		{"the block with no mode", `"mode":"critical",`, ``},
+		{"the block's level outside the vocabulary", `"mode":"critical","level":"critical"`, `"mode":"critical","level":"paranoid"`},
 		{"the block with no layer", `"from":"area",`, ``},
 		{"the block with no moment", `,"at":"finalize"`, ``},
 		{"a key the block does not carry", `"revision":"origin/main"`, `"score":9`},
@@ -1016,6 +1136,27 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			t.Errorf("schema accepts %s: %s", tc.name, repl)
 		}
 	}
+	// The level is carried under two keys (LD2): `mode`, which the block has
+	// always had, and `level` beside it. The key is additive, so a record a
+	// runner before the rename wrote — `mode` alone, block and areas alike —
+	// is still a document this schema accepts, and one written since carries
+	// both and reads the same way.
+	legacy := bytes.ReplaceAll(data, []byte(`,"level":"critical"`), nil)
+	legacy = bytes.ReplaceAll(legacy, []byte(`,"level":"poc"`), nil)
+	const withoutLevel = `"rigor":{"mode":"critical","from":"area",` +
+		`"areas":[{"name":"payments","mode":"critical","at":"bootstrap"},` +
+		`{"name":"docs","mode":"poc","at":"round"}]`
+	if !bytes.Contains(legacy, []byte(withoutLevel)) {
+		t.Fatalf("the legacy fixture is not a block written before the rename: %s", legacy)
+	}
+	old2, err := jsonschema.UnmarshalJSON(bytes.NewReader(legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(old2); err != nil {
+		t.Errorf("schema rejects a record written before the rename: %v", err)
+	}
+
 	// The filed items (docs/rigor-modes T4.5, D9): an id is the day and the
 	// day's sequence, so a record carrying anything else names no file. The
 	// field is additive — a record from before it existed, which is most of
@@ -1116,6 +1257,34 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			t.Errorf("schema accepts %s: %s", tc.name, repl)
 		}
 	}
+	// The message channel's block (docs/run-messages, F13, F24, F25) is closed
+	// the same way: whether the run accepts messages and the format it reads
+	// are what a sender decides from, the flags and the stage are sets the
+	// runner writes and a reader may render, and the block's own keys are the
+	// ones a sender and `diagnose` read — so a value outside one of those
+	// vocabularies, a number past the cap or a key the block does not carry is
+	// a record no reader should have to render.
+	for _, tc := range []struct{ name, old, new string }{
+		{"a state outside the vocabulary", `"state":"missing"`, `"state":"lost"`},
+		{"a stage rule 1 does not allow", `"stage":"implement"`, `"stage":"review"`},
+		{"a number past the cap", `"seq":3,"state":"missing"`, `"seq":30,"state":"missing"`},
+		{"a flag outside the set", `"flags":["now","wrap_up"]`, `"flags":["now","someday"]`},
+		{"the block with no accepting", `"accepting":true,`, ``},
+		{"the block with no format", `"accepting":true,"format":1,`, `"accepting":true,`},
+		{"a key the entry does not carry", `"reason":"the text is 5000 bytes and the cap is 4096"`, `"urgency":"high"`},
+	} {
+		old, repl := []byte(tc.old), []byte(tc.new)
+		if !bytes.Contains(data, old) {
+			t.Fatalf("fixture lacks the literal this test replaces (%s): %s", tc.name, data)
+		}
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, old, repl, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, repl)
+		}
+	}
 	without := rec
 	without.Backlog = nil
 	without.BacklogClosed = nil
@@ -1123,13 +1292,15 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	without.ReviewScope = nil
 	without.Triage = nil
 	without.Deferred = nil
+	without.Messages = nil
 	bare, err := json.Marshal(without)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(bare, []byte(`"backlog"`)) || bytes.Contains(bare, []byte(`"backlog_closed"`)) ||
 		bytes.Contains(bare, []byte(`"tolerated"`)) || bytes.Contains(bare, []byte(`"review_scope"`)) ||
-		bytes.Contains(bare, []byte(`"triage"`)) || bytes.Contains(bare, []byte(`"deferred"`)) {
+		bytes.Contains(bare, []byte(`"triage"`)) || bytes.Contains(bare, []byte(`"deferred"`)) ||
+		bytes.Contains(bare, []byte(`"messages"`)) {
 		t.Fatalf("a run that filed, closed and tolerated nothing still writes the fields: %s", bare)
 	}
 	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(bare))
@@ -3094,6 +3265,86 @@ func TestRecipeSchemaCorpus(t *testing.T) {
 		}
 	}
 }
+
+// TestRecipeSchemaByLevelMatchesGo: the by_level: block — the recipe's one
+// conditional, the roles mapping a level runs with (LD9) — against
+// recipe.Parse, construct by construct. Both directions are failures: a
+// schema narrower than the parser refuses a recipe file the CLI would run,
+// and one that is looser accepts a file the CLI refuses.
+//
+// The level names are pinned here too, and this is the only place they can
+// be: three readers write them — the vocabulary itself (rigor.Rigors), the
+// recipe format's own copy (recipe.LevelNames, which cannot import
+// internal/rigor: rigor's tests import recipe) and this schema's enum — and
+// a level the three disagree about is a recipe that parses at one place and
+// not another.
+func TestRecipeSchemaByLevelMatchesGo(t *testing.T) {
+	sch := compile(t, "recipe.schema.json")
+	const head = "version: 1\nname: a\n"
+	const tail = "steps:\n  - first_line: {}\n  - review: {}\n"
+	for _, tc := range []struct {
+		name  string
+		block string
+		ok    bool
+	}{
+		{"the block", "by_level:\n  poc: { roles: { coder: reviewer } }\n  critical: { roles: {} }\n", true},
+		{"no block", "", true},
+		{"every level", "by_level:\n" +
+			"  poc: { roles: { coder: reviewer } }\n  startup: { roles: { reviewer: coder } }\n" +
+			"  pro: { roles: {} }\n  critical: { roles: { reviewer: coder } }\n  hotfix: { roles: {} }\n", true},
+		{"a level that is not one", "by_level:\n  fast: { roles: { reviewer: coder } }\n", false},
+		{"a level in another spelling", "by_level:\n  POC: { roles: { reviewer: coder } }\n", false},
+		{"an entry with no roles", "by_level:\n  pro: {}\n", false},
+		{"an entry that is not a mapping", "by_level:\n  pro: reviewer\n", false},
+		{"the block that is not a mapping", "by_level: [pro]\n", false},
+		{"a budget in an entry", "by_level:\n  pro: { roles: { reviewer: coder }, budget: 5 }\n", false},
+		{"a round count in an entry", "by_level:\n  pro: { roles: { reviewer: coder }, max_rounds: 2 }\n", false},
+		{"both roles in one entry", "by_level:\n  pro: { roles: { reviewer: coder, coder: reviewer } }\n", false},
+		{"a role mapped to a model", "by_level:\n  pro: { roles: { reviewer: claude-opus-5-5 } }\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := head + tc.block + tail
+			_, ps := recipe.Parse([]byte(text))
+			if got := len(ps) == 0; got != tc.ok {
+				t.Fatalf("recipe.Parse accepted = %v, want %v (problems: %v)", got, tc.ok, ps)
+			}
+			if got := sch.Validate(yamlInstance(t, []byte(text))) == nil; got != tc.ok {
+				t.Errorf("the schema accepted = %v, want %v: the schema and the parser disagree", got, tc.ok)
+			}
+		})
+	}
+	want := levelNames()
+	if !slices.Equal(recipe.LevelNames, want) {
+		t.Errorf("recipe.LevelNames = %v, want rigor.Rigors = %v: the recipe format's copy of the vocabulary has drifted", recipe.LevelNames, want)
+	}
+	data, err := os.ReadFile("recipe.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		Properties map[string]struct {
+			PropertyNames struct {
+				Enum []string `json:"enum"`
+			} `json:"propertyNames"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if got := raw.Properties["by_level"].PropertyNames.Enum; !slices.Equal(got, want) {
+		t.Errorf("the schema's by_level enum = %v, want %v: an enum narrower than the vocabulary refuses a recipe the parser runs, and a wider one accepts a level it refuses", got, want)
+	}
+}
+
+// levelNames is the vocabulary as the level names are written in a file.
+func levelNames() []string {
+	out := make([]string, 0, len(rigor.Rigors))
+	for _, r := range rigor.Rigors {
+		out = append(out, string(r))
+	}
+	return out
+}
+
 func TestResultSchemaRecipe(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	at := time.Date(2026, 10, 7, 10, 0, 0, 0, time.UTC)
@@ -3178,6 +3429,67 @@ func TestProjectLayerSchemaCorpus(t *testing.T) {
 		data, _ := os.ReadFile(f)
 		if err := sch.Validate(yamlInstance(t, data)); err == nil {
 			t.Errorf("%s: schema accepts an invalid project layer", f)
+		}
+	}
+}
+
+// TestProjectLayerSchemaRigorMembers keeps the project layer's LD4 shapes in
+// step with the Go reader, the way TestProjectLayerSchemaArtifactKeys keeps a
+// profile's: an area made of members and a per-repo map are keys the schema an
+// editor validates against must accept, and a member's path that climbs out of
+// its own repository must be refused by both. A corpus fixture can show the
+// refusal and not the reason, so the last part of this test names it: the
+// schema's complaint is about the member's path — its instance location is the
+// one the Go reader's message names — and never an unknown key, which is what
+// a `members` the schema did not know would produce.
+func TestProjectLayerSchemaRigorMembers(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	const head = "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  rigor:\n"
+	anchor := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, c := range []struct {
+		name string
+		body string
+		ok   bool
+	}{
+		{"a whole-repo member", "    areas:\n      - name: console\n        members: [{ repo: acme/console-web }]\n        level: pro\n", true},
+		{"a member with paths", "    areas:\n      - name: console\n        members:\n          - { repo: acme/app, paths: [\"ui/**\"] }\n        level: pro\n", true},
+		{"one repository in two areas", "    areas:\n      - name: console\n        members: [{ repo: acme/app, paths: [\"ui/**\"] }]\n        level: pro\n      - name: mobile\n        members: [{ repo: acme/app, paths: [\"mobile/**\"] }]\n        level: startup\n", true},
+		{"the pre-LD4 match shape, still read", "    areas:\n      - { name: payments, match: \"internal/payments/**\", level: critical }\n", true},
+		{"a per-repo map", "    repos:\n      acme/payments-core: critical\n      acme/legacy-api: pro\n", true},
+		{"a member whose path leaves its repo", "    areas:\n      - name: console\n        members:\n          - { repo: acme/app, paths: [\"../secrets/**\"] }\n        level: pro\n", false},
+		{"a member's absolute path", "    areas:\n      - name: console\n        members:\n          - { repo: acme/app, paths: [\"/etc/passwd\"] }\n        level: pro\n", false},
+		{"an area with neither members nor a match", "    areas:\n      - { name: console, level: pro }\n", false},
+		{"a member with no repo", "    areas:\n      - name: console\n        members: [{ paths: [\"ui/**\"] }]\n        level: pro\n", false},
+		{"a member whose repo is a bare name", "    areas:\n      - name: console\n        members: [{ repo: console-web }]\n        level: pro\n", false},
+		{"a repos key that is a bare name", "    repos:\n      console-web: pro\n", false},
+		{"a repos value outside the vocabulary", "    repos:\n      acme/payments-core: paranoid\n", false},
+	} {
+		text := head + c.body
+		schemaOK := sch.Validate(yamlInstance(t, []byte(text))) == nil
+		_, ps := config.ParseProjectLayer([]byte(text), anchor)
+		if schemaOK != (len(ps) == 0) {
+			t.Errorf("%s: the schema says ok=%v and config.ParseProjectLayer gives %v", c.name, schemaOK, ps)
+		}
+		if schemaOK != c.ok {
+			t.Errorf("%s: the schema says ok=%v; want %v", c.name, schemaOK, c.ok)
+		}
+	}
+	// The reason, on the fixture the corpus carries and the Go test pins.
+	data, err := os.ReadFile("../testdata/project-layer/invalid/rigor-area-outside-repo.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = sch.Validate(yamlInstance(t, data))
+	if err == nil {
+		t.Fatal("the schema accepts a member path that leaves its repository")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "/defaults/rigor/areas/0/members/0/paths/0") {
+		t.Errorf("the schema's refusal does not name the member path it is about: %s", msg)
+	}
+	for _, wrong := range []string{"additional propert", "unknown"} {
+		if strings.Contains(msg, wrong) {
+			t.Errorf("the schema refuses the fixture as %q rather than as a member path leaving its repository: %s", wrong, msg)
 		}
 	}
 }
@@ -7192,6 +7504,7 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 		HeadSHA:       strings.Repeat("a", 40),
 		Base:          "main",
 		Reviewer:      runner.ReviewReviewer{Account: "person-1", Model: "claude-opus-5-5", Effort: "high"},
+		Against:       &runstore.Against{Source: runstore.AgainstSourceRun, Run: "20261102-093000-abcd", SHA256: strings.Repeat("b", 64)},
 		Verdict:       "fix first",
 		Overview:      "the change does what the task asked",
 		Strengths:     []string{"the new reader is strict"},
@@ -7235,11 +7548,13 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 	}
 	want := slices.Sorted(maps.Keys(written))
 	// Every key the struct marshals is declared, and all of them are required
-	// but the one a run can honestly have nothing to say about: the reviewer's
+	// but the ones a run can honestly have nothing to write: the reviewer's
 	// effort is absent when the run's level named none (the model's own
 	// default), which is the meaning absence already has wherever a Fugaro
-	// setting spells one.
-	optional := []string{"effort"}
+	// setting spells one, and `against` is absent until a launcher fills it
+	// (R8) -- a review written before the shape had the field is a valid
+	// document and not a malformed one.
+	optional := []string{"effort", "against"}
 	props := nodeOf(t, doc, "properties")
 	if got := slices.Sorted(maps.Keys(props)); !slices.Equal(got, want) {
 		t.Errorf("review.schema.json declares %v, want %v (every key runner.ReviewArtifact marshals)", got, want)
@@ -7337,6 +7652,8 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 		{"a head that is not hex", `"head_sha":"` + head + `"`, `"head_sha":"` + strings.Repeat("g", 40) + `"`},
 		{"a branch name where a commit belongs", `"head_sha":"` + head + `"`, `"head_sha":"refs/heads/main"`},
 		{"a hostile review_run", `"review_run":"20261102-093000-abcd"`, `"review_run":"../../etc/passwd"`},
+		{"an against source nobody defined", `"source":"run"`, `"source":"sideways"`},
+		{"an against digest that is not hex", `"sha256":"` + strings.Repeat("b", 64) + `"`, `"sha256":"` + strings.Repeat("x", 64) + `"`},
 	} {
 		if !bytes.Contains(data, []byte(tc.from)) {
 			t.Fatalf("%s: fixture lacks the literal this test replaces: %s", tc.name, data)
@@ -7723,4 +8040,279 @@ func TestMergeJudgeSchemaMatchesTheDocument(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPRIndexSchemaRoundTrip: the entry runstore writes is the document
+// schemas/pr-index.schema.json describes, both ways. The Go type's own
+// encoding validates, the schema's kind enum is the three kinds the Go
+// constants spell (so a kind added to one and not the other fails here), and
+// the reader's strict decode gets the entry back unchanged. The index is
+// written by the untrusted job account, so the reader is deliberately
+// stricter than the contract: an unknown member the schema tolerates — which
+// a newer writer's entry needs — is refused by the strict decode, and the
+// entry is skipped rather than half-read (D2963, F8).
+func TestPRIndexSchemaRoundTrip(t *testing.T) {
+	sch := compile(t, "pr-index.schema.json")
+	at := time.Date(2026, 11, 19, 13, 0, 0, 0, time.UTC)
+	for _, kind := range []runstore.PRIndexKind{runstore.PRIndexOpened, runstore.PRIndexFollowed, runstore.PRIndexReviewed} {
+		e := runstore.PRIndexEntry{Version: runstore.PRIndexVersion, RunID: "20261119-130000-abcd", Slug: "acme-app", PR: 42, Kind: kind, At: at}
+		data, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err != nil {
+			t.Fatalf("the schema rejects the entry runstore writes (%s): %v\n%s", kind, err, data)
+		}
+		var back runstore.PRIndexEntry
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&back); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(e, back) {
+			t.Fatalf("round trip = %+v, want %+v", back, e)
+		}
+	}
+
+	// The schema's kind list is the Go vocabulary and nothing else.
+	raw, err := os.ReadFile("pr-index.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties struct {
+			Kind struct {
+				Enum []string `json:"enum"`
+			} `json:"kind"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{string(runstore.PRIndexOpened), string(runstore.PRIndexFollowed), string(runstore.PRIndexReviewed)}; !slices.Equal(doc.Properties.Kind.Enum, want) {
+		t.Errorf("pr-index.schema.json's kind enum = %v, want %v", doc.Properties.Kind.Enum, want)
+	}
+
+	// The schema refuses what the reader refuses: another version, another
+	// kind, a number below 1, a run ID that is not one, a missing time.
+	for _, bad := range []string{
+		`{"version":2,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":42,"kind":"opened","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":42,"kind":"other","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":0,"kind":"opened","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"nope","slug":"acme-app","pr":42,"kind":"opened","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"20261119-130000-abcd","slug":"Acme-App","pr":42,"kind":"opened","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":42,"kind":"opened"}`,
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(bad))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("the schema accepts %s", bad)
+		}
+	}
+
+	extra := []byte(`{"version":1,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":42,"kind":"opened","at":"2026-11-19T13:00:00Z","extra":1}`)
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(extra))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("the schema refuses a member it does not know, which a newer writer's entry needs: %v", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(extra))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(new(runstore.PRIndexEntry)); err == nil {
+		t.Error("the reader's strict decode accepted an unknown member")
+	}
+}
+
+// TestRosterSchemasAgreeWithGo holds the two schema files C1 adds
+// (workspace-roster.schema.json, workspace-audit-event.schema.json) to the
+// types internal/workspace writes and reads: the enums and the version consts
+// are pinned to the Go lists the way this package pins every other contract,
+// and the documents themselves are written by the Go side and handed to the
+// compiled schema. It is half of one pair -- internal/workspace/roster_test.go
+// holds the same two files to the same types from the reader's side, where the
+// document is written by hand and read back -- and between them a key one side
+// knows and the other does not has nowhere to hide.
+func TestRosterSchemasAgreeWithGo(t *testing.T) {
+	rosterSchema := compile(t, "workspace-roster.schema.json")
+	auditSchema := compile(t, "workspace-audit-event.schema.json")
+
+	roster := &workspace.Roster{
+		Version:   workspace.RosterVersion,
+		Mechanism: workspace.MechanismFolder,
+		FolderID:  "folders/123456789012",
+		People: []workspace.Person{
+			{Address: "alice@example.com", Kind: workspace.KindHuman},
+			{Address: "bob@outside.test", Kind: workspace.KindHuman, External: true},
+			{
+				Address: "ci@acme-app.iam.gserviceaccount.com",
+				Kind:    workspace.KindSA,
+				Roles:   []workspace.ProjectRole{{Project: "acme-app", Role: workspace.RoleOperator}},
+			},
+		},
+		Admins:  []string{"alice@example.com"},
+		Domains: []string{"example.com"},
+		Grants:  []workspace.StoredGrant{{Project: "acme-app", User: "alice@example.com", Role: workspace.RoleViewer}},
+	}
+	raw, err := workspace.EncodeRoster(roster)
+	if err != nil {
+		t.Fatalf("EncodeRoster refuses the roster: %v", err)
+	}
+	if err := rosterSchema.Validate(yamlInstance(t, raw)); err != nil {
+		t.Errorf("workspace-roster.schema.json rejects the roster internal/workspace writes: %v\n%s", err, raw)
+	}
+	back, err := workspace.DecodeRoster(raw)
+	if err != nil {
+		t.Errorf("internal/workspace cannot read the roster it wrote: %v", err)
+	} else if !reflect.DeepEqual(roster, back) {
+		t.Errorf("the roster did not round trip:\n got %+v\nwant %+v", back, roster)
+	}
+
+	// The enums are the Go lists: a value added on one side alone is a
+	// document valid in one place and refused in the other.
+	if got := sameStrings(schemaEnum(t, "workspace-roster.schema.json", "$defs", "person", "properties", "kind", "enum"), names(workspace.Kinds())); !got {
+		t.Errorf("the kind enum and workspace.Kinds() disagree")
+	}
+	if got := sameStrings(schemaEnum(t, "workspace-roster.schema.json", "properties", "mechanism", "enum"), names(workspace.Mechanisms())); !got {
+		t.Errorf("the mechanism enum and workspace.Mechanisms() disagree")
+	}
+	if got := sameStrings(schemaEnum(t, "workspace-roster.schema.json", "$defs", "role", "enum"), names(workspace.Roles())); !got {
+		t.Errorf("the role enum and workspace.Roles() disagree")
+	}
+	if got := sameStrings(schemaEnum(t, "workspace-audit-event.schema.json", "properties", "action", "enum"), names(workspace.Actions())); !got {
+		t.Errorf("the action enum and workspace.Actions() disagree")
+	}
+	if got := fmt.Sprint(schemaAt(t, "workspace-roster.schema.json", "properties", "version", "const")); got != fmt.Sprint(workspace.RosterVersion) {
+		t.Errorf("the roster schema's version const is %v and workspace.RosterVersion is %d", got, workspace.RosterVersion)
+	}
+	if got := fmt.Sprint(schemaAt(t, "workspace-audit-event.schema.json", "properties", "version", "const")); got != fmt.Sprint(workspace.AuditEventVersion) {
+		t.Errorf("the audit event schema's version const is %v and workspace.AuditEventVersion is %d", got, workspace.AuditEventVersion)
+	}
+
+	// An audit event, and the same document refused by both sides when the
+	// action is one nobody decided.
+	event := workspace.AuditEvent{
+		Version: workspace.AuditEventVersion,
+		ID:      "20261120T175820Z-0f1e2d3c4b5a6978",
+		Time:    time.Date(2026, 11, 20, 17, 58, 20, 0, time.UTC),
+		Actor:   "alice@example.com",
+		Action:  workspace.ActionUserAdd,
+		Project: "acme-app",
+		Subject: "bob@outside.test",
+		Role:    workspace.RoleViewer,
+	}
+	eventRaw, err := workspace.EncodeAuditEvent(event)
+	if err != nil {
+		t.Fatalf("EncodeAuditEvent refuses the event: %v", err)
+	}
+	if err := auditSchema.Validate(yamlInstance(t, eventRaw)); err != nil {
+		t.Errorf("workspace-audit-event.schema.json rejects the event internal/workspace writes: %v\n%s", err, eventRaw)
+	}
+	if _, err := workspace.DecodeAuditEvent(eventRaw); err != nil {
+		t.Errorf("internal/workspace cannot read the event it wrote: %v", err)
+	}
+	var mutated map[string]any
+	if err := json.Unmarshal(eventRaw, &mutated); err != nil {
+		t.Fatal(err)
+	}
+	mutated["action"] = "something.else"
+	badRaw, err := json.Marshal(mutated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := auditSchema.Validate(yamlInstance(t, badRaw)); err == nil {
+		t.Errorf("workspace-audit-event.schema.json accepts the action %q", "something.else")
+	}
+	if _, err := workspace.DecodeAuditEvent(badRaw); err == nil {
+		t.Errorf("DecodeAuditEvent accepts the action %q", "something.else")
+	}
+
+	// The same, for the roster's version and one of its closed objects: the
+	// two sides read one document or neither.
+	var rosterDoc map[string]any
+	if err := json.Unmarshal(raw, &rosterDoc); err != nil {
+		t.Fatal(err)
+	}
+	rosterDoc["version"] = 2
+	badRoster, err := json.Marshal(rosterDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rosterSchema.Validate(yamlInstance(t, badRoster)); err == nil {
+		t.Error("workspace-roster.schema.json accepts version 2")
+	}
+	if _, err := workspace.DecodeRoster(badRoster); err == nil {
+		t.Error("DecodeRoster accepts version 2")
+	}
+	rosterDoc["version"] = workspace.RosterVersion
+	delete(rosterDoc, "mechanism")
+	badRoster, err = json.Marshal(rosterDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rosterSchema.Validate(yamlInstance(t, badRoster)); err == nil {
+		t.Error("workspace-roster.schema.json accepts a roster with no mechanism")
+	}
+	if _, err := workspace.DecodeRoster(badRoster); err == nil {
+		t.Error("DecodeRoster accepts a roster with no mechanism")
+	}
+}
+
+// schemaAt walks one of the schemas in this directory to the value at path.
+func schemaAt(t *testing.T, file string, path ...string) any {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var node any = doc
+	for _, key := range path {
+		m, ok := node.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: %v: not an object at %q", file, path, key)
+		}
+		node, ok = m[key]
+		if !ok {
+			t.Fatalf("%s: %v: missing %q", file, path, key)
+		}
+	}
+	return node
+}
+
+// schemaEnum is the string list at a path of one of the schemas.
+func schemaEnum(t *testing.T, file string, path ...string) []string {
+	t.Helper()
+	raw, ok := schemaAt(t, file, path...).([]any)
+	if !ok {
+		t.Fatalf("%s: %v: not a list", file, path)
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("%s: %v: entry %v is not a string", file, path, v)
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// names renders a list of the contract's named strings as strings.
+func names[T ~string](list []T) []string {
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		out = append(out, string(v))
+	}
+	return out
 }

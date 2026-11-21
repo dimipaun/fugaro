@@ -86,6 +86,85 @@ func serviceExhaustedStage(t *testing.T, handle func() *runner.RunHandle, reset 
 	}
 }
 
+// serviceUnreachableStage is exhaustedStage's shape for WS12's answer: a call
+// could not reach the credentials service at all (D2983), so the gateway hands
+// the run an Unreachable answer naming the instant its bound ends and which
+// service it was. The stage ends on it exactly as it does on an exhausted one,
+// and what the run does next — wait, resume — is the same mechanism.
+func serviceUnreachableStage(t *testing.T, handle func() *runner.RunHandle, until time.Time) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		handle().ServiceAnswer(gateway.ServiceAnswer{
+			Unreachable: &gateway.Unreachable{RetryAt: until, Service: "workspace's credentials service"},
+		})
+		<-ctx.Done() // the answer ends the stage
+		return initOnly(t, req.SessionID), ctx.Err()
+	}
+}
+
+// TestStageWaitsForAnUnreachableService is WS12's red step for the runner's
+// half: a call that could not reach the credentials service does not fail the
+// stage. The run ends the stage in flight, waits for the instant the gateway's
+// own bound names — inside the job's own timeout — and runs the same stage
+// again on the session that stage had started, with --resume. What halts the
+// run is a call that meets the spent bound, and that is the gateway's
+// (internal/gateway/service_unreachable_test.go), not this loop's: an outage is
+// not a credential the run could switch to, so no cap here counts it.
+func TestStageWaitsForAnUnreachableService(t *testing.T) {
+	h := newHarness(t, "", nil)
+	handle := watchRun(t)
+	var waits []time.Duration
+	runner.SetCredsWait(t, func(ctx context.Context, d time.Duration) error {
+		waits = append(waits, d)
+		return nil
+	})
+	// Inside the fixture workflow's own timeout (total 5m, reserve 30s).
+	until := time.Now().Add(3 * time.Minute)
+	resumed := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !req.Resume || req.SessionID != h.agent.calls[0].SessionID {
+			t.Errorf("the stage resumed %q (resume %v); want the session the interrupted stage ran in, %q",
+				req.SessionID, req.Resume, h.agent.calls[0].SessionID)
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := h.run(t, withSession(serviceUnreachableStage(t, handle, until), "", "interrupted\n"), resumed, review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady || rec.Halt != nil {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(waits) != 1 || waits[0] <= 2*time.Minute || waits[0] > 3*time.Minute {
+		t.Fatalf("waits = %v; want one wait, for the instant the gateway's bound named (about 3m)", waits)
+	}
+	if n := len(h.agent.calls); n != 3 {
+		t.Fatalf("%d agent calls; want the implement stage twice (before and after the wait) and the review", n)
+	}
+}
+
+// TestStageWaitsForAServiceBeyondTheJob halts named rather than idling: an
+// instant past the job's own timeout resumes nothing, and the run says so with
+// the reason an unreachable service halts with (budget_unavailable), naming the
+// service, instead of being killed by the backend's grace mid-wait.
+func TestStageWaitsForAServiceBeyondTheJob(t *testing.T) {
+	h := newHarness(t, "", nil)
+	handle := watchRun(t)
+	runner.SetCredsWait(t, func(ctx context.Context, d time.Duration) error {
+		t.Errorf("the runner waited %s for a service beyond the job's own timeout", d)
+		return nil
+	})
+	rec, err := h.run(t, serviceUnreachableStage(t, handle, time.Now().Add(24*time.Hour)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil ||
+		rec.Halt.Reason != runstore.HaltBudgetUnavailable || rec.Halt.Scope != "run" {
+		t.Fatalf("rec = %+v, halt = %+v; want a halted run with reason %q", rec, rec.Halt, runstore.HaltBudgetUnavailable)
+	}
+	if !strings.Contains(rec.Halt.Detail, "workspace's credentials service") {
+		t.Errorf("the halt does not name the service that could not be reached: %q", rec.Halt.Detail)
+	}
+	if n := len(h.agent.calls); n != 1 {
+		t.Fatalf("%d agent calls; the stage must not run again", n)
+	}
+}
+
 // TestStageWaitsAndResumes is C1.17's red step: the credentials service's
 // typed exhausted_until does not fail the stage — the runner ends it, waits
 // for the reset the answer names inside the job's own timeout, and runs the

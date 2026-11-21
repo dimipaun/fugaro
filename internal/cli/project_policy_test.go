@@ -887,24 +887,26 @@ func TestProjectPolicyPublishRefusesAnEmptyBudgetMode(t *testing.T) {
 	}
 }
 
-// TestPolicyPublishRefusesModeOffWhileARepositoryIsSwitched is D2071 (a) at the
-// publish door (B2.7): a node whose budget mode is `off` is the fourth
-// condition of the credentials-service switch, so publishing it withholds the
-// service's address from every run of a switched `api-key` or `oauth`
-// repository at its next launch — while the mounts those runs would fall back
-// on come back only when each repository's own root is applied again, which is
-// a different command and not this one. The refusal is what stops the operator
-// from leaving an installation in that state by a single command.
+// TestPublishingTheOldWordIsRefused is C1's refusal at the publish door, which
+// AB8a's step makes necessary: the word the budget mode's vocabulary dropped
+// (D3009) is not a mode any more, so a publish that would write it is refused
+// with the vocabulary's own text (policy.ModeOffRefusal) and nothing is written.
 //
-// Every row that is NOT refused is the reason this is one refusal and not a
-// blanket one, and each takes one half of the state away: a mode that is not
-// `off` (nothing is withheld), a repository whose own record does not say a
-// root of it was applied with the service on (its job mounts what it always
-// did), a record whose auth the flip list does not carry (the cascade, whose
-// jobs gave their mounts up long before the flip and whose launch the mode
-// already refuses), and an installation with no credentials service at all.
-func TestPolicyPublishRefusesModeOffWhileARepositoryIsSwitched(t *testing.T) {
+// It is one refusal of one word and not a conditional one, which is what
+// replaced the narrower D2071 (a) refusal that fired only while the credentials
+// service served a switched repository: the rows below take every half of that
+// state away — a switched `api-key` repository, a switched `oauth` one, an
+// installation with no credentials service at all, a repository whose record
+// says cascade, a repository whose root was applied without the service on —
+// and the word is refused in all of them, because a node that says it is one no
+// reader of this release serves wherever it is published.
+//
+// The two rows that are NOT refused are the other half of the claim: the live
+// modes publish exactly as they did, so this is a refusal of the word and not
+// of publishing a budget at all.
+func TestPublishingTheOldWordIsRefused(t *testing.T) {
 	const svc = "credentials_service: { url: https://fugaro-credentials-abc.a.run.app }"
+	const plain = "  acme/app: { provider: github, workflows: [web] }\n"
 	// The switch's own two facts on the repository: the record `fugaro update`
 	// writes when it applies a root with the service on, and the repository's
 	// auth as the run will read it (the record the service narrows a call to).
@@ -920,13 +922,13 @@ func TestPolicyPublishRefusesModeOffWhileARepositoryIsSwitched(t *testing.T) {
 		repo    string
 		refused bool
 	}{
-		{name: "a switched api-key repository and the mode goes off", auth: config.AuthAPIKey, mode: config.BudgetOff, svc: svc, repo: switched, refused: true},
-		{name: "a switched oauth repository and the mode goes off", auth: config.AuthOAuth, mode: config.BudgetOff, svc: svc, repo: switched, refused: true},
-		{name: "the mode is published as enforce", auth: config.AuthAPIKey, mode: config.BudgetEnforce, svc: svc, repo: switched},
-		{name: "the mode is published as observe", auth: config.AuthAPIKey, mode: config.BudgetObserve, svc: svc, repo: switched},
-		{name: "no root of the repository was applied with the service on", auth: config.AuthAPIKey, mode: config.BudgetOff, svc: svc},
-		{name: "the record says cascade", auth: config.AuthCascade, mode: config.BudgetOff, svc: svc, repo: switched},
-		{name: "the installation carries no credentials service", auth: config.AuthAPIKey, mode: config.BudgetOff, repo: switched},
+		{name: "the word, on a switched api-key repository", auth: config.AuthAPIKey, mode: config.BudgetOff, svc: svc, repo: switched, refused: true},
+		{name: "the word, on a switched oauth repository", auth: config.AuthOAuth, mode: config.BudgetOff, svc: svc, repo: switched, refused: true},
+		{name: "the word, on a repository whose root was applied without the service", auth: config.AuthAPIKey, mode: config.BudgetOff, svc: svc, repo: plain, refused: true},
+		{name: "the word, on a repository whose record says cascade", auth: config.AuthCascade, mode: config.BudgetOff, svc: svc, repo: switched, refused: true},
+		{name: "the word, on an installation with no credentials service", auth: config.AuthAPIKey, mode: config.BudgetOff, repo: switched, refused: true},
+		{name: "observe", auth: config.AuthAPIKey, mode: config.BudgetObserve, svc: svc, repo: switched},
+		{name: "enforce", auth: config.AuthAPIKey, mode: config.BudgetEnforce, svc: svc, repo: switched},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newProjectFixture(t, tc.svc+"\n")
@@ -939,18 +941,19 @@ func TestPolicyPublishRefusesModeOffWhileARepositoryIsSwitched(t *testing.T) {
 			_, _, err := execute(t, "project", "policy", "publish")
 			switch {
 			case tc.refused && err == nil:
-				t.Fatal("the mode was published as off while a switched repository holds no model mount of its own: its next launch is handed no service address and has no credential to read (D2071)")
+				t.Fatal("a publish wrote the budget mode as the word the vocabulary dropped: a node that says it is one no reader of this release serves, so this command would be the one that stopped every run of the project")
 			case tc.refused:
-				for _, want := range []string{"acme/app", tc.auth, config.BudgetOff, config.BudgetObserve} {
-					if !strings.Contains(err.Error(), want) {
-						t.Errorf("the refusal does not name %q: %v", want, err)
-					}
+				if !strings.Contains(err.Error(), policy.ModeOffRefusal) {
+					t.Errorf("the refusal does not carry the vocabulary's own text (%q): %v", policy.ModeOffRefusal, err)
+				}
+				if !strings.Contains(err.Error(), tc.mode) {
+					t.Errorf("the refusal does not name the value it would have written (%q): %v", tc.mode, err)
 				}
 				if f.db.Value(projectpolicy.PathShared()) != nil {
-					t.Error("a node was written anyway: the refusal is D2071 (a)'s, and it is before the first write of this publish")
+					t.Error("a node was written anyway: the refusal is before the first write of this publish")
 				}
 			case err != nil:
-				t.Fatalf("a publish D2071 (a) does not refuse was refused: %v", err)
+				t.Fatalf("a publish of a live mode was refused: %v", err)
 			default:
 				if got := publishedPolicy(t, f).Budget.Mode; got != tc.mode {
 					t.Errorf("the node's mode is %q, want %q", got, tc.mode)
@@ -4054,6 +4057,76 @@ func TestPublishKeepsTheTriageSwitchTheConfigIsSilentAbout(t *testing.T) {
 	}
 	if p := publishedPolicy(t, g); p.Triage != nil {
 		t.Errorf("Triage = %v, want nil", p.Triage)
+	}
+}
+
+// TestPublishKeepsTheReviewAgainstTaskNoConfigCanState is the triage switch's
+// case one key over, and it is sharper there: the published true is the one
+// value that turns the task check on for every run of the project and that no
+// repository can walk out of (D2935), so a publish from this release — which
+// reads the member, and so no longer refuses a node that carries it, but has no
+// key of its own that could state it — must not be the write that takes it off.
+// The width of the trap is the whole point: the drop is silent, the diff says
+// nothing, and the owner learns of it from a review that stopped checking the
+// task. The node stands where a hand-edited one or a newer release's write left
+// it, which is why the test seeds it rather than publishing it.
+func TestPublishKeepsTheReviewAgainstTaskNoConfigCanState(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	var node map[string]any
+	if err := json.Unmarshal([]byte(nodeJSON(t, f, projectpolicy.PathShared())), &node); err != nil {
+		t.Fatal(err)
+	}
+	node["review_against_task"] = true
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("a publish over a node carrying review_against_task was refused: %v", err)
+	}
+	if p := publishedPolicy(t, f); p.ReviewAgainstTask == nil || !*p.ReviewAgainstTask {
+		t.Errorf("the publish dropped the owner's forced check: ReviewAgainstTask = %v, want true", p.ReviewAgainstTask)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"review_against_task":true`) {
+		t.Errorf("the node does not carry the switch:\n%s", raw)
+	}
+}
+
+// TestPublishCarriesReviewAgainstTask: the local config is the switch's own
+// home from this release on (R7 of docs/review-against-task/, D2935), and the
+// publish is the only door from that file to the policy node every run of the
+// project reads it from — `fugaro update` runs this stage, which is the one
+// command the HARD RULE allows, so a config that states the switch and a node
+// that says the other answer is exactly the drift this stage exists to close.
+// The written value replaces the node's rather than merging with it: the merge
+// that decides a repository's answer against the project's is the runner's
+// (policy.Merge, RA8a), and the file read here is the owner's own, so his
+// written true turns the check back on under a published false the same way a
+// written false states the project-wide default.
+func TestPublishCarriesReviewAgainstTask(t *testing.T) {
+	f := newProjectFixture(t, "review_against_task: false\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.ReviewAgainstTask == nil || *p.ReviewAgainstTask {
+		t.Fatalf("ReviewAgainstTask = %v, want the written false the config states", p.ReviewAgainstTask)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"review_against_task":false`) {
+		t.Errorf("the node does not carry the switch:\n%s", raw)
+	}
+
+	// The other direction, over the node that now says false: a written true is
+	// the owner's own answer too, and the publish carries it as it stands.
+	rewriteProjectConfig(t, f, "review_against_task: true\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.ReviewAgainstTask == nil || !*p.ReviewAgainstTask {
+		t.Errorf("ReviewAgainstTask = %v, want the written true the config states", p.ReviewAgainstTask)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"review_against_task":true`) {
+		t.Errorf("the second publish did not carry the written true:\n%s", raw)
 	}
 }
 

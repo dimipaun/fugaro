@@ -34,12 +34,17 @@
 
 locals {
   # The whole file is gated on the one variable: null creates nothing, and a
-  # single boolean keeps the eight resources of this file in step (the account,
+  # single boolean keeps the nine resources of this file in step (the account,
   # the bundle container, the accessor grant on it, the dynamic class's
   # conditioned accessor and its lister binding — D1931 — the database role and
-  # its binding, and the service — TestCredentialsServiceResourcesAreCounted is
-  # what holds this number and the file's own resources together, in both
-  # directions).
+  # its two bindings, this service's account's and the mobile service's own, and
+  # the service — TestCredentialsServiceResourcesAreCounted is what holds this
+  # number and the file's own resources together, in both directions). The
+  # mobile service's account and the mobile service itself are NOT among them:
+  # they are the file beside this one, gated on local.mobile_service_on — which
+  # this boolean is the first half of (mobile_service.tf), so a null
+  # var.credentials_service leaves the mobile service's row below uncreated
+  # too, and its own switch narrows it further.
   credentials_service_on = var.credentials_service != null
 
   # The release the image pin names, or "" when the reference carries no
@@ -176,12 +181,22 @@ resource "google_secret_manager_secret" "credentials_bundle" {
     fugaro_project = var.fugaro_project
   }
 
+  # A container the CLI created is replicated in the installation's region, and
+  # replication is creation-time only: a differing value here would plan a
+  # replacement, which prevent_destroy refuses and which deletes every version
+  # first. So the field is ignored below, and this block decides only a
+  # container Terraform itself creates.
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [replication]
   }
 
   depends_on = [google_project_service.this]
@@ -294,6 +309,40 @@ resource "google_project_iam_member" "credentials_database" {
   project = var.credentials_service.firebase_project
   role    = "projects/${var.credentials_service.firebase_project}/roles/fugaroCredentialsDatabase"
   member  = google_service_account.credentials[0].member
+
+  depends_on = [google_project_iam_custom_role.credentials_database]
+}
+
+# ... and the SAME role, unconditioned, to the public mobile service's account
+# (mobile plan task P5; O1's go, 2026-11-18). The mobile routes read the kill
+# switches and the pairing policy and write the device nodes, all of it under
+# the same prefix this service's own writes use — so they need exactly the two
+# permissions above and nothing more, and this account is the second and last
+# member the role is bound to.
+#
+# It is created exactly when the service is and not merely when the private one
+# is (local.mobile_service_on, mobile_service.tf's local): a binding to an
+# account that no switch created would be a plan bound on a member nothing
+# makes, which IAM accepts and the apply fails on.
+#
+# It is a row of ITS OWN rather than a second member in the binding above: one
+# binding carrying two members is the same reachability, but a plan cannot say
+# which of them a widening was for, and internal/infra/tf's grant dispatch reads
+# a grant's member to know whose principal it is (isCredentialsMember beside
+# isMobileMember). Two accounts, two rows, two readings.
+#
+# It is in this file, beside the role's declaration and the private service's own
+# binding, so that the whole of the database role's reach is one screen — a
+# reader of a plan sees the one custom role and the two accounts bound to it —
+# and deploy/terraform/terraform_test.go's tree walk counts every project grant
+# whose body names either account, which is what keeps a third one from being
+# written somewhere else.
+resource "google_project_iam_member" "mobile_database" {
+  count = local.mobile_service_on ? 1 : 0
+
+  project = var.credentials_service.firebase_project
+  role    = "projects/${var.credentials_service.firebase_project}/roles/fugaroCredentialsDatabase"
+  member  = google_service_account.mobile[0].member
 
   depends_on = [google_project_iam_custom_role.credentials_database]
 }

@@ -117,8 +117,20 @@ run "bucket_is_marked" {
     error_message = "the runs bucket must never be force-destroyed"
   }
   assert {
-    condition     = length(google_storage_bucket.runs.lifecycle_rule) == 5
-    error_message = "the runs bucket must have exactly the bootstrap's three lifecycle rules, the one its versioning adds and the one the stored reports expire under"
+    condition     = length(google_storage_bucket.runs.lifecycle_rule) == 6
+    error_message = "the runs bucket must have exactly the bootstrap's three lifecycle rules, the one its versioning adds, the one the stored reports expire under and the one message objects expire under"
+  }
+  assert {
+    condition = anytrue([for r in google_storage_bucket.runs.lifecycle_rule :
+      one(r.action).type == "Delete" && one(r.condition).age == 7 &&
+      one(r.condition).matches_prefix == tolist(["tokens/"]) &&
+    one(r.condition).matches_suffix == tolist([".msg.json"])])
+    error_message = "a launcher's message object (tokens/<slug>/<run>/messages/NNNN.msg.json, D2941) must be deleted after 7 days, whether or not the budget is enabled: nothing else under tokens/ carries that suffix, so the budget token's own rule is untouched (F11)"
+  }
+  assert {
+    condition = alltrue([for r in google_storage_bucket.runs.lifecycle_rule :
+    !contains(coalesce(one(r.condition).matches_suffix, []), "/budget-token")])
+    error_message = "without enable_budget no rule may match the budget token: its rule is the one the budget turns on, and the message rule's suffix must not reach it"
   }
   assert {
     condition     = one(google_storage_bucket.runs.versioning).enabled == true
@@ -1004,8 +1016,15 @@ run "budget_token_objects_expire" {
   }
 
   assert {
-    condition     = length(google_storage_bucket.runs.lifecycle_rule) == 6
-    error_message = "with enable_budget the runs bucket has the bootstrap's three lifecycle rules, the one its versioning adds, the one the stored reports expire under and one for untaken budget tokens"
+    condition     = length(google_storage_bucket.runs.lifecycle_rule) == 7
+    error_message = "with enable_budget the runs bucket has the bootstrap's three lifecycle rules, the one its versioning adds, the one the stored reports expire under, the one message objects expire under and one for untaken budget tokens"
+  }
+  assert {
+    condition = anytrue([for r in google_storage_bucket.runs.lifecycle_rule :
+      one(r.action).type == "Delete" && one(r.condition).age == 7 &&
+      one(r.condition).matches_prefix == tolist(["tokens/"]) &&
+    one(r.condition).matches_suffix == tolist([".msg.json"])])
+    error_message = "the message rule must be planned with the budget enabled too: it is unconditional, and it is not the budget token's rule under another name"
   }
   assert {
     condition     = contains(keys(google_project_service.this), "cloudbilling.googleapis.com")
@@ -2179,11 +2198,12 @@ run "same_project_resolved_iam" {
 # The project-wide secret containers (design docs/design/project-secrets.md
 # §4). What this run pins is the shape a config edit must not quietly change:
 # the labels discovery adopts one by, the ID the plan creates or imports it
-# at, automatic replication (any other replication would replace an adopted
-# container, deleting every version first), and the operator grant -- an
-# operator stores versions and reads metadata, so secretVersionAdder and
-# viewer, never secretAccessor: the value is readable by the jobs that mount
-# it, not by the people who store it.
+# at, replication in the installation's own region (D3082: a container created
+# from now on is replicated where the installation is, and the resource
+# ignores the field so one that exists keeps whatever it has), and the
+# operator grant -- an operator stores versions and reads metadata, so
+# secretVersionAdder and viewer, never secretAccessor: the value is readable
+# by the jobs that mount it, not by the people who store it.
 run "project_secrets" {
   command = plan
 
@@ -2213,8 +2233,9 @@ run "project_secrets" {
   }
   assert {
     condition = alltrue([for s in google_secret_manager_secret.project :
-    length(s.replication) == 1 && length(s.replication[0].auto) == 1])
-    error_message = "every project-wide container must be replicated automatically"
+      length(s.replication) == 1 && length(s.replication[0].user_managed) == 1 &&
+    s.replication[0].user_managed[0].replicas[0].location == var.region])
+    error_message = "every project-wide container must be replicated in the installation's region (D3082)"
   }
   assert {
     condition = toset([for m in google_secret_manager_secret_iam_member.operator : "${m.secret_id} ${m.role} ${m.member}"]) == toset(flatten([
@@ -2606,8 +2627,9 @@ run "credentials_service_on" {
   }
   assert {
     condition = (length(google_secret_manager_secret.credentials_bundle[0].replication) == 1 &&
-    length(google_secret_manager_secret.credentials_bundle[0].replication[0].auto) == 1)
-    error_message = "the bundle container is replicated automatically, like every container the CLI adopts"
+      length(google_secret_manager_secret.credentials_bundle[0].replication[0].user_managed) == 1 &&
+    google_secret_manager_secret.credentials_bundle[0].replication[0].user_managed[0].replicas[0].location == var.region)
+    error_message = "the bundle container is replicated in the installation's region, like every container the CLI adopts (D3082)"
   }
   assert {
     condition = (length(google_secret_manager_secret_iam_member.credentials_bundle) == 1 &&
@@ -3255,3 +3277,46 @@ run "credentials_service_url_must_be_an_https_host" {
 
   expect_failures = [var.credentials_service]
 }
+
+# The secrets intake's container, and the one name this release adds to its
+# environment: the region a container the intake creates is replicated in
+# (D3082). The intake runs in the cloud with no project config and no
+# installation record it may read, so the region its own containers go in is a
+# fact of its deployment rather than something it can look up; LP5c is what
+# reads FUGARO_REGION there. The environment is asserted whole, because the
+# cover holds the intake's container to exactly these five names
+# (internal/infra/tf.intakeServiceEnv): a name the module writes and that list
+# does not carry is refused rather than applied. It is compared as a set and
+# not as a list because the provider keeps env as one.
+run "the_intake_is_told_the_region" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launcher_accounts = ["launcher@example.com"]
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+    }
+  }
+
+  assert {
+    condition     = length(google_cloud_run_v2_service.intake) == 1
+    error_message = "the intake block is the opt-in: with it set the module creates the service"
+  }
+  assert {
+    condition = toset([for e in google_cloud_run_v2_service.intake[0].template[0].containers[0].env : "${e.name}=${e.value}"]) == toset([
+      "FUGARO_GCP_PROJECT=proj-1234",
+      "FUGARO_REGION=us-east5",
+      "FUGARO_INTAKE_URL=https://intake-url-unassigned.invalid",
+      "FUGARO_RUNS_BUCKET=fugaro-runs-proj-1234",
+      "FUGARO_LAUNCHER_ACCOUNTS=[\"launcher@example.com\"]",
+    ])
+    error_message = "the intake's container carries its whole configuration as the five literal names of internal/infra/tf.intakeServiceEnv, and nothing else"
+  }
+}
+

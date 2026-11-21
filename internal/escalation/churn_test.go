@@ -33,7 +33,7 @@ func unscored() rigor.Score {
 func TestChurnSameFinding(t *testing.T) {
 	f := Finding{Key: "9f2a1c", File: "internal/runner/runner.go", Score: minorScore()}
 	rounds := []Round{{f}, {f}, {f}}
-	for _, mode := range []rigor.Mode{rigor.Startup, rigor.Pro} {
+	for _, mode := range []rigor.Rigor{rigor.Startup, rigor.Pro} {
 		if got := Churn(mode, rounds); got != KindSame {
 			t.Errorf("Churn(%s, the same finding in every round) = %q; want %q", mode, got, KindSame)
 		}
@@ -50,7 +50,7 @@ func TestChurnNewMinorEveryRound(t *testing.T) {
 		{{Key: "k2", File: "internal/runner/b.go", Score: minorScore()}},
 		{{Key: "k3", File: "internal/runner/c.go", Score: minorScore()}},
 	}
-	for _, mode := range []rigor.Mode{rigor.Startup, rigor.Pro} {
+	for _, mode := range []rigor.Rigor{rigor.Startup, rigor.Pro} {
 		if got := Churn(mode, rounds); got != KindNewMinor {
 			t.Errorf("Churn(%s, a new minor finding every round) = %q; want %q", mode, got, KindNewMinor)
 		}
@@ -66,7 +66,7 @@ func TestChurnNewBlockingIsNone(t *testing.T) {
 		{{Key: "k1", File: "internal/runner/a.go", Score: blockingScore()}},
 		{{Key: "k2", File: "internal/runner/b.go", Score: blockingScore()}},
 	}
-	for _, mode := range []rigor.Mode{rigor.Startup, rigor.Pro} {
+	for _, mode := range []rigor.Rigor{rigor.Startup, rigor.Pro} {
 		if got := Churn(mode, rounds); got != KindNone {
 			t.Errorf("Churn(%s, a new blocking finding every round) = %q; want %q", mode, got, KindNone)
 		}
@@ -93,7 +93,7 @@ func TestChurnBlockingFirstRoundIsNone(t *testing.T) {
 			{{Key: "k2", File: "internal/runner/b.go", Score: minorScore()}},
 			{{Key: "k3", File: "internal/runner/c.go", Score: minorScore()}},
 		}
-		for _, mode := range []rigor.Mode{rigor.Startup, rigor.Pro} {
+		for _, mode := range []rigor.Rigor{rigor.Startup, rigor.Pro} {
 			if got := Churn(mode, rounds); got != KindNone {
 				t.Errorf("Churn(%s, a first round with %s) = %q; want %q", mode, tc.name, got, KindNone)
 			}
@@ -112,7 +112,7 @@ func TestChurnMixedIsSame(t *testing.T) {
 		{{Key: "k3", File: "internal/runner/c.go", Score: minorScore()},
 			{Key: "k1", File: "internal/runner/a.go", Score: minorScore()}},
 	}
-	for _, mode := range []rigor.Mode{rigor.Startup, rigor.Pro} {
+	for _, mode := range []rigor.Rigor{rigor.Startup, rigor.Pro} {
 		if got := Churn(mode, rounds); got != KindSame {
 			t.Errorf("Churn(%s, a repeat beside new findings) = %q; want %q", mode, got, KindSame)
 		}
@@ -161,7 +161,7 @@ func TestChurnRewordedSameFileClassIsSame(t *testing.T) {
 		{{Key: "9f2a1c", File: file, Score: minorScore()}},
 		{{Key: "1b7d40", File: file, Score: minorScore()}},
 	}
-	for _, mode := range []rigor.Mode{rigor.Startup, rigor.Pro} {
+	for _, mode := range []rigor.Rigor{rigor.Startup, rigor.Pro} {
 		if got := Churn(mode, rounds); got != KindSame {
 			t.Errorf("Churn(%s, the same finding reworded) = %q; want %q", mode, got, KindSame)
 		}
@@ -222,14 +222,14 @@ func TestChurnOffInPOCCriticalHotfix(t *testing.T) {
 		{{Key: "k1", File: "internal/runner/a.go", Score: minorScore()}},
 		{{Key: "k2", File: "internal/runner/b.go", Score: minorScore()}},
 	}
-	for _, mode := range []rigor.Mode{rigor.POC, rigor.Critical, rigor.Hotfix} {
+	for _, mode := range []rigor.Rigor{rigor.POC, rigor.Critical, rigor.Hotfix} {
 		if got := Churn(mode, rounds); got != KindNone {
 			t.Errorf("Churn(%s, a new minor finding every round) = %q; want %q: the key is filled in Startup and Pro only", mode, got, KindNone)
 		}
 	}
 	// A mode outside the vocabulary is off for the same reason and not by a
 	// second rule: it is not one the key is written in.
-	if got := Churn(rigor.Mode(""), rounds); got != KindNone {
+	if got := Churn(rigor.Rigor(""), rounds); got != KindNone {
 		t.Errorf("Churn(the zero mode, a new minor finding every round) = %q; want %q", got, KindNone)
 	}
 }

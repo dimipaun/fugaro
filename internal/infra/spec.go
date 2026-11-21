@@ -121,6 +121,37 @@ const (
 // never has to guess it or drift from them.
 var PlatformEnv = []string{BucketEnv, BackendEnv, GCPProjectEnv, ProjectEnv, RegionEnv, VertexRegionEnv, VertexProjectEnv}
 
+// JobEnvNames is every environment variable name a deployed job of a workflow
+// may carry in its plain environment, both shapes a job comes in together: a
+// per-repository workflow job (the template Workflow builds) and a shared
+// project job (projectJobEnv, plus the two values that follow from the
+// profile). The names are the constants the two builders write, so this list
+// cannot drift from either of them without the constants moving first; the
+// secrets' own variables are not here, because a secret travels by name under
+// secretVariables and never as a plain variable's value.
+//
+// It exists for the Cloud Batch backend (batch-run-identity F8, BR8). A Cloud
+// Run run is handed the deployed job's own environment by the platform: the
+// execution's override is merged into it, so nothing has to restate it. A
+// Batch job is created per run from nothing, so the launcher reads the
+// installation's values under exactly these names and passes them to the
+// backend (batch.Options.JobEnv), which writes them into the task's variables
+// — the run's whole environment on a VM. internal/infra's
+// TestABatchJobCarriesEveryVariableADeployedJobDoes holds the list to a real
+// template and the job to the list: a variable the template gains and this
+// list does not is a variable a Batch run would not carry. Not to be written
+// to.
+var JobEnvNames = []string{
+	BucketEnv, BackendEnv, GCPProjectEnv, ProjectEnv, RegionEnv,
+	VertexRegionEnv, VertexProjectEnv,
+	ImageEntryEnv, CheckoutEnv, RemoteEnv,
+	providers.EnvGitHubAppID, providers.EnvCredentialsServiceURL,
+	ComputePricesEnv,
+	BudgetModeEnv, MaxRunTokensEnv, AllowedModelsEnv, MaxRunUSDEnv,
+	ModelPricesEnv, RTDBURLEnv, FirebaseAPIKeyEnv, BudgetGraceEnv,
+	ModelProvidersEnv, runner.SecretEnvsVar,
+}
+
 // githubGitUser is the HTTPS username of a GitHub App installation token.
 const githubGitUser = "x-access-token"
 
@@ -832,6 +863,23 @@ type repoCtx struct {
 	// from Inputs.Policy: the switch's fourth condition for an `api-key` or
 	// `oauth` repository (D2071). It is "" where the caller read no node.
 	budgetMode string
+	// providerKeysServed and stageAccountServed are R12's two facts as this
+	// repository's entry in the local config records them, read once by
+	// resolve: the owner's own `fugaro update` judged each of them and wrote
+	// the answer there, and this root's plan hands the fact to the job from
+	// that record (KS19, F31). They are the RECORD's values and not a second
+	// judgement — the bundle, the deployed service's release and the published
+	// allow-list are not readable here (internal/infra reads no cloud), which
+	// is exactly why the record exists.
+	//
+	// Neither is honoured unless the switch is on, and that is a condition
+	// rather than the record's own: a fact that says the service serves this
+	// repository's provider keys is only usable where the job was planned to
+	// reach the service at all (an address, an invoker grant), so a config
+	// hand-edited to state the fact with the switch off — no run writes that
+	// state, but a file is a file — plans no fact and the job keeps the key it
+	// mounts, which is the direction every reader of these records fails in.
+	providerKeysServed, stageAccountServed bool
 }
 
 var appIDRE = regexp.MustCompile(`^[0-9]{1,20}$`)
@@ -921,6 +969,8 @@ func resolve(in Inputs) (*repoCtx, error) {
 		c.budgetMode = in.Policy.Budget.Mode
 	}
 	c.credentialsServiceOn = CredentialsServiceServes(c.inst.CredentialsService != nil, local.CredentialsServiceOn(), in.Cfg.Agent.Auth, c.budgetMode)
+	c.providerKeysServed = local.ProviderKeysServedOn()
+	c.stageAccountServed = local.StageAccountServedOn()
 	return c, nil
 }
 
@@ -1010,6 +1060,44 @@ func (c *repoCtx) resolveBitbucketProxied() error {
 // (resolveBitbucketProxied, same reason: internal/infra holds no client that
 // could read one and Repo is a pure function of its Inputs).
 func (c *repoCtx) sharedRepo() bool { return SharedRepo(c.in.Policy, c.provider, c.in.Repo) }
+
+// buildServes is whether the credentials service serves the secrets of class
+// to this repository's BUILDS (B4.9, the S4 flip; D2076, D2077): the class
+// list says which classes are served at all (config.BuildServedSecretClasses)
+// and credentialsServiceOn says whether this repository is one the switch
+// serves — the same two halves every other flip here reads, and the same
+// answer modules/repo/build.tf's local.build_mounts_served and
+// local.check_mount_served compute from the class list it spells out and the
+// per-repository block Go writes into the tfvars.
+//
+// Go's half of the flip is the tfvars: the build account's accessor list
+// (WorkflowSpec.BuildSecrets, which RepoSpec gathers) empties with the class
+// "build", and the check job's mount empties with either class — the job runs
+// as the build account, so the accessor its mount is read under is the one
+// the class "build" takes away (C2.3). internal/backend/gcp's BuildRequest
+// reads the same list for the request's own mounts, beside the service
+// address the build paths in internal/cli put on the spec.
+func (c *repoCtx) buildServes(class string) bool {
+	return c.credentialsServiceOn && config.BuildServesClass(class)
+}
+
+// buildMountsServed is buildServes for the one answer both of the build's own
+// clauses read: whether the build's mounts — the request's availableSecrets,
+// the account's accessor list and the build step's own secretEnv — leave this
+// repository. They go with the class "build" alone, the class of a workflow's
+// own build secrets, because a request that kept any of them would need the
+// accessor the class list takes away (D2077).
+func (c *repoCtx) buildMountsServed() bool { return c.buildServes(config.BuildSecretClassBuild) }
+
+// checkMountServed is whether the daily check job gives its own mount up: it
+// runs as the build account and mounts the repository's git credential (the
+// class "git"), and that credential's accessor is the build account's, so
+// either class takes the mount away (C2.3) — the job then fetches the
+// credential there instead, which is what the service's address in its
+// environment is for (B4.5, checkGitCredential).
+func (c *repoCtx) checkMountServed() bool {
+	return c.buildServes(config.BuildSecretClassGit) || c.buildServes(config.BuildSecretClassBuild)
+}
 
 // SharedRepo is RepoSpec.Shared's answer for a repository whose spec a caller
 // does not build: whether a deployed profile of the published node admits it.
@@ -1734,6 +1822,39 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// credential at all — which is the whole of what this gate is for
 	// (CredentialsServiceServes).
 	ws.StageAccount = mixedStageAccountJob(c.in.Cfg, c.lc, c.in.Repo, token)
+	// R12's two facts, from the record the owner's own `fugaro update` wrote
+	// for this repository (KS19, F31, C1's names): this job's provider calls
+	// may be sent through the service rather than on the key it mounts, and
+	// the mixed variant's second account is one the service selects like any
+	// named account, so the runner holds no token for it. They are planned and
+	// never left to the run to guess, because the two things they are about —
+	// the bundle's entries, the deployed service's release and the published
+	// allow-list — are the owner's own read and are not in this process.
+	//
+	// A false fact is not planned at all and not planned as "0": a run reads a
+	// fact by the entry's presence and its value together (config.ServedValue),
+	// so an absent entry is the one way "not served" is said, and a job planned
+	// by an installation that never wrote the record reads exactly as it does
+	// today (an absent entry, R12's "any other run uses its mounted key as
+	// today").
+	//
+	// Both are hung off the switch, which is the state they were judged in: a
+	// fact is reported to a run by the job it is launched on, and a job with no
+	// switch has no service address and no invoker grant, so a fact planned over
+	// it would send a provider call to a service that refuses the caller.
+	//
+	// Whether the FACTS are true is what a released `fugaro update` decided
+	// (R12's three conditions and, for the second, the release the service must
+	// be at), and release A's `ready` is deliberately not widened by them
+	// (F30): the mounts this spec drops below are the switch's answer alone.
+	if c.credentialsServiceOn {
+		if c.providerKeysServed {
+			ws.Env[config.ProviderKeysServedEnv] = config.ServedValue
+		}
+		if c.stageAccountServed {
+			ws.Env[config.StageAccountServedEnv] = config.ServedValue
+		}
+	}
 	if served := ModelSecretsServed(c.credentialsServiceOn, c.in.Cfg.Agent.Auth); served != config.ModelSecretServedNone {
 		dropModelMounts(&ws, served)
 	}
@@ -1763,12 +1884,21 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 			return ok
 		})
 	}
-	ws.BuildSecrets = []string{c.gitSecret}
-	for _, s := range w.Secrets {
-		ws.BuildSecrets = append(ws.BuildSecrets, s.Name)
+	// The build account's accessor list goes with the service (B4.9, D2076,
+	// D2077): a build of a served repository names none of these secrets — its
+	// credential step fetches the git credential and the workflow's own build
+	// secrets there instead (B4.5) — so the list is empty and
+	// modules/repo/build.tf drops the accessor with it. It is the same list
+	// modules/repo/build.tf reads through local.build_mounts_served, and
+	// internal/backend/gcp's BuildRequest reads the same class for the request.
+	if !c.buildMountsServed() {
+		ws.BuildSecrets = []string{c.gitSecret}
+		for _, s := range w.Secrets {
+			ws.BuildSecrets = append(ws.BuildSecrets, s.Name)
+		}
+		slices.Sort(ws.BuildSecrets)
+		ws.BuildSecrets = slices.Compact(ws.BuildSecrets)
 	}
-	slices.Sort(ws.BuildSecrets)
-	ws.BuildSecrets = slices.Compact(ws.BuildSecrets)
 	// Every variable a secret is mounted as, so the runner can register
 	// them all for redaction before bootstrap.
 	ws.Env[runner.SecretEnvsVar] = redactionEnvs(ws.SecretEnv)
@@ -2290,6 +2420,28 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 		env[providers.EnvGitHubAppID] = c.appID
 	}
 	env[runner.SecretEnvsVar] = gitEnv
+	// A repository the service serves gives the mount up (B4.9, D2076): the
+	// job runs as the build account, whose accessor on the credential goes
+	// with the build's own mounts, and it fetches the credential from the
+	// service instead (B4.5's checkGitCredential, which reads exactly this
+	// address off its environment) — so the environment names the service,
+	// because a job that mounts nothing and names no service holds no
+	// credential at all, and it mounts nothing, so it has no variable to
+	// register for redaction either.
+	//
+	// The address is the local config's own, the same one every job of a
+	// switched repository is launched with (internal/cli's
+	// credentialsServiceLaunchEnv) and the same block the module's
+	// run.invoker grant is planned from: an installation that deploys the
+	// service records its address when it does.
+	secretEnv := map[string]string{gitEnv: c.gitSecret}
+	if c.checkMountServed() {
+		secretEnv = map[string]string{}
+		if cs := lc.CredentialsService; cs != nil && cs.URL != "" {
+			env[providers.EnvCredentialsServiceURL] = cs.URL
+		}
+		env[runner.SecretEnvsVar] = redactionEnvs(secretEnv)
+	}
 	return &CheckSpec{
 		Job:             gcp.CheckJobName(c.slug),
 		Image:           bases[c.in.Cfg.Workflows[checked[0]].BaseKind()],
@@ -2309,7 +2461,7 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 		// so about the cloud.
 		DeployJob: true,
 		Env:       env,
-		SecretEnv: map[string]string{gitEnv: c.gitSecret},
+		SecretEnv: secretEnv,
 		Workflows: checked,
 	}, nil
 }
@@ -2571,6 +2723,30 @@ func (rs RepoSpec) DropsBitbucketToken() bool {
 		slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret)
 }
 
+// BuildMountsServed reports whether this root's plan takes the BUILD's own
+// mounts away: the build account's accessor list (RepoSpec.BuildSecrets, which
+// Addresses turns into one google_secret_manager_secret_iam_member.build per
+// name, and modules/repo/build.tf's for_each reads beside it) and, with it, the
+// request's availableSecrets and the build step's own secrets
+// (internal/backend/gcp's BuildRequest, D2077).
+//
+// It is buildServes(config.BuildSecretClassBuild) for a caller that has to
+// decide from the finished spec rather than while building it — the guard's own
+// allowance for the flip's accessor deletes (BuildAccessorAllowDelete) — and it
+// is stated from the tfvars' side of the same switch: Installation's
+// credentials_service block is null for every repository the switch holds off
+// (repoCredentialsService), which is what modules/repo/build.tf's
+// local.build_mounts_served reads out of var.installation, so this answer and
+// the module's for_each are one answer about one plan.
+//
+// It is the class "build" alone and not either class: the check job's own mount
+// leaves with the class "git" as well (check.tf's local.check_mount_served), and
+// that mount is a container's secret_key_ref and no IAM member, so no plan
+// carries a delete of it for a guard to weigh.
+func (rs RepoSpec) BuildMountsServed() bool {
+	return rs.Installation.CredentialsService != nil && config.BuildServesClass(config.BuildSecretClassBuild)
+}
+
 // serviceReadsSecret reports whether the credentials service's own account is
 // granted this logical secret's container in this repository's root (D2074,
 // B3.3): the module's service_secret_names is the values of its job_mounts
@@ -2667,6 +2843,16 @@ func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []
 		out = append(out, def)
 	}
 	return out
+}
+
+// MixedStageAccounts is mixedStageAccounts for the readers outside this
+// package that have to ask whether a repository mixes a stage account at all:
+// internal/cli's recordCredentialsServiceReady decides R12's second fact with
+// it — "the record names a stage account" — and it must read the same set the
+// job set is built from, or a record could say the fact true for an account no
+// job of the repository exists for, and withhold it where one does (KS9, KS19).
+func MixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
+	return mixedStageAccounts(cfg, lc, repo)
 }
 
 // mixedStageAccountJob is whether token is one of the repository's mixed stage

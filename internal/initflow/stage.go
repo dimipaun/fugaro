@@ -153,6 +153,23 @@ const (
 	// stage and skips it — a member holds no grant on the workspace's project
 	// at all — so it is the owner's installation that publishes.
 	Workspace = "workspace"
+	// CredentialsRoute is the MEMBER's published record of where each of its
+	// repositories' credentials is served from (internal/cli/update_route.go,
+	// WS9, D2973/D2982): `config/policy/route/<slug>` in the member's own
+	// database, one record per repository, carrying the workspace's service
+	// address from the member's own pin and, per kind, whether the project's
+	// own copy serves it or the workspace's service does. A run reads it once
+	// at bootstrap and keeps the answer, so this stage is what writes the only
+	// leaves a run's reads are made of.
+	//
+	// It comes after the policy and the workspace stages: what it publishes is
+	// derived from the policy node the same run publishes (which credentials
+	// the member's own policy admits) and from the membership key and pin the
+	// workspace stage's own subjects declare — recording a route before the
+	// node it is derived from would publish a decision no policy backs. It
+	// comes BEFORE the layer's, and it needs neither the layer nor the
+	// checkout: the record is a database write and nothing else.
+	CredentialsRoute = "credentials-route"
 	// WorkspaceProject is the workspace's OWN project's root
 	// (internal/cli/workspace_create.go, W3): the workspace's own service
 	// account and the one grant that reaches the workspace's database, in the
@@ -297,6 +314,13 @@ var order = []slot{
 	// after the policy one because the two are the run's published documents
 	// and the policy node is what every run of the project is admitted by.
 	{name: Workspace, needs: []string{Installation2, Policy}},
+	// The route is the member's own record of where each repository's
+	// credentials are served (internal/cli/update_route.go). It needs the
+	// policy stage, because which kind the member's own copy serves is a
+	// question asked of the node that stage publishes, and it needs the
+	// installation's own stages for the database it writes into — the same
+	// two the workspace record needs and for the same reason.
+	{name: CredentialsRoute, needs: []string{Installation2, Policy}},
 	// The layer is what the checkout's images are built from, so it is
 	// published before the refresh that reads it: the checkout stage's cloud
 	// step builds this checkout's images off the layer that applies, and a
@@ -423,12 +447,34 @@ const (
 // continued or multi-line command and never a secret's value. When there are
 // commands to paste, each is one complete line of its own in Commands, run in
 // order, never joined by && or ;, and Text is the sentence that introduces
-// them. A LeftCommand with no Commands is itself the one command.
+// them. A LeftCommand with no Commands is itself the one command — unless its
+// Text is a refusal rather than a command, which is a step whose command would
+// refuse where it stands (internal/cli's catalog step, an entry whose own
+// definition its build refused): the run prints what refused it and nothing
+// the reader can run, because there is nothing to run until the refusal is
+// acted on.
 type Left struct {
 	Stage    string   `json:"stage"`
 	Kind     LeftKind `json:"kind"`
 	Text     string   `json:"text"`
 	Commands []string `json:"commands,omitempty"`
+	// Why is the reason this step was not done, one line, in the refusal's own
+	// words: what the run reads under the step it leaves, and the fact a reader
+	// who was not at the terminal has no other way to get. The loop fills it
+	// from the stage's own result when the stage set none and the stage
+	// stopped before applying — a stage that only said "run this in your own
+	// terminal" has said what it owes and not why — so a stage that knows why
+	// it stopped says so once, for the log and for --json, and not only in the
+	// line it printed in flight.
+	//
+	// It is empty when there is no reason beside the step's own Text. A stage
+	// that leaves a step by returning NeedsYouError carries that sentence and
+	// nothing else — the error type has no detail of its own, where
+	// BillingPausedError does; a reason equal to Text is dropped by one rather
+	// than printed twice; and a stage that applied work and left a step sets
+	// this itself or not at all, because its detail is a success line ("No
+	// changes", "installed v0.26.0") and a success line is not a reason.
+	Why string `json:"why,omitempty"`
 	// Brief is a refusal's account as the terminal prints it, one part per
 	// line: what was refused, why in a clause, what to do (the owner's
 	// feedback of 2026-11-09). A refusal's Text argues the case at paragraph
@@ -437,6 +483,28 @@ type Left struct {
 	// this never reaches the wire (json:"-"): the two fields say the same
 	// thing at two lengths and not two things.
 	Brief []string `json:"-"`
+}
+
+// one makes the step's one-line fields one line wherever they are printed and
+// takes the run's redactions over them: a value the process holds must not
+// reach the screen through a stage's own sentence or through the reason it
+// gives for the step, and the two are normalised the same way for that reason.
+// A reason that turns out to be the step's own sentence is dropped here and
+// not printed twice: the input phase's wizard is the stage that answers a stop
+// with its own question as both the line and the reason (wizardStage.Check),
+// and one line is all the step owes.
+func (lf *Left) one(redact func(string) string, redactAll func([]string) []string) {
+	lf.Text = redact(oneLine(lf.Text))
+	lf.Why = redact(oneLine(lf.Why))
+	if lf.Why == lf.Text {
+		lf.Why = ""
+	}
+	if len(lf.Commands) > 0 {
+		lf.Commands = redactAll(lf.Commands)
+		for i, c := range lf.Commands {
+			lf.Commands[i] = oneLine(c)
+		}
+	}
 }
 
 // PrintedCommands is every command line the Left asks the user to run.

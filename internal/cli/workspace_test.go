@@ -58,11 +58,21 @@ func workspaceAppend(t *testing.T, path, extra string) {
 const workspaceOwnerTable = `workspace_members:
   aurora:
     job_service_accounts:
-      - marker-job@aurora-gcp.iam.gserviceaccount.com
+      - account: marker-job@aurora-gcp.iam.gserviceaccount.com
+        repos:
+          - marker-org/aurora
+    database_region: europe-west1
     firebase_project: aurora-fb
     fp: aurora
     exchange_url: https://exchange.example.com/v1
 `
+
+// workspaceSameJobAccount compares two job service accounts of a member, which
+// is the slice-equality the tests read an entry back with: the account with the
+// repositories it is a job of, in order.
+func workspaceSameJobAccount(a, b localcfg.WorkspaceJobAccount) bool {
+	return a.Account == b.Account && slices.Equal(a.Repos, b.Repos)
+}
 
 // workspaceMemberAddArgsNoYes is the whole of one `member add` without its
 // --yes: the same invocation a script drives and the one the test that is about
@@ -70,6 +80,7 @@ const workspaceOwnerTable = `workspace_members:
 func workspaceMemberAddArgsNoYes(extra ...string) []string {
 	return append([]string{"workspace", "member", "add", "workspace-alpha", "aurora",
 		"--job-service-account", "marker-job@aurora-gcp.iam.gserviceaccount.com",
+		"--job-repos", "marker-job@aurora-gcp.iam.gserviceaccount.com=marker-org/aurora",
 		"--firebase-project", "aurora-fb",
 		"--fp", "aurora",
 		"--exchange-url", "https://exchange.example.com/v1"}, extra...)
@@ -278,7 +289,7 @@ func TestWorkspaceAddWritesOneKeyAndKeepsEveryOtherByte(t *testing.T) {
 	if strings.Count(after, "workspace:") != 1 {
 		t.Errorf("the membership key was written more than once:\n%s", after)
 	}
-	workspaceAssertNoSecondCommand(t, "workspace add", out, "aurora", "aurora-gcp")
+	workspaceAssertNamesUpdate(t, "workspace add", out, "aurora", "aurora-gcp")
 }
 
 // TestWorkspaceRmRemovesTheKeyAndNothingElse: the other direction of the red
@@ -298,18 +309,32 @@ func TestWorkspaceRmRemovesTheKeyAndNothingElse(t *testing.T) {
 	if after := readFileString(t, path); after != before {
 		t.Errorf("the removal did not restore the file:\n--- before\n%s--- after\n%s", before, after)
 	}
-	workspaceAssertNoSecondCommand(t, "workspace rm", out, "aurora", "aurora-gcp")
+	workspaceAssertNamesUpdate(t, "workspace rm", out, "aurora", "aurora-gcp")
+}
+
+// workspaceAssertNamesUpdate holds the MEMBER's half to the one command that
+// carries it: `fugaro update`, this project's own, which publishes the
+// membership, the grant and the address inside the policy-side record the runs
+// read at bootstrap (R3, R4). The member's half owes no apply step — apply's
+// `workspace` and `workspace_pin.` rows say why — and a write that named no
+// command would read as one that is live already.
+func workspaceAssertNamesUpdate(t *testing.T, what, out, project, gcp string) {
+	t.Helper()
+	if !strings.Contains(out, "next: fugaro update") {
+		t.Errorf("%s does not name `fugaro update`, which is what carries the member's half to the runs:\n%s", what, out)
+	}
+	if got := workspaceOwedFor(t, project, gcp); len(got) != 0 {
+		t.Errorf("%s left %v owed, and the member's own half declares no step", what, got)
+	}
 }
 
 // workspaceAssertNoSecondCommand holds a write whose change is live the moment
 // the file is written to the shape AP6 gives it: no command is named as the
-// next thing to run, and nothing is left owed. Two writes of this family are
-// that. The MEMBER's half (`workspace add`, `workspace rm`) declares no step at
-// all — apply's `workspace` and `workspace_pin.` rows say why — and so does the
-// owner's half once the change takes the last member out of the table: the
-// config then declares no workspace of its own, both stages skip, and a skip
-// that did nothing is this stage's answer that there is nothing here to
-// converge (workspaceProjectSkip).
+// next thing to run, and nothing is left owed. `workspace member rm` is that
+// once the change takes the last member out of the table: the config then
+// declares no workspace of its own, both stages skip, and a skip that did
+// nothing is this stage's answer that there is nothing here to converge
+// (workspaceProjectSkip).
 func workspaceAssertNoSecondCommand(t *testing.T, what, out, project, gcp string) {
 	t.Helper()
 	for _, forbidden := range []string{"next:", "fugaro update", "fugaro apply"} {
@@ -480,17 +505,20 @@ func TestMemberAddWritesTheOwnersHalfInTheWorkspacesOwnConfig(t *testing.T) {
 	}
 	got := (*lc.WorkspaceMembers)["aurora"]
 	want := localcfg.WorkspaceMember{
-		Repos:              []string{"owner/repo-a", "owner/repo-b"},
-		JobServiceAccounts: []string{"marker-job@aurora-gcp.iam.gserviceaccount.com"},
-		FirebaseProject:    "aurora-fb",
-		FP:                 "aurora",
-		ExchangeURL:        "https://exchange.example.com/v1",
+		Repos: []string{"owner/repo-a", "owner/repo-b"},
+		JobAccounts: []localcfg.WorkspaceJobAccount{{
+			Account: "marker-job@aurora-gcp.iam.gserviceaccount.com",
+			Repos:   []string{"marker-org/aurora"},
+		}},
+		FirebaseProject: "aurora-fb",
+		FP:              "aurora",
+		ExchangeURL:     "https://exchange.example.com/v1",
 	}
 	if got.FirebaseProject != want.FirebaseProject || got.FP != want.FP || got.ExchangeURL != want.ExchangeURL {
 		t.Errorf("the entry is %+v, want the values the flags gave: %+v", got, want)
 	}
-	if strings.Join(got.JobServiceAccounts, ",") != strings.Join(want.JobServiceAccounts, ",") {
-		t.Errorf("job service accounts = %v, want %v", got.JobServiceAccounts, want.JobServiceAccounts)
+	if !slices.EqualFunc(got.JobAccounts, want.JobAccounts, workspaceSameJobAccount) {
+		t.Errorf("job service accounts = %+v, want %+v", got.JobAccounts, want.JobAccounts)
 	}
 	if strings.Join(got.Repos, ",") != strings.Join(want.Repos, ",") {
 		t.Errorf("repos = %v, want %v", got.Repos, want.Repos)
@@ -510,8 +538,13 @@ func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 	workspaceAppend(t, owner, `workspace_members:
   aurora:
     job_service_accounts:
-      - marker-retired@aurora-gcp.iam.gserviceaccount.com
-      - marker-job@aurora-gcp.iam.gserviceaccount.com
+      - account: marker-retired@aurora-gcp.iam.gserviceaccount.com
+        repos:
+          - marker-org/aurora
+      - account: marker-job@aurora-gcp.iam.gserviceaccount.com
+        repos:
+          - owner/repo-old
+    database_region: europe-west1
     firebase_project: aurora-fb
     fp: aurora
     exchange_url: https://exchange.example.com/v1
@@ -520,6 +553,7 @@ func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 `)
 	ours := []string{"workspace", "member", "add", "workspace-alpha", "aurora",
 		"--job-service-account", "marker-new@aurora-gcp.iam.gserviceaccount.com",
+		"--job-repos", "marker-new@aurora-gcp.iam.gserviceaccount.com=marker-org/aurora",
 		"--firebase-project", "aurora-fb",
 		"--fp", "aurora",
 		"--exchange-url", "https://exchange.example.com/v2",
@@ -530,7 +564,12 @@ func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 	out, _, chainErr := execute(t, ours...)
 	after := readFileString(t, owner)
 	// Nothing the replaced entry carried survives it: not the retired account,
-	// not the account that was still live, not the repository.
+	// not the account that was still live, not the repository, not the exchange
+	// URL. The region it recorded does stand, and the assertion below holds it:
+	// LP9 reads it from the member's own database, this declaration derives none
+	// (the fixture's member config writes no budget.rtdb_url), and a job account
+	// added on a machine that cannot see where the member's database is must not
+	// move where the workspace's service reads it (D3084).
 	for _, gone := range []string{"marker-retired@", "marker-job@", "owner/repo-old", "exchange.example.com/v1"} {
 		if strings.Contains(after, gone) {
 			t.Errorf("the replaced entry still carries %q:\n%s", gone, after)
@@ -542,14 +581,21 @@ func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 		t.Fatalf("%v\n%s", err, after)
 	}
 	got := (*lc.WorkspaceMembers)["aurora"]
-	if !slices.Equal(got.JobServiceAccounts, []string{"marker-new@aurora-gcp.iam.gserviceaccount.com"}) {
-		t.Errorf("job service accounts = %v, want the one the declaration named", got.JobServiceAccounts)
+	wantAccounts := []localcfg.WorkspaceJobAccount{{
+		Account: "marker-new@aurora-gcp.iam.gserviceaccount.com",
+		Repos:   []string{"marker-org/aurora"},
+	}}
+	if !slices.EqualFunc(got.JobAccounts, wantAccounts, workspaceSameJobAccount) {
+		t.Errorf("job service accounts = %+v, want %+v", got.JobAccounts, wantAccounts)
 	}
 	if !slices.Equal(got.Repos, []string{"owner/repo-new"}) {
 		t.Errorf("repos = %v, want the one the declaration named", got.Repos)
 	}
 	if got.ExchangeURL != "https://exchange.example.com/v2" {
 		t.Errorf("exchange URL = %q, want the one the declaration named", got.ExchangeURL)
+	}
+	if got.DatabaseRegion != "europe-west1" {
+		t.Errorf("database region = %q, want europe-west1, the region the entry already recorded", got.DatabaseRegion)
 	}
 	// The confirmation says which of the two it is doing, because the sentence
 	// the owner reads is what tells them the old account is going: a merge that
@@ -724,12 +770,19 @@ workspace_pin:
 	workspaceAppend(t, owner, `workspace_members:
   aurora:
     job_service_accounts:
-      - marker-other@aurora-gcp.iam.gserviceaccount.com
+      - account: marker-other@aurora-gcp.iam.gserviceaccount.com
+        repos:
+          - marker-org/aurora
     firebase_project: aurora-fb
     fp: aurora
     exchange_url: https://exchange.example.com/other
 workspace_cap:
   monthly: 40
+workspace_shared:
+  marker-model-key:
+    kind: model
+    projects:
+      - aurora
 `)
 	auroraBefore, ownerBefore := readFileString(t, aurora), readFileString(t, owner)
 
@@ -743,6 +796,11 @@ workspace_cap:
 		{"member add", workspaceMemberAddArgs()},
 		{"member rm", []string{"workspace", "member", "rm", "workspace-alpha", "aurora"}},
 		{"cap set", []string{"workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50"}},
+		// The owner's shared list is the fourth thing this family writes, and
+		// it is the one entry below the fixture already carries: unshare takes
+		// it out and share puts a different credential in, so each has a diff.
+		{"share", workspaceShareArgsNoYes()},
+		{"unshare", []string{"workspace", "unshare", "marker-model-key", "--workspace", "workspace-alpha"}},
 	} {
 		out, _, err := execute(t, tc.args...)
 		if err == nil {
@@ -921,15 +979,17 @@ func TestMemberAddRefusesAWorkspaceThisMachineDoesNotHold(t *testing.T) {
 	}
 }
 
-// TestWorkspaceKeysAreNeverPublished: the membership, the pin, the member table
-// and the cap are this machine's own. The shared config is the file any
-// launcher with objectAdmin on the runs bucket can write, and a launcher who
-// could write the membership key would be choosing which workspace reaches this
-// project's runs, and one who could write the pin would be aiming this
-// project's exchange (spec §2's rule 1). So the publisher drops all four
-// (localcfg.Config.Shared) and the reader refuses them.
+// TestWorkspaceKeysAreNeverPublished: the membership, the pin, the member table,
+// the cap and the owner's shared list are this machine's own. The shared config
+// is the file any launcher with objectAdmin on the runs bucket can write, and a
+// launcher who could write the membership key would be choosing which workspace
+// reaches this project's runs, one who could write the pin would be aiming this
+// project's exchange, and one who could write the shared list would be handing
+// this project's credentials to whoever it names (spec §2's rule 1, D1298). So
+// the publisher drops all five (localcfg.Config.Shared) and the reader refuses
+// them.
 func TestWorkspaceKeysAreNeverPublished(t *testing.T) {
-	for _, key := range []string{"workspace", "workspace_pin", "workspace_members", "workspace_cap"} {
+	for _, key := range []string{"workspace", "workspace_pin", "workspace_members", "workspace_cap", "workspace_shared"} {
 		if !slices.Contains(sharedForbidden, key) {
 			t.Errorf("sharedForbidden does not name %s, so a published membership would be read", key)
 		}

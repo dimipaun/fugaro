@@ -198,16 +198,18 @@ func TestSettingsOwnerMovesLeaveTheRefusalAlone(t *testing.T) {
 
 // TestGenericPathRefusesTheCascadeRows is R1's pin on the six cascade leaves
 // (docs/config-ownership, D2613): they keep the owner token `accounts`, the
-// family whose command K1 adds, so the generic path refuses them in that family's
-// name from level 0 until it lands. That is the window the `credentials.`
-// allowlist prefix would otherwise open — every other key under that prefix is
-// the generic path's — and the reason the rows name a family rather than taking
-// the default token like the rest of R1's rows.
+// family whose command K1 adds, so the generic path refuses them in that
+// family's name — and since K1 landed, in the writer table's own sentence,
+// which names `fugaro accounts cascade set` rather than the token alone. The
+// owner is what decides that: `settingsRefuseRow` asks the family first, so
+// what the reader sees is the writer's line and never the allowlist's, which
+// `credentials.` left with K1 (settingsGenericPrefixes).
 //
-// The policy node is the block's only store and no level's carrier holds it yet
-// (N1), so a write through the generic path would have nowhere to land even if
-// the spelling were admitted: the refusal is the family's until K1 writes the
-// carrier, and `fugaro settings` reads the same six rows as `accounts`'s.
+// The row's Layers stay the policy node's alone: the carrier N1 added is the
+// key K1's command edits (`credential_cascade.*`), not a settings layer, and a
+// write through the generic path would have nowhere to land even if the
+// spelling were admitted. `fugaro settings` reads the same six rows as
+// `accounts`'s.
 func TestGenericPathRefusesTheCascadeRows(t *testing.T) {
 	for _, key := range []string{
 		"credentials.fallback",
@@ -223,18 +225,24 @@ func TestGenericPathRefusesTheCascadeRows(t *testing.T) {
 			continue
 		}
 		if row.Owner != "accounts" {
-			t.Errorf("%s: Owner = %q, and the cascade rows name the accounts family until K1 registers its command (D2613)", key, row.Owner)
+			t.Errorf("%s: Owner = %q, and the cascade rows name the accounts family, whose command K1 registers (D2613)", key, row.Owner)
 		}
 		if len(row.Layers) != 1 || row.Layers[0] != settings.LayerPolicy {
 			t.Errorf("%s: Layers = %v, and the block is stated in the policy node alone (the carrier N1 adds is what the command edits, not a settings layer)", key, row.Layers)
 		}
 		_, err := settingsWriteRow(key)
 		if err == nil {
-			t.Errorf("%s: the generic path writes it, and the row's owner is the accounts family's until K1 (D2613)", key)
+			t.Errorf("%s: the generic path writes it, and the row's owner is the accounts family's", key)
 			continue
 		}
+		// K1's registration is what the sentence is read for: the refusal names
+		// the command that writes the key, which is the accounts family's and one
+		// spelling of the family token the head carries.
 		if command := settingsFamilyCommands["accounts"]; !strings.Contains(err.Error(), "is written by "+command) {
-			t.Errorf("%s: the write refuses it in %v, and the six are refused in `%s`'s name until K1 registers it (D2613)", key, err, command)
+			t.Errorf("%s: the write refuses it in %v, and the six are refused in `%s`'s name (D2613)", key, err, command)
+		}
+		if !strings.Contains(err.Error(), "run `fugaro accounts cascade set ") {
+			t.Errorf("%s: the refusal does not name the command K1 registers for it: %v", key, err)
 		}
 	}
 }
@@ -316,6 +324,15 @@ func TestSettingsRefusedRowsNameNoGenericWriter(t *testing.T) {
 // on `config` instead, the token whose sentence names the file each of them is
 // stated in, so they keep the owner they had and this table has no entry for
 // them. The family's token arrives in M4's own commit, beside the command.
+//
+// W2 of docs/config-ownership moves four more, and they are the block rows of
+// the governance block (D2604): `governance.stage_budget`, `stage_timeout`,
+// `stage_tokens` and `tiers` stay rows of the read — the block a person reads
+// the leaves under, and a keyDefaults member the schema may not lose — while the
+// write refuses their own spelling, because a block is a shape with no value for
+// a scalar to land on. So they leave the default token for the block's own
+// (`settings block`), whose sentence says what is true of such a row:
+// `settings set` writes the settings the block holds, one at a time.
 var settingsOwnerChanges = []struct{ key, was, now string }{
 	{"base_branch", "config", "settings set"},
 	{"budget.max_run_tokens", "budget", "settings set"},
@@ -323,6 +340,10 @@ var settingsOwnerChanges = []struct{ key, was, now string }{
 	{"commit_email", "setup", "settings set"},
 	{"commit_name", "setup", "settings set"},
 	{"gcp_project", "settings set", "config init"},
+	{"governance.stage_budget", "settings set", "settings block"},
+	{"governance.stage_timeout", "settings set", "settings block"},
+	{"governance.stage_tokens", "settings set", "settings block"},
+	{"governance.tiers", "settings set", "settings block"},
 	{"issues.nudge_after_days", "config", "settings set"},
 	{"issues.nudge_recurrence", "config", "settings set"},
 	{"layer.gcp_project", "settings set", "config"},

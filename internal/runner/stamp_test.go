@@ -593,7 +593,7 @@ func TestRunnerOwnCommitsRunNoAgentPlantedHook(t *testing.T) {
 // Critical.
 func TestRunnerOwnCommitsCarryTheRigorOfTheirMoment(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n",
-		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", level: critical }\nagent:\n", 1)
 	h := newHarness(t, cfg, nil)
 	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review' && echo x > left.txt")

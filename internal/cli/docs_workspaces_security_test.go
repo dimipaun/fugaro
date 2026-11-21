@@ -42,6 +42,17 @@ import (
 // credentials service's and the Bitbucket proxy's own sections.
 const wsSecurityHeading = "### Fugaro workspaces"
 
+// wsAuthorityHeading is the section the addendum's own threat model is stated
+// in: the workspace-projects-users work gives a workspace IAM authority over
+// its member projects (D2800), which reverses three of the rules
+// docs/workspaces/spec.md §9 states as prohibitions, so SECURITY.md carries
+// the supersession and, per credential or actor that authority puts in reach,
+// what it reaches. It is a section of its own rather than a paragraph of the
+// one above because the two answer different questions: the section above is
+// what a member's people and a member's run reach of a workspace, and this one
+// is what the workspace's authority reaches of a member.
+const wsAuthorityHeading = "### Workspace authority over member projects"
+
 // TestSecurityMdStatesTheWorkspaceThreatModel is W9's headline pin: the
 // workspace's four reachable surfaces, what a stolen workspace token reaches
 // and what it does not, the unchanged member token, the rotation and
@@ -90,6 +101,15 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"not detectable by rotation",
 		"**Revocation at the workspace ends the person's ability to exchange, and nothing else**",
 		"neither revocation is instantaneous across members",
+		// WS6 gave the member its one grant in the workspace's project when the
+		// workspace root started deploying the workspace's own credentials
+		// service, so the closer half of that sentence has to name it rather
+		// than say no member holds a grant there (F29): what a member's job
+		// accounts hold is the front door to that service and no node of the
+		// workspace's database.
+		"**The one grant a member holds in the workspace's project is the invoke grant on the workspace's own credentials service**",
+		"`roles/run.invoker` per member job account",
+		"no node of the workspace's database",
 		// The pool, the intersection, and what a compromised member reaches.
 		"**A compromised member reaches the pool, and the intersection is what bounds it.**",
 		"cannot read a credential's value",
@@ -122,6 +142,15 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"`firebasedatabase.instances.get`",
 		"**A compromised workspace service therefore reads a member's whole database**",
 		"**It cannot write any of it**",
+		// And the one write that is in reach, because the sentence above is
+		// weaker than it reads without it: the run's own Firebase token, which
+		// a run's call to the service carries (R18, F30), writes the run's own
+		// nodes in the member's database. F30 says so in as many words, and O4
+		// is the review this sentence is written for -- a service that verifies
+		// the run by that token holds it.
+		"**The one write this puts in reach is the run's own token.**",
+		"the run's own nodes in the member's database",
+		"**a write the service's own grant does not carry**",
 		"**cannot delete or disable a member's database**",
 		"**The runs bucket is not read at all**",
 		// The stop, in the workspace's own database, and its scope.
@@ -153,9 +182,12 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"**refuse `custom` and `anonymous`**",
 		"`google.com`",
 		"`password`",
-		"7. **A shared credential is served where the member's own service would refuse it: the run's repository is not held to the calling job account.**",
+		"7. **A shared credential is served where the member's own service would refuse it: the run's repository is now held to the calling job account, and the account's class is not.**",
+		"**The pairing of that repository with the account that called is asked too",
+		"closes the gap the workspaces design recorded as O3",
+		"refused at the pairing with the typed reason `unverified_run_identity`",
 		"**The second way this risk is reachable is the account's class**",
-		"**this release ships both stated and not enforced**",
+		"**this release ships it stated and not enforced**",
 		// Spec §9 as prohibitions, which is how the spec writes them.
 		"**What a workspace never does.**",
 		"**never widens a member**",
@@ -167,6 +199,72 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the `%s` section never says %q: a workspace adds an identity surface, a shared credential pool and a spend ceiling, and this section is where SECURITY.md states what each one reaches", wsSecurityHeading, want)
+		}
+	}
+
+	// The addendum's half, and the red step of WU0: the workspace-projects-users
+	// work hands the workspace IAM authority over its member projects, which is
+	// the rule the section above states as a prohibition, so the supersession
+	// and every credential or actor that authority reaches are stated here. The
+	// heading is read out of the document by name, so this block fails on the
+	// section's absence -- which is what it did before the section was written.
+	authority := flattenDoc(docSection(t, "SECURITY.md", s, wsAuthorityHeading))
+	for _, want := range []string{
+		// The supersession itself: three of §9's six rules, named, and the one
+		// consent that supersedes them.
+		"**The addendum gives a workspace IAM authority over its member projects, and it supersedes three of the six rules `docs/workspaces/spec.md` §9 states as prohibitions.**",
+		"**never widens a member**, **never writes a member's database** and **never becomes a second permission model**",
+		"for people and roles only",
+		"on one consent, and it is the member owner's own act",
+		"`fugaro workspace project link`",
+		"an unlinked member — every existing one — keeps `fugaro user …` unchanged",
+		// The three that stand: a rewrite that superseded all six would read as a
+		// workspace that may now do anything to a member.
+		"**The other three rules stand**",
+		"**never hands out a credential**",
+		"never owns a repository, a runs bucket, a job or an image",
+		"**carries no workspace-wide repository allow-list**",
+		// The actors and credentials, each with its own lead, so a reader can
+		// find the one they are asking about.
+		"**A stolen workspace-admin credential reaches every linked member, and that is the consent's real size.**",
+		"it reads every secret of that member",
+		"**every personal Claude OAuth token**",
+		// The account's own credential paths, which the credential-widest reading
+		// of "no key" hid: an out-of-band key and actAs outlive the binding that
+		// made them, so the lead names the key rather than denying it.
+		"**A compromised workspace IAM account is the same reach held as an account, and a key made on it outlives the binding that made it.**",
+		"`iam.serviceAccountKeys.create`",
+		"`iam.serviceAccounts.actAs`",
+		"`rm --admin` removes the token-creator binding and revokes no key",
+		"**The workspace credentials service's account can rewrite the roster, `Admins` included.**",
+		"`workspaceRosters/<name>`",
+		"**What it cannot do is become an admin by writing the list**",
+		"**The workspace project's owners, editors and budget admins are workspace admins de facto.**",
+		"**the workspace project's own IAM is the workspace's root of trust**",
+		// A project admin's two tamperable nodes, named: the mirror the grant gate
+		// reads and the audit trail itself.
+		"**A hostile project admin rewrites the mirror and the member's audit node.**",
+		"**the audit trail is as tamperable as the roster**",
+		// The member owner, whose reach stops at their own member -- except for
+		// the one record of theirs the workspace reads.
+		"**A hostile member owner reaches their own member and nothing else.**",
+		"`config/admin/workspace-link`",
+		"refuses a recorded parent inside any workspace's folder",
+		// The disclosure the mirror makes: the group's addresses are readable by
+		// every member's own people, which the design above said they were not.
+		"**Every member's launchers and viewers read the mirror: the workspace's member addresses and external marks.**",
+		// And the lag, which is the half a removed admin's reach outlives -- with
+		// the other half named beside it: what they made while they held the
+		// authority is not taken back by the command that removes them, and the
+		// owner ruled on 2026-11-19 that it is accepted with that said.
+		"**The revocation lag is the member's own update, and removing an admin does not take back what they made while they held the authority.**",
+		"the workspace's stored grants stay in the member's roster",
+		"the owner's ruling of 2026-11-19",
+		// The document the whole statement lives in, so the two are read together.
+		"docs/workspace-projects-users/threat-model.md",
+	} {
+		if !strings.Contains(authority, want) {
+			t.Errorf("the `%s` section never says %q: a workspace that holds IAM authority over its members is a widening the workspaces section above denies, and this section is where SECURITY.md states who that authority puts in reach of what", wsAuthorityHeading, want)
 		}
 	}
 
@@ -187,6 +285,11 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		// section has to say, so the pin cannot be a substring of it.
 		"a workspace revocation reaches a member token already minted",
 		"a workspace revocation is immediate",
+		// The pre-WS6 spelling of the grant claim, which the workspace's own
+		// service makes false: a member's job account does hold one grant in
+		// the workspace's project, and a section that kept the older wording
+		// would tell a reader no member's account reaches the workspace at all.
+		"because no member holds a grant on the workspace's project",
 		// The meter, which is machinery on this tree and not yet a fence.
 		"the workspace's cap is enforced on every shared-credential call",
 		"every shared-credential call is metered",
@@ -213,6 +316,19 @@ func TestDesignV1NamesTheWorkspace(t *testing.T) {
 		"membership takes both sides",
 		"holds no repository, no runs bucket, no job and no image",
 		"never widens a member",
+		// The addendum's half: the design the whole repository is written against
+		// has to say that a workspace holds IAM authority over its member
+		// projects, which supersedes three of the rules its own §9 states, and
+		// that the consent is the member owner's own. A design that left the
+		// "never widens a member" sentence standing unqualified beside a
+		// workspace that does widen one is the contradiction this pin exists for.
+		"**supersedes three of `docs/workspaces/spec.md` §9's six prohibitions",
+		"never writes a member's database",
+		"never becomes a second permission model",
+		"for people and roles only",
+		"on the member owner's own consent at `fugaro workspace project link`",
+		"D2800",
+		"../workspace-projects-users/threat-model.md",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/design/v1.md never says %q: the project section is where the repository's unit is defined, and a workspace the design does not define beside it is a workspace the rest of the tree reads as a second project layer", want)

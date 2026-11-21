@@ -926,7 +926,25 @@ pin, moved the table's row from 148 to 149.) (Amended 2026-11-18:
 owner-run Check 640 in the register — the status labels on a real pull request,
 with its row and its section, the sibling test `scripts/live_checks_test.go`
 drives, and the two questions the check settles, U1 and U3 — moved the table's
-row from 148 to 149.) They
+row from 148 to 149.) (Amended 2026-11-19:
+`internal/cli/docs_mobile_identity_pairing_test.go`, the mobile-identity-pairing
+folder's pin over the four documents, the decision and task numbering and the
+register's Checks 730 to 737, moved the table's row from 150 to 151.) (Amended 2026-11-19:
+`internal/cli/docs_troubleshoot_cloud_test.go`, the troubleshoot-cloud plan's
+T-TC9 — the pin over the tier sentences the agent guide, the working skill's
+page for the command and the release notes that carry the tier — moved the
+table's row from 151 to 152.) (Amended 2026-11-20:
+`internal/cli/docs_runs_ls_speed_test.go`, the runs-ls-speed plan's RL5 — the pin
+over the residual of the pull-request index in the bucket's threat model, the
+in-flight audit's own row for the backfill, the two skills' sentences about the
+fast queries and the release notes that carry the change — moved the table's row
+from 152 to 153.) (Amended 2026-11-21:
+`internal/cli/docs_check740_test.go`, the run-messages plan's RM8 — the pin over
+the owner-run Check 740 in the register, whose four readings are the plain
+message delivered at a coder stage, the `--now` stop's quiet point with the same
+session going on after it, the Policy Troubleshooter asked about the real job
+accounts, and the bucket's `.msg.json` lifecycle rule — moved the table's row
+from 153 to 154.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -942,21 +960,66 @@ switched repository's workflow secrets off its job — added `vaultSince` to
 `internal/cli/recipes_skew.go` as well, which moved the *Image-skew `Since` constants* row from 55 to
 56. Same row, same reason for naming it.)
 
+(Amended 2026-11-19: the review-against-task plan's S-OUT added
+`internal/runner/issuescope.go`, whose reader refuses an `unmet` or `differs`
+issue below `major` (that plan's R6), which moved the *Sites that compare a
+finding's severity to a value* row from 0 to 1 and the *Files in `internal/runner`
+that mention `Severity` at all* row from 4 to 5. The comparison reads the
+artifact's closed three-word enum, not the in-run format's free-form label, and
+the two paragraphs below say what each row measures now. Both are rows held to
+their own command rather than to another folder's guard, so they are named here
+for the reason the two above are: a reader who finds a figure stale should find
+who moved it.)
+
+(Amended 2026-11-19: the review-against-task plan's S-TASK — the task fields a launched review is
+judged against, `review_spec`, `from_findings` and `own_text` — added `reviewSpecSince` to
+`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 56 to 57.
+Same row, same reason for naming it.)
+
+(Amended 2026-11-19: the rigor-modes plan's LV1.1 — the rename that makes the type `Rigor` and the
+file's word `level`, with the released `mode:` still read — added `rigorSpellingSince` to
+`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 57 to 58. The
+row is named here for the reason above: a reader who finds the figure stale should find who moved it.)
+
+(Amended 2026-11-20: the rigor-modes plan's LV6.1 — the recipe's one conditional, the `by_level` block that
+gives each rigor level its own `roles` mapping (LD9) — added `levelRolesSince` to
+`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 59 to 60. Same
+row, same reason for naming it.)
+
+(Amended 2026-11-20: the same plan's LV3.1 — a project area's `members` and the project's per-repo
+`defaults.rigor.repos` map — added the `rigor.repos` row to `internal/config/scope.go`, which moved
+the *Config scope rows* row from 117 to 118. The row is not an accident of the shape: the layer's
+scope walker asks that table about every `defaults.*` key and refuses the ones it does not carry, so
+a project layer stating a per-repo level needs the row whatever the key's reader is. The same task
+added `rigorMembersSince` to `internal/cli/recipes_skew.go` — the two keys are the layer's alone and
+are decoded with `KnownFields`, so a job image older than the release that knows them dies at
+bootstrap on every repository of the project — which moved the *Image-skew `Since` constants* row
+from 60 to 61. The two keys ship in one release and one constant, one judge and one gate serve both,
+which is why the row moved by one and not by two.)
+
+(Amended 2026-11-21: the secrets-brokering plan's KS2 — a provider key entering the
+credentials service's bundle under C1's name instead of a container of its own — added
+`repoCredentialSince` to `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since`
+constants* row from 61 to 62. The constant is the guard every writer of such a key holds against a
+service too old to read the entry, so the row moved with the release that starts writing it, as the
+entries above do. Nothing in this folder changed; the row is named here for the reason the ones
+above are: a reader who finds the figure stale should find who moved it.)
+
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 14 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 15 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 116 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 118 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 5 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
-| Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
-| Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 56 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Sites that compare a finding's severity to a value | 1 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
+| Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
+| Image-skew `Since` constants | 62 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 150 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 155 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 10 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |
@@ -972,15 +1035,22 @@ command prints `file:count`, which is not the figure the row states.
 
 Three of those rows are worth reading rather than counting.
 
-The **zero** is F1 and F2 in one figure: `internal/runner/prompts.go` and
-`internal/runner/reviewmode.go` each read `f.Severity` only to print it as a
-label, and no comparison against any value exists in the package. A mode
-threshold table has nothing to attach to today.
+The **one** is F1 and F2's row after the review-against-task plan's S-OUT on
+2026-11-19, and it is not a mode threshold table attaching to a label:
+`internal/runner/issuescope.go`'s reader refuses an issue whose scope is `unmet`
+or `differs` below `major` (that plan's R6), and the artifact's `severity` is the
+closed three-word enum this folder's own amendment above describes rather than
+the in-run format's free-form string. Every other read of `f.Severity` in the
+package still prints a label and compares nothing, so an in-run threshold table
+still has nothing to attach to: D2's rule is about the format whose severity is a
+word the reviewer chose, and it is intact.
 
-The **three** files are `verdict.go` (the schema string, the field, the
-fallback), `prompts.go` (the label) and `reviewmode.go` (the label again) — that
-is the entire surface a scoring change touches inside the runner, which is why D3
-is as small as it is.
+The **five** files are `verdict.go` (the schema string, the field, the
+fallback), `prompts.go` (the label), `reviewmode.go` (the label again),
+`reviewartifact.go` (the artifact's severity enum, the field it is required on,
+and the reader that closes it) and `issuescope.go` (that one rule) — that is the
+entire surface a scoring change touches inside the runner, which is why D3 is as
+small as it is.
 
 The four layering rows the 2026-10-20 amendment added are these: **4** layers a
 key may be set in (F37), **3** blocks the project layer's closed `defaults:` may
@@ -1295,7 +1365,9 @@ items.**
 Why: one answer to "may this pull request be ready" is the property the owner
 relies on, and a tolerated finding has to land where a reader can close it.
 
-**Recommended: Critical *mode* is byte-identical to today — and only Critical,
+**Recommended, restated 2026-10-22 (levels-reconciliation.md §3b item 1):
+Critical's finding thresholds are unchanged; its prompts, its PR body's hand-back
+sections and two presence checks are new — and that is true of Critical alone,
 because D19's answer makes Pro the mode a repository gets for configuring
 nothing.** Every other mode keeps the
 reviewer, keeps the one required `review` step, keeps the verify stage, and
@@ -1807,8 +1879,8 @@ tolerated and filed. Two things bound it. **First, the security-sensitive tier
 stays Critical**: D18's floors are outside every layer, so a credential path, an
 IAM path or `.github/workflows/` runs at Critical whatever the default says.
 **Second, a repository may pin itself back**: `rigor.default: critical` in that
-repository's `fugaro.yaml` restores today's behaviour exactly, and it is one line
-that a repository can merge on its own.
+repository's `fugaro.yaml` restores Critical's finding thresholds, and it is one
+line that a repository can merge on its own.
 
 **The migration note, stated where a reader will meet it** (the plan's T8.3, and
 the release note it writes): *the rigor modes change what "ready" means for a
@@ -1829,12 +1901,15 @@ self-consistent, and `fugaro diagnose` printing the mode of the run it read.
 
 **What follows from the answer, and is the plan's problem rather than this
 decision's:** every claim in this folder and in the plan that the first cut
-"relaxes nothing", that an unconfigured repository "behaves exactly as it does
-today", or that a run is "byte-identical to today" is **true of Critical mode
-only** — of a run whose resolved mode is Critical, which after this answer is a
-run that configured it or sits under a floor. The plan scopes them (T3.1's table,
-T8.3's note) and §7's review focus gives Pro's threshold table the attention it
-now owes: **Pro's table is the behaviour of every unconfigured repository**, so
+leaves a run unchanged is **true of less than it says**, and the owner's answer
+of 2026-10-22 restated them all
+([levels-reconciliation.md](levels-reconciliation.md) §3b item 1): *Critical's
+finding thresholds are unchanged; its prompts, its PR body's hand-back sections
+and two presence checks are new* — true of a run whose resolved mode is Critical,
+which after this answer is a run that configured it or sits under a floor. The
+plan scopes them (T3.1's table, T8.3's note) and §7's review focus gives Pro's
+threshold table the attention it now owes: **Pro's table is the behaviour of
+every unconfigured repository**, so
 it is the one table whose review cannot be deferred.
 
 **Alternative (this folder's earlier recommendation, displaced by the answer):
@@ -1865,7 +1940,8 @@ project like `defaults.git` and `defaults.agent`.
 `fugaro.yaml`: `rigor.default` for this repository's mode and `rigor.areas` for
 its areas, scope `InRepo` — five edits (F7), the schema entry included.
 (c) An **area** is one entry of `rigor.areas`, a list of
-`{name: <short label>, match: <doublestar glob>, mode: <name>}`. The `name` is
+`{name: <short label>, match: <doublestar glob>, level: <name>}` — the leaf LD2
+renamed from `mode:`, which both loaders still read as the fallback. The `name` is
 not decoration: it is what the run, the PR and `fugaro watch` print when they say
 which rule decided (D24), and a rule that cannot be named cannot be explained to
 the person reading the PR. `match` is a path glob, matched with the same
@@ -2010,7 +2086,9 @@ the third is priced because it costs a deploy rather than a line of code.
 **Recommended: one resolved value with three parts — the mode, the layer that
 won, and the areas that matched — shown in three places.** The value is computed
 once per resolution (D22) and carried, not recomputed per surface, from the same
-source as the record's `Mode` (F18's one-value rule, §6's item 5).
+source as the record's level — `runstore.RigorRecord`, whose `LevelOf` reads the
+`level` key LD2 writes and falls back to the released `mode` one (F18's one-value
+rule, §6's item 5).
 
 - **The run.** `runstore.Record` gains the rigor block (mode, `from`, areas with
   the moment each was applied), so `fugaro runs ls --json`, `fugaro diagnose` and

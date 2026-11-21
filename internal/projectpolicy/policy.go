@@ -397,7 +397,7 @@ type Policy struct {
 	// publisher writes nothing at all for a project that sets none, so the
 	// node of such a project is byte for byte what it was before this member
 	// existed.
-	ReviewFloor map[rigor.Mode][]policy.Level `json:"review_floor,omitempty"`
+	ReviewFloor map[rigor.Rigor][]policy.Level `json:"review_floor,omitempty"`
 
 	// Triage is the owner's switch for the run's triage stage (D1854): the
 	// step that weighs a review round's findings before the fix round takes
@@ -418,6 +418,30 @@ type Policy struct {
 	// that sets neither publishes no member: the node of such a project stays
 	// byte for byte what it was before this member existed.
 	Triage *bool `json:"triage,omitempty"`
+
+	// ReviewAgainstTask is the owner's switch for checking a pull request
+	// against the task it was written for (docs/review-against-task, D2935):
+	// every review stage — the in-run first-line, senior and adversarial ones
+	// and the review job `fugaro review` launches — is shown the originating
+	// run's task and asked whether the change does what it asks. true forces
+	// the check on for every repository of the installation, false turns it off
+	// for every repository whose own fugaro.yaml does not set the key, and an
+	// absent member says nothing.
+	//
+	// It belongs to this node for Triage's reason: it decides how much review a
+	// run gets, so a launcher must not be able to move it, and the shared file
+	// and the task are both launcher-written (docs/design/bucket-iam.md §10 L1,
+	// L2). The repository's own agent.review_against_task is the other home, and
+	// the merge between the two takes ON as the stricter value
+	// (internal/policy's Merge, the inverse of triage): the node's true is not
+	// turnable off by a repository, while the node's false is only the
+	// project-wide default a repository's own true overrides.
+	//
+	// It is a pointer because true and false are two statements the merge must
+	// tell apart from silence, and because a project that sets neither publishes
+	// no member: the node of such a project stays byte for byte what it was
+	// before this member existed.
+	ReviewAgainstTask *bool `json:"review_against_task,omitempty"`
 
 	// VerifierAccounts are the identities that may ask the credentials
 	// service's verify route whether a verdict's signature is that service's
@@ -701,8 +725,9 @@ var knownTopLevelKeys = map[string]bool{
 	"model_grades":        true,
 	"subscription_spread": true,
 	"orchestrator":        true, "binaries": true,
-	"reports_commit": true,
-	"triage":         true,
+	"reports_commit":      true,
+	"triage":              true,
+	"review_against_task": true,
 	// The daemon's own two (R1 of docs/orchestrator-graph-estimates): the
 	// switch that hands orchestration back (D2701, D2739) and the project's
 	// issue adapter (D2733). Both are top-level keys and not members of a
@@ -1683,6 +1708,14 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, fmt.Errorf("projectpolicy: triage: %w", err)
 		}
 	}
+	// The owner's review-against-task switch is read the same way and for the
+	// same reason: a bool or nothing at all, because the value decides whether
+	// every review stage of the repository's runs is shown the task.
+	if araw, ok := doc["review_against_task"]; ok && !IsNull(araw) {
+		if err := json.Unmarshal(araw, &p.ReviewAgainstTask); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: review_against_task: %w", err)
+		}
+	}
 	// The daemon's switch and the project's issue adapter are read on their own:
 	// no member of either is judged against another block, and both are held to
 	// their own rules — a bool that is a bool (encoding/json refuses every other
@@ -1813,7 +1846,7 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 // A block that names no mode at all is no floor: the publisher writes nothing
 // for a project that sets none, and a written empty object — which is how an
 // operator takes a published floor away on purpose — reads as the same answer.
-func decodeReviewFloor(raw json.RawMessage) (map[rigor.Mode][]policy.Level, error) {
+func decodeReviewFloor(raw json.RawMessage) (map[rigor.Rigor][]policy.Level, error) {
 	names, err := objectMemberNames(raw)
 	if err != nil {
 		return nil, fmt.Errorf("projectpolicy: review_floor: %w", err)

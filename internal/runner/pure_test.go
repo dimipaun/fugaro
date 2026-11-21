@@ -77,22 +77,22 @@ func TestDecide(t *testing.T) {
 }
 
 func TestPrompts(t *testing.T) {
-	sys := SystemPrompt(PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/work/state"}, "Use tabs.")
+	sys := SystemPrompt(PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/work/state"}, "Use tabs.", "")
 	for _, want := range []string{"fugaro/x", "main", "/work/state/pr.md", "fugaro verify test", "--rerun-failed", "Use tabs."} {
 		if !strings.Contains(sys, want) {
 			t.Errorf("system prompt lacks %q", want)
 		}
 	}
-	if got := ReviewPrompt("/review", "", "origin/main", DiffSize{}, false); !strings.HasPrefix(got, "/review ") || !strings.Contains(got, "origin/main") {
+	if got := ReviewPrompt("/review", "", "origin/main", DiffSize{}, false, ""); !strings.HasPrefix(got, "/review ") || !strings.Contains(got, "origin/main") {
 		t.Errorf("skill review prompt = %q", got)
 	}
-	if got := ReviewPrompt("", "Check the SQL.", "origin/develop", DiffSize{}, false); !strings.HasPrefix(got, "Check the SQL.") || !strings.Contains(got, "origin/develop") {
+	if got := ReviewPrompt("", "Check the SQL.", "origin/develop", DiffSize{}, false, ""); !strings.HasPrefix(got, "Check the SQL.") || !strings.Contains(got, "origin/develop") {
 		t.Errorf("file review prompt = %q", got)
 	}
-	if got := ReviewPrompt("", "", "origin/main", DiffSize{}, false); !strings.Contains(got, "correctness bugs") {
+	if got := ReviewPrompt("", "", "origin/main", DiffSize{}, false, ""); !strings.Contains(got, "correctness bugs") {
 		t.Errorf("default review prompt = %q", got)
 	}
-	fix := FixPrompt([]Finding{{Severity: "major", File: "a.go", Summary: "nil deref"}, {Summary: "add a test"}})
+	fix := FixPrompt([]Finding{{Severity: "major", File: "a.go", Summary: "nil deref"}, {Summary: "add a test"}}, "", "")
 	if !strings.Contains(fix, "- [major] a.go: nil deref\n- add a test\n") {
 		t.Errorf("fix prompt = %q", fix)
 	}
@@ -203,11 +203,11 @@ func TestReportCarriesMarker(t *testing.T) {
 
 func TestPromptWorkflowRule(t *testing.T) {
 	d := PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}
-	if got := SystemPrompt(d, ""); strings.Contains(got, ".github/workflows") {
+	if got := SystemPrompt(d, "", ""); strings.Contains(got, ".github/workflows") {
 		t.Errorf("a prompt without NoWorkflows names workflow files: %s", got)
 	}
 	d.NoWorkflows = true
-	got := SystemPrompt(d, "")
+	got := SystemPrompt(d, "", "")
 	if !strings.Contains(got, ".github/workflows/") || strings.Count(got, ".github/workflows") != 1 {
 		t.Errorf("the rule is missing or repeated: %s", got)
 	}
@@ -215,11 +215,11 @@ func TestPromptWorkflowRule(t *testing.T) {
 
 func TestPromptCheckpointRule(t *testing.T) {
 	d := PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}
-	if got := SystemPrompt(d, ""); strings.Contains(got, "Commit early and often") {
+	if got := SystemPrompt(d, "", ""); strings.Contains(got, "Commit early and often") {
 		t.Errorf("a prompt without checkpoints asks for early commits: %s", got)
 	}
 	d.Checkpoints = true
-	got := SystemPrompt(d, "")
+	got := SystemPrompt(d, "", "")
 	for _, want := range []string{"Commit early and often", "fugaro/x within about a minute", "only pushed commits survive", "uncommitted changes are lost", "rather than amending or rebasing"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the checkpoint rule lacks %q: %s", want, got)
@@ -232,7 +232,7 @@ func TestPromptNeverWaitRule(t *testing.T) {
 		{Branch: "fugaro/x", Base: "main", StateDir: "/s"},
 		{Branch: "fugaro/x", Base: "main", StateDir: "/s", Checkpoints: true, FollowUp: []string{"- follow-up rule"}},
 	} {
-		got := SystemPrompt(d, "")
+		got := SystemPrompt(d, "", "")
 		for _, want := range []string{"Never end your turn to wait", "ends the moment you stop", "fugaro verify test` blocks until done"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("the prompt %+v lacks %q", d, want)
@@ -264,10 +264,10 @@ func countWord(s, word string) int {
 
 func TestPromptScoringAnchors(t *testing.T) {
 	for name, p := range map[string]string{
-		"the default review prompt": ReviewPrompt("", "", "origin/main", DiffSize{}, false),
-		"a skill review prompt":     ReviewPrompt("/review", "", "origin/main", DiffSize{}, false),
-		"a prompt-file review":      ReviewPrompt("", "Check the SQL.", "origin/main", DiffSize{}, false),
-		"a pick prompt":             PickPrompt("", "", []int{9, 7}, []string{"/review/9", "/review/7"}),
+		"the default review prompt": ReviewPrompt("", "", "origin/main", DiffSize{}, false, ""),
+		"a skill review prompt":     ReviewPrompt("/review", "", "origin/main", DiffSize{}, false, ""),
+		"a prompt-file review":      ReviewPrompt("", "Check the SQL.", "origin/main", DiffSize{}, false, ""),
+		"a pick prompt":             PickPrompt("", "", []int{9, 7}, []string{"/review/9", "/review/7"}, ""),
 	} {
 		for _, ax := range promptScoringAxes {
 			if !strings.Contains(p, ax.axis) {
@@ -308,7 +308,7 @@ func TestPromptScoringAnchors(t *testing.T) {
 }
 
 func TestPromptScoringIsTheReviewersAlone(t *testing.T) {
-	implement := SystemPrompt(PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}, "")
+	implement := SystemPrompt(PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}, "", "")
 	words := append(append([]string{}, promptScoringLabels...), "likelihood", "impact", "fix_cost")
 	for _, word := range words {
 		if got := countWord(implement, word); got != 0 {
@@ -338,7 +338,7 @@ func TestSystemPromptDataCheckpointRule(t *testing.T) {
 		if mod != nil {
 			mod(r)
 		}
-		return SystemPrompt(r.systemPromptData(), "")
+		return SystemPrompt(r.systemPromptData(), "", "")
 	}
 	if got := mk(nil); !strings.Contains(got, rule) {
 		t.Errorf("a first run with checkpoints on lacks the rule: %s", got)
@@ -377,7 +377,7 @@ func TestSystemPromptDataLintRule(t *testing.T) {
 		}
 		r.cfg.Git.BaseBranch = "main"
 		r.wf.Commands.Lint = lint
-		return SystemPrompt(r.systemPromptData(), "")
+		return SystemPrompt(r.systemPromptData(), "", "")
 	}
 	if got := mk("golangci-lint run"); !strings.Contains(got, rule) {
 		t.Errorf("commands.lint configured: the prompt lacks the lint rule: %s", got)

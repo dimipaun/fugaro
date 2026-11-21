@@ -3,6 +3,6 @@ project: aurora
 git: { provider: github }
 rigor:
   areas:
-    - { name: secrets, match: "../secrets/**", mode: critical }
+    - { name: secrets, match: "../secrets/**", level: critical }
 workflows:
   server: { commands: { build: make, test: make test } }

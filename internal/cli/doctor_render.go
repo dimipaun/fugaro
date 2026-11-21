@@ -984,20 +984,21 @@ var doctorShorts = map[string]doctorShort{
 	// T10's three other token lines. The per-token half of
 	// bitbucket-token-valid is the prefix below: doctor emits one line per typed
 	// token and the ID carries the token's name.
-	"bitbucket-tokens-uncovered": {"a proxied repository no stored Bitbucket token covers is refused before its first git call.", ""},
-	"bitbucket-token-broken":     {"a stored Bitbucket token was refused with 401 and the credential state holds it as broken.", ""},
-	"bitbucket-token-expiry":     {"a stored Bitbucket token's recorded expiry is near or past.", ""},
-	"bitbucket-direct":           {"a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.", ""},
-	"model-key-in-agent":         {"a model credential reaches a workflow's agent's own environment.", ""},
-	"launcher-jobs":              {"which Cloud Run jobs a launcher can start could not be checked.", ""},
-	"launcher-jobs-public":       {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
-	"launcher-jobs-unread":       {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
-	"batch-launcher-iam":         {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
-	"allow-list-uncovered":       {"the published policy does not admit a repository this machine's config names.", ""},
-	"creds-broken":               {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
-	"creds-unknown-state":        {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
-	"creds-rules":                {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
-	"token-signers":              {"who can sign the budget database's sign-in tokens could not be read.", ""},
+	"bitbucket-tokens-uncovered":  {"a proxied repository no stored Bitbucket token covers is refused before its first git call.", ""},
+	"bitbucket-token-broken":      {"a stored Bitbucket token was refused with 401 and the credential state holds it as broken.", ""},
+	"bitbucket-token-expiry":      {"a stored Bitbucket token's recorded expiry is near or past.", ""},
+	"bitbucket-direct":            {"a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.", ""},
+	"model-key-in-agent":          {"a model credential reaches a workflow's agent's own environment.", ""},
+	"launcher-jobs":               {"which Cloud Run jobs a launcher can start could not be checked.", ""},
+	"launcher-jobs-public":        {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
+	"launcher-jobs-unread":        {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
+	"batch-launcher-iam":          {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
+	"allow-list-uncovered":        {"the published policy does not admit a repository this machine's config names.", ""},
+	"layer-rigor-repo-unadmitted": {"the project layer's rigor names a repository the published policy does not admit, so no run takes its level.", ""},
+	"creds-broken":                {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
+	"creds-unknown-state":         {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
+	"creds-rules":                 {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
+	"token-signers":               {"who can sign the budget database's sign-in tokens could not be read.", ""},
 	// The managed deployer's own grants, the sweep's one warning that is the
 	// module's own binding: it carries no remove command, so its own sentence
 	// is the one the default view must print, and the sentence above is the

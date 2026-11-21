@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"slices"
@@ -10,8 +11,10 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // TestPickPromptPairsNumbersWithTheirOwnDirectory: PickPrompt writes one
@@ -26,7 +29,7 @@ import (
 // this test fails, finding PR #9 paired with "/review/7" and PR #7 paired
 // with "/review/9".
 func TestPickPromptPairsNumbersWithTheirOwnDirectory(t *testing.T) {
-	got := runner.PickPrompt("", "", []int{9, 7}, []string{"/review/9", "/review/7"})
+	got := runner.PickPrompt("", "", []int{9, 7}, []string{"/review/9", "/review/7"}, "")
 	if !strings.Contains(got, "- PR #9: /review/9\n") {
 		t.Fatalf("PR #9 not paired with its own directory: %q", got)
 	}
@@ -192,7 +195,7 @@ var runCommandRE = regexp.MustCompile("`(?:fugaro )?(?:cancel|run --retry|--revi
 // `agent.models.vision` and `model_prices`' `image_tokens` in the remedy
 // again): the remedy assertion fails, as the config would refuse that file.
 func TestTextOnlyCoderBriefNamesImageFilesAndTheFix(t *testing.T) {
-	got := runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s", NoImageReads: true}, "")
+	got := runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s", NoImageReads: true}, "", "")
 	for _, ext := range agent.ImageBlockExtensions() {
 		if kind := "*." + ext; !strings.Contains(got, kind) {
 			t.Errorf("the brief does not name %s:\n%s", kind, got)
@@ -227,7 +230,7 @@ func TestTextOnlyCoderBriefNamesImageFilesAndTheFix(t *testing.T) {
 	// prompt already sends its account to: a follow-up's, not the pull
 	// request description a first run writes.
 	followUp := runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s", NoImageReads: true,
-		FollowUp: []string{"- follow-up rule"}}, "")
+		FollowUp: []string{"- follow-up rule"}}, "", "")
 	if !strings.Contains(followUp, "say so in /s/followup.md") {
 		t.Errorf("a follow-up's brief does not name the follow-up file:\n%s", followUp)
 	}
@@ -238,7 +241,7 @@ func TestPromptsCarryShortIDRule(t *testing.T) {
 		{Branch: "fugaro/x", Base: "main", StateDir: "/s"},
 		{Branch: "fugaro/x", Base: "main", StateDir: "/s", FollowUp: []string{"- follow-up rule"}},
 	} {
-		got := runner.SystemPrompt(d, "")
+		got := runner.SystemPrompt(d, "", "")
 		for _, want := range []string{
 			"In anything you write for a person, refer to a run by its short ID — the last 4 characters of the run ID, and one character more for as long as another run you name shares them",
 			"and to a plan task by its plan name",
@@ -268,7 +271,7 @@ func TestFixPromptListsOnlyBlockingFindings(t *testing.T) {
 		{Severity: "blocker", File: "internal/api/handler.go", Summary: "the handler ignores the decode error"},
 		{Summary: "the retry loop never stops"},
 		{Summary: "the licence text needs counsel's clearance", NeedsOwner: true},
-	})
+	}, "", "")
 	if !strings.Contains(got, "- [blocker] internal/api/handler.go: the handler ignores the decode error\n") {
 		t.Errorf("the brief does not list the first finding with its severity and file:\n%s", got)
 	}
@@ -284,17 +287,157 @@ func TestFixPromptListsOnlyBlockingFindings(t *testing.T) {
 }
 
 // TestFixPromptSaysTouchNothingElse: the brief says the round is these fixes
-// alone (F16), which is CLAUDE.md's "a fix round adds no functionality" stated
-// where the coder reads it. A list of fixes and nothing more reads as leave to
-// keep working, and every finding the round left open is either listed or a
-// follow-up no change here may pre-empt.
+// alone (F16), which is CLAUDE.md's "a fix round adds no functionality beyond
+// the task's brief" stated where the coder reads it. A list of fixes and
+// nothing more reads as leave to keep working, and every finding the round
+// left open is either listed or a follow-up no change here may pre-empt.
+//
+// The brief's version of the rule names the brief for the same reason
+// CLAUDE.md's does (D2931): completing a requirement the task asked for is new
+// behaviour, and a sentence that forbade all of it would forbid the fix round
+// an `unmet` finding asks for.
 func TestFixPromptSaysTouchNothingElse(t *testing.T) {
-	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}})
+	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, "", "")
 	if !strings.Contains(got, "Touch nothing else") {
 		t.Errorf("the brief does not say to touch nothing else:\n%s", got)
 	}
 	if !strings.Contains(got, "Address each one, commit, and run `fugaro verify test` again.") {
 		t.Errorf("the brief lost the sentence that sends the coder through the tests again:\n%s", got)
+	}
+	if !strings.Contains(got, "add no functionality beyond the task's brief") {
+		t.Errorf("the brief does not bound the round at the task's brief:\n%s", got)
+	}
+}
+
+// TestFixPromptDiffersSaysReplace is F20's gap closed on the in-run brief. A
+// `differs` finding says the task asked for one thing and the change did
+// another; a round that answered it by writing the asked-for behaviour beside
+// what is already there would leave both, which is exactly what the scope
+// exists to prevent (D2931). So the brief prints the scope of every finding
+// that carries one — beside the severity, where the coder reads the finding —
+// and says what a `differs` item is fixed by: replacing what the change does
+// with what the task asks for, rather than adding beside it.
+func TestFixPromptDiffersSaysReplace(t *testing.T) {
+	got := runner.FixPrompt([]runner.Finding{
+		{
+			Severity: "major",
+			Class:    "correctness",
+			Scope:    "differs",
+			File:     "internal/store/list.go",
+			Summary:  "the task asks for a name filter and this sorts the whole list instead",
+		},
+		{Severity: "nit", File: "internal/store/list_test.go", Summary: "the new case is not covered"},
+	}, "", "")
+	if !strings.Contains(got, "- [major] [differs] internal/store/list.go: the task asks for a name filter and this sorts the whole list instead\n") {
+		t.Errorf("the brief does not print the finding's scope beside its severity:\n%s", got)
+	}
+	if !strings.Contains(got, "replace what the change does with what the task asks for, rather than adding the missing behaviour beside it") {
+		t.Errorf("the brief does not say to replace rather than add beside:\n%s", got)
+	}
+	// A finding about the code alone reads exactly as it did before the field
+	// existed: the scope is printed where there is one and nowhere else.
+	if !strings.Contains(got, "- [nit] internal/store/list_test.go: the new case is not covered\n") {
+		t.Errorf("the brief changed the line of a finding that carries no scope:\n%s", got)
+	}
+}
+
+// TestFixFindingsDiffersSaysReplace is the same rule in the other renderer:
+// the brief a `--pr --review-run` fix round is launched with carries the
+// scope of each issue the artifact holds (F20) and says what a `differs` item
+// is fixed by. The rule sits above the block and never inside it — the block
+// is the reviewer's own words, and this sentence is the program's.
+func TestFixFindingsDiffersSaysReplace(t *testing.T) {
+	const run = "20261105-120000-5eed"
+	got := runner.FixFindings(run, []runner.ReviewIssue{
+		{
+			Severity: "blocker",
+			Class:    "correctness",
+			Scope:    "unmet",
+			File:     "internal/api/handler.go",
+			Line:     7,
+			Summary:  "the task asks for a retry and the handler returns on the first error",
+			Fix:      "retry the decode, as the task asks",
+			Evidence: "internal/api/handler.go:7",
+		},
+		{
+			Severity: "major",
+			Class:    "maintainability",
+			Scope:    "differs",
+			File:     "internal/store/list.go",
+			Line:     12,
+			Summary:  "the task asks for a name filter and this sorts the whole list instead",
+			Fix:      "filter by name, as the task asks",
+			Evidence: "internal/store/list.go:12",
+		},
+	})
+	if !strings.Contains(got, "[blocker] [unmet] correctness — internal/api/handler.go:7") {
+		t.Errorf("the block does not print the issue's scope beside its severity:\n%s", got)
+	}
+	if !strings.Contains(got, "[major] [differs] maintainability — internal/store/list.go:12") {
+		t.Errorf("the block does not print the differing issue's scope:\n%s", got)
+	}
+	if !strings.Contains(got, "replace what the change does with what the task asks for, rather than adding the missing behaviour beside it") {
+		t.Errorf("the brief does not say to replace rather than add beside:\n%s", got)
+	}
+	if !strings.Contains(got, "the task asks for something this change does not do") {
+		t.Errorf("the brief does not say what an unmet issue is:\n%s", got)
+	}
+	// The rule is the program's own posture, so it stands above the reviewer's
+	// block rather than between its delimiters.
+	if i, j := strings.Index(got, "replace what the change does"), strings.Index(got, "<<<fugaro-findings-"); i > j {
+		t.Errorf("the rule about differing issues is inside the reviewer's block:\n%s", got)
+	}
+}
+
+// TestFixPromptBeyondNotRemoved is D2931's other half: a `beyond` finding is
+// reported and is never removed by a fix round for being beyond the brief —
+// what reaches the fixer reached it because its own class and severity block
+// (a finding the table tolerated is not in the brief at all, T-TR7b), and it
+// is there to be fixed for that risk and for nothing else. So the brief's own
+// words about `beyond` say the risk is what it is fixed for, and a round whose
+// findings carry no scope is told nothing about beyond work at all.
+func TestFixPromptBeyondNotRemoved(t *testing.T) {
+	got := runner.FixPrompt([]runner.Finding{{
+		Severity: "blocker",
+		Class:    "security",
+		Scope:    "beyond",
+		File:     "internal/api/admin.go",
+		Summary:  "the change adds an admin endpoint the task never asked for",
+	}}, "", "")
+	if !strings.Contains(got, "- [blocker] [beyond] internal/api/admin.go: the change adds an admin endpoint the task never asked for\n") {
+		t.Errorf("the brief does not print the finding's scope beside its severity:\n%s", got)
+	}
+	if !strings.Contains(got, "fixed for the risk its own class and severity name") {
+		t.Errorf("the brief does not say a beyond finding is fixed for its own risk:\n%s", got)
+	}
+
+	plain := runner.FixPrompt([]runner.Finding{{Severity: "blocker", File: "internal/api/handler.go", Summary: "the handler ignores the decode error"}}, "", "")
+	for _, absent := range []string{"[beyond]", "the task did not ask for"} {
+		if strings.Contains(plain, absent) {
+			t.Errorf("a round whose findings carry no scope says %q about beyond work:\n%s", absent, plain)
+		}
+	}
+}
+
+// TestFixPromptWidensWithMessage: a fix that carries a run message ends with
+// rule 4's sentence instead of "Touch nothing else" (D2943). The two contradict
+// each other — the round below the message may ask for more than the findings
+// do — and a coder reading "touch nothing else" beside a message asking for
+// something else is told to refuse the message.
+func TestFixPromptWidensWithMessage(t *testing.T) {
+	const block = "<<<fugaro-messages-0123456789abcdef>>>\n    [1] dimi, 2026-11-19T05:30Z\n    rename the helper\n<<<end-fugaro-messages-0123456789abcdef>>>\n"
+	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, block, "")
+	if strings.Contains(got, "Touch nothing else") {
+		t.Errorf("the brief still says to touch nothing else beside a message:\n%s", got)
+	}
+	if !strings.Contains(got, "may ask for more than the findings do") {
+		t.Errorf("the brief does not widen the round for the message:\n%s", got)
+	}
+	if !strings.Contains(got, block) {
+		t.Errorf("the brief does not carry the message block it was handed:\n%s", got)
+	}
+	if !strings.Contains(got, "the retry loop never stops") {
+		t.Errorf("the brief lost the findings it still blocks on:\n%s", got)
 	}
 }
 
@@ -481,4 +624,62 @@ func binariesPart(t *testing.T, body string) string {
 		part = part[:end+1]
 	}
 	return part
+}
+
+// TestPromptsFollowTheLevelARoundRaises: a prompt is built at the level the run
+// is at when it is built, never at the one the run started at. This run starts
+// at Startup and its own fix puts feature.txt under the area the repository
+// calls Critical, so D22's round moment raises it between round 1 and round 2:
+// the second senior round has to judge the change by Critical's reviewer
+// stance, and the fix that follows it has to carry Critical's coder stance in
+// both halves of its request — the system prompt it appends and the prompt
+// itself. A review prompt resolved once before the loop, or a system prompt
+// carried in from the implement stage, leaves round 2 and fix 2 at Startup
+// (findings 1 and 2).
+//
+// Red step: with the review prompt built once and the implement-time system
+// prompt reused by every fix, the second review round and the second fix carry
+// Startup's text.
+func TestPromptsFollowTheLevelARoundRaises(t *testing.T) {
+	base := testutil.FixtureFiles(t)["fugaro.yaml"]
+	cfg := strings.Replace(base, "  review_rounds: 2\n", "", 1)
+	if cfg == base {
+		t.Fatal("the fixture has no review_rounds: 2 to drop, so the level would not be the one supplying the number")
+	}
+	cfg = strings.Replace(cfg, "agent:\n",
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", level: critical }\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Rigor == nil || rec.Rigor.LevelOf() != rigor.Critical {
+		t.Fatalf("the record's level = %+v; want critical, or the case proves nothing", rec.Rigor)
+	}
+	if len(h.agent.calls) < 5 {
+		t.Fatalf("the run made %d agent calls; want implement, two review rounds and two fixes at the least", len(h.agent.calls))
+	}
+	startupRev, criticalRev := rigor.Persona(rigor.Startup, rigor.Reviewer), rigor.Persona(rigor.Critical, rigor.Reviewer)
+	startupCoder, criticalCoder := rigor.Persona(rigor.Startup, rigor.Coder), rigor.Persona(rigor.Critical, rigor.Coder)
+	// The calls are the run's stages in order: 0 implement, 1 the first senior
+	// round, 2 the fix that raises the level, 3 the round after the rise, 4 the
+	// fix it buys, and so on.
+	if first := h.agent.calls[1].Prompt; !strings.Contains(first, startupRev) {
+		t.Errorf("the first review round does not carry Startup's reviewer persona:\n%s", first)
+	}
+	if second := h.agent.calls[3].Prompt; !strings.Contains(second, criticalRev) || strings.Contains(second, startupRev) {
+		t.Errorf("the review round after the rise does not carry Critical's reviewer persona alone:\n%s", second)
+	}
+	f := h.agent.calls[4]
+	if !strings.Contains(f.AppendSystemPrompt, criticalCoder) || strings.Contains(f.AppendSystemPrompt, startupCoder) {
+		t.Errorf("the fix after the rise carries the wrong coder stance in the system prompt it appends:\n%s", f.AppendSystemPrompt)
+	}
+	if !strings.Contains(f.Prompt, criticalCoder) {
+		t.Errorf("the fix after the rise does not carry Critical's coder persona in its prompt:\n%s", f.Prompt)
+	}
 }

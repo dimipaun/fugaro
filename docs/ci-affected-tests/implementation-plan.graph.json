@@ -1,0 +1,277 @@
+{
+  "schema_version": 3,
+  "plan": "docs/ci-affected-tests/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "CS1",
+      "title": "the reverse import graph",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/graph.go",
+          "internal/ciselect/graph_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CS2a",
+      "title": "the read-map: static scan of what tests open",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/scan.go",
+          "internal/ciselect/scan_test.go",
+          "scripts/ci-readmap/main.go",
+          "docs/ci-affected-tests/read-map.json"
+        ]
+      }
+    },
+    {
+      "id": "CS2b",
+      "title": "the read-map: runtime trace on the full run",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/trace.go",
+          "internal/ciselect/trace_test.go",
+          "scripts/ci-readmap/trace.go"
+        ]
+      }
+    },
+    {
+      "id": "CS3",
+      "title": "timings and the packer",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/pack.go",
+          "internal/ciselect/pack_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CS4",
+      "title": "the selector program",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/ci-select/main.go",
+          "internal/ciselect/select.go",
+          "internal/ciselect/select_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CS5",
+      "title": "the map cannot rot: the staleness test",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/ciselect/readmap_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CS7",
+      "title": "the release gate reads that the run was full",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/release-gate.sh",
+          "scripts/release_test.go",
+          "scripts/testdata/fake-gh.sh",
+          "internal/cli/docs_desktop_console_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CS7b",
+      "title": "a release dispatches its own full run",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/release.sh",
+          "scripts/release_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CS6",
+      "title": "ci.yml and the gate jobs: select job, full input, nightly schedule (owner copy)",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/pending-workflows/README.md",
+          "docs/pending-workflows/console-release.yml"
+        ]
+      }
+    },
+    {
+      "id": "CS8",
+      "title": "docs: CONTRIBUTING, release.md, the ruling",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "CONTRIBUTING.md",
+          "docs/release.md",
+          "docs/ci-affected-tests/README.md"
+        ]
+      }
+    },
+    {
+      "id": "CS9",
+      "title": "Check 800: measure and break one on purpose",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check800.sh",
+          "scripts/live-checks/check800_test.sh",
+          "scripts/live_checks_test.go",
+          "docs/ci-affected-tests/check-800.md",
+          "docs/ci-affected-tests/README.md"
+        ]
+      }
+    },
+    {
+      "id": "CS6b",
+      "title": "the tests that pin what CS6 changes",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/docs_desktop_console_test.go",
+          "internal/cli/docs_mobile_release_workflow_test.go",
+          "internal/cli/docs_runner_timeout_test.go",
+          "internal/cli/docs_ci_selector_test.go"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "CS4",
+      "needs": "CS1",
+      "reason": "behaviour: the goldens run on the real graph"
+    },
+    {
+      "task": "CS4",
+      "needs": "CS2a",
+      "reason": "behaviour: the goldens run on the real map"
+    },
+    {
+      "task": "CS4",
+      "needs": "CS3",
+      "reason": "behaviour: the goldens run on the real packer"
+    },
+    {
+      "task": "CS2b",
+      "needs": "CS2a",
+      "reason": "one file, one format, run after the scan exists"
+    },
+    {
+      "task": "CS5",
+      "needs": "CS2a",
+      "reason": "the test re-runs the scan"
+    },
+    {
+      "task": "CS7b",
+      "needs": "CS7",
+      "reason": "one writer of scripts/release_test.go at a time"
+    },
+    {
+      "task": "CS6",
+      "needs": "CS4",
+      "reason": "behaviour: ci.yml calls a selector that works"
+    },
+    {
+      "task": "CS6",
+      "needs": "CS7",
+      "reason": "one sweep: the gate must accept what ci.yml names"
+    },
+    {
+      "task": "CS6",
+      "needs": "CS7b",
+      "reason": "one sweep: the hotfix path dispatches a full run"
+    },
+    {
+      "task": "CS9",
+      "needs": "CS6",
+      "reason": "measures the live workflow"
+    },
+    {
+      "task": "CS9",
+      "needs": "CS2b",
+      "reason": "the trace it breaks on purpose"
+    },
+    {
+      "task": "CS6",
+      "needs": "CS2b",
+      "reason": "the trace format it uploads"
+    },
+    {
+      "task": "CS6b",
+      "needs": "CS6",
+      "reason": "it reads the text it adapts the tests to"
+    },
+    {
+      "task": "CS8",
+      "needs": "CS6",
+      "reason": "documents what ci.yml does"
+    },
+    {
+      "task": "CS8",
+      "needs": "CS6b",
+      "reason": "documents what they do"
+    }
+  ],
+  "decoupling": [],
+  "contract_changes": []
+}

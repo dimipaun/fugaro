@@ -10,8 +10,8 @@ import (
 
 func synth(id, status, title string) Item {
 	return Item{
-		ID: id, Title: title, Mode: "none", Area: "repo", Status: status,
-		FiledBy: "dimipaun", FiledIn: "hand", Date: "2026-10-21",
+		ID: id, Title: title, Level: "none", Kind: "deferred", Area: "repo",
+		Status: status, FiledBy: "dimipaun", FiledIn: "hand", Date: "2026-10-21",
 		Path: Dir + "/" + id + "-a-slug.md",
 	}
 }
@@ -35,13 +35,33 @@ func TestRenderGroupsTheRowsAndSortsThemById(t *testing.T) {
 	if !(openAt < closedAt && closedAt < droppedAt) {
 		t.Errorf("Render's sections are not open, then closed, then dropped:\n%s", doc)
 	}
-	row := "| [20261021-01](20261021-01-a-slug.md) | open one | none | repo | open | dimipaun | 2026-10-21 |"
+	row := "| [20261021-01](20261021-01-a-slug.md) | open one | none | deferred | repo | open | dimipaun | 2026-10-21 |"
 	if !strings.Contains(doc, row) {
 		t.Errorf("Render's index does not carry the row %q:\n%s", row, doc)
 	}
 	// Sorted by id inside a group: 20261021-04 comes after 20261021-01.
 	if strings.Index(doc, "20261021-01") > strings.Index(doc, "20261021-04") {
 		t.Errorf("Render's open rows are not sorted by id:\n%s", doc)
+	}
+}
+
+// TestRenderCarriesTheLevelAndTheKind: the index lists both of the fields LD5
+// put a reader in front of — the level an item was left open under, and whether
+// it is a deferral or an open risk — as a column of its own, and an item's own
+// values land in them rather than in a cell that happens to be beside them.
+//
+// Mutation (verified, run and restored): drop the `kind` cell from Render's
+// row — this fails, because the row then carries the area where the kind
+// belongs.
+func TestRenderCarriesTheLevelAndTheKind(t *testing.T) {
+	it := synth("20261021-01", "open", "open one")
+	it.Level, it.Kind = "critical", "open-risk"
+	doc := Render([]Item{it})
+	if !strings.Contains(doc, "| id | title | level | kind | area | status | filed-by | date |") {
+		t.Errorf("Render's table header does not name the level and the kind: an item's own row says which values are which (LD5):\n%s", doc)
+	}
+	if !strings.Contains(doc, "| open one | critical | open-risk | repo |") {
+		t.Errorf("Render's row does not carry the item's own level and kind in their columns:\n%s", doc)
 	}
 }
 

@@ -274,9 +274,86 @@ const (
 // rows name the `project` family — `fugaro project policy publish` is the door
 // that carries the block onto the node, which is where a report run reads it —
 // so the generic path carries neither.
+//
+// W2 of docs/config-ownership is the last mover, by twenty-one rows and by
+// twenty-one: the governance block's own spelling — a stage's budget, token cap
+// and timeout and a tier's three figures — is a row a person writes at the
+// project layer and at the repository's own file (D2604), where the only
+// concrete spelling before it was the layer file's own `layer.governance.*`, and
+// the `governance.` prefix this list already names reaches all twenty-one. The
+// block's four own rows stay as rows of the read and the write refuses their own
+// spelling, so the named half does not move and the prefix-reached half carries
+// one more for every leaf.
+//
+// S-KNOB of docs/review-against-task/ moved it once more, by one row and by one:
+// the review-against-task switch `agent.review_against_task` is a repository-
+// scope key of `fugaro.yaml`, read from the base branch, and the `agent.` prefix
+// reaches it — the shape `agent.triage` beside it has — so the allowlist carries
+// one key more and the rows without a generic writer do not move.
+//
+// RA8b of the same work moved both by one again: the switch's local carrier,
+// the top-level `review_against_task` the owner's own file states and the
+// publish copies into the policy node (R7, D2935), is a row `settings set`
+// writes — the file is the machine's own, the shape the `triage` row above it
+// has — so the named list carries one key more rather than reaching it by
+// prefix.
+//
+// WS3 of docs/workspace-service/ is the last mover, by six rows and by none:
+// the member's pin gains the address its runs call the workspace's credentials
+// service at (R3), the member row gains where its database lives and splits its
+// job service accounts into the account and the repositories it is a job of (R6,
+// D2992), and the owner's shared list is three rows of its own (D1298). All six
+// name the `workspace` family, whose writer is `fugaro workspace` and never the
+// generic path (D853), so the allowlist carries no key of them and the rows
+// without a generic writer move by the six.
+//
+// W3 of docs/config-ownership is the last mover, by two names and by none: the
+// repository's `workflows.*.needs` (R1) and `workflows.*.ab.reviewer_arm` (B1.4)
+// are rows whose owner column named the generic writer while no name in the
+// allowlist reached them, so a concrete spelling was refused by the path its own
+// row pointed at (F13), and naming the two is the whole of what makes a write
+// land on them. `mobile_allow` — the block a person declares a phone in (D231,
+// D2603) — is the third name and it moves no figure: the registry holds the
+// three `mobile_allow.*` leaf rows and no row for the block, so the block is
+// admitted by its own name and the row an entry write is about is built from its
+// leaves rather than counted here.
+//
+// LP0 of docs/location-preference/ moved it by four rows and by none:
+// the local project config gains the `locations` block, the record of where this
+// machine read the installation's Firestore database, its Realtime Database, the
+// replication of its secret containers and its run-log bucket to be (D3087), and
+// it is one machine's own — never published, never an input — so no name and no
+// prefix in the allowlist reaches any of its four rows.
+//
+// C1 of docs/batch-run-identity/ moved it after that, by three rows and by none:
+// the `batch:` block gains its two identity facts — the opt-in fact
+// (`batch.opt_in`) and the key fact, which is one fact in two fields
+// (`batch.seal_key.version`, `batch.seal_key.public_key`, R13) — each owned by
+// `fugaro update` and by no settings command, because they are the
+// installation's facts and not a machine's preference. No name in the allowlist
+// and no prefix of it reaches the three, so the rows without a generic writer
+// move by the three.
+//
+// KS19 of docs/keys-through-service/ is the last mover after it, by two rows and by
+// none: the record `fugaro update` writes on a repository's entry gains R12's
+// two facts beside the switch it already carries
+// (`repos.*.provider_keys_served`, `repos.*.stage_account_served`), and they
+// are the same family as that switch — the `project` one, whose writer is
+// `fugaro update` and never the generic path — so the allowlist reaches
+// neither of them and the rows without a generic writer move by the two.
+//
+// LV3.1 of docs/rigor-modes/ is the last mover after them, and the first mover this
+// paragraph records whose rows are mostly the generic path's: the project
+// layer's per-repository levels (LD4, LF4) are `rigor.repos` in the block's own
+// spelling — a row config.Scopes derives, whose handful of other rows all carry
+// InRepo and this one does not, so its owner is the layer file's token rather
+// than the generic writer's — beside the layer's `defaults.rigor.repos` row and
+// the two rows an area rule's members are (LF4). The three layer rows are
+// reached by the `layer.defaults.` prefix and the block's own is not carried, so
+// four rows and three of them move the allowlist's figure.
 const (
-	cfmRegistryRows   = 484
-	cfmAllowlistNamed = 118
+	cfmRegistryRows   = 526
+	cfmAllowlistNamed = 121
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

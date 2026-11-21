@@ -77,6 +77,16 @@ const (
 	// the node arrives on the ceiling and the repository's file in the checked
 	// out branch.
 	KeyTriage = "triage"
+	// KeyReviewAgainstTask is the switch that makes a review check a pull
+	// request against its task (docs/review-against-task, D2935): the
+	// repository's own agent.review_against_task, and the owner's published
+	// policy node. It is a key of the merge for KeyTriage's reason — the two
+	// homes meet only here — and it is the inverse of it in direction: ON is the
+	// stricter value, so the merge takes a true wherever it appears and records
+	// a layer's false that lost to one. That is what makes the owner's published
+	// true a check no repository can walk out of, and his published false only
+	// the default a repository's own true overrides.
+	KeyReviewAgainstTask = "review_against_task"
 	// The governance keys, spelled as fugaro.yaml spells them under
 	// governance: (docs/task-governance/spec.md §2, §5). The three stages are
 	// the ones a run's governance bounds: an artifact run's plan and render
@@ -395,14 +405,14 @@ func ParseLevel(s string) (Level, bool) {
 // the key out or writes an empty object: the empty object is how an operator
 // says the node's floor goes away on purpose, and it is what leaves the
 // published node without the member.
-func ParseFloor(written map[string][]string) (map[rigor.Mode][]Level, error) {
+func ParseFloor(written map[string][]string) (map[rigor.Rigor][]Level, error) {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("review_floor."+f, a...)) }
-	out := make(map[rigor.Mode][]Level, len(written))
+	out := make(map[rigor.Rigor][]Level, len(written))
 	for _, mode := range slices.Sorted(maps.Keys(written)) {
 		m, ok := rigor.Parse(mode)
 		if !ok {
-			bad("%s: %q is not a rigor mode (%s)", mode, mode, vocabulary(rigor.Modes))
+			bad("%s: %q is not a rigor mode (%s)", mode, mode, vocabulary(rigor.Rigors))
 			continue
 		}
 		names := written[mode]
@@ -439,7 +449,7 @@ func ParseFloor(written map[string][]string) (map[rigor.Mode][]Level, error) {
 
 // vocabulary is a closed vocabulary as an error prints it, read off the list
 // itself rather than written out again: the floor's refusals name the whole
-// set (rigor.Modes, Levels), so a name this package refuses is a name the
+// set (rigor.Rigors, Levels), so a name this package refuses is a name the
 // operator can see is not in it, and a vocabulary that grows cannot leave the
 // sentence behind.
 func vocabulary[T ~string](names []T) string {
@@ -519,6 +529,23 @@ type Layer struct {
 	// the merge takes it wherever it appears and drops a layer's true under an
 	// effective false.
 	Triage *bool
+	// ReviewAgainstTask is this layer's switch for checking a pull request
+	// against the task it was written for (docs/review-against-task, D2935):
+	// nil = the layer writes none, true = every review stage is shown the
+	// originating run's task and asked whether the change does what it asks,
+	// false = it is not. A pointer for Triage's reason: false is a value here
+	// and not "unset", and the merge has to be able to tell a layer that says
+	// false from one that says nothing.
+	//
+	// The two homes it has are Triage's: the repository's own
+	// agent.review_against_task, read from the base branch, and the owner-only
+	// policy node, which internal/runner puts on the ceiling. Its direction is
+	// the opposite one — on is the stricter answer — so the merge takes a true
+	// wherever it appears and drops a layer's false under an effective true
+	// (see Merge). The owner's published true therefore forces the check on for
+	// every repository, while his published false is the project-wide default a
+	// repository's own true overrides (D2935).
+	ReviewAgainstTask *bool
 	// Governance is this layer's governance limits; the zero value sets
 	// none, which is what leaves the ceiling's own alone (see Governance).
 	Governance Governance
@@ -535,7 +562,7 @@ type Layer struct {
 	// It is merged as a union (see Merge), so a lower layer that writes one
 	// can add a level and never remove one; the merge is what makes that
 	// direction a property of this package rather than of its callers.
-	ReviewFloor map[rigor.Mode][]Level
+	ReviewFloor map[rigor.Rigor][]Level
 	// Orchestrator is this layer's block of the orchestrator's spawn
 	// guardrails and decision models (D1239, D1234); the zero value sets none,
 	// which leaves the ceiling's own alone (see Orchestrator).
@@ -573,10 +600,10 @@ type Layer struct {
 //
 // The method shadows Layer.ReviewFloor, the field the merge fills: the whole
 // map is e.Layer.ReviewFloor, and a mode's levels are asked for here.
-func (e Effective) ReviewFloor(mode rigor.Mode) []Level { return e.Layer.ReviewFloor[mode] }
+func (e Effective) ReviewFloor(mode rigor.Rigor) []Level { return e.Layer.ReviewFloor[mode] }
 
 // ReviewFloorFor is the floor a run at mode is held to, given the mode the
-// layers resolved beside its own request (rigor.LayersMode, "" for every run
+// layers resolved beside its own request (rigor.LayersRigor, "" for every run
 // whose request did not take it off the axis): both rows hold, in the
 // vocabulary's order.
 //
@@ -592,7 +619,7 @@ func (e Effective) ReviewFloor(mode rigor.Mode) []Level { return e.Layer.ReviewF
 // ReviewFloor's does, so a caller that appends to the answer clones it first —
 // which is what the two callers already do with a floor (internal/runner's
 // resolveLevelsForcing, the launcher's copy, both forcing level 3 on).
-func (e Effective) ReviewFloorFor(mode, beside rigor.Mode) []Level {
+func (e Effective) ReviewFloorFor(mode, beside rigor.Rigor) []Level {
 	return FloorFor(e.Layer.ReviewFloor, mode, beside)
 }
 
@@ -601,7 +628,7 @@ func (e Effective) ReviewFloorFor(mode, beside rigor.Mode) []Level {
 // rather than as a merged Effective: the launcher's own read of the policy,
 // which resolves the levels a launch will run before any run exists
 // (internal/cli's launchReviewLevelsAsk).
-func FloorFor(floor map[rigor.Mode][]Level, mode, beside rigor.Mode) []Level {
+func FloorFor(floor map[rigor.Rigor][]Level, mode, beside rigor.Rigor) []Level {
 	if beside == "" || beside == mode {
 		return floor[mode]
 	}
@@ -629,6 +656,25 @@ func unionFloor(a, b []Level) []Level {
 // method rather than by dereferencing a pointer every caller would have to
 // remember to read as "off wins".
 func (e Effective) TriageOff() bool { return e.Triage != nil && !*e.Triage }
+
+// ReviewAgainstTaskForced reports whether the merged layers force a review to
+// be checked against the task: some layer wrote true, which nothing under it
+// could turn off, because on is the stricter answer for this key (D2935). It is
+// the owner's published `true` — the one value no repository can walk out of —
+// and a repository's own true reaches the same answer.
+func (e Effective) ReviewAgainstTaskForced() bool {
+	return e.ReviewAgainstTask != nil && *e.ReviewAgainstTask
+}
+
+// ReviewAgainstTaskDefaultOff reports whether the merged layers leave the check
+// off by default: at least one layer wrote false and none wrote true (D2935).
+// It is what the owner's published `false` means — a project-wide default off,
+// not a ceiling — and the reading order a consumer owes it is the one R7 names:
+// Forced first, then the repository's own value where its base file sets one,
+// then this, then on.
+func (e Effective) ReviewAgainstTaskDefaultOff() bool {
+	return e.ReviewAgainstTask != nil && !*e.ReviewAgainstTask
+}
 
 // Effective is the merged policy plus where each key came from.
 type Effective struct {

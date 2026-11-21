@@ -269,6 +269,14 @@ resource "google_cloud_run_v2_service" "intake" {
         name  = "FUGARO_GCP_PROJECT"
         value = var.project
       }
+      # The region a container the intake creates is replicated in (D3082). This
+      # process runs in the cloud with no project config and no installation
+      # record it may read, so the region its own containers go in is a fact of
+      # its deployment rather than something it can look up.
+      env {
+        name  = "FUGARO_REGION"
+        value = var.region
+      }
       # The service's own URL, which is the audience a caller's Google ID token
       # is minted for — the one thing that binds such a token to THIS service.
       # Cloud Run assigns it, so it is a variable the update stage fills from

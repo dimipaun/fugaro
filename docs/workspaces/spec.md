@@ -470,7 +470,7 @@ repeatable) — the first four are the values this table holds, `--repo` is the 
 contribution to the workspace, and the **region** is in none of them (§6) — and the per-member
 credentials node itself has no writer at all:
 `WorkspaceCredentials`'s own comment says so
-(`internal/projectpolicy/workspace_credentials.go`:101, "This node has no writer in the tree"). The
+(`internal/projectpolicy/workspace_credentials.go`:113, "This node has no writer in the tree"). The
 command that records a region, and the publish path that fills the table, are therefore a later
 task's, and a member whose Firebase project was adopted with a **regional** database is derived the
 legacy `<firebase_project>-default-rtdb` host until one lands: its row can carry only an empty
@@ -927,7 +927,7 @@ ceiling is decided.
    ([reconciliation.md](reconciliation.md) §9, O3).
    **The second way this risk is reachable is the account's class, and it is stated here for the
    same reason.** The workspace builds each member's verifier from the owner's own table —
-   `JobAccounts` alone, `internal/credsvc/workspace.go`:459 — so the two account classes the
+   `JobAccounts` alone, `internal/credsvc/workspace.go`:514 — so the two account classes the
    member's own installation decides from its own published policy are not asked: the shared-job
    gate that refuses a shared project job whole under Global Constraint 6
    (`verifyJob`, `internal/credsvc/auth.go`:682) and the review class, which the installation admits

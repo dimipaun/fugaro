@@ -229,6 +229,11 @@ func TestLeaseTopUpAndRelease(t *testing.T) {
 	}
 }
 
+// spendLeavesBefore is the last generation without the day counter leaves
+// (budget.spendLeavesGeneration is 7): a literal, because RulesVersion moves
+// past it with every later rules change and "one behind" stops being behind.
+const spendLeavesBefore = 6
+
 // TestBudgetSessionWritesTheDeployedLeaves (F27, SA5.1): the run's budget
 // session learns the installation's deployed rules generation at bootstrap --
 // the marker fugaro update writes, read through projectpolicy and handed to
@@ -245,7 +250,7 @@ func TestBudgetSessionWritesTheDeployedLeaves(t *testing.T) {
 		leaf   bool
 	}{
 		{"the deployed generation", projectpolicy.RulesVersion, true},
-		{"one generation behind", projectpolicy.RulesVersion - 1, false},
+		{"the generation before the leaves", spendLeavesBefore, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := newBK(t, gwConfig(t, ""), "enforce", "", capScript(2)...)
@@ -909,8 +914,9 @@ func TestHaltedRecordSchema(t *testing.T) {
 // or its transcript. (The API key is not secret but is redacted like one.)
 func TestBudgetSecretScan(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "", capScript(2)...)
-	// Real values from the job's environment, as on Cloud Run.
-	b.deps.Env = append(b.deps.Env, runner.RTDBURLEnv+"="+b.db.URL, runner.FirebaseAPIKeyEnv+"="+bkAPIKey)
+	// The job's environment carries the run's Firebase identity, as on Cloud
+	// Run: the harness's budget database is where the run's address and web
+	// API key come from (testutil.NewBudget).
 	custom := func() string {
 		objs := allObjects(t, b.harness.bucket)
 		tok, err := token.Unseal(b.key, token.ObjectKey(repoSlug, runID), []byte(objs[token.ObjectKey(repoSlug, runID)]))

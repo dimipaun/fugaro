@@ -200,6 +200,16 @@ export interface SectionRead {
    * a slow earlier read must never overwrite a later one.
    */
   settle(token: number): boolean
+  /**
+   * current answers whether this token is still the newest one asked for, and
+   * **changes nothing**. It is `settle`'s question without its answer: a read
+   * that draws in several parts (`stream.ts`'s chunked rows) asks it between the
+   * parts and stops drawing where it is no longer the section's, where `settle`
+   * would take the busy state down on the first part -- and a stream is a read
+   * that is still going. It is the same fact `mark` reads when it decides
+   * whether to draw at all, so a caller's own guard and this one cannot disagree.
+   */
+  current(token: number): boolean
   /** end clears the busy state without settling it, for a screen the operator
    * has left: nothing is in flight for it any more. */
   end(): void
@@ -281,6 +291,9 @@ export function sectionRead(options: {
       end()
       return true
     },
+    current(mine: number): boolean {
+      return mine === token
+    },
     end,
   }
 }
@@ -335,6 +348,79 @@ export function renderStamp(factory: SectionFactory, at: number): DrawnStamp {
   literal(refresh, STAMP_REFRESH_LABEL)
   root.append(refresh)
   return { root, at: words, refresh }
+}
+
+/** RETRY_CLASS is the retry control's own hook and RETRY_LABEL its word. The
+ * word is this file's own vocabulary, like the stamp's, so `literal` is the
+ * only writer it needs. */
+export const RETRY_CLASS = 'console-retry'
+export const RETRY_LABEL = 'Retry'
+
+/**
+ * renderRetry draws the one control a refused or timed-out section offers
+ * (R1: `docs/console-improvements/reconciliation.md`): a button that re-spawns
+ * that section's own read.
+ *
+ * **This file draws the action and attaches no listener**, exactly as
+ * `renderStamp` does: a listener needs a document, and only the caller has one
+ * -- the caller is also the only place that knows which read the section is
+ * waiting for, and a control that re-read the wrong one would be worse than no
+ * control at all.
+ *
+ * **An empty section's sentence is not this control's job**: a section that
+ * answered with nothing is drawn with `renderEmpty`'s plain sentence, and the
+ * two are separate because they answer separate facts -- "the read failed" and
+ * "the read answered with nothing".
+ *
+ * **The factory's own element comes back**, which is why this is generic in it:
+ * a caller's `factory` is typed by the surface it draws on (`ScreenFactory` in a
+ * screen, the entry's own), and an element widened to this file's `SectionElement`
+ * would have to be narrowed again at exactly the call sites -- `append` to a
+ * screen's host -- that know it is theirs.
+ */
+export function renderRetry<T extends SectionElement>(factory: { create(tag: string): T }): T {
+  const control = factory.create('button')
+  control.setAttribute('class', RETRY_CLASS)
+  // `type` is written rather than left to the document's default, for the
+  // reason `renderStamp`'s refresh gives: a `button` inside a form without it is
+  // a submit, and this one is a read.
+  control.setAttribute('type', 'button')
+  literal(control, RETRY_LABEL)
+  return control
+}
+
+/** EMPTY_CLASS is the hook an empty section's sentence carries. */
+export const EMPTY_CLASS = 'console-empty'
+
+/** EmptySentence is the whole of what an empty section may say: this file's own
+ * strings and no others. It is a closed union rather than a `string` because
+ * every empty sentence is the console's own vocabulary -- `renderEmpty` writes
+ * it with `literal`, which is only honest for a string this console authored,
+ * and a `string` parameter would let a document's words reach that call. */
+export const EMPTY_RUNS = 'No jobs running'
+export type EmptySentence = typeof EMPTY_RUNS
+
+/**
+ * renderEmpty draws the plain sentence a section with nothing in it says, which
+ * the spec's section 8 asks for in as many words ("No jobs running").
+ *
+ * The malformed case is not this one: a section whose read was refused or timed
+ * out draws the CLI's own sentence and `renderRetry` (R1), and a section whose
+ * read has not answered yet draws its busy mark and the shape of what is coming.
+ * This is the third state of the three, and the only one that is a fact about
+ * the data rather than about the read.
+ *
+ * The factory is generic here for the reason `renderRetry`'s is: a screen hands
+ * in the factory of its own surface and gets that surface's element back.
+ */
+export function renderEmpty<T extends SectionElement>(
+  factory: { create(tag: string): T },
+  sentence: EmptySentence,
+): T {
+  const line = factory.create('p')
+  line.setAttribute('class', EMPTY_CLASS)
+  literal(line, sentence)
+  return line
 }
 
 /** CACHE_LIMIT is how many views a session keeps. It is small on purpose: the

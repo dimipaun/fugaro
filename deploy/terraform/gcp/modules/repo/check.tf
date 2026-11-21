@@ -66,8 +66,14 @@ resource "google_cloud_run_v2_job" "check" {
           }
         }
 
+        # The mount leaves once the service serves this repository's builds
+        # (B4.9): the job fetches its git credential from the service instead,
+        # reading the address Go wrote into its environment. It goes with the
+        # accessor above (build.tf's local.check_mount_served, either class),
+        # because a job that mounts a secret its account may not read is a job
+        # Cloud Run refuses to create (C2.3).
         dynamic "env" {
-          for_each = var.repo.check.secret_env
+          for_each = local.check_mount_served ? {} : var.repo.check.secret_env
           content {
             name = env.key
             value_source {

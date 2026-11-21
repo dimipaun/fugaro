@@ -13,13 +13,26 @@ package creds
 // limits, because the first version of this comment was not (review finding m8).
 // It is an allow-list of the packages that may IMPORT internal/creds: the
 // package itself, the service that owns the state (internal/credsvc, C1.10
-// onward), and the operator's CLI (internal/cli, whose `fugaro accounts`
-// commands show the marks and clear a broken one, C1.21). Every package on the
-// run side is off the list — internal/runner and internal/gateway (the in-runner
-// gateway), internal/agent, internal/managed, internal/backend, internal/task —
-// so that a refactor cannot quietly move a write of the state into the code a
-// run executes, where a later loosening of the rules would hand it to a
-// contributor's process.
+// onward), the operator's CLI (internal/cli, whose `fugaro accounts` commands
+// show the marks and clear a broken one, C1.21), and — from WS11 — the run side,
+// where the run reads the one node of this package a run may read. Every other
+// package on the run side is off the list — internal/agent, internal/managed,
+// internal/backend, internal/task — so that a refactor cannot quietly move a
+// write of the state into the code a run executes, where a later loosening of
+// the rules would hand it to a contributor's process.
+//
+// The run side's entry is the route record and nothing else (C2, WS11). A
+// workspace is a second project whose credentials service serves a member's
+// runs, one kind at a time, and the record that says which kind is served from
+// where is a policy node: `config/policy/route/<slug>`, published by the
+// member's own `fugaro update` (R4, F23) and readable by a run's own token (the
+// grant WS22 adds to the rules). A run that could not read it could not route a
+// call at all, so this package holds the record's type, its path and its
+// decoder, and the run side holds the reading of it. What that entry does NOT
+// open is the state above the record: creds/ is still denied to every run
+// identity (O1, D136), the record names holders and an address and carries no
+// credential, and the slip half below is held to the two entries it was — a
+// run reads a route, and no run side names a slip, a claim or a store.
 //
 // It is not "nothing here is ever linked into the runner", and a reader should
 // not take it that way: cmd/fugaro links internal/cli and the runner into ONE
@@ -58,10 +71,28 @@ const credsPackage = "github.com/dimipaun/fugaro/internal/creds"
 // separated) whose files may import credsPackage. Widening it is a deliberate
 // edit here, made with the reason written next to the new entry, and never a
 // quiet new import in some future package.
+// Why internal/gateway appears here though no file of its own package names
+// this package: it cannot. internal/creds imports internal/budget, which imports
+// internal/gateway, so an import the other way is a cycle the go tool refuses —
+// which is exactly why the route reaches the gateway as facts (an address, an
+// identity, whether the model kind is served there) and not as a route value,
+// and why the reading of the record is internal/runner's. The entry is still the
+// truthful one: the test that drives a routed gateway lives in this directory,
+// in the external test package, which reads a record's own type to build the
+// options a run would — and this scan reads test files as much as any other
+// ("no exemption" below). Naming the directory rather than that one file keeps
+// the list the shape it has always had, one entry per package.
 var credsImporters = []string{
 	"internal/creds",   // the package itself, and its tests
 	"internal/credsvc", // the service: the cascade's one caller (C1.10, C1.11)
 	"internal/cli",     // the operator's `fugaro accounts` commands (C1.21)
+	// The run side, from WS11: the run reads its repository's route record at
+	// bootstrap and hands the answer to the gateway, which cannot read this
+	// package itself (see the note below the list). internal/runner is that
+	// reading half; internal/gateway is here for the external test that drives a
+	// routed run, which reads a published record to build a run's options.
+	"internal/runner",
+	"internal/gateway",
 }
 
 // TestCredsIsNotReachableFromARun fails if any file outside the allow-list
@@ -93,11 +124,11 @@ func TestCredsIsNotReachableFromARun(t *testing.T) {
 			strings.Join(found, "\n  "))
 	}
 
-	// The allow-list is exactly the three callers above: a fourth entry is a
+	// The allow-list is exactly the callers above: a further entry is a
 	// deliberate edit here and not a quiet import somewhere (review finding m8),
 	// and a name that is no longer a caller should leave the list rather than
 	// widen it.
-	want := []string{"internal/creds", "internal/credsvc", "internal/cli"}
+	want := []string{"internal/creds", "internal/credsvc", "internal/cli", "internal/runner", "internal/gateway"}
 	if len(credsImporters) != len(want) {
 		t.Fatalf("the allow-list holds %d entries %v; want exactly %v", len(credsImporters), credsImporters, want)
 	}
@@ -147,6 +178,63 @@ func TestBoundaryDeniesRunsTheRepoAuthRecord(t *testing.T) {
 // boundarySlugs are the two slug spellings the paths are built from: the GitHub
 // and the Bitbucket shape a task's own slug has.
 var boundarySlugs = []string{"gh-acme-app-1a2b", "bb-acme-web-9f8e"}
+
+// TestRoutePathIsGrantedInTheDeployedRules: the pair above is a denial — the
+// document grants a run's token nothing on the path the code builds — and this
+// is its converse, for the one path of this package that a run's own token MUST
+// reach. The route record says which service serves a repository's model, GitHub
+// and Bitbucket credentials (C2), and the run reads it once at bootstrap and
+// mints an identity token for the address it names (WS11): a document that
+// refuses that read leaves every run of a member that pinned a workspace served
+// by the project, silently, which is the failure R3 exists to prevent.
+//
+// What the grant may be is as narrow as the denial is wide: the leaf is per
+// repository — a read on the parent would hand every repository's address to
+// every run — and the read holds the record to the token's own slug claim, which
+// is the same escape RoutePath keys the node with, so one repository's run never
+// reads another's. WS22 wrote the rule and this test is the guard the wire
+// contract asks for (docs/workspace-service/contract-wire.md, "The import
+// boundary this contract crosses"): it holds a non-Go spelling — the template's
+// path, through the document the golden pins — to the constant here, and it
+// lives in this package because the package whose file the template is cannot
+// import this one (credsImporters).
+func TestRoutePathIsGrantedInTheDeployedRules(t *testing.T) {
+	rules := rulesDocument(t)
+	for _, slug := range boundarySlugs {
+		path := RoutePath(slug)
+		node, ok := rulesNodeAt(rules, path)
+		if !ok {
+			t.Fatalf("the rules document carries no node at /%s: the record's home is a policy-side leaf a run reads its own route from, and RTDB grants nothing at a path no rule names (WS22, R3, R4)", path)
+		}
+		cond, _ := node[".read"].(string)
+		if cond == "" {
+			t.Errorf("the rules document grants no read of /%s, so a run of this repository is served by the project and never learns its route (R3, F23)", path)
+		} else if !strings.Contains(cond, "auth.token.fs == $slug") {
+			t.Errorf("the read of /%s is %q, which does not hold the record to the run's own slug claim (auth.token.fs == $slug): a read granted without it admits every repository's run, or none, to an address a run mints an identity token for", path, cond)
+		}
+		if v, has := node[".write"]; !has || v != false {
+			t.Errorf("/%s carries .write = %#v, want the explicit false: no token but the member's admins' writes the route, and a client that could write one would point a later run at a service of its own (F23, R4, D2981)", path, v)
+		}
+	}
+	// The parent is where a grant would cascade from, so it carries none: it is
+	// the member's own update that walks it to remove the records of the
+	// repositories it no longer publishes.
+	assertDenied(t, rules, RoutePathParent(), "a read granted on the parent cascades to every repository's record")
+}
+
+// rulesNodeAt walks a path the code builds through the document and returns the
+// node its last segment reaches, false when the document says nothing about it.
+func rulesNodeAt(rules map[string]any, path string) (map[string]any, bool) {
+	node := rules
+	for _, segment := range strings.Split(path, "/") {
+		next, ok := rulesChildAt(node, segment)
+		if !ok {
+			return nil, false
+		}
+		node = next
+	}
+	return node, true
+}
 
 // rulesDocument is the rules document the generator produces, read from the
 // golden that pins it (internal/budget/rules/testdata/rules.golden.json, which

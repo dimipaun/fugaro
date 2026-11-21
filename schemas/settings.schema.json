@@ -220,6 +220,72 @@
           "items": {
             "$ref": "#/$defs/level"
           }
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The setting's human-readable name, at most six words (`settings.Meta.Label`, D2908). Absent on a key the metadata table has no entry for, and the console then falls back to the raw key (SU1 of the console-improvements plan)."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One sentence saying what the setting does (`settings.Meta.Description`). Absent with label."
+        },
+        "group": {
+          "type": "string",
+          "enum": [
+            "Runs",
+            "Budget",
+            "Repositories",
+            "Workflows",
+            "Profiles",
+            "Credentials",
+            "Reviews",
+            "Follow-ups",
+            "Watching",
+            "This machine"
+          ],
+          "$comment": "settings.MetaGroups (internal/settings/meta.go), in the order the console's accordion draws them. An entry naming a group outside this list is refused where its family is loaded, so the schema and the table cannot disagree about the vocabulary."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "string",
+            "bool",
+            "int",
+            "float",
+            "duration",
+            "enum"
+          ],
+          "$comment": "settings.MetaTypes (internal/settings/meta.go): the control the value calls for, which the console branches on to draw a toggle, a number, a text field or a select. A row without it is a text control over the raw key."
+        },
+        "enum": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "The closed set of values a `type: enum` row accepts, in the order a select draws them. Absent on every other type, and on an enum row whose metadata states none (settings.Register refuses that entry)."
+        },
+        "min": {
+          "type": "string",
+          "description": "The low bound of an int, float or duration value, written in the value's own spelling (`1`, `0.5`, `5m`). Absent when the key has no bound on that side, and on every other type."
+        },
+        "max": {
+          "type": "string",
+          "description": "The high bound of an int, float or duration value, in the same spelling as min. Absent when the key has no bound on that side, and on every other type."
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "duration",
+            "repo",
+            "email",
+            "url",
+            "memory",
+            "branch"
+          ],
+          "$comment": "settings.MetaFormats less its empty member (internal/settings/meta.go): the shape the CLI already validates for a string value — a duration as config.ParseDuration reads one, a repository `owner/name`, an e-mail address, an https clone URL, a memory size, a git branch name. Absent is free text, which is what an empty Meta.Format means and why the emitter leaves the member out."
         }
       }
     },
@@ -357,6 +423,9 @@
         "agent.review": {
           "default": "unset = none"
         },
+        "agent.review_against_task": {
+          "default": "unset = on (config.Agent.ReviewAgainstTaskOn)"
+        },
         "agent.review_rounds": {
           "default": "unset = the run's rigor mode decides (rigor.DefaultRounds)"
         },
@@ -389,6 +458,15 @@
         },
         "batch.network": {
           "default": "unset = the project's default network"
+        },
+        "batch.opt_in": {
+          "default": "unset = the installation has not opted in, so no compute root is applied"
+        },
+        "batch.seal_key.public_key": {
+          "default": "unset = none: without the key fact a sealed launch is refused"
+        },
+        "batch.seal_key.version": {
+          "default": "unset = none: without the key fact a sealed launch is refused"
         },
         "batch.secrets": {
           "default": "unset = none"
@@ -745,13 +823,76 @@
         "governance.stage_budget": {
           "default": "unset = Fugaro's own stage budgets"
         },
+        "governance.stage_budget.fix": {
+          "default": "unset = Fugaro's own stage budgets"
+        },
+        "governance.stage_budget.implement": {
+          "default": "unset = Fugaro's own stage budgets"
+        },
+        "governance.stage_budget.review": {
+          "default": "unset = Fugaro's own stage budgets"
+        },
         "governance.stage_timeout": {
+          "default": "unset = Fugaro's own stage timeouts"
+        },
+        "governance.stage_timeout.fix": {
+          "default": "unset = Fugaro's own stage timeouts"
+        },
+        "governance.stage_timeout.implement": {
+          "default": "unset = Fugaro's own stage timeouts"
+        },
+        "governance.stage_timeout.review": {
           "default": "unset = Fugaro's own stage timeouts"
         },
         "governance.stage_tokens": {
           "default": "unset = Fugaro's own stage token caps"
         },
+        "governance.stage_tokens.fix": {
+          "default": "unset = Fugaro's own stage token caps"
+        },
+        "governance.stage_tokens.implement": {
+          "default": "unset = Fugaro's own stage token caps"
+        },
+        "governance.stage_tokens.review": {
+          "default": "unset = Fugaro's own stage token caps"
+        },
         "governance.tiers": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.large.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.large.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.large.max_subagents": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.medium.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.medium.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.medium.max_subagents": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.small.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.small.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.small.max_subagents": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.trivial.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.trivial.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.trivial.max_subagents": {
           "default": "unset = Fugaro's own tiers"
         },
         "image_catalog.entries.*.default": {
@@ -991,14 +1132,23 @@
         "layer.defaults.rigor.areas.*.match": {
           "default": "unset = none"
         },
-        "layer.defaults.rigor.areas.*.mode": {
+        "layer.defaults.rigor.areas.*.level": {
           "default": "unset = none"
         },
         "layer.defaults.rigor.areas.*.name": {
           "default": "unset = none"
         },
+        "layer.defaults.rigor.areas.*.members.*.paths": {
+          "default": "unset = none"
+        },
+        "layer.defaults.rigor.areas.*.members.*.repo": {
+          "default": "unset = none"
+        },
         "layer.defaults.rigor.default": {
-          "default": "unset = the built-in mode (pro)"
+          "default": "unset = the built-in level (pro)"
+        },
+        "layer.defaults.rigor.repos": {
+          "default": "unset = none"
         },
         "layer.gcp_project": {
           "default": "unset = the installation's GCP project"
@@ -1215,7 +1365,19 @@
         },
         "local.version": {
           "$comment": "localcfg.ConfigVersion",
-          "default": "2"
+          "default": "3"
+        },
+        "locations.firestore": {
+          "default": "unset = not known yet: no converge has read where the project's Firestore database is"
+        },
+        "locations.log_bucket": {
+          "default": "unset = not known yet: no converge has read where the installation's run log bucket is"
+        },
+        "locations.rtdb": {
+          "default": "unset = not known yet: no converge has read where the project's Realtime Database is"
+        },
+        "locations.secrets": {
+          "default": "unset = not known yet: no converge has read what the installation's own secret containers do"
         },
         "log_view": {
           "default": "unset = the project's default logs"
@@ -1424,11 +1586,20 @@
         "repos.*.provider": {
           "default": "unset = none"
         },
+        "repos.*.provider_keys_served": {
+          "default": "unset = false: no update has found this repository's bundle holding an entry for every provider credential its config names, or the deployed service is not at the release that serves one, or the project publishes no allow-list"
+        },
+        "repos.*.stage_account_served": {
+          "default": "unset = false: no update has found a stage account this repository mixes with a provider key, or the deployed service is not at the release that serves one"
+        },
         "repos.*.vertex": {
           "default": "unset = false"
         },
         "repos.*.workflows": {
           "default": "unset = every workflow the repository defines"
+        },
+        "review_against_task": {
+          "default": "unset = on: every review stage is handed the task its pull request was written for, and a written false is the project-wide default a repository's own true turns back on"
         },
         "review_floor": {
           "default": "unset = none: no floor is added"
@@ -1438,6 +1609,9 @@
         },
         "rigor.default": {
           "default": "unset = pro (rigor.Default)"
+        },
+        "rigor.repos": {
+          "default": "unset = none"
         },
         "rigor_pending": {
           "default": "unset = none: the wizard's rigor answer has been written into the project layer"
@@ -1672,6 +1846,9 @@
         "workspace_cap.monthly": {
           "default": "unset = the workspace states no cap"
         },
+        "workspace_members.*.database_region": {
+          "default": "unset = the member's database lives in its project's default region"
+        },
         "workspace_members.*.exchange_url": {
           "default": "unset = none"
         },
@@ -1681,8 +1858,11 @@
         "workspace_members.*.fp": {
           "default": "unset = none"
         },
-        "workspace_members.*.job_service_accounts": {
+        "workspace_members.*.job_service_accounts.*.account": {
           "default": "unset = no job service account is declared for the member"
+        },
+        "workspace_members.*.job_service_accounts.*.repos": {
+          "default": "unset = the account is a job of no repository"
         },
         "workspace_members.*.repos": {
           "default": "unset = the member contributes no repository"
@@ -1698,6 +1878,18 @@
         },
         "workspace_pin.service_account": {
           "default": "unset = no workspace is pinned"
+        },
+        "workspace_pin.service_address": {
+          "default": "unset = this project takes no workspace credential"
+        },
+        "workspace_shared.*.covers": {
+          "default": "unset = the credential covers no repository"
+        },
+        "workspace_shared.*.kind": {
+          "default": "unset = the workspace offers no credential"
+        },
+        "workspace_shared.*.projects": {
+          "default": "unset = the credential is offered to no member"
         }
       }
     }

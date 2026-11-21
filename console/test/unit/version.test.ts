@@ -46,10 +46,16 @@ import {
   HIDDEN_VIEW_WORDS,
   LAUNCH_CLI_FLOOR,
   LICENCE_KEY_CLI_FLOOR,
+  BUDGET_STREAM_CLI_FLOOR,
+  IMAGE_CATALOG_CLI_FLOOR,
   NO_APPLY_CLI_FLOOR,
   NOTICE_REASONS,
+  RECIPES_CLI_FLOOR,
   REDUCED_VIEWS,
   RUNS_LIST_PAGE_CLI_FLOOR,
+  RUNS_STREAM_CLI_FLOOR,
+  SETUP_CLI_FLOOR,
+  SPEND_STREAM_CLI_FLOOR,
   SKEW_HEADLINES,
   SUPPORTED_CLI_MINORS,
   UNREADABLE_VERSION,
@@ -59,6 +65,7 @@ import {
   hidesView,
   launchSupported,
   licenceKeySupported,
+  meetsCliFloor,
   noApplySupported,
   parseCliVersion,
   renderVersionSkew,
@@ -537,6 +544,91 @@ describe('licenceKeySupported', () => {
     expect(licenceKeySupported('0.23.0-rc.1', floor)).toBe(false)
     expect(licenceKeySupported('dev', floor)).toBe(false)
     expect(licenceKeySupported('', floor)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The console improvements' six new floors.
+// ---------------------------------------------------------------------------
+
+describe('the console improvements’ floors', () => {
+  /** THE_UNRELEASED is one floor per row the console improvements' plan adds
+   * (AL), with the command it is about. The list is written out here rather
+   * than derived, for the same reason `THE_REFUSED` is in
+   * `licence-state.test.ts`: the question is which rows have a floor and what
+   * each floor is, and a test that read the module's own table back could not
+   * answer either. */
+  const THE_UNRELEASED: readonly (readonly [string, string | null, string])[] = [
+    ['runs.stream', RUNS_STREAM_CLI_FLOOR, 'runs ls --stream --json'],
+    ['spend.stream', SPEND_STREAM_CLI_FLOOR, 'report --stream --json'],
+    ['budget.stream', BUDGET_STREAM_CLI_FLOOR, 'budget show --stream --json'],
+    ['setup.plan', SETUP_CLI_FLOOR, 'setup --plan-only --answers-file - --events --json'],
+    ['setup.apply', SETUP_CLI_FLOOR, 'setup --answers-file - --events --json'],
+    ['image.catalog.ls', IMAGE_CATALOG_CLI_FLOOR, 'image ls --json'],
+    ['recipes.ls', RECIPES_CLI_FLOOR, 'recipes ls --json'],
+  ]
+
+  it('names no release for any of them, because no release carries the flags yet', () => {
+    // **The plan's rule for a row whose flag is on this tree and in no
+    // release**: a floor constant set before the CLI release carries the flag
+    // is a `null` until it does (`version.ts`'s `LICENCE_KEY_CLI_FLOOR` and
+    // `NO_APPLY_CLI_FLOOR` are the same idiom). What a `null` *means* to a
+    // reader is a refusal -- `src/source/new-reads.ts`'s `refuseBelowFloor`
+    // answers `NEW_READ_FLOOR_UNSET` for it, which is the half pinned in
+    // `source-new-reads.test.ts` -- so the direction is refusal and never a
+    // `--stream` handed to a CLI that answers `unknown flag`. A release that
+    // ships one of the flags sets its own constant to its own version in a
+    // one-line pull request, and this case fails then, which is the point: the
+    // line that changes is the line a reviewer reads.
+    for (const [name, floor, command] of THE_UNRELEASED) {
+      expect(floor, `${name} (${command})`).toBeNull()
+    }
+    // ...and the two rows of one command share one constant, because they are
+    // one release and one binary: `setup --plan-only` and `setup` are two
+    // argvs of the same command, and no CLI answers either word before it.
+    expect(THE_UNRELEASED.filter(([, floor]) => floor === null)).toHaveLength(THE_UNRELEASED.length)
+  })
+
+  it('is one constant per command, and each is declared the way every floor is', () => {
+    // **The count is the release step's**: five commands carry the six rows --
+    // `setup`'s plan and apply are one binary and one release -- and the three
+    // feeds arrive with three different CLI tasks (`internal/cli`'s RS1,
+    // `ee/report`'s RS3 and `budget`'s RS4), so a release may carry one flag
+    // without the others and a single constant for the set would force all of
+    // them to land at once. The declarations are read out of the module's own
+    // text, because a value that is `null` today cannot tell a separate binding
+    // from a shared one.
+    const source = readFileSync(join(__dirname, '..', '..', 'src', 'shared', 'version.ts'), 'utf8')
+    for (const name of [
+      'RUNS_STREAM_CLI_FLOOR',
+      'SPEND_STREAM_CLI_FLOOR',
+      'BUDGET_STREAM_CLI_FLOOR',
+      'SETUP_CLI_FLOOR',
+      'IMAGE_CATALOG_CLI_FLOOR',
+      'RECIPES_CLI_FLOOR',
+    ]) {
+      expect(source, name).toContain(`export const ${name}: string | null = null`)
+    }
+    // The two setup rows share the one constant: a second one would be a second
+    // release to wait for, for two argvs of the same command.
+    expect(source).not.toContain('SETUP_APPLY_CLI_FLOOR')
+    expect(source.match(/export const SETUP_CLI_FLOOR/g) ?? []).toHaveLength(1)
+  })
+
+  it('is the patch comparison every other floor is, once a release names itself', () => {
+    // The branch a release takes: the constant becomes the version whose flag
+    // lands, and the comparison is `meetsCliFloor`'s -- below the floor is a
+    // refusal however close, the floor itself and everything above it are not,
+    // and a line that cannot be placed at all is a refusal. Driven with a
+    // version argument because the constants are unset and because the rule is
+    // the shared one rather than six copies of it.
+    const floor = '0.27.0'
+    for (const line of ['0.26.9', '0.27.0-rc.1', 'dev', '']) {
+      expect(meetsCliFloor(line, floor), line).toBe(false)
+    }
+    for (const line of ['0.27.0', '0.27.1', '0.28.0', '1.0.0', '0.27.0+build.7']) {
+      expect(meetsCliFloor(line, floor), line).toBe(true)
+    }
   })
 })
 

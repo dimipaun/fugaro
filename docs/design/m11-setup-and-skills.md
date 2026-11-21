@@ -95,7 +95,7 @@ not list`) and no Terraform address in them, and its own step carries the cross 
 left-for-you marker, because nothing this reader types or runs writes a refused plan. The whole
 sentence, gate sentence and addresses included, is `Left.Text`: the log's and `--json`'s.
 
-`--plan-only` prints this view plus each reachable stage's real Terraform plan and changes nothing (as today, it can still create the state bucket behind its confirmation). `--json` prints the same as data, with `left_for_you` as an array of `{stage, kind: command|prompt|console|refused, text}`.
+`--plan-only` prints this view plus each reachable stage's real Terraform plan and changes nothing (as today, it can still create the state bucket behind its confirmation). `--json` prints the same as data, with `left_for_you` as an array of `{stage, kind: command|prompt|console|refused, text, why}` — `why` is one line saying why the step was not done, in the refusal's own words; it is absent when there is no reason beside the step's own `text` — a stage's needs-you sentence is the whole of what it has to say, a reason that would repeat that `text` is not printed twice, and the detail of a stage that applied work is its success line and never a reason.
 
 **Confirmations.** Unchanged in spirit: typed project name for applies, extra typed confirmations for what is permanent or irreversible (Firestore location, project creation, billing linkage), separate confirmations for billable builds. The owner confirms each step at their own real terminal, which **never** covers project creation or billing linkage (those need their own flags) and **never** supplies a secret.
 

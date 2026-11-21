@@ -39,9 +39,10 @@ import { describe, expect, it } from 'vitest'
 
 import { measured } from '../../src/shared/availability'
 import { PLAN_STATUS_MIN_INTERVAL_MS } from '../../src/source/cli'
+import { CONSOLE_WINDOW_SIZE } from '../../src/main/window'
 import { GRAPH_DOCUMENT_VERSION, decodeGraphDocument } from '../../src/shared/schema'
 import type { GraphView, PlanStatusView, RunView } from '../../src/shared/schema'
-import { GRAPH_ROW_GAP, nodeKey } from '../../src/renderer/graph/layout'
+import { GRAPH_ROW_CARDS, GRAPH_ROW_GAP, nodeKey } from '../../src/renderer/graph/layout'
 import type { WorkerLike } from '../../src/renderer/graph/layout-client'
 import { GRAPH_MAX_TITLE_CODE_POINTS, GRAPH_NODE_WIDTH, GRAPH_SCOPE_NO_RELEASE, STATE_WORDS, buildGraphModel } from '../../src/renderer/graph/model'
 import { STAMP_LEAD, stampOf } from '../../src/renderer/section'
@@ -238,6 +239,59 @@ function threeStreams(): PlanStatusView {
     repo: 'example-owner/example-repo',
     plans,
     totals: { plans: plans.length, tasks, closed: 0, open: tasks },
+    streams: [],
+    warnings: [],
+  })
+}
+
+/**
+ * wideLevel is a document of **one stream whose middle level is wider than a
+ * row**: one task, `count` tasks that wait on it, and one task that waits on the
+ * first of those. Level 1 therefore holds `count` cards in one line, which is
+ * the shape the row bound exists for. It is built through the real decoder, like
+ * `threeStreams`, so the case is about a document and not about a model someone
+ * assembled by hand.
+ */
+function wideLevel(count: number): PlanStatusView {
+  const nodes: unknown[] = [
+    { id: 'root', title: 'The task the rest wait on', state: 'ready', closed: false, level: 0, critical: false, needs: [] },
+  ]
+  for (let at = 0; at < count; at += 1) {
+    nodes.push({
+      id: `wide-${String(at)}`,
+      title: 'A task that waits on the root',
+      state: 'ready',
+      closed: false,
+      level: 1,
+      critical: false,
+      needs: ['root'],
+    })
+  }
+  nodes.push({
+    id: 'tail',
+    title: 'The task that waits on the first of them',
+    state: 'ready',
+    closed: false,
+    level: 2,
+    critical: false,
+    needs: ['wide-0'],
+  })
+  return decoded({
+    repo: 'example-owner/example-repo',
+    plans: [
+      {
+        id: 'plans/2026-11-19-wide',
+        artifact: 'docs/plans/2026-11-19-wide.graph.json',
+        plan: 'The wide plan',
+        stream: 'wide',
+        nodes,
+        releases: [],
+        tasks: nodes.length,
+        closed: 0,
+        open: nodes.length,
+      },
+    ],
+    totals: { plans: 1, tasks: nodes.length, closed: 0, open: nodes.length },
     streams: [],
     warnings: [],
   })
@@ -1566,6 +1620,15 @@ function themeRule(sheet: string, selector: string): Readonly<Record<string, str
   return found
 }
 
+/** pagePadIn is the page's own left padding in CSS pixels, read off the theme
+ * rather than spelled here: it is half of the room the pane loses to the page,
+ * and the row bound is measured against the pane. */
+function pagePadIn(): number {
+  const declared = Number.parseFloat(themeRule('flight-deck.css', ':root')['--page-pad-x'] ?? '')
+  if (!Number.isFinite(declared)) throw new Error('the theme declares no --page-pad-x, so the pane below is unread')
+  return declared
+}
+
 /** inspectorOf is the panel of one selected task, over a fresh screen: the case
  * that reads a panel says as little as it can about how it got there. */
 async function inspectorOf(key: string): Promise<FakeNode> {
@@ -2302,17 +2365,17 @@ describe('the graph screen and its scope', () => {
 })
 
 // ---------------------------------------------------------------------------
-// The scale the picture is drawn at (slice G, D735)
+// The scale the picture is drawn at (slice G, D735; D2900 for the axis)
 // ---------------------------------------------------------------------------
 
 describe('the graph screen and the scale it is drawn at', () => {
   it('graph: fits the width above the minimum scale', async () => {
-    // **The picture has a scale floor, and the panel's width is what reaches
-    // it.** Above the floor nothing changes: the canvas is the panel's own
-    // width, which is `width: auto` with `min-width: 100%` and is what the
-    // element did before the floor existed. The floor itself is the canvas's
-    // `width`/`height` geometry -- the whole picture at `GRAPH_MIN_SCALE` --
-    // written as attributes because `style-src 'self'` backs no inline style.
+    // **The picture carries a scale floor as its own geometry** (D735): the
+    // canvas's `width`/`height` attributes are the whole picture at
+    // `GRAPH_MIN_SCALE`, written as attributes because `style-src 'self'` backs
+    // no inline style, and the stylesheet then draws the element at the pane's
+    // width (`width: 100%`, the case below) with the picture's own ratio keeping
+    // it a picture.
     const screen = elkScreen()
     await screen.load(DOCUMENT, RUNS)
     const root = drawingOf(screen)
@@ -2337,22 +2400,30 @@ describe('the graph screen and the scale it is drawn at', () => {
     expect(GRAPH_NODE_WIDTH * GRAPH_MIN_SCALE).toBe(195)
     expect(title * GRAPH_MIN_SCALE).toBeGreaterThanOrEqual(9)
 
-    // And the canvas fills the panel whenever there is room: `min-width: 100%`
-    // is what makes the floor a floor rather than a size, and `height: auto`
-    // keeps the picture's ratio while it stretches.
+    // And the canvas **is the pane's width**: `width: 100%` draws the whole
+    // picture at whatever the pane holds -- the floor above is what keeps the
+    // scale from being forced under the legibility bound, since a level is
+    // stacked into rows of four cards and no picture is wider than the pane the
+    // console opens in -- and `height: auto` keeps the picture's ratio while it
+    // stretches. `min-width` is gone deliberately: a floor the element cannot go
+    // under is a picture that overflows the pane and is read sideways, which is
+    // the shape D2900 reversed.
     const rule = themeRule('flight-deck.css', 'section.graph svg.graph-canvas')
-    expect(rule['width']).toBe('auto')
-    expect(rule['min-width']).toBe('100%')
+    expect(rule['width']).toBe('100%')
     expect(rule['height']).toBe('auto')
+    expect(rule['min-width']).toBeUndefined()
   })
 
-  it('graph: scrolls horizontally below it', async () => {
-    // Below the floor the canvas keeps its geometry and the pane around it
-    // scrolls: a picture read sideways is still a picture, where a picture
-    // shrunk to the panel is one nobody can read. `width: 100%` -- the rule the
-    // screen carried before the floor existed -- is exactly the value that would
-    // fit the width whatever the picture's own size, so the canvas must not
-    // carry it any more.
+  it('graph: never scrolls across, with the canvas the pane’s width', async () => {
+    // **The pane never scrolls across** (D2900's second half, which reversed the
+    // sideways reading below the floor). Where the pane is narrower than the
+    // picture at its floor -- a window narrower than the console opens in -- the
+    // canvas is drawn at the pane's width and scaled with it rather than held at
+    // the floor and scrolled. The picture is read top to bottom, and it is the
+    // page around the pane that carries it down: nothing bounds the pane's
+    // height, so `overflow-y` is only the value `overflow-x: hidden` computes it
+    // to. The browser's own reading of the width is `graph.spec.ts`'s, in a real
+    // window.
     const screen = elkScreen()
     await screen.load(DOCUMENT, RUNS)
     const root = drawingOf(screen)
@@ -2361,18 +2432,21 @@ describe('the graph screen and the scale it is drawn at', () => {
     if (canvas === undefined) throw new Error('the drawing put no canvas up')
 
     const pane = classedIn(root, 'graph-canvas-pane')[0]
-    if (pane === undefined) throw new Error('the canvas was drawn with no pane to scroll it in')
+    if (pane === undefined) throw new Error('the canvas was drawn with no pane around it')
     expect(pane.children.map((each) => each.getAttribute('class'))).toEqual(['graph-canvas'])
     // The stage still holds the drawing: the pane is between the two, and the
     // inspector is still the stage's own second column.
     const stage = classedIn(root, 'graph-stage')[0]
     expect(stage?.children.map((each) => each.getAttribute('class'))).toEqual(['graph-canvas-pane'])
 
-    expect(themeRule('flight-deck.css', 'div.graph-canvas-pane')['overflow-x']).toBe('auto')
-    const rule = themeRule('flight-deck.css', 'section.graph svg.graph-canvas')
-    expect(rule['width'], 'the canvas still fits the width whatever the picture’s size').not.toBe('100%')
-    // The floor is below the picture's own width, or there would be no range in
-    // which the pane has anything to scroll.
+    const paneRule = themeRule('flight-deck.css', 'div.graph-canvas-pane')
+    expect(paneRule['overflow-x'], 'the pane still scrolls across').toBe('hidden')
+    // And the other axis is `auto`, which is the value `overflow-x: hidden`
+    // gives it whether or not the stylesheet writes it out.
+    expect(paneRule['overflow-y']).toBe('auto')
+    expect(themeRule('flight-deck.css', 'section.graph svg.graph-canvas')['width']).toBe('100%')
+    // The floor is below the picture's own width, or the attributes above would
+    // be the frame itself and the scale they carry would say nothing.
     expect(Number(canvas.getAttribute('width'))).toBeLessThan(frame.width)
     expect(Number(canvas.getAttribute('height'))).toBeLessThan(frame.height)
 
@@ -2386,13 +2460,19 @@ describe('the graph screen and the scale it is drawn at', () => {
     expect(classedIn(mounted(drawn), 'graph-canvas-pane')).toHaveLength(0)
   })
 
-  it('layout: no wrapping option', async () => {
-    // **The floor is the whole of D735's first half**: the picture is never
-    // folded to fit, it is scrolled. `elk.layered.wrapping` is the option that
-    // would fold it -- and folding a graph whose layers run left to right widens
-    // it across the axis a reader moves along, which is the wrong shape for the
-    // panel as well as a new cache key and a new set of positions. So no ask
-    // this screen makes carries a wrapping key at all.
+  it('layout: top to bottom, with the three strategies the stacking is built on', async () => {
+    // **What every ask carries** (D2900, which reversed step 6a's left-to-right
+    // direction). The picture is read top to bottom, so the layers the engine
+    // computes are the rows a person reads down -- and the engine's own width
+    // controls do not bound a level in this direction: `elk.layered.wrapping` is
+    // ignored for it, which is why no ask carries a wrapping key at all, and the
+    // bounds the layerer offers are loose. The three strategies are named because
+    // the picture's width is a function of them, measured rather than assumed:
+    // the default layerer (`NETWORK_SIMPLEX`) balances a level's cards back up
+    // into one line and undoes the rows the module asked for, and the default
+    // node placement spreads a row whose cards are separate components
+    // two-dimensionally -- each of the two drew a level of seven cards about 2000
+    // units wide where the row the picture is meant to be drawn in is 1300.
     const { screen, worker } = screenWith()
     await screen.load(DOCUMENT, RUNS)
     const asks = worker.sent.filter((each) => each['cmd'] === 'layout')
@@ -2401,7 +2481,46 @@ describe('the graph screen and the scale it is drawn at', () => {
       const options = (ask['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
       expect(Object.keys(options).filter((each) => each.includes('wrapping')), 'the engine was asked to fold the picture').toEqual([])
       expect(options['elk.algorithm']).toBe('layered')
-      expect(options['elk.direction']).toBe('RIGHT')
+      expect(options['elk.direction']).toBe('DOWN')
+      expect(options['elk.layered.layering.strategy']).toBe('LONGEST_PATH_SOURCE')
+      expect(options['elk.layered.nodePlacement.strategy']).toBe('SIMPLE')
+      expect(options['elk.separateConnectedComponents']).toBe('false')
     }
+  })
+
+  it('graph: stacks a level wider than a row, so the picture fits the pane at the floor', async () => {
+    // **The pane is the design target and the row is what fits it** (D2900's
+    // second half). A row of `GRAPH_ROW_CARDS` cards and the gaps between them
+    // has to fit the pane the console opens with once the picture is drawn at its
+    // floor -- the pane is the console's own window less the page's own padding,
+    // and a card at the floor is 195 px -- and one card more has to *not* fit, or
+    // the row bound would be a number nothing was measured against. The document
+    // is a task, seven tasks that wait on it, and one that waits on the first of
+    // those: a level nothing could draw in one row of a 1116 px pane.
+    const pane = CONSOLE_WINDOW_SIZE.width - 2 * pagePadIn()
+    const card = GRAPH_NODE_WIDTH * GRAPH_MIN_SCALE
+    const gap = GRAPH_LAYER_GAP * GRAPH_MIN_SCALE
+    expect(GRAPH_ROW_CARDS * card + (GRAPH_ROW_CARDS - 1) * gap, 'a full row does not fit the pane').toBeLessThanOrEqual(pane)
+    expect((GRAPH_ROW_CARDS + 1) * card + GRAPH_ROW_CARDS * gap, 'one card more would still fit the pane').toBeGreaterThan(pane)
+
+    const screen = elkScreen()
+    await screen.load(wideLevel(7), [])
+    const root = drawingOf(screen)
+    const cards = cardsIn(root)
+    expect(cards, 'the wide document was drawn with no cards').toHaveLength(9)
+
+    // Every card of one row is drawn at that row's own y, so the rows are the
+    // distinct y values -- and **the widest of them is the row bound itself**,
+    // which is the fact that tells a stacked level from a level drawn in one
+    // line: a card per row would be a level six cards wide.
+    const rows = new Map<number, number>()
+    for (const drawn of cards) rows.set(drawn.rect.y, (rows.get(drawn.rect.y) ?? 0) + 1)
+    expect(Math.max(...rows.values()), 'no row carries the cards the pane fits').toBe(GRAPH_ROW_CARDS)
+
+    // And the whole picture, bands included, is inside the pane at the floor:
+    // this is the acceptance -- no layout wider than the pane -- measured on the
+    // picture the screen itself computed rather than on the arithmetic above.
+    const frame = viewBoxIn(root)
+    expect(frame.width * GRAPH_MIN_SCALE, 'the picture is wider than the pane at its floor').toBeLessThanOrEqual(pane)
   })
 })

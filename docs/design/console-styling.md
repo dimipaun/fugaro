@@ -54,7 +54,15 @@ files say so in their own words — `console/src/renderer/screens/live.ts`: "no 
 and no colour"; `console/src/renderer/app.ts`'s `ElementLike` is deliberately narrower than
 `HTMLElement` with "no style and no event handler", and `entry.ts`'s header repeats it:
 "the element it wraps exposes a text slot and attributes — no markup parsing, no
-navigating attribute, no style and no event handler". Nothing anywhere under
+navigating attribute and no style". **That narrowness has two exceptions, and `entry.ts`'s
+header names both** rather than leaving them for a reader to find in the wrapper:
+`domSurface`'s `nodeOf`, which the entry uses to attach a click listener to a row it drew;
+and — added for the console-improvements plan's SU2a — the settings panel's search box, for
+which the wrapper also carries `addEventListener`, whose listener takes no argument, and a
+`value` getter, asked for by `screens/projects.ts`'s `SettingsElement` and by no other
+interface in the tree. The search is not the event-handling screen the narrow interface
+exists to keep out: it filters a document this build has already read, so it opens no read,
+names no command, writes nothing and reads no event object. Nothing anywhere under
 `console/src/renderer/` sets a `style` attribute, because the CSP admits no inline style
 anyway (below).
 
@@ -670,7 +678,8 @@ it is a **sibling** of the body rather than a child of it, because `fillProjects
 the seven panels to the body and a host inside it would push the models panel ahead of
 them. The settings read is the third of those hosts —
 `section.projects > div.projects-settings > div.console-busy-slot` — and it is a sibling
-of both for the same reason: one row per setting, in a `ul.projects-settings-list`, with a
+of both for the same reason: one row per setting, in a `ul.projects-settings-list` under its
+group's own section (the accordion below), with a
 pencil on a row the document says is writable and a target layer it names, the owning
 command family on a row the generic path may not write, and **no row at all** for one the
 document marks sensitive. The pencil is a real `<button>`, in the tab order and bound by the
@@ -682,6 +691,21 @@ the section is dimmed while its read is out, never blanked, and says "still read
 a quarter of a minute. A screen this session has already read is drawn at once, stamped
 `as of HH:MM` with a Refresh control.
 
+**The settings rows are an accordion with a search** (the console-improvements plan's
+SU2a; spec §4, D2908). The rows are filed under the groups the CLI's own metadata names,
+in `settings.MetaGroups`' order, one `details.projects-settings-group` per group with the
+group's own name as the text of its `summary.projects-settings-group-title` — a native
+disclosure, so **every group is collapsed when the panel is painted** and the browser is
+what opens one. The name is the only place a section carries its group: it goes through
+`putText`, and no attribute holds it. A row the registry describes nothing about has no group of its
+own, and is drawn under the console's `Other` section with its raw key as the whole of its
+name: `span.projects-settings-label` is drawn only where the document carries a label, and
+the key beside it is muted there (`span.projects-settings-label + span.projects-settings-key`).
+The box (`input.projects-settings-search`) filters the document **already read** — on the
+label, the description and the raw key, never through `--grep`, which the console's argv
+list forbids (R7) — and it expands every group with a match and puts away the ones without;
+a query that matches nothing draws `p.projects-settings-none` and never a second read.
+
 | Group | Class hooks |
 |---|---|
 | Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-state`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
@@ -691,7 +715,7 @@ a quarter of a minute. A screen this session has already read is drawn at once, 
 | Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-enrolled`, `projects-repo-card-none` |
 | Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-account-none`, `projects-accounts-note` |
 | Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
-| Settings | `projects-settings`, `projects-settings-list`, `projects-settings-row`, `projects-settings-key`, `projects-settings-scope`, `projects-settings-value`, `projects-settings-wins`, `projects-settings-state`, `projects-settings-owner-word`, `projects-settings-owner`, `projects-settings-owner-generic`, `projects-settings-pencil`, `projects-settings-editor`, `projects-settings-editor-outcome` |
+| Settings | `projects-settings`, `projects-settings-search`, `projects-settings-group`, `projects-settings-group-title`, `projects-settings-label`, `projects-settings-none`, `projects-settings-list`, `projects-settings-row`, `projects-settings-key`, `projects-settings-scope`, `projects-settings-value`, `projects-settings-wins`, `projects-settings-state`, `projects-settings-owner-word`, `projects-settings-owner`, `projects-settings-owner-generic`, `projects-settings-pencil`, `projects-settings-editor`, `projects-settings-editor-outcome` |
 | Models | `projects-models`, `projects-models-body`, `projects-models-heading`, `projects-models-route-list`, `projects-models-route`, `projects-models-route-name`, `projects-models-route-kind`, `projects-models-route-host`, `projects-models-route-fee`, `projects-models-claims`, `projects-models-claims-word`, `projects-models-claim`, `projects-models-to`, `projects-models-to-word`, `projects-models-to-every`, `projects-models-to-none`, `projects-models-allow`, `projects-models-route-base`, `projects-models-route-note`, `projects-models-list`, `projects-models-row`, `projects-models-id`, `projects-models-route-of`, `projects-models-input`, `projects-models-output`, `projects-models-catalog`, `projects-models-catalog-checked`, `projects-models-catalog-age`, `projects-models-catalog-stale` |
 | Managed state | `projects-managed`, `projects-managed-marks`, `projects-managed-marks-head`, `projects-managed-marks-list`, `projects-managed-trail`, `projects-managed-trail-head`, `projects-managed-trail-list`, `projects-managed-trail-state`, `projects-managed-term`, `projects-managed-value`, `projects-managed-word`, `projects-managed-number` |
 | Account keys | `projects-account-keys`, `projects-account-keys-title`, `projects-account-keys-state`, `projects-account-keys-source`, `projects-account-keys-because`, `projects-account-keys-body`, `projects-account-keys-list`, `projects-account-keys-row`, `projects-account-keys-key`, `projects-account-keys-stage`, `projects-account-keys-value` |
@@ -1270,37 +1294,72 @@ never blanked — and says it is still reading after a quarter of a minute. The 
 drawn from the plan status alone and the run overlay decorates it when the run list lands,
 so a screen that waited for both reads would be the all-or-nothing wait this rule forbids.
 
-**The picture is read left to right** (console redesign, step 6a). The layout engine is
-asked for `elk.direction: 'RIGHT'` and `elk.edgeRouting: 'ORTHOGONAL'`, so a task sits to
-the **left** of the tasks that need it, the layers it computes are the columns a reader
-reads across, and a dependency is a line that leaves one card's side and arrives at
-another's. A card is **260 × 88** (`GRAPH_NODE_WIDTH`, `GRAPH_NODE_HEIGHT`), which is the
+**The picture is read top to bottom** (**D2900**, the owner, 2026-11-18, which **reversed**
+console redesign step 6a's left-to-right canvas). The layout engine is asked for
+`elk.direction: 'DOWN'` and `elk.edgeRouting: 'ORTHOGONAL'`, so a task sits **above** the
+tasks that need it, the layers it computes are the **rows** a reader reads down, and a
+dependency is a line that leaves one card's edge and arrives at another's. What step 6a
+wanted survives the reversal — a dependency is a run of the picture a reader follows — and
+what the ruling changed is the axis: the graph is the one screen whose width grows with its
+data, and the console's window *is* a width, so the axis a picture may grow along is the one
+that scrolls. A card is **260 × 88** (`GRAPH_NODE_WIDTH`, `GRAPH_NODE_HEIGHT`), which is the
 two constants the engine is told and the two **one stream's** layout cache is keyed by: the
 key is a serialization of that stream's **structure**, so the box sizes are in it and a
 card that changes size changes the key with it.
 
-**The picture has a scale floor, and below it the pane scrolls** (the graph-fits-the-width
-slice's G1.1; D735). Fitting the panel's width alone had one way to draw a
-wide graph: **small**. A picture wider than its panel was scaled down until a title wrapped
-over three lines arrived as a grey block, and the columns that made it wide — the streams,
-the releases, a level's own width — were the ones that decided how small. So a card may not
-be drawn narrower than **`GRAPH_MIN_SCALE`** of its own 260 px: at 0.75 that is 195 px, and
-the card's title (the theme's `--text-sm`, 13 px) is still drawn at 9.75 px, its footnotes
-(`--text-xs`, 12 px) at 9 px. The canvas carries the whole picture at that scale as its own
-`width`/`height` geometry — **attributes, never an inline style**, `style-src 'self'`
-admitting none (§5.5) — and the stylesheet turns that into a floor rather than a size:
-`width: auto; min-width: 100%`. A panel at or above the floor draws the canvas exactly as it
-did before, the picture at the panel's own width; a narrower one holds the canvas at the
-floor inside **`div.graph-canvas-pane`**, which carries the `overflow-x: auto` that reads the
-rest of the picture sideways. The floor is the **whole picture's** width, bands and release
-boxes included, never one level's or one stream's: a bound taken from a narrower rectangle
-would leave the columns that made the picture wide drawn under it. **The pane wraps the
-canvas and nothing else** — the list has no width of its own to keep, and the coordinator
-scope draws no picture at all — and the zoom is untouched by it: the frame is the picture
-scaled by the zoom, which stays the operator's own control and the way to go below the
-floor. **No ELK wrapping** (`elk.layered.wrapping`): the layers run left to right, and
-folding them toward a wide shape widens the picture across the axis a reader moves along,
-for a new set of positions and a new cache key.
+**A level wider than a row is stacked into rows of four** (`GRAPH_ROW_CARDS`, D2900's second
+half). A level is a row of a top-to-bottom picture and a level can be wider than the pane —
+a plan of twelve tasks that need one task is one level of twelve cards — so the levels are
+worked out in `layout.ts` (the longest run of needs that ends at a card, which is the
+layering the option `elk.layered.layering.strategy: 'LONGEST_PATH_SOURCE'` names), each is
+cut into rows of at most `GRAPH_ROW_CARDS` **in the model's own order**, and each row is
+**chained** to the row above it by phantom edges the engine is handed and no picture draws.
+The engine's layers are then exactly those rows, and the chain is **exact** rather than
+approximate: every card of a row gets one edge from a card of the row above, so by induction
+the longest path of needs ending at a card is its own row. **The engine's own width controls
+do not do this for a vertical picture**: `elk.layered.wrapping` is ignored in that direction,
+and the bounds the layerer offers are loose — a bound of four came back as rows of five and
+six. `GRAPH_ROW_CARDS` is **4** because that is what the pane holds at the card's floor: the
+console's own window less the page's own padding is 1116 px, four cards and the three gaps
+between them drawn at `GRAPH_MIN_SCALE` are 978 px of it, and five are 1239 px. The two
+strategies named beside the layerer are part of the same bound and are measured rather than
+assumed: the default node placement spread a row of seven cards 5393 units wide, and
+`elk.separateConnectedComponents: 'false'` keeps the engine from packing the separate
+components of one row two-dimensionally, which drew a row of four 2000 units wide.
+
+**The picture has a scale floor, and the pane never scrolls across** (the
+graph-fits-the-width slice's G1.1 and D735 for the floor; **D2900**, the owner, 2026-11-18,
+for the axis). Fitting the panel's width alone had one way to draw a wide graph: **small**.
+A picture wider than its panel was scaled down until a title wrapped over three lines arrived
+as a grey block, and the columns that made it wide — the streams, the releases, a level's own
+width — were the ones that decided how small. So a card may not be drawn narrower than
+**`GRAPH_MIN_SCALE`** of its own 260 px: at 0.75 that is 195 px, and the card's title (the
+theme's `--text-sm`, 13 px) is still drawn at 9.75 px, its footnotes (`--text-xs`, 12 px) at
+9 px. What keeps the scale at or above it is the **row bound**: a level is stacked into rows
+of `GRAPH_ROW_CARDS` cards, which is as many as the pane the console opens in holds at the
+floor (four cards and three gaps are 978 px of its 1116), so the picture is never wider than
+the pane. The canvas carries the whole picture at that scale as its own `width`/`height`
+geometry — **attributes, never an inline style**, `style-src 'self'` admitting none (§5.5) —
+and the stylesheet draws the element at the pane's width (`width: 100%`, its intrinsic ratio
+deciding the height), so the picture is the pane's width wherever the console is opened. The
+floor is the **whole picture's** width, bands and release boxes included, never one level's
+or one stream's: a bound taken from a narrower rectangle would leave the columns that made
+the picture wide drawn under it — and it is now the number the row bound is measured against
+rather than a size the canvas is held at. A pane **narrower** than the picture at the floor —
+a window taken below the console's own opening width — draws the canvas at the pane's width
+and **scales the picture with it**. **`div.graph-canvas-pane` carries `overflow-x: hidden`**,
+so a picture read sideways is one the window has to be wide for, which is the shape step 6a
+had and this ruling reversed; the picture is read top to bottom instead, and it is the page
+around the pane that carries it down — nothing bounds the pane's height, so the
+`overflow-y: auto` beside that rule is only the value a `hidden` axis computes a `visible`
+one to. **The pane wraps the canvas and nothing
+else** — the list has no width of its own to keep, and the coordinator scope draws no picture
+at all — and the zoom is untouched by it: the frame is the picture scaled by the zoom, which
+stays the operator's own control and the way to reach a card the pane draws small. **No ELK
+wrapping** (`elk.layered.wrapping`): the engine ignores it in a top-to-bottom picture, so the
+row bound above is built on the layering instead, and folding the layers toward a wide shape
+would widen the picture across the axis a reader moves along, for a new set of positions and
+a new cache key.
 
 **One engine run per stream, and the runs are stacked as rows** (the owner's ruling of
 2026-10-31). The engine's packing is two-dimensional: handed every stream at once, it
@@ -1420,8 +1479,8 @@ every word already and carries neither kind of line.
 | `graph-chip-name`, `graph-chip-mark`, `graph-chip-version` | `span`s inside the chip | the name, the `✓` mark and the version |
 | `graph-chip-body`, `graph-chip-tasks`, `graph-chip-task`, `graph-chip-task-title` | the open chip's own panel | drawn **only** while `aria-expanded` is `true` |
 | `graph-release-bar` | `p` (chip body) and `span` (list heading) | the "n of m done" bar, both places |
-| `graph-canvas` | `svg` | `viewBox` carries the zoom, and `width`/`height` carry the picture's **scale floor** (`GRAPH_MIN_SCALE`, the whole picture at 0.75): the stylesheet makes them a floor rather than a size (`width: auto; min-width: 100%`), so the element's box is the panel's width whenever there is room and the floor only when there is not. Its dotted-grid ground is a CSS background on this element rather than an element of its own |
-| `graph-canvas-pane` | `div` | the box the canvas is read through: it wraps the canvas alone and carries `overflow-x: auto`, so a picture held at its floor is read by scrolling sideways. The list and the coordinator scope draw no pane — neither has a width of its own to keep |
+| `graph-canvas` | `svg` | `viewBox` carries the zoom, and `width`/`height` carry the picture's **scale floor** (`GRAPH_MIN_SCALE`, the whole picture at 0.75) as the element's intrinsic size: the stylesheet draws the element at the pane's width (`width: 100%`, `height: auto`), so the box is the pane's own width and the picture's ratio decides the height (D2900). Its dotted-grid ground is a CSS background on this element rather than an element of its own |
+| `graph-canvas-pane` | `div` | the box the canvas is read through: it wraps the canvas alone and carries `overflow-x: hidden` — the picture is never read across (D2900) — with the `overflow-y: auto` that axis computes to. The page around it is what carries the picture down. The list and the coordinator scope draw no pane — neither has a width of its own to keep |
 | `graph-band`, `graph-band-box` | `g` + `rect` | one band per stream that has a task on the picture, drawn **first** so it is the ground of its own row: the `g` carries `data-stream`, and the box is the row's wash |
 | `graph-band-label` | `text` at the band's head | the stream's own `Sanitized` name ("no stream" for the plans that name none) |
 | `graph-release`, `graph-release-box` | `g` + `rect` | one frame per release with a task on the picture |
@@ -1918,6 +1977,86 @@ section, and this is the table its hooks are added to.
 - **The tone is a shape first.** The mark's glyph and outline differ per severity
   (`!` in a triangle, `i` in a circle), which is §3.5's rule read where it matters most: the
   one card an operator may see before anything else they can act on.
+
+---
+
+### 2.15 The Manage section — `console/src/renderer/manage/shell.ts` + `console/src/renderer/theme/manage.css`
+
+**The Manage section is the Project tab's four groups, and each kind inside them is a
+section of its own.** It is drawn by one module (`console/src/renderer/manage/shell.ts`,
+whose `mountManage` the Project tab mounts) out of the kind descriptors of
+`console/src/renderer/manage/types.ts` (the console-improvements plan's task MG0): the four
+group names of `MANAGE_GROUPS` — `People & access`, `Code`, `Models & keys`, `Budget` —
+each a real `details`/`summary` disclosure collapsed by default, and inside each group one
+element per registered kind, in registration order. **The shell knows no document.** A
+kind's `source` is its read, its `columns` are the table's headings, its `decode` answers
+its rows and its `actions` are the controls under them, so a kind joins this section by
+being registered and not by editing a screen or this stylesheet — which is why everything
+below is the shell's own drawing, and a kind's own words (a column's title, a cell's value,
+a command) are content under these hooks rather than hooks themselves. **Its rules are a
+layer of their own** (`console/src/renderer/theme/manage.css`, one entry in the bundler's
+`THEME_STYLESHEETS`): no screen's stylesheet names a tree this section draws, and a rule for
+one written into `screens.css` would be a rule about a section living in the file of the
+screens beside it.
+
+**One kind, one read, one busy mark, one refusal** (the parallel-sections rule in
+`console/.claude/rules/console.md`, and reconciliation R3 of the console-improvements plan).
+Each kind's read is a section read from `console/src/renderer/section.ts`: the kind's own
+command is the read, a busy mark and `aria-busy` are set on the kind while it is in flight
+with the rows already drawn kept under them, the CLI's refusal is drawn in that kind alone
+with the Retry beside it, and the other kinds are untouched — one kind's refusal is not the
+section's, which is what the red step of this task's test pins. A kind's content is replaced
+whole when its read lands, never patched row by row, and a group's kinds are read when the
+group is first opened: a collapsed group has asked the CLI for nothing.
+
+**The busy mark, the skeleton, the stamp and the Retry are not this file's.** They are drawn
+by `src/renderer/section.ts` and `src/renderer/skeleton.ts` against the `console-*` hooks §2
+already lists, and `flight-deck.css` styles them once: a second set of rules here would be a
+second busy mark for the one section that uses the helper. The rule that fades what a
+section already drew while its next read runs (`section[data-busy='true']`, with the busy
+slot excepted) is why a kind is drawn as a `section` with the mark in a slot above its own
+body, and not as a `div`.
+
+| Hook | Element | What it is |
+|---|---|---|
+| `section.manage-section` | the section's root | the four groups and nothing else, with `--space-lg` below it. It is mounted inside the Project tab, so it is a block of that tab and not a page: no `h1`, and no card of its own |
+| `details.manage-group` | one group | the disclosure itself. The marker, the keyboard and the folding are the element's, and the state is its own `open` attribute — no class carries it and no rule here sets one. The hairline between two groups is this hook's `border-bottom` |
+| `summary.manage-group-title` | a group's title | the group's name from `MANAGE_GROUPS`, in the medium step and semibold, on `--row-height` because it is a target a person clicks. `manage.css` leaves its `display` alone so the browser's marker survives — the height and the padding are all this rule sets |
+| `div.manage-group-body` | the kinds under a title | the column a group's kinds are drawn in, indented `--space-md` from the title. A collapsed group still draws it; that it is not rendered is the element's own doing |
+| `section.manage-kind` | one kind | the unit the sections rule is about: one read, one busy mark, one refusal, and `data-kind` naming the kind's id so the tree can be read back. The helper's mark goes in a slot at the top of this element, above whatever the last read drew |
+| `h3.manage-kind-title` | a kind's heading | the kind's `title` from its descriptor, in the small step and semibold. A kind is an `h3` because it sits under the tab's own heading and one level below a group's title |
+| `div.manage-body` | a kind's content | replaced whole every time the kind's read lands: the helper's `as of` stamp line, then the table or the empty sentence, then the actions |
+| `table.manage-table` | a kind's table | a real `table` with a real header row and body rows, at the section's full width. A kind whose rows are better read as prose draws its own body instead: no rule here assumes a table |
+| `th.manage-column` | a column's heading | the column's `title`, with `scope="col"`, in §3.7's table-header step — `--font-size-xs`, uppercase, letter-spaced, `--weight-medium` — and `data-column` naming the column's key. It is the smallest thing a person reads in this section, and the hook a sort or a filter would be keyed on later |
+| `td.manage-cell` | a cell | one document string, put through the class its column declared in `TEXT_CLASSES` (`putText`): a value the class refuses is the console's `n/a` with the reason in `title`, and the value itself never reaches the element. `--space-2xs` of vertical padding for §3.8's `--row-height` row, and the hairline between rows is this hook's `border-top` |
+| `tr.manage-row` | a row | one row the kind's `decode` answered with, `data-row` naming the row's own key. No rule selects it: the cells carry the density, and a rule against a row itself would be a rule about one kind's rows |
+| `div.manage-actions` | a kind's actions | the wrapping row of the controls a kind offers, drawn under the table whenever the kind's read landed — an empty list included, because an empty list is exactly when a person reaches for "add" — and never over a refusal |
+| `button.manage-copy` | a copy-command action | a `type="button"` whose label **is** the exact argv (`copyCommandText`, out of the action's parts), copying that text on click. Mono (§3.7), because its whole value is that a person compares it character by character with the command they are about to run |
+| `button.manage-view` | an open-view action | a `type="button"` asking the console to show a view of the rail (D2909: the Budget kind opens Spend). Its label names the view it opens, and it is not mono — the words are this console's own |
+| `p.manage-refusal` | a refused read | the CLI's own sentence for that kind's read (`sanitizeRefusal` keeps the role, project and path words and drops the rest), with the helper's Retry drawn beside it. It is the one place CLI text is drawn as prose |
+| `p.manage-empty` | a read that answered with nothing | the console's own single sentence (`Nothing listed yet`), muted, in the console's voice and never the CLI's: an empty answer is not a refusal, so it gets no CLI sentence and no reason to retry |
+
+- **The attributes are the shell's own bookkeeping.** `data-kind`, `data-operation`,
+  `data-group`, `data-row` and `data-column` are stamped on the elements above, and **no rule
+  in the theme selects any of them**: they are how a reader of the tree — a test, an operator
+  filing a report — sees which kind, which read, which group and which column a node belongs
+  to. The refusal names its own read with `data-operation`, so "which command was refused" is
+  answered by the markup rather than by the sentence beside it.
+- **A kind's actions are drawn once per kind, not once per row.** The descriptor's action
+  carries no per-row value (an id, a slug, a name), so there is nothing to substitute into a
+  row's copy and no row's command a table could name — a per-row action is a descriptor member
+  (the plan's MG0) and then a shell change, in that order. A kind whose rows need their own
+  control draws it from its own `decode` today.
+- **The empty sentence is the shell's, and it is one sentence for every kind.** The console's
+  own `renderEmpty` takes a closed union of sentences (`EMPTY_RUNS` today), so the shell draws
+  its own line rather than widen a helper that belongs to the screens. A kind that wants its
+  own wording for an empty list adds a member to that union first, in the PR that wants it,
+  and then names it here.
+- **A group is read when it is opened, never before.** A collapsed group draws its title and
+  nothing else, and the first `toggle` is what starts its kinds' reads (`read()` and
+  `readKind(id)` are the caller's doors; `end()` stops the section's reads when the tab is
+  left). Jobs are the other thing that is never in the first paint (§2.5), for the same
+  reason: a read nobody asked for is a child process nobody asked for.
 
 ## 3. The theme system
 

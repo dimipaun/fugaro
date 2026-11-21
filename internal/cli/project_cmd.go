@@ -323,14 +323,19 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
-		// D2071 (a), before the empty-allow-list confirmation and the gate:
-		// a node whose mode is `off` is the fourth condition of the switch, so
-		// publishing it takes the service's address away from every switched
-		// `api-key` or `oauth` repository at its next launch — and their jobs
-		// hold no model credential of their own, because the mode they were
-		// applied under was a gateway one. Judged per attempt, on the node this
-		// attempt would write, so a retry re-reads the records it decided on.
-		if err := refuseModeOffWhileTheServiceServes(ctx, db, lc, pol.Budget.Mode); err != nil {
+		// C1's refusal at this door, before the empty-allow-list confirmation and
+		// the gate: a published budget mode is read as the mode every run of the
+		// project is metered by, and the word that was one is not one any more —
+		// a node that says it is one no reader of this release serves (the
+		// runner refuses the run, AB1b, and the decoder refuses the node, AB2),
+		// so publishing it is what would stop the project's next run with a
+		// sentence about a policy this very command wrote. Judged on the mode the
+		// local config states, which is the word this publish is an attempt to
+		// write: the build both doors take hands the node the mode that word asks
+		// for (publishedMode, AB8a), so the node this door would write never
+		// carries it and the refusal is what stands between the operator and a
+		// config that says a word this release does not serve.
+		if err := refuseARemovedBudgetMode(lc.Budget.Mode); err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
 		// A policy whose allow-list admits nothing stops every run of the
@@ -477,73 +482,40 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 	return remote(fmt.Errorf("the policy node kept changing under the write (%d attempts); the shared node is as it was%s; run it again", setAttempts, narrowedNote(narrowedSoFar)))
 }
 
-// refuseModeOffWhileTheServiceServes is D2071 (a) at the publish door: a
-// project whose budget mode is published as `off` while a repository the
-// credentials service serves the model path of holds no model mount of its own
-// is refused here, before a node is written.
+// refuseARemovedBudgetMode is C1's refusal at the publish door: a local config
+// that states the word the budget mode's vocabulary dropped is refused here,
+// before a node is written, whatever the rest of the installation looks like.
 //
-// The order is what makes the state unrepairable rather than merely bad. The
-// mode is one of the switch's four conditions and it is read when a
-// repository's ROOT is applied: an `api-key` or `oauth` repository whose root
-// was applied under `observe` or `enforce` has B2.7's flip in its job — the
-// Anthropic key and the OAuth token are not mounted, because its runs reach the
-// service for them (config.ServiceServedAuths, infra.ModelSecretsServed). The
-// mode a LAUNCH reads is the published node's, so a node lowered to `off`
-// withholds the service's address from those runs at once (D2071's fourth
-// condition, credentialsServiceLaunchEnv) while the mounts come back only when
-// each repository's own root is applied again — and until then every run of
-// that repository is handed no address and has nothing of its own to read. It
-// is the same reasoning that makes `off` a mode an installation converges out
-// of deliberately, and it is why the direction is refused here rather than left
-// for a `fugaro doctor` line: nobody reads a doctor line before a run.
+// It is one refusal and not a conditional one because the word is not a mode at
+// all any more (D3009): a node that carries it is one no reader of this release
+// serves — the runner refuses the run that meets it, with the fix, and the
+// node's own decoder refuses the document (AB2) — so a publish that wrote it
+// would be a policy every run of the project stops on, written by the command
+// the operator ran to give the project one. What the door says is where the word
+// was written; what it means and the fix are the vocabulary's own text
+// (policy.ModeOffRefusal), so this refusal and the flag's, the file's and the
+// node's cannot drift (docs/always-a-budget/contract-mode.md).
 //
-// What the refusal does NOT ask is for an update to finish first, and it holds
-// no run back: it is a write of the project's own policy, judged against the
-// two facts the write would move — the mode it would publish and the
-// repositories whose records say a root of theirs is on the switch.
+// It reads the mode the local config states and not the node this publish would
+// write, because that node no longer says the word at all: the build both doors
+// take hands it the mode the word asks for (publishedMode, AB8a). The operator's
+// file is the thing to fix, and the sentence says so.
 //
-// A repository is "switched" here in the sense the run itself reads it: the
-// installation carries the service (its block, with the address the launch
-// hands a job), the repository's own record says a root of it was applied with
-// the service on (localcfg.Repo.CredentialsServiceOn, the half no cloud read
-// answers), and the auth the record names is one the flip list carries — a
-// `cascade` repository is not one of them, because its job gave its mounts up
-// long before this flip and a mode of `off` refuses its launch outright
-// (cascadeLaunchRefusal is what says so, and at the launch rather than here).
+// It replaces the narrower refusal of D2071 (a), which refused the word only
+// while the credentials service served a switched repository. That state is
+// gone with the word — it was the one publishing off made unrepairable, and
+// nothing can be published in it now — and the mode a repository's own record
+// was applied under is a fact of that record rather than of this write (F15,
+// R9: the guards of the removed mode are deleted and not kept as dead code).
 //
-// A record that cannot be read is a refusal and not a skipped repository: the
-// answer it would give is whether the repository's own jobs hold a model
-// credential, and publishing `off` over "could not tell" is the direction that
-// breaks runs. A record that is absent is a repository this release never
-// recorded, which is a repository it never applied a root of.
-func refuseModeOffWhileTheServiceServes(ctx context.Context, db creds.DB, lc *localcfg.Config, mode string) error {
-	if mode != config.BudgetOff || lc.CredentialsService == nil || lc.CredentialsService.URL == "" {
+// It reads the mode through the vocabulary's own predicate and never compares
+// the string here, so neither this line nor any other spells the word as a
+// literal.
+func refuseARemovedBudgetMode(mode string) error {
+	if !policy.Mode(mode).Removed() {
 		return nil
 	}
-	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
-		entry, ok := lc.RepoFor(repo)
-		if !ok || !entry.CredentialsServiceOn() {
-			continue
-		}
-		slug, err := task.Slug(entry.Provider, repo)
-		if err != nil {
-			// A repository whose provider this config cannot name has no
-			// record: the slug is what names one (writeRepoAuth's own
-			// derivation).
-			continue
-		}
-		rec, found, err := creds.ReadRepoAuth(ctx, db, slug)
-		if err != nil {
-			return userErr("the budget mode would be published as %s, and whether %s is a repository whose model path the credentials service serves could not be read from its record (%s): the mode is what decides whether its runs are handed the service's address, and a repository whose root was applied with the service on holds none of its own model credentials — so a publish over an unreadable record is one that can leave those runs with nothing to read. Run the publish again once the record can be read",
-				mode, repo, safetext.FieldErr(err))
-		}
-		if !found || !slices.Contains(config.ServiceServedAuths, rec.Auth) {
-			continue
-		}
-		return userErr("the budget mode would be published as %s while %s is a repository whose model path the credentials service serves (its record says agent.auth %s, and a root of it was applied with the service on): its jobs mount neither the Anthropic key nor the Claude OAuth token, so a mode of %s is what would withhold the service's address from every run of it — a run handed no address, on a job that has no credential of its own to read (D2071). Publish the mode as %s or %s, or lower it and then run 'fugaro update --repo' in that checkout, which re-applies the root and puts the mounts back",
-			mode, repo, rec.Auth, mode, config.BudgetObserve, config.BudgetEnforce)
-	}
-	return nil
+	return userErr("the local config says the budget mode is %s: %s", mode, policy.ModeOffRefusal)
 }
 
 // requirePolicyRules refuses a publish without the deployed rules marker
@@ -663,6 +635,19 @@ const rulesVoiceGeneration = 5
 // push registration carries on a mailbox message (mobile plan task P5.2.2).
 const rulesRegistrationGeneration = 6
 
+// rulesSpendLeavesGeneration is the rules generation that added the four
+// day-counter leaves a run's stage report writes per model (spend-accuracy task
+// SA5.0, D2648 as amended by D2650).
+const rulesSpendLeavesGeneration = 7
+
+// rulesOutcomeGeneration is the rules generation that added the paired device's
+// read of a run's outcome (mobile identity-pairing task J1, F30, D2797, O3). It
+// is the generation *below* this binary's, which is why the branch it gates in
+// rulesMarkerOlderText is the one that announces the credential route
+// (workspace-service task WS22, R3 and R4): a marker at 8 already has that read,
+// and what the deploy adds over it is generation 9's own grant.
+const rulesOutcomeGeneration = 8
+
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
 // refuses here — Read reads the policy the marker's rules carry and
@@ -681,8 +666,21 @@ const rulesRegistrationGeneration = 6
 // registration kind's fields are new to it (mobile plan task P5.2.2), and one
 // at rulesRegistrationGeneration already has those fields and only the four
 // day-counter leaves a run's stage report writes per model are new to it
-// (spend-accuracy task SA5.0, D2648 as amended by D2650).
+// (spend-accuracy task SA5.0, D2648 as amended by D2650), and one at
+// rulesSpendLeavesGeneration already has those leaves and only the paired
+// device's read of a run's outcome is new to it (mobile identity-pairing task
+// J1, F30, D2797, O3), and one at rulesOutcomeGeneration already has that read
+// and only the credential route a run reads is new to it (workspace-service task
+// WS22, R3 and R4).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesOutcomeGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node, the registration kind's fields, the four day-counter leaves a run's stage report writes per model and the paired device's read of a run's outcome, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the credential route a run reads at bootstrap (config/policy/route/$slug, one node per repository, granted to that repository's own run token and to nothing else, workspace-service WS22, R3 and R4): a run under these rules reads no route and is served by the project's own credential, so a member that pinned a workspace keeps calling the project until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
+	}
+	if gen >= rulesSpendLeavesGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node, the registration kind's fields and the four day-counter leaves a run's stage report writes per model, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the paired device's read of a run's outcome (outcomes/$day/$slug/$run, one node granted to the app's user claim and to nothing else, so the phone can name a run that is still going): a phone under these rules sees a running run's spend and not the run, so the app's jobs list shows the spend alone until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
+	}
 	if gen >= rulesRegistrationGeneration {
 		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node and the registration kind's fields, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the four leaves a run's stage report writes per model (%s/{notional,rep,tlo,thi}: the subscription part of the model's dollars, the cost the provider reported for the calls that carried one, and the table's charge over those same calls at the two ends of the tier that served them, spend-accuracy D2648 and D2650): a run under these rules that writes them is refused the whole stage report, because Realtime Database applies a multi-path update atomically, so it writes the leaves it knows and none of these until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, rules.PathByModel, projectpolicy.RulesVersion)
@@ -1332,6 +1330,22 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedTriage = old.Triage
 	}
 	triage := lc.TriageEffective(publishedTriage)
+	// The review-against-task switch is kept by the triage switch's rule one
+	// key over (R7 of docs/review-against-task/), with the same cost on the
+	// wrong reading: the switch is what turns off the check every review stage
+	// makes of a run's own work, so a publish from a config that says nothing
+	// about it — every machine but the owner's — must not be the write that
+	// takes the check off a node that carried it. A config that states the
+	// switch replaces what the node holds — the direction D2935 gives the
+	// repository's own key is the merge's between layers, not this one, because
+	// the file read here is the owner's own — and a config that states neither
+	// keeps the node's, so a node and a config that both say nothing publish no
+	// member at all.
+	var publishedReviewAgainstTask *bool
+	if old != nil {
+		publishedReviewAgainstTask = old.ReviewAgainstTask
+	}
+	reviewAgainstTask := lc.ReviewAgainstTaskEffective(publishedReviewAgainstTask)
 	// The pools' subscription switch is kept by the triage switch's rule (F22,
 	// D1636), and the cost of the other reading is that switch's: the member is
 	// what makes a pool of two or more subscriptions serve anything at all
@@ -1404,11 +1418,18 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		stageAccounts[stage], _ = lc.ResolveAccount(choice.ClaudeAccount)
 	}
 	defaultAccount, _ := lc.ResolveAccount(lc.DefaultClaudeAccount)
+	// The budget mode is the one the file asks for (publishedMode, AB8a): a file
+	// that spells the word the mode's vocabulary dropped is asking for the mode
+	// it means, and copying the word into the node would undo the migration step
+	// that has just taken it out of the published node — the update's own publish
+	// path reaches this builder with no refusal of its own, and the node it wrote
+	// would be one no reader of this release serves. The publish door's own
+	// refusal of the word is above it, and the file itself loses it in AB8b.
 	pol := &projectpolicy.Policy{
 		DefaultClaudeAccount: defaultAccount,
 		ClaudeAccountStages:  stageAccounts,
 		Version:              projectpolicy.Version,
-		Budget:               projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
+		Budget:               projectpolicy.Budget{Mode: publishedMode(lc.Budget.Mode), PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
 		AllowRepos:           nonNil(allow),
 		BaseBranch:           lc.BaseBranch,
 		Providers:            policyProviders(lc),
@@ -1425,6 +1446,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		ImageMap:             imageMap,
 		BakeRepos:            bakeRepos,
 		Triage:               triage,
+		ReviewAgainstTask:    reviewAgainstTask,
 		Orchestrator:         orchestrator,
 		SubscriptionSpread:   spread,
 	}

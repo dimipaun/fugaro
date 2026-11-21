@@ -513,7 +513,7 @@ func TestFollowupsCarriesTheParentsMode(t *testing.T) {
 	parent := wallRunIDAt(0, "090000", "aaaa")
 	rec := parentRecord(parent)
 	rec.Deferred = allDeferred(t)
-	rec.Rigor = &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea, At: runstore.RigorAtBootstrap}
+	rec.Rigor = &runstore.RigorRecord{Level: rigor.Critical, From: rigor.FromArea, At: runstore.RigorAtBootstrap}
 	seedParent(t, f, parent, rec)
 	followUpsStub(t, followUpPR(7, "fugaro/"+parent, gitprov.PRMerged))
 
@@ -528,7 +528,7 @@ func TestFollowupsCarriesTheParentsMode(t *testing.T) {
 }
 
 // TestFollowupsDropsARecordedHotfix: hotfix is off the rigor axis and is a mode
-// an operator asks for on the run that needs it (rigor.Mode.PerRun), so a filed
+// an operator asks for on the run that needs it (rigor.Rigor.PerRun), so a filed
 // task — a launch that asked for nothing — never carries it (D1844): a parent
 // that recorded one imposes nothing, the task carries no mode, and the run
 // resolves its own.
@@ -538,7 +538,7 @@ func TestFollowupsDropsARecordedHotfix(t *testing.T) {
 	parent := wallRunIDAt(0, "090000", "aaaa")
 	rec := parentRecord(parent)
 	rec.Deferred = allDeferred(t)
-	rec.Rigor = &runstore.RigorRecord{Mode: rigor.Hotfix, From: rigor.FromRepo, At: runstore.RigorAtBootstrap}
+	rec.Rigor = &runstore.RigorRecord{Level: rigor.Hotfix, From: rigor.FromRepo, At: runstore.RigorAtBootstrap}
 	seedParent(t, f, parent, rec)
 	followUpsStub(t, followUpPR(7, "fugaro/"+parent, gitprov.PRMerged))
 
@@ -565,7 +565,7 @@ func TestFollowupsNeverLowersAFloor(t *testing.T) {
 	parent := wallRunIDAt(0, "090000", "aaaa")
 	rec := parentRecord(parent)
 	rec.Deferred = allDeferred(t)
-	rec.Rigor = &runstore.RigorRecord{Mode: rigor.POC, From: rigor.FromRepo, At: runstore.RigorAtBootstrap}
+	rec.Rigor = &runstore.RigorRecord{Level: rigor.POC, From: rigor.FromRepo, At: runstore.RigorAtBootstrap}
 	seedParent(t, f, parent, rec)
 	followUpsStub(t, followUpPR(7, "fugaro/"+parent, gitprov.PRMerged))
 
@@ -582,7 +582,7 @@ func TestFollowupsNeverLowersAFloor(t *testing.T) {
 	}
 	// The request is raise-only, so the floors hold whatever the record said:
 	// poc is below the mode a repository that configures nothing resolves.
-	if got := rigor.Resolve(rigor.Config{}, rigor.Request{Mode: spec.Rigor}).Mode; got != rigor.Default {
+	if got := rigor.Resolve(rigor.Config{}, rigor.Request{Level: spec.Rigor}).Level; got != rigor.Default {
 		t.Fatalf("the run resolves %q, want its floor %q", got, rigor.Default)
 	}
 

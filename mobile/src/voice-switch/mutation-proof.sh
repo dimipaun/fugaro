@@ -1,8 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 # See mobile/LICENSE.md for the terms.
-# Mutation-proves the voice switch's guards (mobile plan, Task P5.3.6; D123,
-# D127, D111).
+# Mutation-proves the voice switch's guards (mobile plan, Tasks P5.3.6 and
+# P5.3.7; D111, D118, D123, D127).
 #
 # Everything this module is trusted for is of the "does NOT do it" kind, which
 # is the kind a test can pass by accident: it must NOT build a badge out of a
@@ -10,8 +10,15 @@
 # own sentence), it must NOT say `send` while a call is already going, it must
 # NOT let a badge be dismissed or hidden, it must NOT read a broken store as an
 # account with no settings, and it must NOT write anywhere but the one settings
-# key it owns. Each mutation below disables exactly ONE of those guards, in one
-# of the module's four files, and every one must make that file's own suite
+# key it owns. P5.3.7 adds the egress half's own list: it must NOT open a URL the
+# allow-list refused, it must NOT send a token it cannot present, it must NOT
+# follow a redirect, it must NOT send while a confirmation is pending or on a
+# destructive route or for a project that is not this account's, it must NOT
+# send raw text where the redactor's output belongs, and it must NOT retry what
+# failed. The voice screen's two additions are mutated here too -- the badge that
+# is in the snapshot before anything is spoken, and the engine tag read when the
+# utterance arrives. Each mutation below disables exactly ONE of those guards, in
+# one of the files named below, and every one must make that file's own suite
 # fail. A guard whose mutation survives is a guard no test defends.
 #
 #   mobile/src/voice-switch/mutation-proof.sh
@@ -59,6 +66,12 @@ SETTINGS=mobile/src/voice-switch/settings.js
 SETTINGS_SUITE=src/voice-switch/settings.test.js
 INDICATOR=mobile/src/voice-switch/indicator.js
 INDICATOR_SUITE=src/voice-switch/indicator.test.js
+HOP=mobile/src/voice-switch/hop.js
+HOP_SUITE=src/voice-switch/hop.test.js
+EGRESS=mobile/src/voice-switch/egress.js
+EGRESS_SUITE=src/voice-switch/egress.test.js
+SCREEN=mobile/src/voice/screen.js
+SCREEN_SUITE=src/voice/screen.test.js
 
 # runner_works asks the question that matters: not "is node on PATH" but "does
 # it run". A shim for a tool whose version was never set sits on PATH and fails
@@ -101,7 +114,7 @@ require_clean() { # file
     exit 2
   fi
 }
-for file in "$F" "$CONSENT" "$SETTINGS" "$INDICATOR"; do
+for file in "$F" "$CONSENT" "$SETTINGS" "$INDICATOR" "$HOP" "$EGRESS" "$SCREEN"; do
   require_clean "$file"
 done
 
@@ -346,6 +359,198 @@ run "a refused input is drawn rather than thrown" \
   "  if (!answer.ok) return failClosedIndicator(input, answer);" \
   "  if (false) return failClosedIndicator(input, answer);" \
   "$INDICATOR" "$INDICATOR_SUITE"
+
+# ---------------------------------------------------------------------------
+# The hop client (P5.3.7): one request, checked, with the ID token and nothing
+# else -- and a failure that is an answer rather than a retry.
+# ---------------------------------------------------------------------------
+
+run "a URL the allow-list refuses is not opened" \
+  "    if (!target.ok) return refuse(HOP_CODES.BAD_URL, 'baseUrl', target.code);" \
+  "    if (false) return refuse(HOP_CODES.BAD_URL, 'baseUrl', target.code);" \
+  "$HOP" "$HOP_SUITE"
+run "a token that cannot be presented is not sent" \
+  "    if (typeof value !== 'string' || value.length === 0) return refuse(HOP_CODES.NO_TOKEN, 'token');" \
+  "    if (false) return refuse(HOP_CODES.NO_TOKEN, 'token');" \
+  "$HOP" "$HOP_SUITE"
+run "no ambient credential rides along" \
+  "        credentials: 'omit'," \
+  "        credentials: 'include'," \
+  "$HOP" "$HOP_SUITE"
+run "a redirect is a failed call, not a call to a host nothing checked" \
+  "        redirect: 'error'," \
+  "        redirect: 'follow'," \
+  "$HOP" "$HOP_SUITE"
+run "an oversized answer is refused before it is read" \
+  "    if (claimed(response, max)) return { ok: false };" \
+  "    if (false) return { ok: false };" \
+  "$HOP" "$HOP_SUITE"
+# The claim is a claim: a chunked answer makes none, and a body may make a false
+# one. These two are the bound applied to the bytes as they arrive and to the
+# ones that were read in one piece -- the halves a `Content-Length` check alone
+# leaves open.
+run "an answer that claimed nothing is held by the count of what was read" \
+  "      return bytes.byteLength > max ? { ok: false } : { ok: true, bytes };" \
+  "      return { ok: true, bytes };" \
+  "$HOP" "$HOP_SUITE"
+run "and a body still arriving is abandoned the moment it passes the bound" \
+  "        if (size > max) {" \
+  "        if (false) {" \
+  "$HOP" "$HOP_SUITE"
+run "an engine name is checked before it can reach the URL" \
+  "    if (typeof engine !== 'string' || !ENGINE_NAME.test(engine)) return refuse(HOP_CODES.BAD_ANSWER, 'engine');" \
+  "    if (false) return refuse(HOP_CODES.BAD_ANSWER, 'engine');" \
+  "$HOP" "$HOP_SUITE"
+run "a reason the hop sent and this tree does not know is not adopted" \
+  "      if (isPlainObject(parsed) && typeof parsed.error === 'string' && REASONS.includes(parsed.error)) {" \
+  "      if (isPlainObject(parsed) && typeof parsed.error === 'string') {" \
+  "$HOP" "$HOP_SUITE"
+run "a revoked device is the badge's own word, and not a query that failed" \
+  "    if (called.detail === HOP_REASON.DEVICE_UNKNOWN) return STATUS_FAILURE.REVOKED_DEVICE;" \
+  "    if (called.detail === HOP_REASON.DEVICE_UNKNOWN) return STATUS_FAILURE.QUERY_FAILED;" \
+  "$HOP" "$HOP_SUITE"
+run "a token that will not verify is an expired token, said so" \
+  "    if (called.detail === HOP_REASON.TOKEN_UNVERIFIED) return STATUS_FAILURE.EXPIRED_TOKEN;" \
+  "    if (called.detail === HOP_REASON.TOKEN_UNVERIFIED) return STATUS_FAILURE.QUERY_FAILED;" \
+  "$HOP" "$HOP_SUITE"
+run "an unreachable hop is unreachable, and not a failed query" \
+  "  if (called.code === HOP_CODES.UNREACHABLE || called.code === HOP_CODES.BAD_URL) {
+    return STATUS_FAILURE.UNREACHABLE;
+  }" \
+  "  if (false) {
+    return STATUS_FAILURE.UNREACHABLE;
+  }" \
+  "$HOP" "$HOP_SUITE"
+# A status answer decorated with this client's own `field` and `detail` is a
+# status answer `shared/voice-switch` refuses, and a refused status is the
+# fail-closed `local -- checking` badge rather than §4.5's revoked-device row.
+run "a status answer is the badge's input and nothing beside it" \
+  "      if (!called.ok) return statusFailed(statusFailure(called));" \
+  "      if (!called.ok) return refuse(statusFailure(called), 'hop', called.detail ?? called.code);" \
+  "$HOP" "$HOP_SUITE"
+
+# ---------------------------------------------------------------------------
+# The ten rules (P5.3.7). Each of these is a rule of §5 turned off in one line:
+# every one of them must be caught by `egress.test.js`, which is one test per
+# rule and the plan's own instruction that the design's list is the test list.
+# ---------------------------------------------------------------------------
+
+run "nothing goes while a confirmation is pending" \
+  "    if (live.actions.length > 0) return local(direction, EGRESS_CODE.PENDING);" \
+  "    if (false) return local(direction, EGRESS_CODE.PENDING);" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "a state that cannot be read is not a state with nothing pending" \
+  "    if (!live.ok) return local(direction, EGRESS_CODE.STATE_UNREADABLE);" \
+  "    if (false) return local(direction, EGRESS_CODE.STATE_UNREADABLE);" \
+  "$EGRESS" "$EGRESS_SUITE"
+# The sentinels are written and never implied: `null` is "no action history" and
+# `undefined` is a caller that told this module nothing, which is the one reading
+# that would let a forgotten key send a turn.
+run "a state the caller did not pass is not a state with nothing pending" \
+  "  if (state === undefined) return local(direction, EGRESS_CODE.STATE_UNREADABLE);
+  if (state !== null) {" \
+  "  if (state !== null && state !== undefined) {" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "a destructive route is served locally" \
+  "      ACTION_COMMANDS.includes(route.command) ? EGRESS_CODE.DESTRUCTIVE : EGRESS_CODE.NO_COMMAND," \
+  "      EGRESS_CODE.NO_COMMAND," \
+  "$EGRESS" "$EGRESS_SUITE"
+run "an utterance the router did not understand is not a command" \
+  "  } else if (route.route === ROUTE.NOT_UNDERSTOOD) {
+    return local(direction, EGRESS_CODE.NO_COMMAND);" \
+  "  } else if (false) {
+    return local(direction, EGRESS_CODE.NO_COMMAND);" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "a reply the app composed with no route is not a turn to send" \
+  "    if (direction === DIRECTION.TTS) return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);" \
+  "    if (false) return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "a route the caller did not pass is not a device without a local engine" \
+  "  if (route === undefined) return local(direction, EGRESS_CODE.ROUTE_UNREADABLE);
+  if (route === null) {" \
+  "  if (route === null || route === undefined) {" \
+  "$EGRESS" "$EGRESS_SUITE"
+# Each method has one transport, so it has one direction and one badge: naming
+# the other one must not select the other switch.
+run "a transcribe turn is an stt turn, whatever the caller names" \
+  "      const direction = DIRECTION.STT;" \
+  "      const direction = turn.direction ?? DIRECTION.STT;" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "a speak turn is a tts turn, whatever the caller names" \
+  "      const direction = DIRECTION.TTS;" \
+  "      const direction = turn.direction ?? DIRECTION.TTS;" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "the app's own other installation is refused by name" \
+  "  if (RESERVED_PROJECTS.includes(project)) return local(direction, EGRESS_CODE.OTHER_INSTALLATION);" \
+  "  if (false) return local(direction, EGRESS_CODE.OTHER_INSTALLATION);" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "only the project's own speech goes" \
+  "  if (!projects.includes(project)) return local(direction, EGRESS_CODE.FOREIGN_PROJECT);" \
+  "  if (false) return local(direction, EGRESS_CODE.FOREIGN_PROJECT);" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "a badge that did not say send sends nothing" \
+  "  if (badge.send !== true) return local(direction, badge.reason ?? REASON.NO_ANSWER);" \
+  "  if (false) return local(direction, badge.reason ?? REASON.NO_ANSWER);" \
+  "$EGRESS" "$EGRESS_SUITE"
+# The one thing this module holds between turns is which direction has a call
+# going: the badge reads it as `lastCallInDirection`, and it is fed the call in
+# flight and never a finished one. Unset, two turns go into one call; left set,
+# a direction is held by a call that is over; and a held turn that is not told
+# "in flight" is told `no-answer`, which is another sentence entirely.
+run "a call already in flight is not a second call" \
+  "  if (badge.inFlight === true) return local(direction, EGRESS_CODE.IN_FLIGHT);" \
+  "  if (false) return local(direction, EGRESS_CODE.IN_FLIGHT);" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "the direction knows a call is going while it goes" \
+  "    inFlight[direction] = started;" \
+  "    inFlight[direction] = null;" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "and lets go of it the moment the call is over" \
+  "      inFlight[direction] = null;" \
+  "      void inFlight[direction];" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "a remote route with no provider name is not a route" \
+  "  if (typeof badge.provider !== 'string' || badge.provider.length === 0) {" \
+  "  if (false) {" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "the text path sends the redactor's output and never the raw text" \
+  "        outgoing = redact(text, secrets);" \
+  "        outgoing = text;" \
+  "$EGRESS" "$EGRESS_SUITE"
+run "a switch that answered what is not a badge is a local turn" \
+  "      if (answer.field !== 'badge') return answer;" \
+  "      if (true) return answer;" \
+  "$EGRESS" "$EGRESS_SUITE"
+
+# ---------------------------------------------------------------------------
+# The screen's two additions (P5.3.7): the indicator's place, and the engine on
+# each transcript line.
+# ---------------------------------------------------------------------------
+
+run "the indicator is in the snapshot before anything is spoken" \
+  "  for (const direction of DIRECTIONS) badges[direction] = noBadge(direction);" \
+  "  for (const direction of DIRECTIONS) badges[direction] = null;" \
+  "$SCREEN" "$SCREEN_SUITE"
+run "and the screen asks the switch as it is built" \
+  "  void refreshIndicator();" \
+  "" \
+  "$SCREEN" "$SCREEN_SUITE"
+run "a badge source that threw, or answered what is not a badge, keeps the fail-closed badge" \
+  "      badges[direction] = isBadge(answer) ? answer : noBadge(direction);" \
+  "      badges[direction] = answer;" \
+  "$SCREEN" "$SCREEN_SUITE"
+run "an engine that cannot be named is no tag at all, and never local" \
+  "    return typeof tag === 'string' && tag.length > 0 ? tag : null;" \
+  "    return typeof tag === 'string' && tag.length > 0 ? tag : ENGINE.LOCAL;" \
+  "$SCREEN" "$SCREEN_SUITE"
+run "with no engine port the tag is this device's own engine" \
+  "    if (engineOf === null) return ENGINE.LOCAL;" \
+  "    if (engineOf === null) return null;" \
+  "$SCREEN" "$SCREEN_SUITE"
+run "the tag is read when the utterance arrives, and not when it is rendered" \
+  "    transcript = Object.freeze({ text: event.text, final: event.final, engine: readEngineTag() });" \
+  "    transcript = Object.freeze({ text: event.text, final: event.final, engine: ENGINE.LOCAL });" \
+  "$SCREEN" "$SCREEN_SUITE"
 
 echo
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"
