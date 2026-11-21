@@ -1687,6 +1687,14 @@ func publishedCraftCredentials(lc *localcfg.Config, old *projectpolicy.Policy) [
 // does not carries no marker, so it is published only if its own owner says who
 // answers for it.
 //
+// The one pool that is published without an owner is the pool the config marks
+// as the cascade's: the marker never reaches the node (R15), and what the node
+// holds instead is the ordinary legacy_open pool a cascaded project's runs are
+// served — the node's readers know no cascades, and this is the shape they do
+// know (F36). Its own rule refuses a marker with no cascade behind it and an
+// owner written beside one (config.ValidateCascadePools), so the exception
+// cannot be reached by a pool nobody's migration wrote.
+//
 // A pool neither the config nor the node can publish — an ownerless one the
 // node has no copy of, which is what `fugaro accounts pool add` writes today —
 // is left out and NAMED in one line: the node would be one this Fugaro refuses
@@ -1721,7 +1729,22 @@ func publishedCraftPools(lc *localcfg.Config, old *projectpolicy.Policy, creds [
 		// taken from the node alone, and only while nothing else answers for the
 		// pool: a pool that names an owner now is not one that predates owners.
 		pub.LegacyOpen = false
-		if held {
+		// The cascade's marker is the installation's and never the node's: the
+		// node's readers are job images that know no such key, and the access
+		// record the service reads is written from the file (R15, CM36). The
+		// pool it marks is published as the ordinary legacy_open pool the
+		// cascade is — served to everyone, owned by nobody — which is the one
+		// exception to the rule above and to the owner the validator asks for:
+		// the marker's own rule refuses a marker with no cascade behind it and
+		// an owner written beside one (config.ValidateCascadePools), so a
+		// marked pool here is the migration's, and a publish that asked it for
+		// an owner would leave a cascaded project's runs served nothing (F36).
+		// The node's owner of that name goes with it: a pool served to everyone
+		// serves no owner, and carrying one forward would leave the node with a
+		// pool this publish then refuses to write at all.
+		pub.Cascade = false
+		pub.LegacyOpen = p.Cascade
+		if held && !p.Cascade {
 			if pub.Owner == "" {
 				pub.Owner = q.Owner
 			}
@@ -2092,9 +2115,14 @@ func nodeTurnsTheCascadeOn(p *projectpolicy.Policy) bool {
 // routingTurnsTheCascadeOn is that switch for a routing block rather than for
 // the node that carries one, so `fugaro project routing unset` refuses the same
 // shape this publish refuses (projectRoutingRefuseSilence): the two ask one
-// question, and neither can drift from the other about what the cascade is.
+// question, and neither can drift from the other about what the cascade is. The
+// question itself is config's (RoutingServesTheCascade), because the pool
+// carrying the cascade's marker is admitted by the same answer
+// (config.ValidateCascadePools, CM32): a project whose cascade serves is one
+// thing to this CLI, and a third reading of it here would be a way for the
+// marker's rule and the publish's to disagree.
 func routingTurnsTheCascadeOn(r *projectpolicy.Routing) bool {
-	return r != nil && r.Claude != nil && r.Claude.ViaValue() == projectpolicy.RouteCascade
+	return config.RoutingServesTheCascade(r)
 }
 
 // policyProviders is the policy's providers block, built from the operator's

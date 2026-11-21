@@ -1502,6 +1502,9 @@
         "pools.*.allowed_users": {
           "default": "unset = only the owner"
         },
+        "pools.*.cascade": {
+          "default": "unset = false: only `fugaro update` writes this, for the pool it migrates out of a cascade that serves"
+        },
         "pools.*.legacy_open": {
           "default": "unset = false: only the policy migration writes this, for a pool that predates owners"
         },
