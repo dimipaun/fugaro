@@ -4725,3 +4725,434 @@ func TestConvergeMarkerIsConditionedOnTheGenerationItRead(t *testing.T) {
 		t.Errorf("gs://%s/%s = %q (present %v), want the other writer's fact %q", testBucket, MarkerObject, b, ok, other)
 	}
 }
+
+// --- RewriteBudget: changing an amount a project already records (D2215) ---
+//
+// The one write that edits a figure rather than adding one. It is needed
+// because the amount became writable with a default (D2212): a creating run
+// that chose nothing records 100 USD, and without a rewrite that number would
+// be the project's for good, since WriteFlag is the only other writer and it
+// adds a budget to a fact that records none. The tests below pin the two
+// things that keep it from being an editor anyone can reach: it writes only
+// this project's own marker of a version that records an amount, and it is
+// reached only when the owner states one — the callers' rule, not this
+// package's (R9; T3 and T4 are the two call sites).
+
+// markerWrites is the writes of the fact the fake has served: the upload an
+// insert sends, and any delete of any key. A test uses it where the object's
+// bytes cannot answer — a write of the same bytes leaves the object looking
+// exactly as it did — so "wrote nothing" is asserted rather than inferred.
+func markerWrites(f *gcpfake.GCS) []gcpfake.Request {
+	var writes []gcpfake.Request
+	for _, r := range f.Requests() {
+		if r.Method == http.MethodDelete || (r.Method == http.MethodPost && strings.HasPrefix(r.Path, "/upload/")) {
+			writes = append(writes, r)
+		}
+	}
+	return writes
+}
+
+// TestDefaultBudgetPassesCheck pins the defaults themselves: the figures
+// D2212 and D2211 chose, and the fact that they are a pair a managed
+// creation could record. The marker's own rule judges them (Budget.Check)
+// because a default outside the range would be refused by the very write
+// that records it, and a version-4 fact recording them is what the write of
+// a defaulted creation produces.
+func TestDefaultBudgetPassesCheck(t *testing.T) {
+	if DefaultBudgetAmount != 100 {
+		t.Errorf("DefaultBudgetAmount = %d, want 100 (D2212)", DefaultBudgetAmount)
+	}
+	if DefaultBudgetCurrency != "USD" {
+		t.Errorf("DefaultBudgetCurrency = %q, want USD (D2211)", DefaultBudgetCurrency)
+	}
+	d := Budget{Amount: DefaultBudgetAmount, Currency: DefaultBudgetCurrency}
+	if err := d.Check(); err != nil {
+		t.Errorf("the default budget %+v is not one a managed creation records: %v", d, err)
+	}
+	b, err := (Marker{Version: MarkerVersionNoBuilds, GCPProject: testProject, Budget: &d}).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf(`{"version":%d,"gcp_project":"%s","budget":{"amount":%d,"currency":%q}}`,
+		MarkerVersionNoBuilds, testProject, DefaultBudgetAmount, DefaultBudgetCurrency)
+	if string(b) != want {
+		t.Errorf("the fact a defaulted creation records = %q, want %q", b, want)
+	}
+}
+
+// TestRewriteBudgetReplacesAmount is the write half: the figures the owner
+// states replace the ones the marker records, the figures replaced are what
+// the call answers with (so the caller can print both), and neither of the
+// two is carried over silently from what is there — the currency is the
+// owner's, not a default taken over a recorded one (R6).
+func TestRewriteBudgetReplacesAmount(t *testing.T) {
+	ctx := context.Background()
+	s, _ := convergeWorld(t, markerNoBuildsJSON)
+	old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 400, Currency: "USD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old != (Budget{Amount: 7, Currency: "USD"}) {
+		t.Errorf("RewriteBudget answered the replaced figures as %+v, want the recorded 7 USD", old)
+	}
+	want := `{"version":4,"gcp_project":"proj-1234","budget":{"amount":400,"currency":"USD"}}`
+	if b, ok := readMarker(t, s, testBucket); !ok || string(b) != want {
+		t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, want)
+	}
+	// The second call replaces the currency alone and answers what the first
+	// one wrote, which is what makes a sequence of rewrites readable to a
+	// caller that prints what it replaced.
+	old, err = RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 400, Currency: "EUR"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old != (Budget{Amount: 400, Currency: "USD"}) {
+		t.Errorf("the second call answered %+v, want the 400 USD the first one wrote", old)
+	}
+	if b, _ := readMarker(t, s, testBucket); string(b) != `{"version":4,"gcp_project":"proj-1234","budget":{"amount":400,"currency":"EUR"}}` {
+		t.Errorf("the second call left %q", b)
+	}
+}
+
+// TestRewriteBudgetFromVersion2And3: the versions installations carry are the
+// ones this meets (F15) — 2, 3, and the 4 this build writes — and every one of
+// them becomes the version this build writes a budget in, recording the
+// figures the owner stated. The count a version-3 object carried does not
+// survive the rewrite, exactly as it does not survive ConvergeMarker (D1543):
+// what a marker records is the amount and the currency, and nothing else.
+func TestRewriteBudgetFromVersion2And3(t *testing.T) {
+	ctx := context.Background()
+	for name, seed := range map[string]string{
+		"the version the flag wrote":                     markerBudgetJSON,
+		"the version that carried the image build bound": markerBuildsJSON,
+		"the version this build writes":                  markerNoBuildsJSON,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := convergeWorld(t, seed)
+			old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: DefaultBudgetAmount, Currency: DefaultBudgetCurrency})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if old != (Budget{Amount: 7, Currency: "USD"}) {
+				t.Errorf("RewriteBudget answered %+v, want the recorded 7 USD", old)
+			}
+			want := fmt.Sprintf(`{"version":4,"gcp_project":"proj-1234","budget":{"amount":%d,"currency":%q}}`, DefaultBudgetAmount, DefaultBudgetCurrency)
+			if b, ok := readMarker(t, s, testBucket); !ok || string(b) != want {
+				t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, want)
+			}
+		})
+	}
+}
+
+// TestRewriteBudgetEqualIsNoWrite: figures the marker already records are not
+// written at all — not written identically, not written and then compared, but
+// no write of the object. It is asserted on the API rather than on the bytes
+// for that reason, because a write of the same bytes leaves the object looking
+// exactly as it did, and it is what makes the rewrite safe to reach on every
+// update that was given a --budget.
+func TestRewriteBudgetEqualIsNoWrite(t *testing.T) {
+	ctx := context.Background()
+	s, f := convergeWorld(t, markerNoBuildsJSON)
+	old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"})
+	if err != nil {
+		t.Fatalf("the call over the figures the marker already records was refused: %v", err)
+	}
+	if old != (Budget{Amount: 7, Currency: "USD"}) {
+		t.Errorf("RewriteBudget answered %+v, want the recorded 7 USD", old)
+	}
+	if writes := markerWrites(f); len(writes) != 0 {
+		t.Errorf("the call over equal figures wrote the fact: %v", writes)
+	}
+	if b, ok := readMarker(t, s, testBucket); !ok || string(b) != markerNoBuildsJSON {
+		t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, b, ok, markerNoBuildsJSON)
+	}
+	// And the same call with another amount does write, so the assertion above
+	// is not the write path being unreachable in this world.
+	if _, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 8, Currency: "USD"}); err != nil {
+		t.Fatal(err)
+	}
+	if writes := markerWrites(f); len(writes) != 1 {
+		t.Errorf("the call over another amount made %d writes of the fact, want 1", len(writes))
+	}
+}
+
+// TestRewriteBudgetRefusesVersion1: the version-1 creation fact records no
+// amount, and the write that replaces it is WriteFlag's — a rewrite here would
+// carry a figure the object never had, and it would do it without the owner's
+// own command, which is what gates that write. The refusal names the command
+// that does the job.
+func TestRewriteBudgetRefusesVersion1(t *testing.T) {
+	ctx := context.Background()
+	s, f := convergeWorld(t, markerJSON)
+	old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: DefaultBudgetAmount, Currency: DefaultBudgetCurrency})
+	if err == nil {
+		t.Fatal("the version-1 creation fact was rewritten")
+	}
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("the refusal is not this package's own (ErrRefused): %v", err)
+	}
+	for _, want := range []string{"the version-1 creation fact", "records no amount", "fugaro managed flag"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if old != (Budget{}) {
+		t.Errorf("a refused call answered %+v, want no figures", old)
+	}
+	if writes := markerWrites(f); len(writes) != 0 {
+		t.Errorf("a refused call wrote the fact: %v", writes)
+	}
+	if b, ok := readMarker(t, s, testBucket); !ok || string(b) != markerJSON {
+		t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, b, ok, markerJSON)
+	}
+}
+
+// TestRewriteBudgetRefusesAnotherProject is the subject of every row here: an
+// object that is not this project's own marker recording an amount. None of
+// them is written over and each leaves the object byte for byte, because a
+// rewrite conditioned on an object the caller did not understand is the write
+// this package refuses — including the two OBJECT-level states the managed
+// read refuses whole (an amount outside the shape, and a version-3 count
+// outside its rule), where rewriting the object as one that read accepts would
+// open the gate on this project rather than carry a figure.
+func TestRewriteBudgetRefusesAnotherProject(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		seed       string
+		unreadable bool
+		want       string
+	}{
+		"a fact about another project": {
+			seed: `{"version":4,"gcp_project":"proj-9999","budget":{"amount":7,"currency":"USD"}}`,
+			want: "names project proj-9999, not proj-1234",
+		},
+		"a version this build does not know": {
+			seed: `{"version":5,"gcp_project":"proj-1234"}`,
+			want: "is a version 5 marker",
+		},
+		"an object that is not a marker": {
+			seed: "this is not the marker",
+			want: "not a marker for",
+		},
+		"an object carrying a key this build does not write": {
+			seed: `{"version":4,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"image_builds":2}`,
+			want: "not a marker for",
+		},
+		"a fact that records no amount": {
+			seed: `{"version":4,"gcp_project":"proj-1234"}`,
+			want: "records no budget amount",
+		},
+		"a fact whose amount this build refuses": {
+			seed: `{"version":4,"gcp_project":"proj-1234","budget":{"amount":0,"currency":"USD"}}`,
+			want: "the amount it records is one this build refuses",
+		},
+		"a version-3 fact whose bound this build refuses": {
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":0}`,
+			want: "image build bound this build refuses",
+		},
+		"an object the caller may not read": {
+			seed:       markerNoBuildsJSON,
+			unreadable: true,
+			want:       "cannot be read",
+		},
+		"nothing there": {want: "it is not there"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := convergeWorld(t, tc.seed)
+			if tc.unreadable {
+				f.FailObjectGetsAfter(testBucket, MarkerObject, 0)
+			}
+			old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 400, Currency: "USD"})
+			if err == nil {
+				t.Fatal("the call rewrote an object that is not this project's own recorded amount")
+			}
+			if !errors.Is(err, ErrRefused) {
+				t.Errorf("the refusal is not this package's own (ErrRefused): %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not say %q: %v", tc.want, err)
+			}
+			if old != (Budget{}) {
+				t.Errorf("a refused call answered %+v, want no figures", old)
+			}
+			if writes := markerWrites(f); len(writes) != 0 {
+				t.Errorf("a refused call wrote the fact: %v", writes)
+			}
+			// The knob above refuses every later read of that object too, so it
+			// is turned off before what is there is read back.
+			f.FailObjectGetsAfter(testBucket, MarkerObject, -1)
+			b, ok := readMarker(t, s, testBucket)
+			switch {
+			case tc.seed == "" && ok:
+				t.Errorf("a refused call wrote an object where there was none: %q", b)
+			case tc.seed != "" && (!ok || string(b) != tc.seed):
+				t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, b, ok, tc.seed)
+			}
+		})
+	}
+}
+
+// TestRewriteBudgetRefusesABudgetThatIsNotOne: the figures the caller states
+// are judged by the marker's own rule before anything is read or written, so a
+// pair that is not one is refused without touching the API at all — not even
+// the bucket read every write here otherwise makes first.
+func TestRewriteBudgetRefusesABudgetThatIsNotOne(t *testing.T) {
+	ctx := context.Background()
+	for name, b := range map[string]Budget{
+		"no amount":              {Currency: "USD"},
+		"a zero amount":          {Currency: "USD"},
+		"a negative amount":      {Amount: -1, Currency: "USD"},
+		"no currency":            {Amount: 7},
+		"one above the ceiling":  {Amount: MaxBudgetAmount + 1, Currency: "USD"},
+		"a lower-case currency":  {Amount: 7, Currency: "usd"},
+		"a four-letter currency": {Amount: 7, Currency: "USDX"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := convergeWorld(t, markerNoBuildsJSON)
+			old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, b)
+			if err == nil {
+				t.Fatal("want a refusal: the amount and the currency are a pair, above 0 and in range")
+			}
+			if !errors.Is(err, ErrRefused) {
+				t.Errorf("the refusal is not this package's own (ErrRefused): %v", err)
+			}
+			if old != (Budget{}) {
+				t.Errorf("a refused call answered %+v, want no figures", old)
+			}
+			if reqs := f.Requests(); len(reqs) != 0 {
+				t.Errorf("a call with a budget that is not one touched the API: %v", reqs)
+			}
+			if got, ok := readMarker(t, s, testBucket); !ok || string(got) != markerNoBuildsJSON {
+				t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, got, ok, markerNoBuildsJSON)
+			}
+		})
+	}
+}
+
+// TestRewriteBudgetNeedsTheProjectsOwnRunsBucket is the proof every writer of
+// this object makes before it writes: the project's own runs bucket, by its
+// number and by the installation's label, exactly as WriteFlag proves it. A
+// bucket name is global, so without that proof the object of a stranger's
+// bucket would be rewritten as this project's.
+func TestRewriteBudgetNeedsTheProjectsOwnRunsBucket(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		bucket string
+		number uint64
+		labels map[string]string
+	}{
+		"no bucket number":                  {testBucket, 0, testManaged},
+		"another project's":                 {testBucket, 999, testManaged},
+		"an unlabelled bucket":              {testBucket, testProjectNumber, nil},
+		"a bucket labelled by someone else": {testBucket, testProjectNumber, map[string]string{gcp.LabelManaged: "managed-by-someone"}},
+		"no bucket named":                   {"", testProjectNumber, testManaged},
+		"a bucket that is not there":        {"fugaro-runs-elsewhere", testProjectNumber, testManaged},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, tc.labels)
+			f.Put(testBucket, MarkerObject, []byte(markerNoBuildsJSON))
+			if _, err := RewriteBudget(ctx, s, tc.bucket, testProject, tc.number, Budget{Amount: 400, Currency: "USD"}); err == nil {
+				t.Fatal("want a refusal")
+			}
+			if writes := markerWrites(f); len(writes) != 0 {
+				t.Errorf("a refused call wrote the object: %v", writes)
+			}
+			if b, ok := readMarker(t, s, testBucket); !ok || string(b) != markerNoBuildsJSON {
+				t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, b, ok, markerNoBuildsJSON)
+			}
+		})
+	}
+	// The project's own runs bucket is the one case that works, so the table
+	// above is not passing for the wrong reason — and no storage client, or no
+	// project named, is a refusal rather than a panic or a write somewhere.
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	f.Put(testBucket, MarkerObject, []byte(markerNoBuildsJSON))
+	if _, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 400, Currency: "USD"}); err != nil {
+		t.Fatalf("the project's own runs bucket was refused: %v", err)
+	}
+	if _, err := RewriteBudget(ctx, nil, testBucket, testProject, testProjectNumber, Budget{Amount: 400, Currency: "USD"}); err == nil {
+		t.Error("the rewrite was made with no storage client")
+	}
+	if _, err := RewriteBudget(ctx, s, testBucket, "", testProjectNumber, Budget{Amount: 400, Currency: "USD"}); err == nil {
+		t.Error("the rewrite was made with no project named")
+	}
+}
+
+// TestRewriteBudgetLosesTheRace: the write is conditioned on the generation
+// this call read (insertMarker), so a writer that got there first — the owner
+// flagging the project while an update runs, or two of the owner's own runs —
+// is never clobbered. What that writer left is what is there afterwards, and
+// the call answers ErrAlreadyMarked rather than a replaced amount.
+func TestRewriteBudgetLosesTheRace(t *testing.T) {
+	ctx := context.Background()
+	_, f := convergeWorld(t, markerNoBuildsJSON)
+	other := []byte(`{"version":4,"gcp_project":"proj-1234","budget":{"amount":9,"currency":"EUR"}}`)
+	racer := &convergeRacer{rt: http.DefaultTransport, f: f, other: other}
+	s, err := storage.NewService(ctx, option.WithoutAuthentication(),
+		option.WithEndpoint(f.URL+"/storage/v1/"), option.WithHTTPClient(&http.Client{Transport: racer}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 400, Currency: "USD"})
+	if !racer.done {
+		t.Fatal("the race never happened: no write of the fact went out")
+	}
+	if err == nil || !errors.Is(err, ErrAlreadyMarked) {
+		t.Fatalf("the rewrite over a fact another writer replaced = %v, want ErrAlreadyMarked", err)
+	}
+	if old != (Budget{Amount: 7, Currency: "USD"}) {
+		t.Errorf("the call answered %+v, want the figures it read", old)
+	}
+	if b, ok := readMarker(t, s, testBucket); !ok || string(b) != string(other) {
+		t.Errorf("gs://%s/%s = %q (present %v), want the other writer's fact %q", testBucket, MarkerObject, b, ok, other)
+	}
+}
+
+// TestRewriteBudgetWritesVersion4 pins the object the rewrite writes: the
+// shape this build has written a budget in since the count went (A3), and not
+// a shape of its own — a version, a project and a two-field budget, nothing
+// else, and no count left over from a version-3 object — and it pins that the
+// object is one the read the managed gate makes believes, which is the whole
+// point of writing a shape rather than a figure.
+func TestRewriteBudgetWritesVersion4(t *testing.T) {
+	ctx := context.Background()
+	s, _ := convergeWorld(t, markerBuildsJSON)
+	if _, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 250, Currency: "EUR"}); err != nil {
+		t.Fatal(err)
+	}
+	b, ok := readMarker(t, s, testBucket)
+	if !ok {
+		t.Fatalf("gs://%s/%s is not there", testBucket, MarkerObject)
+	}
+	want := `{"version":4,"gcp_project":"proj-1234","budget":{"amount":250,"currency":"EUR"}}`
+	if string(b) != want {
+		t.Fatalf("gs://%s/%s = %q, want %q", testBucket, MarkerObject, b, want)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 3 {
+		t.Errorf("the fact holds %d fields (%v), want version, gcp_project and budget", len(fields), slices.Sorted(maps.Keys(fields)))
+	}
+	var version int
+	if err := json.Unmarshal(fields["version"], &version); err != nil || version != MarkerVersionNoBuilds {
+		t.Errorf("the fact is version %d (err %v), want %d", version, err, MarkerVersionNoBuilds)
+	}
+	var budgetFields map[string]json.RawMessage
+	if err := json.Unmarshal(fields["budget"], &budgetFields); err != nil {
+		t.Fatal(err)
+	}
+	if len(budgetFields) != 2 {
+		t.Errorf("the budget holds %d fields (%v), want amount and currency", len(budgetFields), slices.Sorted(maps.Keys(budgetFields)))
+	}
+	fact, err := ReadFlagFact(ctx, s, testBucket, testProject, testProjectNumber)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fact.Ours || fact.Budget != (Budget{Amount: 250, Currency: "EUR"}) {
+		t.Errorf("the read answers %+v, want this project's fact recording 250 EUR", fact)
+	}
+}
