@@ -23,8 +23,16 @@ import (
 const (
 	testProject = "fake-project"
 	testRegion  = "fake-region"
-	testSA      = "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
-	testImage   = "fake-region-docker.pkg.dev/fake-project/fugaro-acme-app/acme-app:1"
+	// testSA is the one account an installation's block carries
+	// (Options.ServiceAccount). Since BR10 nothing a launch creates runs as it:
+	// a job's VMs run as the account of the deployed job the run stands in for.
+	testSA = "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
+	// testJobSA is the account of the per-repository deployed job these tests'
+	// launches stand in for: gcp.ServiceAccountID(slug, workflow) in this
+	// installation's project, which is the account the repository root creates
+	// for that job and the one its Cloud Run job runs as (BR10, D3103).
+	testJobSA = "fugaro-acme-app-web-2dc53d2b@fake-project.iam.gserviceaccount.com"
+	testImage = "fake-region-docker.pkg.dev/fake-project/fugaro-acme-app/acme-app:1"
 	// testSecret is a Secret Manager secret *name*, never a value: the job
 	// definition carries names only.
 	testSecret = "projects/fake-project/secrets/fugaro-acme-app-anthropic-api-key"
@@ -455,9 +463,14 @@ func TestJobDefinitionIsTheDesignsJob(t *testing.T) {
 	if got := object(t, call.Job, "allocationPolicy", "instances", "0")["blockProjectSshKeys"]; got != true {
 		t.Errorf("blockProjectSshKeys = %v, want true", got)
 	}
-	// Never the default Compute Engine account (design §3.2, C6/C21).
-	if got := object(t, call.Job, "allocationPolicy", "serviceAccount")["email"]; got != testSA {
-		t.Errorf("serviceAccount.email = %v, want %s", got, testSA)
+	// Never the default Compute Engine account (design §3.2, C6/C21), and
+	// never the block's single account either (BR10, D3103): it is the account
+	// of the deployed job this launch stands in for.
+	if got := object(t, call.Job, "allocationPolicy", "serviceAccount")["email"]; got != testJobSA {
+		t.Errorf("serviceAccount.email = %v, want %s", got, testJobSA)
+	}
+	if testJobSA == testSA {
+		t.Error("the job's account and the block's are the same string, so this assertion cannot tell them apart")
 	}
 }
 
@@ -570,7 +583,7 @@ const (
       ]
     },
     "serviceAccount": {
-      "email": "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
+      "email": "fugaro-acme-app-web-2dc53d2b@fake-project.iam.gserviceaccount.com"
     }
   },
   "labels": {
@@ -645,7 +658,7 @@ const (
       ]
     },
     "serviceAccount": {
-      "email": "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
+      "email": "fugaro-acme-app-web-2dc53d2b@fake-project.iam.gserviceaccount.com"
     }
   },
   "labels": {
