@@ -1,65 +1,57 @@
 # Cutting over to the orchestrator daemon
 
-The daemon replaces the sweep, the Monitor watcher and the queue scripts in one
-step, with no shadow week (D1235): from the day you start it, it is what
-launches queued work, marks finished runs and nudges the stuck ones. No step
-here deletes the scripts — they stay on disk — and the rollback below is
-reachable for **14 days**.
+The daemon takes over in one step, with no shadow week (D1235): from the day it
+runs, it is what launches queued work, marks finished runs and nudges the stuck
+ones. The step is `fugaro update` — the whole upgrade, and the only command this
+cutover needs (D2729).
 
-## 1. Import what the session tracked (**per installation**)
-
-Once, and before the daemon starts, hand it the session's memory: everything
-the interactive session holds, written out as one patch document, and then
+## Run the update (**per installation**)
 
 ```bash
-fugaro orchestrator import -f session-dump.json
+fugaro update
 ```
 
-The dump is read by `fugaro orchestrator patch`'s own validator and bounded by
-its own caps, because it is the one document in this loop a model wrote. It
-lands as you, and no dump approves work: approving a work item, setting the goal
-and closing a decision that waits on a person are your own word at a real
-terminal, so a dump carrying one is refused whole, whether the decision was
-already in the node or the dump raised it itself in the same document. Every
-work item it declares arrives unapproved, and the daemon launches approved work
-only, so approve what should run before you start it, with
-`fugaro orchestrator patch -f approved.json`.
+At your terminal it installs the login unit that runs the project's
+orchestrator daemon on this machine if there is none, re-renders an installed
+one for the binary this release ships, migrates the project's published policy
+in place and rebuilds the job images (D2700). Nothing else is a step: there is
+no dump to import, no script to stop by hand, and nothing to keep on disk for a
+window of days. A run in flight when the update runs keeps its records, its
+ledger and its counters, and the daemon adopts it: an adopted run is folded and
+counted like any other (D2702).
 
-## 2. Stop the scripts launching (**per installation**)
+Every machine runs the update, and one of them holds the project's daemon lease
+and drives the runs while the others stand by and take it over when it is free.
+`fugaro orchestrator status` says what this machine has: whether that login unit
+is installed, the file it is written at, and whether the file is what this
+release would write. `fugaro orchestrator uninstall` removes it, which is how
+one machine leaves the rotation without touching the project.
 
-Nothing but the daemon takes its launch claim — the claim is per run id, and the
-scripts take none — so a script and the daemon launching the same work would
-launch it twice. Stop whatever starts runs from `queue.txt`: the sweep, the
-watcher's launcher and the queue scripts. Their watching may stay.
+## The switch
 
-## 3. Start it and see one run through (**per installation**)
+Whether a daemon launches anything at all is the project's own answer, in
+`orchestrator_enabled`, a top-level key of its published policy: true for a
+project that never states it, and a `false` that reaches every machine's daemon
+(D2701, D2739). Read the answer that stands with
+`fugaro settings orchestrator_enabled --json`.
 
-Test the budget's spend caps and the kill switch first, then
+While it is false the daemons launch nothing and go on folding the runs already
+going, so a project that wants the work driven by hand sets the key and lets the
+runs in flight finish. The key is the node's own answer to keep: `fugaro project
+policy publish` carries the policy and keeps this key as the node has it, so a
+machine whose config predates it cannot turn a project's daemon back on.
 
-```bash
-fugaro orchestrator status
-fugaro orchestrator run
-```
+## What a session does (**per repository**)
 
-`fugaro setup` installed the login unit; on a machine that skipped it, or after
-a repair, `fugaro orchestrator install` writes it. Confirm one finished run, one
-dependency-driven launch and one notification (Check 302 of
-[the live checklist](../gcp-live-checklist.md), run at your own installation).
+A session in a checkout whose project has a live daemon hands the work over
+rather than launching it: one item for one piece of work, or a plan imported
+whole with `fugaro orchestrator import --plan docs/<plan>`, and it approves
+neither — a person's word is what the daemon launches on. With the switch off,
+or with nobody holding the project's lease, sessions drive the runs as before.
 
-## The rollback, by hand (**per installation**)
-
-**No rollback command is built.** The scripts are still on disk, they stay there
-for the 14 days, and inside that window the rollback is these three steps and
-they are the whole of it:
-
-1. Stop the daemon: `fugaro orchestrator uninstall`.
-2. Re-arm the sweep, the Monitor watcher and the queue scripts.
-3. See one launch through the scripts before removing anything.
-
-That is the way back while the window lasts; nothing else was moved, and the
-scripts are what the machine runs from again.
-
-## After the 14 days (**per installation**)
-
-Nothing removes the scripts for you. Once the fortnight has passed with no
-rollback, delete them yourself; until then, keep their launching stopped.
+Whether a daemon is live is the project's answer and not this machine's: the
+daemon serves the project and one machine holds its lease, so a machine whose
+unit is not installed is out of the rotation rather than a project without a
+daemon. `fugaro orchestrator ls` is where a session reads it — the project's
+holder and the time of its last beat, and a beat inside the lease's ninety
+seconds is a daemon driving the project on whichever machine that is.
