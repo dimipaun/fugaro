@@ -50,10 +50,13 @@
 # step 3). Nothing here starts a Fugaro run, calls a model or touches a run.
 #
 # It changes nothing it does not remove: the ONE Cloud Run job it creates, and
-# the executions on it, are deleted at the end and the deletion is READ BACK. If
-# a job of that name is already there -- someone else's, or a previous run's --
-# it is refused before anything is created, because this check never adopts what
-# it did not make.
+# the executions on it, are deleted at the end and the deletion is READ BACK, and
+# so is the Firebase Auth user the accepted exchange of the custom token creates
+# in the signer's own project (a sign-in makes the account, so the run-shaped uid
+# this check mints becomes a user of the project until it is deleted). If a job
+# of that name is already there -- someone else's, or a previous run's -- it is
+# refused before anything is created, because this check never adopts what it did
+# not make.
 #
 # The register's row and section are docs/gcp-live-checklist.md, "Check 840".
 #
@@ -83,8 +86,10 @@
 #             calls. No model call, no Fugaro run, no Cloud Build.
 # Runs:       by YOU. No agent runs any step of it.
 # Cleanup:    always, including on a Ctrl-C: the job this check created is
-#             deleted and read back as gone, and the scratch directory is
-#             removed. The `restore` row says both.
+#             deleted and read back as gone, the Firebase Auth user the accepted
+#             exchange creates is deleted from the signer's own project and read
+#             back gone, and the scratch directory is removed. The `restore` and
+#             `auth-user` rows say so.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 840 RESULT,
 #             to copy back. Exit 0 when all three readings came back the way the
 #             design assumes, 1 when one of them came back the other way (each
@@ -191,7 +196,12 @@ PROBE_IMAGE="gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
 PROBE_AUDIENCE="https://chk840-check.invalid/"
 RUN_URL_BASE="https://run.googleapis.com/v2"
 IAMCRED_URL="https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts"
-IDENTITY_URL="https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken"
+TOOLKIT_BASE="https://identitytoolkit.googleapis.com/v1"
+IDENTITY_URL="$TOOLKIT_BASE/accounts:signInWithCustomToken"
+# The Firebase project the exchanges happen at: the signer's own, derived in
+# guard_probe_names. It is also where the Auth user an exchange creates is
+# deleted from again (restore_auth_user).
+FP=""
 LAUNCHER_ROLE="fugaroLauncher"
 FIREBASE_KEY_ENV="FUGARO_FIREBASE_API_KEY"
 
@@ -235,6 +245,7 @@ scratch_up() {
 # the subshell.
 cleanup() {
   restore
+  restore_auth_user
   remove_credentials
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
   remove_scratch
@@ -353,6 +364,14 @@ guard_probe_names() {
   if ! printf '%s' "$SIGNER" | grep -Eq '^[a-z0-9][a-z0-9.-]*@[a-z0-9-]+\.iam\.gserviceaccount\.com$'; then
     die "--signer '$SIGNER' is not a service account email: U3 signs the custom token as it. usage: $USAGE"
   fi
+  # The signer is an account OF the Firebase project the custom token is
+  # exchanged at: its own domain is that project, which is what Check 96 relies
+  # on too. It is the one thing here that names the project, and the exchange's
+  # answer is addressed with the project's own web API key -- so an identity
+  # signed by an account of another project cannot be exchanged at all, and the
+  # Auth user the exchange creates is created HERE and has to be deleted here.
+  FP=${SIGNER#*@}
+  FP=${FP%.iam.gserviceaccount.com}
 }
 
 # --------------------------------------------------------------- the one read
@@ -483,7 +502,7 @@ read_job() {
     fact job-key FAIL "the job '$JOB' carries no $FIREBASE_KEY_ENV in its environment, so U3's exchange cannot be addressed and nothing was created: name a job of the installation that carries it (internal/infra writes it as a plain value on every job), and run this check again"
     stop "the job '$JOB' carries no $FIREBASE_KEY_ENV (the row above), so U3 cannot be measured and this run created nothing. Name a job that carries it and run again"
   fi
-  fact job-key PASS "the job '$JOB' carries $FIREBASE_KEY_ENV, and the key travelled from its document into the 0600 curl config file inside the python3 process that read it — never printed, never an argument"
+  fact job-key PASS "the job '$JOB' carries $FIREBASE_KEY_ENV, and the key travelled from its document into the 0600 curl config file inside the python3 process that read it — never printed, never an argument. The key is what names the project the exchange happens at, and it is the signer's own ($FP): the exchange is addressed there, so the Auth user it creates is created in $FP and this run deletes it there again"
 }
 
 # create_probe: the ONE Cloud Run job this check creates. Its account comes from
@@ -982,7 +1001,11 @@ PY
     fact u3-first FAIL "Firebase refused the FIRST exchange of the token this check minted (HTTP $EXCHANGE_CODE): the token is not the shape Firebase accepts, so the second exchange is not measured ($EXCHANGE_DETAIL)"
     stop "Firebase refused the first exchange of the minted custom token (the row above). Nothing is concluded about a second one"
   fi
-  fact u3-first PASS "Firebase accepted the first exchange of the minted custom token (HTTP 200, an ID token back), under uid $EXCHANGE_UID"
+  # An accepted exchange has made a Firebase Auth user of this run's uid, and
+  # the exit trap deletes it (restore_auth_user). Set here, on the one answer
+  # that creates it, so a stop anywhere below still removes it.
+  AUTH_USER_CREATED=yes
+  fact u3-first PASS "Firebase accepted the first exchange of the minted custom token (HTTP 200, an ID token back), under uid $EXCHANGE_UID — which is a Firebase Auth user of $FP's now, and this run deletes it again on the way out (the auth-user row)"
   local first_uid=$EXCHANGE_UID
   exchange 2
   if [ "$EXCHANGE_OK" = yes ]; then
@@ -1105,6 +1128,80 @@ restore() {
   return 0
 }
 
+# restore_auth_user: U3's exchange CREATES a Firebase Auth user. Identity Toolkit
+# makes the account on the first sign-in of a custom token, so the uid this check
+# minted (r~chk840~<random>) is a user in $FP's table from the moment the first
+# exchange is accepted — and the run deletes it the way the installation's own
+# sweepers do: accounts:delete with the caller's own access token, then
+# accounts:lookup read back. That read-back IS the assertion, so a delete that
+# answered 200 and a lookup that could not be read are different answers and the
+# second one is not a pass.
+#
+# It runs from the exit trap beside the Restore, before the credentials go, so a
+# FAIL, a stop or a Ctrl-C after the first exchange still removes it.
+AUTH_USER_CREATED=no
+AUTH_RESTORED=no
+restore_auth_user() {
+  [ "$AUTH_RESTORED" = yes ] && return 0
+  AUTH_RESTORED=yes
+  if [ "$AUTH_USER_CREATED" != yes ]; then
+    fact auth-user PASS "no Firebase Auth user of this check's was made: a user is created by the first accepted exchange of the custom token, and this run never got one, so there is nothing to delete in $FP"
+    return 0
+  fi
+  local code=""
+  (umask 077 && printf '{"localId":"%s"}\n' "$U3_UID" >"$SCRATCH/auth-delete-body.json") || true
+  if ! code=$(curl -sS --max-time "$CURL_SECONDS" -X POST \
+    -H 'Content-Type: application/json' --config "$AUTH_CONF" \
+    -d "@$SCRATCH/auth-delete-body.json" -o "$SCRATCH/auth-delete.json" -w '%{http_code}' \
+    "$TOOLKIT_BASE/projects/$FP/accounts:delete" 2>"$SCRATCH/auth-delete.err"); then
+    fact auth-user FAIL "the Firebase Auth user $U3_UID that this run's accepted exchange created could not be deleted: curl failed before any HTTP response ($(first_line "$SCRATCH/auth-delete.err")). Delete it yourself at $FP's Identity Toolkit ('$TOOLKIT_BASE/projects/$FP/accounts:delete' with {\"localId\":\"$U3_UID\"} and your own access token)"
+    return 0
+  fi
+  if [ "$code" != 200 ]; then
+    fact auth-user FAIL "Identity Toolkit refused the delete of the Auth user $U3_UID (HTTP $code, $FP): the account this run's exchange created is STILL in the project's user table. The access token is your own, so a 403 here is your own right on $FP's Identity Toolkit ($(first_line "$SCRATCH/auth-delete.json"))"
+    return 0
+  fi
+  # The read-back: an accounts:lookup for that one uid, whose body takes a LIST
+  # of localIds where the delete's takes one string. The lookup's own status is
+  # read first, because a document this check could not read would otherwise be
+  # counted as the empty user list — a row that reports "gone" off a call that
+  # never answered.
+  (umask 077 && printf '{"localId":["%s"]}\n' "$U3_UID" >"$SCRATCH/auth-lookup-body.json") || true
+  if ! code=$(curl -sS --max-time "$CURL_SECONDS" -X POST \
+    -H 'Content-Type: application/json' --config "$AUTH_CONF" \
+    -d "@$SCRATCH/auth-lookup-body.json" -o "$SCRATCH/auth-lookup.json" -w '%{http_code}' \
+    "$TOOLKIT_BASE/projects/$FP/accounts:lookup" 2>"$SCRATCH/auth-lookup.err"); then
+    fact auth-user FAIL "the Auth user $U3_UID was deleted (HTTP 200) but the read-back did not answer: curl failed before any HTTP response ($(first_line "$SCRATCH/auth-lookup.err")), so whether it is gone is not known"
+    return 0
+  fi
+  if [ "$code" != 200 ]; then
+    fact auth-user FAIL "the Auth user $U3_UID was deleted (HTTP 200) but the read-back answered HTTP $code rather than 200: an unauthenticated or refused document is not a user list, and this row is the count ($(first_line "$SCRATCH/auth-lookup.json"))"
+    return 0
+  fi
+  local left
+  left=$(python3 - "$SCRATCH/auth-lookup.json" <<'PY'
+import json
+import sys
+
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(1)
+print("%d" % len(d.get("users") or []))
+PY
+  ) || left=""
+  if [ -z "$left" ]; then
+    fact auth-user FAIL "the read-back of the Auth user $U3_UID is not the document this check reads, so whether it is gone is not known: the account was deleted with a 200, and the lookup's own answer could not be parsed"
+    return 0
+  fi
+  if [ "$left" = 0 ]; then
+    fact auth-user PASS "the Firebase Auth user this run's exchange created ($U3_UID, created in $FP by the first accepted exchange) is gone: deleted through the project's own Identity Toolkit (accounts:delete answered 200) and read back with an accounts:lookup for that uid whose own answer holds 0 user(s). Nothing this check created survives it"
+  else
+    fact auth-user FAIL "the project's Identity Toolkit still answers with $left user(s) for the uid this run's exchange created ($U3_UID): the delete did not do what the run asked, and the read-back IS the assertion"
+  fi
+  return 0
+}
+
 # print_plan: the calls a real run would make, printed by --dry-run INSTEAD of
 # running anything. This check's own test pins that a dry run makes no gcloud and
 # no curl call at all, so the plan names the calls' shapes and never makes one.
@@ -1121,6 +1218,7 @@ print_plan() {
   say "  [reads, signs U3] curl -X POST $IAMCRED_URL/<signer>:signJwt — one Firebase custom token signed as the runs' signer, never printed"
   say "  [reads, U3] curl -X POST $IDENTITY_URL — TWICE, the same token, to see whether Firebase exchanges it more than once. The token and the ID tokens it answers with are in 0600 files and are never printed"
   say "  [deletes] gcloud run jobs delete $PROBE_JOB --project $P --region $L --quiet, then a describe that must answer NOT_FOUND: the ONE job this check creates is deleted again and the deletion is read back"
+  say "  [deletes] curl -X POST $TOOLKIT_BASE/projects/$FP/accounts:delete, then an accounts:lookup for the same uid: the Firebase Auth user the accepted exchange CREATES (a sign-in makes the account) is deleted and read back gone"
   say "Nothing else is created, changed or deleted, no Fugaro job is launched and no run starts: this dry run made no gcloud and no curl call at all."
 }
 
@@ -1131,7 +1229,7 @@ print_plan() {
 # recorded it. That is what makes the block safe to diff between two runs.
 BLOCK_KEYS=(project region job probe belong xtrace token job-account probe-run
   probe-exec claims override-echo u1 launcher-perm u2 mint u3-first u3-second u3
-  verdict restore scratch-removed)
+  verdict restore auth-user scratch-removed)
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   local facts=$1 status=$2

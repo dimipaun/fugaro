@@ -86,7 +86,7 @@ CUSTOM_SENTINEL='SENTINEL-840-custom-token-not-a-credential'
 # Every fact key the run's block must carry, whatever it measured.
 BLOCK_KEYS=(project region job probe belong xtrace token job-account probe-run
   probe-exec claims override-echo u1 launcher-perm u2 mint u3-first u3-second u3
-  verdict restore scratch-removed)
+  verdict restore auth-user scratch-removed)
 
 # --------------------------------------------------------------------- fakes
 write_fakes() { # dir
@@ -271,6 +271,21 @@ case "$url" in
   code=$(cat "$FAKE840_DIR/signin.$n.code" 2>/dev/null || true)
   [ -n "$code" ] || code=200
   ;;
+*"accounts:delete"*)
+  # The Restore's delete of the Auth user the exchange created. The body is
+  # recorded, because a case says WHICH account was deleted: the uid has to be
+  # the one this run minted and not some fixed string.
+  if [ -n "$data" ] && [ -f "$data" ]; then cp "$data" "$FAKE840_DIR/auth-delete.body"; fi
+  body=$FAKE840_DIR/auth-delete.json
+  code=$(cat "$FAKE840_DIR/auth-delete.code" 2>/dev/null || true)
+  [ -n "$code" ] || code=200
+  ;;
+*"accounts:lookup"*)
+  if [ -n "$data" ] && [ -f "$data" ]; then cp "$data" "$FAKE840_DIR/auth-lookup.body"; fi
+  body=$FAKE840_DIR/auth-lookup.json
+  code=$(cat "$FAKE840_DIR/auth-lookup.code" 2>/dev/null || true)
+  [ -n "$code" ] || code=200
+  ;;
 *)
   printf 'fake curl: unexpected URL %s\n' "$url" >&2
   exit 64
@@ -452,6 +467,13 @@ import sys
 
 json.dump({"keyId": "key-1", "signedJwt": sys.argv[2]}, open(sys.argv[1], "w", encoding="utf-8"))
 PY
+  # The Restore's two calls about the Auth user the exchange creates: the delete
+  # answers 200 and the lookup answers with no user at all, which is what "the
+  # account is gone" is read from.
+  : >"$dir/state/auth-delete.code"
+  : >"$dir/state/auth-lookup.code"
+  printf '{}\n' >"$dir/state/auth-delete.json"
+  printf '{}\n' >"$dir/state/auth-lookup.json"
   for n in 1 2; do
     : >"$dir/state/signin.$n.code"
     python3 - "$dir/state/signin.$n.json" "$n" <<'PY'
@@ -567,9 +589,21 @@ test_the_three_readings_hold() {
   run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
   expect_status "$status" 0 "the installation's answers"
   expect_block_keys "the installation's answers"
-  for key in project region job probe belong xtrace token job-account probe-run probe-exec claims override-echo u1 launcher-perm u2 mint u3-first u3-second u3 verdict restore scratch-removed; do
+  for key in project region job probe belong xtrace token job-account probe-run probe-exec claims override-echo u1 launcher-perm u2 mint u3-first u3-second u3 verdict restore auth-user scratch-removed; do
     expect_contains "$out" "FACT $key: PASS" "the installation's answers: the $key row"
   done
+  # U3's exchange creates a Firebase Auth user of the uid this run minted, and
+  # the row is the read-back of its deletion: the account named in the delete and
+  # in the lookup is THIS run's uid (printed by the mint row), and the calls are
+  # the project's own Identity Toolkit, at the Firebase project the signer's own
+  # domain names.
+  local uid
+  uid=$(printf '%s\n' "$out" | sed -n 's/.*the run-shaped uid \(r~chk840~[0-9a-f]*\).*/\1/p' | head -1)
+  [ -n "$uid" ] || fail "the installation's answers: the mint row names no run-shaped uid, so the auth-user case cannot say which account was deleted"
+  expect_contains "$(cat "$dir/state/auth-delete.body" 2>/dev/null || true)" "$uid" "the account deleted is the run-shaped uid this run minted"
+  expect_contains "$(cat "$dir/state/auth-lookup.body" 2>/dev/null || true)" "$uid" "the read-back asks the project's own user table for that same uid"
+  expect_contains "$(cat "$dir/state/calls")" "url https://identitytoolkit.googleapis.com/v1/projects/$PROJECT/accounts:delete" "the Auth user is deleted through the project's own Identity Toolkit"
+  expect_contains "$(cat "$dir/state/calls")" "url https://identitytoolkit.googleapis.com/v1/projects/$PROJECT/accounts:lookup" "and read back gone through the same API"
   expect_contains "$out" "FACT claims: PASS — the identity token carries" "the claims row prints what the token carries"
   # The files curl wrote carry the minted custom token and the ID tokens, and
   # their MODE is the check's own: `-o` writes at the caller's umask, so 0600
@@ -690,6 +724,37 @@ test_a_first_exchange_that_is_refused_stops() {
   expect_contains "$out" "FACT aborted: FAIL" "the run ends as an abort rather than as an answer about the second exchange"
   expect_contains "$out" "FACT u3: FAIL — not reached" "nothing is concluded about the second exchange"
   expect_contains "$out" "FACT restore: PASS" "an aborted run still removes the job it created"
+}
+
+# The first accepted exchange makes a Firebase Auth user of the uid this run
+# minted, so the run has to remove it. Both halves are read: a delete the API
+# refuses leaves the account behind (and is not read back as gone, because the
+# read-back never happened), and a delete that answered 200 whose lookup still
+# returns the user is the row's whole point.
+test_an_auth_user_the_delete_refuses_fails() {
+  setup_case auth-user-refused
+  printf '403' >"$dir/state/auth-delete.code"
+  run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
+  expect_status "$status" 0 "a run whose delete of the Auth user was refused"
+  expect_contains "$out" "FACT auth-user: FAIL" "a run whose delete of the Auth user was refused"
+  expect_contains "$out" "STILL in the project's user table" "the row says the account is still there"
+  expect_absent "$(cat "$dir/state/calls")" "accounts:lookup" "a delete that did not answer 200 is not read back as gone"
+  expect_contains "$out" "FACT restore: PASS" "the job is removed whatever the Auth user's delete did"
+}
+
+test_an_auth_user_the_read_back_still_finds_fails() {
+  setup_case auth-user-survives
+  python3 - "$dir/state/auth-lookup.json" <<'PY'
+import json
+import sys
+
+json.dump({"kind": "identitytoolkit#GetAccountInfoResponse",
+           "users": [{"localId": "r~chk840~probe"}]}, open(sys.argv[1], "w", encoding="utf-8"))
+PY
+  run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
+  expect_status "$status" 0 "a delete that answered 200 but left the user there"
+  expect_contains "$out" "FACT auth-user: FAIL" "a delete that answered 200 but left the user there"
+  expect_contains "$out" "still answers with 1 user(s)" "the row reads the count out of the lookup's own answer"
 }
 
 test_a_job_without_the_web_key_stops() {
@@ -970,6 +1035,8 @@ t test_a_marker_the_container_did_not_see_fails_the_verdict
 t test_a_launcher_role_without_the_permission_fails_it
 t test_a_second_exchange_that_is_refused_fails_u3
 t test_a_first_exchange_that_is_refused_stops
+t test_an_auth_user_the_delete_refuses_fails
+t test_an_auth_user_the_read_back_still_finds_fails
 t test_a_job_without_the_web_key_stops
 t test_a_launch_that_is_refused_stops_and_removes_the_job
 t test_a_log_read_that_never_carries_the_execution_stops
