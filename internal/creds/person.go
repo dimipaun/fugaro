@@ -47,15 +47,14 @@ import (
 // `config/policy/shared` of the member's own project), which is what U8 asked C1 to settle. The
 // workspace's service reads it there — the only enforcer, R9 — and on the member's own machine the
 // launcher and `fugaro doctor` read the member's own copy of it to decide whether a launch asks for
-// a grant at all (WC7, WC11). It is a
-// *local* key the node is published from, exactly the shape `triage` and `review_against_task` have
-// (their rows in internal/settings): the member's admin sets it with `fugaro settings set` — a
-// boolean in the machine's own config is the generic path's, as those rows say — and the member's
-// `fugaro update` carries it to the node. U8's other candidate, a plain field of the member's local
-// config that no settings row and no publish touches, is not the answer: the workspace's service is
-// the only enforcer and reads the member's published policy, never anything on the member's disk, so
-// a key with no road to the node would be a switch nothing could obey. WC6 builds this side, and
-// `internal/localcfg/localcfg.go` is not a file of it.
+// a grant at all (WC7, WC11). It is a *local* key the node is published from, exactly the shape
+// `triage` and `review_against_task` have (their rows in internal/settings): the member's admin sets
+// it with `fugaro settings set` — a boolean in the machine's own config is the generic path's, as
+// those rows say — and the member's `fugaro update` carries it to the node. U8's other candidate, a
+// plain field of the member's local config that no settings row and no publish touches, is not the
+// answer: the workspace's service is the only enforcer and reads the member's published policy, never
+// anything on the member's disk, so a key with no road to the node would be a switch nothing could
+// obey. WC6 builds this side, and `internal/localcfg/localcfg.go` is not a file of it.
 //
 // **Absent reads as off**, and that is the whole of the default: a member that never set the key
 // serves no personal token (D2972), and the key's own value is a boolean. The policy's version does
