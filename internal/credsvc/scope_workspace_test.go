@@ -139,16 +139,16 @@ func wsOneRepo() *projectpolicy.WorkspaceCredentials {
 	return wsNodeFor([]string{wsRepo}, []string{wsRepo}, []string{wsRepo})
 }
 
-// wsDeployment is a workspace's deployment under test: the frozen *Workspace, the
+// ws2Scope is a workspace's deployment under test: the frozen *Workspace, the
 // published node and the resolver built from them, plus the fixture the members'
 // databases live in.
-type wsDeployment struct {
+type ws2Scope struct {
 	*wsFixture
 	node *wsNode
 	res  ScopeResolver
 }
 
-func newWSDeployment(t *testing.T, node *wsNode, mutate ...func(*WorkspaceScopeConfig)) *wsDeployment {
+func newWS2Scope(t *testing.T, node *wsNode, mutate ...func(*WorkspaceScopeConfig)) *ws2Scope {
 	t.Helper()
 	f := newWSFixture(t)
 	if node == nil {
@@ -169,7 +169,7 @@ func newWSDeployment(t *testing.T, node *wsNode, mutate ...func(*WorkspaceScopeC
 	if err != nil {
 		t.Fatalf("NewWorkspaceScopeResolver: %v", err)
 	}
-	return &wsDeployment{wsFixture: f, node: node, res: res}
+	return &ws2Scope{wsFixture: f, node: node, res: res}
 }
 
 // onRepo is the run identity of the same member's job naming another
@@ -185,7 +185,7 @@ func onRepo(slug string) func(map[string]any) {
 // request is one call of a member's job as the front door sees it: the job's
 // Google identity in Authorization, the run's token in its own header and the
 // job name the run reports.
-func (s *wsDeployment) request(t *testing.T, path, account string, mutate ...func(map[string]any)) *http.Request {
+func (s *ws2Scope) request(t *testing.T, path, account string, mutate ...func(map[string]any)) *http.Request {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, wsAudience+path, strings.NewReader("{}"))
 	if err != nil {
@@ -199,7 +199,7 @@ func (s *wsDeployment) request(t *testing.T, path, account string, mutate ...fun
 // the whole front door (svc.callPath) rather than through the resolver alone.
 // It is one function so the two paths cannot disagree about what a member's job
 // presents.
-func (s *wsDeployment) hdr(account string, mutate ...func(map[string]any)) func(*http.Request) {
+func (s *ws2Scope) hdr(account string, mutate ...func(map[string]any)) func(*http.Request) {
 	return func(r *http.Request) {
 		r.Header.Set("Authorization", "Bearer "+s.jobToken(account))
 		r.Header.Set(HeaderRunIdentity, s.runToken(wsMemberA, mutate...))
@@ -228,7 +228,7 @@ func lines(buf interface{ String() string }) []map[string]any {
 
 // resolve is request + the resolver, which is the whole of what the front door
 // asks of a workspace's deployment before a handler runs.
-func (s *wsDeployment) resolve(t *testing.T, path, account string, mutate ...func(map[string]any)) (Scope, error) {
+func (s *ws2Scope) resolve(t *testing.T, path, account string, mutate ...func(map[string]any)) (Scope, error) {
 	t.Helper()
 	sc, err := s.res.Resolve(context.Background(), s.request(t, path, account, mutate...))
 	if err != nil {
@@ -242,7 +242,7 @@ func (s *wsDeployment) resolve(t *testing.T, path, account string, mutate ...fun
 
 // served is the happy path: a scope that is served and whose caller is the
 // member's job.
-func (s *wsDeployment) served(t *testing.T, path, account string, mutate ...func(map[string]any)) Scope {
+func (s *ws2Scope) served(t *testing.T, path, account string, mutate ...func(map[string]any)) Scope {
 	t.Helper()
 	sc, err := s.resolve(t, path, account, mutate...)
 	if err != nil {
@@ -281,7 +281,7 @@ func wsPool(t *testing.T) *Bundle {
 // the service and not of this task, so a test of a SERVED call has to publish
 // one. It is written beside the policy the fixture publishes and touches no
 // other block.
-func (s *wsDeployment) allowModels(member string, models ...string) {
+func (s *ws2Scope) allowModels(member string, models ...string) {
 	s.t.Helper()
 	node, ok := s.dbs[member].nodes[projectpolicy.PathShared()].(map[string]any)
 	if !ok {
@@ -297,7 +297,7 @@ func (s *wsDeployment) allowModels(member string, models ...string) {
 
 // serve is setPolicy + allowModels: the state a member's own `fugaro update`
 // leaves for a repository whose runs may call the service.
-func (s *wsDeployment) serve(member string, accounts ...string) {
+func (s *ws2Scope) serve(member string, accounts ...string) {
 	s.t.Helper()
 	s.setPolicy(member, accounts...)
 	s.allowModels(member, testModel)
@@ -305,7 +305,7 @@ func (s *wsDeployment) serve(member string, accounts ...string) {
 
 // serveOn is setPolicyOn + allowModels, for the tests that need the member's
 // own lists to name more than the one repository.
-func (s *wsDeployment) serveOn(member string, repos []string, accounts ...string) {
+func (s *ws2Scope) serveOn(member string, repos []string, accounts ...string) {
 	s.t.Helper()
 	s.setPolicyOn(member, repos, accounts...)
 	s.allowModels(member, testModel)
@@ -315,7 +315,7 @@ func (s *wsDeployment) serveOn(member string, repos []string, accounts ...string
 // gate and handlers (server.go is one code path for both deployments) with the
 // workspace's resolver handed in, which is the whole of what the deployment
 // differs by.
-func wsService(t *testing.T, s *wsDeployment) *svc {
+func wsService(t *testing.T, s *ws2Scope) *svc {
 	t.Helper()
 	return newSvcWith(t, func(svc *svc, cfg *Config) {
 		cfg.Resolver = s.res
@@ -343,7 +343,7 @@ func wsService(t *testing.T, s *wsDeployment) *svc {
 func TestWorkspaceScopeIgnoresADeclaredMember(t *testing.T) {
 	// The control first: the node names the member, so its job is served, and
 	// the scope is the one built over that member's own database.
-	s := newWSDeployment(t, nil)
+	s := newWS2Scope(t, nil)
 	sc := s.served(t, MessagesPath, wsAccountA)
 	if sc.Caller().JobAccount != wsAccountA {
 		t.Errorf("the scope's caller = %q, want the account that called", sc.Caller().JobAccount)
@@ -400,7 +400,7 @@ func TestWorkspaceScopeIgnoresADeclaredMember(t *testing.T) {
 	// A workspace that published nothing admits nobody. Absent is not an empty
 	// member table and not an error: the answer is the same refusal.
 	empty := &wsNode{}
-	plain := newWSDeployment(t, empty)
+	plain := newWS2Scope(t, empty)
 	if _, err := plain.resolve(t, MessagesPath, wsAccountA); !errors.As(err, &fault) {
 		t.Errorf("Resolve with no node published = %v, want a *ScopeFault", err)
 	}
@@ -415,7 +415,7 @@ func TestWorkspaceScopeIgnoresADeclaredMember(t *testing.T) {
 // than that, because the node is the one read this service makes that is not a
 // member's own.
 func TestWorkspaceScopeRereadsItsNode(t *testing.T) {
-	s := newWSDeployment(t, nil)
+	s := newWS2Scope(t, nil)
 	s.served(t, MessagesPath, wsAccountA)
 	if got := s.node.readsSoFar(); got != 1 {
 		t.Fatalf("the node was read %d times for the first call, want 1", got)
@@ -471,7 +471,7 @@ func TestWorkspaceScopeRereadsItsNode(t *testing.T) {
 // *ScopeFault the front door answers as the service's own failure — not the
 // 403 a run's gateway reads as a missing invoke grant.
 func TestAFailedRereadRefuses(t *testing.T) {
-	s := newWSDeployment(t, nil)
+	s := newWS2Scope(t, nil)
 	s.served(t, MessagesPath, wsAccountA)
 
 	// The node's database goes down after the copy was taken, and the minute
@@ -530,39 +530,39 @@ func TestWorkspaceScopeAnswersOnlyC1sTwoErrorShapes(t *testing.T) {
 	// token this deployment did not mint, one whose run identity names another
 	// member, one from an account outside the workspace, one whose member the
 	// node does not name, and a node that cannot be read.
-	cases := map[string]func(*wsDeployment) (*http.Request, error){
-		"no identity at all": func(s *wsDeployment) (*http.Request, error) {
+	cases := map[string]func(*ws2Scope) (*http.Request, error){
+		"no identity at all": func(s *ws2Scope) (*http.Request, error) {
 			return http.NewRequest(http.MethodPost, "https://"+wsAudience+MessagesPath, strings.NewReader("{}"))
 		},
-		"a token signed by somebody else": func(s *wsDeployment) (*http.Request, error) {
+		"a token signed by somebody else": func(s *ws2Scope) (*http.Request, error) {
 			req := s.request(t, MessagesPath, wsAccountA)
 			req.Header.Set(HeaderRunIdentity, "not-a-token-this-deployment-can-read-at-all")
 			return req, nil
 		},
-		"an account outside the workspace": func(s *wsDeployment) (*http.Request, error) {
+		"an account outside the workspace": func(s *ws2Scope) (*http.Request, error) {
 			return s.request(t, MessagesPath, wsAccountOut), nil
 		},
-		"a run identity of another member": func(s *wsDeployment) (*http.Request, error) {
+		"a run identity of another member": func(s *ws2Scope) (*http.Request, error) {
 			return s.request(t, MessagesPath, wsAccountA, func(c map[string]any) {
 				c["iss"] = "https://securetoken.google.com/" + wsMemberB
 				c["aud"] = wsMemberB
 				c["fp"] = wsMemberB
 			}), nil
 		},
-		"a member the node does not name": func(s *wsDeployment) (*http.Request, error) {
+		"a member the node does not name": func(s *ws2Scope) (*http.Request, error) {
 			node := wsOneRepo()
 			node.Members = node.Members[1:]
 			s.node.publish(node)
 			return s.request(t, MessagesPath, wsAccountA), nil
 		},
-		"a node that cannot be read": func(s *wsDeployment) (*http.Request, error) {
+		"a node that cannot be read": func(s *ws2Scope) (*http.Request, error) {
 			s.node.fail(errors.New("the database is unavailable"))
 			return s.request(t, MessagesPath, wsAccountA), nil
 		},
 	}
 	for name, build := range cases {
 		t.Run(name, func(t *testing.T) {
-			s := newWSDeployment(t, nil)
+			s := newWS2Scope(t, nil)
 			req, err := build(s)
 			if err != nil {
 				t.Fatalf("building the call: %v", err)
@@ -600,7 +600,7 @@ func TestWorkspaceScopeOffersOnlyTheIntersection(t *testing.T) {
 	node.Shared = append(node.Shared, projectpolicy.WorkspaceShared{
 		Name: config.AnthropicSecret, Kind: projectpolicy.SharedKindModel, Projects: []string{wsMemberA},
 	})
-	s := newWSDeployment(t, wsPublished(node))
+	s := newWS2Scope(t, wsPublished(node))
 	// Member A's own policy admits one of the three, and its repository child
 	// admits it there. Member B's policy admits the second — and this call is
 	// not B's, which is what makes the read's own database part of the test: a
@@ -630,7 +630,7 @@ func TestWorkspaceScopeOffersOnlyTheIntersection(t *testing.T) {
 	// half of the intersection and not the member's.
 	node = wsOneRepo()
 	node.Shared = nil
-	s = newWSDeployment(t, wsPublished(node))
+	s = newWS2Scope(t, wsPublished(node))
 	s.setPolicy(wsMemberA, wsPoolName)
 	got, err = s.served(t, MessagesPath, wsAccountA).Offering().Offering(ctx, b)
 	if err != nil {
@@ -651,7 +651,7 @@ func TestWorkspaceScopeHoldsTheSlugToTheCallingAccount(t *testing.T) {
 	// The member's OWN policy names both repositories and admits the credential
 	// on both, so nothing here is the member's leg: the only thing that can
 	// refuse the second repository is the workspace owner's declaration.
-	s := newWSDeployment(t, nil)
+	s := newWS2Scope(t, nil)
 	s.serveOn(wsMemberA, []string{wsRepo, wsRepoOther}, wsPoolName)
 
 	sc := s.served(t, MessagesPath, wsAccountA)
@@ -689,7 +689,7 @@ func TestWorkspaceScopeHoldsTheSlugToTheCallingAccount(t *testing.T) {
 	// serves a run on that repository and holds nothing of A's.
 	node := wsOneRepo()
 	node.Members[0].JobAccountRepos[1].Repos = []string{wsRepoOther}
-	s = newWSDeployment(t, wsPublished(node))
+	s = newWS2Scope(t, wsPublished(node))
 	s.serveOn(wsMemberA, []string{wsRepo, wsRepoOther}, wsPoolName)
 	sc = s.served(t, MessagesPath, wsAccountA2, onRepo(wsSlugOther))
 	if canonical, ok := sc.Repos()[wsSlugOther]; !ok || canonical != wsRepoOther {
@@ -702,7 +702,7 @@ func TestWorkspaceScopeHoldsTheSlugToTheCallingAccount(t *testing.T) {
 	// And an account the node lists with no repositories declared is an empty
 	// table — a state (a version-1 row, or an owner who has not declared them
 	// yet) and never "every repository".
-	s = newWSDeployment(t, wsPublished(wsNodeFor(nil, nil, nil)))
+	s = newWS2Scope(t, wsPublished(wsNodeFor(nil, nil, nil)))
 	s.serveOn(wsMemberA, []string{wsRepo, wsRepoOther}, wsPoolName)
 	sc = s.served(t, MessagesPath, wsAccountA)
 	if len(sc.Repos()) != 0 {
@@ -725,7 +725,7 @@ func TestWorkspaceScopeServesASharedProjectJob(t *testing.T) {
 	// project's repositories at once.
 	node := wsOneRepo()
 	node.Members[0].JobAccountRepos[1].Repos = []string{wsRepo, wsRepoOther}
-	s := newWSDeployment(t, wsPublished(node))
+	s := newWS2Scope(t, wsPublished(node))
 	s.serveOn(wsMemberA, []string{wsRepo, wsRepoOther}, wsPoolName)
 
 	for _, tc := range []struct {
@@ -768,7 +768,7 @@ func TestWorkspaceScopeServesASharedProjectJob(t *testing.T) {
 // has added an account and not declared its repositories yet, is an account
 // that is a job of nothing.
 func TestAnUnlistedRepositoryNamesTheFix(t *testing.T) {
-	s := newWSDeployment(t, nil)
+	s := newWS2Scope(t, nil)
 	// The member's own policy admits the credential on both repositories, so
 	// the refusal below is the owner's declaration and not the member's lists.
 	s.serveOn(wsMemberA, []string{wsRepo, wsRepoOther}, wsPoolName)
@@ -794,7 +794,7 @@ func TestAnUnlistedRepositoryNamesTheFix(t *testing.T) {
 	// An account the owner lists with no repositories declared: every run of it
 	// is refused the same way, including one on a repository its member's own
 	// policy admits.
-	unlisted := newWSDeployment(t, wsPublished(wsNodeFor(nil, nil, nil)))
+	unlisted := newWS2Scope(t, wsPublished(wsNodeFor(nil, nil, nil)))
 	unlisted.serveOn(wsMemberA, []string{wsRepo, wsRepoOther}, wsPoolName)
 	svc = wsService(t, unlisted)
 	resp, body = svc.call(t, callBody("ws2-unlisted-declaration"), unlisted.hdr(wsAccountA))
@@ -818,7 +818,7 @@ func TestAnUnlistedRepositoryNamesTheFix(t *testing.T) {
 // and nothing wider, so the write is not a rule a code path is trusted to keep:
 // there is no method to call.
 func TestWorkspaceScopeWritesNothingToAMember(t *testing.T) {
-	s := newWSDeployment(t, nil)
+	s := newWS2Scope(t, nil)
 	s.serve(wsMemberA, wsPoolName)
 	svc := wsService(t, s)
 
@@ -881,7 +881,7 @@ func TestWorkspaceScopeWritesNothingToAMember(t *testing.T) {
 // presents one is refused rather than served slip-less, and a call that
 // presents none is served exactly as before.
 func TestWorkspaceScopeRefusesACallThatPresentsASlip(t *testing.T) {
-	s := newWSDeployment(t, nil)
+	s := newWS2Scope(t, nil)
 	s.serve(wsMemberA, wsPoolName)
 	sc := s.served(t, MessagesPath, wsAccountA)
 	if sc.AcceptsSlip() {
@@ -932,7 +932,7 @@ func TestWorkspaceScopeRefusesACallThatPresentsASlip(t *testing.T) {
 // task's pull request rather than closed here.
 func TestTheKeepWarmRouteCarriesNoSecret(t *testing.T) {
 	const keepWarm = WorkspaceKeepWarmPath
-	s := newWSDeployment(t, nil)
+	s := newWS2Scope(t, nil)
 	sc := s.served(t, keepWarm, wsAccountA)
 	if !sc.Serves(keepWarm) {
 		t.Fatal("Serves is false for the keep-warm route: a beat posted there would be answered as a route this deployment does not have")
@@ -978,7 +978,7 @@ func TestTheKeepWarmRouteCarriesNoSecret(t *testing.T) {
 // refusal is the service's own and writes no line, while a route of the shared
 // parse is refused after a verification and writes exactly one.
 func TestWorkspaceModeRefusesEveryOtherRoute(t *testing.T) {
-	s := newWSDeployment(t, nil)
+	s := newWS2Scope(t, nil)
 	svc := wsService(t, s)
 
 	// R14's served set, one of each: the model routes, the two forge routes a
@@ -1092,7 +1092,7 @@ func TestNewWorkspaceScopeResolverRefusesAConfigurationItCannotCheck(t *testing.
 // together, and the offering, which is the intersection (C1's rule 2, rule 9,
 // D1302).
 func TestWorkspaceScopeAnswersItsReaders(t *testing.T) {
-	s := newWSDeployment(t, nil)
+	s := newWS2Scope(t, nil)
 	s.setPolicy(wsMemberA, wsPoolName)
 	// The stop switches are the calling member's own pair AND the workspace's
 	// own switch, read together: either one stops the call, and the two are
@@ -1169,7 +1169,7 @@ func TestWorkspaceScopeAnswersItsReaders(t *testing.T) {
 // which is a narrowing of that member's own runs rather than a second way to
 // stop the workspace.
 func TestAWorkspaceKillRefusesAServedMemberCall(t *testing.T) {
-	s := newWSDeployment(t, nil)
+	s := newWS2Scope(t, nil)
 	s.serve(wsMemberA, wsPoolName)
 	svc := wsService(t, s)
 
@@ -1244,7 +1244,7 @@ func TestAWorkspaceKillRefusesAServedMemberCall(t *testing.T) {
 func TestWorkspaceScopeAnswersItsMeter(t *testing.T) {
 	_, client := wsMeterDB(t)
 	meter := wsMeter(t, client)
-	s := newWSDeployment(t, nil, func(cfg *WorkspaceScopeConfig) { cfg.Meter = meter })
+	s := newWS2Scope(t, nil, func(cfg *WorkspaceScopeConfig) { cfg.Meter = meter })
 	if got := s.served(t, MessagesPath, wsAccountA).Meter(); got != meter {
 		t.Errorf("Meter() = %v, want the workspace's own cap", got)
 	}
@@ -1255,7 +1255,7 @@ func TestWorkspaceScopeAnswersItsMeter(t *testing.T) {
 	}
 	// A workspace with no cap answers nil, which is the same answer an
 	// installation's does and means no cap rather than a refused call.
-	plain := newWSDeployment(t, nil)
+	plain := newWS2Scope(t, nil)
 	if got := plain.served(t, MessagesPath, wsAccountA).Meter(); got != nil {
 		t.Errorf("Meter() = %v, want nil for a workspace that declared no cap", got)
 	}
@@ -1268,7 +1268,7 @@ func TestWorkspaceScopeAnswersItsMeter(t *testing.T) {
 // reader that answered the second for the first would be one a route could act
 // on.
 func TestWorkspaceScopeRefusesEveryReaderOfAnUnservedCall(t *testing.T) {
-	s := newWSDeployment(t, nil)
+	s := newWS2Scope(t, nil)
 	// The sign route: a route of the shared parse, so the caller IS verified —
 	// which is what makes the gate's refusal of it an audited one.
 	sc, err := s.resolve(t, SignPath, wsAccountA)

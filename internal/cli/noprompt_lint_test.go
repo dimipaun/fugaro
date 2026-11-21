@@ -733,7 +733,17 @@ var dataReadSites = map[string]string{
 // FOUND, like a sanctioned site, so it cannot outlive the read it explains. A
 // prompt does not belong here: it belongs nowhere.
 var notADecisionSites = map[string]string{
-	"pair.go:pairReadCode": "the --json caller's own line: a console asks the operator for the code and hands the command the answer on stdin (§4.1, \"the typed code is read as one stdin line\"), so what arrives is data a caller delivered rather than a question the CLI put to a person; the interactive half reads the same value through readValue and is not this shape",
+	"pair.go:pairReadCode":                              "the --json caller's own line: a console asks the operator for the code and hands the command the answer on stdin (§4.1, \"the typed code is read as one stdin line\"), so what arrives is data a caller delivered rather than a question the CLI put to a person; the interactive half reads the same value through readValue and is not this shape",
+	"workspace_project_save.go:workspaceSaveRosterRead": "C1's roster node read through the workspace.Store seam (WU23): a cloud document, read with a context and answering the roster's bytes or an error, so the one argument the shape sees is a context and no person is behind it; the command asks nothing on any path",
+	// The one-argument Read the rule watches for is a byte-level read of a
+	// reader — `Read(p []byte)` — and every store read in this package took a
+	// context and a key until C1's Store did not: `Store.Read(ctx)` reads the
+	// workspace's own roster node over IAM and takes nothing else, so the shape
+	// and the count of arguments are the same as a line read from a terminal
+	// while the read is a document's. Nothing here waits: a read that fails is
+	// the caller's refusal, and the bytes are the node at the revision they were
+	// read at (docs/workspace-projects-users/contract.md, C1).
+	"workspace_project_rm.go:workspaceProjectRmReadRoster": "C1's Store.Read(ctx): the workspace's own roster node, read over IAM — a document and its revision, not a person's line; WU6's command reads no terminal at all, which TestProjectRmRefusesInACodingAgentsSession holds",
 }
 
 // pendingSites is every decision read the package still makes and the task of

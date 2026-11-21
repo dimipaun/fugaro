@@ -61,6 +61,10 @@
 #                    run's whose checks failed, both answering failed for every
 #                    required name, so a gate that read one of them where a
 #                    green run's suite was called for could not pass.
+#                    "@merge" stands for the merge commit the squash merge will
+#                    make, which a test cannot know when it writes the file:
+#                    every occurrence is replaced by that commit's sha as the
+#                    merge happens.
 #   FAKE_GH_RUN_RELEASE / FAKE_GH_RUN_IMAGES / FAKE_GH_RUN_WINDOWS
 #                    success (default) | failure | cancelled | pending |
 #                    missing: what the runs api reports for that workflow's
@@ -75,6 +79,15 @@
 #   FAKE_GH_RUN_OTHER  an extra run on the tag, "name:state" (default none),
 #                    for the rule that any other workflow the tag started has
 #                    to be green too
+# A `gh workflow run` appends the run it started to ci_runs -- the workflow's
+# newest run, which is what a dispatch is: the head is the tip of the ref the
+# dispatch named (`--ref`) or of origin's own HEAD when it named none, the title
+# is `ci (full)` when the dispatch asked for the full variant (`-f full=true`)
+# and a bare `ci` otherwise, and the suite is the run's own head, so the checks
+# it answers with are that commit's. Its run_number is above every number already
+# in the file, which is how a reader tells the run a dispatch started from the
+# ones before it. The invocation itself is still recorded in workflow_run, one
+# line per call, so a test can assert what was dispatched and against which ref.
 # The api asserts that, once a PR has merged, it is only asked about the
 # merge commit and that PR's head (checks and tree).
 # A required check name with no arm above -- one added to release-gate.sh's
@@ -162,6 +175,12 @@ do_merge() {
   rm -rf "$work"
   echo MERGED >"$dir/pr_state"
   printf '%s' "$sha" >"$dir/pr_merge_sha"
+  # A test writing ci_runs before the release runs cannot know the merge commit,
+  # so "@merge" is what it writes and this is where it becomes the sha.
+  if [ -f "$dir/ci_runs" ]; then
+    sed "s/@merge/$sha/g" "$dir/ci_runs" >"$dir/ci_runs.merge"
+    mv "$dir/ci_runs.merge" "$dir/ci_runs"
+  fi
 }
 
 case "$1 ${2:-}" in
@@ -229,14 +248,75 @@ case "$1 ${2:-}" in
     exit 0
     ;;
   "workflow run")
-    # `gh workflow run ci --ref release/X.Y`, which scripts/release.sh --hotfix
-    # dispatches on the maintenance branch: nothing to do but record it, so a
-    # test can assert it was dispatched and against which ref.
+    # `gh workflow run ci --ref release/X.Y -f ...`, which scripts/release.sh
+    # dispatches -- on main's tip in the ordinary path, on the maintenance branch
+    # in --hotfix. It is recorded so a test can assert what was dispatched and
+    # against which ref, and the run it starts is appended to ci_runs: the ref's
+    # tip, the title the dispatch asked for, the commit's own checks, and a run
+    # number above everything already there (the file's header).
     printf '%s\n' "$*" >>"$dir/workflow_run"
+    ref=""
+    full=false
+    prev=""
+    for a in "$@"; do
+      [ "$prev" = "--ref" ] && ref=$a
+      [ "$a" = "full=true" ] && full=true
+      prev=$a
+    done
+    [ -n "$ref" ] || ref=$(git -C "$FAKE_GH_ORIGIN" symbolic-ref --short HEAD)
+    head=$(git -C "$FAKE_GH_ORIGIN" rev-parse "refs/heads/$ref")
+    title=ci
+    if [ "$full" = true ]; then
+      title="ci (full)"
+    fi
+    tab=$(printf '\t')
+    number=0
+    if [ -f "$dir/ci_runs" ]; then
+      n=0
+      while IFS="$tab" read -r rsha _rtitle _rsuite rnumber; do
+        [ -n "$rsha" ] || continue
+        n=$((n + 1))
+        if [ "${rnumber:-$n}" -gt "$number" ]; then
+          number=${rnumber:-$n}
+        fi
+      done <"$dir/ci_runs"
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$head" "$title" "$head" "$((number + 1))" >>"$dir/ci_runs"
     exit 0
     ;;
   "api "*)
     case "$2" in
+      */actions/workflows/ci.yml/runs*)
+        # scripts/release.sh's read of the newest run of the `ci` workflow,
+        # whatever commit it is on (repos/.../actions/workflows/ci.yml/runs):
+        # one line, "<head sha><TAB><run number>", for the highest-numbered run
+        # in $dir/ci_runs -- the run a dispatch just started, when there is one.
+        # The runs the file does not list do not exist for this read, which is
+        # what makes the file the fake's whole answer here.
+        case "$*" in
+          *".workflow_runs[0]"*) ;;
+          *)
+            echo "fake-gh.sh: the workflow's runs api was asked with a --jq this fake does not answer: $*" >&2
+            exit 1
+            ;;
+        esac
+        tab=$(printf '\t')
+        number=0
+        row=""
+        if [ -f "$dir/ci_runs" ]; then
+          n=0
+          while IFS="$tab" read -r rsha _rtitle _rsuite rnumber; do
+            [ -n "$rsha" ] || continue
+            n=$((n + 1))
+            if [ "${rnumber:-$n}" -gt "$number" ]; then
+              number=${rnumber:-$n}
+              row=$(printf '%s\t%s' "$rsha" "$number")
+            fi
+          done <"$dir/ci_runs"
+        fi
+        [ -z "$row" ] || printf '%s\n' "$row"
+        exit 0
+        ;;
       */actions/runs*)
         case "$*" in
           *".display_title"*)

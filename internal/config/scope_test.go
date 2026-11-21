@@ -321,6 +321,7 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 
 		"rigor.default": InProject | InRepo,
 		"rigor.areas":   InProject | InRepo,
+		"rigor.repos":   InProject,
 
 		"planning.decoupling": InProject | InRepo,
 		"security.patterns":   InProject | InRepo,

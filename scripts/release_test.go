@@ -3188,3 +3188,309 @@ func TestReleaseGateAcceptsAPatchOnItsMaintenanceBranch(t *testing.T) {
 		t.Errorf("the backport was refused for the wrong reason:\n%s", backport.out)
 	}
 }
+
+// ---- CS7b: a release dispatches its own full run -------------------------
+//
+// CI starts on no commit by itself (the owner's ruling of 2026-11-07: dispatch
+// by hand, in batches), and the gate reads the checks of the full `ci` run on a
+// commit and of nothing else, so a release that waited for CI on its own merge
+// commit would wait out --timeout-minutes for checks that never appear.
+// scripts/release.sh therefore puts that run on the commit it is about to tag
+// (R12), and these tests read what it dispatched: the ordinary path on the merge
+// commit, --hotfix on the maintenance branch, with only the inputs the ci.yml the
+// dispatch runs declares -- main's own file for the ordinary path, the branch's
+// for --hotfix. An input a workflow does not declare is a 422 from GitHub, which
+// would stop the release before the run it waits for could even start.
+
+// workflowRunLines is the fake gh's record of the `gh workflow run` calls a run
+// made, one per line, in the order it made them, and nothing when it made none.
+func workflowRunLines(t *testing.T, g *ghState) []string {
+	t.Helper()
+	body := strings.TrimSpace(g.read(t, "workflow_run"))
+	if body == "" {
+		return nil
+	}
+	return strings.Split(body, "\n")
+}
+
+// mainTip is origin/main's commit in the fixture: the merge commit's parent
+// while the release is being prepared, which is what the pre-merge gate reads.
+func mainTip(t *testing.T, r *releaseRepo) string {
+	t.Helper()
+	return strings.TrimSpace(testutil.Git(t, r.bare, "rev-parse", "main"))
+}
+
+// mainFullyGreen is a ci_runs line giving origin/main's commit one full run of
+// its own, green by the fixture's checks. A test that writes ci_runs at all
+// owns the fake's whole answer for every commit (scripts/testdata/fake-gh.sh's
+// header), and this is the run the release's pre-merge gate reads on main --
+// without it the gate would wait out its timeout for a run nobody dispatched.
+func mainFullyGreen(t *testing.T, r *releaseRepo) string {
+	t.Helper()
+	sha := mainTip(t, r)
+	return sha + "\tci (full)\t" + sha
+}
+
+// ciYAML renders a .github/workflows/ci.yml whose `on: workflow_dispatch:` block
+// declares the given inputs, at the shape scripts/release.sh reads the names out
+// of. Only the names matter to it: a dispatch may pass an input only when the
+// workflow it runs declares it, because GitHub refuses an unknown one with a
+// 422.
+func ciYAML(inputs string) string {
+	body := "name: ci\non:\n  workflow_dispatch:\n"
+	if inputs != "" {
+		body += "    inputs:\n" + inputs
+	}
+	return body + "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n"
+}
+
+// ciFullAndLiveScripts is a ci.yml declaring both inputs: the selector's `full`
+// (CS6) and #3301's `live_scripts`, whose `auto` -- its default -- could skip the
+// live-script runners, which is not a gate a release can be cut on. A ref carries
+// both only between CS6's copy and the removal of `live_scripts` (R9), and it is
+// what makes a dispatch pass each flag its own file declares, and no other.
+var ciFullAndLiveScripts = ciYAML(`      full:
+        description: run every leg
+        type: boolean
+        default: false
+      live_scripts:
+        description: the live-script runners
+        type: choice
+        options: [auto, always]
+        default: auto
+`)
+
+// ciLiveScriptsOnly is ci.yml's shape on main today, the one #3301 left: a
+// maintenance branch cut from a tag between #3301 and CS6 carries it, and its
+// dispatch may pass `live_scripts` and no `full`.
+var ciLiveScriptsOnly = ciYAML(`      live_scripts:
+        description: the live-script runners
+        type: choice
+        options: [auto, always]
+        default: auto
+`)
+
+// ciNoInputs is the shape older than both: a bare workflow_dispatch, which a
+// dispatch may pass nothing to.
+var ciNoInputs = ciYAML("")
+
+// releaseMainWithCI is newReleaseRepo whose origin/main carries the given
+// ci.yml. A dispatch with no --ref runs the workflow file on the repository's
+// default branch, so main's own file is what an ordinary release's dispatch runs
+// and the only thing that says which inputs it may pass. The plain fixture has
+// no .github/ at all, which is why a test about that dispatch builds it here.
+func releaseMainWithCI(t *testing.T, ci string) *releaseRepo {
+	t.Helper()
+	r := newReleaseRepo(t)
+	commitCIYAML(t, r.local, ci)
+	testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
+	return r
+}
+
+// commitCIYAML writes ci.yml into dir's .github/workflows and commits it there,
+// the way a repository carries the workflow a release dispatches.
+func commitCIYAML(t *testing.T, dir, ci string) {
+	t.Helper()
+	workflows := filepath.Join(dir, ".github", "workflows")
+	if err := os.MkdirAll(workflows, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workflows, "ci.yml"), []byte(ci), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "ci: the workflow a release dispatches")
+}
+
+// hotfixLineWithCI is the hotfix fixture -- a line 0.12 that shipped from main,
+// with the 0.12.1 plugin bump on main -- whose v0.12.0 tree carries the given
+// ci.yml. A maintenance branch is cut from the line's last tag, so the file a
+// dispatch on release/0.12 runs, and the inputs it may pass, are the tag's.
+func hotfixLineWithCI(t *testing.T, ci string) *hotfixRepo {
+	t.Helper()
+	r := newReleaseRepo(t)
+	git := func(args ...string) string { return strings.TrimSpace(testutil.Git(t, r.local, args...)) }
+	commitCIYAML(t, r.local, ci)
+	git("tag", "-a", "v0.12.0", "-m", "Fugaro v0.12.0")
+	git("push", "--quiet", "origin", "refs/tags/v0.12.0")
+	first := git("rev-parse", "v0.12.0^{commit}")
+	bump := exec.Command("bash", filepath.Join(r.local, "scripts", "bump-plugin-version.sh"), "0.12.1")
+	bump.Dir = r.local
+	if out, err := bump.CombinedOutput(); err != nil {
+		t.Fatalf("bumping the fixture plugin to 0.12.1: %v\n%s", err, out)
+	}
+	git("add", "-A")
+	git("commit", "--quiet", "-m", "plugin: 0.12.1")
+	git("push", "--quiet", "origin", "main")
+	return &hotfixRepo{releaseRepo: r, first: first, bump: git("rev-parse", "HEAD")}
+}
+
+// TestReleaseDispatchesAFullRunForTheMergeCommit: the ordinary path's step 4
+// puts the full `ci` run its gate reads on the merge commit itself, because the
+// commit has none -- nothing dispatches CI for a merge -- and then waits for the
+// run it started, which is the one on the commit being tagged. main's ci.yml
+// there is the selector's shape (CS6), so the dispatch asks for the full variant
+// of the run the gate reads; without that input it is a bare `ci` run, which the
+// gate reads as full too (R1).
+func TestReleaseDispatchesAFullRunForTheMergeCommit(t *testing.T) {
+	r := releaseMainWithCI(t, ciFullAndLiveScripts)
+	g := newGHState(t, r, greenChecks())
+	// The merge commit has runs -- a selected one -- and no full one, which is
+	// what a merge commit looks like. Its sha is the fake's `@merge`: the squash
+	// merge a release makes does not exist when a test writes this file.
+	ciRuns(t, g, mainFullyGreen(t, r), "@merge\tci (selected)\t@merge-selected")
+
+	res := runRelease(t, r, g, "y\n", "0.12.0")
+	res.requireSuccess(t)
+
+	if !strings.Contains(res.out, "dispatched a full ci run on main") {
+		t.Errorf("the release did not say it dispatched the run its gate reads:\n%s", res.out)
+	}
+	if dispatched := workflowRunLines(t, g); len(dispatched) != 1 || dispatched[0] != "workflow run ci -f full=true -f live_scripts=always" {
+		t.Errorf("want exactly one `workflow run ci -f full=true -f live_scripts=always`, got %q:\n%s", dispatched, g.log(t))
+	}
+	merge := strings.TrimSpace(g.read(t, "pr_merge_sha"))
+	if tagged := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}"); tagged != merge {
+		t.Errorf("the tag is on %s, want the merge commit the run was dispatched for (%s)", tagged, merge)
+	}
+}
+
+// TestReleaseReadsAnExistingFullRunInsteadOfDispatch: a merge commit that
+// already has a full run -- a person's dispatch, or a re-run of this release --
+// gets no second one: the gate reads the newest full run, so a second would only
+// cost a runner. A bare `ci` counts as full too, which is the title a ci.yml
+// without run-name gives every run (the file main carries today).
+func TestReleaseReadsAnExistingFullRunInsteadOfDispatch(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, mainFullyGreen(t, r), "@merge\tci\t@merge")
+
+	res := runRelease(t, r, g, "y\n", "0.12.0")
+	res.requireSuccess(t)
+
+	merge := strings.TrimSpace(g.read(t, "pr_merge_sha"))
+	if !strings.Contains(res.out, "ci run #2 on "+merge+" is a full one") {
+		t.Errorf("the release did not say it read the run the commit already had:\n%s", res.out)
+	}
+	if dispatched := workflowRunLines(t, g); len(dispatched) != 0 {
+		t.Errorf("the release dispatched a run the commit already had: %q", dispatched)
+	}
+}
+
+// TestReleaseOnAMainWithoutTheFullInputPassesLiveScripts: main's ci.yml between
+// #3301 and the selector (CS6) declares live_scripts and no `full`. GitHub refuses
+// a dispatch that passes an input its workflow does not declare (422), so
+// `-f full=true` there would stop every ordinary release at step 4, before the run
+// it waits for could start -- and `live_scripts` must still be passed, because
+// `auto`, that input's default, may skip the live-script runners, and a gate run
+// that skipped them is not one a tag can be cut on (R9). The run is titled `ci`,
+// which the gate reads as full (R1).
+func TestReleaseOnAMainWithoutTheFullInputPassesLiveScripts(t *testing.T) {
+	r := releaseMainWithCI(t, ciLiveScriptsOnly)
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, mainFullyGreen(t, r), "@merge\tci (selected)\t@merge-selected")
+
+	res := runRelease(t, r, g, "y\n", "0.12.0")
+	res.requireSuccess(t)
+
+	if dispatched := workflowRunLines(t, g); len(dispatched) != 1 || dispatched[0] != "workflow run ci -f live_scripts=always" {
+		t.Errorf("want exactly one `workflow run ci -f live_scripts=always` on a main that declares no full input, got %q:\n%s", dispatched, g.log(t))
+	}
+	merge := strings.TrimSpace(g.read(t, "pr_merge_sha"))
+	if tagged := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}"); tagged != merge {
+		t.Errorf("the tag is on %s, want the merge commit the run was dispatched for (%s)", tagged, merge)
+	}
+}
+
+// TestReleaseRefusesARunTheDispatchPutOnAnotherCommit: a workflow_dispatch runs
+// a workflow at the ref's tip, so when main moves on between the merge and the
+// dispatch, the run the release started is on a commit that is not the one it is
+// releasing, and reading it would vouch for a commit nobody released. The
+// release refuses instead, names the commit and the one command that would put a
+// full run on it, and creates no ref of its own: that command names a branch a
+// person makes.
+func TestReleaseRefusesARunTheDispatchPutOnAnotherCommit(t *testing.T) {
+	r := releaseMainWithCI(t, ciFullAndLiveScripts)
+	g := newGHState(t, r, greenChecks()).with("FAKE_GH_ADVANCE_AFTER_MERGE=1")
+	ciRuns(t, g, mainFullyGreen(t, r), "@merge\tci (selected)\t@merge-selected")
+
+	res := runRelease(t, r, g, "y\n", "0.12.0")
+
+	merge := strings.TrimSpace(g.read(t, "pr_merge_sha"))
+	res.requireFailureContaining(t, "gh workflow run ci --ref <a branch that points at "+merge+"> -f full=true")
+	if !strings.Contains(res.out, "main had moved past the release's merge commit") {
+		t.Errorf("the refusal does not say why the run landed elsewhere:\n%s", res.out)
+	}
+	// The command it prints names a ref a person makes: this run created none of
+	// its own.
+	heads := strings.Split(strings.TrimSpace(testutil.Git(t, r.bare, "for-each-ref", "--format=%(refname:short)", "refs/heads")), "\n")
+	sort.Strings(heads)
+	if strings.Join(heads, ",") != "main,release/v0.12.0" {
+		t.Errorf("the release left branches %q, want only main and its release branch", heads)
+	}
+	requireNoTag(t, r, res)
+}
+
+// TestHotfixDispatchesAFullRun: --hotfix dispatches the run its own gate reads
+// on the maintenance branch, and what it may pass is what the branch's ci.yml
+// declares -- the workflow a dispatch runs is the file on the ref it names, and
+// a maintenance branch is cut from the line's last tag, so its ci.yml may be
+// older than main's. GitHub refuses an input a workflow does not declare (422),
+// so each is passed only when the branch declares it.
+func TestHotfixDispatchesAFullRun(t *testing.T) {
+	for name, tc := range map[string]struct{ ci, want string }{
+		"a branch that declares both inputs": {
+			ci:   ciFullAndLiveScripts,
+			want: "workflow run ci --ref release/0.12 -f full=true -f live_scripts=always",
+		},
+		"a branch from before the full input (main's shape today)": {
+			ci:   ciLiveScriptsOnly,
+			want: "workflow run ci --ref release/0.12 -f live_scripts=always",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := hotfixLineWithCI(t, tc.ci)
+			g := r.state(t)
+
+			// The first run builds and pushes the branch and then stops: the
+			// release's own text is not on it yet. A release that has not got
+			// there yet dispatches nothing.
+			first := runHotfix(t, r, g, "0.12.1")
+			first.requireFailureContaining(t, "docs/releases/v0.12.1.md")
+			if dispatched := workflowRunLines(t, g); len(dispatched) != 0 {
+				t.Fatalf("the run that stopped for the release's own text dispatched CI: %q", dispatched)
+			}
+			commitHotfixText(t, r, "0.12.1")
+
+			second := runHotfix(t, r, g, "0.12.1")
+			second.requireSuccess(t)
+			if dispatched := workflowRunLines(t, g); len(dispatched) != 1 || dispatched[0] != tc.want {
+				t.Errorf("want exactly one %q, got %q:\n%s", tc.want, dispatched, second.out)
+			}
+			tip := testutil.Git(t, r.bare, "rev-parse", "release/0.12")
+			if tagged := r.git(t, "rev-parse", "refs/tags/v0.12.1^{commit}"); tagged != tip {
+				t.Errorf("tag v0.12.1 (%s) is not on the branch tip (%s)", tagged, tip)
+			}
+		})
+	}
+}
+
+// TestHotfixOnAnOlderBranchPassesNoInput: a line whose tag predates both inputs
+// is dispatched exactly as before -- no -f at all -- because its ci.yml declares
+// neither and a dispatch passing one is refused by GitHub with a 422. The run it
+// starts is titled a bare `ci`, which is what a ci.yml without run-name gives
+// every run, and that is the title the gate reads as a full run.
+func TestHotfixOnAnOlderBranchPassesNoInput(t *testing.T) {
+	r := hotfixLineWithCI(t, ciNoInputs)
+	g := r.state(t)
+
+	first := runHotfix(t, r, g, "0.12.1")
+	first.requireFailureContaining(t, "docs/releases/v0.12.1.md")
+	commitHotfixText(t, r, "0.12.1")
+
+	second := runHotfix(t, r, g, "0.12.1")
+	second.requireSuccess(t)
+	if dispatched := workflowRunLines(t, g); len(dispatched) != 1 || dispatched[0] != "workflow run ci --ref release/0.12" {
+		t.Errorf("want exactly one `workflow run ci --ref release/0.12` and no input, got %q:\n%s", dispatched, second.out)
+	}
+}

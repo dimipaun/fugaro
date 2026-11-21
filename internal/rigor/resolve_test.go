@@ -126,6 +126,47 @@ func TestResolveLayerPrecedence(t *testing.T) {
 	}
 }
 
+// TestResolveReadsTheProjectsPerRepoLevel pins the project layer's per-repo
+// map (LD4): one repository of the project and the level it runs at, stated by
+// the layer that speaks for more than one repository. It sits where the spec
+// puts it and where D20 as amended leaves it — stronger than the project's own
+// default, weaker than the repository's own file, so a repository that states
+// its own level still wins over the project's entry for it. A run of a
+// repository the map does not name is unchanged, and so is a resolution whose
+// request carries no repository at all.
+func TestResolveReadsTheProjectsPerRepoLevel(t *testing.T) {
+	cfg := Config{
+		Project:      Startup,
+		ProjectRepos: map[string]Rigor{"acme/payments-core": Critical},
+	}
+	if got := Resolve(cfg, Request{Repo: "acme/payments-core"}); got.Level != Critical || got.From != FromProject {
+		t.Errorf("Resolve(project startup, payments-core critical) = (%q, %q); want (%q, %q)", got.Level, got.From, Critical, FromProject)
+	}
+	if got := Resolve(cfg, Request{Repo: "acme/console-web"}); got.Level != Startup || got.From != FromProject {
+		t.Errorf("Resolve of a repository the map does not name = (%q, %q); want the project default (%q, %q)", got.Level, got.From, Startup, FromProject)
+	}
+	if got := Resolve(cfg, Request{}); got.Level != Startup || got.From != FromProject {
+		t.Errorf("Resolve with no repository = (%q, %q); want the project default (%q, %q)", got.Level, got.From, Startup, FromProject)
+	}
+	// D20 as amended: the repository's own file beats every project-level
+	// setting, its per-repo entry included.
+	own := Resolve(Config{Project: Startup, ProjectRepos: map[string]Rigor{"acme/payments-core": Critical}, Repo: POC},
+		Request{Repo: "acme/payments-core"})
+	if own.Level != POC || own.From != FromRepo {
+		t.Errorf("Resolve(repo poc over the project's per-repo critical) = (%q, %q); want (%q, %q)", own.Level, own.From, POC, FromRepo)
+	}
+	// A level the map states but the vocabulary does not know is no level: a
+	// hand-built Config reaches here, and the resolution must still carry one.
+	if got := Resolve(Config{ProjectRepos: map[string]Rigor{"acme/app": ""}}, Request{Repo: "acme/app"}); got.Level != Default {
+		t.Errorf("Resolve over an unknown per-repo level = %q; want %q", got.Level, Default)
+	}
+	// And the field opts a Config in on its own: a project that states nothing
+	// but this map is configured.
+	if !cfg.Configured() {
+		t.Error("a Config carrying only ProjectRepos reports itself unconfigured, so a run would skip the resolver")
+	}
+}
+
 // TestResolveTakesAHotfixRequestWhole pins the owner's ruling of 2026-11-13
 // (docs/rigor-command/implementation-plan.md R7): `fugaro run --level hotfix`
 // takes effect with no opt-in, so a request for it decides the run whether the
@@ -287,7 +328,7 @@ func TestStrictestOverASetIsWhatResolveReads(t *testing.T) {
 	if got.Level != Critical {
 		t.Fatalf("level = %q; want %q", got.Level, Critical)
 	}
-	if want := []Area{areas[3], areas[2], areas[1], areas[0]}; !slices.Equal(got.Areas, want) {
+	if want := []Area{areas[3], areas[2], areas[1], areas[0]}; !slices.Equal(areaNames(got.Areas), areaNames(want)) {
 		t.Errorf("areas = %+v; want %+v", got.Areas, want)
 	}
 }
