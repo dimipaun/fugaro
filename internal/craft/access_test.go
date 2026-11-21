@@ -136,6 +136,97 @@ func TestTheLegacyRuleAnswersEveryOldAuthValue(t *testing.T) {
 			ok: true,
 		},
 		{
+			// The mix (docs/design/mixed-credentials.md §11, D1848): an api-key
+			// run holds the provider key for its coder's stages and one Claude
+			// account for review, adversarial and triage. Answering the key for
+			// those three would move them onto the paid key, which is the move
+			// a migration may not make (R3, R7).
+			name: "an api-key run's mix stage goes out on the account the project names for it",
+			edit: func(in *LegacyInput) {
+				in.Auth = "api-key"
+				in.StageAccounts = map[string]string{"review": "alice"}
+			},
+			stage: "review",
+			want: Access{
+				Kind: AccessCredential, Name: "alice",
+				Members: credential("alice", config.CredentialTypeClaudeOAuth),
+				Chosen:  true,
+			},
+			ok: true,
+		},
+		{
+			name: "an api-key run's mix stage with no key of its own goes out on the project default, which is the mix's account (mixedStageAccount)",
+			edit: func(in *LegacyInput) {
+				in.Auth = "api-key"
+				in.DefaultAccount = "alice"
+			},
+			stage: "triage",
+			want: Access{
+				Kind: AccessCredential, Name: "alice",
+				Members: credential("alice", config.CredentialTypeClaudeOAuth),
+				Chosen:  true,
+			},
+			ok: true,
+		},
+		{
+			name: "the mix's account does not reach a coder stage, which stays on the project's key",
+			edit: func(in *LegacyInput) {
+				in.Auth = "api-key"
+				in.DefaultAccount = "alice"
+			},
+			stage: "implement",
+			want: Access{
+				Kind: AccessCredential, Name: config.CredentialAnthropicKey,
+				Members: credential(config.CredentialAnthropicKey, config.CredentialTypeAnthropic),
+				Chosen:  true,
+			},
+			ok: true,
+		},
+		{
+			name:  "a mix stage the project names no account for goes out on the project's key",
+			edit:  func(in *LegacyInput) { in.Auth = "api-key" },
+			stage: "review",
+			want: Access{
+				Kind: AccessCredential, Name: config.CredentialAnthropicKey,
+				Members: credential(config.CredentialAnthropicKey, config.CredentialTypeAnthropic),
+				Chosen:  true,
+			},
+			ok: true,
+		},
+		{
+			// The walk's order (docs/design/mixed-credentials.md §11.2): the
+			// file's agent.oauth_token is rung 3 and the project's
+			// default_claude_account is rung 4, so a repository pinned to an
+			// account of its own keeps it.
+			name: "the file's oauth_token beats the project's default account",
+			edit: func(in *LegacyInput) {
+				in.Auth = "oauth"
+				in.OAuthToken = "bob"
+				in.DefaultAccount = "alice"
+			},
+			stage: "implement",
+			want: Access{
+				Kind: AccessCredential, Name: "bob",
+				Members: credential("bob", config.CredentialTypeClaudeOAuth),
+				Chosen:  true,
+			},
+			ok: true,
+		},
+		{
+			name: "a repository that names no account of its own inherits the project's default account, and it was chosen",
+			edit: func(in *LegacyInput) {
+				in.Auth = "oauth"
+				in.DefaultAccount = "alice"
+			},
+			stage: "implement",
+			want: Access{
+				Kind: AccessCredential, Name: "alice",
+				Members: credential("alice", config.CredentialTypeClaudeOAuth),
+				Chosen:  true,
+			},
+			ok: true,
+		},
+		{
 			name: "a stage account does not reach another craft, which stays on the default account",
 			edit: func(in *LegacyInput) {
 				in.Auth = "oauth"
@@ -297,6 +388,23 @@ func TestTheStubAnswersTheLegacyRule(t *testing.T) {
 			}(), "review", "",
 		},
 		{func() LegacyInput { in := legacyHero(); in.Auth = "cascade"; return in }(), "implement", ""},
+		{
+			func() LegacyInput {
+				in := legacyHero()
+				in.Auth = "api-key"
+				in.DefaultAccount = "alice"
+				return in
+			}(), "triage", "",
+		},
+		{
+			func() LegacyInput {
+				in := legacyHero()
+				in.Auth = "oauth"
+				in.OAuthToken = "bob"
+				in.DefaultAccount = "alice"
+				return in
+			}(), "implement", "",
+		},
 		{func() LegacyInput { in := legacyHero(); in.Auth = "oauth"; return in }(), "implement", config.GradeStrong},
 		{legacyHero(), "implement", ""},
 	}

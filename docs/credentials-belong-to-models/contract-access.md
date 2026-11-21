@@ -98,7 +98,9 @@ It is asked in the order a reader of today's configuration gets, each step narro
 | `agent.crafts.<craft>.access` | the access it writes, as written (D3062) | yes |
 | `agent.auth: oauth` + a stage's account | the account's credential (`claude-oauth`, served by the service) | yes |
 | `agent.auth: oauth` + `agent.oauth_token` | the file's account, the same way | yes |
-| `agent.auth: oauth`, no account anywhere | the project's **default account** (`config.DefaultClaudeAccount`) | **no** (F35) |
+| `agent.auth: oauth` + the project's `default_claude_account` | the project's default account, the same way | yes |
+| `agent.auth: oauth`, no account anywhere | the unsuffixed default account (`config.DefaultClaudeAccount`) | **no** (F35) |
+| `agent.auth: api-key` + a **mix** stage's account | that account (the stage's own key, else the project's `default_claude_account` — the mix's account, D1848) | yes |
 | `agent.auth: api-key` | the project's own Anthropic key, `config.CredentialAnthropicKey` | yes |
 | `agent.auth: cascade` | the pool the migration wrote, `config.PoolCascade`, **marked** (D3064 as amended) | yes |
 | `agent.auth: vertex` (the old default) | the built-in credential `config.CredentialVertex` | yes |
@@ -111,15 +113,24 @@ whether or not the credentials block declares it, and such a repository runs on 
 name a retired `access` key wrote is different: a name no layer holds is a problem the config reports
 at the key that wrote it, and the rule answers nothing rather than inventing a type.
 
-Two more rules the table depends on:
+Three more rules the table depends on:
 
-- A stage account is a **stage's** key. A stage the project wrote nothing for runs on the default
-  account, exactly as it does today — the rule does not move a stage's runs onto another credential.
-  A craft whose stages name different accounts is a craft the migration cannot write one access for,
-  and it reports it (CM4) rather than this rule choosing for it.
-- `Chosen` is F35's second condition and nothing else: it is false **only** for the project's default
-  account reached without a choice. Vertex, the project's key and the cascade's pool have no walk to
-  be walked on and are chosen.
+- A stage account is a **stage's** key, and the caller hands the two account sources in as two fields:
+  `LegacyInput.StageAccounts` holds `stages.<stage>.claude_account` alone, and
+  `LegacyInput.DefaultAccount` holds `default_claude_account`. Folding the project default into
+  `StageAccounts` would make it beat the file's `agent.oauth_token`, which the walk reads above it
+  (§11.2's rungs 3 and 4). A stage the project wrote nothing for runs on what the rungs below it name,
+  exactly as it does today — the rule does not move a stage's runs onto another credential. A craft
+  whose stages name different accounts is a craft the migration cannot write one access for, and it
+  reports it (CM4) rather than this rule choosing for it.
+- The **mix** is the one place an api-key run goes out on a subscription: the review, adversarial and
+  triage stages may run on the account the project names (`config.MixedAccountStages`, D1848, D1851),
+  and every other stage keeps the project's key. The stage's own key is served as written; the mix's
+  account beyond the config's own keys — the review model, the coder's provider route, the budget
+  mode, the allow-list — is the launch's to judge (CM14), never this rule's.
+- `Chosen` is F35's second condition and nothing else: it is false **only** for the unsuffixed default
+  account reached without a choice. Vertex, the project's key, a **mix** account a project named and
+  the cascade's pool have no walk to be walked on and are chosen.
 
 ## (d) The record: `creds/repoaccess/<slug>`
 

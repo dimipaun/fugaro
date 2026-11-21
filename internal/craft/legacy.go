@@ -1,6 +1,8 @@
 package craft
 
 import (
+	"slices"
+
 	"github.com/dimipaun/fugaro/internal/config"
 )
 
@@ -31,8 +33,10 @@ import (
 //     (CM11 walks only that one).
 //   - agent.auth names the four values of config.AgentAuths. vertex is the
 //     built-in credential, named explicitly and only here; api-key is the
-//     project's own Anthropic key (config.CredentialAnthropicKey); cascade is
-//     the pool the migration wrote for the project's cascade
+//     project's own Anthropic key (config.CredentialAnthropicKey) — for the
+//     mix's stages it is the account instead, because an api-key run holds one
+//     Claude account beside the key (mixAccount below, D1848);
+//     cascade is the pool the migration wrote for the project's cascade
 //     (config.PoolCascade, marked, D3064 as amended); oauth is the account
 //     above.
 //   - agent.crafts.<craft>.access is the access the file's craft chose (D3062:
@@ -81,11 +85,24 @@ type LegacyInput struct {
 	// an account and never an alias, D2092). "" is the project's default
 	// account.
 	OAuthToken string
-	// StageAccounts is, per config.RunStages stage, the account that stage runs
-	// on: the project's stages.<stage>.claude_account where it writes one, the
-	// project's default_claude_account where it does not, both resolved past any
-	// alias. A stage the map does not hold runs on the default account.
+	// StageAccounts is the project's stages.<stage>.claude_account, per stage,
+	// resolved past any alias — and NOTHING else: a stage the map does not hold
+	// is a stage whose own key names no account. It is the project default that
+	// must not be folded in here, because the two answer at different points of
+	// the walk (DefaultAccount below): a map that carried the default for every
+	// stage without a key would make the project default beat the file's own
+	// agent.oauth_token, which is rung 3 of the walk and stands ABOVE the
+	// default (claudeAccountChoice's order, docs/design/mixed-credentials.md
+	// §11.2).
 	StageAccounts map[string]string
+	// DefaultAccount is the project's default_claude_account, resolved past any
+	// alias, and "" where the key names none or names the unsuffixed-default
+	// sentinel (config.DefaultClaudeAccount) — which is no account of its own,
+	// the reading mixedStageAccount and claudeAccountChoice both give it. It is
+	// the walk's rung 4, read AFTER the file's agent.oauth_token, and under
+	// api-key it is the one Claude account a run's mix stages may go out on
+	// (mixedStageAccount).
+	DefaultAccount string
 	// Accesses is the file's own agent.crafts block, the retired per-craft
 	// access included.
 	Accesses config.Crafts
@@ -132,6 +149,16 @@ func LegacyAccess(in LegacyInput, stage, grade string) (Access, bool) {
 	case config.DefaultAgentAuth:
 		return in.credential(config.CredentialVertex, config.CredentialTypeVertex, true), true
 	case config.AuthAPIKey:
+		// An api-key run holds the provider key for its coder's stages and, at
+		// most, ONE Claude account beside it, and that account is the mix's
+		// (docs/design/mixed-credentials.md §11, D1848, D1851): stageAccountOf
+		// and mixedStageAccount answer it for the senior review, the
+		// adversarial review and the triage, and for no other stage. Answering
+		// the key for those three would move them onto the paid key, which is
+		// the one thing a migration may not do (R3, R7).
+		if account := in.mixAccount(stage); account != "" {
+			return in.account(account), true
+		}
 		return in.credential(config.CredentialAnthropicKey, config.CredentialTypeAnthropic, true), true
 	case config.AuthOAuth:
 		return in.account(in.stageAccount(stage)), true
@@ -141,10 +168,16 @@ func LegacyAccess(in LegacyInput, stage, grade string) (Access, bool) {
 	return Access{}, false
 }
 
-// stageAccount is the account a stage runs on: the project's own key for that
-// stage where it writes one, the file's agent.oauth_token where the project
-// writes none, and the project's default account where neither does — the walk
-// today's account choice makes, and the one case F35 calls "not chosen".
+// stageAccount is the account an oauth stage runs on: the project's own key for
+// that stage where it writes one (rung 2), the file's agent.oauth_token where
+// the project writes none (rung 3), the project's default_claude_account where
+// neither does (rung 4), and the unsuffixed default where the project names
+// none of the three — the walk today's account choice makes, in today's order,
+// and the last of them is the one case F35 calls "not chosen".
+//
+// The order is load-bearing and is why the file's token stands above the
+// project's default: a repository pinned to an account of its own keeps it,
+// and the project default is what a repository that names nothing inherits.
 func (in LegacyInput) stageAccount(stage string) string {
 	if account := in.StageAccounts[stage]; account != "" {
 		return account
@@ -152,7 +185,34 @@ func (in LegacyInput) stageAccount(stage string) string {
 	if in.OAuthToken != "" {
 		return in.OAuthToken
 	}
+	if in.DefaultAccount != "" {
+		return in.DefaultAccount
+	}
 	return config.DefaultClaudeAccount
+}
+
+// mixAccount is the Claude account an api-key run's mix stages may go out on
+// (mixedStageAccount), and "" for every other stage and for a run whose project
+// names no such account. The mix's stages are config.MixedAccountStages — the
+// senior review, the adversarial review and the triage — and they are exactly
+// the stages an api-key run may name an account for (config.CheckStageAccountMix
+// refuses a stage key anywhere else, so such a file never reaches a launch).
+//
+// The stage's own key comes first and is served as written (mixedRunAccount's
+// own order: "rung 2 comes first"), and the project's default account is the
+// mix's account when the stage names none. The file's agent.oauth_token is not
+// read here: under api-key no name but the mix's is admitted at all
+// (claudeAccountAllowed refuses any other as an account of an oauth run's), so
+// a token that disagreed with the mix would be a launch refused, never a
+// credential a stage runs on.
+func (in LegacyInput) mixAccount(stage string) string {
+	if !slices.Contains(config.MixedAccountStages, stage) {
+		return ""
+	}
+	if account := in.StageAccounts[stage]; account != "" {
+		return account
+	}
+	return in.DefaultAccount
 }
 
 // account is a subscription account as an access: the credential of that
