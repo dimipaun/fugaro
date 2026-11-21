@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -389,11 +390,72 @@ func TestStateSaveNamesTheTargetAndItsSource(t *testing.T) {
 	if s.host.atPush == "" {
 		t.Fatal("the test's host was never asked to push")
 	}
-	for _, want := range []string{"acme/state", source} {
+	// The host is named too: the repository and its folder are not the whole
+	// target, because the same owner/name on another forge is another
+	// repository, and the operator is the one who can tell that the save is
+	// about to reach the host they meant.
+	for _, want := range []string{"acme/state", source, "github.com"} {
 		if !strings.Contains(s.host.atPush, want) {
 			t.Errorf("what the save had printed when it pushed does not name %q:\n%s", want, s.host.atPush)
 		}
 	}
+}
+
+// TestStateSaveRepoOverrideKeepsTheProjectsHost is the --repo override, which
+// names a repository and no host: a Bitbucket project's override must not be
+// read as a GitHub one (it used to be, outright, and the save then pushed at
+// github.com/<owner>/<name> — a host the operator never named and never saw).
+//
+// The second half is the project whose own designation cannot be read at all:
+// --repo is the way through exactly then (D2824 names it as one), so the save
+// goes ahead on this build's default kind — and says which host that is in the
+// same line, rather than pushing into it unseen.
+func TestStateSaveRepoOverrideKeepsTheProjectsHost(t *testing.T) {
+	t.Run("the project's own kind", func(t *testing.T) {
+		s := wu15New(t, "acme/override")
+		s.des.d = stateDesignation{Repo: "acme/state", Dir: "docs/state", Provider: gitprov.KindBitbucket, Source: "the project layer"}
+
+		got, err := s.w.Save(context.Background(), wu15Member())
+		if err != nil {
+			t.Fatalf("a save with --repo failed: %v", err)
+		}
+		if len(s.kinds) != 1 || s.kinds[0] != gitprov.KindBitbucket {
+			t.Errorf("the save opened hosts %v, want the project's own %s", s.kinds, gitprov.KindBitbucket)
+		}
+		if len(s.host.asked) != 1 || s.host.asked[0] != "acme/override" {
+			t.Errorf("the save read the visibility of %v, want the repository --repo named", s.host.asked)
+		}
+		p := s.host.pushed[0]
+		if p.Repo != "acme/override" || p.Dir != stateDefaultRepoDir {
+			t.Errorf("the snapshot went to %s folder %q, want acme/override folder %s", p.Repo, p.Dir, stateDefaultRepoDir)
+		}
+		if !strings.Contains(s.host.atPush, "bitbucket.org") {
+			t.Errorf("what the save had printed when it pushed does not name the host it reaches:\n%s", s.host.atPush)
+		}
+		if !strings.Contains(s.host.atPush, "--repo") {
+			t.Errorf("what the save had printed when it pushed does not say the repository came from --repo:\n%s", s.host.atPush)
+		}
+		if got.PullRequest != s.host.url {
+			t.Errorf("Save answered PullRequest %q, want the host's %q", got.PullRequest, s.host.url)
+		}
+	})
+
+	t.Run("a designation that cannot be read", func(t *testing.T) {
+		s := wu15New(t, "acme/override")
+		s.des.err = errors.New("the project config holds no reports_commit")
+
+		if _, err := s.w.Save(context.Background(), wu15Member()); err != nil {
+			t.Fatalf("a save with --repo failed over a designation it did not need: %v", err)
+		}
+		if len(s.host.pushed) != 1 {
+			t.Fatalf("the save pushed %d times, want once through the default host", len(s.host.pushed))
+		}
+		for _, want := range []string{"github.com", "reports_commit"} {
+			if !strings.Contains(s.host.atPush, want) {
+				t.Errorf("what the save had printed when it pushed does not name %q: the host it fell back to, and why:\n%s", want, s.host.atPush)
+			}
+		}
+	})
 }
 
 // TestStateSaveRefusedInAgentSession is A7: the snapshot leaves this machine
@@ -541,6 +603,24 @@ func TestStateSaveHostIsTheRepositorysOwn(t *testing.T) {
 		if !strings.Contains(ran, want) {
 			t.Errorf("the save never ran %q. Everything it ran:\n%s", want, ran)
 		}
+	}
+	// `gh pr create` has no --json: the real gh answers "unknown flag: --json"
+	// and exits 1, so a save that asked for one would push the branch and then
+	// fail without opening anything. A fake gh echoes whatever argv it is given,
+	// so it cannot catch that on its own — the argv is asserted here, one
+	// invocation per line (the visibility read's own --json is a real flag).
+	for _, line := range strings.Split(ran, "\n") {
+		if strings.Contains(line, "pr create") && strings.Contains(line, "--json") {
+			t.Errorf("the save asked `gh pr create` for JSON, which that subcommand does not have (a real gh refuses the whole call with \"unknown flag: --json\"):\n%s", line)
+		}
+	}
+	// The URL is read off gh's output, which is the one line `gh pr create`
+	// prints on success.
+	if url := statePRURL("A new release of gh is available\nhttps://example.invalid/acme/state/pull/7\n"); url != "https://example.invalid/acme/state/pull/7" {
+		t.Errorf("statePRURL read %q off gh's output, want the URL: a notice before it must not be taken for the pull request", url)
+	}
+	if url := statePRURL("opened a pull request\n"); url != "" {
+		t.Errorf("statePRURL read %q off an answer that holds no URL, want nothing so the save refuses", url)
 	}
 }
 
@@ -743,6 +823,137 @@ func TestStateSaveBitbucketHostReadsVisibility(t *testing.T) {
 	}
 }
 
+// TestStateSaveBitbucketHostPushesWithTheTokenInTheEnvironment is the Bitbucket
+// publish path: Bitbucket has no CLI (D2807), so the save clones, commits and
+// pushes with the owner's git and opens the pull request through
+// internal/gitprov — and the token goes to git in the ENVIRONMENT
+// (gitops.CredentialVars), never in the remote URL, the argv or .git/config,
+// where it would land in a terminal's scrollback.
+//
+// This is the only place a save hands a credential to another program, which is
+// why it is asserted rather than left to the tested visibility read: a save that
+// spelled the token into the clone URL would pass every other test here.
+func TestStateSaveBitbucketHostPushesWithTheTokenInTheEnvironment(t *testing.T) {
+	const token = "a-token-this-test-invented"
+	gitCalls := wu15FakeGitPushing(t)
+	envFile := filepath.Join(filepath.Dir(gitCalls), wu15GitEnvFile)
+
+	var (
+		mu    sync.Mutex
+		seen  []string
+		asked map[string]any
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		if r.Method == http.MethodPost {
+			asked = body
+		}
+		mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pullrequests"):
+			io.WriteString(w, `{"values":[]}`)
+		case r.Method == http.MethodPost:
+			io.WriteString(w, `{"id":7,"links":{"html":{"href":"https://example.invalid/acme/state/pull/7"}}}`)
+		default:
+			io.WriteString(w, `{"is_private":true}`)
+		}
+	}))
+	defer srv.Close()
+
+	s := wu15New(t, "")
+	s.des.d = stateDesignation{Repo: "acme/state", Dir: "docs/state", Provider: gitprov.KindBitbucket, Source: "the project layer"}
+	s.w.hosts = func(kind string) (stateHost, error) {
+		if kind != gitprov.KindBitbucket {
+			t.Errorf("the save opened a %q host for a Bitbucket project", kind)
+		}
+		return stateBitbucketHost{token: token, baseURL: srv.URL + "/2.0"}, nil
+	}
+
+	got, err := s.w.Save(context.Background(), wu15Member())
+	if err != nil {
+		t.Fatalf("a save through the Bitbucket host failed: %v", err)
+	}
+	if got.PullRequest != "https://example.invalid/acme/state/pull/7" {
+		t.Errorf("the save answered PullRequest %q, want the URL the host returned", got.PullRequest)
+	}
+
+	raw, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("the fake git recorded no environment, so the push was handed none (%v)", err)
+	}
+	env := string(raw)
+	for _, want := range []string{
+		"FUGARO_GIT_TOKEN=" + token,
+		"FUGARO_GIT_USERNAME=x-token-auth",
+		"GIT_CONFIG_KEY_0=credential.https://bitbucket.org.helper",
+		"GIT_CONFIG_KEY_1=credential.https://bitbucket.org.helper",
+	} {
+		if !strings.Contains(env, want) {
+			t.Errorf("the push ran without %s in its environment, so the token does not reach git through the credential helper", want)
+		}
+	}
+
+	ran := wu15Calls(t, gitCalls)
+	for _, want := range []string{
+		"clone --quiet -- https://bitbucket.org/acme/state.git",
+		"push --quiet origin fugaro/state-20261121-093000",
+	} {
+		if !strings.Contains(ran, want) {
+			t.Errorf("the save never ran %q. Everything it ran:\n%s", want, ran)
+		}
+	}
+	if strings.Contains(ran, token) {
+		t.Errorf("the token is in what the save ran, where it lands in a shell history, a process listing and .git/config:\n%s", ran)
+	}
+
+	mu.Lock()
+	paths := strings.Join(seen, "\n")
+	post := asked
+	mu.Unlock()
+	for _, want := range []string{"GET /2.0/repositories/acme/state", "POST /2.0/repositories/acme/state/pullrequests"} {
+		if !strings.Contains(paths, want) {
+			t.Errorf("the save never asked Bitbucket %q. Everything it asked:\n%s", want, paths)
+		}
+	}
+	if post == nil {
+		t.Fatal("the save opened no pull request")
+	}
+	source, _ := post["source"].(map[string]any)
+	dest, _ := post["destination"].(map[string]any)
+	if branchOf(source) != "fugaro/state-20261121-093000" || branchOf(dest) != "main" {
+		t.Errorf("the pull request asked to merge %v into %v, want the saved branch into the branch the clone was on", post["source"], post["destination"])
+	}
+}
+
+// wu15GitEnvFile is where the fake git dumps its environment — the push's, the
+// one call whose environment carries the credential — beside the calls it
+// records, which is the same directory testutil.FakeCommand writes both to.
+const wu15GitEnvFile = "env"
+
+// wu15FakeGitPushing is wu15FakeGit with one addition: the push's environment is
+// written out, so a test can see what the token travelled in.
+func wu15FakeGitPushing(t *testing.T) string {
+	t.Helper()
+	return testutil.FakeCommand(t, stateGit, `
+case "$1" in
+clone) mkdir -p "$5" ;;
+rev-parse) echo main ;;
+push) env > "${0%/*}/`+wu15GitEnvFile+`" ;;
+esac
+exit 0
+`)
+}
+
+// branchOf reads the branch name out of a Bitbucket endpoint object.
+func branchOf(e map[string]any) string {
+	b, _ := e["branch"].(map[string]any)
+	name, _ := b["name"].(string)
+	return name
+}
+
 // wu15FakeGit puts a `git` on PATH that answers the subcommands a save runs —
 // the clone makes the directory git would make, and the clone's HEAD is a
 // branch — and answers the path of the file every argv is appended to.
@@ -758,13 +969,16 @@ exit 0
 }
 
 // wu15FakeGH puts a `gh` on PATH that answers the two calls a save makes: the
-// repository's visibility, and the pull request it opens.
+// repository's visibility as JSON (`gh repo view --json` is real), and the pull
+// request as the plain URL `gh pr create` prints — there is no --json on that
+// subcommand, and a fake that answered JSON would let a save pass a flag the
+// real gh refuses (`unknown flag: --json`, after the branch was pushed).
 func wu15FakeGH(t *testing.T) string {
 	t.Helper()
 	return testutil.FakeCommand(t, stateGH, `
 case "$1 $2" in
 "repo view") echo '{"visibility":"PRIVATE"}' ;;
-"pr create") echo '{"url":"https://example.invalid/acme/state/pull/7"}' ;;
+"pr create") echo https://example.invalid/acme/state/pull/7 ;;
 *) echo '{}' ;;
 esac
 exit 0

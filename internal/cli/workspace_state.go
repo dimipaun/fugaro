@@ -417,8 +417,8 @@ func (w *stateWriter) Save(ctx context.Context, s workspace.Snapshot) (workspace
 	// (D2824): a snapshot leaves this machine under the operator's own
 	// credentials, and which layer aimed it is the one thing none of them can
 	// read back afterwards.
-	fmt.Fprintf(w.out, "saving %s to %s, folder %s, the repository %s\n",
-		stateWhat(s), pluginwire.Printable(d.Repo), pluginwire.Printable(d.Dir), d.Source)
+	fmt.Fprintf(w.out, "saving %s to %s on %s, folder %s, the repository %s\n",
+		stateWhat(s), pluginwire.Printable(d.Repo), stateHostName(d.Provider), pluginwire.Printable(d.Dir), d.Source)
 
 	url, err := host.Publish(ctx, statePublish{
 		Repo:    d.Repo,
@@ -472,25 +472,37 @@ func (w *stateWriter) LastSaved(ctx context.Context, s workspace.Snapshot) (time
 // command named one, else the project's E6 setting. The override says so in its
 // own source line, because "this invocation" and "the project's node" are two
 // different answers to the question the printed line asks.
+//
+// The project's own designation is read in BOTH cases, because --repo names a
+// repository and never a host: which host a repository is on is the project's
+// own fact, and the E6 reader is the only place that holds it. A kind chosen
+// here instead (this used to be gitprov.KindGitHub, unconditionally) sends a
+// Bitbucket project's override to github.com/<owner>/<name> — a repository that
+// is not the one named, on a host the operator never named.
 func (w *stateWriter) designation(ctx context.Context, s workspace.Snapshot) (stateDesignation, error) {
-	if w.repoOverride != "" {
-		repo, err := task.CanonicalRepo(w.repoOverride)
-		if err != nil {
-			return stateDesignation{}, userErr("--repo %s: %v", pluginwire.Printable(w.repoOverride), err)
+	d, readErr := w.designate.Designate(ctx, s)
+	if readErr != nil && w.repoOverride == "" {
+		return stateDesignation{}, readErr
+	}
+	if w.repoOverride == "" {
+		if d.Repo != "" && d.Dir == "" {
+			d.Dir = stateDefaultRepoDir
 		}
-		return stateDesignation{
-			Repo:     repo,
-			Dir:      stateDefaultRepoDir,
-			Provider: gitprov.KindGitHub,
-			Source:   "named by --repo on this command line",
-		}, nil
+		return d, nil
 	}
-	d, err := w.designate.Designate(ctx, s)
+	// --repo is the way through exactly when the project's own setting is
+	// unusable (D2824 names it as one), so a designation that cannot be read
+	// does not sink a save that named its own repository — but the giveaway is
+	// not hidden: the host the save falls back to is printed with the target,
+	// and this line says the project's own answer is missing.
+	repo, err := task.CanonicalRepo(w.repoOverride)
 	if err != nil {
-		return stateDesignation{}, err
+		return stateDesignation{}, userErr("--repo %s: %v", pluginwire.Printable(w.repoOverride), err)
 	}
-	if d.Repo != "" && d.Dir == "" {
-		d.Dir = stateDefaultRepoDir
+	d.Repo, d.Dir = repo, stateDefaultRepoDir
+	d.Source = "named by --repo on this command line"
+	if readErr != nil {
+		d.Source += "; the project's own designation could not be read (" + oneLineCLI(readErr.Error()) + ")"
 	}
 	return d, nil
 }
@@ -567,23 +579,47 @@ func (h stateGitHubHost) Visibility(ctx context.Context, repo string) (stateVisi
 
 // Publish implements stateHost: clone, write, commit to a new branch, push, and
 // open the pull request with gh.
+//
+// The URL is read off gh's standard output, which is where `gh pr create` puts
+// it — the one line it prints on success — and there is no --json on that
+// subcommand to ask for it another way: gh would refuse the whole invocation
+// (`unknown flag: --json`), after the branch was already pushed, leaving a
+// branch on the host and no pull request to tell anyone about it.
 func (h stateGitHubHost) Publish(ctx context.Context, p statePublish) (string, error) {
 	base, err := stateCloneAndCommit(ctx, nil, p, "https://github.com/"+p.Repo+".git")
 	if err != nil {
 		return "", err
 	}
-	var answer struct {
-		URL string `json:"url"`
-	}
-	if err := stateRunJSON(ctx, nil, "", &answer, stateGH, "pr", "create",
+	out, err := stateOutput(ctx, nil, "", stateGH, "pr", "create",
 		"--repo", p.Repo, "--head", p.Branch, "--base", base,
-		"--title", p.Subject, "--body", p.Body, "--json", "url"); err != nil {
+		"--title", p.Subject, "--body", p.Body)
+	if err != nil {
 		return "", err
 	}
-	if answer.URL == "" {
-		return "", fmt.Errorf("%s opened the pull request on %s and answered no URL for it, so there is nothing to point the operator at", stateGH, pluginwire.Printable(p.Repo))
+	url := statePRURL(out)
+	if url == "" {
+		return "", fmt.Errorf("%s opened the pull request on %s and printed no URL for it (%q), so there is nothing to point the operator at", stateGH, pluginwire.Printable(p.Repo), oneLineCLI(out))
 	}
-	return answer.URL, nil
+	return url, nil
+}
+
+// statePRURL is the pull request URL at the end of a gh invocation's output:
+// the last non-empty line, and only when it is an https URL. gh prints the URL
+// alone, but a notice it chose to print first (a new release, a warning) must
+// not be taken for the pull request.
+func statePRURL(out string) string {
+	lines := strings.Split(out, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "https://") {
+			return line
+		}
+		return ""
+	}
+	return ""
 }
 
 // stateBitbucketHost is the Bitbucket half of a save's host work, through
@@ -770,6 +806,22 @@ func stateRunJSON(ctx context.Context, env []string, dir string, out any, name s
 		return fmt.Errorf("%s answered something this build cannot read as JSON: %w", name, err)
 	}
 	return nil
+}
+
+// stateHostName is the host a provider kind's repositories live on, as the
+// printed target names it (localcfg.ProviderHosts, the one map of that pair). A
+// designation naming no kind is the default kind here — GitHub, the kind an
+// empty kind opens too (stateHostsFor) — so the line a save prints before it
+// pushes names the host the save is really about to reach, whichever branch of
+// the designation put it there.
+func stateHostName(kind string) string {
+	if kind == "" {
+		kind = gitprov.KindGitHub
+	}
+	if host := localcfg.ProviderHosts[kind]; host != "" {
+		return host
+	}
+	return kind
 }
 
 // stateHostsFor is the opener a command hands the writer: GitHub through gh,
