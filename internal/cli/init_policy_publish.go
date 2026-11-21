@@ -1821,6 +1821,12 @@ func reseedPolicyKeys(old []byte, lc *localcfg.Config, p *projectpolicy.Policy, 
 			})
 		case "base_branch":
 			set(member, []string{"base_branch"}, p.BaseBranch, func() { lc.BaseBranch = p.BaseBranch })
+		case "mobile":
+			// The block is the node's own and no config key carries it: the
+			// publish writes the node's block back (MobileForPublish), so there
+			// is nothing in this file for a re-seed to bring in line, and
+			// sending the operator to a hand edit for it would ask for a key
+			// the config has no place for.
 		default:
 			// The account-choice members — default_claude_account and each
 			// claude_account_stages.<stage> — land here, and the refusal above

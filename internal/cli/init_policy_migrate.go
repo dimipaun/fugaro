@@ -1086,6 +1086,7 @@ const (
 	bitbucketTokenKey    = "bitbucket_token"
 	bitbucketAPIRootsKey = "bitbucket_api_roots"
 	verifierAccountsKey  = "verifier_accounts"
+	mobileKey            = "mobile"
 	policyMigrationWhat  = "this rewrites the published policy node in place"
 	policyPublishWhat    = "this rewrites the published policy node in place, from your local config"
 	policyReseedWhat     = "this re-seeds your local config from the published policy node"
@@ -1169,6 +1170,16 @@ func withDerivedMembers(raw []byte, lc *localcfg.Config, identities map[string]s
 		var err error
 		if node, err = patchPolicyJSON(node, verifierAccountsKey, *lc.VerifierAccounts); err != nil {
 			return raw, userErr("carrying %s's %s verifier list into the policy: %v", lc.Name, verifierAccountsKey, err)
+		}
+	}
+	// The mobile block is carried for the reason the policy stage compares it:
+	// a node this migration writes without one reads as mobile disabled and is
+	// then a difference the very next run publishes, so a migrated node states
+	// the defaults a publish would (MobileForPublish).
+	if !carries(mobileKey) {
+		var err error
+		if node, err = patchPolicyJSON(node, mobileKey, projectpolicy.DefaultMobile()); err != nil {
+			return raw, userErr("carrying the policy's %s block into %s: %v", mobileKey, lc.Name, err)
 		}
 	}
 	return node, nil
