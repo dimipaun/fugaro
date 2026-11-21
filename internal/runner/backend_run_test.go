@@ -563,36 +563,34 @@ func wrapTune(first, second func(*budget.Config)) func(*budget.Config) {
 	return func(c *budget.Config) { first(c); second(c) }
 }
 
-func TestOffNeverTouchesBackend(t *testing.T) {
+// TestARunWithNoDatabaseTouchesNoBackend: the mode a job's environment names
+// no longer decides whether a run is accounted for (AB1a, D3009, R3), so the
+// run that reads nothing is a run whose job carries no database at all — the
+// shape an installation that has never had one gives its runs. Such a run must
+// not read the database, exchange anything, or record a budget, even with a
+// database standing there refusing every call.
+func TestARunWithNoDatabaseTouchesNoBackend(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "off", "")
-	// The bucket holds no token, which is what the launcher leaves for a
-	// repository with no published policy and the mode off (internal/cli's
-	// mint decision: a token is minted whenever a policy exists, whatever the
-	// mode). The bucket's state is what makes this run the legacy one: this
-	// fixture mints a token for every run, and with the object left in place a
-	// mode-off job reads the project's policy like any other run does
-	// (TestRunnerReadsPolicyWhenTheNodeExists), so it is removed here.
-	//
-	// That is also why the assertion this test used to end on is gone (L1 of
-	// the PR #379 review): it checked that the object was absent after the
-	// test itself had removed it, and the form before that — the run must NOT
-	// have taken the token — describes a runner that does not read the policy
-	// at all. What remains is what the run must not do: read the database,
-	// exchange anything, or record a budget.
+	// The job's two environment entries go back out, and the launcher's token
+	// object with them: a job that names no database and whose launch minted a
+	// token is the stray-token refusal (TestARunWithNoDatabaseIsRefusedWithTheFix),
+	// not this state.
 	if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 		t.Fatal(err)
 	}
 	b.unmarked() // a launch that minted nothing: no marker either
+	b.noBudget()
+	b.deps.Backend = runner.Backend{}
 	b.db.Refuse(503, "UNAVAILABLE", "", "down")
 	rec, err := b.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 	if n := len(b.db.Credentials()); n != 0 {
-		t.Fatalf("a run with its budget off made %d database requests", n)
+		t.Fatalf("a run whose job names no database made %d database requests", n)
 	}
 	if b.itk.Exchanges() != 0 {
-		t.Fatal("a run with its budget off exchanged a budget token")
+		t.Fatal("a run whose job names no database exchanged a budget token")
 	}
 	if len(b.agent.calls) != 2 {
 		t.Fatalf("%d stages ran", len(b.agent.calls))
@@ -1108,16 +1106,27 @@ func TestWrongDatabaseIsAnInfraError(t *testing.T) {
 	}
 }
 
-// M2: a run whose budget is off ignores a malformed value in the backend's
-// environment when it describes no backend at all (a stray grace, an API key
-// with no URL): the value is not one the run would have used.
-func TestOffIgnoresMalformedBackendEnv(t *testing.T) {
+// A malformed value in the backend's environment that describes no backend at
+// all (a stray grace, an API key with no URL) used to be one a budget-off run
+// ignored, as it ignored the rest of the backend's environment. From AB1a on
+// every run is accounted for (D3009, R3), so there is no mode that reads a
+// value it cannot parse as one to skip: the run stops on the shipped error,
+// which is what an observe run has always done here. The L-b test below is the
+// other half — a value that *carries* the URL or the marker, whose loss is what
+// the old reading was dangerous for.
+func TestAMalformedBackendEnvThatDescribesNoBackendStopsTheRun(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "off", "")
 	b.deps.Backend = runner.Backend{}
 	b.deps.BackendErr = errors.New("FUGARO_BUDGET_GRACE: it must be a duration between 5s and 3m")
 	rec, err := b.run(t, implement("feature"), review("ship", 0))
-	if err != nil || rec.Status != runstore.StatusSucceeded {
+	if err == nil || rec.Status != runstore.StatusInfraError || rec.Halt != nil {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if !strings.Contains(rec.Reason, "FUGARO_BUDGET_GRACE") || !strings.Contains(rec.Reason, "budget backend in the job's environment") {
+		t.Errorf("the reason does not name the damage and where it is: %q", rec.Reason)
+	}
+	if len(b.agent.calls) != 0 || len(b.provider.State.PRs) != 0 {
+		t.Fatal("the run went on with a ceiling it could not read")
 	}
 }
 
