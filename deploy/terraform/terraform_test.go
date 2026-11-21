@@ -702,20 +702,24 @@ func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
 		for _, typ := range []string{"google_project_iam_member", "google_service_account_iam_member", "google_project_iam_custom_role"} {
 			for _, blk := range resourceBlocks(t, path, b, typ) {
 				for _, bad := range []string{"google_service_account.signer.member", "google_service_account.signer.email", "serviceAccount:", "roles/storage", "roles/run."} {
-					// The four names whose blocks may name a serviceAccount:
+					// The five names whose blocks may name a serviceAccount:
 					// the history and coordinator accounts (the FP's own
 					// sweeper and its writer), the member's pinned workspace
 					// account (workspace_access.tf, W7), which is the one
-					// principal from outside this installation, and the public
+					// principal from outside this installation, the public
 					// mobile service (mobile plan task P5, mobile_token_minter
 					// below) — the installation root creates that account and
 					// hands it over as var.mobile_account, so the row is the
-					// Firebase module's and the principal is the installation's.
+					// Firebase module's and the principal is the installation's
+					// — and the issuer (launcher-does-not-mint plan task LM11,
+					// issuer_minter), which is the credentials service's own
+					// account, created by the installation root the same way
+					// and handed over as var.issuer_account.
 					// The workspace's exception is its exact address and not a
 					// name prefix, so no later block whose name merely
-					// contains workspace_ can borrow it; the mobile one is its
-					// exact block name for the same reason.
-					if strings.Contains(blk.body, bad) && !(bad == "serviceAccount:" && (strings.Contains(blk.name, "history_") || strings.Contains(blk.name, "coordinator_") || blk.name == "google_project_iam_member.workspace_read" || blk.name == "google_service_account_iam_member.mobile_token_minter")) {
+					// contains workspace_ can borrow it; the mobile and issuer
+					// ones are their exact block names for the same reason.
+					if strings.Contains(blk.body, bad) && !(bad == "serviceAccount:" && (strings.Contains(blk.name, "history_") || strings.Contains(blk.name, "coordinator_") || blk.name == "google_project_iam_member.workspace_read" || blk.name == "google_service_account_iam_member.mobile_token_minter" || blk.name == "google_service_account_iam_member.issuer_minter")) {
 						t.Errorf("%s: %s mentions %s", path, blk.name, bad)
 					}
 				}
@@ -1926,6 +1930,17 @@ var (
 	// (modules/firebase/iam.tf's mobile_token_minter, and its comment states
 	// why the grant cannot live in the root that creates the account).
 	//
+	// var.issuer_account is the third of those shapes (launcher-does-not-mint
+	// plan task LM11; D3121): the credentials service's own account, created
+	// by the installation root and read here as the member of the one row that
+	// mints a run's identity. It is admitted beside the two above because it
+	// is the same kind of fact — an installation's account reaching a root
+	// through the tfvars — and because the row it lands in is the one the
+	// whole design turns on: the Firebase root's variable validates the shape,
+	// TestIssuerMinterIsOneSpelling holds the row to the signer it is on, and
+	// internal/infra/tf's issuerMinterGrant is what a plan is refused by when
+	// that account is not on this installation's roster of signers.
+	//
 	// "serviceAccount:${each.value}" is the workspace root's invoker binding
 	// (WS6, D2980): the member table's job accounts arrive as bare addresses —
 	// internal/localcfg's WorkspaceMember.JobServiceAccounts holds an "IAM
@@ -1937,7 +1952,7 @@ var (
 	// every entry to a service account address, and internal/infra/tf's
 	// WorkspaceNotCovered refuses an invoke grant whose member is not one of
 	// the table's accounts.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity|mobile)\[0\]\.member|google_service_account\.(catalog_check|reports|licence|voice)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{each\.value\}"|"serviceAccount:\$\{var\.(history_account|coordinator_account|mobile_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity|mobile)\[0\]\.member|google_service_account\.(catalog_check|reports|licence|voice)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{each\.value\}"|"serviceAccount:\$\{var\.(history_account|coordinator_account|mobile_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account|issuer_account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces
@@ -4021,6 +4036,12 @@ func TestComputeBaseImageIsInTheInstallationsRegistry(t *testing.T) {
 // The signer's own IAM is the launchers' and operators' minter grant on the
 // signer account, and nothing else: no role on the project names it, and no
 // other service account IAM resource grants on it.
+// Every grant on the runs' signer is the token-minter role: the two rows the
+// account may carry — the people's, `local.people` behind LM11's switch, and
+// the issuer's own (LM11; D3121) — and no project-level role reaches it at
+// all. The people's row's own exclusions (a viewer is never among them, and
+// neither is the signer itself) are asserted in
+// roots/firebase/tests/firebase.tftest.hcl, where the plan can read them.
 func TestSignerIAMIsMinterOnly(t *testing.T) {
 	grants := 0
 	walk(t, func(path string, b []byte) {
@@ -4029,7 +4050,10 @@ func TestSignerIAMIsMinterOnly(t *testing.T) {
 				continue
 			}
 			grants++
-			if blk.name != "google_service_account_iam_member.minter" || !strings.Contains(blk.body, "google_project_iam_custom_role.token_minter.name") {
+			if blk.name != "google_service_account_iam_member.minter" && blk.name != "google_service_account_iam_member.issuer_minter" {
+				t.Errorf("%s: %s grants on the signer and is neither of its two rows: the people's minter (`local.people`) or the issuer's (LM11's issuer_minter, the credentials service's own account)", path, blk.name)
+			}
+			if sq := squash(blk.body); !strings.Contains(sq, "google_project_iam_custom_role.token_minter.name") && !strings.Contains(sq, `role = "projects/${var.project}/roles/fugaroTokenMinter"`) {
 				t.Errorf("%s: %s grants on the signer something other than the minter role", path, blk.name)
 			}
 		}
@@ -4039,8 +4063,170 @@ func TestSignerIAMIsMinterOnly(t *testing.T) {
 			}
 		}
 	})
-	if grants != 1 {
-		t.Errorf("want one grant on the signer (minter), got %d", grants)
+	if grants != 2 {
+		t.Errorf("want two grants on the signer (the people's minter and the issuer's), got %d", grants)
+	}
+}
+
+// TestIssuerMinterIsOneSpelling holds the issuer's row on the runs' signer
+// (launcher-does-not-mint plan task LM11; D3121, F7) to the facts it is made
+// of: the account this module creates as that signer, the role the file
+// declares for it, the member the installation hands over, and the switch
+// that names the row into existence.
+//
+// Why the row is spelled out, and why that is not a smell to remove. The two
+// resources it is on are COMPUTED, so a row written with
+// google_service_account.signer.name or
+// google_project_iam_custom_role.token_minter.name reaches a plan as an
+// unknown string — a principal and a role no review screen can read, which
+// internal/infra/tf's cover refuses (issuerMinterGrant), and for this row
+// more than for any other: iam.serviceAccounts.signJwt on an account IS that
+// account, and the design's table says so (orchestrator.tf, section 4.3). The
+// account is therefore spelled the one way this module creates it (the
+// signer's own account_id, read back below) and the role is the literal the
+// role's ID resolves to. One fact, one spelling; this test is what keeps the
+// literal from drifting off the resources it stands for, and the failure it
+// makes impossible is a row on an account or a role nothing creates, which
+// IAM accepts and the first launch through the issuer then fails on.
+//
+// Mutation (verified, run and restored): renaming the signer's account_id
+// fails here; so does dropping the count (an installation with no issuer
+// named would plan a row for a member that does not exist).
+func TestIssuerMinterIsOneSpelling(t *testing.T) {
+	const path = "gcp/modules/firebase/iam.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := ""
+	for _, blk := range resourceBlocks(t, path, b, "google_service_account") {
+		if blk.name == "google_service_account.signer" {
+			signer = blk.body
+		}
+	}
+	if signer == "" {
+		t.Fatalf("%s declares no google_service_account.signer: it is the runs' token signer, and the row below is the one identity that mints a run's token through it (D3121)", path)
+	}
+	accountID := firstAttr(signer, "account_id")
+	if accountID != "var.names.signer_account_id" {
+		t.Errorf("%s: the runs' signer's account_id is %s, want var.names.signer_account_id: internal/infra writes that variable, and the issuer's row below is required to spell the same expression — a signer renamed in one place alone would leave the row on an account nothing creates", path, accountID)
+	}
+	role := ""
+	for _, blk := range resourceBlocks(t, path, b, "google_project_iam_custom_role") {
+		if blk.name == "google_project_iam_custom_role.token_minter" {
+			role = firstAttr(blk.body, "role_id")
+		}
+	}
+	if role != "var.names.minter_role_id" {
+		t.Errorf("%s: google_project_iam_custom_role.token_minter declares role_id %s, want var.names.minter_role_id: the issuer's row names the role as a literal of this file, and this is the ID that literal stands for", path, role)
+	}
+
+	row := ""
+	for _, blk := range resourceBlocks(t, path, b, "google_service_account_iam_member") {
+		if blk.name == "google_service_account_iam_member.issuer_minter" {
+			row = squash(blk.body)
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s declares no google_service_account_iam_member.issuer_minter: without it the credentials service holds no way to sign a run's identity, which is what lets the people's row go (LM14)", path)
+	}
+	for _, want := range []string{
+		`count = var.issuer_account == "" ? 0 : 1`,
+		`service_account_id = "projects/${var.project}/serviceAccounts/${` + accountID + `}@${var.project}.iam.gserviceaccount.com"`,
+		`role = "projects/${var.project}/roles/fugaroTokenMinter"`,
+		`member = "serviceAccount:${var.issuer_account}"`,
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s: the issuer's row on the runs' signer does not hold %q:\n%s", path, want, row)
+		}
+	}
+	// The literal `fugaroTokenMinter` is the ID the custom role above is
+	// declared with, one fact the two attributes spell apart: role_id is the
+	// variable internal/infra writes (MinterRoleID) and the row is the literal
+	// that variable resolves to, exactly as the devices' row spells it. What
+	// holds the ID itself to a role the modules create is
+	// TestIAMResourcesUseKnownExpressions (tf.FugaroRoles), and the spells
+	// named here are the ones a rename in one place alone would break.
+	if strings.Contains(row, "condition") {
+		t.Errorf("%s: the issuer's row carries a condition. iam.serviceAccounts.signJwt cannot be limited to a claim set, and a condition here would read as one that could:\n%s", path, row)
+	}
+	if !strings.Contains(row, "depends_on = [google_service_account.signer, google_project_iam_custom_role.token_minter]") {
+		t.Errorf("%s: the issuer's row names the signer and the role by strings, so it must wait for both: without the edge Terraform applies the grant and the account in parallel, and the first update carrying it fails with notFound (TestStringNamedResourcesAreWaitedFor's incident):\n%s", path, row)
+	}
+}
+
+// TestPeopleMinterIsBehindTheSwitch (launcher-does-not-mint plan task LM11;
+// D3121): the row that lets a launcher or an operator sign a run's identity is
+// behind one switch, the switch is ON at its default, and both the switch and
+// the issuer's account reach the module from the root — an input the root
+// drops is a switch nothing can turn and a row nobody can enable, which no
+// root run can see (a run's assertions cannot reach into a child module, the
+// same reason TestFirebaseRootPassesTheWorkspacePinToTheModule exists).
+//
+// Why the default is the load-bearing half: with it off, the first `fugaro
+// update` carrying this change would remove every launcher's and every
+// operator's way to mint while the issuer's row is not yet in the installation
+// — every launch of an installation that had not been told to update would
+// fail. The switch is what makes the row's removal a step the update takes in
+// the one plan that has the issuer answering (LM14, R8), and not a
+// consequence of taking the release.
+func TestPeopleMinterIsBehindTheSwitch(t *testing.T) {
+	const path = "gcp/modules/firebase/iam.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := ""
+	for _, blk := range resourceBlocks(t, path, b, "google_service_account_iam_member") {
+		if blk.name == "google_service_account_iam_member.minter" {
+			row = squash(blk.body)
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s declares no google_service_account_iam_member.minter: it is the people's row this switch gates", path)
+	}
+	if !strings.Contains(row, "for_each = var.people_minter ? local.people : toset([])") {
+		t.Errorf("%s: the people's minter is not gated by var.people_minter, so `fugaro update` has no switch to turn off in the plan that moves the grant (LM14):\n%s", path, row)
+	}
+
+	vb, err := os.ReadFile("gcp/modules/firebase/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars := stripComments(string(vb))
+	if !regexp.MustCompile(`(?s)variable\s+"people_minter"\s*\{[^}]*default\s*=\s*true`).MatchString(vars) {
+		t.Error("gcp/modules/firebase/variables.tf does not declare people_minter with default = true: a switch that is off at its default removes the people's row the moment the release carrying it is taken, before the issuer answers")
+	}
+	if !regexp.MustCompile(`(?s)variable\s+"people_minter"\s*\{[^}]*nullable\s*=\s*false`).MatchString(vars) {
+		t.Error("gcp/modules/firebase/variables.tf does not hold people_minter non-nullable: a null would make the ternary above an error at plan time rather than a switch")
+	}
+	if !regexp.MustCompile(`(?s)variable\s+"issuer_account"\s*\{[^}]*default\s*=\s*""`).MatchString(vars) {
+		t.Error("gcp/modules/firebase/variables.tf does not default issuer_account to empty: with any other default the first update carrying this change plans a row for an account nobody named")
+	}
+
+	// The root's half: both variables declared, both passed to the module.
+	rvb, err := os.ReadFile("gcp/roots/firebase/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rvars := stripComments(string(rvb))
+	for _, name := range []string{"issuer_account", "people_minter"} {
+		if !regexp.MustCompile(`(?m)^variable\s+"` + name + `"\s*\{`).MatchString(rvars) {
+			t.Errorf("gcp/roots/firebase/variables.tf does not declare %s, which roots/firebase/main.tf passes to the module", name)
+		}
+	}
+	rm, err := os.ReadFile("gcp/roots/firebase/main.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok := moduleBody("gcp/roots/firebase/main.tf", stripComments(string(rm)), "firebase")
+	if !ok {
+		t.Fatal("gcp/roots/firebase/main.tf: no module \"firebase\" block")
+	}
+	for _, pass := range []string{"issuer_account = var.issuer_account", "people_minter = var.people_minter"} {
+		if !strings.Contains(squash(body), pass) {
+			t.Errorf("gcp/roots/firebase/main.tf: the module \"firebase\" block does not pass %q: the root's own variables would be inputs nothing reads", strings.SplitN(pass, "=", 2)[0])
+		}
 	}
 }
 

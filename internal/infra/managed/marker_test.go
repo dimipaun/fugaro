@@ -2483,6 +2483,31 @@ var runAccountGrants = setOf(
 	`google_project_iam_member | "projects/${var.project}/roles/fugaroHistory" | project=var.project | google_service_account.history[0].member | for_each= | perms=run.executions.get,run.executions.list,run.jobs.get,run.jobs.list,run.operations.get`,
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.history[0].member | for_each= | perms=`,
 
+	// The credentials service's own row on the runs' signer (launcher-does-not-mint
+	// plan task LM11; D3121, F7, F8, F33): the ONE grant this design adds, and
+	// the one that makes the people's row above removable. The member is the
+	// credentials service's account (var.issuer_account, empty until the update
+	// that hands the account over, LM13), the role is the Firebase module's own
+	// iam.serviceAccounts.signJwt, and the target is the runs' signer account
+	// and never the project.
+	//
+	// What it costs is stated and not softened: signJwt signs ANY claim set for
+	// ANY uid as the account it is on, so this account becomes the one identity
+	// that mints every run's and every launcher's token — the honest size of the
+	// amendment to .claude/rules/credentials-service.md's sentence on this
+	// account's grants, taken knowingly by the owner (D3121), and a single point
+	// of every launch. What it is NOT is a write path to fugaro/managed.json:
+	// signJwt reaches IAM's sign API and no Cloud Storage object, the account
+	// holds no storage role on the project or the runs bucket anywhere in this
+	// tree, and the reach a signed token buys is bounded by the database rules
+	// and by the service's own route allowlist and auditing, which is what the
+	// rule file and the independent review are for. A second member on this row,
+	// a second grant to this account, or a wider role here is the finding this
+	// list is for — and the row's account and role are literals of the plan
+	// (deploy/terraform's TestIssuerMinterIsOneSpelling holds them to the two
+	// resources), so the review screen names both.
+	`google_service_account_iam_member | "projects/${var.project}/roles/fugaroTokenMinter" | service_account_id="projects/${var.project}/serviceAccounts/${var.names.signer_account_id}@${var.project}.iam.gserviceaccount.com" | "serviceAccount:${var.issuer_account}" | for_each= | perms=?`,
+
 	// The coordinator's writer (coordinator plan task P3): the history
 	// account's database grant above, for the second identity that holds one —
 	// the aggregation job's account, which writes the coordinator's subtree
@@ -2565,6 +2590,23 @@ var runAccountGrants = setOf(
 	// member is a member of one of these three sets.
 	`google_cloud_run_v2_job_iam_member | var.job_runner_role | name=google_cloud_run_v2_job.this[0].name | each.value | for_each=var.workflow.deploy_job ? toset(var.launchers) : toset([]) | perms=?`,
 	`google_logging_log_view_iam_member | "roles/logging.viewAccessor" | name=google_logging_log_view.runs[0].name | each.value | for_each=var.log_isolation ? toset(concat(var.launchers, var.operators, var.viewers)) : toset([]) | perms=`,
+	// ... and the Firebase module's minter row, switch-gated since
+	// launcher-does-not-mint plan task LM11 (D3121). var.people_minter is ON
+	// by default, so this is the row the module has always planned and an
+	// installation taking the change plans nothing new; the plan that turns
+	// the switch off — the one that removes the row, once the credentials
+	// service has proved it signs as this signer — is LM14's (R8), and the
+	// key carries the set it iterates (local.people, the launchers and the
+	// operators) so a member slipped into the switch's on branch is a
+	// different key.
+	//
+	// The members are people and the role is iam.serviceAccounts.signJwt on
+	// the runs' signer, which is the documented limit roles.md §4 states
+	// rather than a gap this scan could close: an operator or a launcher has
+	// always been able to mint an identity in this project, the viewer list
+	// is deliberately not among them, and taking it off every launcher is
+	// what the plan's issuer row (further up this list) and LM14 are for.
+	`google_service_account_iam_member | google_project_iam_custom_role.token_minter.name | service_account_id=google_service_account.signer.name | each.value | for_each=var.people_minter ? local.people : toset([]) [local.people=toset(concat(var.launchers, var.operators))] | perms=iam.serviceAccounts.signJwt`,
 
 	// The viewer list's own grants (RS4 of docs/roles-scopes): the viewer is
 	// a member list of its own, and peopleVars deliberately does not carry

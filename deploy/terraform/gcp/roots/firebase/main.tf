@@ -52,6 +52,14 @@ module "firebase" {
   history_account     = var.history_account
   coordinator_account = var.coordinator_account
 
+  # The issuer's own row and the switch that gates the people's
+  # (launcher-does-not-mint plan task LM11): the credentials service's account,
+  # which `fugaro update` passes once the installation root has created it, and
+  # the switch it leaves on until the plan that moves the grant off the people
+  # (LM14).
+  issuer_account = var.issuer_account
+  people_minter  = var.people_minter
+
   # The public mobile service's runtime account, when the installation runs that
   # service: the module creates the device-only signer and grants it signJwt
   # (iam.tf, mobile_token_minter).
