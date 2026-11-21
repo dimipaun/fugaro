@@ -1484,6 +1484,40 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 		// reader of a set the platform defines, which is exactly the drift this
 		// row set exists to catch.
 		{"a provider key with an auth shape outside the two", string(providerEntryDoc("key: "+fakeCred(t, "x"), "base_url: "+testProviderBase, "auth: oauth"))},
+		// The named family (C1's RepoCredentialPrefix, R2, D3008): one entry per
+		// repository and named credential, so its keys are the document's first
+		// whose repository half cannot be named under `properties` — the key IS
+		// the repository and the credential. `patternProperties` carries the value
+		// shape those entries share with the provider key plus the copy's marker
+		// (D3014), and propertyNames' branch carries their key rule: the slug half
+		// in task.ValidSlug's shape and without the family's separator, the
+		// credential half a provider's name or the project key's own spelling, and
+		// the whole name bounded at MaxRepoCredentialBytes. Every row below is a
+		// shape both readers have to agree about, and the last three are the
+		// family's own bound read at its edge and past it.
+		{"a named provider entry a copy wrote", string(schemaEntry(t, "acme/one", "openrouter", fakeCred(t, "one"), true))},
+		{"a named provider entry a copy did not write", string(schemaEntry(t, "acme/one", "openrouter", fakeCred(t, "one"), false))},
+		{"two repositories' entries for one provider name", string(append(schemaEntry(t, "acme/one", "openrouter", fakeCred(t, "one"), true), schemaEntry(t, "acme/two", "openrouter", fakeCred(t, "two"), true)...))},
+		{"a repository's own Anthropic key", string(schemaEntry(t, "acme/one", config.AnthropicKeyAccount, fakeCred(t, "own"), true))},
+		{"a named entry whose value is a string", repoEntryKeyFor(t, "github", "acme/one", "openrouter") + ": " + fakeCred(t, "x") + "\n"},
+		{"a named entry missing its base URL", string(repoEntryLines(t, repoEntryKeyFor(t, "github", "acme/one", "openrouter"), "key: "+fakeCred(t, "x"), "auth: bearer"))},
+		{"a named entry missing its key", string(repoEntryLines(t, repoEntryKeyFor(t, "github", "acme/one", "openrouter"), "base_url: "+testProviderBase, "auth: bearer"))},
+		{"a named entry with a field it does not define", string(repoEntryDoc(t, repoEntryKeyFor(t, "github", "acme/one", "openrouter"), fakeCred(t, "x"), testProviderBase, providerAuthBearer, "models: [\"x/y\"]"))},
+		{"a named entry with an empty field", string(repoEntryLines(t, repoEntryKeyFor(t, "github", "acme/one", "openrouter"), "key: "+fakeCred(t, "x"), "base_url: "+testProviderBase, "auth: \"\""))},
+		{"a named entry whose marker is half of one", string(repoEntryLines(t, repoEntryKeyFor(t, "github", "acme/one", "openrouter"), "key: "+fakeCred(t, "x"), "base_url: "+testProviderBase, "auth: bearer", "source:", "  container: "+config.AnthropicSecret))},
+		{"a named entry whose marker is empty", string(repoEntryLines(t, repoEntryKeyFor(t, "github", "acme/one", "openrouter"), "key: "+fakeCred(t, "x"), "base_url: "+testProviderBase, "auth: bearer", "source: {}"))},
+		{"a named entry whose marker has a field it does not define", string(repoEntryLines(t, repoEntryKeyFor(t, "github", "acme/one", "openrouter"), "key: "+fakeCred(t, "x"), "base_url: "+testProviderBase, "auth: bearer", "source:", "  container: "+config.AnthropicSecret, "  version: \"3\"", "  digest: x"))},
+		{"a named entry whose marker's version is a number", string(repoEntryLines(t, repoEntryKeyFor(t, "github", "acme/one", "openrouter"), "key: "+fakeCred(t, "x"), "base_url: "+testProviderBase, "auth: bearer", "source:", "  container: "+config.AnthropicSecret, "  version: 3"))},
+		{"the provider key carrying a marker", string(providerEntryDoc("key: "+fakeCred(t, "x"), "base_url: "+testProviderBase, "auth: bearer", "source:", "  container: "+config.AnthropicSecret, "  version: \"3\""))},
+		{"a named entry with no credential", RepoCredentialPrefix + repoEntryKeyFor(t, "github", "acme/one", "openrouter")[len(RepoCredentialPrefix)+len(slugFor(t, "github", "acme/one")):] + ": " + fakeCred(t, "x") + "\n"},
+		{"a named entry with no slug", RepoCredentialPrefix + RepoCredentialSep + "openrouter: " + fakeCred(t, "x") + "\n"},
+		{"a named entry whose slug is not a slug", RepoCredentialPrefix + "acme-one" + RepoCredentialSep + "openrouter:\n  key: " + fakeCred(t, "x") + "\n  base_url: " + testProviderBase + "\n  auth: bearer\n"},
+		{"a named entry whose slug carries the separator", RepoCredentialPrefix + "acme" + RepoCredentialSep + "one-0123456789abcdef" + RepoCredentialSep + "openrouter:\n  key: " + fakeCred(t, "x") + "\n  base_url: " + testProviderBase + "\n  auth: bearer\n"},
+		{"a named entry whose credential is outside the provider rule", RepoCredentialPrefix + slugFor(t, "github", "acme/one") + RepoCredentialSep + "open_router:\n  key: " + fakeCred(t, "x") + "\n  base_url: " + testProviderBase + "\n  auth: bearer\n"},
+		{"a named entry whose credential is a provider name over the rule's bound", RepoCredentialPrefix + slugFor(t, "github", "acme/one") + RepoCredentialSep + strings.Repeat("p", 21) + ":\n  key: " + fakeCred(t, "x") + "\n  base_url: " + testProviderBase + "\n  auth: bearer\n"},
+		{"a named entry at the family's whole-name bound", string(schemaBoundEntry(t, 0))},
+		{"a named entry one byte over the family's whole-name bound", string(schemaBoundEntry(t, 1))},
+		{"a named entry whose slug is longer than a slug's own bound", string(schemaLongSlugEntry(t))},
 		// The account family's one reserved spelling: it resolves to the git
 		// credential's own key, so the loader refuses it, and the schema has
 		// to refuse it too even though the pattern alone admits it.

@@ -380,6 +380,14 @@ var SchedulerRegions = []string{
 // nearestSchedulerRegion is a fixed nearby Scheduler location for Cloud
 // Run regions Scheduler doesn't offer. A Scheduler job can start a job in
 // another region, since its URI names the job's location.
+//
+// Every entry stays on the continent of its key, which is what keeps a
+// region's daily check scheduled from its own part of the world.
+// europe-west10 and southamerica-west1 are the two entries that were missing
+// from the regions internal/place accepts: Berlin has no Scheduler and
+// Frankfurt is its nearest, and Santiago's is São Paulo. Without them the
+// resolution of a region Fugaro accepts would be refused, and the daily check
+// of an installation there would have no schedule at all.
 var nearestSchedulerRegion = map[string]string{
 	"us-east5":             "us-east4",
 	"us-west8":             "us-west4",
@@ -387,7 +395,9 @@ var nearestSchedulerRegion = map[string]string{
 	"europe-north1":        "europe-central2",
 	"europe-north2":        "europe-central2",
 	"europe-southwest1":    "europe-west9",
+	"europe-west10":        "europe-west3",
 	"australia-southeast2": "australia-southeast1",
+	"southamerica-west1":   "southamerica-east1",
 }
 
 // SchedulerRegion is where the daily check's Scheduler job lives for jobs in

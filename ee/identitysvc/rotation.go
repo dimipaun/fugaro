@@ -65,6 +65,13 @@ type Rotation struct {
 // service cannot publish is a set a verifier reads, finds nothing usable in and
 // refuses every assertion against, and the moment to find that out is the
 // moment the service is built, not the moment someone tries to sign in.
+//
+// Two keys that started signing at one instant are refused, and not ordered by
+// a rule of this file's own: the order between them is then the store's, and
+// Current would sign with whichever of the two the store happened to list
+// first, so the same set would sign differently depending on who read it. A
+// rotation puts one key after another in time, and two keys at one instant are
+// a set nobody meant to publish.
 func NewRotation(keys []SigningKey) (*Rotation, error) {
 	if len(keys) == 0 {
 		return nil, errors.New("identitysvc: a rotation with no key publishes nothing and signs nothing")
@@ -72,7 +79,7 @@ func NewRotation(keys []SigningKey) (*Rotation, error) {
 	ordered := slices.Clone(keys)
 	slices.SortStableFunc(ordered, func(a, b SigningKey) int { return a.NotBefore.Compare(b.NotBefore) })
 	seen := make(map[string]bool, len(ordered))
-	for _, key := range ordered {
+	for i, key := range ordered {
 		if key.KID == "" {
 			return nil, errors.New("identitysvc: a signing key names no key id, so a verifier has nothing to look its assertions up by")
 		}
@@ -85,6 +92,9 @@ func NewRotation(keys []SigningKey) (*Rotation, error) {
 		}
 		if key.NotBefore.IsZero() {
 			return nil, fmt.Errorf("identitysvc: the signing key %q names no instant it started signing, so there is no order to publish it in", key.KID)
+		}
+		if i > 0 && key.NotBefore.Equal(ordered[i-1].NotBefore) {
+			return nil, fmt.Errorf("identitysvc: the signing keys %q and %q both started signing at %s, and the order between two keys at one instant is then the store's and not the set's", ordered[i-1].KID, key.KID, key.NotBefore.UTC().Format(time.RFC3339))
 		}
 	}
 	return &Rotation{keys: ordered}, nil

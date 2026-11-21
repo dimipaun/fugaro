@@ -278,7 +278,7 @@ func TestContextReposNamedInPrompt(t *testing.T) {
 	r.cfg = &config.Config{}
 	r.rec = &runstore.Record{Version: 1}
 	r.spec.ContextRepos = []string{contextRepoFixture}
-	prompt := SystemPrompt(r.systemPromptData(), "")
+	prompt := SystemPrompt(r.systemPromptData(), "", "")
 	named := ContextRepoDir(work, contextRepoFixture) + " (" + contextRepoFixture + ")"
 	if !strings.Contains(prompt, named) {
 		t.Errorf("the system prompt does not name the read-only context repository as %q:\n%s", named, prompt)
@@ -289,7 +289,7 @@ func TestContextReposNamedInPrompt(t *testing.T) {
 		}
 	}
 	r.spec.ContextRepos = nil
-	if bare := SystemPrompt(r.systemPromptData(), ""); strings.Contains(bare, "Read-only reference repositories") {
+	if bare := SystemPrompt(r.systemPromptData(), "", ""); strings.Contains(bare, "Read-only reference repositories") {
 		t.Errorf("a task naming no context repository still gets the rule:\n%s", bare)
 	}
 }

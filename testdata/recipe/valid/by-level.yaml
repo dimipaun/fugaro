@@ -1,0 +1,13 @@
+version: 1
+name: by-level
+description: The cheap review everywhere except Critical and Hotfix, which review on the repository's own reviewer
+roles:
+  reviewer: coder
+by_level:
+  critical:
+    roles: {}
+  hotfix:
+    roles: {}
+steps:
+  - first_line: {}
+  - review: { bounce: first_line }

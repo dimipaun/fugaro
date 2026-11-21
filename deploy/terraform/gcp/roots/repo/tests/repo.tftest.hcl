@@ -149,6 +149,34 @@ run "names_are_inputs" {
   }
 }
 
+# A container created from now on is replicated in the installation's region
+# (D3082, F9, R5), and the resource ignores the field so one that exists keeps
+# whatever it has. What the plan can say is the first half; the second is
+# roots/installation/tests/secret_replication.tftest.hcl's two runs and
+# internal/infra's own tests against a synthetic prior state.
+run "secrets_are_replicated_in_the_region" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = var.bitbucket.repo
+  }
+
+  assert {
+    condition = alltrue([for s in google_secret_manager_secret.this :
+      length(s.replication) == 1 && length(s.replication[0].user_managed) == 1 &&
+    s.replication[0].user_managed[0].replicas[0].location == var.bitbucket.region])
+    error_message = "every one of the repository's containers must be replicated in the installation's region (D3082)"
+  }
+}
+
 run "labels" {
   command = plan
 

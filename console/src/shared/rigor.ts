@@ -5,7 +5,7 @@
 // D25; `runstore.RigorRecord`).
 //
 // **The level is carried under two keys.** LD2 renamed this axis's key to
-// `level` -- in `fugaro.yaml`, in the project layer and in everything a person
+// `level` -- in the repository config, in the project layer and in everything a person
 // reads -- and the record kept `mode` beside it, because a record is a wire
 // shape a reader outside the CLI's binary consumes and a field never changes
 // meaning (CLAUDE.md). Every reader of the record prefers `level` and falls

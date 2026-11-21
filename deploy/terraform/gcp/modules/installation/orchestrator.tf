@@ -151,12 +151,22 @@ resource "google_secret_manager_secret" "pairing_key" {
     fugaro_project = var.fugaro_project
   }
 
+  # A container the CLI created is replicated in the installation's region, and
+  # replication is creation-time only: a differing value here would plan a
+  # replacement, which prevent_destroy refuses and which deletes every version
+  # first. So the field is ignored below, and this block decides only a
+  # container Terraform itself creates.
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [replication]
   }
 
   depends_on = [google_project_service.this]

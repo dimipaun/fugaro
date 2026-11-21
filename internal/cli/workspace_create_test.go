@@ -69,7 +69,7 @@ func newWSCreateRig(t *testing.T, stdin, extra string) *wsCreateRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := strings.Replace(string(b), "name: aurora", "name: "+wsProjectName, 1)
+	cfg := wsWithRepos(strings.Replace(string(b), "name: aurora", "name: "+wsProjectName, 1))
 	if err := os.WriteFile(ri.cfg, []byte(cfg+extra), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func splitWorkspaceOwnerConfig(t *testing.T) {
 	if text == string(b) {
 		t.Fatalf("the fixture's config does not name budget.firebase_project %s:\n%s", initProject, b)
 	}
-	if err := os.WriteFile(path, []byte(text+wsOwnerTable+wsOwnerCap), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(wsWithRepos(text)+wsOwnerTable+wsOwnerCap), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

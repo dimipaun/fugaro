@@ -34,14 +34,31 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  SETTINGS_ENTRY_ABOVE_MAX,
+  SETTINGS_ENTRY_BELOW_MIN,
+  SETTINGS_ENTRY_CAVEAT,
+  SETTINGS_ENTRY_DURATION,
+  SETTINGS_ENTRY_READONLY,
+  SETTINGS_ENTRY_SELECT,
+  SETTINGS_ENTRY_TOGGLE,
+  SETTINGS_ENTRY_WHOLE,
   SETTINGS_SHADOWED_SENTENCE,
   SETTINGS_TICK_LABEL,
   SETTINGS_VIEW_DOC_VERSION,
   SETTINGS_VIEW_SHAPE_BECAUSE,
   settingsConfirmAnswerable,
+  settingsEntryError,
+  settingsEntryView,
   settingsView,
 } from '../../src/main/settingsview'
-import type { SettingsView, SettingsViewInputs, SettingsViewRow } from '../../src/main/settingsview'
+import type {
+  SettingsEntryControl,
+  SettingsEntryMeta,
+  SettingsEntryRow,
+  SettingsView,
+  SettingsViewInputs,
+  SettingsViewRow,
+} from '../../src/main/settingsview'
 
 /** DRY is `settings set --dry-run --json` (contract §6.20), invented: a
  * narrowing write of one scalar into the project layer. */
@@ -247,5 +264,235 @@ describe('the settings edit view', () => {
     expect(read.ok).toBe(false)
     if (read.ok) throw new Error('a window opened on no document')
     expect(read.because).toBe('the CLI refused the dry run')
+  })
+})
+
+/** ENTRY_ROW is the read's own row for one key, with the members the entry form
+ * needs beside C2's four: the write's own answer (`writable`), the command the
+ * read names for a key this path does not write (`owner`), the eight metadata
+ * members SM-E emits, and the built-in default R6 draws. */
+const ENTRY_ROW: SettingsEntryRow = {
+  key: 'budget.per_run_usd',
+  value: '8',
+  wins: 'project',
+  targetLayer: 'project',
+  writable: true,
+  owner: 'settings set',
+  meta: {
+    label: 'Per-run cap',
+    description: 'What one run may spend.',
+    group: 'Budget',
+    type: 'int',
+    enum: [],
+    min: '0',
+    max: '25',
+    format: '',
+  },
+  default: { value: '5', unset: '' },
+}
+
+/** ENTRY_MEMBERS is the whole of the entry view, and the list is exact: a
+ * member added to it is a member the window draws, and one the test below has
+ * to be told about. */
+const ENTRY_MEMBERS: readonly string[] = Object.freeze([
+  'kind',
+  'project',
+  'key',
+  'label',
+  'description',
+  'current',
+  'defaultValue',
+  'defaultUnset',
+  'caveat',
+  'control',
+  'options',
+  'min',
+  'max',
+  'format',
+  'type',
+  'command',
+])
+
+/**
+ * The entry form (SU1, D2902): the first half of the one modal, where the
+ * operator types a value before any dry run exists. What is asserted here is
+ * the pair that decides whether OK is drawn enabled -- the control the key's
+ * metadata calls for, and `settingsEntryError`'s answer for what has been typed
+ * -- because the window's own rule is "OK is disabled while that answer is a
+ * sentence", and a form that drew the control but validated nothing would write
+ * whatever was typed.
+ *
+ * The client is a **pre-check and not the authority** (R5): the dry run is what
+ * decides at OK, so each shape here is the permissive one the CLI's own reader
+ * accepts rather than a second copy of its rules.
+ */
+describe('the settings entry form', () => {
+  it('draws the label, the description and the raw key, and starts at the value a run reads now', () => {
+    const view = settingsEntryView({ project: 'sandbox', row: ENTRY_ROW })
+    expect(view.kind).toBe('settings-entry')
+    expect(view.project).toBe('sandbox')
+    expect(view.key).toBe('budget.per_run_usd')
+    expect(view.label).toBe('Per-run cap')
+    expect(view.description).toBe('What one run may spend.')
+    expect(view.current).toBe('8')
+  })
+
+  it('shows the built-in default and says a lower layer may take over (R6)', () => {
+    const view = settingsEntryView({ project: 'sandbox', row: ENTRY_ROW })
+    expect(view.defaultValue).toBe('5')
+    expect(view.defaultUnset).toBe('')
+    expect(view.caveat).toBe(SETTINGS_ENTRY_CAVEAT)
+
+    const sentence = settingsEntryView({
+      project: 'sandbox',
+      row: { ...ENTRY_ROW, default: { value: '', unset: 'unset = the built-in list price' } },
+    })
+    expect(sentence.defaultValue).toBe('')
+    expect(sentence.defaultUnset).toBe('unset = the built-in list price')
+  })
+
+  it('falls back to the raw key and a text control for a key with no metadata', () => {
+    const bare = settingsEntryView({
+      project: 'sandbox',
+      row: {
+        ...ENTRY_ROW,
+        key: 'some.future_key',
+        meta: { label: '', description: '', group: '', type: '', enum: [], min: '', max: '', format: '' },
+      },
+    })
+    expect(bare.label).toBe('some.future_key')
+    expect(bare.control).toBe('text')
+    expect(bare.options).toEqual([])
+    expect(bare.min).toBe('')
+    expect(bare.max).toBe('')
+    expect(bare.format).toBe('')
+  })
+
+  it('draws the control the key’s type calls for, and a text control for a type it does not know', () => {
+    const of = (meta: Partial<SettingsEntryMeta>): SettingsEntryControl | null => {
+      const view = settingsEntryView({ project: 'sandbox', row: { ...ENTRY_ROW, meta: { ...ENTRY_ROW.meta, ...meta } } })
+      return view.control
+    }
+    expect(of({ type: 'bool' })).toBe('toggle')
+    expect(of({ type: 'enum', enum: ['failover', 'spread'] })).toBe('select')
+    expect(of({ type: 'enum' })).toBe('text')
+    expect(of({ type: 'int' })).toBe('number')
+    expect(of({ type: 'float' })).toBe('number')
+    expect(of({ type: 'string' })).toBe('text')
+    expect(of({ type: 'duration', format: 'duration' })).toBe('text')
+    // A type a newer CLI grew: the window draws the fallback rather than
+    // refusing the read whole, which is SM-E's own rule for an absent member.
+    expect(of({ type: 'ip' })).toBe('text')
+
+    const options = settingsEntryView({
+      project: 'sandbox',
+      row: { ...ENTRY_ROW, meta: { ...ENTRY_ROW.meta, type: 'enum', enum: ['failover', 'spread'] } },
+    })
+    expect(options.options).toEqual(['failover', 'spread'])
+  })
+
+  it('leaves OK disabled for a number outside min..max', () => {
+    const view = settingsEntryView({ project: 'sandbox', row: ENTRY_ROW })
+    expect(view.control).toBe('number')
+    expect(view.min).toBe('0')
+    expect(view.max).toBe('25')
+    expect(settingsEntryError(view, '26')).toBe(`${SETTINGS_ENTRY_ABOVE_MAX}${view.max})`)
+    expect(settingsEntryError(view, '-1')).toBe(`${SETTINGS_ENTRY_BELOW_MIN}${view.min})`)
+    expect(settingsEntryError(view, '25')).toBeNull()
+    expect(settingsEntryError(view, '0')).toBeNull()
+    expect(settingsEntryError(view, '0.5')).toBe(SETTINGS_ENTRY_WHOLE)
+    expect(settingsEntryError(view, '2 x')).toBe(SETTINGS_ENTRY_WHOLE)
+    expect(settingsEntryError(view, '')).toBe(SETTINGS_ENTRY_WHOLE)
+  })
+
+  it('bounds a duration in the value’s own spelling', () => {
+    const view = settingsEntryView({
+      project: 'sandbox',
+      row: {
+        ...ENTRY_ROW,
+        meta: { ...ENTRY_ROW.meta, type: 'duration', format: 'duration', min: '90m', max: '14d' },
+      },
+    })
+    expect(view.control).toBe('text')
+    expect(settingsEntryError(view, '90m')).toBeNull()
+    expect(settingsEntryError(view, '1h30m')).toBeNull()
+    expect(settingsEntryError(view, '14d')).toBeNull()
+    expect(settingsEntryError(view, '15d')).toBe(`${SETTINGS_ENTRY_ABOVE_MAX}${view.max})`)
+    expect(settingsEntryError(view, '5m')).toBe(`${SETTINGS_ENTRY_BELOW_MIN}${view.min})`)
+    expect(settingsEntryError(view, 'soon')).toBe(SETTINGS_ENTRY_DURATION)
+  })
+
+  it('refuses a value the metadata’s format does not accept', () => {
+    const formats: readonly (readonly [string, string, string])[] = [
+      ['repo', 'acme/widgets', 'widgets'],
+      ['email', 'someone@example.com', 'someone@'],
+      ['url', 'https://example.com/acme/widgets.git', 'http://example.com/x'],
+      ['memory', '16Gi', '16GB'],
+      ['branch', 'feature/one', '-feature'],
+    ]
+    for (const [format, good, bad] of formats) {
+      const view = settingsEntryView({
+        project: 'sandbox',
+        row: { ...ENTRY_ROW, meta: { ...ENTRY_ROW.meta, type: 'string', format } },
+      })
+      expect(view.control).toBe('text')
+      expect(settingsEntryError(view, good), `${format}: ${good}`).toBeNull()
+      expect(settingsEntryError(view, bad), `${format}: ${bad}`).not.toBeNull()
+    }
+    const free = settingsEntryView({
+      project: 'sandbox',
+      row: { ...ENTRY_ROW, meta: { ...ENTRY_ROW.meta, type: 'string', min: '', max: '', format: '' } },
+    })
+    expect(settingsEntryError(free, 'anything at all')).toBeNull()
+  })
+
+  it('refuses a value outside a closed set, and accepts only the members the CLI lists', () => {
+    const view = settingsEntryView({
+      project: 'sandbox',
+      row: { ...ENTRY_ROW, meta: { ...ENTRY_ROW.meta, type: 'enum', enum: ['narrow', 'wide'] } },
+    })
+    expect(view.control).toBe('select')
+    expect(settingsEntryError(view, 'wide')).toBeNull()
+    expect(settingsEntryError(view, 'wider')).toBe(SETTINGS_ENTRY_SELECT)
+  })
+
+  it('takes a toggle as on or off and nothing else', () => {
+    const view = settingsEntryView({
+      project: 'sandbox',
+      row: { ...ENTRY_ROW, value: 'true', meta: { ...ENTRY_ROW.meta, type: 'bool' } },
+    })
+    expect(view.control).toBe('toggle')
+    expect(settingsEntryError(view, 'true')).toBeNull()
+    expect(settingsEntryError(view, 'false')).toBeNull()
+    expect(settingsEntryError(view, 'yes')).toBe(SETTINGS_ENTRY_TOGGLE)
+  })
+
+  it('takes a reset whatever the control would say, because a reset writes no value at all', () => {
+    const view = settingsEntryView({ project: 'sandbox', row: ENTRY_ROW })
+    expect(settingsEntryError(view, null)).toBeNull()
+  })
+
+  it('shows a key this console does not write read-only, with the command that does', () => {
+    const held = settingsEntryView({
+      project: 'sandbox',
+      row: { ...ENTRY_ROW, writable: false, owner: 'fugaro budget set --per-run 25' },
+    })
+    expect(held.control).toBeNull()
+    expect(held.command).toBe('fugaro budget set --per-run 25')
+    expect(settingsEntryError(held, '12')).toBe(SETTINGS_ENTRY_READONLY)
+    expect(settingsEntryError(held, null)).toBeNull()
+
+    // The same shape for a row the write cannot target at all: a writable key
+    // with no layer to write is a key no edit of this window reaches.
+    const nowhere = settingsEntryView({ project: 'sandbox', row: { ...ENTRY_ROW, targetLayer: '' } })
+    expect(nowhere.control).toBeNull()
+  })
+
+  it('carries exactly the members the window draws, and nothing of the read’s own row', () => {
+    const view = settingsEntryView({ project: 'sandbox', row: ENTRY_ROW })
+    expect(Object.keys(view).sort()).toEqual([...ENTRY_MEMBERS].sort())
+    expect(Object.keys(view)).not.toContain('writable')
+    expect(Object.keys(view)).not.toContain('owner')
+    expect(Object.keys(view)).not.toContain('targetLayer')
   })
 })

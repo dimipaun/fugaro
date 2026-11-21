@@ -69,20 +69,52 @@ const (
 	// back with.
 	bindingPrefix = "binding:"
 
-	// productionDatabase is the address D2205's read goes to, with one %s for
-	// the project id. Every Fugaro installation creates a Realtime Database
-	// (`deploy/terraform/gcp/modules/firebase`), so the database is what says
-	// whether an installation is there, and its own answer to a stranger is what
-	// this service reads.
-	productionDatabase = "https://%s-default-rtdb.firebaseio.com"
+	// The three locations a default Realtime Database can be in, and no other
+	// (firebase.google.com/docs/database/locations, read 2026-11-18). A
+	// database is in one of them for good, so where it is decides which host
+	// answers for it: the us-central1 one answers at the legacy host and the
+	// other two at regional ones. They are also what names a host in an error.
+	usCentralDatabase = "us-central1"
+	europeDatabase    = "europe-west1"
+	asiaDatabase      = "asia-southeast1"
 
-	// probeTimeout bounds the read above, and probeBodyBytes bounds what of its
+	// probeTimeout bounds each read below, and probeBodyBytes bounds what of its
 	// answer is read: the answer is a line of JSON and a failure page can be
 	// anything, and a probe a project can make this service buffer is a probe
 	// that stops being a check.
 	probeTimeout   = 5 * time.Second
 	probeBodyBytes = 4 << 10
 )
+
+// databaseHost is one address a project's default Realtime Database can answer
+// at: the location its database is in, and the address the read is made at, with
+// one %s for the project id.
+type databaseHost struct {
+	location string
+	address  string
+}
+
+// productionDatabases are the addresses D2205's read goes to, in the order it
+// goes to them — the legacy host first.
+//
+// Every Fugaro installation creates a Realtime Database
+// (`deploy/terraform/gcp/modules/firebase`), so the database is what says
+// whether an installation is there, and its own answer to a stranger is what
+// this service reads. Where the database is decides which host answers for it,
+// so an installation made in a region (LP4) has its database at a host the
+// legacy address does not name, and a service reading that address alone reads
+// it as no installation at all (F13, D2205). What a host answers for a database
+// that lives at another is not known — U8 in the reconciliation, which Check 820
+// measures — so `ask` reads every host rather than trusting the first answer.
+//
+// The legacy host is read first because every installation made before a region
+// could be chosen answers there, so the ordinary project is answered in one
+// request.
+var productionDatabases = []databaseHost{
+	{location: usCentralDatabase, address: "https://%s-default-rtdb.firebaseio.com"},
+	{location: europeDatabase, address: "https://%s-default-rtdb.europe-west1.firebasedatabase.app"},
+	{location: asiaDatabase, address: "https://%s-default-rtdb.asia-southeast1.firebasedatabase.app"},
+}
 
 // The refusals binding owns. Every one of them is a sentinel rather than a
 // message built where it failed, so that the route can answer each with the
@@ -155,13 +187,14 @@ func validProjectID(projectID string) bool {
 // database gives are the one half of D2205 this repository cannot check, and a
 // seam is what keeps that boundary where it can be seen.
 type projectInstallation struct {
-	database string
-	client   *http.Client
+	// databases are the hosts the read goes to, in the order it goes to them.
+	databases []databaseHost
+	client    *http.Client
 }
 
 // probeInstallation is the one probe a deployment reads a project with.
 var probeInstallation = projectInstallation{
-	database: productionDatabase,
+	databases: productionDatabases,
 	client: &http.Client{
 		Timeout: probeTimeout,
 		// A redirect is not an installation's answer: what says one is there is
@@ -171,37 +204,68 @@ var probeInstallation = projectInstallation{
 	},
 }
 
-// url is the address one project id is read at.
-func (p projectInstallation) url(projectID string) string {
-	return fmt.Sprintf(p.database, projectID) + "/.json"
+// url is the address one project id is read at on this host.
+func (h databaseHost) url(projectID string) string {
+	return fmt.Sprintf(h.address, projectID) + "/.json"
 }
 
 // ask answers whether a Fugaro installation answers in this project (D2205).
 //
 // The shape is checked first and the id never reaches the address builder
-// without it. Then the read: a refusal of permission is an installation with
-// locked rules and binding proceeds; "no such database" is a project with no
-// installation, and the person is told to set one up; anything else — no answer,
-// a timeout, a failure of the database's own — is a project this service did not
-// check, and an unchecked project is never bound.
+// without it. Then the read, at each host a default database can be at, the
+// legacy one first: a refusal of permission is an installation with locked rules
+// and binding proceeds, whichever host gives it; "no such database" at a host is
+// that host holding no database at its address, and the read goes on to the next
+// one; anything else — no answer, a timeout, a failure of the database's own —
+// is a host that did not answer the question.
+//
+// An unrecognised answer is never an installation and never an absence of one.
+// If no host answers as an installation the caller is told about the first host
+// that did not answer, because a project whose database could not be reached is
+// not a project with no installation and the person's fix is not the same; only
+// when every host says it has no database is there no installation to bind
+// (D2205). A host that did not answer does not stop the read at the hosts after
+// it: a refusal from a host that did answer is still this project's database
+// refusing a stranger, and an installation in a region is just the case where
+// the legacy host is not the one that answers.
 func (p projectInstallation) ask(ctx context.Context, projectID string) error {
 	if !validProjectID(projectID) {
 		return fmt.Errorf("%w: %q is not one Firebase admits", errProjectIDShape, projectID)
 	}
+	var unanswered error
+	for _, host := range p.databases {
+		err := p.askHost(ctx, host, projectID)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, errNoInstallation) && unanswered == nil {
+			unanswered = err
+		}
+	}
+	if unanswered != nil {
+		return unanswered
+	}
+	return errNoInstallation
+}
+
+// askHost is D2205's read at one host, with the same bounds whatever host it is:
+// a refusal of permission, the database's own "no such database", or a host this
+// service did not get an answer out of.
+func (p projectInstallation) askHost(ctx context.Context, host databaseHost, projectID string) error {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, p.url(projectID), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, host.url(projectID), nil)
 	if err != nil {
-		return fmt.Errorf("%w: %v", errProbeUnreachable, err)
+		return fmt.Errorf("%w: %s: %v", errProbeUnreachable, host.location, err)
 	}
 	answer, err := p.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("%w: %v", errProbeUnreachable, err)
+		return fmt.Errorf("%w: %s: %v", errProbeUnreachable, host.location, err)
 	}
 	defer func() { _ = answer.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(answer.Body, probeBodyBytes))
 	if err != nil {
-		return fmt.Errorf("%w: %v", errProbeUnreachable, err)
+		return fmt.Errorf("%w: %s: %v", errProbeUnreachable, host.location, err)
 	}
 	switch {
 	case answer.StatusCode == http.StatusUnauthorized || answer.StatusCode == http.StatusForbidden:
@@ -209,7 +273,7 @@ func (p projectInstallation) ask(ctx context.Context, projectID string) error {
 	case answer.StatusCode == http.StatusNotFound || missingDatabase(string(body)):
 		return errNoInstallation
 	default:
-		return fmt.Errorf("%w: the project's database answered %s", errProbeUnreachable, answer.Status)
+		return fmt.Errorf("%w: the database in %s answered %s", errProbeUnreachable, host.location, answer.Status)
 	}
 }
 
