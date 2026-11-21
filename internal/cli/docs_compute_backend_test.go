@@ -660,9 +660,13 @@ func TestDocsComputeBackendCheck57IsStillOnlyARow(t *testing.T) {
 	}
 	// A heading, not the sentence that explains its absence: the register says
 	// "There is no `## Check 57` section in this file yet" in prose, and that
-	// sentence is asserted below.
-	if strings.Contains(checklist, "\n## Check 57") {
-		t.Fatalf("docs/gcp-live-checklist.md now carries a `## Check 57` section: Task 12 of %s has landed, so that task's heading and this test both have to change in the same commit", computeBackendPlan)
+	// sentence is asserted below. The colon is part of the marker because 57's
+	// heading is written `## Check 57:` and never bare, both here and in
+	// docs_voice_switch_test.go -- without it a three-digit neighbour (570's own
+	// section, which the portal's P9.4 writes) reads as this one, and 570 is not
+	// the section Task 12 lands.
+	if strings.Contains(checklist, "\n## Check 57:") {
+		t.Fatalf("docs/gcp-live-checklist.md now carries a `## Check 57:` section: Task 12 of %s has landed, so that task's heading and this test both have to change in the same commit", computeBackendPlan)
 	}
 	if !strings.Contains(checklist, "There is no `## Check 57` section in this file yet") {
 		t.Errorf("docs/gcp-live-checklist.md no longer says why it has no `## Check 57` section; %s's Task 12 step 1 quotes that sentence", computeBackendPlan)

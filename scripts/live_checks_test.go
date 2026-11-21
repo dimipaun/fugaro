@@ -475,6 +475,32 @@ import (
 // calls that all went direct, a routed call nobody reported, an audit line
 // whose forward was denied, a run that never ends and a record that is another
 // run's, and says what the check charged the provider's reported cost against.
+// Checks 570 to 575 are the portal's live checks (P9.4), and each has fakes of
+// its own: Check 570's are a fake `fugaro` and a fake portal behind a fake
+// `curl`, over one installation and the licence it buys, so a case says what the
+// check paid for, what it minted and what a renewal read. Check 571's is a fake
+// `gcloud` serving one project's IAM policy and the run services it enumerates,
+// so a case says which account reaches the signing key and which does not. Check
+// 572's is a fake `curl` serving the portal's own anonymous 401, the admitted
+// entitlements read and the two refusals the SSO rule gives an email-link
+// account, recording whether an authorization config was carried. Check 573's is
+// a fake `curl` that verifies a webhook delivery the way the service does --
+// HMAC-SHA256 over `ts:<body>` under the case's own secret -- and answers the
+// operations queue, so a case says what the check sent, what a redelivery left
+// in the ledger and what a replay outside the window was refused with. Check
+// 574's are a fake `gcloud` and a fake `fugaro` over one project's keyring and a
+// released build that verifies a licence key the way the build does, recording
+// whether FUGARO_LICENCE_KEY was in each child's environment, so a case says
+// which id the build's ring holds and what a production build did with a
+// staging-signed key. Check 575's are a fake `curl` that serves a reseller's own
+// terms, customers, keys, statements, the operations area's workspaces and the
+// credit limit's refusal, and a fake `gcloud` that serves the API's revision, the
+// scheduler job, the fire and the run line api_statements.go logs -- so a case
+// bends a sale the credit limit must refuse, a sale whose workspace the mint
+// cannot resolve (the project id a key carries against the workspace document id
+// the mint reads), a token that may not read the operations area, a month whose
+// lines do not sum and a token minted for the wrong audience, and says what the
+// check recorded of each.
 // Check 760's fakes are a fake `fugaro` answering `doctor --json` and the four
 // `runs ls` reads it times, over a window that names two pull requests -- one of
 // them with no index entry, so its read falls back to the scan -- and a fake
@@ -572,6 +598,12 @@ var liveCheckScripts = []struct {
 	{"check50.sh", "check50_test.sh"},
 	{"check780.sh", "check780_test.sh"},
 	{"check781.sh", "check781_test.sh"},
+	{"check570.sh", "check570_test.sh"},
+	{"check571.sh", "check571_test.sh"},
+	{"check572.sh", "check572_test.sh"},
+	{"check573.sh", "check573_test.sh"},
+	{"check574.sh", "check574_test.sh"},
+	{"check575.sh", "check575_test.sh"},
 	{"check-760-runs-ls-speed.sh", "check-760-runs-ls-speed_test.sh"},
 	{"check790.sh", "check790_test.sh"},
 	{"check791.sh", "check791_test.sh"},
@@ -640,7 +672,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 267 items on one runner (89 scripts, three shards each) and under
+// The suite is 285 items on one runner (95 scripts, three shards each) and under
 // a minute each; a split that dropped one, ran one twice or fell back to
 // everything would show up as a green run that tested less, which is the failure
 // this pins.
