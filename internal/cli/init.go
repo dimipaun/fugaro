@@ -191,6 +191,14 @@ type initOptions struct {
 	// stdin, which is what a surface with no file of its own passes.
 	answersFile string
 
+	// events is --events: write the run to stdout as the newline-delimited
+	// event feed of setup_events.go in place of the one --json document, so a
+	// surface driving the CLI draws each stage as it settles. It is the other
+	// half of the same task's contract (ST2, D2904) and it needs --json,
+	// because stdout is where the document goes: the feed takes its place and
+	// the run's own progress stays on stderr, where --json already puts it.
+	events bool
+
 	// --repo: onboard the repository of a checkout.
 	repo, noBuild, allowJobDelete bool
 	// retire is --retire: run the retirement a config change needs, behind
@@ -466,6 +474,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			switch {
 			case foreign:
 				err = userErr("fugaro %s does not take --%s: that is %s's (%s)", d.name, ff.name, ff.owner, ff.hint)
+			case o.events && !o.asJSON:
+				// The feed and the document are the same answer on the same
+				// writer, so --events without --json is refused rather than
+				// guessed at: the run that asked for lines is told which flag
+				// makes them an answer instead of a mixture with the account
+				// --json keeps on stderr (setup_events.go).
+				err = userErr("--events writes the run to stdout as newline-delimited events, and stdout is where the run's own account goes without --json: pass --json with it (fugaro %s --json --events)", d.name)
 			case o.checkOnly:
 				// --check is the one mode of this door that is not a
 				// converge: it reads the checkout's own files, writes
@@ -482,7 +497,18 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			default:
 				err = runInit(r)
 			}
-			if err != nil && o.asJSON && !r.printed {
+			if r.events != nil {
+				// The run asked for lines instead of the document
+				// (setup_events.go): the stage each step reached, the stage
+				// each one settled and the steps left for the user have gone
+				// out as they happened, and what is left to say is how the run
+				// ended — `done` with the exit code the process exits with, or
+				// `error` for the stage it stopped at. It is written here,
+				// where the command's own outcome is decided and nowhere else,
+				// so the feed cannot come to say something the process does
+				// not do.
+				r.events.finish(&r.res, err)
+			} else if err != nil && o.asJSON && !r.printed {
 				// A refusal before any stage ran: --json still prints one
 				// object, with the reason (the exit code is the error's).
 				r.res.Error = err.Error()
@@ -545,6 +571,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// file is the reader's whole contract, and it says what the file is not: an
 	// answer is not a confirmation.
 	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the five questions a first run asks (--gcp-project, --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
+	// --events writes the same account --json prints as a stream of lines
+	// instead of one document (setup_events.go, D2904 of
+	// docs/console-improvements). The help names every kind of line, because
+	// the feed is the reader's whole contract, and it says what the flag is
+	// not: an event is not a confirmation, and a step that needs one arrives
+	// as left_for_you like every step a --json run cannot confirm.
+	f.BoolVar(&o.events, "events", false, "write the run to stdout as newline-delimited events instead of the one --json document: one `step` line as the run reaches a stage, one `stage` line as a stage settles (its name, state, detail and the stage it waited for), one `left_for_you` line for each thing only you can do — with the one line to run — and one last line that ends the feed: `done` with the run's exit code, or `error` naming the stage the run stopped at. A run that ends with steps left for you ends `done` with exit code 1 — it did not fail, and the steps are the left_for_you lines above it — which is the hand-off a surface draws rather than an error. It needs --json: the feed takes the document's place on stdout, and the run's own progress stays on stderr where --json already puts it. Nothing here confirms a step: --json confirms none, so every step that needs a confirmation arrives as left_for_you for you to run in your own terminal window")
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
@@ -677,8 +710,13 @@ type initRun struct {
 	historyNoted     bool
 	coordinatorNoted bool
 	printed          bool // the --json result has been printed
-	anchorNoted      bool // update --repo's pointer at --anchor has been said
-	ideNoted         bool // the IDE-terminal notice has been said, once per run
+	// events is the --events feed (setup_events.go), or nil for every run
+	// that did not ask for one — which is what keeps a run without the flag
+	// byte for byte the run it was: no line is written, and the loop's three
+	// hooks (initEngine.options) stay nil.
+	events      *setupEvents
+	anchorNoted bool // update --repo's pointer at --anchor has been said
+	ideNoted    bool // the IDE-terminal notice has been said, once per run
 	// enrolmentNote is what the repo engine did for a repository a deployed
 	// profile admits, in one line (M7): the engine prints it where there is no
 	// stage of its own to carry it (the update --repo door), and the converge's
@@ -948,6 +986,17 @@ func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
 	r.w = runWriter{r: r, out: cmd.OutOrStdout()}
 	if o.asJSON {
 		r.w = runWriter{r: r, out: cmd.ErrOrStderr()}
+	}
+	if o.events && o.asJSON {
+		// The event feed takes the one --json document's place on stdout
+		// (setup_events.go): a run that asked for lines gets lines and not a
+		// document, and its own progress is where --json already puts it,
+		// which is stderr. Both flags are needed, and a run with only --events
+		// is refused before this run exists: without --json stdout is where
+		// the run's own account goes, so there is no place a line of a feed
+		// could be written — which is why the refusal is the whole of what
+		// --events alone does, and it leaves the run byte for byte what it was.
+		r.events = newSetupEvents(cmd.OutOrStdout())
 	}
 	r.in = cmd.InOrStdin()
 	return r
@@ -4412,6 +4461,14 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 
 func (r *initRun) printResult() error {
 	if !r.o.asJSON {
+		return nil
+	}
+	if r.events != nil {
+		// --events replaced the document with the feed (setup_events.go): this
+		// run's account is the lines already written, and its last one is
+		// written where the command ends (RunE), which is the only place the
+		// exit code is known. Printing the object here as well would put two
+		// answers on one stdout.
 		return nil
 	}
 	if r.res.LeftForYou == nil {
