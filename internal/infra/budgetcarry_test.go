@@ -178,6 +178,11 @@ func TestStateBudgetBillingAccountMatchesTheAddress(t *testing.T) {
 		{"a data source", []byte(`{"version":4,"resources":[{"mode":"data","module":"module.installation","type":"google_billing_budget","name":"this","instances":[{"attributes":{"billing_account":"` + testBillingAccount + `"}}]}]}`), "", false, ""},
 		{"no resources at all", []byte(`{"version":4,"resources":[]}`), "", false, ""},
 		{"no document at all", nil, "", false, ""},
+		// An object that is not a state document — no format version, so not
+		// one terraform's backend writes — holds no budget resource and is not
+		// an error: it is a bucket with something else in it, and the answer
+		// for it is the same as for a bucket with nothing.
+		{"an object that is not a state document", []byte(`{}`), "", false, ""},
 		{"an account the state never recorded", budgetState(map[string]string{"display_name": "fugaro monthly budget"}), "", false, ""},
 		{"an older state format", []byte(`{"version":3,"resources":[{"mode":"managed","module":"module.installation","type":"google_billing_budget","name":"this","instances":[{"attributes":{"billing_account":"` + testBillingAccount + `"}}]}]}`), "", false, "format version 3"},
 		{"a document that is not JSON", []byte("not json at all"), "", false, "reading the installation's state"},

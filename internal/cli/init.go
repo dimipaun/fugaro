@@ -3052,12 +3052,18 @@ func (r *initRun) carriedBudget(ctx context.Context, c *infra.Clients, spec infr
 	return spec, nil
 }
 
-// budgetCarry reads the two records the carry is made of (R7): the project's
-// creation fact for the amount and the currency, and the installation root's
-// state object for the billing account. Neither is the local work directory,
-// which is empty on a fresh machine, after a clean, or for a console on another
-// host (F19) — so a run there carries the alert exactly as one whose workdir
-// holds it.
+// budgetCarry reads the two records the carry is made of (R7): the installation
+// root's state object for the billing account, and the project's creation fact
+// for the amount and the currency. Neither is the local work directory, which is
+// empty on a fresh machine, after a clean, or for a console on another host
+// (F19) — so a run there carries the alert exactly as one whose workdir holds
+// it.
+//
+// The state is read first, and the creation fact only when it records an
+// account: the account is what says the installation has an alert at all, and a
+// fact read for a project that has none would be a read of the marker for a
+// block nothing declares (which is what an installation created without a
+// linked account is, D2216: the amount is recorded and no alert is created).
 //
 // A read that fails is the run's own failure and never "nothing carried": the
 // plan a dropped block produces is the alert's deletion, and the answer for a
@@ -3067,6 +3073,13 @@ func (r *initRun) carriedBudget(ctx context.Context, c *infra.Clients, spec infr
 // account alone, which is a run that reaches no plan of this root anyway
 // (--config-only recovering a config it has no name for).
 func (r *initRun) budgetCarry(ctx context.Context, c *infra.Clients, spec infra.InstallationSpec) (infra.CarriedBudget, error) {
+	account, ok, err := infra.ReadInstallationBudgetAccount(ctx, c, spec.StateBucket)
+	if err != nil {
+		return infra.CarriedBudget{}, initErr(err)
+	}
+	if !ok {
+		return infra.CarriedBudget{}, nil
+	}
 	var amount int64
 	var currency string
 	if r.projectName != "" {
@@ -3077,13 +3090,6 @@ func (r *initRun) budgetCarry(ctx context.Context, c *infra.Clients, spec infra.
 		if answer.OK {
 			amount, currency = answer.Budget.Amount, answer.Budget.Currency
 		}
-	}
-	account, ok, err := infra.ReadInstallationBudgetAccount(ctx, c, spec.StateBucket)
-	if err != nil {
-		return infra.CarriedBudget{}, initErr(err)
-	}
-	if !ok {
-		account = ""
 	}
 	return infra.CarriedBudget{Amount: amount, CurrencyCode: currency, BillingAccount: account}, nil
 }

@@ -269,10 +269,14 @@ const (
 // `fugaro managed flag` leaves behind — is deliberately not read, so the two
 // records can never disagree about which one this program believes.
 //
-// The document is Terraform's own output, so it is read as one: the format
-// version is checked (a shape this build has not been taught is refused rather
-// than partly believed) and the fields this build does not read are ignored,
-// exactly as internal/managed reads the same document.
+// The document is Terraform's own output, so it is read as one: a document that
+// records a format version this build has not been taught is refused rather
+// than partly believed, and the fields this build does not read are ignored,
+// exactly as internal/managed reads the same document. A document that records
+// NO version is not one the GCS backend writes at all — an object put there by
+// something other than terraform, which holds no state and so no budget
+// resource, and which is answered as "nothing carried" rather than as a
+// document this build cannot read.
 func StateBudgetBillingAccount(state []byte) (string, bool, error) {
 	if len(state) == 0 {
 		return "", false, nil
@@ -294,7 +298,7 @@ func StateBudgetBillingAccount(state []byte) (string, bool, error) {
 	if err := json.Unmarshal(state, &doc); err != nil {
 		return "", false, fmt.Errorf("reading the installation's state: %w", err)
 	}
-	if doc.Version != installationStateVersion {
+	if doc.Version != 0 && doc.Version != installationStateVersion {
 		return "", false, fmt.Errorf("the installation's state is format version %d, and this build reads only %d", doc.Version, installationStateVersion)
 	}
 	for _, r := range doc.Resources {
