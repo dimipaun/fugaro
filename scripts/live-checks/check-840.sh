@@ -497,7 +497,7 @@ PY
     --command /bin/bash \
     --args="-c,echo $b64 | base64 -d | bash" \
     --service-account "$JOB_SA" \
-    --tasks 1 --max-retries 0 \
+    --tasks 1 --max-retries 0 --quiet \
     >"$SCRATCH/create.out" 2>"$SCRATCH/create.err" || code=$?
   unset b64
   if [ "$code" -ne 0 ]; then
@@ -1220,8 +1220,10 @@ parse_args() {
 }
 
 main() {
-  need_tools
+  # The arguments first, so that `--help` and a missing flag answer on a machine
+  # that has none of the tools: a usage line is not a run.
   parse_args "$@"
+  need_tools
   scratch_up
   guard_xtrace
   fact project PASS "$P (typed by the owner; the project this check creates its one job in)"
