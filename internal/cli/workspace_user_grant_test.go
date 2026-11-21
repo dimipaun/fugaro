@@ -696,6 +696,46 @@ func TestRevokeKeepsLastAdmin(t *testing.T) {
 	})
 }
 
+// TestRevokeTakesAccessAwayOffTheMirror: the member list is the gate on a GRANT
+// and not on a revoke, because a revoke only takes access away — a refusal here
+// could only leave the grant in place. The case that matters is the person the
+// workspace no longer lists: somebody taken out of the workspace whose
+// offboarding failed, or whose entry this member's own admins rewrote, keeps a
+// grant that nothing else would remove once D2813's refusal lands in
+// `fugaro user revoke`. The list is advisory besides, so gating a revoke on it
+// would hand a member's admins a way to freeze the grants they can no longer
+// justify.
+func TestRevokeTakesAccessAwayOffTheMirror(t *testing.T) {
+	ops := wu8Rig(t, []workspace.MirrorEntry{wu8Person(wu8Bob)},
+		wu8Stored(t, wu8Alice, accesslib.RoleAdmin, "project"),
+		wu8Stored(t, wu8Bob, accesslib.RoleAdmin, "project"))
+	all, err := wu8Run(t, ops, wu8As(t, wu8Bob), "revoke", wu8Alice, wu8Member, "admin")
+	if err != nil {
+		t.Fatalf("a revoke of a person the member's list does not carry was refused: %v\n%s", err, all)
+	}
+	if got := wu8Pairs(t, ops.grants.Raw); !slices.Equal(got, []string{wu8As(t, wu8Bob) + " (admin) at project"}) {
+		t.Errorf("the node holds %v, want the person off the list revoked", got)
+	}
+	if len(ops.audits) != 1 {
+		t.Fatalf("the revoke filed %d audit entr(ies), want one", len(ops.audits))
+	}
+
+	// The linked member is still required: an unlinked one is not this
+	// command's to write at all (R11), in either direction.
+	unlinked := wu8Unlinked(t, wu8Stored(t, wu8Alice, accesslib.RoleAdmin, "project"),
+		wu8Stored(t, wu8Bob, accesslib.RoleAdmin, "project"))
+	all, err = wu8Run(t, unlinked, wu8As(t, wu8Bob), "revoke", wu8Alice, wu8Member, "admin")
+	if err == nil {
+		t.Fatalf("a revoke was written against a member nothing has been mirrored into:\n%s", all)
+	}
+	if !strings.Contains(all, "fugaro workspace project link") {
+		t.Errorf("the refusal does not name the command that links the member:\n%s", all)
+	}
+	if got := unlinked.wu8Wrote(); got != "" {
+		t.Errorf("the refused revoke wrote: %s", got)
+	}
+}
+
 // TestGrantNamesTheUpdateThatAppliesIt: the grant is a record and the member's
 // OWN `fugaro update` is what turns it into bindings (D2801). This machine binds
 // nothing and says so — applying another installation's Terraform is exactly

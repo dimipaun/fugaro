@@ -31,7 +31,9 @@ package cli
 //     admins hold their database's write, so a rewritten mirror can hide the
 //     whole list or land one that is not there; nothing here rests on it being
 //     the record -- drift, run by a workspace admin against the workspace's own
-//     node, is that fence (D2813, WU12), and the refusal says so.
+//     node, is that fence (D2813, WU12), and the refusal says so. A revoke is
+//     not gated on the list at all: a revoke only takes access away, and
+//     refusing one leaves the grant it names in place.
 //   - **A machine is never granted (D2806).** A machine member is recorded in
 //     the workspace's node with the roles the workspace expects it to hold, and
 //     gets no roster, no grant and no audit of its own: its real IAM is the
@@ -127,10 +129,12 @@ fugaro user grant writes -- and it is written in the same format, so the
 member's own fugaro update derives the same IAM lists from it. What differs is
 this command's gate and its trail:
 
-  - the address must be in the member's own copy of the workspace's member
-    list (config/admin/workspace-members), which the workspace mirrors into
-    every member it manages. An address the list does not carry was never
-    admitted to the workspace, and a grant is not an admitting;
+  - a grant's address must be in the member's own copy of the workspace's
+    member list (config/admin/workspace-members), which the workspace mirrors
+    into every member it manages. An address the list does not carry was never
+    admitted to the workspace, and a grant is not an admitting. A revoke needs
+    the member to be linked and reads the list no further: taking access away is
+    never blocked by a list the member's own admins can rewrite;
   - the change is filed in the member's own audit trail at
     config/admin/workspace-audit, because a project admin holds no write on the
     workspace's own project (D2811).
@@ -196,7 +200,7 @@ func workspaceUserPair(cmd *cobra.Command, ops workspace.MemberOps, o *workspace
 		return userErr("%s is not a member a grant can name: %v", safetext.Field(address), err)
 	}
 	target := workspace.MemberTarget{Project: project}
-	if err := workspaceGrantGate(ctx, ops, target, address); err != nil {
+	if err := workspaceGrantGate(ctx, ops, target, address, grant); err != nil {
 		return err
 	}
 	caller, err := userCallerLookup(ctx)
@@ -265,16 +269,27 @@ func workspaceGrantScope(value string) (accesslib.Scope, error) {
 	return scope, nil
 }
 
-// workspaceGrantGate is the refusals in front of every grant: the member must be
-// one the workspace has mirrored into, the person must be one the member's own
-// list names, and a machine is granted nothing at all.
+// workspaceGrantGate is the refusals in front of a change: the member must be
+// one the workspace has mirrored into, and -- for a GRANT -- the person must be
+// one the member's own list names, and not a machine.
+//
+// A revoke stops at the link, and that asymmetry is the direction's. The list is
+// the gate on admission, and a revoke is not an admission: refusing it can only
+// leave access in place. Everything a revoke must remove passes through here --
+// somebody taken out of the workspace whose offboarding failed, a person the
+// workspace's own node no longer lists, one whose record in this member's copy
+// was rewritten by that member's admins -- and none of them is a reason to keep
+// the grant, least of all once D2813's refusal lands in `fugaro user revoke` and
+// this command is the only door left. The list is advisory besides (a member's
+// own admins hold their database's write), so refusing a revoke on it would hand
+// them a way to freeze the grants they cannot otherwise keep.
 //
 // The read is the member's mirror and nothing else. R11's other half -- whether
 // the workspace still holds the member -- is a fact of the workspace's own
 // authority, and a member owner's unlink leaves this mirror where it is until
 // the workspace project's owner runs project rm (D2822): the grants stay, and
 // status is where "unlinked, grants left" is read.
-func workspaceGrantGate(ctx context.Context, ops workspace.MemberOps, target workspace.MemberTarget, address string) error {
+func workspaceGrantGate(ctx context.Context, ops workspace.MemberOps, target workspace.MemberTarget, address string, grant bool) error {
 	mirror, err := ops.ReadMirror(ctx, target)
 	if err != nil {
 		return workspaceMemberReadErr(fmt.Sprintf("the member project %s's member list at %s", safetext.Field(target.Project), workspace.PathMemberMirror), err)
@@ -282,6 +297,9 @@ func workspaceGrantGate(ctx context.Context, ops workspace.MemberOps, target wor
 	if !mirror.Found {
 		return userErr("nothing was written: %s holds no member list, so it is not a member of a workspace this command can grant in. A member the workspace manages carries the list at %s, written when the workspace added it, and a member whose owner has not linked it keeps fugaro user grant and no workspace command reaches it (D2819, R11). Run: fugaro workspace project link on the member's own machine -- linking a member is its owner's own act",
 			safetext.Field(target.Project), workspace.PathMemberMirror)
+	}
+	if !grant {
+		return nil
 	}
 	entries, err := workspaceMirrorEntries(mirror)
 	if err != nil {
