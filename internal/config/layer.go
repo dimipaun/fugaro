@@ -573,6 +573,10 @@ type LayerAgent struct {
 	MaxBudgetUSD    float64    `yaml:"max_budget_usd"`
 	FirstLineReview string     `yaml:"first_line_review"`
 	FirstLineRounds int        `yaml:"first_line_rounds"`
+	// WorkspaceBeat is the project's answer to whether a run keeps its
+	// workspace's credentials service warm (R10, D2985); a repository's own
+	// value replaces it. Unset means on (config.Agent.WorkspaceBeatOn).
+	WorkspaceBeat *bool `yaml:"workspace_beat"`
 	// Levels is the project-wide per-level review block (L1.3, D722): the
 	// same config.ReviewLevels a repository's agent.levels and a task's
 	// review_levels carry. The merge is per key (resolve.go's overlay), so

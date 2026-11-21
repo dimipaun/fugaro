@@ -731,6 +731,22 @@ type Agent struct {
 	// whatever it says, which is what the launch's own gate judges the job
 	// image on (internal/cli's reviewSpecSince).
 	ReviewAgainstTask *bool `yaml:"review_against_task,omitempty" json:"ReviewAgainstTask,omitempty"`
+	// WorkspaceBeat is whether a run that routed a kind of credential to its
+	// workspace's credentials service keeps that service warm (R10, D2985):
+	// true, false, or nil for the default, which is on. It is a pointer for
+	// Triage's reason: the key's absence and `workspace_beat: false` are two
+	// answers, and the field cannot tell them apart otherwise.
+	//
+	// The beat is the run's own (creds.WorkspaceBeatSetting, C2 carries the
+	// key's spelling): the run posts a keep-warm request to the workspace's
+	// service at the slip beat's cadence, so a service scaled to zero between
+	// the calls the run pays for is warm when the next one arrives. Turning it
+	// off is the owner's own doubt of D2985 rather than a safety setting — a
+	// run that sends no beat is slower at a call, not less correct — so the
+	// project layer and the repository both carry it, as they carry the run's
+	// other behaviour keys. Binaries before this key's release refuse it
+	// (strict decoder).
+	WorkspaceBeat *bool `yaml:"workspace_beat,omitempty" json:"WorkspaceBeat,omitempty"`
 	// Recipe names the task loop that follows implement
 	// (docs/design/recipes.md): a recipe in .fugaro/recipes/, the project's,
 	// or the catalog's. "" is default. fugaro run --recipe wins over it.
@@ -784,6 +800,13 @@ func (a Agent) TriageOn(mode rigor.Rigor) bool {
 	}
 	return a.Triage == nil || *a.Triage
 }
+
+// WorkspaceBeatOn reports whether this run keeps its workspace's credentials
+// service warm (R10, D2985): true unless agent.workspace_beat is false. The
+// key is the run's own switch and nothing else decides it — no policy node and
+// no ceiling carries it — because the beat's absence costs a cold start at a
+// call and never a credential.
+func (a Agent) WorkspaceBeatOn() bool { return a.WorkspaceBeat == nil || *a.WorkspaceBeat }
 
 // ReviewAgainstTaskOn reports whether the repository's own configuration has
 // every review stage checked against the task the pull request was written for
