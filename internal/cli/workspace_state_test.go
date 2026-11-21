@@ -604,15 +604,16 @@ func TestStateSaveHostIsTheRepositorysOwn(t *testing.T) {
 			t.Errorf("the save never ran %q. Everything it ran:\n%s", want, ran)
 		}
 	}
-	// `gh pr create` has no --json: the real gh answers "unknown flag: --json"
+	// `gh pr create` has no --json — the real gh answers "unknown flag: --json"
 	// and exits 1, so a save that asked for one would push the branch and then
-	// fail without opening anything. A fake gh echoes whatever argv it is given,
-	// so it cannot catch that on its own — the argv is asserted here, one
-	// invocation per line (the visibility read's own --json is a real flag).
-	for _, line := range strings.Split(ran, "\n") {
-		if strings.Contains(line, "pr create") && strings.Contains(line, "--json") {
-			t.Errorf("the save asked `gh pr create` for JSON, which that subcommand does not have (a real gh refuses the whole call with \"unknown flag: --json\"):\n%s", line)
-		}
+	// fail without opening anything — and the fake gh refuses it the way gh does
+	// (wu15FakeGH), which is what makes a save that asks for it fail here. The
+	// recorded argv is asserted too, because the pull request's body is a
+	// multi-line argument and an invocation is therefore not one line of the
+	// calls file: the pull request's own call is the last thing gh is asked.
+	ghRan := wu15Calls(t, ghCalls)
+	if i := strings.Index(ghRan, "pr create"); i >= 0 && strings.Contains(ghRan[i:], "--json") {
+		t.Errorf("the save asked `gh pr create` for JSON, which that subcommand does not have:\n%s", ghRan[i:])
 	}
 	// The URL is read off gh's output, which is the one line `gh pr create`
 	// prints on success.
@@ -970,15 +971,28 @@ exit 0
 
 // wu15FakeGH puts a `gh` on PATH that answers the two calls a save makes: the
 // repository's visibility as JSON (`gh repo view --json` is real), and the pull
-// request as the plain URL `gh pr create` prints — there is no --json on that
-// subcommand, and a fake that answered JSON would let a save pass a flag the
-// real gh refuses (`unknown flag: --json`, after the branch was pushed).
+// request as the plain URL `gh pr create` prints.
+//
+// It is gh's behaviour over the flag it does NOT have, though, that a save has
+// to be held to: `gh pr create` has no --json, and the real gh refuses the whole
+// invocation over it ("unknown flag: --json", exit 1) after the branch has
+// already been pushed. A fake that answered whatever it was asked would pass a
+// save that fails against the real gh, so this one refuses --json the same way —
+// which is a fake doing what the tool does, not a test asserting on argv alone.
 func wu15FakeGH(t *testing.T) string {
 	t.Helper()
 	return testutil.FakeCommand(t, stateGH, `
 case "$1 $2" in
 "repo view") echo '{"visibility":"PRIVATE"}' ;;
-"pr create") echo https://example.invalid/acme/state/pull/7 ;;
+"pr create")
+  for a in "$@"; do
+    if [ "$a" = "--json" ]; then
+      echo "unknown flag: --json" >&2
+      exit 1
+    fi
+  done
+  echo https://example.invalid/acme/state/pull/7
+  ;;
 *) echo '{}' ;;
 esac
 exit 0
