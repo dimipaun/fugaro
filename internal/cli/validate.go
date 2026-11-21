@@ -2253,6 +2253,7 @@ func newValidateCmd() *cobra.Command {
 				warnings = append(warnings, config.CheckWarnings(cfg, filepath.Dir(path))...)
 				warnings = append(warnings, cloneWorkflowWarnings(cfg)...)
 				warnings = append(warnings, rigorImageWarnings(cfg)...)
+				warnings = append(warnings, rigorMembersImageWarnings(cfg)...)
 				warnings = append(warnings, gitAuthorImageWarnings(cfg)...)
 				warnings = append(warnings, securityImageWarnings(cfg)...)
 				warnings = append(warnings, jobsImageWarnings(cfg)...)

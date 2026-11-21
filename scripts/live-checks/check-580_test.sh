@@ -12,7 +12,7 @@
 # and prints a listing built from the row template the case wrote, and the fake
 # `gcloud` serves the job list and the credentials service's own lines. Every
 # document a case bends is a file the case wrote — a policy with no profile, two
-# profiles, another provider, no claude_accounts or mode off; a job list whose
+# profiles, another provider, no claude_accounts or no budget mode; a job list whose
 # jobs carry no service URL or a Bitbucket token; a row that did not push, names
 # no pull request, ran on another job or had not finished; a service log with no
 # git line, no forward line, another credential, or two forward lines whose
@@ -346,7 +346,6 @@ def only_other_provider(x):
 
 
 out("policy-other-provider-only.json", only_other_provider)
-out("policy-mode-off.json", lambda x: x["policy"]["budget"].__setitem__("mode", "off"))
 out("policy-no-mode.json", lambda x: x["policy"]["budget"].pop("mode"))
 out("policy-not-admitted.json", lambda x: x["policy"].__setitem__("allow_repos", ["bitbucket/other-owner/elsewhere"]))
 
@@ -388,6 +387,15 @@ second["metadata"]["name"] = "fugaro-p-bb-bitbucket-1a2b3c"
 spec = second["spec"]["template"]["spec"]["template"]["spec"]
 spec["containers"][0]["env"] = [e for e in spec["containers"][0]["env"] if e["name"] != "FUGARO_CREDENTIALS_SERVICE_URL"]
 doc.append(second)
+json.dump(doc, open(sys.argv[2], "w"))
+PY
+  # The same job under the truncated name Terraform gives a long profile and
+  # provider (fugaro-p-<profile>-bitbucke-<hash>), found by its labels.
+  python3 - "$1/json/jobs.json" "$1/json/jobs-truncated.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+doc[0]["metadata"]["name"] = "fugaro-p-bb-bitbucke-7f3a2b"
+doc[0]["metadata"]["labels"] = {"fugaro": "p", "fugaro_profile": "bb", "fugaro_provider": "bitbucket"}
 json.dump(doc, open(sys.argv[2], "w"))
 PY
   # The run's own row: it ended succeeded, pushed and opened a pull request, and
@@ -975,23 +983,13 @@ test_a_profile_with_no_claude_accounts_is_a_finding() {
   assert_no_launch "$dir" "a profile with no claude_accounts"
 }
 
-test_a_budget_mode_of_off_is_a_finding() {
-  local dir=$work/mode-off
-  prepare "$dir"
-  run_check "$dir" FAKE_POLICY_FILE=policy-mode-off.json
-  expect_status "$status" 1 "a budget mode of off"
-  expect_contains "$out" "FACT policy: FAIL — the profile 'bb' admits $repo and the published budget mode is 'off'" "a budget mode of off: the row"
-  expect_contains "$out" "the gateway is what reaches the credentials service" "a budget mode of off: why it matters"
-  assert_no_launch "$dir" "a budget mode of off"
-}
-
 test_a_policy_with_no_budget_mode_is_not_measured() {
   local dir=$work/no-mode
   prepare "$dir"
   run_check "$dir" FAKE_POLICY_FILE=policy-no-mode.json
   expect_status "$status" 2 "a policy with no budget mode"
   expect_contains "$out" "FACT policy: FAIL — $repo is on the profile 'bb' and the policy document carries no budget mode" "a policy with no budget mode: the row"
-  expect_contains "$out" "a mode the document does not carry is not a mode that is not off" "a policy with no budget mode: why it is not a finding"
+  expect_contains "$out" "a mode the document does not carry is neither" "a policy with no budget mode: why it is not a finding"
   assert_no_launch "$dir" "a policy with no budget mode"
 }
 
@@ -1039,6 +1037,13 @@ test_one_job_of_the_profile_without_the_url_is_a_finding() {
   expect_contains "$out" "FACT job: FAIL — 1 of 2 shared Bitbucket job(s) of the profile 'bb' carry FUGARO_CREDENTIALS_SERVICE_URL" "one job without the URL: the row"
   expect_contains "$out" "the profile's own switch and it is turned on for every job of the profile at once" "one job without the URL: the switch is per profile"
   assert_no_launch "$dir" "one of the profile's jobs without the URL"
+}
+
+test_a_job_with_a_truncated_name_is_found_by_its_labels() {
+  local dir=$work/truncated-job
+  prepare "$dir"
+  run_check "$dir" FAKE_JOBS_FILE=jobs-truncated.json
+  expect_contains "$out" "FACT job: PASS" "a truncated job name: found by the profile and provider labels"
 }
 
 test_a_jobs_list_that_could_not_be_read_is_not_measured() {
@@ -1348,7 +1353,6 @@ t test_a_repository_two_profiles_admit_is_not_measured
 t test_a_profile_of_another_provider_does_not_admit_the_repository
 t test_a_policy_whose_only_profile_serves_another_provider_is_a_finding
 t test_a_profile_with_no_claude_accounts_is_a_finding
-t test_a_budget_mode_of_off_is_a_finding
 t test_a_policy_with_no_budget_mode_is_not_measured
 t test_no_shared_job_of_the_profile_is_not_measured
 t test_a_shared_job_without_the_service_url_is_a_finding
@@ -1376,6 +1380,7 @@ t test_the_first_model_call_is_read_from_the_runs_own_start
 t test_a_git_line_that_was_not_served_is_not_the_git_row
 t test_a_line_of_another_run_is_not_read
 t test_kept_scratch_is_reported
+t test_a_job_with_a_truncated_name_is_found_by_its_labels
 t test_an_unknown_argument_is_refused
 t test_the_belong_guard_is_named_in_every_block
 

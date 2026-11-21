@@ -902,10 +902,11 @@ const bitbucketTokenSince = "0.24.0"
 // `fugaro creds set` is the bundle's only writer, so the guard is at that write
 // too (creds.go's refuseAnEntryTheServiceCannotRead, which judges the release
 // that SERVES the document rather than the installation's pin). It is the
-// guard's third entry and not a second writer: the runner-path key types are
-// refused at the same write and never reach the document
-// (credsKeyCredentialHalfRefusal), so no document of this release holds an
-// entry of this family that a second write path could create.
+// guard's third entry and not a second writer: a RUNNER-path key type has been
+// refused at that write since KS2 (D1670 reversed by D2975) and its key is
+// written into repoCredentialSince's family instead, so the entries of THIS
+// family are the service-served credentials' alone and no write of a provider
+// key adds one.
 //
 // It names 0.26.0, the release this work ships in, and it is the first constant
 // of this file whose reader has never been in a released image: MC22's
@@ -930,6 +931,35 @@ const bitbucketTokenSince = "0.24.0"
 // deployed service already reads it, with `fugaro update` no remedy for them.
 // docs/release.md's ("Before you tag") list carries that reading.
 const keyCredentialSince = "0.26.0"
+
+// repoCredentialSince is the first fugaro release whose credentials service
+// reads the bundle's repository-credential family (credsvc.RepoCredentialPrefix,
+// credsvc.RepoCredentialKey, C1 of docs/keys-through-service): the entries
+// repo-credential--<slug>--<credential>, one per (repository, provider
+// credential) pair, each holding the provider key and the two routing facts the
+// service attaches when it forwards a call (credsvc's providerFacts). It is a
+// fourth entry of the same kind as providerEntrySince above and a constant of
+// its own for the reason that entry's comment gives: the loader refuses the
+// WHOLE document for a key it does not know, so the release a document is
+// readable by is decided by the newest entry it holds.
+//
+// The guard is no longer one write's: the family has THREE writers (F27) — the
+// key credential's own `fugaro creds set credential-<name>-key`, `fugaro
+// accounts add --type openrouter`, and `fugaro secrets set` of a model
+// provider's own secret, at repository scope and project-wide — and all three
+// go through refuseAnEntryTheServiceCannotRead before the value is read
+// (creds.go's providerKeyBundleWrite).
+//
+// It names 0.27.0, the release this work ships in, and it is the second
+// constant of this file whose reader has never been in a released image: C1's
+// wire and KS1's loader are newer than the `v0.26.1` tag, so the release before
+// this one serves a bundle without the family and cannot read a document that
+// holds it. The direction the siblings' tests protect holds from 0.27.0 on: a
+// value ABOVE the tag that shipped the family refuses every provider-key write
+// on installations whose deployed service already reads it, with `fugaro
+// update` no remedy for them. docs/release.md's ("Before you tag") list carries
+// that reading, and TestRepoCredentialSinceHasAReleaseBullet holds its bullet.
+const repoCredentialSince = "0.27.0"
 
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
@@ -4034,6 +4064,134 @@ func rigorSpellingLaunchSources(ctx context.Context, env *cloudEnv, spec *task.S
 		return false, false, false
 	}
 	return cfg.RepoRigorLevelSet, cfg.RepoRigorScalarSet, cfg.Layer.SetsRigorLevel()
+}
+
+// rigorMembersSince is the first fugaro release whose config reader knows what
+// LD4 adds to the project layer's rigor block: a `members:` key of one of its
+// defaults.rigor.areas rules, and the per-repository defaults.rigor.repos map
+// beside them. Both keys are the layer's alone — a repository's own file knows
+// no repos: and refuses members: on a rule of its own (rigor.Area.Validate) —
+// and the layer is decoded with KnownFields, so a layer that carries either
+// makes every repository of the project whose job image is older than this
+// release fail at bootstrap on a key its runner does not know, before the agent
+// starts and after the launch was paid for.
+//
+// It is not rigorSpellingSince, which names the release whose reader knows the
+// two spellings of that block: that constant's judge booleans are an area
+// rule's `level:` key and the scalar shorthand, and a layer writing members or
+// repos need write neither (an area rule still reads `mode:`, and the layer
+// never carried the shorthand), so the gate it drives passes a layer this one
+// refuses. Like rigorSpellingSince the judge is the image that runs the run:
+// the installation's base image for a checkout: clone workflow, the base a
+// workflow's build record was built FROM for a derived one. fugaro update
+// --repo gates it before any cloud effect (gateRigorMembers, beside
+// gateRigorSpelling), a launch gates it the way checkJobsImage does
+// (checkRigorMembersImage, checkCloneRigorMembersImage) from a checkout of the
+// repository, where the layer the run will read can be read here at all, and
+// fugaro validate warns (rigorMembersImageWarnings). Outside a checkout only
+// fugaro update --repo checks.
+//
+// It names 0.27.0, the release this work is slotted for (docs/release.md's
+// Before-you-tag bullet verifies it against the tag actually cut), which is not
+// tagged yet: a wrong value refuses too late (a run on an image whose runner
+// cannot read the keys dies at bootstrap) or too early (an image that knows
+// them stays blocked).
+const rigorMembersSince = "0.27.0"
+
+// rigorMembersLayerSet reports whether the project layer the configuration
+// resolves over writes either key, at any value: SetsRigorMembers' question,
+// and its reason — `members:` with nothing under it and `repos: {}` are lines
+// an older runner's decoder refuses just as a populated one is, and the parsed
+// rule cannot tell the two apart. The configuration is launchFileConfig's, so
+// the launch gates fire where the sibling gates' do: from a checkout of the
+// repository, where the layer the run will read can be read here at all
+// (checkoutConfig, or the ref's file resolved over the layer the task carries,
+// cascadeRefConfig). Outside one it is nil and nothing is gated, which is the
+// shape rigorSpellingSince and jobsSince have: there only fugaro update --repo
+// checks.
+func rigorMembersLayerSet(cfg *config.Config) bool {
+	return cfg != nil && cfg.Layer.SetsRigorMembers()
+}
+
+// rigorMembersSubject names, for the gates' messages, what the layer wrote and
+// the way out its author has: the layer is the operator's file, and the
+// repositories the key breaks each have the same fix — removing it and
+// publishing the layer again. One subject names both keys, because one release
+// reads both and the operator finds whichever they wrote in the same block.
+func rigorMembersSubject(repo string) (subject, alt string) {
+	// The subject takes the gates' singular verb ("needs a job image whose
+	// runner knows …"), so the two keys are joined by "or" rather than by a
+	// comma: the verb then agrees with the nearer one, and the sentence reads
+	// for either key an operator wrote.
+	return "the project layer's `members:` key or its `defaults.rigor.repos` map (read for " + repo + ")",
+		"remove the members: key or the repos: map from the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way"
+}
+
+// rigorMembersKnows names, for the image gates' messages, the keys the job
+// image's runner has to know: the refusal reads "needs a job image whose runner
+// knows <this>", and the two keys are the layer's whole half of LD4.
+const rigorMembersKnows = "the project layer's rigor members, an area rule's `members:` key and the `defaults.rigor.repos` map"
+
+// rigorMembersImageWarnings warns, once, that the project layer a configuration
+// resolves over writes members: or repos:, which needs every job image on
+// rigorMembersSince. It is validate's half of checkRigorMembersImage and a
+// warning rather than a Problem for rigorImageWarnings' reason: the layer is
+// valid, and what has to move is the installation (the base image, or a
+// workflow's derived one), which is why both ways to move an image are named.
+func rigorMembersImageWarnings(c *config.Config) []config.Problem {
+	if !rigorMembersLayerSet(c) {
+		return nil
+	}
+	return []config.Problem{{Path: "defaults.rigor", Message: rigorMembersKnows + " need fugaro " + rigorMembersSince + " or later in the job image that runs it, and in the CLI of everyone who reads this layer: an older runner decodes the layer strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
+// refuseRigorMembersSkew refuses fugaro update --repo, before any cloud effect,
+// when the project layer the checkout resolves writes members: or repos: and
+// the installation's base image predates rigorMembersSince — a runner built
+// from it decodes the layer with KnownFields and refuses it at bootstrap. The
+// states of ref are read as refuseRigorSkew reads them: no base image passes,
+// one that is not a release only warns.
+func refuseRigorMembersSkew(repo string, fromLayer bool, ref string, warn io.Writer) error {
+	if !fromLayer {
+		return nil
+	}
+	subject, alt := rigorMembersSubject(repo)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, rigorMembersSince):
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the layer strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, rigorMembersSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// checkRigorMembersImage and checkCloneRigorMembersImage are the launch's own
+// rigorMembersSince gate, for a workflow whose job image is a derived one and
+// for a checkout: clone workflow respectively: the pair every other
+// per-workflow image gate has (checkImageSince/checkCloneImageSince), with
+// checkJobsImage's judge and its one source — the project layer, which is the
+// only file that can write either key. A launch whose configuration writes
+// neither is never gated.
+func checkRigorMembersImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	if !rigorMembersLayerSet(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := rigorMembersSubject(spec.Repo)
+	return checkImageSince(ctx, env, slug, spec, kind, rigorMembersSince, subject, rigorMembersKnows, "; or "+alt, warn)
+}
+
+// checkCloneRigorMembersImage is checkRigorMembersImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneRigorMembersImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
+	if !rigorMembersLayerSet(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := rigorMembersSubject(spec.Repo)
+	return checkCloneImageSince(env.lc, spec, rigorMembersSince, subject, rigorMembersKnows, "; or "+alt, warn)
 }
 
 // refuseGovernanceSkew refuses fugaro update --repo, before any cloud effect,
