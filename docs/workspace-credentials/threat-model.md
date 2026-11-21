@@ -314,10 +314,11 @@ sentence, the test that pins it and `website/content/security.md` in the same ch
 **It becomes:** the workspace's service admits a member's **person** on two routes of its own — the
 grant route and the calls that present a slip it granted (R3, R4) — and it does so on a list it *can*
 check, which is why this is an amendment and not a reversal of the sentence's reason: the workspace's
-own roster, written by the workspace's own `fugaro update` from the workspace's own config and
-re-read by the service (R3, R13 of workspace-service). The rest of §4 stands: the workspace's person
-class is still the workspace owner's people, and the roster's people are admitted as a class of their
-own beside it. What does not change is the reach: a person admitted there is served **their own**
+own roster — a node of the workspace's own database, written only by the workspace's own commands and
+re-read by the service every 60 seconds (R3) — whose people the workspace owner's `fugaro update`
+renders into the installation's own admission (R5, D2971, §7). The rest of §4 stands: the workspace's
+person class is still the workspace owner's people, and the roster's people are admitted as a class
+of their own beside it. What does not change is the reach: a person admitted there is served **their own**
 run's token and nothing of another's (D2962, D2976). WC4 and WC2 change the sentence, its test
 (`TestSecurityMdStatesTheWorkspaceThreatModel`) and `website/content/security.md` together.
 
