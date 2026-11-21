@@ -733,7 +733,8 @@ var dataReadSites = map[string]string{
 // FOUND, like a sanctioned site, so it cannot outlive the read it explains. A
 // prompt does not belong here: it belongs nowhere.
 var notADecisionSites = map[string]string{
-	"pair.go:pairReadCode": "the --json caller's own line: a console asks the operator for the code and hands the command the answer on stdin (§4.1, \"the typed code is read as one stdin line\"), so what arrives is data a caller delivered rather than a question the CLI put to a person; the interactive half reads the same value through readValue and is not this shape",
+	"pair.go:pairReadCode":                "the --json caller's own line: a console asks the operator for the code and hands the command the answer on stdin (§4.1, \"the typed code is read as one stdin line\"), so what arrives is data a caller delivered rather than a question the CLI put to a person; the interactive half reads the same value through readValue and is not this shape",
+	"workspace_state.go:stateBranchNonce": "the state writer's random source: crypto/rand in production, a counter in a test, entropy for the suffix of the branch a save pushes (WU15). It is a parameter of the writer rather than the package's own reader so a test's branch name is the same string on every run, and what a caller hands it is a source of bytes — never a stream a person types into",
 }
 
 // pendingSites is every decision read the package still makes and the task of
