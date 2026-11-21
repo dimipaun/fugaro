@@ -452,13 +452,26 @@ func providerServedEntry(b *Bundle, slug, name string) (Entry, creds.Credential,
 //     them either (its own forwardFree).
 //   - the bundle, and the entry the verified repository and the provider's name
 //     derive. This is the first credential read of this path.
-//   - the selection, over a list of ONE (creds.Selector.Select): the entry is
+//   - the selection, over a list of ONE (creds.Selector.MayServe): the entry is
 //     the only candidate, and the selection is what decides whether it may serve
 //     this call at all — the model's class rule, the provider tie and the Check
 //     50 gate for an Anthropic model are creds' own rules (D3000, D150), and
-//     this service reaches every one of them through the same call the cascade
-//     does rather than by judging them again here. What a Claude model on this
-//     route meets is therefore Check 50's own refusal, spelled once.
+//     this service reaches every one of them through the same judgement the
+//     cascade does rather than by judging them again here. What a Claude model on
+//     this route meets is therefore Check 50's own refusal, spelled once. It is
+//     the judgement WITHOUT the placement, and that is deliberate: MayServe
+//     records nothing, because a placement is one fact — where this run is, its
+//     current credential and its lease together — and this route's credential is
+//     DERIVED (the run's verified repository and the provider's name, the same
+//     entry for every call), so there is no decision to record and nothing for
+//     the run to be sticky about. Placing it would be the harm: a run that mixes
+//     Claude calls with routed ones is on a shared subscription token for the
+//     first, and the routed call would move it onto the provider's entry and take
+//     the lease it holds on the account with it — freeing that account's
+//     concurrency slot (D142) while the run is still using it and leaving the
+//     next Claude call with no current credential to stay on (D154, the prompt
+//     cache) or a wait on the cap. A run's placement is the cascade's to write,
+//     and only for a call the cascade served.
 //   - the forward itself, and the answer: one attempt, no retry, no mark, no
 //     usage-limit scan, and no switch.
 //
@@ -571,11 +584,10 @@ func (s *Server) providerCall(ctx context.Context, w http.ResponseWriter, r *htt
 		return
 	}
 	// The selector is built over the SCOPE's state and not the deployment's, for
-	// the cascade's reason (R1, R8): every mark this call writes lands in the
-	// database of the scope that answered the caller.
+	// the cascade's reason (R1, R8): the marks this call is judged by are the ones
+	// the scope that answered the caller holds.
 	sel := &creds.Selector{Store: sc.State(), Settings: settingsOf(shared), Now: s.now, Model: model, Provider: name, Strategy: creds.StrategyFailover}
-	chosen, _, err := sel.Select(ctx, creds.Run{Slug: id.Slug, ID: id.Run}, []creds.Credential{cand})
-	if err != nil {
+	if err := sel.MayServe(ctx, creds.Run{Slug: id.Slug, ID: id.Run}, cand); err != nil {
 		// The selector's own refusals, each spelled once: what this call cannot
 		// be served by (the class rule and the provider tie — checkCandidates),
 		// Check 50's gate for a Claude model, a wait on an entry the owner's own
@@ -589,7 +601,7 @@ func (s *Server) providerCall(ctx context.Context, w http.ResponseWriter, r *htt
 			err.Error(), labelRead(readUpstream, err))
 		return
 	}
-	s.answer(ctx, w, id, cl, ans, chosen, nil, nil)
+	s.answer(ctx, w, id, cl, ans, cand, nil, nil)
 }
 
 // trimSlash drops a base URL's trailing slashes, so a prefix and a path are

@@ -48,7 +48,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
@@ -864,4 +866,97 @@ func TestAReviewCallerIsRefusedTheProviderRoute(t *testing.T) {
 			t.Errorf("the provider saw %d requests, want exactly the control's one", n)
 		}
 	})
+}
+
+// TestARoutedCallLeavesTheRunsPlacementAlone: the provider route JUDGES its entry
+// and never places the run on it (creds.Selector.MayServe), and this is the test
+// that fails if it places it again.
+//
+// A run's placement is one fact — its current credential and its lease together
+// (D154's stickiness, D142's slot) — and a run mixes the two routes: Claude calls
+// go through the cascade to a shared subscription account, routed calls through
+// this route to a provider's entry. The entry is DERIVED (the run's verified
+// repository and the provider's name, the same one for every such call), so there
+// is nothing for the run to be sticky about on this route — while placing it
+// would move the run off the account, taking the lease it holds on it away: the
+// account's concurrency slot is freed while the run is using it, and the next
+// Claude call has no current credential to stay on and re-selects (or waits on
+// the cap).
+//
+// So the fence is the pair of facts either side of the routed call: the cascade's
+// own answer is what should have been written, and after a routed call the run is
+// still exactly there — same credential, same lease, and not one write of any
+// kind (no mark, no placement, no counter) that a placement could hide in.
+//
+// Mutation (run, restore): call creds.Selector.Select instead of MayServe in
+// providerCall and the second half of this test fails with the run placed on the
+// named entry and its lease moved with it.
+func TestARoutedCallLeavesTheRunsPlacementAlone(t *testing.T) {
+	s := routedSvc(t)
+	// The routed call needs the provider's answer; the default script holds one.
+	s.up.Script = append(s.up.Script, anthropicfake.MessageOK(routedModel, testUsage))
+
+	// A Claude call first, through the cascade: that is the call that places a
+	// run, and the credential it places it on is the account's.
+	resp, ans := s.callPath(t, MessagesPath, callBody("placed"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the Claude call is answered %d, want %d: %s", resp.StatusCode, http.StatusOK, ans)
+	}
+	account := resp.Header.Get(HeaderCredential)
+	if account == "" {
+		t.Fatal("the Claude call's answer names no credential, so this test has no placement to keep")
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierA {
+		t.Fatalf("%s = %q, want %q: the credential a run mixes routes on has to be the shared account this test is about", HeaderTier, got, TierA)
+	}
+	if placed, ok := s.state.placed(s.credsRun()); !ok || placed != account {
+		t.Fatalf("the run is placed on %q (%v), want the cascade's own answer %q", placed, ok, account)
+	}
+	before := s.state.snapshot(s.credsRun())
+
+	// The routed call, on the same run, the same fixture and the same service.
+	rresp, rans := s.callPath(t, ProviderRoutePath, routedCallBody(routedModel), routedName(routedProvider))
+	if rresp.StatusCode != http.StatusOK {
+		t.Fatalf("the routed call is answered %d, want the upstream's 200: %s", rresp.StatusCode, rans)
+	}
+	if got, want := rresp.Header.Get(HeaderCredential), familyName(t, s.slug, routedProvider); got != want {
+		t.Errorf("%s = %q, want %q: the routed call does not carry the placement's name", HeaderCredential, got, want)
+	}
+
+	after := s.state.snapshot(s.credsRun())
+	if after.current != account {
+		t.Errorf("the run is placed on %q after a routed call, want the account %q it was on: a routed call must not move a run off the credential it holds", after.current, account)
+	}
+	if after.lease != before.lease || after.leased != before.leased {
+		t.Errorf("the run's lease is %+v after a routed call, want the %+v it held: the account's slot (D142) is freed by a move nobody asked for", after.lease, before.lease)
+	}
+	if after.rr != before.rr {
+		t.Errorf("the round-robin counter moved from %d to %d: a judgement of one credential has no tie to break", before.rr, after.rr)
+	}
+	if after.marks != before.marks {
+		t.Errorf("the routed call wrote a mark (%d held, was %d): it attaches a key and answers with what the provider said, and it marks nothing", after.marks, before.marks)
+	}
+	if n := s.up.Count(); n != 2 {
+		t.Errorf("the provider saw %d requests, want the Claude call's one and the routed call's one", n)
+	}
+}
+
+// placement is the run's state as one reading: what it is placed on, the lease it
+// holds with it, and the two other things a selection can write. It is read as a
+// whole because the property under test is that NONE of it moved.
+type placement struct {
+	current string
+	lease   creds.Lease
+	leased  bool
+	rr      int64
+	marks   int
+}
+
+// snapshot reads the fixture's store for one run. It takes the store's own lock,
+// for the reason every writer here does.
+func (s *fakeStore) snapshot(run creds.Run) placement {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lease, ok := s.leases[runKey(run)]
+	return placement{current: s.current[runKey(run)], lease: lease, leased: ok, rr: s.rr, marks: len(s.marks)}
 }
