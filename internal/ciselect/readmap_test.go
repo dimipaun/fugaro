@@ -21,6 +21,12 @@ import (
 // (CS5, spec item 5): it re-reads the checkout and fails when the map has
 // stopped describing it, so a change that adds a path literal or a //go:embed
 // carries the refreshed map in the same pull request.
+//
+// The pin is not theoretical: the map was already stale when it landed. The
+// scan named 213 things the committed file was missing — 211 reads, one package
+// it had no entry for at all, and one package whose `any` was gone — most of
+// them around a read of internal/rigor/personas that reaches most of the tree,
+// while no entry named a file the checkout had lost.
 const (
 	readMapPath = "../../docs/ci-affected-tests/read-map.json"
 	readMapRoot = "../.."
