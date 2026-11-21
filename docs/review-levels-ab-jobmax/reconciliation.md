@@ -168,6 +168,13 @@ not asked.
 | **D736** | ECharts for the gauges? (F40, F43) | **No: draw the gauge as SVG next to the existing sparkline, bar and fleet gauge, with the styling tokens and `data-*` hooks.** No chart dependency (the console's only runtime dependency would be D733's reporter). | ECharts: a runtime dependency of roughly a megabyte, theming outside the tokens, an audit, and owner-only golden re-records | **2026-10-30: no ECharts; extend the existing SVG** (the recommendation). Why: no chart dependency and no styling outside the tokens. |
 | **D737** | Gauge semantics (F41, F42) | **Red zone: the rate at which the day's remaining headroom runs out before the UTC day ends. One-hour sparklines are a second history kept by the console while open (the 5-minute burn window stays). `max_parallel` becomes a CLI document field. The iterations bar goes to the Run screen.** | A fixed $/h threshold the owner sets: simpler, but not tied to the cap the spec names | **2026-10-30: red zone is the rate that uses up the day's remaining headroom before the UTC day ends; one-hour history kept by the console; `max_parallel` as a CLI field; the iterations bar on the Run screen** (the recommendation). Why: tied to the cap the spec names. |
 
+**D738 — recorded 2026-11-21, by the re-plan of T3.1, V1.3 and X1 (the owner's instruction of that date).** The
+block D720–D759 was reserved on 2026-10-30; D738–D759 stayed unused until now, and D738 is the first of them taken.
+
+| # | Question | What is recorded | Why, and the alternative |
+| --- | --- | --- | --- |
+| **D738** | T1.1's `settings` node is closed (2026-11-16) and T1.2's `project show --json` field with it: where does the app's crash-report switch live, and where is it read? | **The switch is the published project policy's `mobile.crash_reports` member, and the app reads it as `crash_reports` in the pairing session's response** (`internal/mobilesession/contract.go`'s `SessionPolicy`, added to `shared/mobile-session/port.js`'s closed `SESSION_POLICY_FIELDS`); the default a publish writes is on, and **a member the published policy does not carry reads as off**, the fail-safe G7 and U2 require. | **D734 answered the reading half on 2026-10-30**: "mobile reads the pairing configuration, the console reads CLI output". So the carrier is the session the app already has, and the registry's rule agrees — an owner-only value a client outside the CLI reads takes the typed publisher with one writer, which the `mobile` block already is (`internal/projectpolicy`, `mobileMembers` as the closed member set, `MobileForPublish` writing the default), rather than the generic `fugaro settings` leaf, which lives on the owner's machine where no phone can read it. **The alternative is a per-device switch in the app's own prefs**, mirroring the console's shipped per-user `<userData>/crash.json` (the owner's ruling of 2026-10-31): no policy member and no session field, and the two clients symmetric — but it reverses D734 and contradicts D731's "project configuration", so it is the owner's to take at review, not the re-plan's to pick silently. |
+
 ### 3.1 Resolutions (one defensible answer)
 
 - **R1.** L3 counts as the `review` stage class for per-stage budgets, tokens and timeouts (F14). No new config key.
@@ -194,6 +201,15 @@ Compared with today's text, it drops "basic diagnostic data" (the spec says stac
 "may not disable". The Licensor's processor (D733) may also need naming. Whether the sender's IP
 address in transit makes the report personal data is for counsel (U8). The privacy page, the store
 forms (D257) and the console download page (F29) change with it.
+
+**The draft's key name is dated 2026-11-21, with D738.** The quotation above turns crash reports off
+"in the project configuration (`telemetry.crash_reports: false`)". That key was T1.1's node and T1.2's
+field, both closed on 2026-11-16; what the re-plan names instead is the published policy's
+`mobile.crash_reports` (D738), and the console's own switch is per-user and local, not project
+configuration at all. So the sentence is right in substance for the app and wrong in its example key:
+**counsel's draft should say that the customer may turn crash reports off in the project
+configuration and that the console offers a per-user switch**, and T4 is where that wording lives —
+no agent edits the Terms.
 
 **O3. Resolved 2026-10-30 by D731.** D255 (mobile, always on) and console D5 (no telemetry) were the owner's earlier answers. The owner ruled that this spec supersedes both, along with the console download page's text and Terms §7.3. The plan records it where each one lives: T0.1 for D255 and D5, T2.2 for the download page, and the owner with counsel for the Terms (T4).
 

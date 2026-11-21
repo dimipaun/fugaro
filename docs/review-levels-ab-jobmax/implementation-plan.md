@@ -2,9 +2,22 @@
 
 ## Status
 
-**Ruling 2026-11-16: the orchestrator (`fugaro:orchestrator`) replaces `/jobmax`. J1.2, J1.3 and T1.1–T1.3 are closed as superseded (no `jobmax.auto_launch` is built); T3.1 and V1.3 are WAITING on a re-plan against the orchestrator and the config-ownership registry and are not approved to launch as written; V1.2 is unchanged. X2 and Check 273, which measure J1.2's skill, are not touched here and are the owner's to close or re-point.** **Status as of 2026-11-10: in progress, about 24/40 merged; see [docs/status.md](../status.md) for the current table.** The owner approved every task on 2026-10-30, with these
+**Re-plan 2026-11-21 (the owner's instruction): T3.1, V1.3 and X1 are re-planned in this document, against the
+orchestrator (`docs/stateless-orchestrator/`) and the config-ownership registry (`docs/config-ownership/`), and X2
+is closed. Nothing in this re-plan is approved: it is a document for the owner's review, and no task in it launches
+until the owner says so.** The re-plan records one new decision, **D738** (in [reconciliation.md](reconciliation.md) §3),
+and it decides nothing D734 had not already answered: the app's switch is the **pairing-delivered configuration**,
+which D734's own answer of 2026-10-30 names, so the carrier is the pairing session and what D738 fixes is the
+member's name and home in the published policy. What moved, in one line each: **T3.1** keeps its slot and moves off
+T1.1's `settings` node onto the published project policy's `mobile` block, which a phone already reads; **V1.3**
+keeps its slot and loses the two closed dependencies it carried for shared files only; **X1** keeps its slot, and
+two of its three checks are re-worded against the console and the app as built; **X2 disappears** — Check 273 is
+closed with nothing written and nothing run. The re-plan's own section, below, states the contract-first pass, the
+edges and, for each task, what it consumes from the orchestrator's state and the registry.
+
+**Ruling 2026-11-16: the orchestrator (`fugaro:orchestrator`) replaces `/jobmax`. J1.2, J1.3 and T1.1–T1.3 are closed as superseded (no `jobmax.auto_launch` is built); V1.2 is unchanged.** **Status as of 2026-11-10: in progress, about 24/40 merged; see [docs/status.md](../status.md) for the current table.** The owner approved every task on 2026-10-30, with these
 exceptions: T2.1 and T2.2 stay draft until the processor is named (O4); O1 and O2 are counsel's; T3.2
-(O6), the checks X1 and X2 write (270–273) and every OWNER-RUN part below are the owner's. The owner
+(O6), the checks X1 writes (**270–272**; X2's Check 273 was closed unrun on 2026-11-21) and every OWNER-RUN part below are the owner's. The owner
 also named L5.2's model: `claude-opus-5-5` as this repository's level-2 reviewer. *(**Superseded
 2026-10-30 (evening):** L5.2's level-2 model is `deepseek/deepseek-v4-pro` through the same
 OpenRouter route as the coder, `agent.auth` stays `api-key`, and no new secret is stored — the
@@ -67,7 +80,7 @@ the plan:
 | G6 | A crash report holds the error type and frames only: no message, no absolute path, no user name, no breadcrumbs, no local variables (D734). A scrubber test feeds a hostile message carrying a token-shaped placeholder, a home path and a repository name, and asserts none of them leaves | T2.1, T3.1 |
 | G7 | Nothing is sent before the switch is read, and nothing is sent with the switch off (D734) | T2.1, T3.1 |
 | G8 | The CLI and the job send no crash report: `go.mod` carries no crash-reporting module (D732) | T0.1 |
-| G9 | `/jobmax` launches unattended only with the owner's opt-in on (default off). It never launches a task whose dependency is unmerged (an unknown merge state counts as unmerged), never launches past a cap, and stops and asks on any ambiguity (D730 as ruled) | J1.2, J1.3, Check 273 |
+| G9 | **RETIRED 2026-11-21.** `/jobmax` launches unattended only with the owner's opt-in on (default off), never launches a task whose dependency is unmerged (an unknown merge state counts as unmerged), never launches past a cap, and stops and asks on any ambiguity (D730 as ruled) | **was** J1.2, J1.3, Check 273 — J1.2 and J1.3 closed 2026-11-16 and Check 273 closed with X2 on 2026-11-21, so this constraint pins nothing here. The behaviour is the orchestrator's, and its constraints are that work's **G4** and **G5** (`docs/stateless-orchestrator/implementation-plan.md`), pinned by O6 and its tests; the live half is that work's **Check 302**, not this one's |
 | G10 | The A/B `slot` field is fixed before the pair launch writes pairs (D728), so pairs are not written twice in two formats | B1.1 before A3.3 |
 
 **Trust boundaries to probe in review:**
@@ -75,8 +88,9 @@ the plan:
 - The task field and the project layer are written by the launcher (`docs/bucket-iam/spec.md` §10 L1, L2), so a hostile task could set a level to `none`, name a model, or embed a layer. The floor is read from the owner-only policy node, and the runner re-runs `ResolveLevels` at bootstrap.
 - The `effort` value is passed into the agent's environment, so it is accepted only from a closed set.
 - A crash payload leaves the machine: G6, and the DSN cannot be redirected by configuration.
-- The `settings` node is new database surface: written by the owner only, read by signed-in users of the installation. Its rules entry is security-reviewed with emulator tests (T1.1).
-- `/jobmax` reads plan files from the repository, which are untrusted text: the graph is parsed by `fugaro plan graph`, never by the skill, and a task's text goes to `fugaro run` on stdin.
+- **The `settings` node is retired (2026-11-21).** T1.1 would have added new database surface written by the owner and read by signed-in users. Nothing adds it: the two switches that would have lived on it are carried by surfaces that already exist — the console's per-user `<userData>/crash.json` (the owner's ruling of 2026-10-31) and, for the app, the published project policy's `mobile` block (T3.1, D738). Both are narrower than the node: a phone reads one boolean through the pairing session and never the policy document, and `config/policy/**` stays out of the paired device's read set.
+- **The app's switch is policy surface, and the phone is not its writer.** `mobile.crash_reports` joins the block the owner publishes (`internal/projectpolicy`), and the phone reads it through `internal/mobilesession`'s session response — the same one-way path `mobile.costly_modes` already takes. Nothing a phone can reach writes it; `SessionPolicy`'s own comment is the reason (D2791: every value there is a display input, and what a mode permits is decided at the consumer).
+- **`/jobmax` reads plan files from the repository, which are untrusted text** — retired with J1.2 (2026-11-16). The orchestrator's launcher reads its work items from its own state (`orchestrator/state`), which is not repository text; that work's own trust boundaries cover it.
 
 ## In-flight work this plan waits for (file conflicts)
 
@@ -455,11 +469,12 @@ Every task's reviewer tier is **standard** unless marked otherwise.
   - The DSN comes from a build-time environment variable. A build without it sends nothing. **SUPERSEDED (owner's ruling, 2026-10-31):** a build-time DSN was cancelled, so this bullet and the two `after deploy` lines that lean on it (the build secret and the release note that names it) no longer describe what is built — the DSN is one embedded public constant in `console/src/main/crash-dsn.ts`, it is the same in every build, and the per-user switch is the gate that decides whether anything is sent.
 - **Tests:** `crash: nothing before the switch is read`, `crash: nothing with the switch off or null`, `crash: the scrubber drops message, home path, hostname and token-shaped placeholder`, `crash: no minidump, no session, no client report`, `crash: no preload is registered`, `pinning: @sentry/electron is exact and the only runtime dependency`, and the website's privacy test as amended.
 - **Command:** `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 crash pinning`, then `cd website && npm run check`, then `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
-- **Depends on:** T1.3, T0.1 (the same `desktop-console.md`), T3.1 (the same privacy page and test), the processor named (O4).
+- **Depends on:** T0.1 (the same `desktop-console.md`), T3.1 (the same privacy page and test), the processor named (O4). **T1.3 is dropped (2026-11-21): it is closed, and this task's decode of its argv is superseded by the owner's ruling of 2026-10-31 — see the note below.**
 - **Red step:** `crash: nothing before the switch is read` fails against a stub that initialises at startup.
 - **Reviewer:** opus + mandatory independent review.
 - **OWNER-RUN part:** the owner sets the DSN as the console build's secret, never in the repository. The release's `### For operators` names the variable.
 - **Commit:** `console: crash reports, opt-out, stack frames only`.
+- **Re-plan note, 2026-11-21 (observed, not approved).** T1.3 is closed, so the **Files** line's "decoded inside `console/src/main/crash.ts` from T1.3's `project show --json` operation" no longer names a task that exists. What shipped — the owner's ruling of 2026-10-31, recorded in this task's own **Interfaces** and in `x1-blocked.md` — is the console's per-user `<userData>/crash.json`, off when it is absent, which `console/src/main/crashstore.ts` reads and `crash.ts` gates on. This re-plan drops the stale edge so the graph carries only real ones, and does **not** re-word the task: T2.1 is not one of the three this re-plan was asked for, it is a draft anyway, and its remaining work is the pieces that are not built (`@sentry/electron` pinned, the scrubber, the pinning tests, `THIRD_PARTY_NOTICES.md`, the dependency audit, the `desktop-console` section and the privacy page). **The owner should fold T2.1's re-wording into this review**, and the re-wording is the same shape T3.1's is: the switch's carrier is named once, and the argv that does not exist is not named at all.
 
 #### T2.2 The console's public statements (D731)
 
@@ -471,16 +486,19 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### T3.1 The app: opt-out Crashlytics, no Analytics (D731, D734)
 
-**WAITING on a re-plan, 2026-11-16 (the owner's ruling), not approved to launch as written:** it reads T1.1's `settings` node, now closed, so it is re-planned later against the orchestrator and the config-ownership registry. D731 and D734 stand.
+**Re-planned 2026-11-21 (the owner's instruction) and NOT APPROVED: it waits on the owner's review of this re-plan before anything launches from it.** D731 and D734 stand unchanged; what moved is the switch's carrier. T1.1's `settings` node is closed, so the switch is a member of a carrier that exists and that a phone already reads.
 
-- **Files:** `mobile/package.json` and `mobile/package-lock.json` (drop `@react-native-firebase/analytics`), `mobile/app.config.js`, `mobile/src/app-config.test.js` and `mobile/src/app-config.ids.test.js` (they pin the analytics plugin), `mobile/firebase.json` (`crashlytics_auto_collection_enabled: false`, Analytics keys removed), `mobile/src/telemetry/index.js` (new: the module's only entry point), `mobile/src/telemetry/crash.js` (new: the one `setCrashlyticsCollectionEnabled(` call, from the settings node), `mobile/src/telemetry/crash.test.js` (new), `mobile/src/telemetry/scan.test.js` (new: the §7.4 scan as amended in T0.1, since P7.2/P7.3 are unbuilt — **amended 2026-11-11: P7.2 is built and P7.3 is not**, P7.2 having landed ahead of T0.1's amendment (the sequencing is recorded in `docs/mobile/telemetry-plan.md`'s P7.2 section), so this scan lands beside P7.2's `notice.test.js`), `mobile/src/telemetry/notice.js` and `mobile/src/telemetry/notice.test.js` (**added 2026-11-11**: P7.2's statement names Analytics while the app ships it, and `notice.test.js` reads `mobile/package.json` and fails until the clause leaves with the package — so this task's removal empties the statement of it), `website/src/pages/privacy.astro` (the app paragraph: Crashlytics, opt-out, no Analytics) and `website/test/privacy.mjs` (its `APP_TELEMETRY` list names the analytics package, so the page and the test move with the package in one task), `docs/releases/mobile/` (the release's notes).
-- **Interfaces:** after sign-in, the app reads `settings/crash_reports` from the installation's database (T1.1's node; O9 as ruled), and follows later changes while signed in. Before sign-in, or if the node cannot be read, collection stays off and unsent reports are deleted (U2).
-- **Tests:** `crash: off until signed in`, `crash: follows the settings node, including a later change`, `scan: exactly one setCrashlyticsCollectionEnabled call site, no analytics import`.
-- **Command:** `cd mobile && npm test`, then `cd website && npm run check`.
-- **Depends on:** T0.1, T1.1, #1332, and the app's sign-in to the installation's database.
+- **Carrier — D738, which D734 had already answered.** D734's own answer of 2026-10-30 says **the mobile client reads the switch from the pairing-delivered configuration** (the console reads CLI output), so the carrier is the pairing session and not a new node, a new argv or a new file. What D738 records is the member's name and home: the switch is a member of the **published project policy's `mobile` block**, `mobile.crash_reports`, an owner-written boolean, default `true`, beside `mobile.enabled`, `mobile.sync`, `mobile.accepted_providers`, `mobile.max_auth_age`, `mobile.strict_new_device`, `mobile.costly_modes` and `mobile.biometric_on_costly`. It is written where those are written — the project layer (`schemas/project-layer.schema.json`, `docs/project-layer.md`) — published the way they are published, seeded by the same default-writing publish (`projectpolicy.MobileForPublish`, which `fugaro project policy publish` calls), and the block is a closed set of members in code (`mobileMembers`, read off the struct's json tags), so the member is added in one place and both the decoder and the schema test move with it. The phone reaches it as `crash_reports` in the pairing session's response (`internal/mobilesession/contract.go`'s `SessionPolicy`), and that closed list is the contract: `shared/mobile-session/port.js`'s **`SESSION_POLICY_FIELDS`** gains it, which is exactly the list that keeps the policy file and the session response from drifting. `config/policy/**` is not in the paired device's read set, so the session is the only path, and it is a one-way one: a phone that edited the value would hide a button and change nothing (D2791).
+  - **Why not the registry's generic `fugaro settings` leaf.** The registry (`docs/config-ownership/`) rules that a scalar leaf with no invariant goes through generic `fugaro settings`, and that a value with a publish step or a reader outside the CLI takes a typed carrier with one writer. An app-facing switch is the second: a local-config leaf lives on the owner's machine, where no phone can read it, and reaching the phone at all means publishing, which the typed block already does — with one writer, a default, a closed member set and a schema.
+  - **The alternative, recorded so the owner can take it at review:** a **per-device switch in the app's own prefs**, mirroring the console's shipped per-user `<userData>/crash.json` (the owner's ruling of 2026-10-31). It needs no policy member and no session field, and it makes the two clients symmetric — but **it contradicts D734**, which answers that the mobile client reads the pairing configuration, and D731 states the app's switch as project configuration. So the alternative is a reversal the owner can make at review and not something the re-plan picks silently; the recommendation stands as written.
+- **Files:** `mobile/package.json` and `mobile/package-lock.json` (drop `@react-native-firebase/analytics`), `mobile/app.config.js`, `mobile/src/app-config.test.js` and `mobile/src/app-config.ids.test.js` (they pin the analytics plugin), `mobile/firebase.json` (`crashlytics_auto_collection_enabled: false`, Analytics keys removed), `mobile/src/telemetry/index.js` (new: the module's only entry point), `mobile/src/telemetry/crash.js` (new: the one `setCrashlyticsCollectionEnabled(` call, decided from the session's `crash_reports`), `mobile/src/telemetry/crash.test.js` (new), `mobile/src/telemetry/scan.test.js` (new: the §7.4 scan as amended in T0.1, since P7.2/P7.3 are unbuilt — **amended 2026-11-11: P7.2 is built and P7.3 is not**, P7.2 having landed ahead of T0.1's amendment (the sequencing is recorded in `docs/mobile/telemetry-plan.md`'s P7.2 section), so this scan lands beside P7.2's `notice.test.js`), `mobile/src/telemetry/notice.js` and `mobile/src/telemetry/notice.test.js` (**added 2026-11-11**: P7.2's statement names Analytics while the app ships it, and `notice.test.js` reads `mobile/package.json` and fails until the clause leaves with the package — so this task's removal empties the statement of it), **`internal/projectpolicy/mobile.go` and `internal/projectpolicy/mobile_test.go`** (the member, its default in `DefaultMobile()`, and its spelling in `mobileMembers`; **`schemas/project-layer.schema.json`** if that test reads the schema), **`internal/mobilesession/contract.go` and its test** (the field in `SessionPolicy`), **`shared/mobile-session/port.js` and its test** (the closed `SESSION_POLICY_FIELDS` list and the value check), `website/src/pages/privacy.astro` (the app paragraph: Crashlytics, opt-out, no Analytics) and `website/test/privacy.mjs` (its `APP_TELEMETRY` list names the analytics package, so the page and the test move with the package in one task), `docs/releases/mobile/` (the release's notes).
+- **Interfaces:** after pairing, the app reads `crash_reports` from the session's policy and follows a later change at its next session refresh. Before a session exists, or when the member is absent from the published policy or the policy cannot be read, collection stays off and unsent reports are deleted (U2, G7) — **absence reads off, not "the default on"**, which is the shape `mobile.enabled` already has: `MobileForPublish` writes the default (`DefaultMobile()`, on) into a block a publish creates, and a reader that finds no member answers off rather than filling it in. The app reads one field of `SESSION_POLICY_FIELDS`; the port refuses an unknown field (`UNKNOWN_POLICY_FIELD`) and a value that is not a boolean (`BAD_POLICY_VALUE`) rather than guessing. **Consumes nothing from the orchestrator's state**: no switch here is an orchestrator fact, nothing reads `orchestrator/state`, and the running-jobs view's own orchestrator read (mobile-identity-pairing J2) is not this task's. **What it consumes from the registry is one rule**, not a row: an owner-only value that a client outside the CLI reads takes a typed publisher with one writer, which is the `mobile` block and not a generic leaf.
+- **Tests:** `crash: off until the session carries the policy`, `crash: follows a later session's change`, `crash: a project that publishes it false sends nothing`, `crash: an unreadable policy sends nothing and deletes unsent reports`, `scan: exactly one setCrashlyticsCollectionEnabled call site, no analytics import`, `projectpolicy: mobile.crash_reports defaults true and is a closed member`, `mobilesession: the session policy carries crash_reports`, `port: crash_reports is a session policy field and a non-boolean is refused`.
+- **Command:** `cd mobile && npm test`, then `cd shared && npm test`, then `cd website && npm run check`, then `GOFLAGS=-p=2 go test ./internal/projectpolicy ./internal/mobilesession -count=1`.
+- **Depends on:** T0.1 (the same `docs/mobile/telemetry-plan.md` and its scan), #1332 (the same two mobile documents), the app's pairing to the installation (mobile-identity-pairing C1/M3, merged) and P6's published `mobile` block (merged). **No edge to T1.1, T1.2 or T1.3** (closed 2026-11-16), and none to the orchestrator: this task reads no orchestrator state.
 - **Red step:** the scan finds the analytics package imported.
-- **Reviewer:** opus + mandatory independent review.
-- **Commit:** `mobile: Crashlytics follows the project switch; Analytics removed`.
+- **Reviewer:** opus + mandatory independent review (a phone-facing policy member, and a package removal).
+- **Commit:** `mobile: Crashlytics follows the project policy; Analytics removed`.
 
 #### T3.2 OWNER-RUN: the store privacy forms (O6)
 
@@ -535,38 +553,131 @@ processor (O4). No agent edits the Terms.
 
 #### V1.3 The iterations bar on the Run screen
 
-**WAITING on a re-plan, 2026-11-16 (the owner's ruling), not approved to launch as written:** it depends on T1.2 and J1.3, both closed, so it is re-planned later against the orchestrator and the config-ownership registry.
+**Re-planned 2026-11-21 (the owner's instruction) and NOT APPROVED: it waits on the owner's review of this re-plan before anything launches from it.** Its subject is unchanged — the iterations bar on the Run screen, one bar per level, rounds used against that level's cap. What moved is its dependencies: **T1.2 and J1.3 are dropped** (closed 2026-11-16), and they were there for shared files and a contract member, not for anything the bar draws.
 
-- **Files:** `internal/cli/diagnose.go` and its test (the document the Run screen reads), `console/docs/json-contract.md`, `console/src/shared/schema.ts` (`RECORD_KEYS`; `closed()` refuses unknown keys), `console/src/renderer/screens/run.ts`, `console/src/renderer/theme/screens.css`, `console/test/unit/run.test.ts`, `docs/console-styling/spec.md`.
-- **Interfaces:** `diagnose --json` gains each level's rounds used and its cap. No console decoder reads `reviews` today. The Run screen draws one bar per level.
-- **Tests:** `run: iterations bar per level`.
+- **Files:** `internal/cli/diagnose.go` and its test (the document the Run screen reads; the read gains the per-level figures), `console/docs/json-contract.md`, `console/src/shared/schema.ts` (`RECORD_KEYS`; `closed()` refuses unknown keys), `console/src/renderer/screens/run.ts`, `console/src/renderer/theme/screens.css`, `console/test/unit/run.test.ts`, `docs/console-styling/spec.md`.
+- **Interfaces:** `diagnose --json` gains each level's rounds used and **its cap**. No console decoder reads `reviews` today, so the bar is the first reader.
+  - **Rounds used** comes from the record the read already carries: `Diagnosis.Reviews` is `[]runstore.ReviewSummary` (round, tier, verdict, findings, head, model, effort), and a level's used count is its own highest `round` — L4.1's tier (`runstore.TierAdversarial`) is what tells L3's rounds from L2's.
+  - **The cap** is the level's own `rounds` in the run's task, which is where a level's cap is written (`internal/task`, L1.1's `review_levels`), raised by the mode's rows when they raise it (`config.MaxFirstLineRounds`, `recipe.MaxReviewRounds`, and the adversarial row L2.1 fixed). `diagnose` reads the run's `task.json` for it (`runstore.ReadTask`), the way it already reads the record. **A cap it cannot resolve prints `null`, never a guess** — the run's `task.json` may be gone, and a bar drawn against an invented cap is worse than a bar that says it cannot. The console renders `null` as a bar with no full mark, not as a full one.
+  - The full marks are the level's **cap**, and the bar's own numbers are therefore the same figures `fugaro diagnose` prints; the Run screen adds no arithmetic of its own (every figure goes through `hidesView` and `formatReading`, the rule `docs/console-styling/spec.md` §2.10 states and V1.2's gauge and cap bars are already held to).
+  - **Consumes nothing from the orchestrator's state and nothing from the registry.** A run's review rounds are the run record's own facts; the orchestrator's state says which work item a run belongs to, not how many rounds it spent, and no config leaf decides what the bar draws — the cap is the run's own resolved task, recorded at launch. This task adds no registry row and reads none.
+- **Tests:** `run: iterations bar per level`, `run: a level with no resolvable cap draws no full mark`, `diagnose: each level's rounds and cap`, `diagnose: an absent task.json prints a null cap`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Diagnose|Docs' -count=1`, then `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 run`.
-- **Depends on:** L4.1, L4.2, G1.1, V1.2, T1.2 and J1.3 (the same stylesheet, styling doc, `schema.ts` and contract, at earlier levels).
+- **Depends on:** L4.1 (the tier the bar reads), L4.2 (the levels a run actually runs), G1.1 and V1.2 (the same stylesheet, styling doc and `RECORD_KEYS`). **No edge to T1.2 or J1.3** (closed 2026-11-16): both were file-conflict edges against `console/docs/json-contract.md`, `console/src/shared/schema.ts` and `docs/console-styling/spec.md`, and with both gone this task is their only writer at its level.
 - **Red step:** the bar is absent.
 - **Commit:** `console: the run's review rounds against their caps`.
 
 ### X1 Checks 270–272, written into the register
 
-- **Files:** `docs/gcp-live-checklist.md`.
+**Re-planned 2026-11-21 (the owner's instruction) and NOT APPROVED: it waits on the owner's review of this re-plan before anything launches from it.** The task keeps its slot, its file and its three check numbers. Two of the three checks are re-worded against the console and the app as built; the third is unchanged. It is still **OWNER-RUN** and still writes nothing until its three dependencies are built.
+
+- **Files:** `docs/gcp-live-checklist.md` (the one writer of that file at this task's level; no other task in this plan writes it now that X2 is closed).
 - **The checks:**
-  - **270:** a Critical run on the sandbox repository whose L3 rejects once. The PR body shows L2's head older than L3's, and `result.json` records tiers `first`, `senior` and `adversarial`.
-  - **271:** a console crash, forced with a debug build's test trigger, arrives at the processor with type and frames only. With `crash_reports: false`, none arrives.
-  - **272:** the same for the app on a development build, before sign-in and after sign-in with the switch off.
+  - **270 (unchanged):** a Critical run on the sandbox repository whose L3 rejects once. The PR body shows L2's head older than L3's, and `result.json` records tiers `first`, `senior` and `adversarial`. Its subject is L4.2, which is merged; the run is started with `fugaro run` on the sandbox repository, not through the orchestrator — **this plan's checks launch no orchestrator task**, and the orchestrator's launcher is measured by its own block (Checks 300–305).
+  - **271 (re-worded 2026-11-21):** a console crash, forced with a debug build's test trigger, arrives at the processor with type and frames only. **With the console's own switch off — the per-user `<userData>/crash.json` absent, or the menu item turned off — none arrives.** The old wording said `crash_reports: false`, which was T1.2's `project show --json` field; both it and T1.1's node are closed, and what shipped is the owner's ruling of 2026-10-31 (per-user, on when the file says so, off when it is absent). [Evidence, command by command](x1-blocked.md).
+  - **272 (re-worded 2026-11-21):** the same for the app on a development build — **before pairing (no session, so no policy), and after pairing with the project policy's `mobile.crash_reports` published as `false`**. Unsent reports are deleted in both states (U2). The old wording said "the switch off" without saying which switch; the switch is T3.1's as re-planned, and 271 and 272 now name their own carriers rather than sharing one phrase.
 - All three are **OWNER-RUN, NOT RUN**.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
-- **Depends on:** L4.2, T2.1, T3.1. #620, which is open and edits the same register, merges or rebases first.
+- **Depends on:** L4.2 (Check 270's subject, merged), T2.1 (Check 271's), T3.1 (Check 272's, as re-planned). #620, which was open on 2026-10-30 and edits the same register, merges or rebases first — **the re-plan leaves that edge as it found it rather than assuming a merge it did not verify.**
 - **Red step:** none. It is a register entry, and the Go docs tests check the register's format and numbers.
 - **Commit:** `checklist: checks 270-272 for review levels and crash reports`.
-- **Blocked (2026-11-15): T3.1 is not built.** L4.2 and T2.1 are on `main` and T3.1 is not, so no row and no section were written into `docs/gcp-live-checklist.md` and 270–273 stay unused. **Read 271's `crash_reports: false` against the console as built**: it is T2.1 as this block describes it, and what shipped is the owner's ruling of 2026-10-31 — the console's own per-user `<userData>/crash.json`, off when it is absent. [Evidence, command by command](x1-blocked.md).
+- **Blocked (2026-11-15), and what the re-plan changes about it: T3.1 is not built.** L4.2 is on `main`; T2.1 is a draft and T3.1 is not built, so no row and no section were written into `docs/gcp-live-checklist.md` and 270–272 stay unused. The re-plan removes the reason that is *this* plan's: what blocked the wording was T3.1 reading a closed node and 271 naming a closed task's field, both of which now have a carrier that exists. What remains is build order, not a re-plan: run X1 after T2.1 and T3.1 land.
 
-### X2 Check 273, written into the register
+### X2 Check 273: CLOSED 2026-11-21, with nothing written and nothing run
 
-- **Files:** `docs/gcp-live-checklist.md`.
-- **The check:** **273:** `/jobmax` on a sandbox plan launches only tasks whose dependencies are merged, stops at a cap, and prints what it launched. **OWNER-RUN, NOT RUN**.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
-- **Depends on:** J1.2, and X1 (the same register).
-- **Red step:** as X1.
-- **Commit:** `checklist: check 273 for /jobmax`.
+**Closed by this re-plan, on the owner's instruction of 2026-11-21. X2 disappears as a task.** Its text is kept below as the record.
+
+- **What Check 273 would have measured:** `/jobmax` on a sandbox plan launches only tasks whose dependencies are merged, stops at a cap, and prints what it launched — J1.2's skill, which the owner's ruling of 2026-11-16 closed as superseded. No task in this plan builds `/jobmax`: J1.2 and J1.3 are closed, and no `jobmax.auto_launch` key is read anywhere.
+- **Nothing measured it, and there is nothing to amend.** Read in the register on 2026-11-21, `docs/gcp-live-checklist.md` carries **no `## Check 273` section and no row for 270–273**: the only occurrence of the number is the console-coordinator-v2 paragraph that reads this plan's checks row to justify taking Check 290 for itself, and that paragraph is another work's record of how it picked its number (a dated record this re-plan does not rewrite). So the close is a record here, not an edit there: **X2's `Files` line (`docs/gcp-live-checklist.md`) has nothing to write**, and this re-plan does not add a register row for a check nobody will run.
+- **What it closes: G9, the `/jobmax` guardrail** — its every pin is now closed (J1.2, J1.3 and Check 273). The behaviour G9 describes is the orchestrator's, merged and in code: `docs/stateless-orchestrator/implementation-plan.md` **O6**, "The dependency-driven launcher: intent-first claims, caps, running cap and breaker" (merged, `6145e445`, #1950), whose constraints are that work's **G4** (one approval covers one item's first attempt and at most one automatic retry of the same approved spec, and caps per cycle, hour, day, running and per minute are code) and **G5** (the intent is committed before the launch, and the per-run-id claim is the concurrency fence). Its pins are that work's tests — `TestSpawnNeverLeavesTheApprovedItem`, `TestCapsStopALoop`, `TestCapsSurviveARestart`, `TestOneAutomaticRetryUnderTheSameApproval`, `TestRecoveryReissuesUnderTheRecordedRunID` — and the live half is that work's own owner-run **Check 302** (O11's cutover: start the daemon, see one launch through it), which is not rerun here and is not this work's.
+- **The decision it settles: D730** ("fully automatic `/jobmax`", taken against the recommendation on 2026-10-30) is answered by **non-implementation**. The automatic launcher is the orchestrator's, and it is automatic under a *person's* per-item approval rather than under a project opt-in: the owner's ruling of 2026-11-04 gives one approval the first attempt plus at most one retry of that same approved spec, and a second failure needs a new approval. What D730's opt-in would have gated — an unattended launch with nobody having approved the item — is not built, and nothing reads a `jobmax` key.
+- **The check number:** **273 stays this work's and unused.** A number, once reserved, is never reused or renumbered (the register's own rule), so this work now holds **270–289** as: **270–272** written by X1 (not yet run), and **273–289** reserved and unused. 273 is unused because its subject was retired, not because it was reassigned.
+- **Commit:** none — the close is this plan's own text, and no register row is written.
+
+## The re-plan of 2026-11-21: T3.1, V1.3, X1, and the close of X2
+
+**Written for the owner's review. Nothing here is approved, no task launches from it, and the plan's status stays
+"waiting on a re-plan" until the owner answers it.** The re-plan was asked for in one sentence: write T3.1, V1.3 and
+X1 against the orchestrator and the config-ownership registry, and close X2. What follows is the pass behind the
+three task sections above.
+
+**What the two carriers are, in the terms the tasks use.** The **orchestrator** (`docs/stateless-orchestrator/`) is
+the thing that replaces `/jobmax`: it holds a project's work items in its own state (`orchestrator/<id>` in the
+installation's database, siblings `state`, `lease` and `audit`), and its launcher (**O6**, merged) starts a run only
+for an item a person approved. The **config-ownership registry** (`docs/config-ownership/`, `internal/settings/registry.go`)
+is the rule for where a value lives: one writer per field; a scalar leaf with no invariant goes through generic
+`fugaro settings`; a value with a publish step, a secret, a multi-part list or a reader outside the CLI takes a
+**typed carrier** and a semantic command.
+
+**What each re-planned task consumes from them, plainly:**
+
+| Task | From the orchestrator's state | From the registry |
+| --- | --- | --- |
+| T3.1 | **nothing** — no switch here is an orchestrator fact, and nothing reads `orchestrator/state`; the phone's running-jobs view is mobile-identity-pairing J2's read, not this task's | **one rule**, no row: an owner-only value a client outside the CLI reads takes a typed publisher with one writer, so the switch joins the published project policy's `mobile` block rather than a `settings` node (which does not exist) or a generic leaf (which no phone can reach) |
+| V1.3 | **nothing** — a run's review rounds are the run record's own facts; the orchestrator says which work item a run belongs to, not how many rounds it spent | **nothing** — the cap is the run's own resolved task, recorded at launch; this task adds no row and reads none |
+| X1 | **nothing directly** — its three checks launch runs with `fugaro run`, and the orchestrator's launcher is measured by that work's own Checks 300–305 | **nothing** — a check writes prose into the register |
+| X2 | **the behaviour it would have measured, which is O6's** | none |
+
+**Where a task disappears or merges into another spec's task, named:**
+
+- **J1.2 and J1.3** (both closed 2026-11-16) merge into **`docs/stateless-orchestrator/` O6 and O10**: O6 is the
+  dependency-driven launcher, and O10 is the plugin skill and the shared session-start hook slot — the slot a
+  `/jobmax` skill would have occupied. Neither this plan nor its tasks re-implements any of it.
+- **T1.1, T1.2 and T1.3** (closed 2026-11-16) merge into **the carriers that already exist**: T3.1's switch onto the
+  published project policy's `mobile` block (below), and the console's onto its own per-user `<userData>/crash.json`
+  (T2.1, as shipped under the owner's ruling of 2026-10-31). **No `settings` node is built by anyone**: with J1.3
+  gone it had one tenant left, and the registry's rule puts that tenant on a block that is already published.
+- **X2 disappears** as a task: **Check 273 is closed with nothing written and nothing run** (the section above), and
+  G9 is retired — its behaviour is **O6**'s, under that work's **G4** and **G5**.
+
+**The contract-first pass, edge by edge.** Every edge the re-plan touches was asked one question: can a small
+contract break it, so the two sides stop waiting for each other?
+
+- **`T1.2, J1.3 → V1.3` — broken by removal, not by a contract.** Both edges existed only because three files have
+  several writers (`console/docs/json-contract.md`, `console/src/shared/schema.ts`, `docs/console-styling/spec.md`),
+  and neither task's *work* was V1.3's input. With both closed, V1.3 is the only writer of those files at its level,
+  and it waits on L4.1 and L4.2 — which it genuinely consumes, because the tier and the rounds are what it draws.
+- **`T1.1 → T3.1` — broken, and the replacement is a real contract.** The old edge said the app waits for the node
+  it reads. The re-plan splits that work at the one place a stub is honest: **the switch's wire name and the closed
+  session field list are the contract** (`mobile.crash_reports` in the policy block → `crash_reports` in
+  `SESSION_POLICY_FIELDS`, both validated by `shared/mobile-session/port.js`'s own checks). So the Go half (the
+  member, its default and the session field) and the app half (`mobile/src/telemetry/`) can be built against the
+  port's existing refusal codes rather than against each other's code, and only the integration check — the app
+  reading a real session policy — is one task's. **This is an intra-task decoupling, not a broken edge:** the re-plan
+  keeps one task rather than inventing two, because both halves are small and one PR per policy member is the shape
+  P6 used.
+- **`L4.2 → X1`, `T2.1 → X1`, `T3.1 → X1` — kept.** No contract can break them: a live check reads a shipped build.
+- **`L4.1, L4.2 → V1.3` — kept.** V1.3 draws the tier and the round L4.1 records, and reads levels L4.2 runs. A stub
+  could not break this without the bar showing a figure the run did not produce.
+- **`#620 → X1` — kept as found.** The in-flight table says that pull request was open on 2026-10-30 and edits the
+  same register. The re-plan did not verify a merge, so the edge stays.
+
+**The edges as drawn** (only these; the full list is under Parallel execution): `T0.1 → T3.1` and, externally, the
+published `mobile` block (P6, merged) and the app's pairing (C1/M3, merged) `→ T3.1 → T3.2`; `T0.1, T3.1 → T2.1`
+(O4's processor name is a gate, not a task); `L4.1, L4.2, G1.1, V1.2 → V1.3`; `L4.2, T2.1, T3.1 [#620] → X1`.
+
+**The one new decision: D738, and it is mostly a record.** D734's answer of 2026-10-30 already says where the app's
+switch is read — **the pairing-delivered configuration** — so the carrier was never T1.1's `settings` node: it was
+T1.2's `project show --json` field that the closed chain put in front of it, and the session is what D734 names. What
+D738 fixes is the rest of the sentence: the switch is the published policy's **`mobile.crash_reports`**, delivered as
+`crash_reports` in `SESSION_POLICY_FIELDS`, with absence reading **off** rather than as the default on. The one
+alternative — a **per-device switch in the app's own prefs**, mirroring the console's shipped per-user
+`<userData>/crash.json` — is recorded as a **reversal of D734**, not as an equally good reading, and the recommendation
+is the policy member. **If the owner reverses it, that is the review's one change to this re-plan**, and it also
+rewrites O2's draft Terms sentence (below). It is written up in [reconciliation.md](reconciliation.md), where the
+first unused number of this work's reserved block (D738) is now taken for it.
+
+**The plan carries no graph artifact, so there is none to re-plan.** `fugaro plan graph --plan
+docs/review-levels-ab-jobmax/implementation-plan.md` refuses with "no graph artifact here; a plan's graph is written
+beside it as `<plan>.graph.json`" — this plan never had one, so the edges, the levels table, the critical path and the
+shared-files table above are the plan's graph of record, and this re-plan updated them in place rather than in an
+artifact beside them. **A future task that wants the artifact would write one, not this re-plan**: it would be a new
+`schema_version: 3` document with a node per task and the footprints the tasks predict, and inventing it here would
+put a second, unchecked description of the graph next to the one the plan already keeps.
+
+**What this re-plan does not decide.** T2.1's own re-wording (its decode of T1.3's argv, superseded) — noted in its
+section, for the owner to fold into this review. L4.4, L4.5b and L5.1's own edges, which the re-plan leaves as they
+are. And every check number below 270, which is not this work's.
 
 ## Parallel execution
 
@@ -587,36 +698,43 @@ among a task's internal dependencies):
 - B1.1 [A3.3] → B1.4
 - B1.1, L4.2 [A5.2] → B1.2
 - B1.2, B1.4 [A4.3, A5.4] → B1.3
-- L1.4 → T1.1 → T1.2 → T1.3
-- V1.1 → T1.2
-- T1.1, T1.2 → J1.3
-- J1.1, J1.3 → J1.2
+- ~~L1.4 → T1.1 → T1.2 → T1.3~~ (all three closed 2026-11-16 as superseded; the `settings` node is built by nobody)
+- ~~V1.1 → T1.2~~ (closed)
+- ~~T1.1, T1.2 → J1.3~~ (closed; merges into docs/stateless-orchestrator O10)
+- ~~J1.1, J1.3 → J1.2~~ (closed; the launcher merges into docs/stateless-orchestrator O6)
 - [#1332] → T0.1
-- T0.1, T1.1 [#1332, app sign-in] → T3.1 → T3.2
-- T1.3, T0.1, T3.1 [O4] → T2.1 → T2.2
+- T0.1 [#1332, the published `mobile` block (P6, merged), the app's pairing (C1/M3, merged)] → T3.1 → T3.2
+- T0.1, T3.1 [O4] → T2.1 → T2.2
 - [console redesign steps 5–7] → G1.1
 - V1.1, G1.1 → V1.2
-- L4.1, L4.2, G1.1, V1.2, T1.2, J1.3 → V1.3
+- L4.1, L4.2, G1.1, V1.2 → V1.3 (T1.2 and J1.3 dropped: closed 2026-11-16, file-conflict edges only)
 - L4.2, T2.1, T3.1 [#620] → X1
-- J1.2, X1 → X2
+- ~~J1.2, X1 → X2~~ (X2 closed 2026-11-21: Check 273 was never measured and nothing is written for it)
 
 **Levels:**
 
 | Level | Tasks |
 | --- | --- |
 | 0 | L0.1, L1.4, L2.1, L2.2, L4.1, L5.2, J1.1, T0.1, G1.1, V1.1 |
-| 1 | L1.1, T1.1, V1.2 |
-| 2 | L1.2, L1.3, L4.3, T1.2, T3.1 |
-| 3 | L3.1, L4.4, B1.1, J1.3, T1.3, T3.2 |
-| 4 | L3.2, L4.5, L4.5b, B1.4, J1.2, T2.1 |
-| 5 | L4.2, T2.2 |
+| 1 | L1.1, V1.2, T3.1 |
+| 2 | L1.2, L1.3, L4.3, T3.2, T2.1 |
+| 3 | L3.1, L4.4, B1.1, T2.2 |
+| 4 | L3.2, L4.5, L4.5b, B1.4 |
+| 5 | L4.2 |
 | 6 | L5.1, B1.2, V1.3, X1 |
-| 7 | B1.3, X2 |
+
+*(Re-planned 2026-11-21. T1.1–T1.3 and J1.2–J1.3 are out of the table: closed 2026-11-16. X2 is out: closed. T3.1
+falls from 2 to 1 and T3.2 from 3 to 2, because T3.1's only remaining internal edge is T0.1 and the two things it
+needs from elsewhere — the published `mobile` block and the app's pairing — are merged; T2.1 falls from 4 to 2 and
+T2.2 from 5 to 3, because T2.1's T1.3 edge is gone (T1.3 is closed, and the console's switch shipped as the per-user
+file). X1 stays at 6: L4.2 is level 5, and T2.1 and T3.1 are below it now. Level 7 is empty and is not listed.)*
 
 **Critical path (inside this plan):** for the review levels, L0.1 → L1.1 → L1.3 → L3.1 → L4.5 → L4.2 → L5.1 / X1,
 seven tasks. It starts at once; L4.2 also waits until no other run writes `internal/runner/runner.go`. The longest chain
 overall is eight tasks, L0.1 → L1.1 → L1.3 → L3.1 → L4.5 → L4.2 → B1.2 → B1.3, and it also waits for the A/B plan's
 A3.3 and A5.x. Slices G and V are off the critical path. The console's T2.1 waits on the processor's name (O4).
+**Unchanged by the 2026-11-21 re-plan, and the re-plan shortens nothing on it**: T3.1, V1.3 and X1 were never on the
+critical path, and X2's close removes its deepest level (7) rather than a task from the path.
 
 **What must be sequential and why:**
 
@@ -625,10 +743,11 @@ A3.3 and A5.x. Slices G and V are off the critical path. The console's T2.1 wait
 - L3.1 after L1.1, L1.3, L1.4 and L2.2: it consumes the settings and the defaults, and applies the floor.
 - L3.2 after L5.2: this repository's own configuration must pass the check L3.2 ships.
 - L4.5, L4.5b and L4.2 after L3.1: they consume the resolved levels, and L4.2 routes through L4.5.
-- T1.1 after L1.4, then T1.2, then J1.3 and T1.3: the same `localcfg.go`, `project_cmd.go` and contract; T1.3 allow-lists what T1.2 prints.
+- ~~T1.1 after L1.4, then T1.2, then J1.3 and T1.3~~ — closed 2026-11-16; nothing is sequential on that chain now.
 - B1.1 after L1.1, L4.1 and L1.2: the same files.
-- T2.1 after T1.3 and T3.1: the argv it calls, and the same privacy page and test.
-- V1.3 after G1.1, V1.2, T1.2 and J1.3: the same stylesheet, styling doc, `schema.ts` and contract.
+- T2.1 after T3.1 (the same privacy page and test) and T0.1 (the same `desktop-console.md`): **not** after T1.3, which is closed.
+- V1.3 after G1.1, V1.2, L4.1 and L4.2: the same stylesheet, styling doc and `RECORD_KEYS`, and the record's own tier and rounds. **Not** after T1.2 or J1.3, which are closed.
+- T3.1 after T0.1 only, inside this plan: the published `mobile` block and the app's pairing are merged, so the switch's carrier is not a wait.
 
 **Shared-files table** (every file with more than one writer; no level holds two writers of a file, and every
 pair of writers is joined by a dependency path):
@@ -638,41 +757,42 @@ pair of writers is joined by a dependency path):
 | `internal/task/task.go`, `schemas/task.schema.json` | L1.1 (1), B1.1 (3) |
 | `internal/runstore/runstore.go`, `schemas/result.schema.json` | L4.1 (0), B1.1 (3) |
 | `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go` | L2.1 (0), L1.2 (2), B1.1 (3) |
-| `internal/localcfg/localcfg.go` | L1.4 (0), T1.1 (1), J1.3 (3) |
-| `internal/localcfg/shared.go`, `internal/cli/sharedcfg.go` | L1.4 (0), T1.1 (1) |
-| `internal/cli/project_cmd.go` | L1.4 (0), T1.1 (1), T1.2 (2), J1.3 (3) |
-| `internal/cli/project_enroll_test.go` | T1.2 (2), J1.3 (3) |
 | `internal/cli/run.go`, `internal/cli/run_review_test.go` | L1.2 (2), L3.2 (4) |
 | `internal/runner/runner.go` | L4.2 (5), B1.2 (6) |
 | `docs/recipes.md` | L2.1 (0), L5.1 (6) |
-| `plugin/skills/parallelism/SKILL.md` | J1.1 (0), J1.2 (4) |
 | `plugin/skills/working/SKILL.md` | J1.1 (0), L5.1 (6) |
-| `docs/gcp-live-checklist.md` | X1 (6), X2 (7) |
-| `docs/desktop-console/spec.md` | T0.1 (0), T1.3 (3), T2.1 (4), T2.2 (5) |
-| `docs/mobile/implementation-plan.md` | T0.1 (0), T3.2 (3) |
-| `console/docs/json-contract.md` | V1.1 (0), T1.2 (2), J1.3 (3), V1.3 (6) |
+| `docs/gcp-live-checklist.md` | X1 (6) — **one writer now: X2 is closed, and it wrote nothing** |
+| `docs/desktop-console/spec.md` | T0.1 (0), T2.1 (2), T2.2 (3) |
+| `docs/mobile/implementation-plan.md` | T0.1 (0), T3.2 (2) |
+| `console/docs/json-contract.md` | V1.1 (0), V1.3 (6) |
 | `console/src/shared/schema.ts` | V1.2 (1), V1.3 (6) |
 | `docs/console-styling/spec.md` | G1.1 (0), V1.2 (1), V1.3 (6) |
 | `console/src/renderer/theme/screens.css` | G1.1 (0), V1.3 (6) |
-| `website/src/pages/privacy.astro`, `website/test/privacy.mjs` | T3.1 (2), T2.1 (4) |
+| `website/src/pages/privacy.astro`, `website/test/privacy.mjs` | T3.1 (1), T2.1 (2) |
+| `internal/projectpolicy/mobile.go`, `internal/projectpolicy/mobile_test.go` | T3.1 (1), P6 (merged) — **the re-plan adds T3.1 as a writer of an already-merged file**, which the graph does not model |
 | the CLI release's notes (`docs/releases/`) | L1.2 (2), L3.2 (4), L5.1 (6) |
 
-Every other file in the plan has one writer.
+Every other file in the plan has one writer. **Re-planned 2026-11-21:** the `localcfg`, `sharedcfg` and `project_cmd.go`
+rows leave the table with T1.1–T1.3 and J1.3 (closed; L1.4 is their only remaining writer), `plugin/skills/parallelism/SKILL.md`
+leaves it with J1.2 (J1.1's alone), and `console/docs/json-contract.md` and `console/src/shared/schema.ts` keep two
+writers each with V1.3 as the later one.
 
 ## Check numbers this plan takes
 
 | Check | What it measures | Who runs it |
 | --- | --- | --- |
 | 270 | A Critical run's L3 bounce skips L2, readiness follows the highest level, and the PR body shows each level's head | the owner, on the sandbox installation; NOT RUN |
-| 271 | The console's crash report holds type and frames only, and none is sent with the switch off | the owner; NOT RUN |
-| 272 | The app sends none before sign-in or with the switch off, and type and frames only otherwise | the owner, on a development build; NOT RUN |
-| 273 | `/jobmax` on a sandbox plan launches only tasks whose dependencies are merged, stops at a cap, and prints what it launched | the owner; NOT RUN (written by X2) |
+| 271 | The console's crash report holds type and frames only, and none is sent with the console's own per-user switch off (the file absent, or the menu item off) | the owner; NOT RUN |
+| 272 | The app sends none before pairing or with `mobile.crash_reports` published as false, and type and frames only otherwise | the owner, on a development build; NOT RUN |
+| ~~273~~ | ~~`/jobmax` on a sandbox plan launches only tasks whose dependencies are merged, stops at a cap, and prints what it launched~~ — **CLOSED 2026-11-21: never measured, nothing written, and its subject is retired with J1.2. The behaviour is docs/stateless-orchestrator O6's, under that work's G4 and G5, and its live half is that work's Check 302** | the owner; NOT RUN, and never will be (X2 closed) |
 
-Checks 274–289 stay reserved and unused.
+Checks 274–289 stay reserved and unused, and **273 joins them**: it stays this work's and unused, because a number,
+once reserved, is never reused or renumbered. **This work therefore holds 270–289: 270–272 are written by X1 (not yet
+run) and 273–289 are reserved and unused.**
 
 ## After deploy
 
 - **T2.1:** the console's release notes, `### For operators`, name the build-time DSN variable. The owner sets it as a build secret before the release build.
-- **T1.1:** the database rules gain the `settings` entry only when the operator runs `fugaro update`. Until then, the console and the apps read `null` and send nothing.
+- **~~T1.1~~:** struck 2026-11-21 — no `settings` entry is added to the database rules by anyone, because no `settings` node is built. Nothing here waits on a rules change. **T3.1** instead publishes a `mobile` block member, which is carried by the policy publish the operator already runs (`fugaro update` re-publishes it, and a project that has published nothing since the key existed gets the default from `MobileForPublish`); the default is **on** for a block `update`'s publish writes (`DefaultMobile()`), and **a member the published policy does not carry reads as off, not as the default** — the fail-safe D734's G7 and U2 require, and the shape `mobile.enabled` already has (absence answers off, whatever the default is). D731's opt-out is the owner publishing `false`.
 - **Before the 0.16.0 tag:** 0.15.0 shipped without L4.2 — the `adversarial` step parsed but no runner ran it, and `review_levels` decoded but nothing acted on it — so `adversarialSince` moved to 0.16.0 with L4.2, and `reviewLevelsSince` (L1.2's constant, in the tree since L1.2 landed) names 0.16.0. Both must name the release L4.2 actually ships in, so no image accepts a level it does not run.
 - **L1.2:** job images must be refreshed (`fugaro image refresh`) before any launcher sets `--review-levels`. The release's `### For operators` says so.
