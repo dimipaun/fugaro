@@ -564,8 +564,13 @@ func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 	out, _, chainErr := execute(t, ours...)
 	after := readFileString(t, owner)
 	// Nothing the replaced entry carried survives it: not the retired account,
-	// not the account that was still live, not the repository, not the region.
-	for _, gone := range []string{"marker-retired@", "marker-job@", "owner/repo-old", "europe-west1", "exchange.example.com/v1"} {
+	// not the account that was still live, not the repository, not the exchange
+	// URL. The region it recorded does stand, and the assertion below holds it:
+	// LP9 reads it from the member's own database, this declaration derives none
+	// (the fixture's member config writes no budget.rtdb_url), and a job account
+	// added on a machine that cannot see where the member's database is must not
+	// move where the workspace's service reads it (D3084).
+	for _, gone := range []string{"marker-retired@", "marker-job@", "owner/repo-old", "exchange.example.com/v1"} {
 		if strings.Contains(after, gone) {
 			t.Errorf("the replaced entry still carries %q:\n%s", gone, after)
 		}
@@ -588,6 +593,9 @@ func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 	}
 	if got.ExchangeURL != "https://exchange.example.com/v2" {
 		t.Errorf("exchange URL = %q, want the one the declaration named", got.ExchangeURL)
+	}
+	if got.DatabaseRegion != "europe-west1" {
+		t.Errorf("database region = %q, want europe-west1, the region the entry already recorded", got.DatabaseRegion)
 	}
 	// The confirmation says which of the two it is doing, because the sentence
 	// the owner reads is what tells them the old account is going: a merge that

@@ -425,6 +425,60 @@ func TestDocsCheck195IsRegistered(t *testing.T) {
 	}
 }
 
+// TestDocsCheck196IsRegistered: B4.7 writes Check 196, S4's own reading — a
+// GitHub and a Bitbucket sandbox repository whose image build and daily image
+// check bake with a credential the service served, the boundary the service's
+// own policy draws around whose build may call it, and the flip measured by the
+// same script's `--after-flip` — and the register carries both halves of its
+// registration, in the pairing TestDocsCheck190IsRegistered and
+// TestDocsCheck195IsRegistered pin: a `| 196 |` row in the summary table and a
+// `## Check 196:` section below it. A row without its section is a promise of
+// steps that are not written, and a section without its row is a check nothing
+// points at. The section says four things a reader needs and cannot infer: the
+// check is **NOT RUN** (the owner runs it in B4.8, and again in B4.10 after the
+// flip), no agent runs any step of it, the owner's own steps are in the work's
+// own file rather than in the register, and it has two halves — one script, one
+// `--after-flip` — because a section that named only the first would read as a
+// check the flip is not measured by. A FAIL stops S4 and returns to the owner
+// as a decision, which is what B4.8's own row in the plan says of it.
+func TestDocsCheck196IsRegistered(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	if !regexp.MustCompile(`(?m)^\|\s*196\s*\|`).MatchString(register) {
+		t.Errorf("%s's register has no `| 196 |` row: Check 196 is written below it, and the table is where a reader finds it", liveChecksDoc)
+	}
+	heading := "\n## Check 196:"
+	i := strings.Index(register, heading)
+	if i < 0 {
+		t.Fatalf("%s has no `## Check 196:` section: the row above points at steps that have to be there", liveChecksDoc)
+	}
+	// Bounded by the next `## ` heading, so a check written after this one does
+	// not widen what is read here.
+	section := register[i+1:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	flat := strings.ToLower(flattenDoc(section))
+	for _, want := range []string{
+		// The banner, before either run of it: nothing has measured S4 yet.
+		"**not run",
+		// The register's own rule for an owner-run check: no agent runs any step
+		// of it, and the text has to say so.
+		"no agent runs any step of it",
+		// Where the owner's own steps live, so the section does not have to carry
+		// them (and cannot drift from them).
+		"secrets-brokering/check196-steps.md",
+		// The second half: one script, and the mode the flip is read by.
+		"check196.sh --after-flip",
+		// The gate: a FAIL here is a decision for the owner and stops S4, which
+		// is the one thing a reader of this row has to know before running it.
+		"stops s4",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check 196's section does not say %q: the check is owner-run, not yet run, its steps are the work's own file, its second half is the --after-flip mode, and a FAIL stops S4 — a section that leaves any of them out reads as something an agent did, or as a check the flip is not measured by", want)
+		}
+	}
+}
+
 // TestDocsCheck193IsRegistered: B2.5 writes Check 193, S2's own reading — an
 // `api-key` and an `oauth` repository through the credentials service, and the
 // flip measured by the same script's `--after-flip` — and the register carries

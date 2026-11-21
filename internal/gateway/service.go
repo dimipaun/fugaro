@@ -159,6 +159,22 @@ const (
 	// detail, which the agent reads: the set of the project's credentials is
 	// not the agent's business (D143).
 	ErrorNoCandidateCredentials = "no_candidate_credentials"
+	// ErrorRepositoryNotListed is the workspace's own refusal of a call from a
+	// repository its member row does not name (R19): the workspace's record of
+	// a job account carries the repositories that account serves (D2992, R6),
+	// and a run whose repository is not in that list cannot be served from the
+	// workspace's credentials at all. A refusal, so the run halts (D143), and
+	// the halt's detail names the workspace owner's own fix.
+	//
+	// It is written by the workspace's scope — the Scope C1 declares and
+	// internal/credsvc (WS2) implements, told apart from the member's own
+	// service by WorkspaceModeEnv and nothing else — and it is mirrored here
+	// the way every other type of this contract is, because this package
+	// cannot import the service's half (the header comment above says why). A
+	// scope that spelled it otherwise would halt a run with the
+	// unreadable-answer sentence instead of the one that names the fix, so
+	// TestAnUnlistedRepositoryHaltsNamingTheFix holds the spelling.
+	ErrorRepositoryNotListed = "repository_not_listed"
 )
 
 // Why a credential was not used, in a refusal's tried list
@@ -1020,6 +1036,13 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// as it always did. The run is not stopped by it either: another
 		// credential, or a person, may be what fixes it.
 		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && !modelErrorEnvelope(head) {
+			// Which of the two services answered decides which grant the
+			// detail names: the member's own job on its own project's service,
+			// or the same job on the workspace's, where only the workspace
+			// owner's own `fugaro update` can grant it (R16).
+			if s.wsModel {
+				return haltOn(stateDetailUnadmittedWorkspace), true, "", nil
+			}
 			return haltOn(stateDetailUnadmitted), true, "", nil
 		}
 		return resp.StatusCode, false, "", nil // a model error the service relayed
@@ -1064,6 +1087,13 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// running run. The detail says so, because the service's own sentence
 		// never reaches the agent (D143): without it the operator reads a
 		// detail about a broken service instead of the missing allow-list.
+		return haltOn(refusalDetail(e.Error)), true, "", nil
+	case ErrorRepositoryNotListed:
+		// R19: the workspace's scope, refusing a repository its own record of
+		// the calling job account does not name. The detail names the
+		// workspace owner's own step, as the platform's 403 above does and for
+		// the same reason: nothing on this side of the workspace can add a
+		// repository to that list.
 		return haltOn(refusalDetail(e.Error)), true, "", nil
 	case ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity:
 		return haltOn(refusalDetail(e.Error)), true, "", nil
@@ -1116,6 +1146,22 @@ const (
 	// identity on: the run's own token, or the Google ID token the metadata
 	// server mints. Nothing was sent.
 	stateDetailUnidentified = "this job could not present its identity to the credentials service (the metadata server or the run's own identity was not available)"
+	// stateDetailUnadmittedWorkspace is stateDetailUnadmitted for a run whose
+	// model calls go to the workspace's credentials service (R16): the
+	// platform's own front door refuses every call this job makes, which is a
+	// job the workspace has not granted run.invoker yet — the expected state of
+	// a member that has just added a repository, because its own `fugaro update`
+	// publishes the route that sends the repository here and the workspace
+	// owner's has not admitted the repository's job (F17). It is not waited for:
+	// every later call would be refused the same way. The sentence names the
+	// owner's step rather than the operator's own, because the member's operator
+	// cannot grant it: the workspace's project is not theirs.
+	stateDetailUnadmittedWorkspace = "the workspace's credentials service refused this job's call: this repository's job is not granted on it yet, and the workspace owner's own 'fugaro update' in the workspace's project is what grants it (nothing this run or its own repository's operator does reaches that project)"
+	// workspaceNotListedDetail is R19's halt: the workspace's scope refuses a
+	// repository its own record of the calling job account does not name. Like
+	// stateDetailUnadmittedWorkspace it names the workspace owner's own step,
+	// which is the one thing that adds a repository to that list.
+	workspaceNotListedDetail = "the workspace's credentials service does not serve this repository (repository_not_listed): the workspace's record of this job account does not name it, and the workspace owner's own 'fugaro update' in the workspace's project is what adds it"
 )
 
 // refusalDetail is the detail for a typed refusal the run cannot be served
@@ -1152,6 +1198,8 @@ func refusalDetail(typ string) string {
 		// refuses the call (R11, D3003), so the reader is sent to the
 		// allowance and never to a key.
 		return "the credentials service refused this provider call (provider_not_allowed: check the project's published allowance and this repository's own admission)"
+	case ErrorRepositoryNotListed:
+		return workspaceNotListedDetail
 	}
 	return stateDetailUnreadable
 }

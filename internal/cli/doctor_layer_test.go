@@ -1105,3 +1105,116 @@ func TestPrebuiltEntrySmokedReportsInDoctor(t *testing.T) {
 		}
 	})
 }
+
+// TestLayerRigorRepoAdmissionCheck is the judgement the layer's rigor names get
+// from the published allow-list (LD4): a name the node admits is silent, and a
+// name it cannot admit is the warning whose sentence says what the level
+// written for it decides (nothing — the run is refused before it starts) and
+// whose fix says how to enroll the repository.
+//
+// The provider is the whole shape of the check. A name this machine's config
+// records is judged as the canonical repository its runs carry (Canonical with
+// the recorded provider), so an allow-list that admits the name under another
+// provider still warns — which is the case the check exists for on the machine
+// that launches the runs. A name this machine does not know is judged by
+// whether any entry could admit it at all, dropping each entry's provider
+// segment, because the only thing that decides the provider is the
+// repository's own fugaro.yaml and doctor does not read it for a question about
+// the project's policy. And a name the layer's own validation would have
+// refused is refused here too rather than reported as admitted: a hand-built
+// layer reaches this function, and no allow-list admits a string that is not a
+// repository.
+func TestLayerRigorRepoAdmissionCheck(t *testing.T) {
+	machine := &localcfg.Config{Repos: map[string]localcfg.Repo{
+		"acme/app":        {Provider: "github"},
+		"acme/legacy-api": {Provider: "bitbucket"},
+	}}
+	cases := []struct {
+		name  string
+		lc    *localcfg.Config
+		allow []string
+		names []string
+		want  []string // the names the check must report, in their order
+	}{
+		{"a layer that names no repository at all", machine, []string{"github/acme/app"}, nil, nil},
+		{"a name the machine's provider admits", machine, []string{"github/acme/app"}, []string{"acme/app"}, nil},
+		{"a name under the machine's other provider", machine, []string{"github/acme/*"}, []string{"acme/app", "acme/legacy-api"}, []string{"acme/legacy-api"}},
+		{"a name no entry admits at all", machine, []string{"github/other/app"}, []string{"acme/app"}, []string{"acme/app"}},
+		{"the every-repository entry", machine, []string{"*"}, []string{"acme/app", "acme/legacy-api"}, nil},
+		{"a name the machine does not know, which some entry would admit", machine, []string{"github/acme/*"}, []string{"acme/other"}, nil},
+		{"a name the machine does not know, which no entry would", machine, []string{"github/other/*"}, []string{"acme/other"}, []string{"acme/other"}},
+		{"a nested repository, segment against segment", machine, []string{"github/acme/group/*"}, []string{"acme/group/app"}, nil},
+		{"no machine config to ask, so a provider-qualified entry decides", nil, []string{"github/acme/app"}, []string{"acme/app"}, nil},
+		{"no machine config, and no entry admits the name", nil, []string{"github/other/app"}, []string{"acme/app"}, []string{"acme/app"}},
+		{"a pattern that admits nothing of the name", machine, []string{"github/acme/app"}, []string{"acme/apps"}, []string{"acme/apps"}},
+		{"a name that is no repository at all", machine, []string{"*"}, []string{"acme/app/../etc"}, []string{"acme/app/../etc"}},
+	}
+	for _, c := range cases {
+		got := layerRigorRepoAdmissionCheck(c.lc, c.names, &projectpolicy.Policy{AllowRepos: c.allow})
+		if len(c.want) == 0 {
+			if got != nil {
+				t.Errorf("%s: check = %+v; want none", c.name, got)
+			}
+			continue
+		}
+		if got == nil {
+			t.Fatalf("%s: no check; want %v refused", c.name, c.want)
+		}
+		if got.ID != "layer-rigor-repo-unadmitted" || got.Severity != "warning" {
+			t.Errorf("%s: check = %+v; want the layer-rigor-repo-unadmitted warning", c.name, got)
+		}
+		// The sentence carries the names and the list they were judged
+		// against, and only the refused ones: a name the node admits must not
+		// appear as one to fix.
+		wantList := strings.Join(c.want, ", ")
+		if !strings.Contains(got.Problem, "rigor names "+wantList+", which the policy published at ") {
+			t.Errorf("%s: problem does not list exactly %v: %q", c.name, c.want, got.Problem)
+		}
+		if !strings.Contains(got.Problem, projectpolicy.PathShared()) || !strings.Contains(got.Problem, "refused before it mints a git token") {
+			t.Errorf("%s: problem does not say where the policy is and what a refused run loses: %q", c.name, got.Problem)
+		}
+		// The fix names the first refused repository: the command takes one
+		// name, and it is the one the operator is being sent to enroll.
+		if !strings.Contains(got.Fix, "fugaro project repos add "+c.want[0]) {
+			t.Errorf("%s: fix does not name the enroll command for %s: %q", c.name, c.want[0], got.Fix)
+		}
+	}
+}
+
+// TestDoctorPolicyChecksJudgeTheLayersRigorNames is the same judgement reached
+// the way doctor reaches it: the names travel on the layer doctor read
+// (doctorRoutingLayer.RigorRepos, which doctorRoutingLayerOf fills from the
+// resolved layer) and the policy is the node in force, so the check is emitted
+// beside the other policy findings and under the same read. The rig's policy
+// admits github/acme/app and nothing else, and its config records acme/app
+// under github.
+func TestDoctorPolicyChecksJudgeTheLayersRigorNames(t *testing.T) {
+	r, _ := doctorPolicyRig(t, doctorPolicy(nil), "repos: { acme/app: { provider: github } }\n")
+	lc, err := localcfg.Load(r.cfgPath)
+	if err != nil {
+		t.Fatalf("the config the rig writes is not one an installation could have: %v", err)
+	}
+	ctx := context.Background()
+	// The admitted name is not reported and the one the node cannot admit is:
+	// the area that names it and the level it sets decide nothing.
+	c := layerCheck(doctorPolicyChecks(ctx, lc, doctorRoutingLayer{RigorRepos: []string{"acme/app", "acme/legacy-api"}}), "layer-rigor-repo-unadmitted")
+	if c == nil || c.Severity != "warning" {
+		t.Fatalf("check = %+v; want the warning for acme/legacy-api", c)
+	}
+	if !strings.Contains(c.Problem, "rigor names acme/legacy-api, which the policy published at ") {
+		t.Errorf("the check does not report exactly the refused name: %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "fugaro project repos add acme/legacy-api") {
+		t.Errorf("the check does not name how to enroll it: %q", c.Fix)
+	}
+	// Every name admitted: the layer's rigor decides runs, and doctor says
+	// nothing.
+	if c := layerCheck(doctorPolicyChecks(ctx, lc, doctorRoutingLayer{RigorRepos: []string{"acme/app"}}), "layer-rigor-repo-unadmitted"); c != nil {
+		t.Errorf("the check fired for a name the policy admits: %+v", c)
+	}
+	// And a layer that names no repository — every layer published before LD4 —
+	// is not a layer whose names are all missing.
+	if c := layerCheck(doctorPolicyChecks(ctx, lc, doctorRoutingLayer{}), "layer-rigor-repo-unadmitted"); c != nil {
+		t.Errorf("the check fired for a layer that names no repository: %+v", c)
+	}
+}

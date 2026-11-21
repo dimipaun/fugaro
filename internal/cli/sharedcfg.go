@@ -505,10 +505,15 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	// not be able to point another machine's Batch runs at resources of their
 	// choosing: an image they built, which would run as the installation's own
 	// service account, VMs placed on their network, a job running as their
-	// account, or a job reading a secret out of their project. The values are
-	// the ones the compute root the Batch stage applies creates in the
-	// installation's project (design compute-backend.md §4.4, plan
-	// 2026-10-19-compute-backend.md Task 8 step 2).
+	// account, or a job reading a secret out of their project. The key fact's
+	// version is held here the same way, and its case is the sharpest of them
+	// (R13, D3101): it names the Cloud KMS key a launcher wraps the seal key to,
+	// so a version of the writer's project is every seal key of this
+	// installation wrapped to a key the installation holds no half of. The
+	// values are the ones the
+	// compute root the Batch stage applies creates in the installation's project
+	// (design compute-backend.md §4.4, plan 2026-10-19-compute-backend.md Task 8
+	// step 2).
 	//
 	// What this refuses beyond a foreign image, account and secret: an image
 	// served through the project's own fugaro-ghcr repository, which the
@@ -592,6 +597,21 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 				continue
 			}
 			return bad(f.field, "%q is not this project's resource, %s", f.value, f.want)
+		}
+		// The key fact's version, which is the one resource name of this block
+		// that decides WHO can open a run's budget token: it names the Cloud
+		// KMS key version a launcher wraps the seal key to, so a published
+		// version in another project is every seal key of this installation
+		// wrapped to a key the installation holds no half of (R13, D3101).
+		// The public key beside it is held to its SHAPE by localcfg and to
+		// nothing more here: whether that version exists in that project, and
+		// whether the public key is that version's, are cloud facts, read by
+		// `fugaro doctor` on the machine whose block it is (BR7) and by the
+		// service at release, never by a parse of a name.
+		if b.SealKey != nil {
+			if m := batchResourceProjectRE.FindStringSubmatch(b.SealKey.Version); m == nil || m[1] != a.GCPProject {
+				return bad("batch.seal_key.version", "%q is not this project's key version, projects/%s/locations/<location>/keyRings/<ring>/cryptoKeys/<key>/cryptoKeyVersions/<version>", b.SealKey.Version, a.GCPProject)
+			}
 		}
 		if b.ServiceAccount != "" && !strings.HasSuffix(b.ServiceAccount, "@"+a.GCPProject+".iam.gserviceaccount.com") {
 			return bad("batch.service_account", "%q is not this project's service account, <name>@%s.iam.gserviceaccount.com", b.ServiceAccount, a.GCPProject)
