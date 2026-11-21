@@ -416,6 +416,15 @@ func providerServedEntry(b *Bundle, slug, name string) (Entry, creds.Credential,
 //
 // What it does, in order, and why each step is where it is:
 //
+//   - the CALLER'S CLASS, before anything at all. A review caller is refused the
+//     route whole (spec §2.3, C3.9's variant): its credentials are its account's
+//     own list, resolved by the pairing (candidates reads ClassReview before the
+//     cascade narrows anything, and reviewCandidates offers that one account and
+//     no tier beyond it), so a repository's own named provider entry — the one
+//     credential this route exists to attach — is never a review call's to be
+//     served by. Nothing is read for it, not even the header below: a class the
+//     route does not serve must not reach the policy or the bundle at all, which
+//     is the shape the sign route refuses the other classes with.
 //   - the provider's name, off the call's own header and held to the wire's
 //     shape rule. Nothing is read before it: a call that names no provider is
 //     not a call this route can answer anything about, and the sentence is about
@@ -472,6 +481,16 @@ func providerServedEntry(b *Bundle, slug, name string) (Entry, creds.Credential,
 // (slipRequiresSlip), and a named provider entry is a bundle key of neither
 // (C1's family), like every other entry the bundle itself holds.
 func (s *Server) providerCall(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity, purpose string, req Request) {
+	if id.JobClass == ClassReview {
+		// The class fence above, and it is the FIRST statement for its reason: a
+		// review job runs the same runner as any other and holds the run identity
+		// and the job's own ID token, so it can post here directly (D3003's
+		// hand-built call) — and what it would be handed is the one entry its class
+		// is never served by.
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnverified, ErrorUnverifiedRunIdentity,
+			"the provider route is served to a coding caller's account only: a review caller is served the model path from its own account's list, and a repository's named provider entry is never one of them")
+		return
+	}
 	sc := scopeOfCall(ctx, s)
 	name, why := providerNamed(r)
 	if why != "" {

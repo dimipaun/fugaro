@@ -758,3 +758,110 @@ func TestTheUpstreamIsTheEntrysNotTheCallers(t *testing.T) {
 		})
 	}
 }
+
+// routedReviewSvc is routedSvc's state under a REVIEW-class caller: the same
+// policy, the same bundle and the same repository as every test above, with the
+// verifier and the pairing both admitting the fixture's review job account
+// instead of — beside — the repository's own. The state is deliberately the one
+// the tests above serve calls from, because a class fence can only be read
+// against a call the other classes ARE served: a fixture with nothing to attach
+// would refuse for the wrong reason and look the same.
+func routedReviewSvc(t *testing.T) (*svc, *logBuf) {
+	t.Helper()
+	return auditSvc(t, func(s *svc, cfg *Config) {
+		s.policy.shared = decodeTestPolicy(t, routedPolicyDoc(t,
+			routedBudget(testModel, routedModel, routedOtherModel)))
+		s.src.docs = [][]byte{routedBundleDoc(t)}
+		auth, err := NewAuthenticator(AuthConfig{
+			Project:           testProject,
+			FirebaseProject:   testFirebase,
+			Audience:          testAudience,
+			JobAccounts:       []string{testJobSA},
+			ReviewJobAccounts: []ReviewJobAccount{{Email: testReviewSA, Account: testReviewAccount}},
+			Keys:              s.keys,
+			JobKeys:           s.jobKeys,
+			Outcomes:          RTDBOutcomes{DB: s.db},
+			Now:               func() time.Time { return s.now },
+		})
+		if err != nil {
+			t.Fatalf("the fixture's own verifier configuration is not one NewAuthenticator accepts: %v", err)
+		}
+		cfg.Auth, s.auth = auth, auth
+		cfg.ReviewAccounts = []ReviewJobAccount{{Email: testReviewSA, Account: testReviewAccount}}
+		cfg.Repos = map[string]string{s.slug: testRepo}
+	})
+}
+
+// TestAReviewCallerIsRefusedTheProviderRoute: the class fence this route owes
+// C3.9's review variant, and it is a hand-built call rather than a hypothetical
+// one (D3003): a review job runs the same runner as any other, so it holds its
+// own run identity and the job's own ID token and can post here past its
+// gateway. What it must not reach is this route's whole credential — a
+// repository's own NAMED provider entry — because a review caller is served its
+// account's own list and nothing else (candidates reads ClassReview before the
+// cascade narrows anything, and reviewCandidates offers the pairing's one
+// account and no tier beyond it, so ownNamedEntries is never read for it).
+//
+// The refusal is asserted the way a hand-built one is above: the typed body, no
+// upstream request at all, and exactly one audit line naming no credential —
+// the line a verified caller's refusal owes.
+//
+// The control is the same fixture called by the REPOSITORY class, and it is what
+// makes this about the class: that call goes out to the entry's own address and
+// answers the upstream's 200, so the state has a key to attach and only the
+// caller's class is the reason the review call is refused.
+//
+// Mutation (run, restore): drop the ClassReview arm from providerCall and the
+// review call is forwarded with the repository's own provider key attached,
+// answering 200 where this test wants the refusal.
+func TestAReviewCallerIsRefusedTheProviderRoute(t *testing.T) {
+	s, auditLog := routedReviewSvc(t)
+	resp := s.postTokens(t, ProviderRoutePath, routedCallBody(routedModel), s.reviewRunToken(), s.reviewJobToken(), s.job,
+		routedName(routedProvider))
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the answer: %v", err)
+	}
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the review caller is answered %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	}
+	e := refusal(t, resp.StatusCode, body)
+	if e.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q: the class this route does not serve is the refusal's own type, as it is on the sign route", e.Error, ErrorUnverifiedRunIdentity)
+	}
+	if !strings.Contains(e.Message, "coding caller") {
+		t.Errorf("the refusal is %q, and it has to say which caller this route IS served to: a refusal that names no reason sends the operator to the bundle", e.Message)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Fatalf("the provider saw %d requests, want none: the call was refused before it was forwarded", n)
+	}
+	got := forwardLines(t, auditLog)
+	if len(got) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly 1: %v", len(got), got)
+	}
+	line := got[0]
+	checkAuditShape(t, line)
+	if c := auditField(line, "credential"); c != "" {
+		t.Errorf("the audit line names the credential %q: no credential was chosen and none was read", c)
+	}
+	if v := routedValue(t, testRepoPath, routedProvider); strings.Contains(string(body), v) ||
+		strings.Contains(auditField(line, "msg"), v) {
+		t.Error("the refusal carries the provider key's value")
+	}
+
+	// The control: the same state, the same provider and the same model, called
+	// by the class this route IS served to.
+	t.Run("the coding class is served from the same state", func(t *testing.T) {
+		resp, ans := s.callPath(t, ProviderRoutePath, routedCallBody(routedModel), routedName(routedProvider))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the repository caller is answered %d, want the upstream's 200: %s", resp.StatusCode, ans)
+		}
+		if got := resp.Header.Get(HeaderCredential); got != familyName(t, s.slug, routedProvider) {
+			t.Errorf("%s = %q, want the entry the verified repository and the provider derive %q", HeaderCredential, got, familyName(t, s.slug, routedProvider))
+		}
+		if n := s.up.Count(); n != 1 {
+			t.Errorf("the provider saw %d requests, want exactly the control's one", n)
+		}
+	})
+}
