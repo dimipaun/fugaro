@@ -8,12 +8,13 @@
 // the registration over one account -- plus the vocabulary it renders:
 // `pushScreen` for the two facts it shows (registered or not, and what the
 // switches are), the state and code lists those answers are made of, and
-// `firebaseTokenSource`, which names the Firebase app instance the token is
-// minted on (D259). **That last one is built by the app's entry and not here**:
-// `mobile/index.js` is the only file that may import `@react-native-firebase/*`
-// (`write-path.test.js` rule 5), so it is where the two SDK namespaces and the
-// app name arrive -- and no task has put push on a screen yet, so nothing there
-// builds it today. Until something does, a caller that already has both builds
+// `firebaseTokenSource`, which names the Firebase project the token is minted
+// for (D259) -- the app instance and the sender id, one per platform. **That
+// last one is built by the app's entry and not here**: `mobile/index.js` is the
+// only file that may import `@react-native-firebase/*` (`write-path.test.js`
+// rule 5), so it is where the two SDK namespaces, the app name and the sender id
+// arrive -- and no task has put push on a screen yet, so nothing there builds it
+// today. Until something does, a caller that already has them builds
 // this door itself, which is what its tests do.
 //
 // **What is deliberately NOT here.** No Firebase SDK (`messaging.js` is handed
