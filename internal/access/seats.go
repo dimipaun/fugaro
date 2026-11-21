@@ -176,12 +176,13 @@ func Seats(in Input, seats int) []Seat {
 
 	roster := make([]Seat, 0, len(in.Implicit)+len(admins)+len(operators))
 	taken := make(map[string]bool, cap(roster))
-	place := func(member string, role Role, seated bool) {
+	place := func(member string, role Role, seated bool) bool {
 		if member == "" || taken[member] {
-			return
+			return false
 		}
 		taken[member] = true
 		roster = append(roster, Seat{Member: member, Role: role, Seated: seated})
+		return true
 	}
 	for _, member := range in.Implicit {
 		place(member, RoleAdmin, true)
@@ -190,10 +191,16 @@ func Seats(in Input, seats int) []Seat {
 		place(p.member, RoleAdmin, true)
 	}
 	// What is left of the count after every admin has one, which is what the
-	// operators fill in the node's order.
+	// operators fill in the node's order — and only the operators this places
+	// spend it. A member the node also grants operator to but who is already
+	// placed as an admin (an implicit project admin, or one the node names
+	// admin) holds the admin's seat, and their operator grant must not take a
+	// second one from the operators after them.
 	room := seats - len(roster)
-	for i, p := range operators {
-		place(p.member, RoleOperator, i < room)
+	for _, p := range operators {
+		if place(p.member, RoleOperator, room > 0) {
+			room--
+		}
 	}
 	return roster
 }

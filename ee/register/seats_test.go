@@ -12,7 +12,10 @@ package register
 // The roster is the grants node and the count is the key's, so every test here
 // seeds a node into a fake Realtime Database and installs a key of its own
 // count. The read that publishes the facts the limit answers with is
-// `fugaro licence seats ls`, which is driven as the command a person runs.
+// `fugaro licence seats ls`, which is driven as the command a person runs — and
+// one test holds the other side of that: a process that has read no licence
+// caps nobody, because the count is a fact a read publishes and not something a
+// check fetches (TestTheLimitCapsNobodyUntilThisProcessReadsTheLicence).
 
 import (
 	"encoding/json"
@@ -206,6 +209,34 @@ func TestAdminsAlwaysKeepASeat(t *testing.T) {
 	}
 	if access.SubscriptionAllowed(in, seatsFirst, access.ActionLaunch, seatsRepo) {
 		t.Error("a Subscription surface lets an operator launch, and the key buys no seat and holds no room for one: the count is the key's, and nothing is handed out past it")
+	}
+}
+
+// TestTheLimitCapsNobodyUntilThisProcessReadsTheLicence is where the limit
+// begins: a tagged process starts with no licence read, and every Subscription
+// surface check answers admin until one happens — the count is a fact a read
+// publishes (licenceSeatFacts), not something a check goes and fetches, because
+// a role check may not pay for a bucket read. The key is installed and it buys
+// two seats; the second operator keeps the launch only until the read that
+// publishes the count, and loses it after — so an installation whose surfaces
+// never read the licence enforces no seat, which is what every surface did
+// before this task and what a build with no ee/ does always.
+func TestTheLimitCapsNobodyUntilThisProcessReadsTheLicence(t *testing.T) {
+	f := newSeatsFixture(t)
+	f.seed(t,
+		seatGrant(t, access.RoleAdmin, seatsAdmin),
+		seatGrant(t, access.RoleOperator, seatsFirst),
+		seatGrant(t, access.RoleOperator, seatsSecond),
+	)
+	f.installKey(t, 2)
+	in := f.input()
+
+	if !access.SubscriptionAllowed(in, seatsSecond, access.ActionLaunch, seatsRepo) {
+		t.Error("a Subscription surface already refuses the second operator a launch before this process read the licence: the limit answers with the facts the last read published, and one that read none caps nobody rather than capping everybody")
+	}
+	f.publish(t)
+	if access.SubscriptionAllowed(in, seatsSecond, access.ActionLaunch, seatsRepo) {
+		t.Error("a Subscription surface still lets the second operator launch after the read published a two-seat key an admin and the first operator fill: the read is what puts the count in the limit's hands")
 	}
 }
 

@@ -89,6 +89,13 @@ func TestSeatRuleGivesEveryAdminSeatBeforeAnyOperator(t *testing.T) {
 			want:   []string{bob + " admin seated", alice + " operator over"},
 		},
 		{
+			name:     "an implicit admin's own operator grant spends no seat",
+			implicit: []string{dave},
+			grants:   []Grant{grant(dave, RoleOperator, project), grant(bob, RoleOperator, project), grant(carol, RoleOperator, project)},
+			seats:    2,
+			want:     []string{dave + " admin seated", bob + " operator seated", carol + " operator over"},
+		},
+		{
 			name:   "a viewer is free and is not in the list at all",
 			grants: []Grant{grant(alice, RoleViewer, project), grant(bob, RoleOperator, project)},
 			seats:  1,
@@ -126,11 +133,15 @@ func TestSeatRuleGivesEveryAdminSeatBeforeAnyOperator(t *testing.T) {
 // the callers whose answer is not the roster's own order.
 func TestSeatedFollowsTheCount(t *testing.T) {
 	project := scope(t, "project")
+	// The node names dave first, as an operator, and dave is also an implicit
+	// project admin: the operator grant places nobody — dave is already placed
+	// as the admin that grant cannot raise — and it must not spend the seat the
+	// two operators after it are seated from.
 	in := seatRoster(t, []string{dave},
+		grant(dave, RoleOperator, project),
 		grant(alice, RoleAdmin, project),
 		grant(bob, RoleOperator, project),
 		grant(carol, RoleOperator, project),
-		grant(dave, RoleViewer, project),
 	)
 	for _, c := range []struct {
 		caller string

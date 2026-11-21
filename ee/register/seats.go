@@ -16,8 +16,10 @@ package register
 // with.
 //
 //   - `fugaro licence seats` is the read. It shows the holders the grants node
-//     places, in the rule's own order, with the key's count beside them — and
-//     it is what publishes the facts the limit below answers with.
+//     places, in the rule's own order, with the key's count beside them, and its
+//     read is what publishes the facts the limit below answers with
+//     (licenceSeatsView, which also reads the licence the other half of a
+//     Subscription surface's answer comes from).
 //   - There is no `seats assign` and no `seats rm`: D2186 answers the
 //     specification's "admins assign seats explicitly" with the node's order,
 //     and no field is added to it — internal/access/store.go decodes that node
@@ -60,16 +62,20 @@ type licenceSeats struct {
 	applies bool
 }
 
-// licenceSeatFacts is what the seat limit answers with, published by every read
-// of this installation's licence (licencePublishSeats) and read on every
-// Subscription surface check.
+// licenceSeatFacts is what the seat limit answers with, published by the licence
+// read (licenceSeatsView) and read on every Subscription surface check.
 //
 // It is a published fact rather than a reader for the reason ee/register's
 // warn.go declines the same read in the same place: a role check may not pay
 // for a bucket read, and one that did would make every check on a paid surface
-// a cloud call. The value it holds is what a reader had in hand, so a process
-// that never read a licence caps nobody — which is the core's own default, and
-// what every surface did before this task.
+// a cloud call. What it holds is therefore what the last licence read in THIS
+// process published, and a process that has read none caps nobody — which is
+// the core's own default, and what every surface did before this task. The
+// limit engages in the process that read the licence, and reading it is the
+// step a Subscription surface already takes for the other half of its answer:
+// Input.Lapse is the caller's for the same reason, so a surface that asks the
+// gate reads the licence through licenceSeatsView on its way in, which is what
+// publishes this. `fugaro licence seats ls` is the read that does it today.
 var licenceSeatFacts atomic.Pointer[licenceSeats]
 
 // licencePublishSeats publishes the seat facts a licence read in hand, and
@@ -212,9 +218,9 @@ type licenceSeatJSON struct {
 	Seated bool   `json:"seated"`
 }
 
-// licenceSeatsLs reads the licence that applies, publishes the seat facts every
-// Subscription surface check is answered with, and answers the holders the
-// grants node places.
+// licenceSeatsLs reads the licence that applies — which is what publishes the
+// seat facts every Subscription surface check is answered with — and answers the
+// holders the grants node places.
 func licenceSeatsLs(cmd *cobra.Command, o *licenceSeatsOptions) error {
 	ctx := cmd.Context()
 	cloud, err := fcli.OpenCloud(ctx, &o.cloud)
@@ -223,11 +229,10 @@ func licenceSeatsLs(cmd *cobra.Command, o *licenceSeatsOptions) error {
 	}
 	defer cloud.Close()
 	lc := cloud.Config()
-	view, err := licenceSeatsView(ctx, cloud, lc)
+	view, applies, err := licenceSeatsView(ctx, cloud, lc)
 	if err != nil {
 		return err
 	}
-	applies := licencePublishSeats(view)
 	in, err := licenceSeatsInput(ctx, cloud, lc)
 	if err != nil {
 		return err
@@ -263,27 +268,46 @@ func licenceSeatsLs(cmd *cobra.Command, o *licenceSeatsOptions) error {
 // this machine's as the fallback, the way `licence status` reads it (D2137).
 // Where the project holds none and this machine does, that key's count is the
 // one that applies.
-func licenceSeatsView(ctx context.Context, cloud *fcli.Cloud, lc *localcfg.Config) (project.View, error) {
+//
+// Reading it is what publishes the seat facts the limit answers with
+// (licencePublishSeats), Free included: an installation whose key went away
+// must stop capping seats at the count an earlier read published. This is the
+// read an ee surface that asks the gate performs — the one it already needs for
+// the other half of its answer, Input.Lapse — so that publishing the count and
+// learning whether the subscription lapsed are one call and not two steps a
+// surface can half take. `fugaro licence seats ls` is the read that does it
+// today, and it answers the facts' `applies` beside the view: a caller is shown
+// the count that is in force, not the count of a key that ended.
+//
+// A read that fails publishes nothing — a refusal is not a licence state, and
+// the facts of the last read stand — and a process that reads no licence at all
+// caps nobody: the facts are what a read published, not something a check goes
+// and fetches. The reads of the licence commands beside this file (`status`,
+// `set`, `refresh`) publish nothing, and publishing there would decide nothing
+// anyway: each is a process of its own that has exited before any check runs. A
+// surface enforces the count by reading the licence itself, which is what this
+// function is for and what `licence seats ls` does.
+func licenceSeatsView(ctx context.Context, cloud *fcli.Cloud, lc *localcfg.Config) (project.View, bool, error) {
 	machine, err := licence.Open(os.Getenv)
 	if err != nil {
-		return project.View{}, fcli.UserErr("%v", err)
+		return project.View{}, false, fcli.UserErr("%v", err)
 	}
 	keys, err := machine.Keys()
 	if err != nil {
-		return project.View{}, fcli.UserErr("%v", err)
+		return project.View{}, false, fcli.UserErr("%v", err)
 	}
 	view, err := project.New(cloud.RunsBucket()).View(ctx, licenceNow(), licenceRing, licenceFirebaseProject(lc), keys)
 	switch {
 	case errors.Is(err, licence.ErrNoKey):
 		// No key at all is the Free state and not a failure (D2143).
-		return project.View{}, nil
+		return project.View{}, licencePublishSeats(project.View{}), nil
 	case errors.Is(err, licence.ErrWorkspace) && licenceFirebaseProject(lc) == "":
-		return project.View{}, licenceNoWorkspace(lc)
+		return project.View{}, false, licenceNoWorkspace(lc)
 	case err != nil:
 		// Anything else is a refusal, and a refusal must never read as Free.
-		return project.View{}, licenceObjectErr(err, "")
+		return project.View{}, false, licenceObjectErr(err, "")
 	}
-	return view, nil
+	return view, licencePublishSeats(view), nil
 }
 
 // licenceSeatsInput is the roster the rule reads: the grants node, in the order
