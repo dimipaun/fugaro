@@ -185,6 +185,15 @@ type Config struct {
 	// says (internal/cli). Like the fields above it is never part of the file
 	// or of SHA256.
 	RepoStopFractionSet bool `yaml:"-" json:"-"`
+	// RepoWorkspaceBeatSet is whether the repository's own file wrote the
+	// agent.workspace_beat key at all, at any value: the question
+	// RepoRigorSet answers for rigor:, and Agent.WorkspaceBeat cannot answer
+	// it — the key written true (the default) decodes to the same answer as
+	// the key being absent once WorkspaceBeatOn is read, and a runner older
+	// than workspaceBeatSince refuses the key itself, whatever it says
+	// (internal/cli). Like the fields above it is never part of the file or
+	// of SHA256.
+	RepoWorkspaceBeatSet bool `yaml:"-" json:"-"`
 	// RepoTriageSet is whether the repository's own file wrote the
 	// agent.triage key at all, at any value: the question RepoRigorSet answers
 	// for rigor:, and Agent.Triage cannot answer it — the key written true
@@ -744,8 +753,9 @@ type Agent struct {
 	// off is the owner's own doubt of D2985 rather than a safety setting — a
 	// run that sends no beat is slower at a call, not less correct — so the
 	// project layer and the repository both carry it, as they carry the run's
-	// other behaviour keys. Binaries before this key's release refuse it
-	// (strict decoder).
+	// other behaviour keys. Binaries before 0.27.0 refuse the key (strict
+	// decoder), whatever it says, which is what the launch's own gate judges
+	// the job image on (internal/cli's workspaceBeatSince).
 	WorkspaceBeat *bool `yaml:"workspace_beat,omitempty" json:"WorkspaceBeat,omitempty"`
 	// Recipe names the task loop that follows implement
 	// (docs/design/recipes.md): a recipe in .fugaro/recipes/, the project's,

@@ -463,6 +463,25 @@ func (l *ProjectLayer) SetsStopFraction() bool {
 	return ok
 }
 
+// SetsWorkspaceBeat reports whether the layer's text writes
+// defaults.agent.workspace_beat, at any value: the layer's half of the
+// keep-warm beat's switch, judged as the key being written for
+// SetsStopFraction's reason — a runner before workspaceBeatSince
+// (internal/cli) decodes the layer with KnownFields and refuses the key
+// whatever it says, and a layer writing it `true`, the default, is the same
+// line to that decoder as one writing `false`. It is what the gates judge the
+// job images against, beside the repository's half (setsWorkspaceBeat), and it
+// is the layer's because that refusal reaches every repository of the project.
+func (l *ProjectLayer) SetsWorkspaceBeat() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	a, _ := d["agent"].(map[string]any)
+	_, ok := a["workspace_beat"]
+	return ok
+}
+
 // SetsDefault reports whether the layer's text writes a fugaro.yaml key under
 // defaults:, at any value — its own, or the nearest ancestor the text writes,
 // because a list is one key (Resolution.Sources' own rule: rigor.areas is set
@@ -576,6 +595,9 @@ type LayerAgent struct {
 	// WorkspaceBeat is the project's answer to whether a run keeps its
 	// workspace's credentials service warm (R10, D2985); a repository's own
 	// value replaces it. Unset means on (config.Agent.WorkspaceBeatOn).
+	// Fugaro before 0.27.0 refuses the key (strict decoder), in every
+	// repository of the project, which is what the launch's own gate judges
+	// the job image on (internal/cli's workspaceBeatSince).
 	WorkspaceBeat *bool `yaml:"workspace_beat"`
 	// Levels is the project-wide per-level review block (L1.3, D722): the
 	// same config.ReviewLevels a repository's agent.levels and a task's
