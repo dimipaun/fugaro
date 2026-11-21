@@ -81,11 +81,11 @@ func workspaceNode(name string) *projectpolicy.WorkspaceCredentials {
 	}
 }
 
-// workspaceMemberDatabase is the URL credsvc derives from that member's own
+// credsServeMemberDatabase is the URL credsvc derives from that member's own
 // Firebase project, and the only thing that says whose state a call may read:
 // the tests below assert the process asked for exactly it rather than building
 // a URL of its own.
-const workspaceMemberDatabase = "https://member-one-fp-default-rtdb.firebaseio.com"
+const credsServeMemberDatabase = "https://member-one-fp-default-rtdb.firebaseio.com"
 
 // fakeWorkspaceDatabase starts a Realtime Database fake holding the workspace's
 // published node — encoded by C3's own writer, so the document the process
@@ -181,8 +181,8 @@ func TestServeWorkspaceModeBuildsTheWorkspaceResolver(t *testing.T) {
 	// The member's database is the one credsvc derived from that member's own
 	// Firebase project, which is the only thing that says whose state a call may
 	// read: the process opens the URL it is handed and builds no URL of its own.
-	if !slices.Contains(opened, workspaceMemberDatabase) {
-		t.Errorf("the databases this process opened were %v, want the member's own (%s): a workspace's service reaches a member's state at the URL derived from that member's Firebase project and at no other", opened, workspaceMemberDatabase)
+	if !slices.Contains(opened, credsServeMemberDatabase) {
+		t.Errorf("the databases this process opened were %v, want the member's own (%s): a workspace's service reaches a member's state at the URL derived from that member's Firebase project and at no other", opened, credsServeMemberDatabase)
 	}
 	if !slices.Contains(opened, "https://"+workspace+"-default-rtdb.firebaseio.com") {
 		t.Errorf("the databases this process opened were %v, want the workspace's own as well: the node it read its callers out of and the meter it keeps the cap in are both the workspace's", opened)
