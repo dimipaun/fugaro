@@ -280,8 +280,11 @@ func TestReconcileRemovesExtra(t *testing.T) {
 		etag:  "wu13-etag-1",
 		found: true}
 	audit := &wu13FakeAudit{t: t}
+	// The report's principal is spelled the way the drift check read it -- an
+	// IAM member -- and the row and the trail's subject are the address
+	// (wu13RowOf says why the two spellings are one person).
 	d := wu13Deps(t, workspace.DriftReport{
-		Extra: []workspace.DriftBinding{wu13Extra("bob@example.com", "admin", workspace.PrincipalPerson)},
+		Extra: []workspace.DriftBinding{wu13Extra("user:bob@example.com", "admin", workspace.PrincipalPerson)},
 	}, ops, audit)
 
 	out, err := wu13Run(t, d, wu13Member.Project)
@@ -428,6 +431,10 @@ func TestReconcileNamesWhatItCannotReach(t *testing.T) {
 		Extra: []workspace.DriftBinding{
 			wu13Extra("mallory@example.com", "admin", workspace.PrincipalPerson),
 			wu13Extra("nobody@example.com", "operator", workspace.PrincipalUnknown),
+			// A report that placed a service account as a person is one this
+			// command writes no row for rather than one it spells a member out
+			// of: the row it would build is "user:serviceAccount:…".
+			wu13Extra("serviceAccount:ci@member-project.iam.gserviceaccount.com", "operator", workspace.PrincipalPerson),
 		},
 		Unmeasured:     []string{"config/admin/grants of the member's Firebase project: the read was denied"},
 		ConsoleChanges: []workspace.ConsoleChange{{Project: "member-project", Principal: "eve@example.com", Role: "roles/owner", Entry: "wu13-entry", At: time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)}},
@@ -443,6 +450,7 @@ func TestReconcileNamesWhatItCannotReach(t *testing.T) {
 	for _, want := range []string{
 		"mallory@example.com", "writes no member's IAM",
 		"nobody@example.com", "cannot place",
+		"serviceAccount:ci@member-project.iam.gserviceaccount.com", "carries a prefix a person's binding does not",
 		"not measured by the drift check",
 		"wu13-entry", "Google's console",
 	} {

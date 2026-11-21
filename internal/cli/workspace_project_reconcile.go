@@ -286,7 +286,13 @@ func wu13Judge(report workspace.DriftReport, member workspace.MemberTarget, doc 
 	onRoster := func(form, role string) bool {
 		return slices.ContainsFunc(rows, func(g accesslib.Grant) bool { return g.User == form && string(g.Role) == role })
 	}
-	decided := map[string]bool{}
+	// seen is a pair already judged, so a report that names one twice is one row;
+	// removed is a pair whose row the document the write stores drops. They are
+	// two maps and not one because an addition's pair is never on the roster --
+	// the two questions happen to have the same answer there, and a later change
+	// that made them differ would be a row silently deleted.
+	seen := map[string]bool{}
+	removed := map[string]bool{}
 	for _, b := range report.Missing {
 		what := wu13Line("add", b)
 		if b.Kind != workspace.PrincipalPerson {
@@ -298,14 +304,15 @@ func wu13Judge(report workspace.DriftReport, member workspace.MemberTarget, doc 
 			p.named = append(p.named, wu13Named{what, err.Error()})
 			continue
 		}
-		if decided[form+" "+role] {
+		key := form + " " + role
+		if seen[key] {
 			continue
 		}
+		seen[key] = true
 		if onRoster(form, role) {
 			p.named = append(p.named, wu13Named{what, "the member's roster already grants this pair: the member's own fugaro update is what applies it"})
 			continue
 		}
-		decided[form+" "+role] = true
 		p.changes = append(p.changes, wu13Change{add: true, form: form, address: address, role: role})
 	}
 	for _, b := range report.Extra {
@@ -323,18 +330,24 @@ func wu13Judge(report workspace.DriftReport, member workspace.MemberTarget, doc 
 			p.named = append(p.named, wu13Named{what, err.Error()})
 			continue
 		}
-		if decided[form+" "+role] {
+		key := form + " " + role
+		if seen[key] {
 			continue
 		}
+		seen[key] = true
 		if !onRoster(form, role) {
-			why := "the member's roster holds no grant of this pair, and this command writes no member's IAM: nothing here takes this binding back"
+			// The difference is a binding on the member's own policy and not a row
+			// of its roster, so no write of this command can reach it: the member's
+			// own update is what applies the lists its roster derives (D2801), and
+			// this is the difference it has not been run against yet.
+			why := "the member's roster holds no grant of this pair, and this command writes no member's IAM: it is a binding on the member's own policy, and the member's own fugaro update is what applies the lists its roster derives (D2801)"
 			if !doc.Found {
 				why = "the member's roster is not there yet: its own fugaro update migrates its lists into " + accesslib.PathNode
 			}
 			p.named = append(p.named, wu13Named{what, why})
 			continue
 		}
-		decided[form+" "+role] = true
+		removed[key] = true
 		p.changes = append(p.changes, wu13Change{add: false, form: form, address: address, role: role})
 	}
 	if len(p.changes) == 0 {
@@ -356,7 +369,7 @@ func wu13Judge(report workspace.DriftReport, member workspace.MemberTarget, doc 
 	// them by their pair -- so a row this command does not touch keeps its place.
 	next := make([]accesslib.Grant, 0, len(rows)+len(p.changes))
 	for _, g := range rows {
-		if decided[g.User+" "+string(g.Role)] {
+		if removed[g.User+" "+string(g.Role)] {
 			continue
 		}
 		next = append(next, g)
@@ -378,12 +391,27 @@ func wu13Judge(report workspace.DriftReport, member workspace.MemberTarget, doc 
 // wu13RowOf turns one difference into the row it is about: the member form a
 // roster carries and the role, both refused when a row cannot hold them, so a
 // difference nothing can be written for is named rather than written.
+//
+// The report's principal is spelled one of two ways and they are one person: an
+// IAM member where the drift check read the member's policy
+// ("user:alice@example.com") and a bare address where it read the workspace
+// node's own list. access.Member is the function both sides of a comparison
+// spell a member through (F25), so it is the one this command writes with, and
+// the prefix is taken off first rather than left to become a second "user:" in
+// the row.
 func wu13RowOf(b workspace.DriftBinding) (form, address, role string, err error) {
 	role = b.Role
 	if _, ok := accesslib.ParseRole(b.Role); !ok {
 		return "", "", "", fmt.Errorf("the role %q is not one of %s, so it is not a pair a grant can carry", b.Role, accesslib.Roles())
 	}
-	form, err = accesslib.Member(b.Principal)
+	principal := b.Principal
+	if rest, ok := strings.CutPrefix(principal, "user:"); ok {
+		principal = rest
+	}
+	if strings.ContainsRune(principal, ':') {
+		return "", "", "", fmt.Errorf("the principal %q carries a prefix a person's binding does not -- a person is a `user:` member, and the part after it is their address -- so this command writes no row for it", b.Principal)
+	}
+	form, err = accesslib.Member(principal)
 	if err != nil {
 		return "", "", "", fmt.Errorf("the address %q is not one this command can write a row for: %v", b.Principal, err)
 	}
