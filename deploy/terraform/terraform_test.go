@@ -1937,9 +1937,10 @@ var (
 	// is the same kind of fact — an installation's account reaching a root
 	// through the tfvars — and because the row it lands in is the one the
 	// whole design turns on: the Firebase root's variable validates the shape,
-	// TestIssuerMinterIsOneSpelling holds the row to the signer it is on, and
-	// internal/infra/tf's issuerMinterGrant is what a plan is refused by when
-	// that account is not on this installation's roster of signers.
+	// and TestIssuerMinterIsOneSpelling holds the row to the signer it is on.
+	// The cover rule that will refuse a plan whose issuer's row is not on this
+	// installation's roster of signers is LM13's (issuerMinterGrant), beside
+	// mobileMinterGrant; it does not exist yet, and nothing here depends on it.
 	//
 	// "serviceAccount:${each.value}" is the workspace root's invoker binding
 	// (WS6, D2980): the member table's job accounts arrive as bare addresses —
@@ -4078,16 +4079,20 @@ func TestSignerIAMIsMinterOnly(t *testing.T) {
 // resources it is on are COMPUTED, so a row written with
 // google_service_account.signer.name or
 // google_project_iam_custom_role.token_minter.name reaches a plan as an
-// unknown string — a principal and a role no review screen can read, which
-// internal/infra/tf's cover refuses (issuerMinterGrant), and for this row
-// more than for any other: iam.serviceAccounts.signJwt on an account IS that
-// account, and the design's table says so (orchestrator.tf, section 4.3). The
-// account is therefore spelled the one way this module creates it (the
-// signer's own account_id, read back below) and the role is the literal the
-// role's ID resolves to. One fact, one spelling; this test is what keeps the
-// literal from drifting off the resources it stands for, and the failure it
-// makes impossible is a row on an account or a role nothing creates, which
-// IAM accepts and the first launch through the issuer then fails on.
+// unknown string — a principal and a role no review screen can read, and no
+// table in the tree refuses that yet: the cover's fugaroTokenMinter cell
+// admits people, the resident orchestrator and the mobile service, and the
+// rule that names the account an issuer's row may be on is LM13's
+// (issuerMinterGrant, beside mobileMinterGrant). That the shape matters more
+// here than anywhere else is not in doubt — signJwt on an account IS that
+// account, and the design's table says so (orchestrator.tf, section 4.3) — so
+// this test is what holds the literals until that rule lands. The account is
+// therefore spelled the one way this module creates it (the signer's own
+// account_id, read back below) and the role is the literal the role's ID
+// resolves to. One fact, one spelling; this test is what keeps the literal
+// from drifting off the resources it stands for, and the failure it makes
+// impossible is a row on an account or a role nothing creates, which IAM
+// accepts and the first launch through the issuer then fails on.
 //
 // Mutation (verified, run and restored): renaming the signer's account_id
 // fails here; so does dropping the count (an installation with no issuer

@@ -181,13 +181,19 @@ resource "google_service_account_iam_member" "minter" {
 # role no review screen can read. iam.serviceAccounts.signJwt on an account IS
 # that account (orchestrator.tf calls it the widest grant in the design's
 # table), so that is the one row of this file whose signer may never be an
-# unknown — internal/infra/tf's cover refuses it (issuerMinterGrant), the way
-# mobileMinterGrant refuses the same shape on the devices' signer. The account
-# is spelled the way this module creates it (google_service_account.signer's
-# account_id, var.names.signer_account_id) and the role is the ID this file
-# declares (role_id, var.names.minter_role_id): a literal of the plan, held to
-# both resources by deploy/terraform's TestIssuerMinterIsOneSpelling, which is
-# what a literal costs and what keeps the plan readable.
+# unknown. The refusal that shape needs is not in the tree yet: the cover's
+# fugaroTokenMinter cell admits people, the resident orchestrator and the
+# mobile service, and `issuerMinterGrant` — the rule beside `mobileMinterGrant`,
+# which holds the devices' row to this run's own signer — is the one LM13 adds
+# to name the account THIS row may be on. Until it lands, this row is one the
+# tables warn about and apply (D1545: a tripwire, not a fence), and what holds
+# its spelling to the signer and the role it stands for is deploy/terraform's
+# TestIssuerMinterIsOneSpelling. The account is spelled the way this module
+# creates it (google_service_account.signer's account_id,
+# var.names.signer_account_id) and the role is the ID this file declares
+# (role_id, var.names.minter_role_id): a literal of the plan, held to both
+# resources by that test, which is what a literal costs and what keeps the plan
+# readable.
 #
 # It is created exactly when an account is named (var.issuer_account, empty
 # until the update that passes the credentials service's own account): a row
