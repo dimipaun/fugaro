@@ -448,7 +448,7 @@ step_run() { # step_run KEY RUN ENVVAR AT WHERE
     return 0
   fi
   if [ -n "$at" ] && [ -n "$halt_at" ] && in_window "$at" "$halt_at" "$UPDATE_WINDOW_SECONDS"; then
-    fact "$key" FAIL "the run ${rid} in flight on ${where} halted ${halt_reason} at ${halt_at}, $(gap_after "$at" "$halt_at"), with the update running at ${at} and marker '$(field_of halt_workspace_refusal "$out")'${detail:+, detail '$(printf '%s' "$detail" | head -c 200)'}: a run whose halt falls inside the update's own window is a run the update stopped, which R11 forbids. The step that reached it has to be named in the update's own line (the budget mode's raise to enforce, the policy a cascade project re-reads, a retirement) — and a run it stopped is not that line's promise being kept"
+    fact "$key" FAIL "the run ${rid} in flight on ${where} halted ${halt_reason} at ${halt_at}, $(gap_after "$at" "$halt_at" || true), with the update running at ${at} and marker '$(field_of halt_workspace_refusal "$out")'${detail:+, detail '$(printf '%s' "$detail" | head -c 200)'}: a run whose halt falls inside the update's own window is a run the update stopped, which R11 forbids. The step that reached it has to be named in the update's own line (the budget mode's raise to enforce, the policy a cascade project re-reads, a retirement) — and a run it stopped is not that line's promise being kept"
     return 0
   fi
   fact "$key" FAIL "the run ${rid} in flight on ${where} halted after the update: ${halt_reason} at ${halt_at}${detail:+, detail '$(printf '%s' "$detail" | head -c 200)'}. Whether the update caused it needs the moment the update ran (CHECK773_WORKSPACE_UPDATE_AT): with it, this row says whether the halt fell inside the update's window. A halt elsewhere is a finding of its own for that run — 'fugaro runs show ${rid}' and 'fugaro diagnose ${rid}' are the two that read it"
@@ -459,6 +459,8 @@ in_window() {
   python3 -c '
 import sys, datetime
 def at(one):
+    if one.isdigit():
+        return datetime.datetime.fromtimestamp(int(one), datetime.timezone.utc)
     return datetime.datetime.fromisoformat(one.replace("Z", "+00:00"))
 try:
     start, end = at(sys.argv[1]), at(sys.argv[2])
@@ -472,6 +474,8 @@ gap_after() {
   python3 -c '
 import sys, datetime
 def at(one):
+    if one.isdigit():
+        return datetime.datetime.fromtimestamp(int(one), datetime.timezone.utc)
     return datetime.datetime.fromisoformat(one.replace("Z", "+00:00"))
 try:
     seconds = (at(sys.argv[2]) - at(sys.argv[1])).total_seconds()
@@ -581,9 +585,9 @@ main() {
   need_tools
   [ -n "$ACCOUNT" ] || die "gcloud prints no account ('gcloud config get-value account'): the check reads the run listing from the cloud with that account's own roles. Run 'gcloud auth login' first"
   [ "$UPDATE_WINDOW_SECONDS" -gt 0 ] || die "CHECK773_UPDATE_WINDOW_SECONDS is ${UPDATE_WINDOW_SECONDS}: the window is seconds an update may take, so it has to be a positive number"
-  [ -n "$WORKSPACE_PROJECT" ] || unmeasured workspace-converged "CHECK773_WORKSPACE_PROJECT was not set, so this run does not know the workspace's Fugaro project to read doctor from. Name it and run the check again: CHECK773_WORKSPACE_PROJECT=<project> bash scripts/live-checks/check773.sh"
   scratch_up
   trap on_error ERR
+  [ -n "$WORKSPACE_PROJECT" ] || unmeasured workspace-converged "CHECK773_WORKSPACE_PROJECT was not set, so this run does not know the workspace's Fugaro project to read doctor from. Name it and run the check again: CHECK773_WORKSPACE_PROJECT=<project> bash scripts/live-checks/check773.sh"
   guard_agent
   guard_xtrace
   guard_project
