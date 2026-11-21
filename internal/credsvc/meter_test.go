@@ -353,6 +353,50 @@ func TestACallAtTheCeilingIsRefused(t *testing.T) {
 	}
 }
 
+// A probe the workspace cannot pay for is the RUN's refusal and not the
+// credential's: the service owes a backed-off credential a probe (C1.12), the
+// meter refuses that probe before it is made, and the run waiting on the call
+// is answered the workspace's own refusal rather than the wait the probe was
+// owed on.
+//
+// The distinction is the whole test: the same state — a backed-off credential
+// the selection elides — is answered exhausted_until whenever the workspace has
+// room, and only the meter's refusal makes it the cap. A run handed the wait
+// instead would re-ask, and re-ask again, for a probe the workspace will refuse
+// every time, spending its budget on a deterministic refusal (cascade.go's
+// forward reads the refusal off the call whatever the probe reports).
+func TestAProbeTheMeterRefusesIsTheRunsRefusal(t *testing.T) {
+	// A ceiling below the worst case of the smallest call this service makes
+	// (probeMaxTokens, one token), with nothing spent against it: the probe
+	// cannot be reserved, so it is never made.
+	cap := wsMicros(t, 0.001)
+	f := newWSMeterSvc(t, 0.001, nil, wsPaidOnly)
+	paid := f.tierBName(t)
+	f.backedOff(paid, f.now.Add(-time.Hour), creds.DefaultBackoffInitial)
+
+	resp, body := f.call(t, callBody("ws8-probe-cap"))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the call answered %d %s, want the workspace's refusal %d", resp.StatusCode, body, StatusUnavailable)
+	}
+	e := refusal(t, resp.StatusCode, body)
+	if e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q: a run owed a probe the workspace refuses is answered the refusal and not the wait the probe was owed on",
+			e.Error, ErrorStateUnavailable)
+	}
+	if n := f.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d requests, want none: a probe the workspace cannot pay for is not made", n)
+	}
+	if got, ok := gateway.WorkspaceRefusal(resp.Header); !ok || got != gateway.WorkspaceRefusalCap {
+		t.Errorf("%s = %q (read: %v), want %q", gateway.WorkspaceRefusalHeader, resp.Header.Get(gateway.WorkspaceRefusalHeader), ok, gateway.WorkspaceRefusalCap)
+	}
+	if got, want := resp.Header.Get(gateway.WorkspaceHeadroomHeader), strconv.FormatInt(int64(cap), 10); got != want {
+		t.Errorf("%s = %q, want %q: the refusal carries the room the workspace still has", gateway.WorkspaceHeadroomHeader, got, want)
+	}
+	if room := f.wsRoom(t); room.Settled != 0 || room.Reserved != 0 {
+		t.Errorf("the refused probe left the month at %v settled and %v reserved, want nothing of either", room.Settled.USD(), room.Reserved.USD())
+	}
+}
+
 // R15, D1300: a call on a subscription token reserves nothing. The workspace's
 // cap bounds what the workspace's money buys, and a subscription token's calls
 // are the donor's own quota — not one micro-dollar of the workspace's month

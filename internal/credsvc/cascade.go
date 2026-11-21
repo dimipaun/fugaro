@@ -765,17 +765,25 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// and the selection is made again. Anything else — a real wait, a
 			// broken mark, an unreadable state — is the run's answer and is
 			// refused below.
-			if s.probeDue(ctx, sel, id, cl, b, pool, probed, err) {
-				// A probe the workspace could not pay for is refused like any
-				// other call of this run's: the meter's refusal is on the call
-				// (probeOne's own answer, carried here), and the run is
-				// answered it rather than the wait the probe was owed on. The
-				// alternative — walking on as if the probe had happened — is a
-				// call that was never made being treated as one that was.
-				if cl.fail != nil {
-					s.refuseMeter(ctx, w, id, PurposeForward, cl.fail)
-					return
-				}
+			due := s.probeDue(ctx, sel, id, cl, b, pool, probed, err)
+			// A probe the workspace could not pay for is refused like any other
+			// call of this run's: the meter's refusal is on the call (probeOne's
+			// own answer, carried here), and the run is answered it rather than
+			// the wait the probe was owed on. The alternative — walking on as if
+			// the probe had happened — is a call that was never made being
+			// treated as one that was.
+			//
+			// cl.fail is read whatever probeDue answered, because probeOne
+			// reports false on the two paths that set it (a reservation refused
+			// before the call, a settle that could not be written after it):
+			// reading it only where the probe reports success would let a call
+			// the workspace refused fall through to the wait the probe was owed
+			// on, which the run would then spend its budget re-asking for.
+			if cl.fail != nil {
+				s.refuseMeter(ctx, w, id, PurposeForward, cl.fail)
+				return
+			}
+			if due {
 				continue
 			}
 			s.refuseSelection(ctx, w, id, err, tried)
