@@ -12,14 +12,12 @@
     "description": { "type": "string", "maxLength": 200, "pattern": "^[^\u0000-\u001f\u007f-\u009f­؀-؅؜۝܏࣢᠎​-‏ -‮⁠-⁤⁦-⁯﻿￹-￻]*$", "$comment": "The pattern refuses C0, DEL, C1 and the BMP format characters and line separators the Go parser refuses (recipe.hasControlChar); the parser is stricter (it also refuses the astral format characters). maxLength here counts Unicode characters (the JSON Schema spec); the Go parser's 200-byte limit (recipe.MaxDescription) is stricter for any multi-byte character, so this schema accepts some strings the parser refuses." },
     "use_when": { "type": "string", "maxLength": 300, "pattern": "^[^\u0000-\u001f\u007f-\u009f­؀-؅؜۝܏࣢᠎​-‏ -‮⁠-⁤⁦-⁯﻿￹-￻]*$", "description": "The routing skill's self-description.", "$comment": "maxLength here counts Unicode characters (the JSON Schema spec); the Go parser's 300-byte limit (recipe.MaxUseWhen) is stricter for any multi-byte character, so this schema accepts some strings the parser refuses. The pattern matches the BMP part of the parser's control-character, format-character and line-separator refusal." },
     "mode": { "enum": ["implement", "review", "artifact", "evaluate"] },
-    "roles": {
+    "roles": { "$ref": "#/$defs/roles" },
+    "by_level": {
       "type": "object",
-      "additionalProperties": false,
-      "not": { "required": ["reviewer", "coder"] },
-      "properties": {
-        "reviewer": { "const": "coder", "description": "The reviewer role runs on the coder's model and output limit." },
-        "coder": { "const": "reviewer", "description": "The coder role runs on the reviewer's (strong) model." }
-      }
+      "description": "The recipe's one conditional: the roles: mapping the recipe resolves at a given rigor level, which replaces roles: at that level (recipe.RolesFor). A level written with an empty roles block resolves to no mapping. Nothing else is conditioned: the per-run cap is the level's own and the loop's shape is the recipe's, so any other key is refused. No run applies the block yet: the runner and the level resolver both apply the recipe's own roles: once, at bootstrap, before the run's level is known, so a recipe that writes it runs on its top-level roles: at every level.",
+      "propertyNames": { "enum": ["poc", "startup", "pro", "critical", "hotfix"] },
+      "additionalProperties": { "$ref": "#/$defs/levelRoles" }
     },
     "steps": {
       "oneOf": [
@@ -93,6 +91,21 @@
     }
   ],
   "$defs": {
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "not": { "required": ["reviewer", "coder"] },
+      "properties": {
+        "reviewer": { "const": "coder", "description": "The reviewer role runs on the coder's model and output limit." },
+        "coder": { "const": "reviewer", "description": "The coder role runs on the reviewer's (strong) model." }
+      }
+    },
+    "levelRoles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["roles"],
+      "properties": { "roles": { "$ref": "#/$defs/roles" } }
+    },
     "outputs": {
       "type": "object", "additionalProperties": false, "required": ["globs"],
       "properties": {

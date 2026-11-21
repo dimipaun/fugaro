@@ -794,31 +794,49 @@ func TestDocsRigorModesEveryTaskIsComplete(t *testing.T) {
 }
 
 // rigorModesCriticalPin is the one-line pin D19's answer gives a repository that
-// wants today's behaviour after Pro became the default: without it in the
-// documents, the change of behaviour has no stated way back.
+// wants Critical's finding thresholds after Pro became the default: without it
+// in the documents, the change of behaviour has no stated way back.
 const rigorModesCriticalPin = "`rigor.default: critical`"
 
-// rigorModesUnchangedClaims are the phrases the folder used to make its
-// strongest safety claim with, back when the default was Critical and an
-// unconfigured repository was said not to change at all. D19's answer makes Pro
-// the default, so each of these is true of *Critical mode* only — of a run whose
-// resolved mode is Critical — and the guard holds each occurrence to a nearby
-// "Critical mode" rather than to a reader's memory of which decision said what.
+// rigorModesUnchangedClaims is the restated form of the folder's strongest
+// safety claim, which the owner answered on 2026-10-22 (levels-reconciliation.md
+// §3b item 1). The 2026-10-20 documents said a run at Critical was
+// "byte-identical to today" — the claim D19's answer had already narrowed to
+// Critical mode — and the levels addendum showed it false even there: every
+// prompt carries a persona now, and Critical gains two presence checks. So what
+// survives is narrower and is what the documents have to say, word for word,
+// wherever they used to make the old claim.
 //
-// The phrases are the ones that say a *run* is unchanged. A sentence about a
-// golden or a transcript being unchanged ("an unscored finding rendering exactly
-// as it does today", plan T4.1) is a claim about a test fixture, not about a
-// mode, and is not one of these.
+// Both halves are about a *run*. A sentence about a golden or a transcript being
+// unchanged ("an unscored finding rendering exactly as it does today", plan
+// T4.1) is a claim about a test fixture, not about a run's behaviour, and is not
+// one of these.
 var rigorModesUnchangedClaims = []string{
+	"Critical's finding thresholds are unchanged",
+	"its prompts, its PR body's hand-back sections and two presence checks are new",
+}
+
+// rigorModesWithdrawnClaims are the phrasings the restatement withdrew, and they
+// are pinned absent rather than scoped to Critical: a reader who meets one of
+// them meets a claim this folder has already answered, which is the failure this
+// guard exists for. The pin restores Critical's finding *thresholds* and nothing
+// else, so a sentence promising "today's behaviour" makes the same withdrawn
+// claim in longer words, and is listed here for that reason. A later document
+// that wants to quote one back says so in its own words.
+var rigorModesWithdrawnClaims = []string{
 	"relaxes nothing",
 	"byte-identical to today",
 	"behaves exactly as it does today",
+	"keep today's behaviour",
+	"wants today's behaviour",
+	"restores today's behaviour",
 }
 
-// rigorModesScopeWindow is how far from such a claim the word "Critical" may sit
-// and still count as scoping it. It is generous because markdown wraps: the
-// claim and its scope are one sentence, and a sentence here runs to a few
-// hundred characters.
+// rigorModesScopeWindow is how close two facts in these documents have to sit to
+// count as the same sentence: a fact and the sentence that qualifies it are one
+// unit here, and a fact a reader meets twenty lines away from its qualification
+// is the shape this catches. It is generous because markdown wraps, and a
+// sentence in this folder runs to a few hundred characters.
 const rigorModesScopeWindow = 600
 
 // rigorModesMarksReadyAbsences are the phrasings the folder must not carry: a
@@ -877,10 +895,13 @@ func rigorModesBlock(t *testing.T, path, doc, id string, re *regexp.Regexp) stri
 // four things about what this folder claims — the default mode (D19), the
 // Hotfix gate's inputs (D14), the order the work is picked up in (D9) and who
 // marks a pull request ready (D11) — and each of those changed a sentence that
-// was true when it was written. This is the guard on the sentences rather than
-// on the decisions: an answer recorded while the claim it displaced stays in the
-// documents is the one failure a reader cannot see, because both halves read as
-// deliberate.
+// was true when it was written. The levels addendum's review, answered by the
+// owner on 2026-10-22, added a fifth: the unchanged-behaviour claim holds of
+// Critical's finding thresholds alone, because every prompt now carries a
+// persona and Critical gains two presence checks (levels-reconciliation.md §3b
+// item 1). This is the guard on the sentences rather than on the decisions: an
+// answer recorded while the claim it displaced stays in the documents is the one
+// failure a reader cannot see, because both halves read as deliberate.
 func TestDocsRigorModesAnswersSayWhatTheyChange(t *testing.T) {
 	readme := readDoc(t, rigorModesReadme)
 	recon := readDoc(t, rigorModesRecon)
@@ -910,33 +931,29 @@ func TestDocsRigorModesAnswersSayWhatTheyChange(t *testing.T) {
 		{rigorModesPlan, flat[rigorModesPlan]},
 	} {
 		if !strings.Contains(doc.text, rigorModesCriticalPin) {
-			t.Errorf("%s does not state %q: D19's answer makes Pro the default, and the one-line pin is what a repository keeps today's behaviour with", doc.path, rigorModesCriticalPin)
+			t.Errorf("%s does not state %q: D19's answer makes Pro the default, and the one-line pin is the stated way back to Critical's finding thresholds", doc.path, rigorModesCriticalPin)
 		}
 	}
 
-	// Every unchanged-behaviour claim is scoped to Critical mode. The window is
-	// the sentence around the claim, not the document: a claim a reader meets
-	// twenty lines away from its scope is the shape this catches.
-	for _, path := range []string{rigorModesReadme, rigorModesRecon, rigorModesPlan} {
-		doc := flat[path]
+	// The owner's answer of 2026-10-22 restates the folder's unchanged-behaviour
+	// claim (levels-reconciliation.md §3b item 1): Critical's finding thresholds
+	// are unchanged, and its prompts, its PR body's hand-back sections and two
+	// presence checks are new. All three documents make the old claim, so all
+	// three carry the restatement — and none of them may still carry the
+	// phrasing it displaced.
+	for _, doc := range []struct{ path, text string }{
+		{rigorModesReadme, flat[rigorModesReadme]},
+		{rigorModesRecon, flat[rigorModesRecon]},
+		{rigorModesPlan, flat[rigorModesPlan]},
+	} {
 		for _, claim := range rigorModesUnchangedClaims {
-			for at := strings.Index(doc, claim); at >= 0; {
-				lo, hi := at-rigorModesScopeWindow, at+len(claim)+rigorModesScopeWindow
-				if lo < 0 {
-					lo = 0
-				}
-				if hi > len(doc) {
-					hi = len(doc)
-				}
-				window := doc[lo:hi]
-				if !strings.Contains(window, "Critical mode") && !strings.Contains(window, "Critical *mode*") {
-					t.Errorf("%s states %q with no \"Critical mode\" in the sentence around it: D19's answer makes Pro the default, so the claim is true of Critical mode only", path, claim)
-				}
-				next := strings.Index(doc[at+1:], claim)
-				if next < 0 {
-					break
-				}
-				at += 1 + next
+			if !strings.Contains(doc.text, claim) {
+				t.Errorf("%s does not state %q: the 2026-10-22 answer restated the folder's unchanged-behaviour claim as Critical's finding thresholds being unchanged and its prompts, its PR body's hand-back sections and two presence checks being new (levels-reconciliation.md §3b item 1)", doc.path, claim)
+			}
+		}
+		for _, withdrawn := range rigorModesWithdrawnClaims {
+			if strings.Contains(flatLower[doc.path], withdrawn) {
+				t.Errorf("%s still states %q: the claim it makes is false once every prompt carries a persona and Critical gains two presence checks, which is why the 2026-10-22 answer restated it (levels-reconciliation.md §3b item 1)", doc.path, withdrawn)
 			}
 		}
 	}

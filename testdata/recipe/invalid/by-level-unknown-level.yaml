@@ -1,0 +1,7 @@
+version: 1
+name: by-level-unknown-level
+by_level:
+  fast:
+    roles: { reviewer: coder }
+steps:
+  - review: {}

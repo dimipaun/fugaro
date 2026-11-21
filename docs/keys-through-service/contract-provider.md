@@ -178,6 +178,11 @@ not served.
 | this repository's provider keys are served | the bundle holds an entry for every provider credential the repository's config names, the deployed service can read that entry kind, and the project publishes an allow-list (F41) | the run's gateway, which sends a routed provider call through the service instead of using the mounted key (KS5) |
 | this repository's stage account is served | the mixed variant's second account is one the service selects like any named account, so the runner holds no token for it (R9) | the runner, where it picks the account its stages go out on (KS10, F44) |
 
+**Amended 2026-11-20 (F50): the second fact is not needed.** KS10 is withdrawn (F48), and with a
+stage's account the access of that stage's craft, one fact per repository — "its credentials are
+served", which [credentials belong to models](../credentials-belong-to-models/README.md) declares —
+covers both. The name stays in `internal/config` as C1 wrote it; nothing records or reads it.
+
 **Where they are recorded.** The owner's `fugaro update` is what reads each fact and decides it,
 because it is the one command that can see everything the fact is about; it records the answer on
 that repository's own entry in the LOCAL CONFIG, beside the switch already there

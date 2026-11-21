@@ -33,10 +33,10 @@ func newAccountsCmd() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return userErr("unknown accounts subcommand; want ls, add, allow, deny, rm, clear, pool, alias, switch, craft, grade or repo (see fugaro accounts --help)")
+			return userErr("unknown accounts subcommand; want ls, add, allow, deny, rm, clear, pool, alias, switch, craft, grade, cascade or repo (see fugaro accounts --help)")
 		},
 	}
-	cmd.AddCommand(newAccountsLsCmd(), newAccountsAddCmd(), newAccountsAllowCmd(), newAccountsDenyCmd(), newAccountsRmCmd(), newAccountsClearCmd(), newAccountsPoolCmd(), newAccountsAliasCmd(), newAccountsSwitchCmd(), newAccountsCraftCmd(), newAccountsGradeCmd(), newAccountsRepoCmd())
+	cmd.AddCommand(newAccountsLsCmd(), newAccountsAddCmd(), newAccountsAllowCmd(), newAccountsDenyCmd(), newAccountsRmCmd(), newAccountsClearCmd(), newAccountsPoolCmd(), newAccountsAliasCmd(), newAccountsSwitchCmd(), newAccountsCraftCmd(), newAccountsGradeCmd(), newAccountsCascadeCmd(), newAccountsRepoCmd())
 	return cmd
 }
 
