@@ -607,13 +607,19 @@ elif cmd == "policy":
     print("mode=%s" % word(budget.get("mode"), 20))
 elif cmd == "jobs":
     prefix = sys.argv[3]
+    profile = sys.argv[4] if len(sys.argv) > 4 else ""
     n = urls = tokens = 0
     names = []
     for doc in load(sys.argv[2]) or []:
         if not isinstance(doc, dict):
             continue
         name = ((doc.get("metadata") or {}).get("name")) or ""
-        if not name or not name.startswith(prefix):
+        labels = ((doc.get("metadata") or {}).get("labels")) or {}
+        # The name is truncated before its hash when the parts are long
+        # (fugaro-p-<profile>-bitbucke-<hash>), so the prefix alone misses a
+        # real job; the labels the job carries are what name its profile.
+        by_label = bool(profile) and labels.get("fugaro_profile") == profile and labels.get("fugaro_provider") == "bitbucket"
+        if not name or not (name.startswith(prefix) or by_label):
             continue
         containers = containers_of(doc)
         n += 1
@@ -903,7 +909,7 @@ step_job() {
     JOB_STOP=yes
     return 0
   fi
-  if ! reader jobs "$SCRATCH/jobs.out" "$SHARED_PREFIX" >"$SCRATCH/jobs.txt" 2>"$SCRATCH/jobs.reader.err"; then
+  if ! reader jobs "$SCRATCH/jobs.out" "$SHARED_PREFIX" "$PROFILE" >"$SCRATCH/jobs.txt" 2>"$SCRATCH/jobs.reader.err"; then
     unmeasured job "gcloud run jobs list printed a document this check could not read: what it printed is in $SCRATCH/jobs.out"
     JOB_STOP=yes
     return 0
