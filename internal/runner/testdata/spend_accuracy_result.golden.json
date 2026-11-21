@@ -24,9 +24,9 @@
       }
     }
   ],
-  "cost_usd": 0.003289,
+  "cost_usd": 0.004906,
   "cost": {
-    "model_usd": 0.003289,
+    "model_usd": 0.004906,
     "compute_usd": 0,
     "compute_estimated": false,
     "total_usd": 0,
@@ -34,22 +34,22 @@
     "model_basis": "api-list",
     "model_source": "gateway",
     "model_by": {
-      "deepseek/deepseek-v4-flash": 0.003289
+      "deepseek/deepseek-v4-flash": 0.004906
     },
     "route_by": {
-      "openrouter": 0.003289
+      "openrouter": 0.004906
     },
     "reported_usd": 0.0025,
     "reported_by": {
       "deepseek/deepseek-v4-flash": 0.0025
     },
-    "table_lo_usd": 0.000168,
-    "table_hi_usd": 0.00098,
+    "table_lo_usd": 0.00067,
+    "table_hi_usd": 0.00392,
     "unreported_calls": 1,
     "model_tokens": {
       "deepseek/deepseek-v4-flash": {
-        "input": 3000,
-        "output": 1500,
+        "input": 12000,
+        "output": 6000,
         "cache_read": 0,
         "cache_write_5m": 0,
         "cache_write_1h": 0
@@ -64,7 +64,7 @@
       "calls": 3,
       "agents": 0,
       "repeats": 0,
-      "model_usd": 0.003289,
+      "model_usd": 0.004906,
       "model": "deepseek/deepseek-v4-flash",
       "served_by": "api-key"
     },
