@@ -994,6 +994,11 @@ func credentialsWorkspaceService(ctx context.Context, workspace string, env map[
 		Open: func(databaseURL string) (credsvc.Getter, error) {
 			return credentialsDatabase(ctx, databaseURL, ts)
 		},
+		// The pool's state and the stop switch are the workspace's own
+		// database's, the one FUGARO_RTDB_URL names; no member's database is
+		// ever handed to either (R8, D1302).
+		State: &creds.RTDBStore{DB: db},
+		Kills: db,
 	})
 	if err != nil {
 		return credentialsWorkspaceDeployment{}, userErr("the workspace's service cannot verify its callers, so it will not start: %v", err)
