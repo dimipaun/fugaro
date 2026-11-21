@@ -188,8 +188,15 @@ while [ $# -gt 0 ]; do
 done
 printf 'url %s\n' "$url" >>"$FAKE840_DIR/calls"
 if [ -n "$conf" ]; then
-  sed -n 's/^header = "Authorization: Bearer \(.*\)"$/\1/p' "$conf" >"$FAKE840_DIR/auth" 2>/dev/null || true
-  sed -n 's/^url = "\(.*\)"$/\1/p' "$conf" >"$FAKE840_DIR/conf.url" 2>/dev/null || true
+  # Appended rather than written: the last config file a run passes is the U3
+  # exchange's, which carries no Authorization header, and a truncating write
+  # would throw away the token the earlier calls did travel by file.
+  sed -n 's/^header = "Authorization: Bearer \(.*\)"$/\1/p' "$conf" >>"$FAKE840_DIR/auth" 2>/dev/null || true
+  # The URL only ever set by a config file that has one, so the exchange's own
+  # file is the one this ends up recording.
+  if url_line=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$conf" 2>/dev/null) && [ -n "$url_line" ]; then
+    printf '%s\n' "$url_line" >"$FAKE840_DIR/conf.url"
+  fi
   # The file's mode, so a case can say it is 0600 and not merely present. Read
   # with python3 rather than stat, whose -c is GNU's: the owner runs this check
   # on their own machine, and this test on both.
@@ -207,19 +214,23 @@ code=""
 case "$url" in
 *":run")
   body=$FAKE840_DIR/run.json
-  code=$(cat "$FAKE840_DIR/run.code" 2>/dev/null || printf '200')
+  code=$(cat "$FAKE840_DIR/run.code" 2>/dev/null || true)
+  [ -n "$code" ] || code=200
   ;;
 *"/operations/"*)
   body=$FAKE840_DIR/operation.json
-  code=$(cat "$FAKE840_DIR/operation.code" 2>/dev/null || printf '200')
+  code=$(cat "$FAKE840_DIR/operation.code" 2>/dev/null || true)
+  [ -n "$code" ] || code=200
   ;;
 *"/executions/"*)
   body=$FAKE840_DIR/execution.json
-  code=$(cat "$FAKE840_DIR/execution.code" 2>/dev/null || printf '200')
+  code=$(cat "$FAKE840_DIR/execution.code" 2>/dev/null || true)
+  [ -n "$code" ] || code=200
   ;;
 *":signJwt")
   body=$FAKE840_DIR/signjwt.json
-  code=$(cat "$FAKE840_DIR/signjwt.code" 2>/dev/null || printf '200')
+  code=$(cat "$FAKE840_DIR/signjwt.code" 2>/dev/null || true)
+  [ -n "$code" ] || code=200
   ;;
 *"signInWithCustomToken"*)
   n=$(( $(cat "$FAKE840_DIR/signin.count" 2>/dev/null || printf '0') + 1 ))
@@ -228,7 +239,8 @@ case "$url" in
   # travelled in it, and never on a command line.
   if [ -n "$data" ] && [ -f "$data" ]; then cp "$data" "$FAKE840_DIR/signin.$n.body"; fi
   body=$FAKE840_DIR/signin.$n.json
-  code=$(cat "$FAKE840_DIR/signin.$n.code" 2>/dev/null || printf '200')
+  code=$(cat "$FAKE840_DIR/signin.$n.code" 2>/dev/null || true)
+  [ -n "$code" ] || code=200
   ;;
 *)
   printf 'fake curl: unexpected URL %s\n' "$url" >&2
@@ -417,6 +429,7 @@ run840() {
   out=$(env TMPDIR="$dir/tmp" FAKE840_DIR="$dir/state" FAKE840_PROBE="$PROBE" \
     CHECK840_POLL_TRIES=1 CHECK840_POLL_SECONDS=0 \
     CHECK840_LOG_TRIES=1 CHECK840_LOG_SECONDS=0 \
+    CHECK840_MARKER_VALUE="$MARKER_VALUE" \
     PATH="$dir/bin:$PATH" \
     ${RUN840_ENV[@]+"${RUN840_ENV[@]}"} \
     bash ${RUN840_ARGS[@]+"${RUN840_ARGS[@]}"} "$script" "$@" 2>"$dir/err") || status=$?
@@ -736,6 +749,10 @@ test_usage() {
 test_the_credential_assertions_catch_an_echoing_script() {
   setup_case echoing
   local copy=$dir/check-840-echoing.sh
+  # The copy's added line reads a file whose name is the one the check writes
+  # its custom token to, and this case puts the sentinel there so that the copy
+  # really does print a credential.
+  printf '%s' "$CUSTOM_SENTINEL" >"$dir/state/custom.jwt"
   python3 - "$script" "$copy" <<'PY'
 import sys
 
@@ -757,6 +774,7 @@ PY
   out=$(env TMPDIR="$dir/tmp" FAKE840_DIR="$dir/state" FAKE840_PROBE="$PROBE" \
     CHECK840_POLL_TRIES=1 CHECK840_POLL_SECONDS=0 \
     CHECK840_LOG_TRIES=1 CHECK840_LOG_SECONDS=0 \
+    CHECK840_MARKER_VALUE="$MARKER_VALUE" \
     PATH="$dir/bin:$PATH" bash "$copy" \
     --project "$PROJECT" --region "$REGION" --job "$JOB" 2>"$dir/err") || status=$?
   expect_contains "$out" "$CUSTOM_SENTINEL" "the echoing copy prints a credential, which is what this self-test needs"

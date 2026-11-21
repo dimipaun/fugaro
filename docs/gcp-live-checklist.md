@@ -1161,6 +1161,7 @@ probe account carries predefined grants only).
 | 736 | The Firebase Auth, KMS and Cloud Run **quotas** at the stated scale ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 736**; the reconciliation's **U6**): the identity project's Identity Platform sign-in quota, the KMS signing operations per second it can want and the Cloud Run request and instance quotas beside them, read against the scale the plan states — every phone refreshing its token on the hour and pairing and revoking as the spec describes — so a limit that would stop pairing at the planned fleet size is found before the fleet is that size | See "Check 736" below; **one command**, run by **you**, on the **identity project** (**never `belong`**), with your own credentials; **no agent runs any step of it** | Each quota the command prints is compared with the plan's stated scale, and the reading names the ones with no headroom. A quota that answers with a limit below the stated scale is a **FAIL with the limit and the scale named**; a quota the read cannot reach is written as **not measured** rather than as headroom. The section records the figures it read, because a quota rises and the sentence here is only as good as its date. **OWNER-RUN, NOT RUN.** |
 | 737 | **The root key project** and the first signed key set ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 737** and task **A4**; the owner's **O7** and **O15**, and **A2**'s and **P8**'s pinned half): the separate owner-only project exists with its root KMS key, the root key is non-exportable and **no service account can sign with it** — signing is granted to exactly one member, a separate owner identity given as a variable, and the laptop's default login **cannot sign** either; the **key-set** signing command has signed the first set and A2 serves it; and a rotation rehearsal has run, so the new KMS key version and the signing command are known before the first real rotation needs them | See "Check 737" below; **one command** for the refusal that matters (your own login against the root key), run by **you**, at your own terminal with your own credential on the **root key project** (**never `belong`**); the applies and the ceremony are yours, and **no agent applies, signs or holds the key**; **no agent runs any step of it** | The root key's purpose is `ASYMMETRIC_SIGN`, its algorithm is Ed25519, and the sign attempt with the owner's own login is **refused** — a sign that succeeds is the **worst finding this check can produce**, because a key anyone holding the default login can sign with is a key that signs key sets no client should trust (O7). The signed set A2 serves verifies against the root public key, its `seq` is above every set before it and its not-after date is the one the envelope carries; the rotation rehearsal's reading is the new key version's `kid` and the command that signed it, recorded in the section. **USER-RUN, NOT RUN.** |
 | 640 | The status labels on a real pull request ([`docs/forge-labels/`](forge-labels/implementation-plan.md), its task **CK** and the block it reserves — **640–649**, 640 used; **U1** and **U3** are the two questions nothing offline can answer, and **D2437**'s table with **D2439**'s token and **D2440**'s create-on-first-use are what the labels' colours and the route's behaviour rest on): with the installation's orchestrator daemon running and **one approved task** launched, the pull request the run opens carries **`fugaro:running`** while the run is in flight and, once it has ended, **no** status label (a run that ended `succeeded` or `cancelled`) or **`fugaro:failed`** — plus the **`spec:<name>`** label its item's own spec asks for, in D2437's grey. **U1** — whether the dogfood installation's GitHub App really holds `pull_requests: write` — is read from the **credentials service's own audit lines** (`gcloud logging read`, purpose `label`), which are the service's record of the act and never the run's word; **U3** — what GitHub does with a label name that carries a **colon** — is read from the repository's own label table (`gh label list`). Run by **you**, on the **dogfood installation `fugaro`** (GCP project `fugaro-dev`, region `us-east5`, never `belong`), at your own terminal, as **one command**: `bash scripts/live-checks/check640.sh --installation fugaro`, with the test that drives it against fakes, `scripts/live-checks/check640_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** It reads and writes nothing anywhere, launches no run and costs nothing billable; the one conditional owner step is the plan's: if the check shows the App lacks `pull_requests: write`, you raise it on the App's settings page, which an agent cannot. **OWNER-RUN, NOT RUN.** |
+| 840 | **What a Cloud Run execution can prove** ([`docs/launcher-does-not-mint/`](launcher-does-not-mint/implementation-plan.md), its task **LM0**, which is the register's side of its **U1**, **U2** and **U3**; **F9**, **F11** and **R15** of its [reconciliation.md](launcher-does-not-mint/reconciliation.md)): what a Cloud Run job **execution's** metadata identity token carries, and whether anything in it is that execution's (**U1** — the platform's answer decides whether a contract change binds a run's claim to it, which is that work's **R-C1-execution**, and whether the residual **R5** leaves closes for Cloud Run); whether **`run.executions.get` returns an execution's environment overrides** to a caller the launcher role admits (**U2**, **F9**: a second launcher reads a peer's sealed token out of the execution's own override through exactly this call); and whether **Firebase accepts a second exchange of one custom token** inside its hour (**U3**, which **F9** assumes it does — if it does not, the copy F9 describes is a race today as well) | See "Check 840" below; **one command**, run by **you**, on your own **development installation** (**never `belong`**): `bash scripts/live-checks/check-840.sh --project <project> --region <region> --job <a job the installation already runs>`, with the hermetic test that drives it against fakes, `scripts/live-checks/check-840_test.sh` (run by `go test ./scripts`). It creates **one throwaway Cloud Run job of its own** (`fugaro-chk840-probe`, an image with a shell in it, no Fugaro code and no secret), launches **one execution of it with an environment override through the API's `jobs.run`** (which `gcloud run jobs execute` has no flag for), reads the execution back, and **deletes the job again, read back by a describe**. **No agent runs any step of it.** | Each of the three is a **reading**, and the block says which of them came back the other way: nothing in the identity token names the execution — the claims carry the account and the audience and **no claim names the execution**, which is **F11**'s reading of the platform, and a claim that **does** name it is the finding **R15** and **R-C1-execution** exist for; `run.executions.get` answers with the execution's own document **carrying the override's environment variable**, and the row beside it reads whether the launcher role carries `run.executions.get` at all (a role without it is that finding); and Firebase **accepts the same custom token a second time**, under the same uid — a second exchange Firebase refuses is a **FAIL** and is what **U3** and **F9** must be read against. An unreachable read, a job name already taken, or a credential that mints nothing is **not measured** (exit 2) rather than a FAIL. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -22248,5 +22249,94 @@ order puts beside Check 730, before the release and before every operator's `fug
 the check's — and the signature files the rehearsal wrote are yours to delete. What must not be left is a
 second signing grant: the reading's own criterion is that exactly one member can sign, so a rehearsal that
 granted anyone else must have that grant removed before the section is written.
+
+**USER-RUN, NOT RUN: no agent runs any step of it.**
+
+## Check 840: what a Cloud Run execution can prove — its identity token, the override read back, and one custom token exchanged twice (your own development installation, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **LM0** of
+[docs/launcher-does-not-mint/implementation-plan.md](launcher-does-not-mint/implementation-plan.md), and it
+is that work's register row for the three things its
+[reconciliation.md](launcher-does-not-mint/reconciliation.md) lists as **UNVERIFIED**: **U1**, **U2** and
+**U3**. It changes nothing it does not remove, it launches no Fugaro run, it calls no model, and **no agent
+runs any step of it**.
+
+**What it settles.** Three readings, and each of them is a question about the platform rather than about
+this installation, so an answer against the design is a **finding** and not a fault of the project it ran
+against.
+
+- **U1 — what the execution's identity token carries.** Every Cloud Run job execution has a metadata
+  server, and `internal/runner/gateway.go` mints an ID token from it for a fixed audience
+  (`…/service-accounts/default/identity?audience=…&format=full`). The check creates one throwaway job whose
+  only command prints the **claims** of that token — never the token — with the execution's own name known
+  from the platform's answer to the launch rather than from the container. **F11** reads the platform as
+  unable to tell two executions of one job apart, and this is where that reading is checked: if a claim
+  **names the execution**, that is the finding **R15** and its **R-C1-execution** exist for, and the
+  residual **R5** leaves closes for Cloud Run; if nothing does, the claim set is the account and the
+  audience, and a claim by a run proves the **job**.
+- **U2 — whether `run.executions.get` returns the override.** The launch puts a marker variable on the
+  execution as an **execution-level override** (the shape the launcher writes, and the one
+  `gcloud run jobs execute` has no flag for), and the check then reads the execution's own document back at
+  `GET https://run.googleapis.com/v2/<the execution's name>` — the call `run.executions.get` admits. The
+  reading is whether that document carries the marker with the value the launch set. **F9** rests on it: a
+  second launcher reads a peer's sealed token out of the execution's own override this way. The role is read
+  beside it, because "the owner's own credential can" and "a launcher can" are different claims: if
+  `fugaroLauncher` does not carry `run.executions.get`, F9's premise does not hold on this installation, and
+  that is a finding too.
+- **U3 — whether one custom token exchanges twice.** The check mints one Firebase custom token the way the
+  launcher does (`internal/budget/token/mint.go`'s claims, signed as `fugaro-token-signer` through IAM
+  Credentials `signJwt`), with a **run-shaped uid that names no run** (`r~chk840~<random>`), and posts it at
+  `accounts:signInWithCustomToken` **twice**. **F9** assumes a second exchange inside the hour works, which
+  is what makes the copy it describes a race; a refusal is a **finding** and means that copy was never the
+  race it is written as.
+
+**What has to exist before it runs.** An installation with a Cloud Run job (`--job`), your own `gcloud`
+login (`gcloud auth login`), and — for U3 — the right to sign as the installation's signer
+(`fugaroTokenMinter` on `fugaro-token-signer@<project>.iam.gserviceaccount.com`, which the installation
+granting you its deployer role gives). Nothing is installed and nothing is built: the probe job runs a
+public Cloud SDK image, and the check needs only `bash`, `gcloud`, `curl`, `python3`, `sed` and `mktemp`.
+
+**The command.**
+
+```sh
+bash scripts/live-checks/check-840.sh --project <project> --region <region> --job <a job the installation already runs>
+```
+
+`--job` is a job the installation already runs — a repository job, a shared job or the review job. The
+check reads exactly two things off it and changes nothing on it: the service account it runs as (which the
+probe job is created with, so that the identity token U1 reads names the account the installation's own jobs
+use) and the Firebase web API key in its environment (`FUGARO_FIREBASE_API_KEY`, a plain value, not a secret
+reference), which is what the U3 exchange is addressed with. `--signer <email>` overrides the signing
+account, and `--dry-run` prints every call it would make and makes none. **Any typed value containing
+`belong` is refused before any call** — the project, the region and the job alike — because the owner's own
+installation is never the subject of a check that creates a Cloud Run job.
+
+**What it reads, and what it never prints.** The access token this check carries is minted into a **0600
+curl config file** inside a 0700 scratch directory and curl reads it with `--config`; the Firebase web API
+key travels the same way, inside that file's URL; the custom token U3 mints, and the ID token Firebase
+answers with, are written to 0600 files and are never printed at all. `ps` shows a process's argv to every
+user of the machine, which is why none of the three is ever an argument of a command, and why a shell that
+arrived tracing (`-x`) is refused: a trace would print the credentials into the log you would paste back.
+
+**The three answers, and what each one moves.** A **PASS** on all three is the design's assumption holding,
+and the block says so in one verdict line. A **FAIL** on any of them is an answer against it, and the row
+names which: **U1** moves the reconciliation's **U1** and **R15** (**R-C1-execution** binds the run's claim
+to the claim that names the execution, and R5's residual closes for Cloud Run); **U2** moves its **U2** and
+**F9** (the launcher's read of a peer's override is not the way it is described); a launcher role without
+`run.executions.get` moves **F9** and the role's own permission list; **U3** moves its **U3** and **F9** (the
+copy was never a race). Exit 0 is all three as assumed, **1** is an answer against one of them, and **2** is
+**not measured** — a guard stopped it, a read did not answer, a credential minted nothing, or the job name
+was already taken — with the block's rows saying which.
+
+**Restore.** The check creates **one** Cloud Run job (`fugaro-chk840-probe`) and **one** execution of it,
+both its own, and deletes the job at the end — including on a Ctrl-C — then reads the deletion back with a
+describe that must answer `NOT_FOUND`. If a job of that name is **already** there, the check refuses before
+creating anything and deletes nothing: it never adopts a job it did not make. What stays in the project is
+the executions' own log lines, which are the project's record of what ran rather than a resource this check
+made, and the scratch directory and every credential file in it are removed and read back as gone.
+
+**What waits on it.** The launcher work's own items read against these three: **U1** against **R15** and
+**R-C1-execution**, **U2** and the launcher role's permission against **F9**, and **U3** against **F9**'s
+copy. Nothing here is a prerequisite for another task; the three are read when the owner runs the script.
 
 **USER-RUN, NOT RUN: no agent runs any step of it.**
