@@ -18,6 +18,7 @@ answers. It is the spec batch-run-identity's F24 and O6 said was not written.
 | [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A6, the census (who signs, who holds a signing grant, where a launch starts, who verifies), findings F1–F34, what each option does to the trust boundary, decisions D3120–D3137 with the owner's answers, resolutions R1–R16, open items O1–O19, UNVERIFIED U1–U11. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks C1, LM0 to LM24 without LM9, and I1 (26 runs); levels, critical path, shared files; Checks 840 and 841 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
+| [contract.md](contract.md) | The identity wire contract as implemented (C1): the five routes and their classes, the bodies, the refusal codes and the bridge's three triggers, the record and its place, the attempt reference and the probe |
 
 **Other plans read, and where.** batch-run-identity was first read on its branch at `910a545a7`
 while pull request #3323 was open; it merged as `b03f9147a` (branch tip `69f76967d`, which added

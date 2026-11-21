@@ -229,7 +229,10 @@ func TestAdmitSkipsChampionModel(t *testing.T) {
 // provider's calls go through the budget gateway, which holds the key and
 // routes the call, so a provider-served challenger under any other mode would
 // be a call to Anthropic. A direct model needs none of it. The mode is the
-// run's, and a merge that set none is off (the runner fills the same value).
+// run's, and a merge that set none is observe once the vocabulary reads it
+// (docs/always-a-budget/contract-mode.md, C1), which is one more answer this
+// refuses: observe never refuses a call, and a provider's calls are real
+// dollars.
 func TestAdmitNeedsEnforceForProvider(t *testing.T) {
 	for _, mode := range []string{"", policy.ModeOff, policy.ModeObserve} {
 		eff := admitPolicy()
@@ -242,6 +245,36 @@ func TestAdmitNeedsEnforceForProvider(t *testing.T) {
 	eff.Mode = policy.ModeObserve
 	if model, ok, why := admit(admitConfig(), admitLayer(admitClaudeAlt), eff, admitProviders(), admitPrices()); !ok || model != admitClaudeAlt || why != "" {
 		t.Errorf("a direct model under observe was refused: %q %v %q", model, ok, why)
+	}
+}
+
+// TestAdmitReadsAnEmptyModeAsObserve: the mode handed to the provider check is
+// read through the one vocabulary that answers what a mode string means
+// (docs/always-a-budget/contract-mode.md, C1), so a merge that set no mode is
+// observe and not off. Both refuse a provider-served challenger —
+// config.CheckProviderGateway admits one only under enforce — but which answer
+// reaches it, and the words of the refusal that answer picks, are the
+// vocabulary's rather than this file's; before the vocabulary this file read an
+// empty mode as off, which is what this test goes red on.
+func TestAdmitReadsAnEmptyModeAsObserve(t *testing.T) {
+	for _, tc := range []struct{ mode, want string }{
+		{"", policy.ModeObserve},
+		// The word that was a mode is named through the constant and never as
+		// a literal of its own (docs/always-a-budget/contract-mode.md §3).
+		{policy.ModeOff, policy.ModeObserve},
+		{policy.ModeObserve, policy.ModeObserve},
+		{policy.ModeEnforce, policy.ModeEnforce},
+	} {
+		if got := policyMode(policy.Effective{Mode: tc.mode}); got != tc.want {
+			t.Errorf("policyMode(%q) = %q, want %q", tc.mode, got, tc.want)
+		}
+	}
+	// The challenger's own answer under an empty mode, so the reading above is
+	// the one the provider check is given on a run whose merge set no mode.
+	eff := admitPolicy()
+	eff.Mode = ""
+	if model, ok, why := admit(admitConfig(), admitLayer(admitChallenger), eff, admitProviders(), admitPrices()); ok || model != "" || why != ReasonNeedsEnforce {
+		t.Errorf("mode \"\": Admit = %q %v %q, want no model and %q", model, ok, why, ReasonNeedsEnforce)
 	}
 }
 

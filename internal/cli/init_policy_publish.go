@@ -53,6 +53,22 @@ type policyDrift struct {
 	Node   string // the published node's value, the same way
 }
 
+// publishedMode is the mode a local config's spelling asks for (AB8a): the word
+// the mode's vocabulary dropped (D3009) is no mode of its own, and the answer
+// the vocabulary gives for it is the mode it means. Every reader of a file's
+// mode on the way to the published node asks it here, so neither the drift
+// comparison nor the node a publish builds can put the word back into the node
+// the migration has just taken it out of — which is what the update would
+// otherwise do to the very node it converged, on every run of it. A live mode,
+// and the empty spelling a config that states none carries, come back
+// unchanged; the file itself loses the word in AB8b, not here.
+func publishedMode(mode string) string {
+	if policy.Mode(mode).Removed() {
+		return policy.Mode(mode).Effective()
+	}
+	return mode
+}
+
 // policyConfigDrift is the members of the published node the local config is
 // the source of and that the node does not carry, in the order a diff reads.
 //
@@ -66,6 +82,9 @@ type policyDrift struct {
 // the project is admitted by. The credentials block is not in that list any
 // more: this release's local config carries it (credential_cascade), so it is
 // compared below through the publisher's own merge (D2607).
+//
+// The file's mode is compared as the mode it asks for (publishedMode), which is
+// AB8a's rule and the reason the comparison is not the two spellings.
 func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities map[string]string) []policyDrift {
 	if lc.Budget == nil || p == nil {
 		// A config with no budget block names no budget backend, so the stage
@@ -84,7 +103,17 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 		}
 		out = append(out, d)
 	}
-	add("budget.mode", lc.Budget.Mode, p.Budget.Mode, true)
+	// The file's own mode is asked through the vocabulary (AB8a): the word the
+	// mode's vocabulary dropped (D3009) is no mode of its own — a file that
+	// spells it asks for the mode it means, which is the mode the migration has
+	// just written into the published node — so a row comparing the two
+	// spellings would report this stage's own rewrite as a difference, and the
+	// publish that followed would put the word back into the node the step
+	// exists to take it out of. The node's side is its own bytes: a node that
+	// carries no mode at all is a member this file states and the node does not,
+	// which is what the settings read marks unpublished. The file itself loses
+	// the word in AB8b, not here.
+	add("budget.mode", publishedMode(lc.Budget.Mode), p.Budget.Mode, true)
 	add("budget.per_run_usd", lc.Budget.PerRunUSD, p.Budget.PerRunUSD, true)
 	add("budget.max_run_tokens", lc.Budget.MaxRunTokens, p.Budget.MaxRunTokens, true)
 	add("budget.allowed_models", lc.Budget.AllowedModels, p.Budget.AllowedModels, false)

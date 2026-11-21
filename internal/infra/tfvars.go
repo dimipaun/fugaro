@@ -227,6 +227,9 @@ type InstallationSpec struct {
 	// correctly-labelled container that already exists, so a config edit
 	// can never shrink the module's for_each (N3).
 	ProjectSecrets map[string]string `json:"project_secrets,omitempty"`
+	// OwnGitSecrets is set by LiveGitSecrets and read only by
+	// WithPlannedProjectSecrets; it never reaches tfvars.
+	OwnGitSecrets map[string]bool `json:"-"`
 	// ProjectJobs are the installation's shared project jobs (design
 	// project-centric §4.1): one Cloud Run job and one job service account
 	// per (profile, provider, account), by job name. The key is left out of

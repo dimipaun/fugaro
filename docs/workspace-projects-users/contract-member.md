@@ -104,6 +104,12 @@ node's `Admins` that also holds one of `AdminBindings` is propagated or trusted,
 
 ## 5. `StateWriter`, `CredentialProbe` and `Drift`
 
+`Snapshot.Member` names its member the way the workspace names a member, and not the way §1's calls do: `Project` is the
+member's Fugaro project name — the key of the owner's member table and the record's `members[].project` — which is what
+a snapshot is filed under, and `Firebase` is the member's Firebase project, which the snapshot itself is read from. A
+save runs on the workspace owner's machine, which holds no GCP project id for a member at all, and no snapshot reaches a
+member's GCP project.
+
 `StateWriter.Save` writes one `Snapshot` — a member's settings and spend summary, or the workspace's own audit export —
 always to a local file it names and, when E6's designated repository is set, as a pull request from the owner's own
 credentials (D2807). It refuses a public repository, naming a `--repo` override, because the snapshot carries addresses

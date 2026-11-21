@@ -200,6 +200,14 @@ type initOptions struct {
 	// stdin, which is what a surface with no file of its own passes.
 	answersFile string
 
+	// events is --events: write the run to stdout as the newline-delimited
+	// event feed of setup_events.go in place of the one --json document, so a
+	// surface driving the CLI draws each stage as it settles. It is the other
+	// half of the same task's contract (ST2, D2904) and it needs --json,
+	// because stdout is where the document goes: the feed takes its place and
+	// the run's own progress stays on stderr, where --json already puts it.
+	events bool
+
 	// --repo: onboard the repository of a checkout.
 	repo, noBuild, allowJobDelete bool
 	// retire is --retire: run the retirement a config change needs, behind
@@ -475,6 +483,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			switch {
 			case foreign:
 				err = userErr("fugaro %s does not take --%s: that is %s's (%s)", d.name, ff.name, ff.owner, ff.hint)
+			case o.events && !o.asJSON:
+				// The feed and the document are the same answer on the same
+				// writer, so --events without --json is refused rather than
+				// guessed at: the run that asked for lines is told which flag
+				// makes them an answer instead of a mixture with the account
+				// --json keeps on stderr (setup_events.go).
+				err = userErr("--events writes the run to stdout as newline-delimited events, and stdout is where the run's own account goes without --json: pass --json with it (fugaro %s --json --events)", d.name)
 			case o.checkOnly:
 				// --check is the one mode of this door that is not a
 				// converge: it reads the checkout's own files, writes
@@ -491,7 +506,18 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			default:
 				err = runInit(r)
 			}
-			if err != nil && o.asJSON && !r.printed {
+			if r.events != nil {
+				// The run asked for lines instead of the document
+				// (setup_events.go): the stage each step reached, the stage
+				// each one settled and the steps left for the user have gone
+				// out as they happened, and what is left to say is how the run
+				// ended — `done` with the exit code the process exits with, or
+				// `error` for the stage it stopped at. It is written here,
+				// where the command's own outcome is decided and nowhere else,
+				// so the feed cannot come to say something the process does
+				// not do.
+				r.events.finish(&r.res, err)
+			} else if err != nil && o.asJSON && !r.printed {
 				// A refusal before any stage ran: --json still prints one
 				// object, with the reason (the exit code is the error's).
 				r.res.Error = err.Error()
@@ -558,6 +584,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// file is the reader's whole contract, and it says what the file is not: an
 	// answer is not a confirmation.
 	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the five questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
+	// --events writes the same account --json prints as a stream of lines
+	// instead of one document (setup_events.go, D2904 of
+	// docs/console-improvements). The help names every kind of line, because
+	// the feed is the reader's whole contract, and it says what the flag is
+	// not: an event is not a confirmation, and a step that needs one arrives
+	// as left_for_you like every step a --json run cannot confirm.
+	f.BoolVar(&o.events, "events", false, "write the run to stdout as newline-delimited events instead of the one --json document: one `step` line as the run reaches a stage, one `stage` line as a stage settles (its name, state, detail and the stage it waited for), one `left_for_you` line for each thing only you can do — with the one line to run — and one last line that ends the feed: `done` with the run's exit code, or `error` naming the stage the run stopped at. A run that ends with steps left for you ends `done` with exit code 1 — it did not fail, and the steps are the left_for_you lines above it — which is the hand-off a surface draws rather than an error. It needs --json: the feed takes the document's place on stdout, and the run's own progress stays on stderr where --json already puts it. Nothing here confirms a step: --json confirms none, so every step that needs a confirmation arrives as left_for_you for you to run in your own terminal window")
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
@@ -690,8 +723,13 @@ type initRun struct {
 	historyNoted     bool
 	coordinatorNoted bool
 	printed          bool // the --json result has been printed
-	anchorNoted      bool // update --repo's pointer at --anchor has been said
-	ideNoted         bool // the IDE-terminal notice has been said, once per run
+	// events is the --events feed (setup_events.go), or nil for every run
+	// that did not ask for one — which is what keeps a run without the flag
+	// byte for byte the run it was: no line is written, and the loop's three
+	// hooks (initEngine.options) stay nil.
+	events      *setupEvents
+	anchorNoted bool // update --repo's pointer at --anchor has been said
+	ideNoted    bool // the IDE-terminal notice has been said, once per run
 	// enrolmentNote is what the repo engine did for a repository a deployed
 	// profile admits, in one line (M7): the engine prints it where there is no
 	// stage of its own to carry it (the update --repo door), and the converge's
@@ -848,12 +886,30 @@ type initRun struct {
 	// same question about the named token family (D2350), which the proxy
 	// serves as readily (T15): S6's flip asks the two together
 	// (bundleHoldsBitbucketToken).
-	credsRead           bool
-	credsNames          map[string]bool
-	credsAppKey         bool
-	credsRecord         bool
-	credsBitbucket      bool
-	credsBitbucketTyped bool
+	//
+	// credsRepoCredentials is the reading's last answer, the members of C1's
+	// named-provider family the document holds, by their own document keys
+	// (withoutRepoCredentials): R12's first fact asks whether the entry this
+	// repository's own slug and a provider it names is among them, and it is a
+	// question about the document just read rather than a second read of the
+	// secret. It is nil wherever the family is absent and wherever no document
+	// was read at all, which are two states the fact's reader asks no
+	// difference of (neither holds an entry).
+	credsRead            bool
+	credsNames           map[string]bool
+	credsAppKey          bool
+	credsRecord          bool
+	credsBitbucket       bool
+	credsBitbucketTyped  bool
+	credsRepoCredentials map[string]bool
+	// credsProviderKey is the same reading's answer for the project's provider
+	// key (config.ProviderKeySecret), which is the one model credential that is
+	// not an account: credsNames cannot carry it, because a caller reaches it
+	// under the account name config.ProviderKeyAccount rather than under the
+	// credential's own name. The credential-route stage reads it, since a
+	// project whose model calls ride the provider key serves its own model kind
+	// (update_route.go's modelServes).
+	credsProviderKey bool
 
 	// credsUnreadMarker is the marker of a session whose own rule kept the
 	// bundle unopened — a coding agent's session or a Fugaro run's own process
@@ -961,6 +1017,17 @@ func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
 	r.w = runWriter{r: r, out: cmd.OutOrStdout()}
 	if o.asJSON {
 		r.w = runWriter{r: r, out: cmd.ErrOrStderr()}
+	}
+	if o.events && o.asJSON {
+		// The event feed takes the one --json document's place on stdout
+		// (setup_events.go): a run that asked for lines gets lines and not a
+		// document, and its own progress is where --json already puts it,
+		// which is stderr. Both flags are needed, and a run with only --events
+		// is refused before this run exists: without --json stdout is where
+		// the run's own account goes, so there is no place a line of a feed
+		// could be written — which is why the refusal is the whole of what
+		// --events alone does, and it leaves the run byte for byte what it was.
+		r.events = newSetupEvents(cmd.OutOrStdout())
 	}
 	r.in = cmd.InOrStdin()
 	return r
@@ -3176,6 +3243,9 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	spec.ProjectSecrets = im.ProjectSecrets
 	// The catalog check's git credentials name a project container only when
 	// the plan holds it, which is known only now.
+	if spec.OwnGitSecrets, err = infra.LiveGitSecrets(ctx, c, lc); err != nil {
+		return outs, false, initErr(err)
+	}
 	if spec, err = spec.WithPlannedProjectSecrets(lc); err != nil {
 		return outs, false, err
 	}
@@ -4448,6 +4518,14 @@ func (r *initRun) printResult() error {
 	if !r.o.asJSON {
 		return nil
 	}
+	if r.events != nil {
+		// --events replaced the document with the feed (setup_events.go): this
+		// run's account is the lines already written, and its last one is
+		// written where the command ends (RunE), which is the only place the
+		// exit code is known. Printing the object here as well would put two
+		// answers on one stdout.
+		return nil
+	}
 	if r.res.LeftForYou == nil {
 		r.res.LeftForYou = []initflow.Left{} // an array, never null
 	}
@@ -4738,6 +4816,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateRigorSpelling(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// The members and the per-repo map LD4 adds to that block are the same
+	// kind of break on the newer rigorMembersSince, and the layer's alone: a
+	// repository's file refuses members: on a rule of its own and has no
+	// repos: key at all, so no repository half is judged here.
+	if err := r.gateRigorMembers(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	// The governance: block, in either file, is the same kind of break, on
 	// governanceSince.
 	if err := r.gateGovernance(o, repo, lc, cfg); err != nil {
@@ -4978,7 +5063,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// and not the document's agent.oauth_token alone: they are the accounts its
 	// jobs go out on and the ones the record below names, so a launch on any of
 	// them (`--token`, D2070 (a)) is a run this bundle reading has to cover.
-	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, lc, repo), policyBudgetMode(in.Policy))
+	r.recordCredentialsServiceReady(ctx, lc, outs, cfg, in.Policy, repo, cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, lc, repo), policyBudgetMode(in.Policy))
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
@@ -5366,6 +5451,23 @@ func (r *initRun) gateGovernance(o *initOptions, repo string, lc *localcfg.Confi
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseGovernanceSkew(repo, cfg.RepoGovernanceSet, cfg.Layer.SetsGovernance(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateRigorMembers is fugaro update --repo's gate for rigorMembersSince:
+// refuseRigorMembersSkew, with gateRigor's escapes and for its reason. The keys
+// are the project layer's alone — a repository's fugaro.yaml refuses members: on
+// one of its own rigor.areas rules and knows no repos: key — so the repository
+// half the other gates carry is absent: what is judged is the layer this
+// repository's configuration resolves over, and the refusal names it.
+func (r *initRun) gateRigorMembers(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseRigorMembersSkew(repo, cfg.Layer.SetsRigorMembers(), lc.BaseImage(config.BaseKind), w)
 }
 
 // gateJobs is fugaro update --repo's gate for jobsSince: refuseJobsSkew, with
@@ -5884,12 +5986,14 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			// ordinary path — the one a project that is not managed takes —
 			// may not owe the user a flag or a second command for it (the
 			// proxied token's is infra.ProxiedTokenAccessorAllowDelete, the
+			// model credentials' is infra.ModelAccessorAllowDelete, the
 			// fetched class's is infra.VaultAccessorAllowDelete, the S4
 			// flip's are infra.BuildAccessorAllowDelete; CLAUDE.md's HARD
 			// RULE, and the switch in init_retire.go's retireManaged is the
 			// managed path's own). Every other change in this plan is judged
 			// exactly as it was.
 			allowed := append(slices.Clone(r.o.allowDelete), infra.ProxiedTokenAccessorAllowDelete(plan, spec)...)
+			allowed = append(allowed, infra.ModelAccessorAllowDelete(plan, spec)...)
 			allowed = append(allowed, infra.VaultAccessorAllowDelete(plan, spec)...)
 			allowed = append(allowed, infra.BuildAccessorAllowDelete(plan, spec)...)
 			if err := r.guard(ctx, c, plan, allowed); err != nil {
@@ -6224,10 +6328,20 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 	// runs would then be answered 503 no_candidate_credentials by the
 	// credentials service while the node this publish writes still carries the
 	// admission, which is the state this key exists to end.
-	var ready *bool
+	// The same care extends to R12's two facts, which the same door wrote on
+	// the same entry a moment ago (recordCredentialsServiceReady, KS19): this
+	// write is the one `fugaro update` publishes for the installation, so a
+	// fact it did not carry over would be erased from the record of the very
+	// run that judged it — which is every run, the repository door writing this
+	// entry each time it converges. They travel with the switch, nil included,
+	// and for the same reason: an entry no update has judged must stay
+	// unjudged, and only the reading that judged it writes one.
+	var ready, providerKeysServed, stageAccountServed *bool
 	var accounts []string
 	if entry, ok := lc.Repos[key]; ok {
 		ready = entry.CredentialsServiceReady
+		providerKeysServed = entry.ProviderKeysServed
+		stageAccountServed = entry.StageAccountServed
 		accounts = entry.ClaudeAccounts
 	}
 	next.Repos[key] = localcfg.Repo{
@@ -6237,6 +6351,8 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 		GitHubAppID:             spec.GitHubAppID,
 		Vertex:                  spec.UsesVertex(),
 		CredentialsServiceReady: ready,
+		ProviderKeysServed:      providerKeysServed,
+		StageAccountServed:      stageAccountServed,
 		ClaudeAccounts:          accounts,
 	}
 	if spec.UsesVertex() && !lc.UsesVertex() {

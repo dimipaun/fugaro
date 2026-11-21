@@ -20,16 +20,19 @@ import (
 // Logging is a stateful fake of Cloud Logging's entries.list, of a log
 // bucket's get (for fugaro update's discovery) and of a project log sink's get
 // (`fugaro doctor` reads the installation's sink for the Batch arm of its
-// filter). entries.list takes the two
-// filter shapes Fugaro sends -- a Cloud Run job execution's entries, and a
-// Batch job's task logs by the job's UID (design compute-backend.md §2.3) --
+// filter). entries.list takes the three
+// filter shapes Fugaro sends -- a Cloud Run job execution's entries, a
+// Batch job's task logs by the job's UID (design compute-backend.md §2.3), and
+// a project's Admin Activity entries for SetIamPolicy (WU12's cross-check) --
 // each optionally from a timestamp on. Any other filter fails the test.
 //
 // Cloud Run entries are keyed by region, job and short execution name, as
 // the real resource.labels.location, resource.labels.job_name and
 // labels."run.googleapis.com/execution_name" are; an entry added under a
 // short name has no region and matches a query in any. Batch entries are
-// keyed by the job's UID, which is what labels.job_uid carries.
+// keyed by the job's UID, which is what labels.job_uid carries. Audit entries
+// are keyed by the project whose Admin Activity log they were written to, which
+// is the only way they are reached (AddAudit).
 type Logging struct {
 	*Server
 	// Resource, when set, is the one resource name (such as a log view)
@@ -42,6 +45,7 @@ type Logging struct {
 	mu        sync.Mutex
 	entries   map[logExec][]LogEntry
 	uidLogs   map[string][]LogEntry // Batch: a job's task logs by its UID
+	audit     map[string][]AuditEntry
 	nextID    int
 	buckets   map[string]logBucket // projects/<p>/locations/<l>/buckets/<id>
 	sinks     map[string]logSink   // projects/<p>/sinks/<id>
@@ -216,6 +220,49 @@ func (l *Logging) AddUID(uid string, e LogEntry) {
 	l.uidLogs[uid] = append(l.uidLogs[uid], e)
 }
 
+// BindingDelta is one binding a SetIamPolicy call added or removed, as
+// protoPayload.serviceData.policyDelta.bindingDeltas carries it.
+type BindingDelta struct {
+	// Action is the delta's own spelling: ADD, REMOVE or REMOVE_NON_EXISTENT.
+	Action string
+	Role   string
+	// Member is the binding's principal, as IAM spells it (`user:`, a service
+	// account's address, a group, a domain).
+	Member string
+}
+
+// AuditEntry is one Admin Activity entry (WU12): an audited SetIamPolicy call,
+// who made it, when, and the bindings it changed. It is what the fake renders
+// as a protoPayload, in the shape Google's documentation describes for a Cloud
+// Resource Manager policy change -- which is the shape
+// internal/infra/auditlogs.go reads, unverified against the real service as
+// every other surface here is.
+type AuditEntry struct {
+	Time time.Time
+	// Caller is protoPayload.authenticationInfo.principalEmail: the account
+	// that made the call.
+	Caller string
+	// Deltas are the bindings the call changed.
+	Deltas []BindingDelta
+	// InsertID is the entry's own id. An empty one is assigned, as Add's is.
+	InsertID string
+}
+
+// AddAudit stores one Admin Activity entry in project's log, which is how the
+// drift cross-check's filter reaches it.
+func (l *Logging) AddAudit(project string, e AuditEntry) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e.InsertID == "" {
+		l.nextID++
+		e.InsertID = fmt.Sprintf("fake-%06d", l.nextID)
+	}
+	if l.audit == nil {
+		l.audit = map[string][]AuditEntry{}
+	}
+	l.audit[project] = append(l.audit[project], e)
+}
+
 // logExec is an execution's log key; region is "" for one added by its
 // short name.
 type logExec struct {
@@ -295,19 +342,33 @@ var logFilterRE = regexp.MustCompile(`^resource\.type="cloud_run_job" AND resour
 // by its UID, the form Google documents for one job (design §2.3).
 var batchLogFilterRE = regexp.MustCompile(`^labels\.job_uid="([^"]+)" AND logName="projects/([^/]+)/logs/([^"]+)"(?: AND timestamp>="([^"]+)")?$`)
 
-// logQuery is a parsed entries.list filter: one of the two shapes above.
+// auditLogFilterRE is the shape WU12's drift cross-check sends: one project's
+// Admin Activity log, its SetIamPolicy calls, from a timestamp on. The log's
+// own name carries %2F, which is how the filter spells a log anywhere it is
+// compared.
+var auditLogFilterRE = regexp.MustCompile(`^logName="projects/([^/]+)/logs/cloudaudit\.googleapis\.com%2Factivity" AND protoPayload\.methodName="SetIamPolicy"(?: AND timestamp>="([^"]+)")?$`)
+
+// logQuery is a parsed entries.list filter: one of the three shapes above.
 type logQuery struct {
 	// Cloud Run: the monitored resource's labels and the execution label.
 	region, job, short string
 	// Batch: the job's UID, the log the entries come from, and its project.
 	uid, logName, project string
-	since                 time.Time
+	// auditProject is the project whose Admin Activity log an audit query
+	// reads. It is a field of its own rather than Batch's project because the
+	// two are read from different places in the filter: Batch's from the
+	// logName inside it, this one from the logName's project component.
+	auditProject string
+	since        time.Time
 }
 
 // batch reports whether q is the Batch filter shape.
 func (q logQuery) batch() bool { return q.uid != "" }
 
-// parseLogFilter parses either filter shape. A timestamp it cannot parse
+// audit reports whether q is the Admin Activity filter shape (WU12).
+func (q logQuery) audit() bool { return q.uid == "" && q.auditProject != "" }
+
+// parseLogFilter parses any filter shape. A timestamp it cannot parse
 // makes the filter unanswerable, exactly as the Cloud Run shape's did.
 func parseLogFilter(f string) (logQuery, bool) {
 	var q logQuery
@@ -318,6 +379,9 @@ func parseLogFilter(f string) (logQuery, bool) {
 	case batchLogFilterRE.MatchString(f):
 		m := batchLogFilterRE.FindStringSubmatch(f)
 		q.uid, q.project, q.logName, since = m[1], m[2], m[3], m[4]
+	case auditLogFilterRE.MatchString(f):
+		m := auditLogFilterRE.FindStringSubmatch(f)
+		q.auditProject, since = m[1], m[2]
 	default:
 		return logQuery{}, false
 	}
@@ -388,21 +452,29 @@ func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		return strings.HasPrefix(req.ResourceNames[0], "projects/") && !strings.Contains(req.ResourceNames[0], "/views/")
 	}
-	// A Batch filter names the log's project as well, and the real API
-	// requires it to be one the request may read: a mismatch is a request
+	// A Batch filter and an audit filter name the project as well, and the real
+	// API requires it to be one the request may read: a mismatch is a request
 	// Fugaro must never send, so it fails the test. It is asked only after
 	// wantRes has established there is exactly one resource name, which is
 	// the one it reads.
 	wantProject := func() bool {
-		if !q.batch() {
+		want := q.project
+		if q.audit() {
+			want = q.auditProject
+		}
+		if want == "" {
 			return true
 		}
-		return resourceProject(req.ResourceNames[0]) == q.project
+		return resourceProject(req.ResourceNames[0]) == want
 	}
 	if !ok || !wantRes() || !wantProject() ||
 		(req.OrderBy != "" && req.OrderBy != "timestamp asc") {
 		l.failf("gcpfake: entries.list request the fake cannot answer: resourceNames=%q filter=%q orderBy=%q", req.ResourceNames, req.Filter, req.OrderBy)
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported request")
+		return
+	}
+	if q.audit() {
+		l.listAuditEntries(w, q, req.PageSize, req.PageToken)
 		return
 	}
 
@@ -470,4 +542,66 @@ func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		resp["nextPageToken"] = strconv.Itoa(end)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// listAuditEntries answers an Admin Activity query: the entries of project's log
+// at or after the filter's timestamp, oldest first, as the real entries.list
+// answers them. It is a function of its own rather than a third arm of the loop
+// in handle because an audit entry is rendered from its own record: nothing of
+// it is a container's output and nothing of it is a payload a reader prints as a
+// message.
+func (l *Logging) listAuditEntries(w http.ResponseWriter, q logQuery, pageSize int, pageToken string) {
+	l.mu.Lock()
+	var match []AuditEntry
+	for _, e := range l.audit[q.auditProject] {
+		if !e.Time.Before(q.since) {
+			match = append(match, e)
+		}
+	}
+	l.mu.Unlock()
+	sort.SliceStable(match, func(i, j int) bool { return match[i].Time.Before(match[j].Time) })
+
+	size := pageSize
+	if size <= 0 {
+		size = 50
+	}
+	start, _ := strconv.Atoi(pageToken)
+	start = min(max(start, 0), len(match))
+	end := min(start+size, len(match))
+	out := []any{}
+	for _, e := range match[start:end] {
+		out = append(out, auditEntryBody(q.auditProject, e))
+	}
+	resp := map[string]any{"entries": out}
+	if end < len(match) {
+		resp["nextPageToken"] = strconv.Itoa(end)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// auditEntryBody is one Admin Activity entry as entries.list returns it: the
+// Cloud Resource Manager SetIamPolicy shape, carrying the policy delta the drift
+// cross-check reads.
+func auditEntryBody(project string, e AuditEntry) map[string]any {
+	deltas := make([]any, 0, len(e.Deltas))
+	for _, d := range e.Deltas {
+		deltas = append(deltas, map[string]any{"action": d.Action, "role": d.Role, "member": d.Member})
+	}
+	return map[string]any{
+		"insertId":  e.InsertID,
+		"timestamp": e.Time.UTC().Format(time.RFC3339Nano),
+		"severity":  "NOTICE",
+		"logName":   "projects/" + project + "/logs/cloudaudit.googleapis.com%2Factivity",
+		"resource":  map[string]any{"type": "project", "labels": map[string]string{"project_id": project}},
+		"protoPayload": map[string]any{
+			"@type":              "type.googleapis.com/google.cloud.audit.AuditLog",
+			"serviceName":        "cloudresourcemanager.googleapis.com",
+			"methodName":         "SetIamPolicy",
+			"authenticationInfo": map[string]any{"principalEmail": e.Caller},
+			"serviceData": map[string]any{
+				"@type":       "type.googleapis.com/google.iam.v1.logging.AuditData",
+				"policyDelta": map[string]any{"bindingDeltas": deltas},
+			},
+		},
+	}
 }
