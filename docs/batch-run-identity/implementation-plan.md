@@ -366,11 +366,12 @@ a claim rather than one guard on a key release.
 **Rewritten by LM19**: the key fact leaves the block; the opt-in fact and the accounts stay.
 - Acceptance: after `fugaro update` the block carries the opt-in fact and no key fact — a key fact
   written by the release behind is removed from the machine's file in place, and R10's rule holds
-  for it; the retired key is dropped **by name as text**, and the writer names no field of it, so
-  the deletion in BR23 does not reach this file; `batch.secrets` and the single `service_account`
-  are gone from the file, in place; the root is fed the project job accounts beside the
-  per-repository ones, which is what gives launchers `actAs` on them (D3105); the block is
-  published; the release notes' `### For operators` says "run `fugaro update`", and the feature
+  for it; the retired key is dropped **by name as text**, and the writer's own code stops naming its
+  field and its type — `sameSealKey`, and the copy in the block's builder — which is the behaviour
+  BR23's deletion waits for, so BR23 never reaches into this file; `batch.secrets` and the single
+  `service_account` are gone from the file, in place; the root is fed the project job accounts
+  beside the per-repository ones, which is what gives launchers `actAs` on them (D3105); the block
+  is published; the release notes' `### For operators` says "run `fugaro update`", and the feature
   notes say how Batch is chosen; where the root has no output yet (BR5 not applied) the launch
   refusal stays and the opt-in fact is still written (R13 dropped: no settings command writes a
   fact the installation's root owns).
@@ -732,10 +733,10 @@ it (R21).
   `internal/localcfg/batch.go`, which this task renames from `batch_sealkey.go` rather than
   deleting); `git grep` finds no user of a deleted name outside the contract's files, the
   registration's file and the two places that name the retired key as text without a field of it —
-  the block writer (BR16's) and this task's own reader, which skips the one retired key so that a
-  block an un-updated machine still holds loads; the deletion is refused for a name still
-  referenced, so the task lands only after BR1, BR2, BR4 and BR17; `docs/` carries no sentence
-  describing a Batch run's key.
+  the block writer (BR16's, which this task waits on for exactly that) and this task's own reader,
+  which skips the one retired key so that a block an un-updated machine still holds loads; the
+  deletion is refused for a name still referenced, so the task lands only after BR1, BR2, BR4, BR16
+  and BR17; `docs/` carries no sentence describing a Batch run's key.
 - Files: `internal/budget/token/wrap_contract.go` (deleted), `internal/budget/token/wrap_contract_test.go`
   (deleted), `internal/credsvc/sealkey_wire.go` (deleted), `internal/credsvc/sealkey_wire_test.go`
   (deleted), `internal/credsvc/sealkey_stub.go` (deleted), `internal/credsvc/sealkey_stub_test.go`
@@ -748,8 +749,10 @@ it (R21).
   `schemas/settings.schema.json`, `internal/cli/sharedcfg.go`,
   `internal/cli/sharedcfg_validate_test.go`, `internal/cli/writers_labels.go` (the two
   `batch.seal_key.*` rows). Past five; eight are a deletion, a rename or a line.
-- Interfaces: consumes C1 (the shapes that survive the deletion, and the file the job-name shape
-  moved to) and the block's own file, which it renames.
+- Interfaces: reads C1 (the shapes that survive the deletion, and the file the job-name shape moved
+  to) — an edge onto it would have to stand in place of a break, and this task has none — and
+  consumes BR16's file, where the writer stops naming the key, and the block's own file, which it
+  renames.
 - Tests: `TestNoConstructorNamesTheSealKey`, `TestTheSettingsRegistryHasNoBatchKeyFact`,
   `TestAnOldBlockWithAKeyFactStillLoads`, `TestTheOptInFactStaysWhereItMoved`.
 - Command: `go build ./... && ! git grep -nE 'BatchSealKey|ParseSealKeyPublicKey|FUGARO_BUDGET_TOKEN_WRAPPED|sealkey_wire|wrap_contract' -- '*.go' ':!*_test.go' && go test ./internal/localcfg/ -run 'OldBlockWithAKeyFact|OptInFactStays' -count=1 && go test ./internal/settings/ -run RegistryCoversEveryConfigField -count=1 && go test ./internal/backend/batch/ ./internal/credsvc/ -count=1`.
@@ -758,16 +761,18 @@ it (R21).
   stay until the launcher plan's LM18, and the Batch backend's `SealKey` option is a field of
   `internal/backend/batch/seal.go`, BR1's file. Nothing is excluded for the two places the
   acceptance keeps: both name the retired key as text, and a text mention matches none of the five
-  names, so the grep stays able to fail on a real user — including `internal/cli/init_compute.go`,
-  BR16's writer, which names no field of the retired key by the time this task runs, a level after
-  BR16.
+  names, so the grep stays able to fail on a real user — `internal/cli/init_compute.go`, BR16's
+  writer, included: this task waits on BR16 for it.
 - Red step: the build fails on a deleted file's last user.
-- Depends on: C1; BR1, BR2, BR4 and BR17 (kept: each stops using the code this deletes, one file
-  at a time); BR19 (kept: two files, `sharedcfg.go` and `shared_test.go`, which both tasks write).
-  It does not wait on BR16, and the pass records that wait as broken by the contract:
-  the block's writer names the retired key as text and no field of it, so there is nothing in it to
-  stop compiling. It starts after the owner has run Check 830, so that the link's read is the one
-  the surviving code names (R4).
+- Depends on: BR1, BR2, BR4, BR16, BR17 and BR19 (kept: each stops using the code this deletes or
+  removes a name of it, one or two files at a time). **It does not wait on C1, where it did until
+  now**: a wait on a contract stands in place of an edge the contract broke and this task has none
+  left — its old wait on BR16 is the behaviour this task keeps, since `internal/cli/init_compute.go`
+  names `Batch.SealKey` and `localcfg.BatchSealKey` today, and only BR16 removes them, so a deletion
+  that landed first would leave the build broken in a file outside this task's footprint. The
+  shapes C1 declares it still reads are in the contract's own file and in the files this task
+  renames; a wait on them would state a dependency no break stands behind. It starts after the
+  owner has run Check 830, so that the link's read is the one the surviving code names (R4).
 - Commit: `batch: the key-release code retires (BR23, R21, D3101 as amended)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -835,7 +840,6 @@ critical path BR0 → `R-C1-link-permission` → BR12 → BR18 → BR20 → I1, 
 | BR17 after BR1 | the registration needs the route's bodies, not the launcher that calls it |
 | BR6 after BR5 | the update's stage needs the opt-in fact and the root's input names, not its resources |
 | BR19 after BR16 | the merge needs the fact's shape, not the update that writes it |
-| BR23 after BR16 | the deletion needs the shapes the contract declares, and the block writer names the retired key as text and no field of it |
 
 **Edges kept:**
 
@@ -854,11 +858,11 @@ critical path BR0 → `R-C1-link-permission` → BR12 → BR18 → BR20 → I1, 
 | BR18 after BR7 and BR12 | behaviour: it reads which failure BR7's check reports; and one file, `docs/backends.md` |
 | BR10 after BR8 | behaviour: a project job's environment is what BR8 builds |
 | BR13 after BR0 | two files, the checklist and the scripts' list |
-| BR23 after BR1, BR2, BR4 and BR17 | behaviour: each stops using the code it deletes, and a deletion that lands first leaves the build broken |
+| BR23 after BR1, BR2, BR4, BR16 and BR17 | behaviour: each stops using the code it deletes, and a deletion that lands first leaves the build broken; BR16's block writer names the retired key's field and its type, which this task removes |
 | BR23 after BR19 | two files, `sharedcfg.go` and `shared_test.go` |
 | I1 after all | it wires the real sides and proves them together |
 
-**The gain**, as `fugaro plan graph` reports it: 13 edges broken, 25 kept, 4 added; the critical
+**The gain**, as `fugaro plan graph` reports it: 12 edges broken, 26 kept, 4 added; the critical
 path was 8 tasks of weight 16 and is 6 tasks of weight 11. **The critical path** is BR0,
 `R-C1-link-permission`, BR12, BR18, BR20, I1 — and BR0 is the bottleneck: between it and the
 contract change stand the owner's run of Check 830 and his answer on the second read, and the whole

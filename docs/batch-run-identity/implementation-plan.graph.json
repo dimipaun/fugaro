@@ -738,11 +738,6 @@
       "reason": "the opt-in fact"
     },
     {
-      "task": "BR23",
-      "needs": "C1",
-      "reason": "the names that survive the deletion, and the files they move to"
-    },
-    {
       "task": "R-C1-link-permission",
       "needs": "C1",
       "reason": "amends a file C1 creates"
@@ -896,6 +891,11 @@
       "task": "BR23",
       "needs": "BR19",
       "reason": "two files: sharedcfg.go and shared_test.go"
+    },
+    {
+      "task": "BR23",
+      "needs": "BR16",
+      "reason": "behaviour: the writer stops naming the retired key's field and type, which this deletion removes"
     }
   ],
   "decoupling": [
@@ -1006,15 +1006,6 @@
       },
       "integration": "I1",
       "reason": "the merge needs the fact's shape, not the update that writes it"
-    },
-    {
-      "contract": "C1",
-      "was": {
-        "task": "BR23",
-        "needs": "BR16"
-      },
-      "integration": "I1",
-      "reason": "the deletion needs the shapes the contract declares, not the block writer; the key fact leaves the block on BR16's side of the break"
     }
   ],
   "contract_changes": [
