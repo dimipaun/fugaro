@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -1866,6 +1867,82 @@ func TestUpdateLeavesACurrentNodeAloneWhateverTheRulesAre(t *testing.T) {
 	}
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Errorf("the node's version is %d, want %d", got, projectpolicy.Version)
+	}
+}
+
+// TestUpdatePolicyMigrationRewritesAnOffModeInPlace is AB8a's Red step at the
+// door that runs it: before the same-version step, `fugaro update` read a node
+// already at this version, found no version to walk and wrote nothing, so the
+// published node still said the word the vocabulary dropped and every run of
+// the project was refused by a reader that no longer knows it (F22). The step
+// runs at the version rather than across two, so the node's own number does not
+// move (R4, D3025), and what the operator reads is the one line that says what
+// was rewritten rather than a version move that is not there.
+//
+// The local config states the mode the step writes, so the diff the migration
+// produces is the whole of this run's work: a file that stated anything else
+// would be the publish half's difference and not the step's.
+func TestUpdatePolicyMigrationRewritesAnOffModeInPlace(t *testing.T) {
+	f := newProjectFixture(t, "")
+	setConfig(t, f, func(s string) string {
+		return strings.Replace(s, "budget: { mode: enforce,", "budget: { mode: "+policy.ModeObserve+",", 1)
+	})
+	node := currentPolicyNode()
+	node["budget"] = map[string]any{"mode": config.BudgetOff, "per_run_usd": 5}
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatalf("a node that says the word was refused by the check: %v", err)
+	}
+	if st.State != initflow.Todo {
+		t.Errorf("the check reports %q (%s), want the step as a todo", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "rewrites it in place") {
+		t.Errorf("the check line does not say what this run does: %s", st.Detail)
+	}
+	if strings.Contains(st.Detail, "writes version") {
+		t.Errorf("the check line words the step as a version move the node does not make: %s", st.Detail)
+	}
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+		t.Fatalf("the node is version %d after the step, want %d: the step runs at the version and does not bump it (R4, D3025)", got, projectpolicy.Version)
+	}
+	if p := publishedPolicy(t, f); p.Budget.Mode != policy.ModeObserve || p.Budget.PerRunUSD != 5 {
+		t.Errorf("the published node's budget is %+v, want the mode the step writes and the node's own ceiling", p.Budget)
+	}
+	if !strings.Contains(out, fmt.Sprintf("rewritten in place at version %d", projectpolicy.Version)) {
+		t.Errorf("the diff does not say the node was rewritten at its own version:\n%s", out)
+	}
+	// The step's own line, and not a version move: the numbers a walk reports
+	// would say the node went from a version to itself.
+	if !strings.Contains(out, fmt.Sprintf("the budget mode: %s -> %s", config.BudgetOff, policy.ModeObserve)) {
+		t.Errorf("the diff does not say what the mode became, in the step's own words:\n%s", out)
+	}
+	if strings.Contains(out, fmt.Sprintf("%d to %d:", projectpolicy.Version, projectpolicy.Version)) {
+		t.Errorf("the diff words the step as a version move the node does not make:\n%s", out)
+	}
+	// A second update leaves the node where the first one put it: the step is a
+	// fixed point, which is what keeps the one command the upgrade is from
+	// rewriting a converged node on every run of it.
+	h2 := newMigrationRig(t, f, &initOptions{})
+	out2, err := h2.apply(t, true)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out2)
+	}
+	if strings.Contains(out2, "rewritten in place") {
+		t.Errorf("a second update rewrote the node again:\n%s", out2)
+	}
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+		t.Errorf("the node is version %d after a second update, want %d", got, projectpolicy.Version)
+	}
+	if p := publishedPolicy(t, f); p.Budget.Mode != policy.ModeObserve {
+		t.Errorf("the node's mode is %q after a second update, want %q", p.Budget.Mode, policy.ModeObserve)
 	}
 }
 

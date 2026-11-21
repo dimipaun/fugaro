@@ -323,14 +323,16 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
-		// D2071 (a), before the empty-allow-list confirmation and the gate:
-		// a node whose mode is `off` is the fourth condition of the switch, so
-		// publishing it takes the service's address away from every switched
-		// `api-key` or `oauth` repository at its next launch — and their jobs
-		// hold no model credential of their own, because the mode they were
-		// applied under was a gateway one. Judged per attempt, on the node this
-		// attempt would write, so a retry re-reads the records it decided on.
-		if err := refuseModeOffWhileTheServiceServes(ctx, db, lc, pol.Budget.Mode); err != nil {
+		// C1's refusal at this door, before the empty-allow-list confirmation and
+		// the gate: a published budget mode is read as the mode every run of the
+		// project is metered by, and the word that was one is not one any more —
+		// a node that says it is one no reader of this release serves (the
+		// runner refuses the run, AB1b, and the decoder refuses the node, AB2),
+		// so publishing it is what would stop the project's next run with a
+		// sentence about a policy this very command wrote. Judged per attempt, on
+		// the node this attempt would write, so a retry re-reads the value it
+		// decided on.
+		if err := refuseARemovedBudgetMode(pol.Budget.Mode); err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
 		// A policy whose allow-list admits nothing stops every run of the
@@ -477,73 +479,35 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 	return remote(fmt.Errorf("the policy node kept changing under the write (%d attempts); the shared node is as it was%s; run it again", setAttempts, narrowedNote(narrowedSoFar)))
 }
 
-// refuseModeOffWhileTheServiceServes is D2071 (a) at the publish door: a
-// project whose budget mode is published as `off` while a repository the
-// credentials service serves the model path of holds no model mount of its own
-// is refused here, before a node is written.
+// refuseARemovedBudgetMode is C1's refusal at the publish door: the word the
+// budget mode's vocabulary dropped is refused here, before a node is written,
+// whatever the rest of the installation looks like.
 //
-// The order is what makes the state unrepairable rather than merely bad. The
-// mode is one of the switch's four conditions and it is read when a
-// repository's ROOT is applied: an `api-key` or `oauth` repository whose root
-// was applied under `observe` or `enforce` has B2.7's flip in its job — the
-// Anthropic key and the OAuth token are not mounted, because its runs reach the
-// service for them (config.ServiceServedAuths, infra.ModelSecretsServed). The
-// mode a LAUNCH reads is the published node's, so a node lowered to `off`
-// withholds the service's address from those runs at once (D2071's fourth
-// condition, credentialsServiceLaunchEnv) while the mounts come back only when
-// each repository's own root is applied again — and until then every run of
-// that repository is handed no address and has nothing of its own to read. It
-// is the same reasoning that makes `off` a mode an installation converges out
-// of deliberately, and it is why the direction is refused here rather than left
-// for a `fugaro doctor` line: nobody reads a doctor line before a run.
+// It is one refusal and not a conditional one because the word is not a mode at
+// all any more (D3009): a node that carries it is one no reader of this release
+// serves — the runner refuses the run that meets it, with the fix, and the
+// node's own decoder refuses the document (AB2) — so a publish that wrote it
+// would be a policy every run of the project stops on, written by the command
+// the operator ran to give the project one. What the door says is where the word
+// was written; what it means and the fix are the vocabulary's own text
+// (policy.ModeOffRefusal), so this refusal and the flag's, the file's and the
+// node's cannot drift (docs/always-a-budget/contract-mode.md).
 //
-// What the refusal does NOT ask is for an update to finish first, and it holds
-// no run back: it is a write of the project's own policy, judged against the
-// two facts the write would move — the mode it would publish and the
-// repositories whose records say a root of theirs is on the switch.
+// It replaces the narrower refusal of D2071 (a), which refused the word only
+// while the credentials service served a switched repository. That state is
+// gone with the word — it was the one publishing off made unrepairable, and
+// nothing can be published in it now — and the mode a repository's own record
+// was applied under is a fact of that record rather than of this write (F15,
+// R9: the guards of the removed mode are deleted and not kept as dead code).
 //
-// A repository is "switched" here in the sense the run itself reads it: the
-// installation carries the service (its block, with the address the launch
-// hands a job), the repository's own record says a root of it was applied with
-// the service on (localcfg.Repo.CredentialsServiceOn, the half no cloud read
-// answers), and the auth the record names is one the flip list carries — a
-// `cascade` repository is not one of them, because its job gave its mounts up
-// long before this flip and a mode of `off` refuses its launch outright
-// (cascadeLaunchRefusal is what says so, and at the launch rather than here).
-//
-// A record that cannot be read is a refusal and not a skipped repository: the
-// answer it would give is whether the repository's own jobs hold a model
-// credential, and publishing `off` over "could not tell" is the direction that
-// breaks runs. A record that is absent is a repository this release never
-// recorded, which is a repository it never applied a root of.
-func refuseModeOffWhileTheServiceServes(ctx context.Context, db creds.DB, lc *localcfg.Config, mode string) error {
-	if mode != config.BudgetOff || lc.CredentialsService == nil || lc.CredentialsService.URL == "" {
+// It reads the mode through the vocabulary's own predicate and never compares
+// the string here, so neither this line nor any other spells the word as a
+// literal.
+func refuseARemovedBudgetMode(mode string) error {
+	if !policy.Mode(mode).Removed() {
 		return nil
 	}
-	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
-		entry, ok := lc.RepoFor(repo)
-		if !ok || !entry.CredentialsServiceOn() {
-			continue
-		}
-		slug, err := task.Slug(entry.Provider, repo)
-		if err != nil {
-			// A repository whose provider this config cannot name has no
-			// record: the slug is what names one (writeRepoAuth's own
-			// derivation).
-			continue
-		}
-		rec, found, err := creds.ReadRepoAuth(ctx, db, slug)
-		if err != nil {
-			return userErr("the budget mode would be published as %s, and whether %s is a repository whose model path the credentials service serves could not be read from its record (%s): the mode is what decides whether its runs are handed the service's address, and a repository whose root was applied with the service on holds none of its own model credentials — so a publish over an unreadable record is one that can leave those runs with nothing to read. Run the publish again once the record can be read",
-				mode, repo, safetext.FieldErr(err))
-		}
-		if !found || !slices.Contains(config.ServiceServedAuths, rec.Auth) {
-			continue
-		}
-		return userErr("the budget mode would be published as %s while %s is a repository whose model path the credentials service serves (its record says agent.auth %s, and a root of it was applied with the service on): its jobs mount neither the Anthropic key nor the Claude OAuth token, so a mode of %s is what would withhold the service's address from every run of it — a run handed no address, on a job that has no credential of its own to read (D2071). Publish the mode as %s or %s, or lower it and then run 'fugaro update --repo' in that checkout, which re-applies the root and puts the mounts back",
-			mode, repo, rec.Auth, mode, config.BudgetObserve, config.BudgetEnforce)
-	}
-	return nil
+	return userErr("this publish would write the budget mode as %s: %s", mode, policy.ModeOffRefusal)
 }
 
 // requirePolicyRules refuses a publish without the deployed rules marker
