@@ -235,6 +235,21 @@ export const RUNS_LIST_MAX_LIMIT = 200
 export const SUMMARY_SINCE_WINDOWS: readonly string[] = Object.freeze(['7d', '1d'])
 
 /**
+ * RUNS_STREAM_SINCE_WINDOWS is the closed set of windows `runs ls --stream
+ * --since` may be asked for from here, and **it is the console's own window
+ * rather than the command's grammar**. `runs ls` reads `parseSince` (`runSince`,
+ * `internal/cli/runs.go`), whose first branch is `0` -- no lower bound at all --
+ * and a *live* read of every run an installation ever made, still arriving, is
+ * the one window a feed must not be opened on. The window this console makes its
+ * `runs ls` reads for is a day (`RUNS_SINCE`, `src/renderer/entry.ts`), so the
+ * stream admits exactly that word: the feed and the whole-document listing its
+ * screen falls back to cover the same window, and a renderer cannot widen one of
+ * the two under another spelling of the same flag. The set is stated once, here,
+ * and both the schema and the argv builder read it.
+ */
+export const RUNS_STREAM_SINCE_WINDOWS: readonly string[] = Object.freeze(['24h'])
+
+/**
  * GRAPH_SCOPE_RE is the closed shape of a `graph.read` scope argument: the two
  * selector words, and an id-carrying scope whose id is one lower-case letter or
  * digit followed by up to 39 more of those or a hyphen. It is **the CLI's own
@@ -369,6 +384,16 @@ const MAX_ROADMAP_RELEASE_LENGTH = 64
  *     of `runSince` because the *position* differs as well: the row emits it as
  *     the `=` form `--since=<window>`, one word, so a value can never read as a
  *     flag;
+ *   - `runsStreamSince` -- `runs ls --stream --since`'s window: one of
+ *     `RUNS_STREAM_SINCE_WINDOWS` and nothing else, which is the console's own
+ *     day rather than `parseSince`'s grammar (`runSince`). It is closed for
+ *     `summarySince`'s reason and one more the live read adds: `parseSince`'s
+ *     `0` is no lower bound at all, and on a feed that is every run the
+ *     installation ever made, still arriving. It is a kind of its own rather
+ *     than a reuse of `runSince` for that reason *and*, as `summarySince`'s is,
+ *     for the position: this row emits the space form `--since <window>`, the
+ *     one `runs ls`'s whole-document row emits, so a stream and the listing its
+ *     screen falls back to ask for one window one way;
  *   - `reportDimension` -- `report --by`'s closed set of eight words;
  *   - `secretScope` -- `secrets ls`'s two mutually exclusive scopes;
  *   - `pullRequest` -- a pull request number, a positive integer;
@@ -450,6 +475,7 @@ export type ArgumentKind =
   | 'runLimit'
   | 'runAfter'
   | 'summarySince'
+  | 'runsStreamSince'
   | 'reportDimension'
   | 'secretScope'
   | 'pullRequest'
@@ -2033,9 +2059,12 @@ export const CONSOLE_OPERATIONS = [
   {
     // The runs list's live form (RS2, `runs ls --stream --json --since <w>`):
     // the same rows the whole-document read draws, one line at a time. The
-    // window is `runs.list`'s own grammar (`isRunsSince`) and **required**,
-    // because a stream that opened on the command's default window would be a
-    // feed whose first question nobody answered. The row's other columns --
+    // window is the console's own closed set (`RUNS_STREAM_SINCE_WINDOWS`) --
+    // the day every `runs ls` here is read for -- and never `parseSince`'s
+    // grammar, whose `0` is every run the installation ever made arriving one
+    // line at a time. It is **required**, because a stream that opened on the
+    // command's default window would be a feed whose first question nobody
+    // answered. The row's other columns --
     // `--repo`, `--mine`, `--pr`, `--all`, `--limit`, `--after` -- are absent,
     // so the stream is the window's own list and never a filtered one.
     name: 'runs.stream',
@@ -2046,9 +2075,9 @@ export const CONSOLE_OPERATIONS = [
     args: [
       {
         key: 'since',
-        kind: 'runSince',
+        kind: 'runsStreamSince',
         required: true,
-        why: 'the window the feed covers, in `runs ls`’s own grammar (`7d`, `36h`, `90m`, `0`). Required rather than defaulted: a live list whose window nobody chose is the read the console must not make on a screen’s behalf.',
+        why: 'the window the feed covers: the console’s own day (`RUNS_STREAM_SINCE_WINDOWS`) and no other word. Required rather than defaulted: a live list whose window nobody chose is the read the console must not make on a screen’s behalf.',
       },
     ],
   },
@@ -3619,6 +3648,20 @@ function validateValue(
         return refuse(`${spec.key} must be one of ${SUMMARY_SINCE_WINDOWS.join(', ')}`)
       }
       return { ok: true, value }
+    case 'runsStreamSince':
+      // `runs ls --stream --since`, and **the console's own set rather than the
+      // command's grammar**: `runs ls` reads `parseSince` the way `runs stats`
+      // does, and its first branch is `0` -- no lower bound -- which on a live
+      // feed is every run the installation ever made, still arriving. The window
+      // is the day this console reads a run list for
+      // (`RUNS_STREAM_SINCE_WINDOWS`), so the feed and the whole-document
+      // listing its screen falls
+      // back to cover the same window; every other form the command takes
+      // (`0`, `7d`, `36h`, a date) is refused before a child exists.
+      if (!RUNS_STREAM_SINCE_WINDOWS.includes(value)) {
+        return refuse(`${spec.key} must be one of ${RUNS_STREAM_SINCE_WINDOWS.join(', ')}`)
+      }
+      return { ok: true, value }
     case 'reportDimension':
       if (!REPORT_DIMENSIONS.includes(value)) return refuse(`${spec.key} must be one of ${REPORT_DIMENSIONS.join(', ')}`)
       return { ok: true, value }
@@ -3806,6 +3849,10 @@ function kindLimit(kind: ArgumentKind): number {
       // longer than these two cannot be refused by the bound before its own
       // membership check sees it.
       return Math.max(...SUMMARY_SINCE_WINDOWS.map((window) => window.length))
+    case 'runsStreamSince':
+      // The longest window in the closed set, read off the set for
+      // `summarySince`'s reason.
+      return Math.max(...RUNS_STREAM_SINCE_WINDOWS.map((window) => window.length))
     case 'reportDimension':
       return 8
     case 'secretScope':

@@ -1710,6 +1710,44 @@ describe('the spawn table and the argv it builds', () => {
     }
   })
 
+  it('spawns the runs stream with the console’s own window and nothing else', () => {
+    // `runs ls --stream --json --since <w>` (AL). The window is a declared
+    // argument in the **space form**, the way `runs.list`'s is, and it is the
+    // console's own closed set (`RUNS_STREAM_SINCE_WINDOWS`) rather than the
+    // `parseSince` grammar the command reads. **Both guards refuse a window
+    // outside it**: the validator (`ipc.ts`'s `runsStreamSince`) is the
+    // renderer's gate, and the argv builder re-asks the membership for the
+    // `summarySince` case's reason -- the window this one admits by accident is
+    // every run the installation ever made, arriving on a live feed.
+    expect([...argvFor('runs.stream', { since: '24h' }, safeContext({ project: 'chosen' }))]).toEqual([
+      'runs',
+      'ls',
+      '--stream',
+      '--json',
+      '--since',
+      '24h',
+      '--project',
+      'chosen',
+    ])
+    for (const since of ['0', '7d', '1d', '36h', '1h30m', '12w', '2026-10-16', '24H', ' 24h', '24h ', '']) {
+      expect(validateArguments('runs.stream', { since }).ok, JSON.stringify(since)).toBe(false)
+      expect(
+        () => argvFor('runs.stream', { since }, safeContext()),
+        JSON.stringify(since),
+      ).toThrow(/not a window this console will pass/)
+    }
+    // What the spawn alphabet refuses on top of that is a word an argv could not
+    // carry at all -- the builder's other half.
+    for (const since of ['a b', '$(id)', 'a;b', 'a\u0000b']) {
+      expect(() => argvFor('runs.stream', { since }, safeContext()), JSON.stringify(since)).toThrow()
+    }
+    // And no other key of the listing's argv reaches this row: the stream is the
+    // window's own list and never a filtered one.
+    for (const key of ['repo', 'mine', 'pr', 'all', 'limit', 'after']) {
+      expect(() => argvFor('runs.stream', { [key]: 'x' }, safeContext()), key).toThrow(/does not declare/)
+    }
+  })
+
   it('spawns `models ls` with exactly these words and no argument a renderer can fill', () => {
     // The read-only models panel's read (console 0.119.0, the owner's ruling of
     // 2026-11-02). One argv, written out: the command, its one fixed flag and

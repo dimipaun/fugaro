@@ -116,6 +116,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 import {
   CONSOLE_OPERATIONS,
   RUNS_LIST_MAX_LIMIT,
+  RUNS_STREAM_SINCE_WINDOWS,
   SETTINGS_VALUE_MAX_LENGTH,
   SUMMARY_SINCE_WINDOWS,
   isNeverReachable,
@@ -686,6 +687,14 @@ export interface Backoff {
  * alone -- the window itself is `ipc.ts`'s closed set, which is narrower than
  * any grammar here could be, so what is left for this module is the spelling.
  *
+ * **`runsStreamSince` is the runs stream's one** (the console improvements
+ * plan's AL): `--since <window>`, the *space* form `runs ls`'s whole-document
+ * row emits, so the feed and the listing its screen falls back to ask for one
+ * window one way. It is a kind of its own rather than `value` for the reason
+ * `summarySince` is: the window is `ipc.ts`'s closed set
+ * (`RUNS_STREAM_SINCE_WINDOWS`), narrower than the command's own `parseSince`,
+ * so what is left here is the spelling and the second asking of the membership.
+ *
  * **`settingOp` and `settingValue` are the settings write's two** (the
  * settings-edit plan's C3), and both are kinds of their own because neither
  * emits a flag. `settingOp` is the subcommand the edit is -- `set` or `unset`,
@@ -726,6 +735,7 @@ export type SpawnArgumentKind =
   | 'limit'
   | 'after'
   | 'summarySince'
+  | 'runsStreamSince'
   | 'settingOp'
   | 'settingValue'
   | 'roadmapTask'
@@ -752,6 +762,9 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   // The runs summary's window: the third `=`-form kind, and the second on a
   // row that is a read.
   summarySince: 'summarySince',
+  // The runs stream's window: the console's own closed set in the space form,
+  // for the reason its own paragraph above gives.
+  runsStreamSince: 'runsStreamSince',
   reportDimension: 'value',
   secretScope: 'secretScope',
   pullRequest: 'pullRequest',
@@ -1566,9 +1579,12 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // things are deliberately absent.
     //
     // **`--since` is a declared argument and not a word**, and it is the one
-    // ring the read shares with `runs.list`: the window is that row's own kind
-    // (`runSince`, the CLI's `parseSince` grammar), so a stream and a list
-    // cannot spell one window two ways.
+    // ring the read shares with `runs.list`: the window is a closed set of the
+    // console's own (`runsStreamSince`, `RUNS_STREAM_SINCE_WINDOWS`) rather
+    // than the CLI's `parseSince`, whose `0` is every run the installation ever
+    // made arriving one line at a time -- and both rows emit it as the space
+    // form, so a stream and the listing its screen falls back to cannot spell
+    // one window two ways.
     //
     // **No `--repo`, `--mine`, `--pr`, `--all`, `--limit`, `--after`**: the
     // operation's schema has none of them, so `argvFor` refuses them by name
@@ -1580,7 +1596,7 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     operation: 'runs.stream',
     words: ['runs', 'ls', '--stream', '--json'],
     takesProject: true,
-    args: [{ key: 'since', flag: '--since', kind: 'value' }],
+    args: [{ key: 'since', flag: '--since', kind: 'runsStreamSince' }],
     dirFlag: false,
   },
   {
@@ -2227,6 +2243,27 @@ export function argvFor(
         argv.push(`${spec.flag ?? ''}${value}`)
         break
       }
+      case 'runsStreamSince': {
+        // Two words, `--since <window>`, which is the form `runs ls`'s
+        // whole-document row emits: the feed and the listing its screen falls
+        // back to read the same flag the same way.
+        //
+        // **The membership is asked again here rather than trusted**, for
+        // `summarySince`'s reason: the schema is the renderer's gate (`ipc.ts`'s
+        // `runsStreamSince`) and this is the argv's, and the window the two could
+        // disagree about is `parseSince`'s `0` -- no lower bound, so every run the
+        // installation ever made, still arriving on a live feed.
+        if (
+          typeof value !== 'string' ||
+          !RUNS_STREAM_SINCE_WINDOWS.includes(value) ||
+          !isSafeArgumentValue(value)
+        ) {
+          refused(`${operation}'s ${spec.key} is not a window this console will pass to the CLI`)
+        }
+        if (spec.flag !== null) argv.push(spec.flag)
+        argv.push(value)
+        break
+      }
       case 'pullRequest': {
         // The validator hands this over as the *number* it checked (ipc.ts's
         // `pullRequest` kind returns it unchanged), and the CLI's `--pr` is an
@@ -2460,6 +2497,7 @@ function emitsArgvWord(spec: SpawnArgument, value: ValidatedArgument): boolean {
     case 'limit':
     case 'after':
     case 'summarySince':
+    case 'runsStreamSince':
     case 'pullRequest':
     case 'title':
     case 'planTask':

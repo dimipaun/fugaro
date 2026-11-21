@@ -101,6 +101,7 @@ import {
   REDUCED_REFUSAL,
   REDUCED_VIEW_OPERATIONS,
   RUNS_LIST_MAX_LIMIT,
+  RUNS_STREAM_SINCE_WINDOWS,
   SENDER_REFUSAL,
   assertReachableSurface,
   channelForOperation,
@@ -2006,12 +2007,14 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // `NoArgs` and the operation declares no key -- so there is no step name, no
   // key and no project here for a caller to spell.
   'apply.pending': {},
-  // The console improvements' nine (AL). The three live reads carry exactly
-  // what their whole-document siblings carry -- `runs.stream`'s window is
+  // The console improvements' nine (AL). The three live reads carry the
+  // arguments of their whole-document siblings -- `runs.stream`'s window is
   // required, where `runs.list`'s is optional, because a feed whose window
-  // nobody chose is the read a screen must not make on the operator's behalf --
-  // and the three reads that take no argument at all take none here either.
-  'runs.stream': { since: '7d' },
+  // nobody chose is the read a screen must not make on the operator's behalf,
+  // and it is the console's own day rather than the command's whole grammar
+  // (`RUNS_STREAM_SINCE_WINDOWS`, the pins below) -- and the three reads that
+  // take no argument at all take none here either.
+  'runs.stream': { since: '24h' },
   'spend.stream': { by: 'model', since: '7d', until: '2026-10-16', repo: 'acme/app' },
   'budget.stream': { repo: 'acme/app', all: false, compute: true },
   'whoami': {},
@@ -3224,6 +3227,64 @@ describe('the day and window arguments', () => {
     const kinds = CONSOLE_OPERATIONS.filter((operation) => operation.name === 'runs.summary')
       .flatMap((operation) => operation.args.map((spec) => spec.kind))
     expect(kinds).toEqual(['summarySince'])
+  })
+
+  // `runs ls --stream --since` is **the console's own closed set**
+  // (`RUNS_STREAM_SINCE_WINDOWS`) and not the command's grammar either: `runs
+  // ls` reads `parseSince`, so every form in `runWindows` above is a form the
+  // command takes and this surface refuses. The live read is where that matters
+  // most -- `0` is no lower bound, and on a feed it is every run the
+  // installation ever made, one line at a time -- so the set is one window, the
+  // day `RUNS_SINCE` reads a run list for, and the same day the whole-document
+  // fallback covers.
+  const streamWindows: readonly (readonly [string, boolean, string])[] = [
+    ['24h', true, 'the console’s own window: the day `RUNS_SINCE` reads a run list for'],
+    ['0', false, 'parseSince’s “no bound” is the whole history arriving one line at a time'],
+    ['7d', false, 'a window no `runs ls` here is read for, and the set is closed rather than a bound'],
+    ['1d', false, 'a day is 24h in this grammar: the set is exact, not a duration comparison'],
+    ['36h', false, 'a Go duration is a form of the command and not of this set'],
+    ['1h30m', false, 'nor a compound one'],
+    ['2026-10-16', false, 'and a UTC day is neither'],
+    ['12w', false, 'nor weeks'],
+    ['24H', false, 'the set is exact: the spelling is part of the word'],
+    [' 24h', false, 'a leading space'],
+    ['24h ', false, 'a trailing one'],
+    ['', false, 'empty'],
+    ['all', false, 'a word'],
+    ['--json', false, 'and a flag is not a window'],
+  ]
+
+  for (const [value, accepted, why] of streamWindows) {
+    it(`${accepted ? 'accepts' : 'refuses'} the stream window ${JSON.stringify(value)} (${why})`, () => {
+      expect(validateArguments('runs.stream', { since: value }).ok).toBe(accepted)
+    })
+  }
+
+  it('refuses a stream window the command itself takes, which is the set’s whole point', () => {
+    // The pair that makes the claim above a fact rather than a coincidence:
+    // `7d` is `parseSince`'s, so `runs.list` and `runs.summary` both take it,
+    // and this operation refuses it before a child exists.
+    expect(validateArguments('runs.list', { since: '7d' }).ok).toBe(true)
+    expect(validateArguments('runs.stream', { since: '7d' }).ok).toBe(false)
+    expect(validateArguments('runs.stream', { since: '24h' }).ok).toBe(true)
+    // The set itself, so a second window cannot join it without this line
+    // moving: one member, the console's own day, and the table above refuses
+    // every other form the command takes.
+    expect(RUNS_STREAM_SINCE_WINDOWS).toStrictEqual(['24h'])
+  })
+
+  it('requires the stream’s window, where the listing it falls back to defaults it', () => {
+    // The one argument of the read that has no default: a feed opened on the
+    // command's own window would be a live read whose window nobody chose, and
+    // the screen that falls back to `runs.list` passes the same word.
+    expect(validateArguments('runs.list', {}).ok).toBe(true)
+    expect(validateArguments('runs.stream', {}).ok).toBe(false)
+  })
+
+  it('gives the stream its own window kind, so the four `--since`s cannot drift', () => {
+    const kinds = CONSOLE_OPERATIONS.filter((operation) => operation.name === 'runs.stream')
+      .flatMap((operation) => operation.args.map((spec) => spec.kind))
+    expect(kinds).toEqual(['runsStreamSince'])
   })
 })
 

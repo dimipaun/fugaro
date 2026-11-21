@@ -904,7 +904,12 @@ CLI's own output.
 not `groups` (so `--group-by failure_class` is not a pairing the console uses)
 and not `warnings`, so a consumer that needs one of those reads the whole
 document. **The console reads it as `runs.stream`** (design §5.1 rule 5), always
-with `--since 24h` as it spawns the one-shot read, with the caps that rule states
+with `--since 24h` as it spawns the one-shot read — and `--since <w>` in this
+feed is **the console's own closed set and not the command's grammar** (`24h`,
+`RUNS_STREAM_SINCE_WINDOWS`, `src/main/ipc.ts`): `runs ls` reads `parseSince`,
+whose `0` is no lower bound at all, and a live read opened on it is every run the
+installation ever made, one line at a time, so every other form the command takes
+is refused before a child exists — with the caps that rule states
 (per line, 10,000 rows, 16 MiB), and it draws each run as its line arrives
 instead of holding the listing; a feed that reaches a cap is ended, the child
 killed and the section shown as an interrupted read with a Retry, never as a
