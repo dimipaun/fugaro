@@ -40,6 +40,30 @@ import (
 //     installation that knows better than the derivation is not fought
 //     (Options.JobAccounts' keys are both classes' job names).
 //
+// The derived account IS one of the project's run-class accounts -- the
+// repository root creates it under the display name JobRunAccounts matches
+// (gcp.JobSADisplayName), which is why doctor's membership check passes for it
+// -- but existing as a run account is not the same as the compute root having
+// been provisioned WITH it. `run_accounts` is a snapshot taken when `fugaro
+// setup --provision-batch` last ran (internal/cli's compute stage lists the
+// project at that moment, infra.JobRunAccounts), and F13 is that nothing
+// applies that root again: `fugaro update` applies it only once BR6 has
+// landed. A workflow or a token variant added after the last provisioning
+// therefore derives an account the provisioned grants do not cover: the
+// launchers hold no actAs on it, so creating a job that names it is refused,
+// and its VM holds neither batch.agentReporter nor logging.logWriter, so a
+// job that did get created sits until the queue deadline. This backend cannot
+// see that list, and must not guess at it: the compute root publishes no
+// run_accounts output and the local config records workflow names rather than
+// the accounts the repository roots created (internal/localcfg's Batch), so no
+// caller could fill one in. The check is doctor's instead, over accounts it
+// lists live from the project -- `batch-run-accounts`,
+// `batch-run-account-roles` (the two roles, for every account in the list) and
+// `batch-run-account-actas` -- and each one's fix is `fugaro update`, which
+// R14's rule makes a launch name as its own fix until the root has been
+// applied. That apply (BR6) and the shared project job accounts the root has
+// to be fed (BR16, D3105) are other tasks', not this one's.
+//
 // **Nothing fills Options.JobAccounts yet, so a project job is still refused
 // on a real installation**, and this is the one thing BR10 leaves open rather
 // than guesses at. The account exists -- the launcher resolves the job, and so
