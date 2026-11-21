@@ -3,8 +3,8 @@
 Checked against `origin/main` at `2e8c7cb0b` on 2026-11-21, and re-read at `72859a77d` the same
 day after review round 1. **Where this file disagrees with
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. The spec's own
-decisions are D2960–D2979, all answered on 2026-11-19; this file adds **D3140–D3145**, answered by
-the owner on 2026-11-21, every one as recommended.
+decisions are D2960–D2979, all answered on 2026-11-19; this file adds **D3140–D3147**, answered by
+the owner on 2026-11-21, every one as recommended (D3146 and D3147 were added by review round 2).
 
 **How to read a decision number here.** D2960–D2969 are allocated twice on `main` (F1). In this
 folder they always mean the workspace-credentials decisions of [spec.md](spec.md) §4 and §5.
@@ -63,7 +63,7 @@ a plan that has merged 19 of its 25 runs. Consequence: the table of §1 replaces
 
 **F3 — Exists.** Everything the spec proposes for shared entries is workspace-service's, built or
 in flight there: D2968, D2973, D2977, D2978 and D2979, and the first half of D2969. Consequence:
-this plan holds no task for them and depends on four of that plan's tasks by name (plan §5).
+this plan holds no task for them and depends on that plan's unmerged tasks by name (plan §5).
 
 **F4 — Gap, and the headline.** No model call can use a person's own token today. The pieces exist
 for a project: the intake writes `fugaro_u_<id>_<name>` containers, the grant route holds a
@@ -126,13 +126,16 @@ the member's, and that the scope refuses a call that presents a slip. D2970 need
 calls. The two do not conflict once they are told apart: R18 is about a **member's** slip, whose
 claim secret would be handed to a service outside the member (its F40). A slip the workspace's own
 service granted is the workspace's secret, not a member's. Consequence: R4, and tasks WC4 and WC8
-move the three tests that pin the old wording.
+move the tests that pin the old wording.
 
-**F14 — Gap.** A grant is spent by whoever presents its claim secret from a job running as the
-expected account. A launcher passes that secret to the job it launches, and the job belongs to the
-member. So a member's admins can read it from the execution and present it from another job of the
-same account until the slip expires (`maxSlipRuntime`, 24 hours). They also control the image the
-person's run executes. Consequence: stated as a residual risk for the threat model (WC0), not
+**F14 — Gap (mechanism corrected after review round 2).** A grant answers a slip's id and nothing
+secret (`SlipGrantResponse`, `internal/credsvc/slip.go`); the launcher hands the id to the job, and
+the job's claim is answered the claim secret once, which the run keeps out of its environment
+(`slipHold`, `internal/runner/budget_session.go`). The claim is held to the run's verified identity
+and job account, and both are the member's: the identity is minted in the member's own Firebase
+project, which its admins can forge (D1943's class), and the image the run executes is theirs. So
+a member's admins can claim a person's slip first, or take the secret from a run they control, and
+spend the slip until it expires (`maxSlipRuntime`, 24 hours). Consequence: stated as a residual risk for the threat model (WC0), not
 closed: launching a run in a member lets that member spend the launcher's subscription for the
 slip's lifetime, and no longer. It is the bound D2970 asked for (no spending without an act by the
 person), not a stronger one. With D3142 the exposure starts without a flag: the switch that
@@ -219,12 +222,15 @@ answered on 2026-11-21.
 | **D3144** | D2974 covers a missing token. What when the person's token is there but exhausted mid-run? | **The run moves on to the shared entries** it is admitted to, through their allow-list and the meter. Not chosen: wait and never switch | 2026-11-21, as recommended. Why: it is what the cascade does. Cost: a heavy user's runs spend the workspace's paid entries once their own window is used up |
 | **D3145** | Should the service also require the roster's `grants` list to name the person for that member (F18)? | **No.** Being on the roster and having launched the run is enough. Not chosen: require the mark | 2026-11-21, as recommended. Why: the list is a record and not a grant, and a person a member granted directly is not in it |
 
+| **D3146** | A person is removed from the roster while a run of theirs draws on their token. The spec's §6 says offboarding does not stop a run in flight (F25) | **The run halts within a minute**: the slip's owner is checked against the roster on every call (R3). Not chosen: let it finish on a grant that lasts up to 24 hours | 2026-11-21, added by review round 2, as recommended. Why: a removed person's token stops being spent at once. Cost: it reverses that sentence of the spec's §6, and it stops runs of someone removed from the workspace who still holds a role in that member |
+| **D3147** | The person holds a token and the grant fails at launch | **The run starts on the shared entries**, with one line saying it is not on the person's own token and why. Not chosen: refuse the launch | 2026-11-21, added by review round 2, as recommended. Why: it is what a failed grant does inside one project today. Cost: a run the person expected on their own subscription spends the workspace's paid entries |
+
 ## 5. Resolutions
 
 Each has one defensible answer given the decisions and the owner's constraints.
 
-- **R1. The numbers stay.** `spec.md` is kept as received and D2968, D2973 and D2975 to D2979 are
-  cited widely with its meaning, so nothing is renumbered. Every document of this folder says which
+- **R1. The numbers stay.** `spec.md` is kept as received and D2968 is cited across
+  workspace-service's documents and D2973, D2975 and D2977 to D2979 in code, with its meaning, so nothing is renumbered. Every document of this folder says which
   D2960–D2969 it means, and the README carries the note (F1).
 - **R2. Where the spec's decisions land.**
 
@@ -249,15 +255,17 @@ Each has one defensible answer given the decisions and the owner's constraints.
 - **R3. The launcher class of the workspace's service.** Workspace mode serves the grant route and
   the claim route (`SlipPath`, `SlipClaimPath`). The grant admits a verified person whose address
   is a `human` of the roster; the roster is re-read as the node is (60 seconds, and a roster that
-  cannot be re-read refuses). *(Amended after review round 1, F25.)* The same check is made on
+  cannot be re-read refuses). *(Amended after review round 1, F25; the halt is the owner's answer
+  D3146.)* The same check is made on
   every call under a workspace slip, against the same copy: a call whose slip's owner is no longer
   on the roster is refused, so a removed person's grants and runs in flight stop within a minute,
   whether or not the sweep of their containers succeeded. Such a run halts with a reason that
   names the removal; it does not move on to the shared entries. A grant names the
   member's job account, the repository and the run, and the service holds the account to a member
   row of the node and the repository to that account's list before it writes anything. Every refusal of a grant is one class that names no account, repository or
-  person, and each grant and each refusal writes one audit line, so the route cannot be used to map
-  the workspace's members. The slip is
+  person, and each grant and each refusal writes one audit line. "No token held" is answered before the
+  node is read, so only a person who holds a token learns anything from a slip or a refusal:
+  whether a job account and repository are a member's. WC0 states that residue. The slip is
   kept in the workspace's own database (R8 of workspace-service). The claim is the member job
   account's, as today. An addition to the roster still waits for the workspace owner's
   `fugaro update`, which binds the person's invoke grant (D2971).
@@ -283,7 +291,9 @@ Each has one defensible answer given the decisions and the owner's constraints.
   workspace for a grant only when the repository's model route is the workspace (D3141) and the
   member's switch is on. The service answers whether the caller holds a token: with none there is
   no slip, and the run is served the shared entries exactly as before. The launcher never calls
-  the intake. A run launched by a service account asks for none (D2976's consequence).
+  the intake. A grant that is refused, or a service that cannot be reached, starts the run on the
+  shared entries with one line that says so and why (D3147); those entries are served through
+  their allow-list and the meter, which is what D2974 guards. A run launched by a service account asks for none (D2976's consequence).
 - **R9. The member's switch.** One key at the top level of the member's published policy, off when
   absent, set by the member's admin and published by the member's `fugaro update`. It is read by
   the workspace's service, which is the only enforcer, so an older reader that lists the key as
@@ -305,7 +315,12 @@ Each has one defensible answer given the decisions and the owner's constraints.
   token with the workspace's own project selected, exactly as `fugaro secrets user set` works
   today: the address is read out of that project's local config on the person's machine, which
   the person has from the workspace. `--workspace <name>` is a convenience that selects that
-  project and refuses, naming how to get its config, when the person's machine holds none. No
+  project and refuses, naming how to get its config, when the person's machine holds none. *(Review
+  round 2.)* It selects only a config that is the workspace's own, one that declares that
+  workspace's members (`workspace_members`), and never a project that merely pins the workspace:
+  otherwise a member the person also launches in would pass for it and receive the token in its
+  own intake. The config reaches the person the way any project's does, from the workspace's
+  owner. No
   pin, route or policy of a member carries the intake's address.
 
 ## 6. Open tensions and open items
@@ -317,13 +332,17 @@ No two answers pull against each other.
 - **O2.** F14's residual risk is the owner's to accept in WC0's review, in words: a member's admins
   can spend a person's subscription in that member for up to 24 hours after that person launched a
   run there. F24's replay is the second: a member admin who publishes a false address can act
-  as a person who launched there for as long as that person's identity token lives.
+  as a person who launched there while that person's identity token lives, about an hour, and a
+  grant taken in that hour lasts up to 24 more.
 - **O3.** D3141's cost falls on a workspace whose projects still hold model credentials of their
   own. The plan tells an admin which copy is used and does not remove anything.
 - **O4.** Two tasks of another plan are prerequisites and are not merged: workspace-service WS8
   (#3410, a draft) and WS19. The plan's §5 says which task waits on which. keys-through-service
   KS4 and workspace-projects-users WU7 were prerequisites at the first read and merged the same
   day (#3454, #3417).
+- **O6.** The cost stated with D3143 was corrected after the owner answered it (review round 1):
+  the question said a token would also serve the workspace project's own runs, and it does not.
+  The corrected cost is the lesser one; it is listed here for the owner to see.
 - **O5.** keys-through-service's KS18 edits `docs/workspace-credentials/spec.md` (one sentence, F8).
   This pull request does not touch that file, so the two do not conflict.
 
@@ -343,8 +362,9 @@ The spec's own §7 uses U1 to U4; these continue from U5.
 - **U8.** Whether the member's settings layer or its local config is the right home for the switch
   of R9. Contract C1 settles the name and the home before either side is written; WC6 is the only
   level-1 writer of `internal/localcfg/localcfg.go`, so either answer fits the levels.
-- **U10.** How a roster person who is no launcher of the workspace's project gets that project's
-  local config (R13). WC9's first step settles it, and Check 850 proves it on a real workspace.
+- **U10.** Whether a roster person who is no launcher of the workspace's project can load that
+  project's config with the grants WC2 and WC3 give (R13 says where it must come from, not that
+  it loads). WC9's red step shows it over the fakes and Check 850 on a real workspace.
 - **U9.** Whether the crafts a member's repository declares are honoured for a call routed to the
   workspace, where no account header is sent (workspace-service R18). It decides nothing here: R7
   places the personal token first whatever the craft, and WC5's red step records what it finds.

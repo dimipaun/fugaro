@@ -106,6 +106,7 @@
           "deploy/terraform/gcp/modules/installation/intake.tf",
           "deploy/terraform/gcp/modules/installation/variables.tf",
           "internal/infra/launchers.go",
+          "internal/infra/tfvars.go",
           "internal/cli/intake_serve.go",
           "internal/intake/server.go"
         ]
@@ -126,6 +127,7 @@
           "internal/credsvc/slip.go",
           "internal/credsvc/server.go",
           "internal/credsvc/scope_workspace_test.go",
+          "internal/credsvc/scope_installation_test.go",
           "SECURITY.md",
           "docs/workspaces/*.md"
         ]
@@ -265,8 +267,8 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "scripts/live-checks/check850*.sh",
-          "scripts/live-checks/check851*.sh",
+          "scripts/live-checks/check-850*.sh",
+          "scripts/live-checks/check-851*.sh",
           "docs/gcp-live-checklist.md"
         ]
       }
@@ -285,6 +287,21 @@
           "docs/workspaces/README.md",
           "docs/workspace-credentials/README.md",
           "plugin/skills/working/SKILL.md"
+        ]
+      }
+    },
+    {
+      "id": "WC14",
+      "title": "workspace mode is handed the roster and its slips",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/credentials_serve.go",
+          "internal/cli/credentials_serve_test.go"
         ]
       }
     },
@@ -385,6 +402,11 @@
       "reason": "the owner's answers to the threat model's review"
     },
     {
+      "task": "WC14",
+      "needs": "WC0",
+      "reason": "the owner's answers to the threat model's review"
+    },
+    {
       "task": "WC7",
       "needs": "C1",
       "reason": "the grant's request and answer"
@@ -423,6 +445,11 @@
       "task": "WC12",
       "needs": "WC9",
       "reason": "the scripts call the built command"
+    },
+    {
+      "task": "WC13",
+      "needs": "WC4",
+      "reason": "it describes the two routes"
     },
     {
       "task": "WC13",
@@ -477,6 +504,11 @@
     {
       "task": "I1",
       "needs": "WC9",
+      "reason": "it wires the real side"
+    },
+    {
+      "task": "I1",
+      "needs": "WC14",
       "reason": "it wires the real side"
     },
     {
@@ -549,7 +581,8 @@
       "reason": "if the candidate needs something of the call the interface does not carry",
       "affects": [
         "WC4",
-        "WC5"
+        "WC5",
+        "WC14"
       ]
     }
   ]

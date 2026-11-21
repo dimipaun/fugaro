@@ -13,11 +13,11 @@ Claude token stored once at the workspace and served only to the runs that perso
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The addendum, as received on `main` from #3250, with its decisions D2960–D2979 answered on 2026-11-19. No typo was fixed and this plan does not edit it |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A5, findings F1–F25 (F24 and F25 came with review round 1, which also amended F23), decisions D3140–D3145 with the owner's answers, resolutions R1–R13 (R13 came with review round 1, which amended R3, R8 and R11), open items O1–O5, UNVERIFIED U5–U10 (the spec's own §7 holds U1–U4). **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Contracts C1 and C2, tasks WC0–WC13, integration I1 (17 runs, and two contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 850 and 851 |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A5, findings F1–F25 (F24 and F25 came with review round 1, which also amended F23), decisions D3140–D3147 with the owner's answers, resolutions R1–R13 (R13 came with review round 1, which amended R3, R8 and R11), open items O1–O6, UNVERIFIED U5–U10 (the spec's own §7 holds U1–U4). **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Contracts C1 and C2, tasks WC0–WC14, integration I1 (18 runs, and two contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 850 and 851 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
-**Numbers reserved:** decisions **D3140–D3159** (D3140–D3145 used), checks **850–859** (850 and 851
+**Numbers reserved:** decisions **D3140–D3159** (D3140–D3147 used), checks **850–859** (850 and 851
 used). Read on 2026-11-21: the highest decision reserved on `main` and in the open pull requests
 was D3139, the highest check 849.
 
@@ -25,10 +25,14 @@ was D3139, the highest check 849.
 and by `docs/runs-ls-speed`. In this folder they always mean the spec's own decisions
 (reconciliation F1, R1). Nothing is renumbered.
 
-**Owner answers of 2026-11-21:** D3140–D3145, every one as recommended. **Review round 1**
+**Owner answers of 2026-11-21:** D3140–D3147, every one as recommended. **Review round 1**
 changed no answer. It corrected the cost stated with D3143, moved the intake's address off the
 member's pin (R13), gave one answer for a run in flight whose launcher is offboarded (R3), and
-added the replay risk of F24 to what the threat model must state.
+added the replay risk of F24 to what the threat model must state. **Review round 2** added
+D3146 (a removed person's run halts within a minute) and D3147 (a failed grant starts the run on
+the shared entries), both answered the same day as recommended. It corrected how a grant and its
+claim secret travel (F14, C1), held `--workspace` to the workspace's own project config (R13),
+and added task WC14.
 
 **What a reader should not take from here:** no task is approved; each needs the owner's go by
 name. No personal task is launched before the owner has answered the review of the threat model
