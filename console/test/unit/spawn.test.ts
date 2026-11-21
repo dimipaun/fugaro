@@ -5671,19 +5671,28 @@ describe('the source scan', () => {
     expect((source.match(/shell:/g) ?? []).length).toBe((source.match(/shell: false/g) ?? []).length)
   })
 
-  it('takes stdin bytes from the launch, and from nowhere else in src/', () => {
+  it('takes stdin bytes from the launch and the setup wizard, and from nowhere else in src/', () => {
     // `stdinBytes` is the one way a caller hands a child bytes on its standard
-    // input, and the launch is its one caller: the task text must reach `fugaro
-    // run` without ever being an argv word or a spawn-log line (rule 11), and a
-    // second caller would be a second child this console writes to. The scan is
-    // over every `.ts` file under `src/`, so the next module that reaches for it
-    // fails here rather than in review -- the mechanism in `main/spawn.ts` and
-    // the one caller in `main/launch.ts`, and nothing else.
+    // input, and there are exactly two callers, both of them for the same
+    // reason: a document the operator or the CLI supplied must reach the child
+    // without ever being an argv word or a spawn-log line (rule 11), and a third
+    // caller would be a third child this console writes to. The launch's is the
+    // task text (`fugaro run --task-file -`); the setup wizard's (`wizardrun.ts`,
+    // SW3a) is the answers file main serialises and holds in memory, so that
+    // `fugaro setup --answers-file -` reads them with no file on the disk for
+    // another process of the same user to swap (D2904, ST1). The scan is over
+    // every `.ts` file under `src/`, so the next module that reaches for it
+    // fails here rather than in review.
     const callers = srcFiles()
       .filter((file) => file.source.includes('stdinBytes'))
       .map((file) => file.path)
-    expect([...callers].sort()).toEqual(['main/launch.ts', 'main/spawn.ts'])
+    expect([...callers].sort()).toEqual([
+      'main/launch.ts',
+      'main/spawn.ts',
+      'main/wizardrun.ts',
+    ])
     expect(codeOnly('main/launch.ts')).toContain('stdinBytes: launch.taskBytes')
+    expect(codeOnly('main/wizardrun.ts')).toContain('stdinBytes: bytes')
   })
 
   it('hands the real spawner `shell: false`, as a literal, and never `true`', () => {
