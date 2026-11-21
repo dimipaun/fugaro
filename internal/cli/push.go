@@ -434,6 +434,10 @@ func (p *pushSender) deliver(ctx context.Context, uid string, node *pushNode, e 
 	now := p.now().UnixMilli()
 	next := pushRow{Category: e.category, Key: e.key, At: now, State: pushStatePending}
 	if row != nil {
+		// A retry keeps the intent's OWN instant: both the retry filter and the
+		// prune measure age from At, so a row restamped on every attempt would
+		// never reach the end of the window and would be retried for ever.
+		next.At = row.At
 		next.Attempts = row.Attempts
 	}
 	key := pushRowKey(e)

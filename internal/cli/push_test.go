@@ -378,6 +378,12 @@ func TestPushRetriesAPendingIntentInsideTheWindowAndDropsItPastIt(t *testing.T) 
 	if got := mailboxNodeString(t, row, "state"); got != pushStateSent {
 		t.Errorf("the retried row's state = %q, want %q", got, pushStateSent)
 	}
+	// The retry keeps the intent's own instant: the retry filter and the prune
+	// both measure age from it, so a row restamped on every attempt would never
+	// age out and would be retried for ever.
+	if want := f.now.Add(-10 * time.Minute).UnixMilli(); !equalJSON(row["at"], want) {
+		t.Errorf("the retried row's at = %v, want the original %v", row["at"], want)
+	}
 
 	// An intent whose category the account turned off between the sweeps is
 	// dropped rather than sent: the switch is honoured at the send.
@@ -431,15 +437,21 @@ func TestPushReapsATokenTheProviderReportsUnregistered(t *testing.T) {
 		t.Errorf("%s changed: %v -> %v, want the admission untouched", rules.PathDevices, devices, got)
 	}
 
-	// The node with nothing but the registration in it goes whole.
+	// The node with nothing but the registration in it goes whole — and the
+	// device node that admitted it is left exactly as it was: the whole-node
+	// delete must not reach across into `devices/**` either.
 	f2 := newPushFixture(t, pushTestNow)
 	f2.db.Set(rules.PathDevices+"/"+pushTestUID, map[string]any{"name": "seed"})
 	f2.db.Set(pairPushPath(pushTestUID), map[string]any{"token": mailboxRegistrationToken, "platform": "ios", "updated_at": f2.now.UnixMilli()})
+	devices2 := f2.db.Value(rules.PathDevices)
 	f2.kill()
 	f2.answer = pushUnregistered
 	f2.sweep(t)
 	if v := f2.db.Value(pairPushPath(pushTestUID)); v != nil {
 		t.Errorf("%s holds %v, want the node deleted: an emptied push node is one the next registration creates", pairPushPath(pushTestUID), v)
+	}
+	if got := f2.db.Value(rules.PathDevices); !equalJSON(devices2, got) {
+		t.Errorf("%s changed: %v -> %v, want the admission untouched", rules.PathDevices, devices2, got)
 	}
 }
 
@@ -449,11 +461,18 @@ func TestPushReapsATokenTheProviderReportsUnregistered(t *testing.T) {
 // no marker is left behind for a reader to misread.
 func TestPushReapsAnOrphanedPushNode(t *testing.T) {
 	f := newPushFixture(t, pushTestNow)
+	// An orphaned push node is one whose device node is gone: there is nothing
+	// under `devices/**` for the reaping to touch, and it must stay that way —
+	// the delete is the push node's own.
+	devices := f.db.Value(rules.PathDevices)
 	f.db.Set(pairPushPath(pushTestUID), map[string]any{"token": mailboxRegistrationToken, "platform": "ios",
 		"updated_at": f.now.UnixMilli(), "prefs": mailboxSwitchState(nil)})
 	f.kill()
 
 	out, _ := f.sweep(t)
+	if got := f.db.Value(rules.PathDevices); !equalJSON(devices, got) {
+		t.Errorf("%s changed: %v -> %v, want the admission untouched", rules.PathDevices, devices, got)
+	}
 	if v := f.db.Value(pushTestPath); v != nil {
 		t.Fatalf("%s holds %v, want it deleted: its device node is gone", pushTestPath, v)
 	}
