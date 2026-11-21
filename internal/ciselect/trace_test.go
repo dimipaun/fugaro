@@ -173,6 +173,10 @@ func TestFromArtifactMergesIntoTheCommittedMap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FromArtifact: %v", err)
 	}
+	mergedData, err := MarshalReadMap(merged)
+	if err != nil {
+		t.Fatalf("MarshalReadMap: %v", err)
+	}
 	a := entry(t, merged, "./internal/a")
 	wantReads(t, a, "docs/x.md", "internal/a/testdata/fixture.txt")
 	if !slices.IsSorted(a.Reads) {
@@ -182,6 +186,24 @@ func TestFromArtifactMergesIntoTheCommittedMap(t *testing.T) {
 	// ./internal/c reads nothing beyond its own directory and so has no entry in
 	// the scan's map: a shard that ran it gives it one.
 	wantReads(t, entry(t, merged, "./internal/c"), "internal/testdata/fixture-repo/a.txt", "docs/x.md")
+
+	// The artifacts are a run's, and a person may merge them into a map they
+	// already merged them into: a read is a set, so the second merge is the
+	// first.
+	twice, gaps, err := FromArtifact(merged, dir)
+	if err != nil {
+		t.Fatalf("FromArtifact of an already merged map: %v", err)
+	}
+	if len(gaps) != 0 {
+		t.Errorf("a second merge of the same artifacts reports %v, want no gap: the reads are already in the map", gaps)
+	}
+	twiceData, err := MarshalReadMap(twice)
+	if err != nil {
+		t.Fatalf("MarshalReadMap: %v", err)
+	}
+	if string(twiceData) != string(mergedData) {
+		t.Errorf("merging the same artifacts twice changed the map:\n%s\n%s", mergedData, twiceData)
+	}
 
 	var names []string
 	for _, p := range merged.Packages {
@@ -194,10 +216,6 @@ func TestFromArtifactMergesIntoTheCommittedMap(t *testing.T) {
 	// The merged map is what a pull request commits, so it must load as the
 	// committed one does and survive the round trip unchanged.
 	out := filepath.Join(t.TempDir(), "merged.json")
-	mergedData, err := MarshalReadMap(merged)
-	if err != nil {
-		t.Fatalf("MarshalReadMap: %v", err)
-	}
 	if err := os.WriteFile(out, mergedData, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -212,6 +230,38 @@ func TestFromArtifactMergesIntoTheCommittedMap(t *testing.T) {
 	if string(againData) != string(mergedData) {
 		t.Errorf("the merged map does not survive a round trip:\n%s\n%s", mergedData, againData)
 	}
+}
+
+// The trace adds reads and nothing else. A shard traces the tests it ran — one
+// family of them, for a ./internal/cli leg — so its reads are a subset of what
+// the package opens, and a merge that took them for the whole would clear an
+// `any` and drop a read the scan found. That is the safe default the flag's off
+// position rests on.
+func TestTraceKeepsTheScansEscapeHatches(t *testing.T) {
+	m := ReadMap{Packages: []PackageReads{{
+		Package: "./internal/a",
+		Reads:   []string{"docs/pinned.md", "internal/testdata/fixture-repo/**"},
+		Ignores: []string{"node_modules"},
+		Any:     true,
+	}}}
+	dir := artifactDir(t, TraceArtifact{
+		Shard:    "cli-3",
+		Packages: []string{"./internal/a"},
+		Reads:    []string{"docs/x.md"},
+	})
+
+	merged, _, err := FromArtifact(m, dir)
+	if err != nil {
+		t.Fatalf("FromArtifact: %v", err)
+	}
+	p := entry(t, merged, "./internal/a")
+	if !p.Any {
+		t.Errorf("./internal/a is no longer any: %+v", p)
+	}
+	if !slices.Equal(p.Ignores, []string{"node_modules"}) {
+		t.Errorf("./internal/a ignores are %v, want them untouched", p.Ignores)
+	}
+	wantReads(t, p, "docs/pinned.md", "internal/testdata/fixture-repo/**", "docs/x.md")
 }
 
 func TestFromArtifactRefusesAnEmptyDirectory(t *testing.T) {

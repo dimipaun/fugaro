@@ -156,14 +156,19 @@ func FromArtifact(m ReadMap, dir string) (ReadMap, []ScanGap, error) {
 			}
 			reads := slices.Clone(out.Packages[i].Reads)
 			for _, r := range a.Reads {
-				if !out.Packages[i].Any && !coveredBy(reads, r) {
+				if coveredBy(reads, r) {
+					// The map already names it, exactly or through a pattern of
+					// the shape it writes for a directory: a trace of 17 packages
+					// must not put a file an entry's "dir/**" already reaches
+					// into the committed file a second time.
+					continue
+				}
+				if !out.Packages[i].Any {
 					if gap := (ScanGap{Package: pkg, Path: r}); !slices.Contains(gaps, gap) {
 						gaps = append(gaps, gap)
 					}
 				}
-				if !slices.Contains(reads, r) {
-					reads = append(reads, r)
-				}
+				reads = append(reads, r)
 			}
 			slices.Sort(reads)
 			out.Packages[i].Reads = reads
@@ -213,10 +218,12 @@ func traceArtifacts(dir string) ([]string, error) {
 	return out, nil
 }
 
-// openCall matches the opens of a `strace -f -y -e trace=openat,open` log. The
-// pid strace prefixes a line with is not part of the match: only the call and
-// its arguments are read.
-var openCall = regexp.MustCompile(`\b(?:openat2|openat64|openat|open64|open)\(`)
+// openCall matches the opens of a `strace -f -y -e trace=openat,open` log: the
+// call at the head of a line, behind the pid strace -f prefixes it with ("1234  "
+// or "[pid 1234] "). Anchoring there is what keeps a path a line merely mentions
+// — the binary an execve names, a string a read returned — from being read as an
+// open of its own.
+var openCall = regexp.MustCompile(`^\s*(?:\[pid\s+\d+\]\s+|\d+\s+)?(?:openat2|openat64|openat|open64|open)\(`)
 
 // fdPath matches the path strace's -y decorates a returned descriptor with
 // ("= 3</work/fugaro/docs/x.md>"): the path the process really reached, however

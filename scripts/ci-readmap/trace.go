@@ -26,6 +26,11 @@ import (
 // unchanged map that would look like a trace which found nothing. A trace only
 // ever adds a read: it clears no `any` and drops no read the scan found, so the
 // map cannot become less safe by being traced.
+//
+// Tracing a full run costs the strace of every shard, so the workflow keeps this
+// step off until CS9's measurement on ubuntu-latest says the cost is worth it;
+// the step is a shard's own `strace -f -y` around its go test, and this command
+// is what reduces the log it leaves.
 var (
 	traceLog      = flag.String("trace", "", "reduce one shard's `strace -f -y -e trace=openat,open` log into the artifact the shard uploads")
 	traceShard    = flag.String("shard", "", "the matrix leg the log came from (with --trace), as ci.yml names it")
