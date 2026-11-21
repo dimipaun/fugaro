@@ -9,11 +9,29 @@ import (
 	"testing"
 )
 
-// openLine is one line of the log `strace -f -y -e trace=openat,open` writes for
-// a successful open: the call with the path the process passed, and the
-// decoration -y adds, which is the path it reached.
+// openLine is one line of the log `strace -f -y -e trace=openat,open,execve`
+// writes for a successful open: the call with the path the process passed, and
+// the decoration -y adds, which is the path it reached.
 func openLine(pid int, passed, reached string) string {
 	return strconv.Itoa(pid) + "  openat(AT_FDCWD, " + strconv.Quote(passed) + ", O_RDONLY|O_CLOEXEC) = 3<" + reached + ">"
+}
+
+// execLine is one line of the log for a process that becomes a program: strace
+// prints the path it execs and the arguments it takes, and the pid the line
+// carries is the process the opens after it belong to.
+func execLine(pid int, prog string, argv ...string) string {
+	quoted := make([]string, 0, len(argv))
+	for _, a := range argv {
+		quoted = append(quoted, strconv.Quote(a))
+	}
+	return strconv.Itoa(pid) + "  execve(" + strconv.Quote(prog) + ", [" + strings.Join(quoted, ", ") + "], 0x7ffd) = 0"
+}
+
+// reduce is ReduceOpens with no go root named: the logs below carry no process
+// of a toolchain's own. The one that does is
+// TestTraceIgnoresTheBuildTheGoToolRuns.
+func reduce(raw, root string, drop ...string) []string {
+	return ReduceOpens(raw, root, "", drop...)
 }
 
 // artifactDir writes the artifacts of a run the way `gh run download` lays them
@@ -71,7 +89,7 @@ func TestTraceReducesOpensToRepoPaths(t *testing.T) {
 		"1234  execve(\"/tmp/go-build123/b001/cli.test\", [\"cli.test\"], 0x7ffd) = 0",
 	}, "\n")
 
-	got := ReduceOpens(raw, root)
+	got := reduce(raw, root)
 	want := []string{"docs/sub/**", "docs/x.md"}
 	if !slices.Equal(got, want) {
 		t.Errorf("ReduceOpens = %v, want %v", got, want)
@@ -93,9 +111,59 @@ func TestTraceIgnoresTheGoBuildCache(t *testing.T) {
 		openLine(1234, filepath.Join(root, "docs", "x.md"), filepath.Join(root, "docs", "x.md")),
 	}, "\n")
 
-	got := ReduceOpens(raw, root, cache)
+	got := reduce(raw, root, cache)
 	if !slices.Equal(got, []string{"docs/x.md"}) {
 		t.Errorf("ReduceOpens = %v, want only docs/x.md: the build cache is not a file of the checkout", got)
+	}
+}
+
+// The build is not the test. A shard's `go test` compiles, vets and links every
+// package it runs, and each of those opens the package's sources and the
+// directory it sits in; a test that runs a build of its own does the same, one
+// level down. None of it is a file a test read, and taking it for one would name
+// every package of the leg as a read of every package it ran — and report each
+// as a scan gap (R8, and the CS2b acceptance: the test process and its children,
+// not the toolchain's).
+func TestTraceIgnoresTheBuildTheGoToolRuns(t *testing.T) {
+	root := tree(t, map[string]string{
+		"go.mod":          goMod,
+		"docs/x.md":       "x\n",
+		"docs/y.md":       "y\n",
+		"internal/x/x.go": "package x\n",
+	})
+	abs := func(rel string) string { return filepath.Join(root, filepath.FromSlash(rel)) }
+	goroot := filepath.Join(t.TempDir(), "go")
+	tool := func(name string) string { return filepath.Join(goroot, "pkg", "tool", "linux_amd64", name) }
+	testbin := filepath.Join(t.TempDir(), "x.test")
+	raw := strings.Join([]string{
+		// The shard's own go test, which reads the module file as it builds.
+		execLine(1234, filepath.Join(goroot, "bin", "go"), "go", "test", "./internal/x"),
+		openLine(1234, abs("go.mod"), abs("go.mod")),
+		// The compiler it runs: one source file, and the package's directory.
+		execLine(1235, tool("compile"), "compile", "-p", "internal/x"),
+		openLine(1235, abs("internal/x/x.go"), abs("internal/x/x.go")),
+		openLine(1235, abs("internal/x"), abs("internal/x")),
+		// The linker, on the same package.
+		execLine(1236, tool("link"), "link", "-o", testbin),
+		openLine(1236, abs("internal/x/x.go"), abs("internal/x/x.go")),
+		// An exec that failed leaves the process in the program it was already
+		// running: this pid is still the go command, and this open is still the
+		// build's.
+		"1234  execve(\"/nonexistent/bin/go\", [\"go\"], 0x7ffd) = -1 ENOENT (No such file or directory)",
+		openLine(1234, abs("internal/x/x.go"), abs("internal/x/x.go")),
+		// The test binary the shard built: a child of the build, and the process
+		// whose reads the trace is for.
+		execLine(1240, testbin, "x.test", "-test.run=."),
+		openLine(1240, abs("docs/x.md"), abs("docs/x.md")),
+		// A process the log never shows exec'ing — a fork of a test — is not the
+		// toolchain's either.
+		openLine(1250, abs("docs/y.md"), abs("docs/y.md")),
+	}, "\n")
+
+	got := ReduceOpens(raw, root, goroot)
+	want := []string{"docs/x.md", "docs/y.md"}
+	if !slices.Equal(got, want) {
+		t.Errorf("ReduceOpens = %v, want %v: what the go toolchain opened is the build, not the tests", got, want)
 	}
 }
 
@@ -250,7 +318,7 @@ func TestTraceIgnoresAPathTheCheckoutIgnores(t *testing.T) {
 		openLine(1234, filepath.Join(root, "docs", "x.md"), filepath.Join(root, "docs", "x.md")),
 	}, "\n")
 
-	got := ReduceOpens(raw, root)
+	got := reduce(raw, root)
 	if !slices.Equal(got, []string{"docs/x.md"}) {
 		t.Errorf("ReduceOpens = %v, want only docs/x.md: reports/ is in no commit", got)
 	}

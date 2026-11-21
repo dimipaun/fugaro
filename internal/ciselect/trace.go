@@ -15,12 +15,19 @@ import (
 	"strings"
 )
 
-// The runtime trace (CS2b): what a full run's tests really opened, which the
-// scan of CS2a can only read out of the source. A shard wraps its `go test` in
-// `strace -f -y -e trace=openat,open`, reduces the log to repository-relative
-// paths with ReduceOpens, and uploads the small artifact; the merge back into
-// the committed map is a pull request made from the nightly's artifacts, never a
-// push from CI (R10).
+// The runtime trace (CS2b): the repository files a full run's test processes and
+// their children opened, which the scan of CS2a can only read out of the source.
+// A shard wraps its `go test` in `strace -f -y -e trace=openat,open,execve`,
+// reduces the log to repository-relative paths with ReduceOpens, and uploads the
+// small artifact; the merge back into the committed map is a pull request made
+// from the nightly's artifacts, never a push from CI (R10).
+//
+// The build is not the test. The go command a shard starts, and every compile,
+// vet and link it runs, are the toolchain's own processes: a compiler opens the
+// source of every package it builds and the directory of each of them, so a log
+// taken around the whole `go test` names every package of the leg as a read of
+// every package it ran — over-selection, and a scan gap for each. ReduceOpens
+// drops them, which is what the log's execve lines are for.
 //
 // The trace only ever adds a read. It does not clear an `any` mark and does not
 // drop a read the scan found: a trace covers the tests a shard ran, which for a
@@ -218,30 +225,59 @@ func traceArtifacts(dir string) ([]string, error) {
 	return out, nil
 }
 
-// openCall matches the opens of a `strace -f -y -e trace=openat,open` log: the
-// call at the head of a line, behind the pid strace -f prefixes it with ("1234  "
-// or "[pid 1234] "). Anchoring there is what keeps a path a line merely mentions
-// — the binary an execve names, a string a read returned — from being read as an
-// open of its own.
-var openCall = regexp.MustCompile(`^\s*(?:\[pid\s+\d+\]\s+|\d+\s+)?(?:openat2|openat64|openat|open64|open)\(`)
+// pidPrefix is what strace -f puts in front of a line: the pid of a process it
+// followed into ("[pid  1235] ") or of the one it started ("1234  "), which is
+// the process the call behind it belongs to.
+var pidPrefix = regexp.MustCompile(`^\s*(?:\[pid\s+(\d+)\]\s+|(\d+)\s+)?`)
+
+// call splits one log line into the pid it belongs to and the call it records.
+// A log taken without -f carries no pid, and then a line's own text is its call.
+func call(line string) (pid, rest string) {
+	m := pidPrefix.FindStringSubmatchIndex(line)
+	switch {
+	case m[2] >= 0:
+		pid = line[m[2]:m[3]]
+	case m[4] >= 0:
+		pid = line[m[4]:m[5]]
+	}
+	return pid, line[m[1]:]
+}
+
+// openCall matches an open in the call that follows a line's pid prefix.
+// Anchoring at its head is what keeps a path a line merely mentions — the binary
+// an execve named, a string a read returned — from being read as an open of its
+// own.
+var openCall = regexp.MustCompile(`^(?:openat2|openat64|openat|open64|open)\(`)
+
+// execCall matches the exec of a log taken with execve among its traced calls:
+// the call that says which program a pid is running.
+var execCall = regexp.MustCompile(`^execve(?:at)?\(`)
 
 // fdPath matches the path strace's -y decorates a returned descriptor with
 // ("= 3</work/fugaro/docs/x.md>"): the path the process really reached, however
 // it spelled it.
 var fdPath = regexp.MustCompile(`= *\d+<([^>]*)>`)
 
-// ReduceOpens turns one shard's `strace -f -y -e trace=openat,open` log into the
-// repository files its test processes and their children opened: the paths under
-// root, minus those under a drop root the caller names — the go build and module
-// caches, which the shard reads out of `go env` — minus .git, and minus the
-// paths the checkout does not hold. A path that is a directory becomes the
-// "dir/**" a read of a directory means in the map everywhere else, and the
-// result is sorted and deduplicated, so the artifact does not depend on the
-// order the shard's processes ran or on how often they opened one file.
+// ReduceOpens turns one shard's `strace -f -y -e trace=openat,open,execve` log
+// into the repository files its test processes and their children opened: the
+// paths under root, minus those under a drop root the caller names — the go
+// build and module caches, which the shard reads out of `go env` — minus .git,
+// minus the paths the checkout does not hold, and minus everything a process of
+// the go toolchain's own opened. A path that is a directory becomes the "dir/**"
+// a read of a directory means in the map everywhere else, and the result is
+// sorted and deduplicated, so the artifact does not depend on the order the
+// shard's processes ran or on how often they opened one file.
+//
+// goroot is where that toolchain's own programs live, as `go env GOROOT` answers
+// it, and "" treats no process as the toolchain's. The build a shard runs is the
+// shard's rather than its tests': the go command, and the compile, vet and link
+// it starts, open the source of every package they build and the directory of
+// each of them, and taking those for reads would name every package of the leg
+// as a read of every package it ran.
 //
 // A relative argument is placed by -y's decoration alone: it means the
 // process's working directory, which the log does not carry.
-func ReduceOpens(raw, root string, drop ...string) []string {
+func ReduceOpens(raw, root, goroot string, drop ...string) []string {
 	// The log names what a process opened: an absolute path. The root a caller
 	// hands over is the checkout it scans, which may be named "." or relatively,
 	// so it is made absolute before anything is compared with it.
@@ -249,6 +285,12 @@ func ReduceOpens(raw, root string, drop ...string) []string {
 		root = abs
 	}
 	root = filepath.Clean(root)
+	// An answer that is not a directory — no go, or a tool that named one
+	// relatively — leaves no process read as the toolchain's, which costs only
+	// the over-selection this drops.
+	if goroot = filepath.Clean(goroot); !filepath.IsAbs(goroot) {
+		goroot = ""
+	}
 	drops := make([]string, 0, len(drop))
 	for _, d := range drop {
 		if d != "" {
@@ -261,9 +303,21 @@ func ReduceOpens(raw, root string, drop ...string) []string {
 	// checkout ignores — would make the committed map differ between two
 	// checkouts of the same commit.
 	files, dirs := checkoutIndex(root)
+	// progs is the program each traced process is running, from the log's own
+	// execve lines: a process of the go toolchain's is the build, and the source
+	// it opens is one it compiles rather than one a test read.
+	progs := map[string]string{}
 	seen := map[string]bool{}
 	for _, line := range strings.Split(raw, "\n") {
-		p, ok := openPath(line)
+		pid, rest := call(line)
+		if prog, ok := execProgram(rest); ok {
+			progs[pid] = prog
+			continue
+		}
+		if isBuild(progs[pid], goroot) {
+			continue
+		}
+		p, ok := openPath(rest)
 		if !ok {
 			continue
 		}
@@ -314,18 +368,41 @@ func checkoutIndex(root string) (files, dirs map[string]bool) {
 	return files, dirs
 }
 
-// openPath is the path one open line names: the descriptor's -y decoration when
-// there is one, and otherwise the argument the process passed, which is usable
-// only when it is absolute.
-func openPath(line string) (string, bool) {
-	loc := openCall.FindStringIndex(line)
+// openPath is the path one open names: the descriptor's -y decoration when there
+// is one, and otherwise the argument the process passed, which is usable only
+// when it is absolute.
+func openPath(rest string) (string, bool) {
+	loc := openCall.FindStringIndex(rest)
 	if loc == nil {
 		return "", false
 	}
-	if m := fdPath.FindStringSubmatch(line[loc[1]:]); m != nil && m[1] != "" {
+	if m := fdPath.FindStringSubmatch(rest[loc[1]:]); m != nil && m[1] != "" {
 		return m[1], true
 	}
-	return quotedArg(line[loc[1]:])
+	return quotedArg(rest[loc[1]:])
+}
+
+// execProgram is the program a call makes its process: the path an exec named,
+// when the exec succeeded. A failed one leaves the process running what it was
+// already running, so it says nothing about the program.
+func execProgram(rest string) (string, bool) {
+	loc := execCall.FindStringIndex(rest)
+	if loc == nil || !strings.HasSuffix(strings.TrimSpace(rest), "= 0") {
+		return "", false
+	}
+	return quotedArg(rest[loc[1]:])
+}
+
+// isBuild reports whether a traced process is one of the go toolchain's own: the
+// go command a shard started, and the compile, vet, link and asm tools it runs,
+// all of which live under the go root. What one of them opens is a package's
+// source or its directory — the build reading the tree, which the map already
+// reaches through the import graph — and not a file a test read.
+func isBuild(prog, goroot string) bool {
+	if prog == "" || goroot == "" {
+		return false
+	}
+	return prog == goroot || strings.HasPrefix(prog, goroot+string(filepath.Separator))
 }
 
 // quotedArg is the first C-quoted argument of a call: the path the process
