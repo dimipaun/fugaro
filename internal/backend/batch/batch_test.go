@@ -586,6 +586,7 @@ const (
           "variables": {
             "FUGARO_BACKEND": "cloud-batch",
             "FUGARO_BATCH_JOB": "projects/fake-project/locations/fake-region/jobs/fugaro-acme-app-web-f31eb908886f",
+            "FUGARO_DEPLOYED_JOB": "fugaro-acme-app-web-2dc53d2bf3a6",
             "FUGARO_GCP_PROJECT": "fake-project",
             "FUGARO_PROJECT": "acme",
             "FUGARO_REGION": "fake-region",
@@ -664,6 +665,7 @@ const (
             "DOCKER_HOST": "unix:///var/run/docker.sock",
             "FUGARO_BACKEND": "cloud-batch",
             "FUGARO_BATCH_JOB": "projects/fake-project/locations/fake-region/jobs/fugaro-acme-app-web-f31eb908886f",
+            "FUGARO_DEPLOYED_JOB": "fugaro-acme-app-web-2dc53d2bf3a6",
             "FUGARO_GCP_PROJECT": "fake-project",
             "FUGARO_PROJECT": "acme",
             "FUGARO_REGION": "fake-region",
@@ -786,8 +788,8 @@ func TestLaunchSendsNoSecretValue(t *testing.T) {
 	if n := strings.Count(string(raw), testSecret); n != 1 {
 		t.Fatalf("the secret's name appears %d times in the job definition, want once (under secretVariables): %s", n, raw)
 	}
-	if got := object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables"); len(got) != 6 {
-		t.Errorf("the task's plain variables = %v, want the job's own six and no secret", got)
+	if got := object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables"); len(got) != 7 {
+		t.Errorf("the task's plain variables = %v, want the job's own seven and no secret", got)
 	}
 	for k, v := range object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables") {
 		if s, ok := v.(string); ok && strings.Contains(s, "secrets/") {
@@ -2099,12 +2101,12 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 	// launcher drops its claim and the token it minted.
 	//
 	// The platform's own five are reserved here too, Cloud Run's list
-	// (backend.ReservedEnvNames), and FUGARO_BUCKET is the one of them no
-	// Batch job writes: an entry naming it would be the only writer of the
-	// bucket a run puts its results in, which is what the same entry is
-	// refused for on Cloud Run — where the job's environment already holds it
-	// — rather than a name this backend happens not to set (the review
-	// finding on this change).
+	// (backend.ReservedEnvNames), and FUGARO_BUCKET is the one of them this
+	// job's own map does not hold -- the launcher passes the deployed job's
+	// values in (Options.JobEnv), which this installation leaves empty: an
+	// entry naming it would be the only writer of the bucket a run puts its
+	// results in, which is what the same entry is refused for on Cloud Run,
+	// where the job's environment already holds it.
 	before := len(bf.Creates())
 	for _, bad := range []string{
 		"FUGARO_BUDGET_TOKEN", "=1", "FUGARO_RUN=acme-app/someone-elses-run",
@@ -2117,13 +2119,13 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 		}
 	}
 	// And every name the two backends reserve for the deployment's own — the
-	// platform's five, and the catalog stamp, which this backend refuses
-	// although no Batch job writes it: the entry would land in the task's
+	// platform's five, and the catalog stamp: the entry would land in the task's
 	// variables, which are the run's environment, and the runner reads that
 	// name to decide whether the image's own variables reach the agent, so an
 	// entry naming it would turn the passthrough on for a job whose catalog
-	// chose no image (docs/image-env, D1371). Nothing is sent for any of them,
-	// which is the check Cloud Run's own test makes over its reserved names.
+	// chose no image (docs/image-env, D1371) — or overwrite the stamp the
+	// deployed job carried. Nothing is sent for any of them, which is the check
+	// Cloud Run's own test makes over its reserved names.
 	for _, name := range append([]string{backend.ImageEntryEnv}, backend.PlatformEnvNames...) {
 		sent := len(bf.Creates())
 		s.Env = []string{name + "=someone-elses-" + strings.ToLower(name)}

@@ -197,12 +197,12 @@ type Options struct {
 	// JobEnv is the installation's own values as the deployed job this run
 	// stands in for carries them -- the runs bucket, the budget backend, the
 	// credentials service's URL, the price tables, the caps and the rest --
-	// keyed by the environment variable's name. **BR8 fills a run's job from
-	// this** (env.go): today a Batch job's variables are the six that name the
-	// run and a Docker socket, and nothing tells the run which bucket to write
-	// to, so a Batch run cannot do what the deployed job's run does. BR8
-	// writes these into the task's environment beside the identity entries and
-	// reserves each against the launch's own entries (F8). Empty means the
+	// keyed by the environment variable's name (internal/infra's JobEnvNames
+	// is that key set). **BR8 fills a run's job from this** (env.go): a Batch
+	// job's variables are the run's whole environment, so these are written
+	// into the task's environment beside the identity entries, each reserved
+	// against the launch's own entries, and a run can write its results and
+	// open its session where it could not before (F8). Empty means the
 	// installation's values are not passed in, which is every launch today;
 	// the values are the launcher's to read, because a backend that read them
 	// itself would be the config layer this seam deliberately is not.
