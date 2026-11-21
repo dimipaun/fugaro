@@ -163,6 +163,82 @@ func TestCheckRecipeImageDigestSince(t *testing.T) {
 	}
 }
 
+// TestCheckRecipeImageLevelRolesSince: a recipe that branches on the level
+// needs a job image whose runner reads the by_level: key, which is 0.27.0's
+// (levelRolesSince) and newer than every other construct's gate. An image
+// older than it is refused at the terminal — where the person can still
+// act — rather than starting a job whose runner refuses the whole recipe at
+// bootstrap ("by_level is not a recipe key"), with the launch already paid
+// for; an image at levelRolesSince or later passes. The guard is the key's
+// presence, so a recipe whose entries happen to hold nothing the parser
+// would have defaulted to anyway is judged the same way: by_level: {} is a
+// file an older runner refuses whole.
+func TestCheckRecipeImageLevelRolesSince(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	older := shiftRelease(t, levelRolesSince, -1)
+	const branched = "version: 1\nname: tiered\nby_level:\n  pro:\n    roles: { reviewer: coder }\nsteps:\n  - review: {}\n"
+	for _, tc := range []struct {
+		name, yaml, baseRef, wantErr string
+	}{
+		{"an older image", branched, older, "recipe tiered needs a job image whose runner knows recipes (fugaro " + levelRolesSince + " or later)"},
+		{"an empty block", "version: 1\nname: tiered\nby_level: {}\nsteps:\n  - review: {}\n", older, "fugaro " + levelRolesSince + " or later"},
+		{"the release itself", branched, levelRolesSince, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+				Recipe: &task.Recipe{Name: "tiered", Source: string(recipe.SourceCatalog), YAML: tc.yaml}}
+			var warn bytes.Buffer
+			writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+tc.baseRef)
+			err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &warn)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("warn = %q, err = %v", warn.String(), err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr) || ExitCode(err) != ExitUserError):
+				t.Fatalf("warn = %q, err = %v, want %q", warn.String(), err, tc.wantErr)
+			}
+		})
+	}
+	// A recipe with no by_level: key keeps the gate its constructs always
+	// had: an image that predates the key must not be refused for a recipe
+	// that does not write it.
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "plain", Source: string(recipe.SourceCatalog),
+			YAML: "version: 1\nname: plain\nroles: { reviewer: coder }\nsteps:\n  - review: {}\n"}}
+	tagged := shiftRelease(t, levelRolesSince, -1)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+tagged)
+	if err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &bytes.Buffer{}); err != nil {
+		t.Fatalf("a recipe with no by_level: key was judged by its gate: %v", err)
+	}
+}
+
+// TestLevelRolesSinceHasAReleaseBullet: levelRolesSince names 0.27.0, the
+// release this work is slotted for, which is not tagged yet (docs/release.md
+// has the same note on rigorSpellingSince's and reviewSpecSince's bullets).
+// It is docs/release.md's Before-you-tag list that verifies the constant
+// against the tag actually cut, so the bullet is what makes the number a
+// promise a release keeps, and this test is what keeps the bullet there.
+func TestLevelRolesSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `levelRolesSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no levelRolesSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+levelRolesSince+"\"`") {
+		t.Errorf("docs/release.md's levelRolesSince bullet does not carry the constant's release (%q)", levelRolesSince)
+	}
+	for _, want := range []string{"by_level", "not tagged yet", "checkRecipeImage", "checkCloneRecipeImage", "recipeSinceFor", "recipe.UsesLevelRoles"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's levelRolesSince bullet does not say %q", want)
+		}
+	}
+}
+
 // TestCheckCloneRecipeImageDigestSince is TestCheckRecipeImageDigestSince for
 // a checkout: clone workflow, where there is no derived image and so no build
 // record: the same digest step raises checkCloneImageSince's threshold on
@@ -423,7 +499,7 @@ func TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved(t *testing
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
 	env.policy = policyReadOnce{done: true, found: true, p: &projectpolicy.Policy{
-		ReviewFloor: map[rigor.Mode][]policy.Level{rigor.Pro: {policy.LevelL2, policy.LevelL3}},
+		ReviewFloor: map[rigor.Rigor][]policy.Level{rigor.Pro: {policy.LevelL2, policy.LevelL3}},
 	}}
 	cfg := &config.Config{RepoRigor: &config.Rigor{Default: rigor.Pro}}
 	spec := &task.Spec{Version: 1, Rigor: rigor.Hotfix}
@@ -2944,6 +3020,340 @@ func TestTriageSinceIsTheReleaseTheDocsName(t *testing.T) {
 	repoSchema := readDoc(t, "schemas/fugaro.schema.json")
 	if want := "Needs fugaro " + triageSince; !strings.Contains(repoSchema, want) {
 		t.Errorf("fugaro.yaml's schema does not name the release agent.triage ships in: want %q", want)
+	}
+}
+
+// configSkewReviewAgainstTask is configSkewHead with the review-against-task
+// switch written: the file the reviewSpecSince launches below check out.
+func configSkewReviewAgainstTask(value string) string {
+	return strings.Replace(configSkewHead, "agent: { auth: api-key }", "agent: { auth: api-key, review_against_task: "+value+" }", 1)
+}
+
+// reviewAgainstTaskSwitched is the configuration
+// refuseReviewAgainstTaskSkew judges: the repository file's key written at
+// value, which is the pair config.Resolve carries into a run —
+// RepoReviewAgainstTaskSet beside the switch's own field. A nil *config.Config
+// is a file that writes no key at all, which is the state the gate passes.
+func reviewAgainstTaskSwitched(value bool) *config.Config {
+	return &config.Config{RepoReviewAgainstTaskSet: true, Agent: config.Agent{ReviewAgainstTask: &value}}
+}
+
+// TestReviewAgainstTaskKeyGatedOnImage is reviewSpecSince's launch gate for the
+// repository's own key: agent.review_against_task is read by the config decoder
+// and not by the runner's logic, so a release before this one decodes
+// fugaro.yaml with KnownFields and the key alone — whatever it says, `true`
+// included — fails the run at bootstrap, after the launch was paid for, on a key
+// nobody can do anything about any more. The check the key switches is new in
+// this release as well, so the image's runner runs no review against a task
+// either way: the way out with no image to move is to remove the key, and the
+// refusal says so.
+//
+// The judge is the workflow's build record, as every checkImageSince gate's is,
+// and the boundary is the constant's own: one release below is refused, the
+// constant and one above pass.
+func TestReviewAgainstTaskKeyGatedOnImage(t *testing.T) {
+	for _, c := range []struct {
+		rel     string
+		refused bool
+	}{
+		{shiftRelease(t, reviewSpecSince, -1), true},
+		{reviewSpecSince, false},
+		{shiftRelease(t, reviewSpecSince, 1), false},
+	} {
+		t.Run(c.rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			configSkewCheckout(t, f, configSkewReviewAgainstTask("false")+configSkewWorkflow)
+			writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+c.rel)
+			_, _, err := execute(t, "run", "--run-id", "20261120-100000-abcd", "A task")
+			if !c.refused {
+				if err != nil {
+					t.Fatalf("release %s: err = %v, want launched", c.rel, err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+			for _, want := range []string{
+				"fugaro.yaml's agent.review_against_task of acme/other",
+				"needs a job image whose runner knows " + reviewAgainstTaskKnows,
+				"fugaro " + reviewSpecSince + " or later",
+				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
+				imageGateRemedy,
+				"; or remove agent.review_against_task from fugaro.yaml",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			// This file wrote the off-switch, so the way out names its cost:
+			// the absent key means the check on, and removing the key hands the
+			// check back on the first image that reads it
+			// (ReviewAgainstTaskOn).
+			if !strings.Contains(err.Error(), "only if the off-switch may go with it") {
+				t.Errorf("a file writing agent.review_against_task: false is not told what removing the key costs: %v", err)
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Errorf("%d executions, want none", n)
+			}
+		})
+	}
+	// The key is judged as text and not as a value: `review_against_task: true`
+	// is the default — the check on, which is what an older image does by
+	// running no such check at all — and it is refused exactly as false is.
+	t.Run("the switch written on", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dir := configSkewCheckout(t, f, configSkewReviewAgainstTask("true")+configSkewWorkflow)
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, reviewSpecSince, -1))
+		_, _, err := execute(t, "run", "--run-id", "20261120-100000-abcd", "A task")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want the launch refused", err)
+		}
+		if !strings.Contains(err.Error(), "fugaro.yaml's agent.review_against_task of acme/other") {
+			t.Errorf("%v lacks the key's own subject", err)
+		}
+		// The way out is worded for the answer this file wrote: `true` asks for
+		// the check's own default and the absent key means the same, so nothing
+		// this file asked for is turned off by removing the key.
+		if !strings.Contains(err.Error(), "the absent key means the check on") {
+			t.Errorf("%v does not say what removing the key means for a file that wrote true", err)
+		}
+		if strings.Contains(err.Error(), "the off-switch may go with it") {
+			t.Errorf("%v offers a file writing review_against_task: true the off-switch's own way out", err)
+		}
+		// The same image, the same repository, a file that writes no key:
+		// nothing to gate, which is the way out the refusal names.
+		testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": configSkewHead + configSkewWorkflow})
+		commitRef(t, dir, "develop")
+		if _, _, err := execute(t, "run", "--run-id", "20261120-100000-abce", "A task"); err != nil {
+			t.Fatalf("a file that writes no agent.review_against_task must not be gated on reviewSpecSince: %v", err)
+		}
+	})
+	// A checkout: clone workflow has no build record: its gate is the
+	// installation's own base image (checkCloneReviewAgainstTaskImage), and the
+	// key is the same break there.
+	t.Run("a checkout: clone workflow", func(t *testing.T) {
+		f := newCloudFixture(t)
+		older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, reviewSpecSince, -1)
+		f.appendConfig(t, "base_images: {base: "+older+"}\n")
+		configSkewCheckout(t, f, configSkewReviewAgainstTask("false")+
+			"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
+		_, _, err := execute(t, "run", "--run-id", "20261120-100000-abcf", "A task")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want the launch refused", err)
+		}
+		for _, want := range []string{
+			"fugaro.yaml's agent.review_against_task of acme/other",
+			"needs a job image whose runner knows " + reviewAgainstTaskKnows,
+			older,
+			"fugaro update --base base",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%v lacks %q", err, want)
+			}
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Errorf("%d executions, want none", n)
+		}
+	})
+	// fugaro review launches through the same block of gates (finishLaunch →
+	// freshLaunchGates), and its reviews are the check's own subject: a
+	// repository that writes the key is refused before the review job is
+	// started, like every other launch of it.
+	t.Run("fugaro review", func(t *testing.T) {
+		f := newReviewFixture(t)
+		setBaseImage(t, shiftRelease(t, reviewSpecSince, -1))
+		projectJobCheckoutYAML(t, strings.Replace(projectJobOAuthRepoYAML,
+			"  auth: oauth\n", "  auth: oauth\n  review_against_task: false\n", 1))
+		_, _, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want the review launch refused", err)
+		}
+		for _, want := range []string{
+			"fugaro.yaml's agent.review_against_task of acme/app",
+			"needs a job image whose runner knows " + reviewAgainstTaskKnows,
+			"fugaro update --base base",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%v lacks %q", err, want)
+			}
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Errorf("%d executions, want none", n)
+		}
+	})
+}
+
+// TestReviewAgainstTaskValidateWarns: the file is valid — the skew is the
+// installation's, not the file's — so fugaro validate warns rather than
+// refusing, the shape triageImageWarnings has, and names both ways to move an
+// image (the installation's base, and a workflow's own). The key written at
+// either value counts: it is the line an older runner refuses, whatever it says.
+func TestReviewAgainstTaskValidateWarns(t *testing.T) {
+	for _, value := range []string{"false", "true"} {
+		doc := validateReviewAgainstTask(t, "  review_against_task: "+value+"\n")
+		if !has(doc.Warnings, "agent.review_against_task", "needs fugaro "+reviewSpecSince) {
+			t.Errorf("%s: warnings = %+v, want the review-against-task warning", value, doc.Warnings)
+		}
+		for _, want := range []string{"fugaro update --base base", "fugaro image refresh"} {
+			if !has(doc.Warnings, "agent.review_against_task", want) {
+				t.Errorf("%s: the warning does not name %q: %+v", value, want, doc.Warnings)
+			}
+		}
+		if has(doc.Problems, "agent.review_against_task", "") {
+			t.Errorf("%s: the key was refused, and the file is valid: %+v", value, doc.Problems)
+		}
+	}
+	if doc := validateReviewAgainstTask(t, ""); has(doc.Warnings, "agent.review_against_task", "") {
+		t.Errorf("a file that writes no key was warned about: %+v", doc.Warnings)
+	}
+}
+
+// validateReviewAgainstTask runs fugaro validate --json on a repository file
+// whose agent block carries the key, in a directory that is no checkout and has
+// no project config: the file's own key is all this judges.
+func validateReviewAgainstTask(t *testing.T, lines string) validateOutput {
+	t.Helper()
+	isolateProjects(t, t.TempDir())
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n" + lines +
+		"workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"})
+	out, _, err := execute(t, "validate", "--json", filepath.Join(dir, "fugaro.yaml"))
+	var doc validateOutput
+	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+		t.Fatalf("output %q: %v", out, jerr)
+	}
+	if err != nil {
+		t.Fatalf("err = %v, want a valid file: %+v", err, doc.Problems)
+	}
+	return doc
+}
+
+// TestUpdateGatesReviewAgainstTask is fugaro update --repo's half of the gate,
+// which a launch from outside the repository's checkout has nothing else to
+// stand on: it reads no fugaro.yaml, so the key the run will find once it has
+// one is judged by the operator's own converge (gateReviewAgainstTask). The
+// judged half is the key being written and not the value it holds — an older
+// runner's decoder refuses the key whatever it says — and the way out the
+// refusal offers is worded for the answer the file wrote.
+func TestUpdateGatesReviewAgainstTask(t *testing.T) {
+	below, above := shiftRelease(t, reviewSpecSince, -1), shiftRelease(t, reviewSpecSince, 1)
+	lc := func(ref string) *localcfg.Config {
+		if ref == "" {
+			return &localcfg.Config{}
+		}
+		return &localcfg.Config{BaseImages: map[string]string{"base": ref}}
+	}
+	var out, errOut bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	r := &initRun{o: &initOptions{}, cmd: cmd, w: &out}
+	older := "ghcr.io/dimipaun/fugaro-base:" + below
+
+	err := r.gateReviewAgainstTask(r.o, "acme/app", lc(older), reviewAgainstTaskSwitched(false))
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want refused", err)
+	}
+	for _, want := range []string{
+		"fugaro.yaml's agent.review_against_task of acme/app",
+		reviewAgainstTaskKnows,
+		"fugaro " + reviewSpecSince + " or later",
+		older + ", release " + below,
+		"fugaro update --base base",
+		"only if the off-switch may go with it",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if errOut.Len() != 0 {
+		t.Errorf("stderr = %q, want none (refused, not warned)", errOut.String())
+	}
+	// The key written on is the same break: the absent key means the check on,
+	// so this file asked for the default and is told so.
+	if err := r.gateReviewAgainstTask(r.o, "acme/app", lc(older), reviewAgainstTaskSwitched(true)); err == nil ||
+		!strings.Contains(err.Error(), "the absent key means the check on") {
+		t.Errorf("a file writing review_against_task: true: err = %v, want the default's own way out", err)
+	}
+
+	// The boundary, and the three states that ask nothing of the image.
+	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + reviewSpecSince, "ghcr.io/dimipaun/fugaro-base:" + above, ""} {
+		var warn bytes.Buffer
+		if err := refuseReviewAgainstTaskSkew("acme/app", reviewAgainstTaskSwitched(false), ref, &warn); err != nil || warn.Len() != 0 {
+			t.Errorf("%q: err = %v, warn = %q, want neither", ref, err, warn.String())
+		}
+	}
+	var warn bytes.Buffer
+	if err := refuseReviewAgainstTaskSkew("acme/app", reviewAgainstTaskSwitched(false), "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", &warn); err != nil {
+		t.Errorf("dev base: err = %v, want a warning only", err)
+	}
+	if !strings.Contains(warn.String(), "not a release base image") || !strings.Contains(warn.String(), "is not checked") {
+		t.Errorf("dev base: warn = %q", warn.String())
+	}
+	// A file that writes no key asks nothing of the image.
+	for _, cfg := range []*config.Config{nil, {}} {
+		var w bytes.Buffer
+		if err := refuseReviewAgainstTaskSkew("acme/app", cfg, older, &w); err != nil || w.Len() != 0 {
+			t.Errorf("%+v: err = %v, warn = %q, want neither", cfg, err, w.String())
+		}
+		if err := r.gateReviewAgainstTask(r.o, "acme/app", lc(older), cfg); err != nil {
+			t.Errorf("%+v: err = %v, want none", cfg, err)
+		}
+	}
+
+	// --forget and --plan-only deploy nothing, so neither is refused;
+	// --print-vars is judged like a deploy and writes nothing to stdout.
+	for _, o := range []*initOptions{{planOnly: true}, {forget: true}} {
+		if err := (&initRun{o: o, cmd: cmd, w: &out}).gateReviewAgainstTask(o, "acme/app", lc(older), reviewAgainstTaskSwitched(false)); err != nil {
+			t.Errorf("%+v: err = %v, want none", o, err)
+		}
+	}
+	out.Reset()
+	pv := &initOptions{printVars: true}
+	if err := (&initRun{o: pv, cmd: cmd, w: io.Discard}).gateReviewAgainstTask(pv, "acme/app", lc(older), reviewAgainstTaskSwitched(false)); err == nil {
+		t.Fatal("--print-vars: want refused")
+	}
+	if out.Len() != 0 {
+		t.Errorf("--print-vars wrote to stdout: %q", out.String())
+	}
+}
+
+// TestReviewSpecSinceHasAReleaseBullet: reviewSpecSince names 0.27.0, which is
+// not tagged, so docs/release.md's Before-you-tag list is what holds the
+// constant to the release actually cut — the job every other *Since constant's
+// bullet does. The constant has two halves, and the bullet has to name both:
+// the fields a launcher drops (review_spec, from_findings, own_text) and the
+// repository's key a launch refuses (agent.review_against_task), with the four
+// call sites of the key's gate.
+func TestReviewSpecSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `reviewSpecSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no reviewSpecSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+reviewSpecSince+"\"`") {
+		t.Errorf("docs/release.md's reviewSpecSince bullet does not carry the constant's release (%q)", reviewSpecSince)
+	}
+	for _, want := range []string{
+		"agent.review_against_task", "config.RepoReviewAgainstTaskSet", "not tagged yet", "review_spec",
+		"reviewSpecSkew", "checkReviewAgainstTaskImage", "checkCloneReviewAgainstTaskImage",
+		"refuseReviewAgainstTaskSkew", "gateReviewAgainstTask", "reviewAgainstTaskImageWarnings",
+	} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's reviewSpecSince bullet does not say %q", want)
+		}
+	}
+	// The key has one file and not two: a bullet that sent a release looking
+	// for a layer half would have it verify a predicate no gate asks — the
+	// layer's own loader refuses the key long before an image is judged.
+	if strings.Contains(bullet, "SetsReviewAgainstTask") || strings.Contains(bullet, "defaults.agent.review_against_task") {
+		t.Errorf("docs/release.md's reviewSpecSince bullet names a layer half the key does not have: agent.review_against_task is repo-scope alone (config.Scopes)")
 	}
 }
 

@@ -168,14 +168,7 @@ func newBitbucketFixture(t *testing.T, serving string, answers map[string]bitbuc
 	f, _ := credsSkewFixture(t, "none", skew)
 	db := gcpfake.NewRTDB(t)
 	path := os.Getenv("FUGARO_CONFIG")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	budgetYAML := "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + db.URL + " }\n"
-	if err := os.WriteFile(path, append(b, []byte(budgetYAML)...), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	setBudgetBlock(t, path, "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+db.URL+" }\n")
 	db.Set(budget.PathProject, "aurora")
 	// The mark `fugaro update --firebase-project` writes, which is what makes
 	// this database the installation's at all: every writer into it asks

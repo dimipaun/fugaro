@@ -3,18 +3,58 @@ package tf
 import (
 	"os"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 // The workspace root's plan cover, tested over plan JSON the way
-// deploy/terraform/gcp/roots/workspace plans it: the workspace's own role, the
-// service account that holds it, and the one grant that binds them
-// (workspace.go, docs/workspaces/implementation-plan.md W3).
+// deploy/terraform/gcp/roots/workspace plans it (WS6,
+// docs/workspace-service/implementation-plan.md): the workspace's own service
+// account and its database role with the ONE grant that binds them, the
+// workspace's own credentials service (D2980) running as that account, the ONE
+// bundle accessor and one invoke grant per member job account (F4, F17, F25,
+// R9).
 const (
 	wsProject = "workspace-alpha-1234"
+	wsName    = "workspace-alpha"
 	wsEmail   = WorkspaceServiceAccountID + "@" + wsProject + ".iam.gserviceaccount.com"
+	// wsIAMEmail is the SA fallback's account (WU3): created by the root, granted
+	// nothing by it.
+	wsIAMEmail = WorkspaceIAMAccountID + "@" + wsProject + ".iam.gserviceaccount.com"
+	wsService  = "fugaro-workspace-credentials"
+	wsRegion   = "us-central1"
+	// wsBundle is the workspace's own bundle container's Secret Manager id as
+	// internal/backend/gcp derives it (CredsBundleSecretID of the workspace's
+	// name): a value the cover is GIVEN, because no plan carries the
+	// derivation and a rule that read it out of the plan would accept
+	// whatever container the plan named.
+	wsBundle = "fugaro-project-workspace-alpha-creds-bundle-0123456789abcdef"
+	// wsImage is the released pin the root's service is written with: the
+	// workspace's own registry, the remote (pull-through) repository, the
+	// recorded owner, a fugaro-<kind> image, a release version tag and a
+	// digest — the closure wsCover holds it to (credentialsImageOK), which is
+	// the same shape an installation's credentials service is deployed with.
+	wsImage  = "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:" + wsDigest
+	wsDigest = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+
+	wsMemberA = "fugaro-run-alpha-a@member-alpha-1234.iam.gserviceaccount.com"
+	wsMemberB = "fugaro-run-alpha-b@member-beta-5678.iam.gserviceaccount.com"
 )
+
+// wsCover is the image identity the workspace cover holds the service to: this
+// run's registry, the remote (pull-through) repository and the owner the run's
+// config records — tf.Cover's own three fields, the same three init's review and
+// managed_apply read off the config (infra.RegistryHost, infra.GhcrRegistry,
+// baseOwner), spelled as literals here because this package sits below both. An
+// owner of "" would refuse every remote reference, which is the other half of
+// what these cases test.
+var wsCover = Cover{Registry: "us-central1-docker.pkg.dev", Ghcr: "fugaro-ghcr", Owner: "dimipaun"}
+
+// wsMembers is the member table the cover is given: the job accounts a plan may
+// bind an invoke grant to, and no other principal.
+var wsMembers = []string{wsMemberA, wsMemberB}
 
 // wsRole is the role path the root's grant names, which is what a plan of it
 // carries: the cover builds it from the project it was given rather than
@@ -28,6 +68,24 @@ func wsPlan(t *testing.T, changes ...string) *Plan {
 	return mustPlan(t, `{"resource_changes":[`+strings.Join(changes, ",")+`]}`)
 }
 
+// wsPlanCfg is wsPlan with a configuration section: what terraform writes
+// beside the changes, and where a computed grant's member expression is written
+// as a reference to the account it reads (workspaceComputedMember).
+func wsPlanCfg(t *testing.T, cfg string, changes ...string) *Plan {
+	t.Helper()
+	return mustPlan(t, `{"resource_changes":[`+strings.Join(changes, ",")+
+		`],"configuration":{"root_module":{"resources":[`+cfg+`]}}}`)
+}
+
+// wsMemberExpr is the grant's member expression as the plan's configuration
+// writes it when the member is the address of the account resource named:
+// terraform writes an attribute path as the path and the resource
+// (testdata/managed_provider_wrapped_project_plan.json's own shape).
+func wsMemberExpr(account string) string {
+	return `{"address":"google_project_iam_member.workspace_database","mode":"managed","type":"google_project_iam_member","expressions":{"member":{"references":["` +
+		account + `.member","` + account + `"]}}}`
+}
+
 func wsActions(acts ...string) string {
 	q := make([]string, 0, len(acts))
 	for _, a := range acts {
@@ -36,25 +94,33 @@ func wsActions(acts ...string) string {
 	return "[" + strings.Join(q, ",") + "]"
 }
 
+// wsChange is one resource_change of a plan, with `after` written as the given
+// attributes and `before` left empty.
+func wsChange(addr, typ string, after string, acts ...string) string {
+	return `{"address":"` + addr + `","mode":"managed","type":"` + typ + `","change":{"actions":` +
+		wsActions(acts...) + `,"after":{` + after + `}}}`
+}
+
+// wsDelete is a resource_change that deletes the resource, with `before` as the
+// state it had: what terraform plans when a member leaves the table.
+func wsDelete(addr, typ, before string) string {
+	return `{"address":"` + addr + `","mode":"managed","type":"` + typ + `","change":{"actions":["delete"],"before":{` +
+		before + `},"after":null}}`
+}
+
 // wsSA is the workspace's own service account as the root's plan writes it:
 // both of its names literal, which is why the root is given them as variables.
 func wsSA(project, accountID string, acts ...string) string {
-	return `{"address":"google_service_account.workspace","mode":"managed","type":"google_service_account","change":{"actions":` +
-		wsActions(acts...) + `,"after":{"project":"` + project + `","account_id":"` + accountID + `"}}}`
+	return wsChange("google_service_account.workspace", workspaceAccountType,
+		`"project":"`+project+`","account_id":"`+accountID+`"`, acts...)
 }
 
-// wsKnownGrant is the root's one grant with the member terraform already knows.
-func wsKnownGrant(project, member, role string, acts ...string) string {
-	return `{"address":"google_project_iam_member.workspace_database","mode":"managed","type":"google_project_iam_member","change":{"actions":` +
-		wsActions(acts...) + `,"after":{"project":"` + project + `","role":"` + role + `","member":"` + member + `"}}}`
-}
-
-// wsComputedGrant is the same grant as the root really plans it: the member is
-// the address of the account this plan creates, so terraform knows it only at
-// apply and the plan carries after_unknown instead of a value.
-func wsComputedGrant(project, role string, acts ...string) string {
-	return `{"address":"google_project_iam_member.workspace_database","mode":"managed","type":"google_project_iam_member","change":{"actions":` +
-		wsActions(acts...) + `,"after":{"project":"` + project + `","role":"` + role + `"},"after_unknown":{"member":true}}}`
+// wsIAM is the SA fallback's IAM account as the root's plan writes it: the
+// account id is the root's own literal, which is why the cover can hold it
+// without being told it.
+func wsIAM(project, accountID string, acts ...string) string {
+	return wsChange("google_service_account.workspace_iam", workspaceAccountType,
+		`"project":"`+project+`","account_id":"`+accountID+`"`, acts...)
 }
 
 // wsRoleChange is the root's custom role as the root plans it: the project, the
@@ -65,8 +131,8 @@ func wsRoleChange(project, id string, perms ...string) string {
 	for _, p := range perms {
 		q = append(q, `"`+p+`"`)
 	}
-	return `{"address":"google_project_iam_custom_role.workspace_database","mode":"managed","type":"google_project_iam_custom_role","change":{"actions":["create"],"after":{"project":"` +
-		project + `","role_id":"` + id + `","permissions":[` + strings.Join(q, ",") + `]}}}`
+	return wsChange("google_project_iam_custom_role.workspace_database", workspaceRoleType,
+		`"project":"`+project+`","role_id":"`+id+`","permissions":[`+strings.Join(q, ",")+`]`, "create")
 }
 
 // wsPinnedRole is the root's own role, as the root declares it.
@@ -74,165 +140,293 @@ func wsPinnedRole() string {
 	return wsRoleChange(wsProject, WorkspaceDatabaseRoleID, WorkspaceDatabasePermissions...)
 }
 
-func wsWhy(t *testing.T, p *Plan) string {
-	t.Helper()
-	return strings.Join(WorkspaceNotCovered(p, wsProject, WorkspaceServiceAccountID), "; ")
+// wsComputedGrant is the database grant as the root really plans it: the member
+// is the address of the account this plan creates, so terraform knows it only
+// at apply and the plan carries after_unknown instead of a value.
+func wsComputedGrant(project, role string, acts ...string) string {
+	return `{"address":"google_project_iam_member.workspace_database","mode":"managed","type":"` + workspaceGrantType + `","change":{"actions":` +
+		wsActions(acts...) + `,"after":{"project":"` + project + `","role":"` + role + `"},"after_unknown":{"member":true}}}`
 }
 
-func TestWorkspacePlanIsTheServiceAndItsOneGrant(t *testing.T) {
+// wsKnownGrant is that grant with the member terraform already knows.
+func wsKnownGrant(project, member, role string, acts ...string) string {
+	return wsChange("google_project_iam_member.workspace_database", workspaceGrantType,
+		`"project":"`+project+`","role":"`+role+`","member":"`+member+`"`, acts...)
+}
+
+// wsServiceAfter is the service's plan body: the shape the root writes, which
+// every service case below starts from and then breaks in one place.
+type wsServiceAttrs struct {
+	name        string
+	project     string
+	account     string
+	image       string
+	iam         string
+	concurrency string
+	maxScale    string
+	minScale    string
+	minSvc      string
+	scaling     string // the whole template scaling block, when not the root's
+	env         string // the whole env list, when not the root's
+	command     string
+}
+
+func (a wsServiceAttrs) json() string {
+	name, project, account, image := a.name, a.project, a.account, a.image
+	if name == "" {
+		name = wsService
+	}
+	if project == "" {
+		project = wsProject
+	}
+	if account == "" {
+		account = wsEmail
+	}
+	if image == "" {
+		image = wsImage
+	}
+	iam := a.iam
+	if iam == "" {
+		iam = "false"
+	}
+	conc := a.concurrency
+	if conc == "" {
+		conc = strconv.Itoa(WorkspaceConcurrency)
+	}
+	minSvc := a.minSvc
+	if minSvc == "" {
+		minSvc = "0"
+	}
+	scaling := a.scaling
+	if scaling == "" {
+		maxScale, minScale := a.maxScale, a.minScale
+		if maxScale == "" {
+			maxScale = strconv.Itoa(WorkspaceMaxInstances)
+		}
+		if minScale == "" {
+			minScale = "0"
+		}
+		scaling = `"scaling":[{"min_instance_count":` + minScale + `,"max_instance_count":` + maxScale + `}]`
+	}
+	env := a.env
+	if env == "" {
+		env = `"env":[{"name":"` + WorkspaceModeEnv + `","value":"1"}]`
+	}
+	return `"project":"` + project + `","location":"` + wsRegion + `","name":"` + name +
+		`","invoker_iam_disabled":` + iam + `,"scaling":[{"scaling_mode":"AUTOMATIC","min_instance_count":` + minSvc + `}],` +
+		`"template":[{"service_account":"` + account + `","max_instance_request_concurrency":` + conc + `,` + scaling +
+		`,"containers":[{"image":"` + image + `"` + a.command + `,` + env + `}]}]`
+}
+
+// wsService is the workspace's own credentials service as the root plans it.
+func wsServiceChange(a wsServiceAttrs, acts ...string) string {
+	return wsChange("google_cloud_run_v2_service.workspace", workspaceServiceType, a.json(), acts...)
+}
+
+// wsAccessor is the ONE bundle accessor, which the cover is held to by the
+// container the caller derived.
+func wsAccessor(project, secret, role, member string, acts ...string) string {
+	if project == "" {
+		project = wsProject
+	}
+	if secret == "" {
+		secret = wsBundle
+	}
+	if role == "" {
+		role = WorkspaceBundleAccessorRole
+	}
+	if member == "" {
+		member = wsEmail
+	}
+	return wsChange("google_secret_manager_secret_iam_member.workspace_bundle", workspaceAccessorType,
+		`"project":"`+project+`","secret_id":"`+secret+`","role":"`+role+`","member":"`+member+`"`, acts...)
+}
+
+// wsInvokerAfter is an invoke grant's attributes as the root writes them.
+func wsInvokerAfter(project, name, role, member string) string {
+	if project == "" {
+		project = wsProject
+	}
+	if name == "" {
+		name = wsService
+	}
+	if role == "" {
+		role = WorkspaceInvokerRole
+	}
+	return `"project":"` + project + `","location":"` + wsRegion + `","name":"` + name +
+		`","role":"` + role + `","member":"` + member + `"`
+}
+
+// wsInvoker is one member's invoke grant on the workspace's service.
+func wsInvoker(member string, acts ...string) string {
+	return wsChange("google_cloud_run_v2_service_iam_member.workspace_invoker", workspaceInvokerType,
+		wsInvokerAfter("", "", "", member), acts...)
+}
+
+// wsInvokerDelete is the same grant as terraform plans it when the member
+// leaves the table: the state it had, and no `after`.
+func wsInvokerDelete(member string) string {
+	return wsDelete("google_cloud_run_v2_service_iam_member.workspace_invoker", workspaceInvokerType,
+		wsInvokerAfter("", "", "", member))
+}
+
+// wsDeployed is the whole root as a first apply plans it: the three resources
+// of the workspace's own identity, the service, its one bundle accessor and one
+// invoke grant per member job account.
+func wsDeployed() []string {
+	return []string{
+		wsPinnedRole(),
+		wsSA(wsProject, WorkspaceServiceAccountID, "create"),
+		wsIAM(wsProject, WorkspaceIAMAccountID, "create"),
+		wsComputedGrant(wsProject, wsRole, "create"),
+		wsServiceChange(wsServiceAttrs{}, "create"),
+		wsAccessor("", "", "", "", "create"),
+		wsInvoker(wsMemberA, "create"),
+		wsInvoker(wsMemberB, "create"),
+	}
+}
+
+func wsWhy(t *testing.T, p *Plan) string {
+	t.Helper()
+	return wsWhyMembers(t, p, wsMembers)
+}
+
+// wsWhyMembers is wsWhy against the member table the workspace holds now, which
+// the removal case below gives as the shrunk table: the cover is handed the
+// members of the workspace's own config, so a member who has left the table is
+// by definition not one of them.
+func wsWhyMembers(t *testing.T, p *Plan, members []string) string {
+	t.Helper()
+	return strings.Join(wsCover.WorkspaceNotCovered(p, wsProject, WorkspaceServiceAccountID, wsBundle, members), "; ")
+}
+
+// wsAdd is the root's plan with one change appended, which every refusal case
+// below is written as: the failure is the added change and not the plan.
+func wsAdd(t *testing.T, extra string) *Plan {
+	t.Helper()
+	return wsPlan(t, append(wsDeployed(), extra)...)
+}
+
+// TestWorkspacePlanAdmitsTheService is the positive half: the plan the root
+// really produces is covered, in every state it produces it in — the first
+// apply, a converged update, a second apply that fills the service's own URL,
+// and the workspace whose service is not deployed at all.
+func TestWorkspacePlanAdmitsTheService(t *testing.T) {
 	covered := []struct {
-		name    string
+		name string
+		// cfg is the plan's configuration, as the resource entries terraform
+		// writes it: the member of a computed grant is only held to the account
+		// it reads where the plan carries one (workspaceComputedMember), so a
+		// case with no cfg is a plan built by hand without a configuration.
+		cfg     string
 		changes []string
 	}{
-		{"the root's own plan, with the member terraform computes", []string{
+		{"the root's own plan: the accounts, the role and grant, the service, its accessor and the members' invoke grants", "", wsDeployed()},
+		{"the root's own plan, with the configuration that writes the member terraform computes", wsMemberExpr("google_service_account.workspace"), wsDeployed()},
+		{"the same plan converged: every resource a no-op", "", []string{
+			wsPinnedRole(),
+			wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
+			wsIAM(wsProject, WorkspaceIAMAccountID, "no-op"),
+			wsComputedGrant(wsProject, wsRole, "no-op"),
+			wsServiceChange(wsServiceAttrs{}, "no-op"),
+			wsAccessor("", "", "", "", "no-op"),
+			wsInvoker(wsMemberA, "no-op"),
+			wsInvoker(wsMemberB, "no-op"),
+		}},
+		{"the service's own URL filled on a second apply: the service is updated and nothing else changes", "", []string{
+			wsPinnedRole(),
+			wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
+			wsComputedGrant(wsProject, wsRole, "no-op"),
+			wsServiceChange(wsServiceAttrs{env: `"env":[{"name":"` + WorkspaceModeEnv + `","value":"1"},{"name":"FUGARO_CREDENTIALS_SERVICE_URL","value":"https://fugaro-workspace-credentials-abc.a.run.app"}]`}, "update"),
+			wsAccessor("", "", "", "", "no-op"),
+			wsInvoker(wsMemberA, "no-op"),
+			wsInvoker(wsMemberB, "no-op"),
+		}},
+		{"the workspace's account, its role and its grant alone: no service is deployed (var.credentials_service unset)", "", []string{
 			wsPinnedRole(),
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
 			wsComputedGrant(wsProject, wsRole, "create"),
 		}},
-		{"the root's own plan converged: the role, the account and the grant are all no-ops", []string{
-			wsPinnedRole(),
+		{"the SA fallback's IAM account created while the rest is converged", "", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
+			wsIAM(wsProject, WorkspaceIAMAccountID, "create"),
 			wsComputedGrant(wsProject, wsRole, "no-op"),
 		}},
-		{"the same plan converged: both resources are no-ops", []string{
-			wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
-			wsComputedGrant(wsProject, wsRole, "no-op"),
+		{"the accounts' display names updated, the grant held", "", []string{
+			wsSA(wsProject, WorkspaceServiceAccountID, "update"),
+			wsIAM(wsProject, WorkspaceIAMAccountID, "update"),
+			wsComputedGrant(wsProject, wsRole, "update"),
 		}},
-		{"the member known, bare", []string{
+		{"the member known, bare and as the root writes it", "", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
 			wsKnownGrant(wsProject, wsEmail, wsRole, "create"),
-		}},
-		{"the member known, as the root writes it", []string{
-			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
-			wsKnownGrant(wsProject, "serviceAccount:"+wsEmail, wsRole, "create"),
-		}},
-		{"the account's display name updated, the grant held", []string{
-			wsSA(wsProject, WorkspaceServiceAccountID, "update"),
-			wsComputedGrant(wsProject, wsRole, "update"),
 		}},
 	}
 	for _, c := range covered {
 		t.Run(c.name, func(t *testing.T) {
-			if why := wsWhy(t, wsPlan(t, c.changes...)); why != "" {
+			p := wsPlan(t, c.changes...)
+			if c.cfg != "" {
+				p = wsPlanCfg(t, c.cfg, c.changes...)
+			}
+			if why := wsWhy(t, p); why != "" {
 				t.Errorf("the workspace root's own plan must be covered, got: %s", why)
 			}
 		})
 	}
 }
 
-// TestWorkspacePlanRefusesAJobABucketAndARepository holds spec §9's "nothing
-// else": the workspace's own project carries no resource but its own service
-// account and that account's one grant, and every type outside the root is
-// refused by name however harmless it looks.
-func TestWorkspacePlanRefusesAJobABucketAndARepository(t *testing.T) {
-	other := []struct {
-		typ  string
-		addr string
-	}{
-		{"google_cloud_run_v2_job", "google_cloud_run_v2_job.workspace"},
-		{"google_cloud_run_v2_service", "google_cloud_run_v2_service.workspace"},
-		{"google_storage_bucket", "google_storage_bucket.runs"},
-		{"google_project_service", "google_project_service.identitytoolkit"},
-		{"google_firebase_project", "google_firebase_project.this"},
-		{"google_artifact_registry_repository", "google_artifact_registry_repository.images"},
-		{"google_secret_manager_secret", "google_secret_manager_secret.model"},
+// TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant is F25's sentence and the
+// plan's own constraint ("Removing a member needs no operator repair"): the ONE
+// deletion the workspace root's plan holds is a member's invoke grant, so
+// `fugaro update` converges a shrunk member table with no repair — and the
+// deletion of anything else stays refused, the workspace's service and the
+// bundle accessor included.
+//
+// The cover is handed the table the workspace holds AFTER the removal, which is
+// the case that matters: the member who left is exactly the account that table
+// no longer names, so the deletion is held to the project, the role and the
+// plan's own service and not to the members — a rule that asked for the deleted
+// principal to be among them would refuse every real removal and leave the
+// operator repair this design has none of.
+func TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant(t *testing.T) {
+	// The table the cover is given is the workspace's OWN, after the removal:
+	// wsMemberA is the member who has left, so its account is exactly what the
+	// table no longer names — which is why the deletion is not held to it.
+	if why := wsWhyMembers(t, wsPlan(t,
+		wsPinnedRole(),
+		wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
+		wsComputedGrant(wsProject, wsRole, "no-op"),
+		wsServiceChange(wsServiceAttrs{}, "no-op"),
+		wsAccessor("", "", "", "", "no-op"),
+		wsInvokerDelete(wsMemberA),
+		wsInvoker(wsMemberB, "no-op"),
+	), []string{wsMemberB}); why != "" {
+		t.Errorf("removing a member must be no operator repair (F25): the plan that deletes its invoke grant and nothing else is this root's, got: %s", why)
 	}
-	for _, c := range other {
-		t.Run(c.typ, func(t *testing.T) {
-			p := wsPlan(t,
-				wsSA(wsProject, WorkspaceServiceAccountID, "create"),
-				wsComputedGrant(wsProject, wsRole, "create"),
-				`{"address":"`+c.addr+`","mode":"managed","type":"`+c.typ+`","change":{"actions":["create"],"after":{}}}`)
-			why := wsWhy(t, p)
-			if why == "" {
-				t.Fatalf("a %s in the workspace's own project must be refused: a workspace holds no job, no runs bucket and no repository (spec §9)", c.typ)
-			}
-			if !strings.Contains(why, "no job, no runs bucket and no repository") {
-				t.Errorf("the refusal must say what a workspace does not hold, got: %s", why)
-			}
-		})
-	}
-}
 
-// TestWorkspacePlanRefusesAGrantToAnotherPrincipal is the security half of the
-// cover: the workspace's database role is bound to the workspace's own service
-// account and to nothing else, because any other member of that grant can read
-// the record and the admitted-token hashes (spec §2, §8).
-func TestWorkspacePlanRefusesAGrantToAnotherPrincipal(t *testing.T) {
-	others := []string{
-		"user:someone@example.com",
-		"group:ops@example.com",
-		"domain:example.com",
-		"allUsers",
-		"allAuthenticatedUsers",
-		"serviceAccount:" + FugaroAccounts[0] + "@" + wsProject + ".iam.gserviceaccount.com",
-		"serviceAccount:fugaro-member@member-project-5678.iam.gserviceaccount.com",
-	}
-	for _, member := range others {
-		t.Run(member, func(t *testing.T) {
-			p := wsPlan(t,
-				wsSA(wsProject, WorkspaceServiceAccountID, "create"),
-				wsKnownGrant(wsProject, member, wsRole, "create"))
-			why := wsWhy(t, p)
-			if why == "" {
-				t.Fatalf("a grant of the workspace's database role to %s must be refused", member)
-			}
-			if !strings.Contains(why, "reached by "+wsEmail+" and by nobody else") {
-				t.Errorf("the refusal must name the account the workspace's database is reached by, got: %s", why)
-			}
-		})
-	}
-}
-
-func TestWorkspacePlanRefusesASecondRoleAnotherProjectAndAKey(t *testing.T) {
 	refused := []struct {
-		name    string
-		changes []string
-		want    string
+		name  string
+		extra string
+		want  string
 	}{
-		{"another role on the workspace's account", []string{
-			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
-			wsKnownGrant(wsProject, wsEmail, "roles/editor", "create"),
-		}, "holds " + wsRole + " and nothing else"},
-		{"the database role in another project", []string{
-			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
-			wsKnownGrant("member-project-5678", wsEmail, WorkspaceDatabaseRole("member-project-5678"), "create"),
-		}, "the workspace's own database is"},
-		{"the account in another project", []string{
-			wsSA("member-project-5678", WorkspaceServiceAccountID, "create"),
-			wsComputedGrant(wsProject, wsRole, "create"),
-		}, "an account in another project"},
-		{"another account id", []string{
-			wsSA(wsProject, "fugaro-runner", "create"),
-			wsComputedGrant(wsProject, wsRole, "create"),
-		}, "the workspace's own service account is"},
-		{"a service account key", []string{
-			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
-			`{"address":"google_service_account_key.workspace","mode":"managed","type":"google_service_account_key","change":{"actions":["create"],"after":{}}}`,
-		}, "a service account key"},
-		{"an authoritative binding", []string{
-			`{"address":"google_project_iam_binding.workspace_database","mode":"managed","type":"google_project_iam_binding","change":{"actions":["create"],"after":{"role":"` + wsRole + `"}}}`,
-		}, "an authoritative IAM resource"},
-		{"a delete of the workspace's account", []string{
-			wsSA(wsProject, WorkspaceServiceAccountID, "delete"),
-		}, "actions delete"},
-		{"a replace of the workspace's account", []string{
-			wsSA(wsProject, WorkspaceServiceAccountID, "delete", "create"),
-		}, "actions delete, create"},
-		{"a data source", []string{
-			`{"address":"data.google_project.this","mode":"data","type":"google_project","change":{"actions":["read"],"after":{}}}`,
-		}, "a data source"},
-		{"the member computed with no account in the plan", []string{
-			wsComputedGrant(wsProject, wsRole, "create"),
-		}, "does not create the workspace's own service account"},
-		{"the member computed while another account is created", []string{
-			wsSA(wsProject, "fugaro-runner", "create"),
-			wsComputedGrant(wsProject, wsRole, "create"),
-		}, "the workspace's own service account is"},
+		{"the bundle accessor deleted", wsDelete("google_secret_manager_secret_iam_member.workspace_bundle", workspaceAccessorType,
+			`"project":"`+wsProject+`","secret_id":"`+wsBundle+`","role":"`+WorkspaceBundleAccessorRole+`","member":"serviceAccount:`+wsEmail+`"`),
+			"actions delete"},
+		{"the service deleted", wsDelete("google_cloud_run_v2_service.workspace", workspaceServiceType,
+			`"project":"`+wsProject+`","location":"`+wsRegion+`","name":"`+wsService+`"`), "actions delete"},
+		{"the workspace's database grant deleted", wsDelete("google_project_iam_member.workspace_database", workspaceGrantType,
+			`"project":"`+wsProject+`","role":"`+wsRole+`","member":"serviceAccount:`+wsEmail+`"`), "actions delete"},
+		{"the workspace's own account deleted", wsSA(wsProject, WorkspaceServiceAccountID, "delete"), "actions delete"},
+		{"the workspace's own role deleted", wsChange("google_project_iam_custom_role.workspace_database", workspaceRoleType,
+			`"project":"`+wsProject+`","role_id":"`+WorkspaceDatabaseRoleID+`"`, "delete"), "actions delete"},
+		{"an invoke grant replaced rather than deleted", wsChange("google_cloud_run_v2_service_iam_member.workspace_invoker", workspaceInvokerType,
+			wsInvokerAfter("", "fugaro-workspace-credentials-v2", "", wsMemberA), "delete", "create"), "actions delete, create"},
+		{"an invoke grant deleted for a principal that is not a service account", wsInvokerDelete("group:workspace-owners@example.com"),
+			"not a service account address"},
 	}
 	for _, c := range refused {
 		t.Run(c.name, func(t *testing.T) {
-			why := wsWhy(t, wsPlan(t, c.changes...))
+			why := wsWhy(t, wsAdd(t, c.extra))
 			if why == "" {
 				t.Fatalf("this plan must be refused: %s", c.name)
 			}
@@ -243,13 +437,260 @@ func TestWorkspacePlanRefusesASecondRoleAnotherProjectAndAKey(t *testing.T) {
 	}
 }
 
-// TestWorkspacePlanRefusesAnotherRoleAThirdPermissionAndAnotherProject is the
-// other half of the grant's reach: the plan that grants the role is also the
-// plan that can WIDEN it, and Realtime Database IAM having no path-level scope
-// makes the permission list the whole of the decision (spec §8). A third
+// TestWorkspacePlanRefusesAnythingElse holds spec §9's "nothing else" and every
+// rule the root's four new resources are admitted under: a type outside the
+// root, a service that is not this deployment (another project, another runtime
+// account, an unpinned image, a command, an environment that is not the root's,
+// or R9's limits moved), an accessor on another container, with another role or
+// for another principal, an invoke grant with another role, on another service,
+// in another project or to a principal that is not a member's job account — and
+// the workspace's own role, account and grant held as they were.
+func TestWorkspacePlanRefusesAnythingElse(t *testing.T) {
+	other := []struct {
+		typ  string
+		addr string
+	}{
+		{"google_cloud_run_v2_job", "google_cloud_run_v2_job.workspace"},
+		{"google_storage_bucket", "google_storage_bucket.runs"},
+		{"google_project_service", "google_project_service.identitytoolkit"},
+		{"google_firebase_project", "google_firebase_project.this"},
+		{"google_artifact_registry_repository", "google_artifact_registry_repository.images"},
+		{"google_secret_manager_secret", "google_secret_manager_secret.model"},
+	}
+	for _, c := range other {
+		t.Run(c.typ, func(t *testing.T) {
+			why := wsWhy(t, wsAdd(t, wsChange(c.addr, c.typ, ``, "create")))
+			if why == "" {
+				t.Fatalf("a %s in the workspace's own project must be refused: a workspace holds no job, no runs bucket and no repository (spec §9)", c.typ)
+			}
+			if !strings.Contains(why, "no job, no runs bucket and no repository") {
+				t.Errorf("the refusal must say what a workspace does not hold, got: %s", why)
+			}
+		})
+	}
+
+	refused := []struct {
+		name  string
+		extra []string
+		want  string
+	}{
+		{"the database role granted to another principal", []string{
+			wsKnownGrant(wsProject, "user:someone@example.com", wsRole, "create"),
+		}, "reached by " + wsEmail + " and by nobody else"},
+		{"the database role granted to a member's own job account", []string{
+			wsKnownGrant(wsProject, "serviceAccount:"+wsMemberA, wsRole, "create"),
+		}, "reached by " + wsEmail + " and by nobody else"},
+		{"the database role granted to the SA fallback's account, bare", []string{
+			wsKnownGrant(wsProject, wsIAMEmail, wsRole, "create"),
+		}, "reached by " + wsEmail + " and by nobody else"},
+		{"the database role granted to the SA fallback's account, as the root writes a member", []string{
+			wsKnownGrant(wsProject, "serviceAccount:"+wsIAMEmail, wsRole, "create"),
+		}, "reached by " + wsEmail + " and by nobody else"},
+		{"the database role granted to the SA fallback's account's own address", []string{
+			wsKnownGrant(wsProject, "google_service_account.workspace_iam.member", wsRole, "create"),
+		}, "reached by " + wsEmail + " and by nobody else"},
+		{"another role on the workspace's account", []string{
+			wsKnownGrant(wsProject, "serviceAccount:"+wsEmail, "roles/editor", "create"),
+		}, "holds " + wsRole + " and nothing else"},
+		{"the database role in another project", []string{
+			wsKnownGrant("member-project-5678", "serviceAccount:"+wsEmail, WorkspaceDatabaseRole("member-project-5678"), "create"),
+		}, "the workspace's own database is"},
+		{"the account in another project", []string{
+			wsSA("member-project-5678", WorkspaceServiceAccountID, "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}, "an account in another project"},
+		{"another account id", []string{
+			wsSA(wsProject, "fugaro-runner", "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}, "creates two and no third"},
+		{"the SA fallback's account replaced by another id", []string{
+			wsIAM(wsProject, "fugaro-workspace-admin", "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}, "creates two and no third"},
+		{"the SA fallback's IAM account in another project", []string{
+			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
+			wsIAM("member-project-5678", WorkspaceIAMAccountID, "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}, "an account in another project"},
+		{"an account id terraform knows only at apply", []string{
+			`{"address":"google_service_account.workspace_iam","mode":"managed","type":"google_service_account","change":{"actions":["create"],"after":{"project":"` + wsProject + `"},"after_unknown":{"account_id":true}}}`,
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}, "knows only at apply"},
+		{"a service account key", []string{
+			wsChange("google_service_account_key.workspace", "google_service_account_key", ``, "create"),
+		}, "a service account key"},
+		{"an authoritative binding of the workspace's role", []string{
+			wsChange("google_project_iam_binding.workspace_database", "google_project_iam_binding",
+				`"project":"`+wsProject+`","role":"`+wsRole+`"`, "create"),
+		}, "an authoritative IAM resource"},
+		{"a data source", []string{
+			`{"address":"data.google_project.this","mode":"data","type":"google_project","change":{"actions":["read"],"after":{}}}`,
+		}, "a data source"},
+		{"the workspace's own account deleted", []string{
+			wsSA(wsProject, WorkspaceServiceAccountID, "delete"),
+		}, "actions delete"},
+		{"a second service in the workspace's own project", []string{
+			wsChange("google_cloud_run_v2_service.second", workspaceServiceType,
+				wsServiceAttrs{name: "fugaro-workspace-second"}.json(), "create"),
+		}, "one service"},
+		{"the service in another project", []string{
+			wsServiceChange(wsServiceAttrs{project: "member-project-5678"}, "create"),
+		}, "a service in project"},
+		{"the service running as another account", []string{
+			wsServiceChange(wsServiceAttrs{account: "fugaro-credentials@" + wsProject + ".iam.gserviceaccount.com"}, "create"),
+		}, "and as nobody else"},
+		{"the service running as a job account of the workspace's own project", []string{
+			wsServiceChange(wsServiceAttrs{account: wsMemberA}, "create"),
+		}, "the workspace's own service runs as"},
+		{"the service on an image with no digest", []string{
+			wsServiceChange(wsServiceAttrs{image: "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/dimipaun/fugaro-base:latest"}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
+		// The image cases below are the closure's own half, one reference each:
+		// the same digest under another registry (a foreign project's, which is
+		// the minimum this rule has to refuse), another owner's path through the
+		// remote repository, a mutable tag that is not a release, the
+		// operators' own writable base repository rather than the remote
+		// repository, and an image that is not a fugaro-<kind> at all. The
+		// reference is what an operator chooses, and the account behind it reads
+		// every model credential the workspace holds.
+		{"the service on a digest under another registry", []string{
+			wsServiceChange(wsServiceAttrs{image: "europe-west1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:" + wsDigest}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
+		{"the service on another project's registry", []string{
+			wsServiceChange(wsServiceAttrs{image: "us-central1-docker.pkg.dev/member-project-5678/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:" + wsDigest}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
+		{"the service on another owner's image through the remote repository", []string{
+			wsServiceChange(wsServiceAttrs{image: "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/stranger/fugaro-base:1.2.3@sha256:" + wsDigest}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
+		{"the service on a mutable tag through the remote repository", []string{
+			wsServiceChange(wsServiceAttrs{image: "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/dimipaun/fugaro-base:latest@sha256:" + wsDigest}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
+		{"the service on the run's own base repository rather than the remote one", []string{
+			wsServiceChange(wsServiceAttrs{image: "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-base/dimipaun/fugaro-base:1.2.3@sha256:" + wsDigest}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
+		{"the service on an image that is not a fugaro-<kind>", []string{
+			wsServiceChange(wsServiceAttrs{image: "us-central1-docker.pkg.dev/workspace-alpha-1234/fugaro-ghcr/dimipaun/base:1.2.3@sha256:" + wsDigest}, "create"),
+		}, "released pin an installation's credentials service runs and nothing else"},
+		{"the service with a command of its own", []string{
+			wsServiceChange(wsServiceAttrs{command: `,"command":["/bin/sh"]`}, "create"),
+		}, "sets a command or args"},
+		{"the service whose environment takes a value from a source", []string{
+			wsServiceChange(wsServiceAttrs{env: `"env":[{"name":"` + WorkspaceModeEnv + `","value":"1"},{"name":"FUGARO_RTDB_URL","value_source":[{"secret_key_ref":[{"secret":"bundle"}]}]}]`}, "create"),
+		}, "value comes from a source"},
+		{"the service with no workspace mode in its environment", []string{
+			wsServiceChange(wsServiceAttrs{env: `"env":[{"name":"FUGARO_PROJECT","value":"` + wsName + `"}]`}, "create"),
+		}, "does not carry " + WorkspaceModeEnv},
+		{"the service with no IAM required", []string{
+			wsServiceChange(wsServiceAttrs{iam: "true"}, "create"),
+		}, "does not require IAM"},
+		{"a maximum of twenty instances rather than R9's ten", []string{
+			wsServiceChange(wsServiceAttrs{maxScale: "20"}, "create"),
+		}, "maximum instance count is 20"},
+		{"a concurrency of a hundred rather than R9's forty", []string{
+			wsServiceChange(wsServiceAttrs{concurrency: "100"}, "create"),
+		}, "concurrency is 100"},
+		{"a template minimum of one instance", []string{
+			wsServiceChange(wsServiceAttrs{minScale: "1"}, "create"),
+		}, "minimum instance count is 1"},
+		{"a service-level minimum of one instance", []string{
+			wsServiceChange(wsServiceAttrs{minSvc: "1"}, "create"),
+		}, "service-level scaling"},
+		{"the service with no scaling block at all", []string{
+			wsServiceChange(wsServiceAttrs{scaling: `"scaling":[]`}, "create"),
+		}, "states no scaling"},
+		{"a second service's worth: the workspace's service and another under the same type", []string{
+			wsServiceChange(wsServiceAttrs{name: "fugaro-workspace-other"}, "create"),
+		}, "one service"},
+		{"the bundle accessor on another container", []string{
+			wsAccessor("", "fugaro-project-workspace-alpha-ssh-key-0011223344556677", "", "", "create"),
+		}, "the workspace's own bundle is the container"},
+		{"the bundle accessor in another project", []string{
+			wsAccessor("member-project-5678", "", "", "", "create"),
+		}, "a bundle accessor in project"},
+		{"the bundle accessor with another role", []string{
+			wsAccessor("", "", "roles/secretmanager.secretVersionAdder", "", "create"),
+		}, "roles/secretmanager.secretVersionAdder"},
+		{"the bundle accessor for a member's job account", []string{
+			wsAccessor("", "", "", "serviceAccount:"+wsMemberA, "create"),
+		}, "read by " + wsEmail + " and by nobody else"},
+		{"the bundle accessor for a person", []string{
+			wsAccessor("", "", "", "user:someone@example.com", "create"),
+		}, "read by " + wsEmail + " and by nobody else"},
+		{"an invoke grant with another role", []string{
+			wsChange("google_cloud_run_v2_service_iam_member.workspace_invoker", workspaceInvokerType,
+				wsInvokerAfter("", "", "roles/run.developer", "serviceAccount:"+wsMemberA), "create"),
+		}, "roles/run.developer"},
+		{"an invoke grant on another service", []string{
+			wsChange("google_cloud_run_v2_service_iam_member.workspace_invoker", workspaceInvokerType,
+				wsInvokerAfter("", "fugaro-credentials", "", "serviceAccount:"+wsMemberA), "create"),
+		}, "this plan's own workspace service"},
+		{"an invoke grant in another project", []string{
+			wsChange("google_cloud_run_v2_service_iam_member.workspace_invoker", workspaceInvokerType,
+				wsInvokerAfter("member-project-5678", "", "", "serviceAccount:"+wsMemberA), "create"),
+		}, "an invoke grant in project"},
+		{"an invoke grant to a person", []string{
+			wsInvoker("user:someone@example.com", "create"),
+		}, "invoked by a member's own job accounts alone"},
+		{"an invoke grant to allUsers", []string{
+			wsInvoker("allUsers", "create"),
+		}, "invoked by a member's own job accounts alone"},
+		{"an invoke grant to a member of another workspace", []string{
+			wsInvoker("serviceAccount:fugaro-run-stranger@member-gamma-9012.iam.gserviceaccount.com", "create"),
+		}, "invoked by a member's own job accounts alone"},
+	}
+	for _, c := range refused {
+		t.Run(c.name, func(t *testing.T) {
+			why := wsWhy(t, wsPlan(t, append(wsDeployed(), c.extra...)...))
+			if why == "" {
+				t.Fatalf("this plan must be refused: %s", c.name)
+			}
+			if !strings.Contains(why, c.want) {
+				t.Errorf("the refusal must say why, want a sentence with %q, got: %s", c.want, why)
+			}
+		})
+	}
+}
+
+// TestWorkspacePlanRefusesAComputedMemberThatReadsAnotherAccount is the half of
+// the grant rule that the change alone cannot answer (workspaceComputedMember,
+// WU3's second account): while a plan creates the workspace's own service
+// account, a grant whose member terraform knows only at apply is the root's own
+// shape — and a grant bound to the SA fallback's IAM account carries
+// after_unknown.member exactly the same way, so the plan's configuration is what
+// tells them apart. The account that would be bound is the one that ends up
+// holding roles/owner on every linked member (D2803, F20).
+func TestWorkspacePlanRefusesAComputedMemberThatReadsAnotherAccount(t *testing.T) {
+	own := wsSA(wsProject, WorkspaceServiceAccountID, "create")
+	grant := wsComputedGrant(wsProject, wsRole, "create")
+	refused := []struct {
+		name string
+		cfg  string
+		want string
+	}{
+		{"the member expression reads the SA fallback's IAM account", wsMemberExpr("google_service_account.workspace_iam"), "google_service_account.workspace_iam"},
+		{"the member expression reads a variable", `{"address":"google_project_iam_member.workspace_database","mode":"managed","type":"google_project_iam_member","expressions":{"member":{"references":["var.member"]}}}`, "var.member"},
+		{"the configuration has no member expression on the grant", `{"address":"google_project_iam_member.workspace_database","mode":"managed","type":"google_project_iam_member","expressions":{}}`, "no member expression"},
+	}
+	for _, c := range refused {
+		t.Run(c.name, func(t *testing.T) {
+			why := wsWhy(t, wsPlanCfg(t, c.cfg, own, grant))
+			if why == "" {
+				t.Fatalf("this plan must be refused: %s", c.name)
+			}
+			if !strings.Contains(why, c.want) {
+				t.Errorf("the refusal must name what the member reads, want a sentence with %q, got: %s", c.want, why)
+			}
+		})
+	}
+}
+
+// TestWorkspacePlanRefusesAnotherRoleAThirdPermissionAndTheUnknownService is
+// the role half of the cover on its own: the plan that grants the role is also
+// the plan that can WIDEN it, and Realtime Database IAM having no path-level
+// scope makes the permission list the whole of the decision (spec §8). A third
 // permission — the lifecycle admin carries, or the list — an update that adds
 // one, another id and another project are all refused by name.
-func TestWorkspacePlanRefusesAnotherRoleAThirdPermissionAndAnotherProject(t *testing.T) {
+func TestWorkspacePlanRefusesAnotherRoleAThirdPermissionAndTheUnknownService(t *testing.T) {
 	refused := []struct {
 		name    string
 		changes []string
@@ -271,11 +712,29 @@ func TestWorkspacePlanRefusesAnotherRoleAThirdPermissionAndAnotherProject(t *tes
 			wsRoleChange("member-project-5678", WorkspaceDatabaseRoleID, WorkspaceDatabasePermissions...),
 		}, "a role in another project"},
 		{"a role whose permissions terraform computes", []string{
-			`{"address":"google_project_iam_custom_role.workspace_database","mode":"managed","type":"google_project_iam_custom_role","change":{"actions":["create"],"after":{"project":"` + wsProject + `","role_id":"` + WorkspaceDatabaseRoleID + `"},"after_unknown":{"permissions":true}}}`,
+			`{"address":"google_project_iam_custom_role.workspace_database","mode":"managed","type":"` + workspaceRoleType + `","change":{"actions":["create"],"after":{"project":"` + wsProject + `","role_id":"` + WorkspaceDatabaseRoleID + `"},"after_unknown":{"permissions":true}}}`,
 		}, "knows only at apply"},
 		{"a delete of the role", []string{
-			`{"address":"google_project_iam_custom_role.workspace_database","mode":"managed","type":"google_project_iam_custom_role","change":{"actions":["delete"],"after":{"project":"` + wsProject + `","role_id":"` + WorkspaceDatabaseRoleID + `","permissions":["` + strings.Join(WorkspaceDatabasePermissions, `","`) + `"]}}}`,
+			wsChange("google_project_iam_custom_role.workspace_database", workspaceRoleType,
+				`"project":"`+wsProject+`","role_id":"`+WorkspaceDatabaseRoleID+`","permissions":["`+strings.Join(WorkspaceDatabasePermissions, `","`)+`"]`, "delete"),
 		}, "actions delete"},
+		{"the member computed with no account in the plan", []string{
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}, "does not create the workspace's own service account"},
+		{"the member computed while another account is created", []string{
+			wsSA(wsProject, "fugaro-runner", "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}, "creates two and no third"},
+		{"the member computed while only the SA fallback's account is created", []string{
+			wsIAM(wsProject, WorkspaceIAMAccountID, "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}, "does not create the workspace's own service account"},
+		{"a service whose runtime account terraform knows only at apply", []string{
+			`{"address":"google_cloud_run_v2_service.workspace","mode":"managed","type":"` + workspaceServiceType + `","change":{"actions":["create"],"after":{` + wsServiceAttrs{}.json() + `},"after_unknown":{"template":[{"service_account":true}]}}}`,
+		}, "a runtime account that is not known"},
+		{"an invoke grant whose member terraform knows only at apply", []string{
+			`{"address":"google_cloud_run_v2_service_iam_member.workspace_invoker","mode":"managed","type":"` + workspaceInvokerType + `","change":{"actions":["create"],"after":{"project":"` + wsProject + `","location":"` + wsRegion + `","name":"` + wsService + `","role":"` + WorkspaceInvokerRole + `"},"after_unknown":{"member":true}}}`,
+		}, "knows only at apply"},
 	}
 	for _, c := range refused {
 		t.Run(c.name, func(t *testing.T) {
@@ -293,43 +752,178 @@ func TestWorkspacePlanRefusesAnotherRoleAThirdPermissionAndAnotherProject(t *tes
 // TestWorkspacePlanRefusesNoPlan is the nil case every cover has: a plan that
 // could not be read is not a plan to confirm.
 func TestWorkspacePlanRefusesNoPlan(t *testing.T) {
-	if why := WorkspaceNotCovered(nil, wsProject, WorkspaceServiceAccountID); len(why) == 0 {
+	if why := wsCover.WorkspaceNotCovered(nil, wsProject, WorkspaceServiceAccountID, wsBundle, wsMembers); len(why) == 0 {
 		t.Fatal("a nil plan must be refused")
 	}
 }
 
+// TestWorkspacePlanRefusesAnImageWithoutARecordedOwner is the fail-closed end of
+// the image rule, and the half that makes the owner a GIVEN rather than a read:
+// the owner a pin is checked against is the one this machine's config records
+// (init's baseOwner, over localcfg's image_source), so a cover built from a
+// config that records none admits no reference through the remote repository at
+// all — the root's own pin included. A rule that read the owner out of the
+// reference it is judging would admit whoever published the image, run as the
+// account that reads every model credential the workspace holds.
+func TestWorkspacePlanRefusesAnImageWithoutARecordedOwner(t *testing.T) {
+	unrecorded := wsCover
+	unrecorded.Owner = ""
+	why := strings.Join(unrecorded.WorkspaceNotCovered(wsPlan(t, wsDeployed()...), wsProject,
+		WorkspaceServiceAccountID, wsBundle, wsMembers), "; ")
+	if !strings.Contains(why, "released pin an installation's credentials service runs and nothing else") {
+		t.Fatalf("a cover with no recorded owner must refuse the service's image, got: %s", why)
+	}
+}
+
 // TestWorkspaceRootDeclaresTheTypesTheCoverHolds reads the root itself and
-// holds its resources to the cover's three types: the file is what the embed
-// ships and what an operator applies, so a fourth type added there is a
+// holds its resources to the cover's six types: the file is what the embed
+// ships and what an operator applies, so a seventh type added there is a
 // workspace holding something else, and it fails here rather than in a plan the
 // cover would have refused anyway.
 //
-// It also reads the root's two literals — the role id and the grant's role path
-// — against the Go side, because the cover builds the path from the project it
-// was given and compares the id it pins: a root that renamed either would leave
-// every plan of it refused, and this is where that is said in one sentence
-// rather than as a plan that will not confirm.
+// It also reads the root's literals — the role id, the grant's role path, the
+// two permissions, the accessor's role, the invoke grant's role, R9's three
+// numbers and the workspace-mode environment name — against the Go side,
+// because the cover holds a plan to the pins it builds rather than to what the
+// plan says: a root that renamed or moved one would leave every plan of it
+// refused, or a plan admitted that is not the one this design reviewed, and
+// this is where that is said in one sentence rather than as a plan that will
+// not confirm.
 func TestWorkspaceRootDeclaresTheTypesTheCoverHolds(t *testing.T) {
 	raw, err := os.ReadFile("../../../deploy/terraform/gcp/roots/workspace/main.tf")
 	if err != nil {
 		t.Fatal(err)
 	}
+	src := string(raw)
 	types := map[string]bool{}
-	for _, m := range regexp.MustCompile(`(?m)^resource "([a-z0-9_]+)" "([a-z0-9_]+)" \{`).FindAllStringSubmatch(string(raw), -1) {
+	accounts := 0
+	for _, m := range regexp.MustCompile(`(?m)^resource "([a-z0-9_]+)" "([a-z0-9_]+)" \{`).FindAllStringSubmatch(src, -1) {
 		types[m[1]] = true
+		if m[1] == workspaceAccountType {
+			accounts++
+		}
 	}
-	if len(types) != 3 || !types[workspaceRoleType] || !types[workspaceAccountType] || !types[workspaceGrantType] {
-		t.Fatalf("the workspace root must declare exactly the workspace's role, its account and that account's one grant, got %v", types)
+	if accounts != 2 {
+		t.Fatalf("the workspace root declares %d service accounts, want two: the workspace's own service (W6) and the SA fallback's IAM account (D2803, F20 — two accounts, never one)", accounts)
 	}
-	if m := regexp.MustCompile(`(?m)^\s*role_id\s*=\s*"` + WorkspaceDatabaseRoleID + `"\s*$`); !m.Match(raw) {
-		t.Errorf("the root does not declare the role id the cover pins (%s)", WorkspaceDatabaseRoleID)
+	if !regexp.MustCompile(`(?m)^\s*account_id\s*=\s*"` + WorkspaceIAMAccountID + `"\s*$`).MatchString(src) {
+		t.Errorf("the root does not declare the SA fallback's account id the cover pins (%s): the cover holds that account by its literal, because the root gives it no variable the account's own name could travel in", WorkspaceIAMAccountID)
 	}
-	if m := regexp.MustCompile(`(?m)^\s*role\s*=\s*"projects/\$\{var\.project\}/roles/` + WorkspaceDatabaseRoleID + `"\s*$`); !m.Match(raw) {
-		t.Errorf("the root's grant does not name the role as the literal path the cover reads out of a plan (WorkspaceDatabaseRole): a role it cannot read is a role it cannot hold to the pinned id")
+	for _, typ := range []string{workspaceRoleType, workspaceAccountType, workspaceGrantType, workspaceServiceType, workspaceAccessorType, workspaceInvokerType} {
+		if !types[typ] {
+			t.Errorf("the workspace root does not declare a %s, and the cover admits a plan of it", typ)
+		}
+	}
+	if len(types) != 6 {
+		t.Fatalf("the workspace root must declare exactly the workspace's role, its TWO accounts (the workspace's own service and the SA fallback's IAM account), that service's one grant, its credentials service, that service's bundle accessor and its members' invoke grants, got %v", types)
+	}
+	// find is the root's text with runs of whitespace collapsed, so a literal
+	// can be read wherever the formatter wrapped it.
+	flat := regexp.MustCompile(`\s+`).ReplaceAllString(src, " ")
+	for _, want := range []struct{ what, literal string }{
+		{"the role id the cover pins", `role_id = "` + WorkspaceDatabaseRoleID + `"`},
+		{"the role path the cover reads out of a plan", `role = "projects/${var.project}/roles/` + WorkspaceDatabaseRoleID + `"`},
+		{"the accessor's role", `role = "` + WorkspaceBundleAccessorRole + `"`},
+		{"the invoke grant's role", `role = "` + WorkspaceInvokerRole + `"`},
+		{"the workspace-mode environment name", `name = "` + WorkspaceModeEnv + `"`},
+		{"R9's maximum instance count", `max_instance_count = ` + strconv.Itoa(WorkspaceMaxInstances)},
+		{"R9's concurrency", `max_instance_request_concurrency = ` + strconv.Itoa(WorkspaceConcurrency)},
+		{"the zero minimum the managed gate prices", `min_instance_count = 0`},
+		{"the service running as the workspace's own account", `service_account = google_service_account.workspace.email`},
+		{"the bundle container the accessor is on", `secret_id = var.credentials_service.bundle_secret`},
+		{"the member table the invoke grants come from", `"serviceAccount:${each.value}"`},
+	} {
+		if !strings.Contains(flat, want.literal) {
+			t.Errorf("the root does not hold %s (%s), and the cover builds its rules from it", want.what, want.literal)
+		}
 	}
 	for _, p := range WorkspaceDatabasePermissions {
-		if !strings.Contains(string(raw), `"`+p+`"`) {
+		if !strings.Contains(src, `"`+p+`"`) {
 			t.Errorf("the root's role does not hold %s, which the cover pins", p)
+		}
+	}
+}
+
+// TestWorkspaceRootMakesNoKeyForTheIAMAccount is the Go half of the tftest
+// case beside the root, and it says what "no key" is: the ROOT writes none.
+// That is a fact about what Fugaro writes and **not a claim that none can
+// exist** — the account lives in a project Fugaro does not own alone, and two
+// paths on that project make a key anyway, neither of them this root's:
+//
+//   - iam.serviceAccounts.actAs, which roles/editor and
+//     roles/iam.serviceAccountUser carry, lets a holder deploy a workload that
+//     runs as the account;
+//   - iam.serviceAccountKeys.create, which roles/editor resolves to, mints a
+//     user-managed key that outlives the binding that made it.
+//
+// The only control that closes the second is the organization policy
+// constraints/iam.disableServiceAccountKeyCreation, and WU11's `status` is what
+// takes both up. What this test holds is the root's own side: no
+// google_service_account_key, no actAs or token-creator grant, and no grant of
+// any kind naming the SA fallback's account — its reach on a member is written
+// live by the CLI (D2803, D2818), never by Terraform.
+// TestWorkspaceAccountsAreTwoAndNeitherIsTheCredentialsServices pins the three
+// sentences the design's accounts are told apart by (F20, D2803, D1299):
+//
+//   - the workspace root creates TWO accounts and never one. The service reads
+//     the workspace's own database and the members' ledgers; the SA fallback's
+//     IAM account holds roles/owner on every member it is linked to. One
+//     account doing both is a single compromise holding the workspace's state
+//     AND its authority over every member.
+//   - neither is the credentials service's account (CredentialsAccountID),
+//     which holds no write on a member at all (D1299).
+//   - neither is one of the installation's own (FugaroAccounts), which an
+//     installation's toAccounts rows may grant a job's role to: the whole
+//     reason WorkspaceServiceAccountID is outside that table, said again for
+//     the account that holds roles/owner on the members.
+func TestWorkspaceAccountsAreTwoAndNeitherIsTheCredentialsServices(t *testing.T) {
+	if WorkspaceServiceAccountID == WorkspaceIAMAccountID {
+		t.Fatalf("the workspace root's two accounts are one id (%s): F20 is two accounts, never one", WorkspaceServiceAccountID)
+	}
+	for _, id := range []string{WorkspaceServiceAccountID, WorkspaceIAMAccountID} {
+		if id == CredentialsAccountID {
+			t.Errorf("%s is the credentials service's account: that one holds no write on any member (D1299), and this one is created to hold authority over them", id)
+		}
+		if slices.Contains(FugaroAccounts, id) {
+			t.Errorf("%s is one of FugaroAccounts: as one of them, an installation table's toAccounts row could have granted it a job's role", id)
+		}
+	}
+}
+
+// wsCode is the root's source with its own comments removed, so a test can
+// hold what the file DOES to the text it may name in prose: the root's comments
+// are where the design says what "no key" is and which two paths make one
+// anyway, and a check over the raw text would refuse the sentence it is there
+// to read. A `#` inside a string literal would cut the line early, and no line
+// of this root has one.
+func wsCode(raw string) string {
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = line[:i]
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func TestWorkspaceRootMakesNoKeyForTheIAMAccount(t *testing.T) {
+	raw, err := os.ReadFile("../../../deploy/terraform/gcp/roots/workspace/main.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := wsCode(string(raw))
+	for _, bad := range []struct{ needle, why string }{
+		{"google_service_account_key", "a key resource: the root creates the SA fallback's account and writes no key for it (D2803), so a key here would be a credential of the account that holds roles/owner on every member"},
+		{"serviceAccountKeys", "a key permission or role literal"},
+		{"iam.serviceAccounts.actAs", "an actAs grant: the root grants the workspace database role and nothing else"},
+		{"roles/iam.serviceAccountUser", "an actAs role: the workspace root makes no impersonation grant at all"},
+		{"roles/iam.serviceAccountTokenCreator", "a token-creator role: the SA fallback's token creators are the workspace admins, written live by `workspace user add --admin` (D2818), never by Terraform"},
+		{"google_service_account_iam_member", "a service-account IAM resource: the root's one IAM resource is the project member that binds its database role"},
+		{"workspace_iam.member", "a reference to the SA fallback's account as a grant's member: Terraform grants it nothing"},
+	} {
+		if strings.Contains(src, bad.needle) {
+			t.Errorf("the workspace root's main.tf mentions %s (%s)", bad.needle, bad.why)
 		}
 	}
 }

@@ -182,7 +182,11 @@ func TestWorkspaceWritesChain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("workspace add: %v\n%s", err, chainPrinted(out, errOut))
 		}
-		workspaceAssertNoSecondCommand(t, "workspace add", chainPrinted(out, errOut), "aurora", "aurora-gcp")
+		// The half owes no apply STEP — nothing this machine's own run can
+		// converge — and it is still not live: the record its runs read is
+		// published by this project's own `fugaro update` (R3, R4), which is
+		// the one command the write names.
+		workspaceAssertNamesUpdate(t, "workspace add", chainPrinted(out, errOut), "aurora", "aurora-gcp")
 		if !strings.Contains(readFileString(t, path), "workspace: workspace-alpha\n") {
 			t.Errorf("the membership was not written:\n%s", readFileString(t, path))
 		}

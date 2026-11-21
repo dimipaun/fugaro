@@ -411,12 +411,107 @@ func TestBuildRequestCarriesTheServiceURL(t *testing.T) {
 	if args := strings.Join(cred.Args, " "); strings.Contains(args, spec.CredentialsServiceURL) {
 		t.Errorf("the credential step's argv carries the address: %q", args)
 	}
-	// The provider credential is still mounted for the step, and the workflow
-	// secrets are still in availableSecrets and in the build step's secretEnv:
-	// the flip that drops them is B4.9's, so this request is the same one either
-	// way.
-	if len(b.AvailableSecrets.SecretManager) != 2 || !slices.Equal(step(t, b, "build").SecretEnv, []string{"NPM_TOKEN"}) {
-		t.Fatalf("a switched build's mounts changed: %+v / %v", b.AvailableSecrets, step(t, b, "build").SecretEnv)
+	// The mounts are the flip's own half and this spec is read with the class
+	// list filled, so they are gone here: TestSwitchedBuildRequestHasNoAvailableSecrets
+	// is the test for that, and this one is about the address.
+	if b.AvailableSecrets != nil || len(cred.SecretEnv) != 0 {
+		t.Errorf("a switched build still mounts secrets (%+v, %v): with the class list filled the request names none of them (B4.9, D2077)", b.AvailableSecrets, cred.SecretEnv)
+	}
+}
+
+// TestSwitchedBuildRequestHasNoAvailableSecrets is B4.9's request half pinned
+// (D2076, D2077): a repository the credentials service serves submits a
+// request that names no secret at all — no availableSecrets, no step's
+// secretEnv and no git credential ID to check — because its credential step
+// fetches the git credential and the workflow's own build secrets from the
+// service with the build account's own identity (B4.5), and the account holds
+// no accessor on any of them (modules/repo/build.tf).
+//
+// What stays is the part that is not a value: the address, and the list of
+// variables to fetch (_SECRET_ENVS, the same list either way, so the build
+// step reads each fetched secret under the name it always read it under).
+//
+// It was written red: with config.BuildServedSecretClasses still empty the
+// first assertion below fails and every request mounts what it mounted before,
+// which is the state B4.5 shipped.
+func TestSwitchedBuildRequestHasNoAvailableSecrets(t *testing.T) {
+	if !config.BuildServesClass(config.BuildSecretClassBuild) {
+		t.Fatalf("config.BuildServedSecretClasses = %v and does not carry %q: B4.9's flip is what makes a switched build name no secret and fetch them at the service instead (D2076, D2077)", config.BuildServedSecretClasses, config.BuildSecretClassBuild)
+	}
+	spec := buildSpec(t)
+	spec.CredentialsServiceURL = "https://credentials.example.com"
+	// No ID: a served request names no container, so the check must not be the
+	// one that refuses it (internal/cli's build paths never resolve one for
+	// such a repository — the grant it would be checked against is gone).
+	spec.GitSecretID = ""
+	b, err := BuildRequest("proj-1234", spec)
+	if err != nil {
+		t.Fatalf("a served build's request was refused: %v", err)
+	}
+	if b.AvailableSecrets != nil {
+		t.Errorf("a served build carries availableSecrets %+v, want none: the account holds no accessor on them and Cloud Build refuses a build that names a secret its account cannot read (D2076)", b.AvailableSecrets)
+	}
+	for _, id := range []string{"credential", "build"} {
+		if got := step(t, b, id).SecretEnv; len(got) != 0 {
+			t.Errorf("a served build's %s step mounts %v, want none: the values come from the service (B4.5, D2076)", id, got)
+		}
+	}
+	if got := b.Substitutions["_SECRET_ENVS"]; got != "NPM_TOKEN" {
+		t.Errorf("_SECRET_ENVS = %q, want %q: the list of variables to fetch is a list of names and is the same one either way, so the build step reads each secret under the name it always read it under (B4.9)", got, "NPM_TOKEN")
+	}
+	if got := b.Substitutions["_CREDENTIALS_SERVICE_URL"]; got != spec.CredentialsServiceURL {
+		t.Errorf("_CREDENTIALS_SERVICE_URL = %q, want %q: the step fetches at the address and nowhere else", got, spec.CredentialsServiceURL)
+	}
+
+	// The two halves of the fact, one row each: a build that names no address
+	// keeps every mount whatever the class list says, and the class list is
+	// what decides the address moves anything at all.
+	unswitched := buildSpec(t)
+	bl, err := BuildRequest("proj-1234", unswitched)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl.AvailableSecrets.SecretManager) != 2 || !slices.Contains(step(t, bl, "credential").SecretEnv, gitTokenEnv) {
+		t.Errorf("a build of a repository the service does not serve mounts %+v / %v, want the provider credential and each workflow secret: only a switched repository names none (G9, D147)", bl.AvailableSecrets, step(t, bl, "credential").SecretEnv)
+	}
+	saved := config.BuildServedSecretClasses
+	config.BuildServedSecretClasses = nil
+	t.Cleanup(func() { config.BuildServedSecretClasses = saved })
+	// The spec's own ID comes back with the list: an empty list is the state
+	// every build resolved its ID in, which is why the id is what a served
+	// request stops naming rather than what it never had.
+	prev := spec
+	prev.GitSecretID = buildSpec(t).GitSecretID
+	bi, err := BuildRequest("proj-1234", prev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bi.AvailableSecrets == nil || len(bi.AvailableSecrets.SecretManager) != 2 {
+		t.Errorf("with the class list empty a build naming an address carries %+v, want every mount it carried before the flip: the address alone is B4.5's state, which changed no mount (D147)", bi.AvailableSecrets)
+	}
+	config.BuildServedSecretClasses = saved
+}
+
+// TestCatalogBuildKeepsItsMountsWhenServed pins the one build the flip never
+// moves (B4.9): a catalog entry's request names no service — its identity is
+// not one the build route admits, so its credential step has nothing to fetch
+// — and a request with no address is never served, whatever the class list
+// says. Its provider credential stays in availableSecrets and in the
+// credential step's secretEnv.
+func TestCatalogBuildKeepsItsMountsWhenServed(t *testing.T) {
+	if !config.BuildServesClass(config.BuildSecretClassBuild) {
+		t.Fatalf("config.BuildServedSecretClasses = %v and does not carry %q: this case is about the flip being filled and a catalog build keeping its mounts (D147, D2077)", config.BuildServedSecretClasses, config.BuildSecretClassBuild)
+	}
+	spec := catalogBuildSpec(t)
+	b, err := CatalogBuildRequest("proj-1234", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.AvailableSecrets == nil || len(b.AvailableSecrets.SecretManager) != 1 {
+		t.Errorf("a catalog build's request carries %+v, want the provider credential: a catalog build is never served, so the flip moves none of its secrets (D2077)", b.AvailableSecrets)
+	}
+	if got := b.Substitutions["_SECRET_ENVS"]; got != "" {
+		t.Errorf("a catalog build's _SECRET_ENVS = %q, want the empty value it always had: an entry's build is handed no secret of the entry's (D2311, B9)", got)
 	}
 }
 

@@ -65,6 +65,42 @@ func (f *Fake) Add(issue Issue) *Fake {
 	return f
 }
 
+// Put seeds one issue, replacing the issue that already carries its number: a
+// test writes a ticket with it before a read, and rewrites it with it when the
+// ticket is edited at the forge between one read and the next.
+//
+// The replacement is the same ticket in everything but the text it carries, so
+// the state and the author it does not name are the ones it replaced — the two
+// are what Add's own defaults give a new one.
+func (f *Fake) Put(issue Issue) *Fake {
+	for i := range f.issues {
+		if issue.Number <= 0 || f.issues[i].Number != issue.Number {
+			continue
+		}
+		if issue.State == "" {
+			issue.State = f.issues[i].State
+		}
+		if issue.AuthorLogin == "" && issue.AppSlug == "" && issue.AppID == "" {
+			issue.AuthorLogin, issue.AppSlug, issue.AppID = f.issues[i].AuthorLogin, f.issues[i].AppSlug, f.issues[i].AppID
+		}
+		f.issues[i] = issue
+		return f
+	}
+	return f.Add(issue)
+}
+
+// Issue answers one issue by number, which is what the route's read act asks
+// (B9): a read answers a closed issue too — whether a closed issue's item still
+// launches is the state's question and not the host's (D2720).
+func (f *Fake) Issue(number int) (Issue, bool) {
+	for _, i := range f.issues {
+		if i.Number == number {
+			return i, true
+		}
+	}
+	return Issue{}, false
+}
+
 // Close marks one issue closed: it leaves the listing, which is the whole of
 // what a closed issue is to the sync (ListOpen answers open ones, so an item
 // whose number is absent from a listing is one whose issue closed).

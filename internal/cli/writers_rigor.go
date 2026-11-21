@@ -49,7 +49,7 @@ func init() {
 // under one `layer.defaults.rigor.*` pattern, because a pattern's varying
 // segment is what the template's `<1>` is filled from and the two spellings do
 // not share one: `layer.defaults.rigor.default` has no segment at all and
-// `layer.defaults.rigor.areas.*.mode` has the rule's name.
+// `layer.defaults.rigor.areas.*.level` has the rule's name.
 var rigorSetWriters = []struct {
 	pattern string
 	writer  settings.Writer
@@ -111,7 +111,7 @@ var rigorSetWriters = []struct {
 		},
 	},
 	{
-		pattern: "layer.defaults.rigor.areas.*.mode",
+		pattern: "layer.defaults.rigor.areas.*.level",
 		writer: settings.Writer{
 			Command: "fugaro rigor set",
 			Argv: []string{"rigor", "set", settings.ValuePlaceholder,

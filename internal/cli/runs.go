@@ -52,6 +52,7 @@ type lsOptions struct {
 	state                    string
 	groupBy                  string
 	all, mine, watch, asJSON bool
+	stream                   bool // with --json: one line per run, then the line that ends the feed
 	debt                     bool // only the runs filed from a triage deferral, when set
 	interval                 time.Duration
 	pr                       int    // only the runs on this pull request, when set
@@ -326,7 +327,16 @@ func newLsCmd() *cobra.Command {
 			"with --limit, --after or --watch.\n\n" +
 			"--pr N lists the runs on pull request N of one repository (the first run and\n" +
 			"its follow-ups), over the last " + prLookback + " unless --since says otherwise; the totals\n" +
-			"line is then the PR's total cost.",
+			"line is then the PR's total cost.\n\n" +
+			"--stream, with --json, prints the listing as newline-delimited JSON instead of\n" +
+			"as one document: a line per run, each carrying one element of --json's runs\n" +
+			"array unchanged under `row`, then a line saying how many rows the feed\n" +
+			"carried (`end`). A consumer renders a run as its line arrives rather than\n" +
+			"holding the whole document, and a feed with no end line is a read that was\n" +
+			"interrupted. A listing that stopped after its first line writes an `error`\n" +
+			"line with the sentence the command would have printed, and exits non-zero.\n" +
+			"The rows of a page are the page's, so --limit and --after mean here what\n" +
+			"they mean without it.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runLs(cmd, &o) },
 	}
@@ -348,6 +358,7 @@ func newLsCmd() *cobra.Command {
 	f.BoolVar(&o.noCache, "no-cache", false, "read every run object from the bucket instead of the local run cache")
 	_ = f.MarkHidden("no-cache")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
+	f.BoolVar(&o.stream, "stream", false, "with --json: one line per run, then a line saying how many there were")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -405,6 +416,19 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	if o.groupBy != "" && o.watch {
 		return userErr("--group-by reads the whole window: --watch redraws the listing until every run has settled, so the two don't go together")
 	}
+	// The feed is JSON lines -- one element of --json's runs array per line --
+	// so --stream without --json would be a listing in a shape the flag does
+	// not write, and the two combinations below are documents the feed has no
+	// line for: a redraw of the listing, and a block beside the rows.
+	if o.stream && !o.asJSON {
+		return userErr("--stream needs --json: the feed is JSON lines, one per run of the document's runs array")
+	}
+	if o.stream && o.watch {
+		return userErr("--stream prints the listing once: --watch redraws it until every run has settled, so the two don't go together")
+	}
+	if o.stream && o.groupBy != "" {
+		return userErr("--stream has no line for --group-by's block: the feed carries the document's runs, and the block is a reading of the whole window")
+	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -459,7 +483,9 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 		if clear {
 			fmt.Fprint(out, "\x1b[H\x1b[2J")
 		}
-		if o.groupBy != "" {
+		if o.stream {
+			err = streamRows(out, page)
+		} else if o.groupBy != "" {
 			err = printGroupsWithTotals(out, env.lc.Name, page, runview.Sum(rows), warnings, now, o.asJSON)
 		} else {
 			err = printRowsWithTotals(out, env.lc.Name, page, runview.Sum(rows), warnings, now, o.asJSON)
@@ -1417,7 +1443,7 @@ func modeCell(r runview.Row) string {
 	if rg == nil {
 		return "-"
 	}
-	cell := string(rg.Mode) + " (" + string(rg.From)
+	cell := string(rg.LevelOf()) + " (" + string(rg.From)
 	if len(rg.Areas) > 0 {
 		cell += " " + clipRunes(rg.Areas[0].Name, maxNameCellRunes)
 		if n := len(rg.Areas) - 1; n > 0 {

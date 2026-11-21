@@ -471,9 +471,9 @@ func (r *run) reviewModePrompt(ctx context.Context) string {
 		// every other review stage for the in-run verdict's (D890): the
 		// brief is the same and only the ask differs.
 		if r.reviewJob() {
-			p = reviewArtifactPrompt("", r.reviewFile, rev, r.reviewDiffSize(ctx), r.baseUnreadable())
+			p = reviewArtifactPrompt("", r.reviewFile, rev, r.reviewDiffSize(ctx), r.baseUnreadable(), r.reviewerPersona())
 		} else {
-			p = ReviewPrompt("", r.reviewFile, rev, r.reviewDiffSize(ctx), r.baseUnreadable())
+			p = ReviewPrompt("", r.reviewFile, rev, r.reviewDiffSize(ctx), r.baseUnreadable(), r.reviewerPersona())
 		}
 	} else {
 		nums := make([]int, len(r.reviewHeads))
@@ -481,7 +481,7 @@ func (r *run) reviewModePrompt(ctx context.Context) string {
 		for i, h := range r.reviewHeads {
 			nums[i], dirs[i] = h.Number, r.reviewDir(h.Number)
 		}
-		p = PickPrompt("", r.reviewFile, nums, dirs)
+		p = PickPrompt("", r.reviewFile, nums, dirs, r.reviewerPersona())
 	}
 	p += "\n\n" + baseInstructionsBlock(rev, len(r.reviewHeads) > 1, r.baseInstructions(ctx, rev))
 	// The task this pull request was written for, quoted as data (RA1, R3):

@@ -1,10 +1,20 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
-// The rigor block a run's record carries: the mode the run resolved, the layer
+// The rigor block a run's record carries: the level the run resolved, the layer
 // that decided it and the area rules that matched (docs/rigor-modes D22, D24,
 // D25; `runstore.RigorRecord`).
 //
-// **Three screens draw a run's mode and this is the one reader they share**: the
+// **The level is carried under two keys.** LD2 renamed this axis's key to
+// `level` -- in the repository config, in the project layer and in everything a person
+// reads -- and the record kept `mode` beside it, because a record is a wire
+// shape a reader outside the CLI's binary consumes and a field never changes
+// meaning (CLAUDE.md). Every reader of the record prefers `level` and falls
+// back to `mode` (`runstore.RigorRecord.LevelOf`), and this module's reader does
+// the same. What still spells the old word here is the console's own drawing --
+// `rigorModeWord`, the `label` field a raw fallback is drawn with -- which is the
+// console's own vocabulary to sweep, not the record's.
+//
+// **Three screens draw a run's level and this is the one reader they share**: the
 // Projects screen's jobs list, the Live screen's run rows and the Run detail
 // header. They read it here rather than three times because the two things that
 // are easy to get differently -- what a block is allowed to say, and which word
@@ -14,7 +24,8 @@
 // before it reaches the console (`runstore.RigorRecord.Bounded`, through
 // `runview.Join`), and this reader bounds it again, because a console that
 // trusted a bound it did not apply would be reading a document rather than a
-// decision: a block that is not an object, or that carries no mode or no layer,
+// decision: a block that is not an object, or that carries no level (under
+// `level` or under the older `mode`) or no layer,
 // is no block at all (`null`, which is what a record written before the field
 // existed answers too, and which every screen draws as "no record of this run's
 // rigor" rather than as "it resolved nothing"), and the areas are capped here as
@@ -71,17 +82,21 @@ export const RIGOR_LAYER_WORDS: Readonly<Record<string, string>> = Object.freeze
 })
 
 /** RigorAreaView is one matched area rule: the name the repository gave it and
- * the mode that rule sets (D23, strictest first in the record's own order). */
+ * the level that rule sets (D23, strictest first in the record's own order). The
+ * field is `mode` because that is the word the screens that draw it spell; the
+ * record's key for the same value is `level` (see the header). */
 export interface RigorAreaView {
   readonly name: string
   readonly mode: string
 }
 
 /** RigorView is a run's rigor block as the screens draw it. It is the block's
- * `mode`, `from` and `areas` and nothing else: `at` (the moment) and `revision`
+ * level, `from` and `areas` and nothing else: `at` (the moment) and `revision`
  * (where the configuration was read from) are the record's own stamps, no screen
  * on this tree draws them, and a reader that carried them would be carrying
- * fields nobody checks. */
+ * fields nobody checks. The field is `mode`, as every screen that draws it
+ * spells it; the key the record carries the level under is `level` (see the
+ * header). */
 export interface RigorView {
   readonly mode: string
   readonly from: string
@@ -122,22 +137,32 @@ export function rigorLayerWord(from: string): string | null {
  * The three ways to get `null` are one answer on purpose, because the screens
  * draw them the same way: the record carries no block (a run from before the
  * field, or one that died before bootstrap), the value is not a block at all, or
- * the block does not carry the two keys a decision is made of -- a mode and the
+ * the block does not carry the two keys a decision is made of -- a level and the
  * layer that set it, neither of which is `omitempty` in the record. An absent
- * mode is not a mode, and a console that drew one would be answering "what was
+ * level is not a level, and a console that drew one would be answering "what was
  * this run's rigor" with a blank.
  *
- * A block that carries both is kept even when its *values* are outside this
- * build's vocabulary: the mode and the layer are drawn as the raw, bounded text
- * they are (see the header), which is the direction this has to fail in -- the
- * alternative is a screen that hides a mode a newer CLI resolved.
+ * **The level is read from `level`, and from `mode` where there is none.** LD2
+ * renamed this axis's key to `level` and the record carries both, with the same
+ * value, so that a reader outside the CLI's binary which knows only the older
+ * name still finds one (`runstore.RigorRecord.MarshalJSON`; console/docs/
+ * json-contract.md section 6.1). This reader prefers the new key and keeps
+ * reading the old one, which is what every reader of the record does
+ * (`runstore.RigorRecord.LevelOf`): a record written before the rename carries
+ * `mode` alone and reads exactly as it always did.
+ *
+ * A block that carries a level and a layer is kept even when its *values* are
+ * outside this build's vocabulary: the level and the layer are drawn as the raw,
+ * bounded text they are (see the header), which is the direction this has to
+ * fail in -- the alternative is a screen that hides a level a newer CLI
+ * resolved.
  */
 export function readRigor(raw: unknown): RigorView | null {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
   const block = raw as Record<string, unknown>
-  const mode = block['mode']
+  const mode = levelOf(block)
   const from = block['from']
-  if (typeof mode !== 'string' || mode === '') return null
+  if (mode === null) return null
   if (typeof from !== 'string' || from === '') return null
   const areas: RigorAreaView[] = []
   const listed = block['areas']
@@ -147,17 +172,30 @@ export function readRigor(raw: unknown): RigorView | null {
       if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue
       const area = entry as Record<string, unknown>
       const name = area['name']
-      const areaMode = area['mode']
+      const areaMode = levelOf(area)
       // A rule with no name is not a rule a reader can name, and one with no
-      // mode is not one that set anything: both are dropped rather than drawn
+      // level is not one that set anything: both are dropped rather than drawn
       // with a placeholder, which is what `runstore.RigorRecord.Bounded` does
       // with them too.
       if (typeof name !== 'string' || name === '') continue
-      if (typeof areaMode !== 'string' || areaMode === '') continue
+      if (areaMode === null) continue
       areas.push({ name, mode: areaMode })
     }
   }
   return { mode, from, areas }
+}
+
+/** levelOf is a block's or an area rule's level: `level` where the value carries
+ * one, and `mode` otherwise -- the preference `runstore.RigorRecord.LevelOf`
+ * states for every reader of the record, and the one reason both keys are
+ * written at all. A `level` that is not a non-empty string is not a level, so
+ * the older key is read in its place, and `null` means the value carries
+ * neither. */
+function levelOf(raw: Record<string, unknown>): string | null {
+  const level = raw['level']
+  if (typeof level === 'string' && level !== '') return level
+  const mode = raw['mode']
+  return typeof mode === 'string' && mode !== '' ? mode : null
 }
 
 /**

@@ -244,9 +244,9 @@ func TestResolveLevelsFloorRefusesNone(t *testing.T) {
 // to the owner's floor. `review_floor` is a mode→levels map, and a run reads
 // the row of the mode it is at (policy.Effective.ReviewFloorFor) — but a
 // request may raise a mode and never lower a floor (D8, LF5), so a request
-// that takes a run off the axis to hotfix (rigor.Mode.PerRun) is held to
+// that takes a run off the axis to hotfix (rigor.Rigor.PerRun) is held to
 // hotfix's row *and* to the row of the mode the layers resolved beside it
-// (rigor.LayersMode): a floor of l2,l3 on pro still turns l3 on for that run.
+// (rigor.LayersRigor): a floor of l2,l3 on pro still turns l3 on for that run.
 // Reading hotfix's row alone would let one flag drop a floor the owner set,
 // silently, which is the lowering no request may take.
 //
@@ -254,18 +254,18 @@ func TestResolveLevelsFloorRefusesNone(t *testing.T) {
 // hotfix, which `fugaro rigor floor set hotfix l2,l3` accepts
 // (TestRigorFloorSetAcceptsHotfix, internal/cli).
 func TestResolveLevelsFloorHoldsForAHotfixRequest(t *testing.T) {
-	owner := policy.Layer{ReviewFloor: map[rigor.Mode][]policy.Level{
+	owner := policy.Layer{ReviewFloor: map[rigor.Rigor][]policy.Level{
 		rigor.Pro: {policy.LevelL2, policy.LevelL3},
 	}}
 	effective := policy.Merge(owner)
 	// The two steps both readers of a floor take: resolve the run, then read
 	// the mode it is at beside the mode the layers resolved for it.
-	floorFor := func(req rigor.Request) (rigor.Mode, []policy.Level) {
+	floorFor := func(req rigor.Request) (rigor.Rigor, []policy.Level) {
 		cfg := rigor.Config{Repo: rigor.Pro}
-		mode := rigor.Resolve(cfg, req).Mode
-		return mode, effective.ReviewFloorFor(mode, rigor.LayersMode(cfg, req, ""))
+		mode := rigor.Resolve(cfg, req).Level
+		return mode, effective.ReviewFloorFor(mode, rigor.LayersRigor(cfg, req, ""))
 	}
-	levels := func(mode rigor.Mode, floor []policy.Level) Levels {
+	levels := func(mode rigor.Rigor, floor []policy.Level) Levels {
 		t.Helper()
 		got, _, err := ResolveLevels(LevelInputs{
 			Config: &Config{Agent: levelAgent()}, Mode: mode, Floor: floor,
@@ -287,7 +287,7 @@ func TestResolveLevelsFloorHoldsForAHotfixRequest(t *testing.T) {
 
 	// The same repository and the same owner, with the run's own request for
 	// hotfix: hotfix's row is empty, and pro's still holds beside it.
-	mode, floor = floorFor(rigor.Request{Mode: rigor.Hotfix})
+	mode, floor = floorFor(rigor.Request{Level: rigor.Hotfix})
 	if mode != rigor.Hotfix {
 		t.Fatalf("the run resolved to %s; want hotfix from the request", mode)
 	}
@@ -301,7 +301,7 @@ func TestResolveLevelsFloorHoldsForAHotfixRequest(t *testing.T) {
 	// The owner's lever for a floored hotfix run: the same request, with the
 	// floor written for hotfix. The command accepts the mode, so this row is
 	// one an owner reaches.
-	hotfixFloor := policy.Merge(policy.Layer{ReviewFloor: map[rigor.Mode][]policy.Level{
+	hotfixFloor := policy.Merge(policy.Layer{ReviewFloor: map[rigor.Rigor][]policy.Level{
 		rigor.Hotfix: {policy.LevelL2, policy.LevelL3},
 	}}).ReviewFloor(rigor.Hotfix)
 	if len(hotfixFloor) != 2 {
@@ -794,7 +794,7 @@ func TestResolveLevelsSoloUnaffected(t *testing.T) {
 		{"lint-fix", "lint-fix", false},
 		{"the catalog default with the coder as the reviewer", "default", true},
 	} {
-		for _, mode := range rigor.Modes {
+		for _, mode := range rigor.Rigors {
 			got, _, err := ResolveLevels(LevelInputs{
 				Config: &Config{Agent: Agent{Models: ModelRoles{
 					Coder: "deepseek/deepseek-v4-flash", Reviewer: "deepseek/deepseek-v4-flash",

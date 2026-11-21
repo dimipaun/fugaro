@@ -26,7 +26,7 @@ type Limits struct {
 	// MinRigor is the weakest mode a run started with this token may ask
 	// for: the window's floor. MinRigor and MaxRigor are optional, and unset
 	// means the project's policy decides alone (D926).
-	MinRigor rigor.Mode
+	MinRigor rigor.Rigor
 	// MaxRigor is the strongest mode a run started with this token may ask
 	// for: the window's ceiling.
 	//
@@ -35,7 +35,7 @@ type Limits struct {
 	// so folding it into a window would make `min: pro` admit a Hotfix
 	// request, which is the opposite of D925's "off by default". Hotfix is
 	// the flag below and nothing else.
-	MaxRigor rigor.Mode
+	MaxRigor rigor.Rigor
 	// Hotfix is whether a run started with this token may ask for Hotfix at
 	// all (D925). It is off by default, it is not read against the window,
 	// and it only ever narrows: ahead of a token that carries it, a project
@@ -200,7 +200,7 @@ func (l Limits) Validate() error {
 func (l Limits) window() error {
 	for _, b := range []struct {
 		field string
-		mode  rigor.Mode
+		mode  rigor.Rigor
 	}{{"min_rigor", l.MinRigor}, {"max_rigor", l.MaxRigor}} {
 		if b.mode == "" {
 			continue
@@ -243,7 +243,7 @@ func (l Limits) scopeVocabulary() error {
 // A window that is not a window is refused before it is read, for the same
 // reason Validate refuses one: a bound off the axis ranks 0, so reading it
 // here would answer as if the token had no bound at all.
-func (l Limits) Admits(mode rigor.Mode) error {
+func (l Limits) Admits(mode rigor.Rigor) error {
 	if !rigor.Known(mode) {
 		return fmt.Errorf("mcpauth: %q: %w", string(mode), ErrUnknownMode)
 	}
@@ -324,7 +324,7 @@ func (l Limits) Narrow(project Limits) (Limits, error) {
 // requests, and an unset one imposes nothing. It is the mirror of
 // rigor.Strictest, which cannot be used here because a floor and a ceiling
 // take opposite sides of the comparison.
-func lowerCeiling(a, b rigor.Mode) rigor.Mode {
+func lowerCeiling(a, b rigor.Rigor) rigor.Rigor {
 	switch {
 	case a == "":
 		return b

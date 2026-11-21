@@ -379,3 +379,66 @@ func named(offer []creds.Credential, name string) bool {
 	}
 	return false
 }
+
+// heldBy is the crafts' list restricted to the names the call's POOL holds, in
+// the crafts' own order.
+//
+// The pool is the scope's answer and the crafts are the project's, so the two
+// can disagree in exactly one direction that matters: a workspace's pool is a
+// member's own shared node, and a craft may name a credential that node does not
+// admit. Serving the crafts' list unchanged would let a project's crafts widen a
+// member's pool, so the intersection is what a call is served from — while the
+// strategy stays the crafts' own (candidates), because which rule a pool of one
+// entry is walked under is still the crafts' to say.
+func heldBy(crafts, pool []creds.Credential) []creds.Credential {
+	if len(crafts) == 0 {
+		return nil
+	}
+	out := make([]creds.Credential, 0, len(crafts))
+	for _, c := range crafts {
+		if named(pool, c.Name) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// craftsAndPoolSkips is every credential the crafts and the call's pool
+// disagree about, as the run's halt message reads it: the names the crafts go
+// out on that this call's pool does not hold, then the pool's members the
+// crafts do not name. A credential the two agree on was offered and is no skip,
+// and no name is listed twice.
+//
+// Both directions are one fact from the run's side — the list it was served
+// from and the project's crafts were not the same list — and a name dropped in
+// silence is a halt an operator cannot read. It names credentials by NAME and
+// never by value, as every refusal and every tried entry does (F27, C1.13).
+func craftsAndPoolSkips(crafts, pool []creds.Credential) []Tried {
+	out := make([]Tried, 0, len(crafts)+len(pool))
+	for _, c := range crafts {
+		if !named(pool, c.Name) {
+			out = append(out, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
+		}
+	}
+	for _, c := range pool {
+		if !named(crafts, c.Name) {
+			out = append(out, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
+		}
+	}
+	return out
+}
+
+// credentialNames is a list of credentials as a refusal names them: their names
+// in the list's own order, never a value. An empty list says so, because the
+// sentence it is read in — "this call's pool holds ..." — is written for a pool
+// that could hold nothing at all.
+func credentialNames(list []creds.Credential) string {
+	if len(list) == 0 {
+		return "no credential"
+	}
+	names := make([]string, 0, len(list))
+	for _, c := range list {
+		names = append(names, c.Name)
+	}
+	return strings.Join(names, ", ")
+}

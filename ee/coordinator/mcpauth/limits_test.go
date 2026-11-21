@@ -158,9 +158,9 @@ func TestNarrowTakesTheTighterCeilingWhicheverSideIsLower(t *testing.T) {
 	// The ceiling: the lower bound stands, whichever side carries it.
 	for _, tc := range []struct {
 		name    string
-		token   rigor.Mode
-		project rigor.Mode
-		want    rigor.Mode
+		token   rigor.Rigor
+		project rigor.Rigor
+		want    rigor.Rigor
 	}{
 		{"the project's ceiling is lower", rigor.Critical, rigor.Pro, rigor.Pro},
 		{"the token's ceiling is lower", rigor.Startup, rigor.Critical, rigor.Startup},
@@ -183,9 +183,9 @@ func TestNarrowTakesTheTighterCeilingWhicheverSideIsLower(t *testing.T) {
 	// stands, and a token may not lower the project's.
 	for _, tc := range []struct {
 		name    string
-		token   rigor.Mode
-		project rigor.Mode
-		want    rigor.Mode
+		token   rigor.Rigor
+		project rigor.Rigor
+		want    rigor.Rigor
 	}{
 		{"the project's floor is higher", rigor.POC, rigor.Pro, rigor.Pro},
 		{"the token's floor is higher", rigor.Critical, rigor.POC, rigor.Critical},

@@ -252,10 +252,10 @@ func writeRigorFloorRows(w io.Writer, floor map[string][]string) {
 // outside it sorts last rather than dropping out: the loader refuses one, so a
 // name here came from somewhere else and the read says so by printing it.
 func rigorModeIndex(mode string) int {
-	if i := slices.Index(rigor.Modes, rigor.Mode(mode)); i >= 0 {
+	if i := slices.Index(rigor.Rigors, rigor.Rigor(mode)); i >= 0 {
 		return i
 	}
-	return len(rigor.Modes)
+	return len(rigor.Rigors)
 }
 
 func newRigorFloorSetCmd() *cobra.Command {
@@ -338,9 +338,9 @@ func runRigorFloor(cmd *cobra.Command, o rigorFloorOptions, modeArg, levelsArg s
 		return userErr("%s is the owner's own minimum — the review levels every run of a mode must run — and taking one away is a whole project reviewing less: %s; nothing was written. Run this yourself at your own terminal: %s",
 			rigorFloorKey, initflow.AgentRefusal(m), rigorFloorCommand(o, modeArg, levelsArg, remove))
 	}
-	mode := rigor.Mode(modeArg)
+	mode := rigor.Rigor(modeArg)
 	if !rigor.Known(mode) {
-		return userErr("%q is not a rigor mode: use %s; nothing was written", modeArg, rigor.ModeList())
+		return userErr("%q is not a rigor mode: use %s; nothing was written", modeArg, rigor.RigorList())
 	}
 	var levels []policy.Level
 	if !remove {
@@ -417,7 +417,7 @@ func runRigorFloor(cmd *cobra.Command, o rigorFloorOptions, modeArg, levelsArg s
 // l3]}`) is the shape that meets it — and the key's own name otherwise, because
 // a refusal that named nothing would leave the person reading the file to find
 // out what the editor would not touch.
-func rigorFloorError(target settingsTarget, mode rigor.Mode, err error) error {
+func rigorFloorError(target settingsTarget, mode rigor.Rigor, err error) error {
 	if refusal, ok := modelsSpliceRefusal(target.path, err); ok {
 		return refusal
 	}
@@ -429,7 +429,7 @@ func rigorFloorError(target settingsTarget, mode rigor.Mode, err error) error {
 // The list is written once for the whole argument rather than level by level,
 // because a floor is a set and a person naming one should not have to spell the
 // levels in the file's order.
-func rigorFloorLevels(arg string, mode rigor.Mode) ([]policy.Level, error) {
+func rigorFloorLevels(arg string, mode rigor.Rigor) ([]policy.Level, error) {
 	// The empty argument is the one way to name no level at all, and it is
 	// refused here rather than left to the loop below: the loop refuses a name
 	// that is not a level, and what this person asked for is the other command.
@@ -492,7 +492,7 @@ func rigorLevelList() string {
 // owner's words (rigorFloorError) — because one of them is a document this
 // command cannot edit at all, and it is worth saying which: a floor whose whole
 // mapping is a flow collection.
-func rigorFloorEdit(old []byte, floor map[string][]string, mode rigor.Mode, levels []policy.Level, remove bool) ([]byte, bool, error) {
+func rigorFloorEdit(old []byte, floor map[string][]string, mode rigor.Rigor, levels []policy.Level, remove bool) ([]byte, bool, error) {
 	path := []string{rigorFloorKey, string(mode)}
 	held := rigorFloorHeld(floor[string(mode)])
 	if remove {
@@ -589,7 +589,7 @@ func rigorFloorHeld(written []string) []policy.Level {
 
 // rigorFloorNoChange is the sentence an edit that changes nothing prints: the
 // state the file is already in, said in the document's own terms.
-func rigorFloorNoChange(mode rigor.Mode, remove bool) string {
+func rigorFloorNoChange(mode rigor.Rigor, remove bool) string {
 	if remove {
 		return fmt.Sprintf("%s carries no floor, so there is nothing to remove", mode)
 	}
@@ -600,7 +600,7 @@ func rigorFloorNoChange(mode rigor.Mode, remove bool) string {
 // and carried by the session refusal (settingsEdit's What). It shows the floor
 // as it is and as it would be, because that is the whole of what the person
 // deciding this step is deciding.
-func rigorFloorWhat(target settingsTarget, floor map[string][]string, mode rigor.Mode, levels []policy.Level, remove bool) string {
+func rigorFloorWhat(target settingsTarget, floor map[string][]string, mode rigor.Rigor, levels []policy.Level, remove bool) string {
 	held := rigorFloorHeld(floor[string(mode)])
 	if remove {
 		return fmt.Sprintf("remove %s.%s (%s) in %s", rigorFloorKey, mode, rigorLevelsText(held), target.path)
@@ -630,7 +630,7 @@ func rigorLevelsText(levels []policy.Level) string {
 // TypedWhy): what the edit takes away, in the words the person reading it acts
 // on. The write path prints it before the write for a Typed edit, and it is the
 // reason the session fence carries beside the marker and the command.
-func rigorFloorWhy(mode rigor.Mode, remove bool) string {
+func rigorFloorWhy(mode rigor.Rigor, remove bool) string {
 	if remove {
 		return fmt.Sprintf("removing %s's review floor is a whole project reviewing less, so it is the owner's own step and no flag stands in for it", mode)
 	}

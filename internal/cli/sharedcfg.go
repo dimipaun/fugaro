@@ -320,17 +320,20 @@ type SharedAnchor struct {
 // writes and the runner fails closed on, and localcfg.Config.Shared nils it for
 // that reason.
 //
-// workspace, workspace_pin, workspace_members and workspace_cap are the
-// workspace keys, and workspace_pin is the sharpest of them: the pin is the
-// member's own record of which workspace it trusts — the project its exchange
-// requires as the token's aud, the issuer, the key it verifies a member-bound
-// assertion against and the account its grant binds to — so a launcher who
-// could write it into the runs bucket's shared file would be aiming this
-// project's exchange and this project's database grant at a party of its
-// choosing (docs/workspaces/spec.md §2). The membership key and the owner's
-// member table are dropped with it, because a shared file that could name a
-// workspace would be one that could join this project to a group nobody here
-// chose. localcfg.Config.Shared nils all four.
+// workspace, workspace_pin, workspace_members, workspace_cap and
+// workspace_shared are the workspace keys, and workspace_pin is the sharpest of
+// them: the pin is the member's own record of which workspace it trusts — the
+// project its exchange requires as the token's aud, the issuer, the key it
+// verifies a member-bound assertion against, the account its grant binds to and
+// the address its runs call — so a launcher who could write it into the runs
+// bucket's shared file would be aiming this project's exchange, its database
+// grant and its runs' calls at a party of its choosing
+// (docs/workspaces/spec.md §2). The membership key and the owner's member table
+// are dropped with it, because a shared file that could name a workspace would
+// be one that could join this project to a group nobody here chose, and the
+// owner's shared list goes with the member table for its reason once more: it
+// says what the workspace's credentials service offers, which is the owner's
+// act. localcfg.Config.Shared nils all five.
 //
 // credential_cascade, model_grades and node_removals are the carriers the
 // node-only blocks gained (config-ownership, D2607, F23, F22), and each is here
@@ -350,7 +353,22 @@ type SharedAnchor struct {
 // crafts from the file it can write. All three are published through the policy
 // node, which the owner writes and the runner fails closed on, and
 // localcfg.Config.Shared nils them.
-var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "bitbucket_tokens", "clone_urls", "update_check", "issues", "escalation", "mobile_allow", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "rigor_pending", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap", "binaries", "reports_commit", "credential_cascade", "model_grades", "node_removals"}
+//
+// review_against_task is the triage switch's own case one key over (R7 of
+// docs/review-against-task/): it is the local config's carrier of the check
+// every review stage makes of a run's own work, published through the policy
+// node, so a launcher who could write it into the shared file would be having
+// every teammate's pull requests reviewed against nothing. localcfg.Config.Shared
+// nils it.
+//
+// locations is the one key here refused for a reason that is not about who may
+// write the runs bucket (LP0 of docs/location-preference/, D3087 as amended):
+// it is one machine's record of where the installation's data already is, read
+// from the cloud and never an input to anything, so no other machine has a use
+// for it — and a published copy of it would stop every teammate whose Fugaro is
+// older than the release that wrote the key, whose strict decoder refuses a
+// field it does not know. localcfg.Config.Shared nils it.
+var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "bitbucket_tokens", "clone_urls", "update_check", "issues", "escalation", "mobile_allow", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "review_against_task", "rigor_pending", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap", "workspace_shared", "binaries", "reports_commit", "credential_cascade", "model_grades", "node_removals", "locations"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
@@ -613,7 +631,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 // arrived some other way (a merge, a decoder that mapped a key onto a field of
 // its own), and the check a test can hold each field of without a file.
 func sharedNeverPublished(c *localcfg.Config) bool {
-	return c.BackendName != "" || c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.BitbucketTokens != nil || c.CloneURLs != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.Triage != nil || c.RigorPending != "" || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.ClaudeAccountAliases != nil || c.Credentials != nil || c.Pools != nil || c.SubscriptionSpread != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil || c.Binaries != nil || c.ReportsCommit != nil || c.CredentialCascade != nil || c.ModelGrades != nil || c.NodeRemovals != nil
+	return c.Locations != nil || c.BackendName != "" || c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.BitbucketTokens != nil || c.CloneURLs != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.Triage != nil || c.ReviewAgainstTask != nil || c.RigorPending != "" || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.ClaudeAccountAliases != nil || c.Credentials != nil || c.Pools != nil || c.SubscriptionSpread != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil || c.WorkspaceShared != nil || c.Binaries != nil || c.ReportsCommit != nil || c.CredentialCascade != nil || c.ModelGrades != nil || c.NodeRemovals != nil
 }
 
 // dropLegacyBaseImages removes a base_images entry of exactly a kind

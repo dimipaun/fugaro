@@ -29,7 +29,7 @@ import type { ChildSpawner, SpawnPlan, Timers } from './spawn'
 import { cliSentence, planFor, privateWorkingDirectory, runToCompletion, spawnedArgv } from './spawn'
 import type { SpawnLogWriter } from './spawnlog'
 import type { LaunchRecords, LaunchResult } from './launchrules'
-import type { SettingsView } from './settingsview'
+import type { SettingsEntryView, SettingsView } from './settingsview'
 import {
   checkLaunchBranch,
   checkLaunchPlanTask,
@@ -354,13 +354,16 @@ export interface SettingsConfirmView extends SettingsView {
 }
 
 /** ConfirmSubject is what one confirmation window is opened for, and there are
- * exactly two: a launch (`ConfirmView`, rule 11's window) and a settings edit
- * (`SettingsConfirmView`, rule 12's). The union is a discriminant rather than a
- * guess, so neither the window nor the document it serves can mistake one for
- * the other -- which is the property that matters, because the two questions
- * have different gates: a launch's yes spawns a run, and a widening's yes needs
- * the tick as well (`CONFIRM_TICK_NEEDED`). */
-export type ConfirmSubject = ConfirmView | SettingsConfirmView
+ * exactly three: a launch (`ConfirmView`, rule 11's window), a settings edit's
+ * confirmation (`SettingsConfirmView`, rule 12's) and a settings edit's **entry
+ * form** (`SettingsEntryView`, SU1's first phase of D2902's one modal, which is
+ * the same window before any dry run exists). The union is a discriminant rather
+ * than a guess, so neither the window nor the document it serves can mistake one
+ * for the other -- which is the property that matters, because the three
+ * questions have different gates: a launch's yes spawns a run, a widening's yes
+ * needs the tick as well (`CONFIRM_TICK_NEEDED`), and the entry form's answer is
+ * a value the main process then runs a dry run over. */
+export type ConfirmSubject = ConfirmView | SettingsConfirmView | SettingsEntryView
 
 /**
  * LaunchConfirmer is the seam the confirmation window fills: `confirm.ts`'s

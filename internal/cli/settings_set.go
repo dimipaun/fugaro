@@ -292,8 +292,9 @@ var settingsGenericKeys = map[string]bool{
 	// TestSettingsOwnerStringsAreAClosedVocabulary is what fails on it.
 	//
 	// The orchestrator block and the two nudge thresholds are the machine's own
-	// config, `triage`, `verifier_accounts` and the two schedules are local and
-	// project keys this path already writes the file of, and
+	// config, `triage`, `review_against_task`, `verifier_accounts` and the two
+	// schedules are local and project keys this path already writes the file
+	// of, and
 	// `planning.decoupling` is the fifth of the four file-carrier rows G12 left
 	// with the layer file's token while its repository half was never in that
 	// file. Every one of them is named rather than reached by a prefix: a
@@ -308,10 +309,28 @@ var settingsGenericKeys = map[string]bool{
 	"issues.nudge_after_days":               true,
 	"issues.nudge_recurrence":               true,
 	"triage":                                true,
+	"review_against_task":                   true,
 	"verifier_accounts":                     true,
 	"layer.jobs.reports.paused":             true,
 	"layer.jobs.catalog_check.paused":       true,
 	"planning.decoupling":                   true,
+	// The three spellings R1's rows gained and this list did not yet name (W3):
+	// the repository's `workflows.*.needs` and `workflows.*.ab.reviewer_arm` are
+	// rows the registry holds with the generic writer's own token, and a row the
+	// write refuses while its column names this path is the pair F13 forbids —
+	// the two are listed like every other wildcard block, so a concrete spelling
+	// (`workflows.web.needs`) is a key a write lands on.
+	//
+	// `mobile_allow` is the block a person declares a phone with (D231, D2603),
+	// and it is named as the block rather than as its three leaves: an entry is
+	// the whole of what the write takes — the `uid`, the `address` and the `role`
+	// together, which is `--add-entry`'s own rule — and the registry's rows for
+	// the leaves carry a `*` no write lands on, so naming them here would register
+	// writers whose argv edits a path the loader refuses (settingsEntryRow builds
+	// the block's row from those leaves, and this list is what admits it).
+	"workflows.*.needs":           true,
+	"workflows.*.ab.reviewer_arm": true,
+	"mobile_allow":                true,
 }
 
 // settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
@@ -319,13 +338,20 @@ var settingsGenericKeys = map[string]bool{
 // carries a varying segment, and settingsWriteLookup reaches a wildcard
 // registry row only for a spelling settingsGenericKeys names, so a prefix is
 // never the reason a map entry resolves.
-// `credentials.` and `clone_urls.` are §4.4's own names for the blocks §5.6's
-// family adds: they are listed now so the generic path does not refuse a name
-// the spec hands it once that family lands.
+//
+// `credentials.` stood here until K1 and is deliberately gone (D2613). §4.4
+// handed this path the name, but the registry's `credentials.*` rows are the
+// published node's spelling of the credentials cascade — `credential_cascade`
+// is what this machine's file calls the same block (F23) — whose owner is the
+// accounts family and whose writer is `fugaro accounts cascade set`. The prefix
+// was the reason a `credentials.` name reached the allowlist's branch at all,
+// and a block the owner writes through a command of its own is not one this
+// path may go on claiming. `clone_urls.` is §4.4's name for a block §5.6's
+// family adds, and it stays until that family lands.
 var settingsGenericPrefixes = []string{
 	"agent.", "git.", "followup.", "governance.", "watch.",
 	"layer.defaults.", "layer.governance.",
-	"credentials.", "clone_urls.",
+	"clone_urls.",
 	// The ladder's own block (E3). It is §4.4's list's successor in shape and
 	// not in origin: the keys are T-E3's, and the generic path is their one
 	// door — which is what puts the owner's own hand (the typed form below) and
@@ -639,6 +665,9 @@ func settingsRefuseRow(key, registry string, row settings.Row) (settings.Row, er
 		return settings.Row{}, userErr("%s is a sensitive setting, and the generic path never writes one: its value would be printed in the diff this command shows (spec §2.3)", key)
 	}
 	if family, ok := settingsFamilyCommands[row.Owner]; ok {
+		if w, ok := settingsRefusalWriter(key); ok {
+			return settings.Row{}, userErr("%s", settingsRefusalNamesTheWriter(key, row, w))
+		}
 		return settings.Row{}, userErr("%s is written by %s, not by the generic path: settings set writes no route, price, rigor mode, floor, account, job profile, credential, clone URL, image map, binary admission or workspace key", key, family)
 	}
 	if strings.Contains(key, "*") {
@@ -664,9 +693,79 @@ func settingsRefuseRow(key, registry string, row settings.Row) (settings.Row, er
 		return settings.Row{}, userErr("%s is a block of settings rather than a setting: it holds %s; write one of them", key, strings.Join(settings.BlockChildren(row.Key), ", "))
 	}
 	if !settingsGenericKey(registry) {
-		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*), the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account), the pools' subscription switch (subscription_spread) and a repository's workflows.<name>.* and the project layer's profiles.<name>.*, and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
+		// A key the allowlist does not carry is refused with the sentence above
+		// unless the writer table answers for it: the budget's caps and the kill
+		// switch are neither a family's nor a spec §4.4 key — they live in the
+		// project's Realtime Database rather than in a settings file — and item 6
+		// asks for the command that writes one, not for the list of what this
+		// path does write (W3).
+		if w, ok := settingsRefusalWriter(key); ok {
+			return settings.Row{}, userErr("%s", settingsRefusalNamesTheWriter(key, row, w))
+		}
+		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, clone_urls.* and the layer's defaults.*), the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account), the pools' subscription switch (subscription_spread) and a repository's workflows.<name>.* and the project layer's profiles.<name>.*, and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
 	}
 	return row, nil
+}
+
+// settingsRefusalWriter is the writer a refusal prints the line of: the writer
+// table's answer for the key where that answer is a command line that runs. A
+// labelled row answers with no argv — the label is what stands in for one — so
+// it is no writer here, and the family or allowlist sentence stands for it
+// (docs/contracts/config-ownership.md §3, §5).
+//
+// The answer is the whole of the question and not the row's owner column: the
+// column is a token a family or a file is named by, and the table is what a
+// write really runs. `bitbucket_api_roots` names the secrets family and
+// `caps.global.per_day_usd` names no family at all, and both are keys the
+// refusal now hands a command line for.
+func settingsRefusalWriter(key string) (settings.Writer, bool) {
+	w, ok := settings.WriterOf(key)
+	if !ok || w.Label != "" || len(w.Argv) == 0 {
+		return settings.Writer{}, false
+	}
+	return w, true
+}
+
+// settingsRefusalNamesTheWriter is the sentence a refusal prints for a key the
+// writer table answers for (W3, item 6 of the owner's direction): the command
+// that writes it, its whole command line with the key filled in, and the layer
+// spellings the key has where there is more than one — the line's own `--layer`
+// word is the spelling it was written at, and a key stated in two files needs
+// the second named or a person at the other layer runs a line that refuses
+// (docs/contracts/config-ownership.md §6). The value word is left as the line
+// carries it, which is the caller's to fill, and a word ArgvFor cannot place —
+// the security rows' category — is printed as written rather than dropped:
+// what the refusal prints is the shape of the write and not a line with a
+// silently different meaning (§2).
+//
+// The head stays the write's own sentence — "is written by X, not by the
+// generic path" — because it is the read's pair (D1178) and the console's
+// (settings --json's `owner`, drawn as `written by <owner>, not by the generic
+// path`); the writer's own command is the name in it where the table has one,
+// which is a command rather than a family a reader would have to look up.
+func settingsRefusalNamesTheWriter(key string, row settings.Row, w settings.Writer) string {
+	sentence := fmt.Sprintf("%s is written by %s, not by the generic path: run `fugaro %s`",
+		key, w.Command, strings.Join(w.ArgvFor(key), " "))
+	if layers := settingsWriteLayerSpellings(row); len(layers) > 1 {
+		sentence += fmt.Sprintf(" (--layer is one of %s)", strings.Join(layers, ", "))
+	}
+	return sentence
+}
+
+// settingsWriteLayerSpellings is the layers of a key `--layer` accepts, in the
+// order the flag's own vocabulary prints them. The registry's Layers carry the
+// levels a key is stated at, and only the three a write lands in are a `--layer`
+// word: `shared` stands for a key this machine's file lacks, `flag` for a key
+// the loader owns, and a node or cloud layer is no file of this command's — a
+// sentence naming one would offer a spelling the flag refuses.
+func settingsWriteLayerSpellings(row settings.Row) []string {
+	out := make([]string, 0, len(settingsWriteLayers))
+	for _, layer := range settingsWriteLayers {
+		if slices.Contains(row.Layers, layer) {
+			out = append(out, layer)
+		}
+	}
+	return out
 }
 
 // settingsWriteLookup is the row a write names, with the registry's own
@@ -848,6 +947,14 @@ var settingsHintListKeys = map[string]bool{
 	// policy.ValidVerifierAccounts — so a scalar write is one the loader always
 	// refuses, and --add is the only spelling this key has.
 	"verifier_accounts": true, // localcfg.Config.VerifierAccounts
+	// A repository's `workflows.*.needs`: the tag a run of that workflow waits
+	// for, added and removed one tag at a time (config.Workflow.Needs), and R1's
+	// row rather than a leaf of a block — which is what makes it the one entry
+	// here whose registry key carries a `*`. The write that lands on it is
+	// `--add`, and the line a refusal prints for a concrete spelling (`workflows.
+	// web.needs`, W3) is that spelling: a scalar word would put one tag where the
+	// file reads a list, which is the loader's own refusal and not this key's.
+	"workflows.*.needs": true,
 }
 
 // settingsWriteHintRows are the registry rows a write's unknown-key refusal may
@@ -1307,13 +1414,12 @@ var settingsEntryBlocks = map[string]settingsEntryBlock{
 	// list whose entries the `uid` field names, so --add-entry is the spelling
 	// that grows it — and one that widens, because an entry admits a phone to
 	// the project's runs: the device node the rules read is seeded from the
-	// declaration, so growing the list widens who may drive them. It is the
-	// blocks' *registration* and not yet their writer: settingsWriteRow refuses
-	// the bare block name today (the registry carries the three `mobile_allow.*`
-	// leaf rows and no row for the block), so the entry pair never reaches this
-	// one — W3's allowlist is what admits it, and the widening D1165 classifies
-	// is recorded here so that the guard is in place before the writer is and
-	// not after it (R1 of docs/config-ownership).
+	// declaration, so growing the list widens who may drive them. The registry
+	// carries the three `mobile_allow.*` leaf rows and no row for the block, so
+	// the row an entry write is about is built from them (settingsEntryRow) and
+	// it is the allowlist's naming the block that admits it (W3) — the widening
+	// D1165 classifies is recorded here so that the guard is in place before the
+	// writer is, and not after it (R1 of docs/config-ownership).
 	"mobile_allow": {
 		kind: settingsEntryList, keyField: "uid", widens: true,
 		widensWhy: "this admits a phone to the project's runs: an entry that names a uid seeds the device node the rules read, so growing the list widens who may drive them",
@@ -1347,6 +1453,26 @@ func settingsEntryBlockOf(key string) (settingsEntryBlock, bool) {
 	return block, ok
 }
 
+// settingsBlockSpelledByLeaves reports whether the registry states a block's
+// members one by one and holds no row for the block itself: `layer.ab` is the
+// pattern and `layer.ab.rate` the row, which is what makes a write of the block
+// a row built from its leaves (settingsEntryRow) rather than one the registry
+// answers (D1175). A block the registry holds as a row — `workflows.*.secrets`,
+// `orchestrator.decision_model_per_class` — is not one: its own row is what the
+// write is refused against.
+func settingsBlockSpelledByLeaves(pattern string) bool {
+	found := false
+	for _, r := range settings.Rows() {
+		if r.Key == pattern {
+			return false
+		}
+		if strings.HasPrefix(r.Key, pattern+".") {
+			found = true
+		}
+	}
+	return found
+}
+
 // settingsEntryBlockPattern is settingsEntryBlockOf's own walk, answering the
 // pattern it matched beside the block: the pattern is the spelling the registry
 // rows for the block's members are keyed under, and the project layer's blocks
@@ -1366,13 +1492,18 @@ func settingsEntryBlockPattern(key string) (string, settingsEntryBlock, bool) {
 // registry holds the block itself (`workflows.*.secrets`,
 // `workflows.*.cache`) and the refusals are the ones every write meets.
 //
-// The project layer's blocks are the exception D1175 writes down. The registry
-// spells their members leaf by leaf — `layer.ab.rate`,
+// The blocks the registry spells by their leaves are the exception D1175 writes
+// down, and the project layer's are the ones it names. The registry states
+// their members leaf by leaf — `layer.ab.rate`,
 // `layer.profiles.*.commands.rerun_failed.command` — and holds no row for the
 // block a person names, because a block is a shape and not a key. So the row is
 // built from the leaves here and handed to the same refusals as any other
 // (settingsRefuseRow), which is what keeps one answer to what the generic path
-// writes. Two things about it are decided rather than derived:
+// writes. `mobile_allow` is the second such block and not a layer's (W3): the
+// registry's three rows for it carry a `*` (`mobile_allow.*.uid`), which is a
+// shape and not a key a write lands on, so it is the block the entry pair names
+// that the leaves spell. Two things about the built row are decided rather than
+// derived:
 //
 //   - the layers are the leaves' own (D1161's rule: the row supplies the layer,
 //     and the leaves are the only rows there are), so a session outside the
@@ -1400,7 +1531,7 @@ func settingsEntryBlockPattern(key string) (string, settingsEntryBlock, bool) {
 // which file to write.
 func settingsEntryRow(key string) (settings.Row, error) {
 	pattern, _, ok := settingsEntryBlockPattern(key)
-	if !ok || !strings.HasPrefix(pattern, "layer.") {
+	if !ok || !settingsBlockSpelledByLeaves(pattern) {
 		return settingsWriteRow(key)
 	}
 	// The owner column is the registry's own default, the words every generic
@@ -2121,7 +2252,7 @@ func settingsEscalationBase(doc []byte, key, raw string) string {
 		return settingsEscalationFigure(doc, shipped, mode, leaf, raw)
 	}
 	best, bestN := "", 0.0
-	for _, m := range rigor.Modes {
+	for _, m := range rigor.Rigors {
 		figure := settingsEscalationFigure(doc, shipped, string(m), leaf, raw)
 		n, err := strconv.ParseFloat(figure, 64)
 		if err != nil {
@@ -2153,7 +2284,7 @@ func settingsEscalationFigure(doc []byte, shipped escalation.Thresholds, mode, l
 // block states once) answers "", which the callers read as no figure to
 // compare against.
 func settingsEscalationShipped(t escalation.Thresholds, mode, leaf string) string {
-	row, ok := t.Rows[rigor.Mode(mode)]
+	row, ok := t.Rows[rigor.Rigor(mode)]
 	if !ok {
 		return ""
 	}
@@ -2219,14 +2350,14 @@ func settingsRigorFloorKey(key string) bool {
 }
 
 // settingsLowersRigorFloor reports whether newValue leaves a weaker floor than
-// oldValue, by the order the run itself resolves modes with (rigor.Mode.Rank,
+// oldValue, by the order the run itself resolves modes with (rigor.Rigor.Rank,
 // the comparison layerRigorRules makes over the same pair of values). A mode
 // this binary does not know ranks 0, below every real one, which is the
 // fail-closed reading: an edit nobody can prove raises the floor takes the
 // typed name. A block the file holds no floor in ranks 0 and any mode is above
 // it, so adding one is admitted — the direction layerRigorRules admits too.
 func settingsLowersRigorFloor(oldValue, newValue string) bool {
-	return rigor.Mode(newValue).Rank() < rigor.Mode(oldValue).Rank()
+	return rigor.Rigor(newValue).Rank() < rigor.Rigor(oldValue).Rank()
 }
 
 // settingsRigorBlockKey is the block every member of which is a floor: the

@@ -101,6 +101,15 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"not detectable by rotation",
 		"**Revocation at the workspace ends the person's ability to exchange, and nothing else**",
 		"neither revocation is instantaneous across members",
+		// WS6 gave the member its one grant in the workspace's project when the
+		// workspace root started deploying the workspace's own credentials
+		// service, so the closer half of that sentence has to name it rather
+		// than say no member holds a grant there (F29): what a member's job
+		// accounts hold is the front door to that service and no node of the
+		// workspace's database.
+		"**The one grant a member holds in the workspace's project is the invoke grant on the workspace's own credentials service**",
+		"`roles/run.invoker` per member job account",
+		"no node of the workspace's database",
 		// The pool, the intersection, and what a compromised member reaches.
 		"**A compromised member reaches the pool, and the intersection is what bounds it.**",
 		"cannot read a credential's value",
@@ -173,9 +182,12 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"**refuse `custom` and `anonymous`**",
 		"`google.com`",
 		"`password`",
-		"7. **A shared credential is served where the member's own service would refuse it: the run's repository is not held to the calling job account.**",
+		"7. **A shared credential is served where the member's own service would refuse it: the run's repository is now held to the calling job account, and the account's class is not.**",
+		"**The pairing of that repository with the account that called is asked too",
+		"closes the gap the workspaces design recorded as O3",
+		"refused at the pairing with the typed reason `unverified_run_identity`",
 		"**The second way this risk is reachable is the account's class**",
-		"**this release ships both stated and not enforced**",
+		"**this release ships it stated and not enforced**",
 		// Spec §9 as prohibitions, which is how the spec writes them.
 		"**What a workspace never does.**",
 		"**never widens a member**",
@@ -273,6 +285,11 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		// section has to say, so the pin cannot be a substring of it.
 		"a workspace revocation reaches a member token already minted",
 		"a workspace revocation is immediate",
+		// The pre-WS6 spelling of the grant claim, which the workspace's own
+		// service makes false: a member's job account does hold one grant in
+		// the workspace's project, and a section that kept the older wording
+		// would tell a reader no member's account reaches the workspace at all.
+		"because no member holds a grant on the workspace's project",
 		// The meter, which is machinery on this tree and not yet a fence.
 		"the workspace's cap is enforced on every shared-credential call",
 		"every shared-credential call is metered",

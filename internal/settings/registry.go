@@ -512,6 +512,10 @@ func scopeLayers(in config.Scope) []string {
 const (
 	docSetup = "docs/gcp-setup.md"
 	docLayer = "docs/project-layer.md"
+	// docLocations is the record's own document (LP0 of
+	// docs/location-preference/, D3087): what the block is, that it is one
+	// machine's own, and that nothing reads it as an input (R5).
+	docLocations = "docs/location-preference/record.md"
 	// docGovernance is docLayer plus the one fact about a governance key the
 	// table has no column for (F12): the guardrails are enforced by a build with
 	// the `ee` tag, so an untagged build reads the block and holds no run to it
@@ -572,6 +576,13 @@ const (
 	// of the stage's own would take the row over.
 	docTriage    = "docs/post-review-triage/implementation-plan.md"
 	docCloneURLs = "docs/project-claude-accounts.md"
+	// docReviewAgainstTask is the document that states the check every review
+	// stage makes of the task a pull request was written for, and the local key
+	// the publish carries the switch from (R7 of docs/review-against-task/). It
+	// is the work's plan, docTriage's reason: the key, its default and D2935's
+	// two directions are stated there and nowhere else yet, and a document of
+	// the check's own would take the row over.
+	docReviewAgainstTask = "docs/review-against-task/implementation-plan.md"
 	// docABJobmax is the document that states the A/B reviewer arm's key (O12).
 	// It is the work's plan rather than a spec, for docOrchestrator's reason:
 	// the ask is named there and in the reconciliation that records the ruling,
@@ -609,8 +620,8 @@ const (
 	// backoff's two ends and the two owner-headroom knobs are named in the
 	// credentials service's plan, and the spec of the service (its README's
 	// sibling) is the design of the service rather than of the policy an
-	// operator writes. K1's command and the carrier N1 adds take the rows over
-	// the day they land.
+	// operator writes. K1's command and the carrier N1 adds are what state the
+	// rows now.
 	docCredentialsCascade = "docs/credentials-service/implementation-plan.md"
 	// docOrchestratorGraph is the document that states the orchestrator's
 	// switch and the project's issue adapter (D2701, D2733, D2739): both keys
@@ -769,10 +780,10 @@ var layerRows = []Row{
 	layerRow("defaults.agent.adversarial_rounds", "the run's rigor mode decides (rigor.AdversarialDefault)", "settings set", docLayer),
 	layerRow("defaults.agent.review_stop_fraction", "0.8 (config.DefaultReviewStopFraction)", "settings set", docLayer),
 	layerRow("defaults.agent.recipe", "the built-in recipe", "models", docModels),
-	layerRow("defaults.rigor.default", "the built-in mode (pro)", "rigor", docRigor),
+	layerRow("defaults.rigor.default", "the built-in level (pro)", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.name", "none", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.match", "none", "rigor", docRigor),
-	layerRow("defaults.rigor.areas.*.mode", "none", "rigor", docRigor),
+	layerRow("defaults.rigor.areas.*.level", "none", "rigor", docRigor),
 	// The planning pass's switch, read the way defaults.git.pr.early_draft
 	// above is: a layer that states nothing leaves it as the fugaro.yaml row
 	// says (docs/contract-first-decoupling, D1813).
@@ -908,6 +919,19 @@ var localRows = []Row{
 	loc("backend", "cloud-run", "setup", "docs/backends.md"),
 	loc("log_view", "the project's default logs", "setup", docSetup),
 	loc("scheduler_region", "the region the jobs run in", "setup", docSetup),
+	// The locations record (LP0 of docs/location-preference/, D3087): where
+	// this installation's located things already are, as the converge read
+	// them from the cloud. One row per member, and each is local-only — the
+	// record is never published, because the shared config decodes strictly
+	// and a teammate's older CLI would refuse the key — and written by the
+	// two converge doors from what the cloud holds rather than by any
+	// editor: no flag states a location, because nothing that exists is
+	// given a place by a rule — what already is somewhere is read from the
+	// cloud (R5) — and an absent member means no converge has read it yet.
+	locLocal("locations.firestore", "not known yet: no converge has read where the project's Firestore database is", "setup", docLocations),
+	locLocal("locations.log_bucket", "not known yet: no converge has read where the installation's run log bucket is", "setup", docLocations),
+	locLocal("locations.rtdb", "not known yet: no converge has read where the project's Realtime Database is", "setup", docLocations),
+	locLocal("locations.secrets", "not known yet: no converge has read what the installation's own secret containers do", "setup", docLocations),
 	loc("user", "none", "setup", docSetup),
 	// The keys of the installation a repository's own settings file also holds
 	// say `settings set` where the allowlist carries them (D1178): commit_name,
@@ -1207,6 +1231,17 @@ var localRows = []Row{
 	// a pull request back (D1854), and the publish is what carries the value to
 	// the node every run of the project reads it from.
 	loc("triage", "true: a review round's findings are judged by the triage stage in the modes that triage at all, and a written false turns the stage off for the project", "settings set", docTriage),
+	// The review-against-task switch is that policy key's shape one over (R7 of
+	// docs/review-against-task/, D2935): a local key the node is published from,
+	// whose owner is `settings set` for the triage row's reason — a boolean in
+	// the machine's own config is the generic path's. It is the owner's answer
+	// for the whole project, and the publish is what carries it to the node
+	// every run of the project reads it from. The absent key reads as on rather
+	// than as "none", because a reader would take "none" for the check itself
+	// being off; a written false is the project-wide default a repository's own
+	// `true` overrides, and a written true is the check no repository may walk
+	// out of.
+	loc("review_against_task", "on: every review stage is handed the task its pull request was written for, and a written false is the project-wide default a repository's own true turns back on", "settings set", docReviewAgainstTask),
 	// The clone URLs the project's repositories clone from (settings spec
 	// §5.6, SD5, D842). The block moved out of the policy node and into the
 	// owner's local config, and `fugaro project clone-url` is the family that
@@ -1453,25 +1488,33 @@ var localRows = []Row{
 	// read has to be able to name.
 	loc("repos.*.credentials_service_ready", "false: no update has applied this repository's root with the service on — its bundle holds no model credential, or its agent.auth is not the cascade", "project", docSetup),
 
-	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all eleven of
+	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all seventeen of
 	// them local-only: the pin is the member's own trust and the member table
-	// is the workspace owner's own declaration, and a launcher who could write
-	// either into the shared file could aim this project's exchange and this
-	// project's database grant (internal/cli/sharedcfg.go's sharedForbidden).
-	// Their owner is the `fugaro workspace` family, so the generic writer
-	// refuses them (D853) — a member entry and a pin are written whole by the
-	// commands that know what the four values have to agree about.
+	// and shared list are the workspace owner's own declaration, and a launcher
+	// who could write any of them into the shared file could aim this project's
+	// exchange, this project's database grant and this project's calls, or
+	// choose what the workspace's credentials service offers
+	// (internal/cli/sharedcfg.go's sharedForbidden). Their owner is the `fugaro
+	// workspace` family, so the generic writer refuses them (D853) — a member
+	// entry, a pin and a shared entry are written whole by the commands that
+	// know what the values have to agree about.
 	locLocal("workspace", "this project is a member of no workspace", "workspace", docWorkspace),
 	locLocal("workspace_pin.firebase_project", "no workspace is pinned", "workspace", docWorkspace),
 	locLocal("workspace_pin.issuer", "no workspace is pinned", "workspace", docWorkspace),
 	locLocal("workspace_pin.assertion_key", "no workspace is pinned", "workspace", docWorkspace),
 	locLocal("workspace_pin.service_account", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_pin.service_address", "this project takes no workspace credential", "workspace", docWorkspace),
 	locLocal("workspace_members.*.repos", "the member contributes no repository", "workspace", docWorkspace),
-	locLocal("workspace_members.*.job_service_accounts", "no job service account is declared for the member", "workspace", docWorkspace),
+	locLocal("workspace_members.*.job_service_accounts.*.account", "no job service account is declared for the member", "workspace", docWorkspace),
+	locLocal("workspace_members.*.job_service_accounts.*.repos", "the account is a job of no repository", "workspace", docWorkspace),
+	locLocal("workspace_members.*.database_region", "the member's database lives in its project's default region", "workspace", docWorkspace),
 	locLocal("workspace_members.*.firebase_project", "none", "workspace", docWorkspace),
 	locLocal("workspace_members.*.fp", "none", "workspace", docWorkspace),
 	locLocal("workspace_members.*.exchange_url", "none", "workspace", docWorkspace),
 	locLocal("workspace_cap.monthly", "the workspace states no cap", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.kind", "the workspace offers no credential", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.projects", "the credential is offered to no member", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.covers", "the credential covers no repository", "workspace", docWorkspace),
 
 	// The terminal Issues section's nudge thresholds (T-IS15). They are
 	// local-only rather than loc's two layers: the section is printed on the
@@ -1570,13 +1613,22 @@ var cloudRows = []Row{
 // one of the three file layers would send the read and the write at a file the
 // key is not in.
 //
-// The spelling is `credentials.<leaf>`, which is §4.4's own name for the
-// block — `credentials.` is one of the generic path's prefixes — and the owner
-// is the `accounts` family's, so the generic path refuses every one of the six
-// in that family's name rather than writing an operator's node policy as a
-// local setting (D2603, R1 of docs/config-ownership). K1 registers
-// `fugaro accounts cascade set` as their writer; until it lands the six are
-// testdata/writer_gaps.golden's.
+// The spelling is `credentials.<leaf>`, which is §4.4's own name for the block,
+// and the owner is the `accounts` family's, so the generic path refuses every
+// one of the six in that family's name rather than writing an operator's node
+// policy as a local setting (D2603, R1 of docs/config-ownership). `credentials.`
+// left the generic path's prefixes with K1, which registers `fugaro accounts
+// cascade set` as their writer, so a refusal now names that command.
+//
+// The six stay testdata/writer_gaps.golden's, and the carrier's six beside
+// them. A registered writer is measured where the row spells the key, and these
+// six are the node's own spelling while the write lands in this machine's
+// carrier (`credential_cascade.<leaf>`, writers_cascade.go) — and the carrier's
+// six owe the publish the write ends on (D2615), which a hermetic installation
+// cannot complete, so the command exits non-zero after the bytes land. That is
+// the gap every semantic family's rows show for the same reason (pools',
+// providers' and the crafts' among them): the golden lists them until I1's
+// strict ratchet has a rig that can run a stage.
 //
 // Every default is a sentence naming the constant the node's own reader falls
 // back to (projectpolicy.FallbackValue, WaitThresholdDuration,
@@ -1610,8 +1662,8 @@ var policyRows = []Row{
 	// What the family does *not* have is a carrier for either: no key of the
 	// local config states the switch or the adapter (D2701, D2733), so a person
 	// writes the node's own member and `publish` carries it from the node
-	// forward — which is why the two are testdata/writer_gaps.golden's, the
-	// cascade's six before K1.
+	// forward — which is why the two are testdata/writer_gaps.golden's, as the
+	// cascade's own twelve are.
 	//
 	// The switch merges by Tighten, and it is the rule rather than a figure
 	// here: false is its stricter value and the only one that can undo the
@@ -1784,7 +1836,7 @@ var defaultValues = map[string]Default{
 	// release writes for a file that sets it nowhere (localcfg.Parse), which is
 	// localcfg.ConfigVersion, so the value is written here and read back out of
 	// a parsed config like the two above.
-	"local.version": value("2", "localcfg.ConfigVersion"),
+	"local.version": value("3", "localcfg.ConfigVersion"),
 	// The Issues section's nudge thresholds (T-IS15): the loader answers the
 	// constants for a file that sets neither, through the accessors rather
 	// than the fields, so "the file wrote nothing" and "the file wrote the

@@ -317,6 +317,16 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "repos.acme/app.claude_accounts gains it",
 		seed:    closedStdinRepoAddSeed,
 	},
+	// The cascade's own write (K1): one member of the credentials cascade into
+	// this installation's own config, which is the carrier the project's
+	// published node is filled from. `oauth-only` is the narrowing value, so
+	// what stands between the bare run and the write is the flag itself and not
+	// the agent session's refusal (D2617); the sentence is the member as the file
+	// spells it.
+	"fugaro accounts cascade set": {
+		args:    []string{"--fallback", "oauth-only"},
+		reaches: "write the credentials cascade: fallback = oauth-only",
+	},
 	"fugaro settings set":   {args: []string{"base_branch", "main"}, reaches: "write base_branch in"},
 	"fugaro settings unset": {args: []string{"base_branch"}, reaches: "remove base_branch from", seed: closedStdinSetBaseBranch},
 	// The two workflow writes are repository-scoped, so their fixture's world
@@ -542,7 +552,9 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro workspace member add": {args: []string{"ws", "acme/app"}},
 	"fugaro workspace member rm":  {args: []string{"ws", "acme/app"}},
 	"fugaro workspace rm":         {args: []string{"ws"}},
+	"fugaro workspace share":      {args: []string{"anthropic-api-key", "--workspace", "ws", "--projects", "acme"}},
 	"fugaro workspace show":       {args: []string{"ws"}},
+	"fugaro workspace unshare":    {args: []string{"anthropic-api-key", "--workspace", "ws"}},
 }
 
 // closedStdinNoFixture is the other half of the classification, and the reason
@@ -571,6 +583,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro apply":             "owes nothing in this world, which holds no record: the whole of what a bare run does is the answer of a run with nothing to apply, and it reaches its own body to print it",
 	"fugaro accounts":          "is a name for the twelve subcommands beside it: a bare run prints its own usage and returns",
 	"fugaro accounts alias":    "is a name for set and rm: a bare run prints its own usage and returns",
+	"fugaro accounts cascade":  "is a name for set: a bare run prints its own usage and returns",
 	"fugaro accounts craft":    "is a name for set and rm: a bare run prints its own usage and returns",
 	"fugaro accounts grade":    "is a name for set: a bare run prints its own usage and returns",
 	"fugaro accounts repo":     "is a name for add: a bare run prints its own usage and returns",

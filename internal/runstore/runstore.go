@@ -246,6 +246,20 @@ type ReviewSummary struct {
 	// for the cheap loop after the first one, and so on. Always 0 on a
 	// senior (tier "" or "senior") review.
 	Bounce int `json:"bounce,omitempty"`
+	// Against is what this round was checked against: the task the pull
+	// request was written for, or the spec a launcher wrote (spec §2, R8).
+	// It is the same record the independent review job's artifact carries
+	// (Against, review.json's against), so a reader that wants to know
+	// whether a verdict judged the change against a brief reads one object
+	// in both — and, as there, it is a CLAIM and never evidence (R16).
+	//
+	// Every round carries one: a round with no brief to check against
+	// records source none with the reason, so a code-only review says so in
+	// its own record rather than leaving a reader to guess. Absent on a
+	// round written before the field existed, which is every record an
+	// older release wrote; the field is additive, so such a record stays
+	// valid and version stays 1.
+	Against *Against `json:"against,omitempty"`
 }
 
 // Review tiers (ReviewSummary.Tier).
@@ -572,7 +586,7 @@ type ToleratedFinding struct {
 	Label rigor.Label `json:"label"`
 	// Mode is the mode that tolerated the finding: the run's resolved mode,
 	// which is one value (D9, D22).
-	Mode rigor.Mode `json:"mode"`
+	Mode rigor.Rigor `json:"mode"`
 	// Likelihood, Impact, FixCost and Class are the score the mode's table
 	// read, as the reviewer wrote it (D3).
 	Likelihood int         `json:"likelihood"`
@@ -649,7 +663,7 @@ type AcceptedFindings struct {
 	Total int `json:"total"`
 	// Mode is the mode the run resolved, which is the mode whose stop row
 	// accepted them (one value, D9, D22).
-	Mode rigor.Mode `json:"mode"`
+	Mode rigor.Rigor `json:"mode"`
 	// Round is the review round whose findings were accepted: the deciding
 	// level's last round, which is the round readiness read.
 	Round int `json:"round"`
@@ -667,7 +681,7 @@ type AcceptedFindings struct {
 // facts beside the entries are read here as well: a round is at least 1 and the
 // half is one of the two the schema closes on, so a caller cannot store a
 // block whose reason a reader cannot place.
-func NewAccepted(mode rigor.Mode, round int, at string, findings []ToleratedFinding) *AcceptedFindings {
+func NewAccepted(mode rigor.Rigor, round int, at string, findings []ToleratedFinding) *AcceptedFindings {
 	if round < 1 || (at != StopRoundsSpent && at != StopTimeThreshold) {
 		return nil
 	}
@@ -907,7 +921,7 @@ type TriageRound struct {
 	// Mode is the mode reached at this round (F14): the mode's persona is what
 	// the judge was asked from, and it is not necessarily the run's starting
 	// mode.
-	Mode rigor.Mode `json:"mode"`
+	Mode rigor.Rigor `json:"mode"`
 	// Level is the review level in force at the round (internal/policy's
 	// vocabulary, D1847).
 	Level policy.Level `json:"level"`

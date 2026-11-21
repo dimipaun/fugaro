@@ -501,7 +501,7 @@ const rigorQuestionLead = "the project's rigor mode decides how much review ever
 // (rigor.DefaultLevels) and the rounds it spends (rigor.DefaultRounds) — so the
 // question cannot describe a mode as anything other than what a run of it does.
 type rigorChoice struct {
-	mode rigor.Mode
+	mode rigor.Rigor
 	cost string
 }
 
@@ -568,7 +568,7 @@ func rigorReviewWords(l rigor.Levels) string {
 // rigorAnswerModes is the list a near miss is refused with: the modes this
 // question accepts, in the order it prints them (rigorChoices).
 //
-// It is not rigor.ModeList(), which is the whole vocabulary with hotfix in it:
+// It is not rigor.RigorList(), which is the whole vocabulary with hotfix in it:
 // hotfix is the one value this question refuses a line below, so a refusal that
 // named it would send the reader to a second refusal. Taking the list off the
 // table the question prints is also what keeps the two from drifting — a mode
@@ -588,8 +588,8 @@ func rigorAnswerModes() string {
 // operator's own per-run mode, so no layer sets it, and the refusal is D834's
 // sentence — the one `fugaro rigor set` gives it (rigorHotfixRefusal, rigor.go)
 // rather than a second spelling of it.
-func setupRigorMode(v string) (rigor.Mode, error) {
-	mode := rigor.Mode(strings.TrimSpace(v))
+func setupRigorMode(v string) (rigor.Rigor, error) {
+	mode := rigor.Rigor(strings.TrimSpace(v))
 	if !rigor.Known(mode) {
 		return "", errors.New("not a rigor mode: use " + rigorAnswerModes())
 	}

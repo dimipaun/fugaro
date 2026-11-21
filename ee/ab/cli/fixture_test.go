@@ -248,7 +248,7 @@ func (f *abFixture) seedPair(t *testing.T, pairID, startID, mode, tr, championMo
 			StartSHA: "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f", HeadSHA: "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
 			AB:     &task.AB{PairID: pairID, Arm: arm, Challenger: challengerModel, ChallengerSource: task.ABChallengerOwner},
 			Recipe: &runstore.RecipeRecord{Name: "default", Source: "catalog", SHA256: "abababababababababababababababababababababababababababababababab"},
-			Rigor:  &runstore.RigorRecord{Mode: rigor.Mode(mode)},
+			Rigor:  &runstore.RigorRecord{Level: rigor.Rigor(mode)},
 			Tier:   &runstore.TierRecord{Tier: tier.Tier(tr)},
 			Verify: []verify.Record{{Kind: verify.KindTest, HeadSHA: "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e", CleanTree: true, Passed: true}},
 			Stages: []runstore.StageTiming{{Name: "implement", Model: model}},

@@ -290,9 +290,42 @@ const (
 // scope key of `fugaro.yaml`, read from the base branch, and the `agent.` prefix
 // reaches it — the shape `agent.triage` beside it has — so the allowlist carries
 // one key more and the rows without a generic writer do not move.
+//
+// RA8b of the same work moved both by one again: the switch's local carrier,
+// the top-level `review_against_task` the owner's own file states and the
+// publish copies into the policy node (R7, D2935), is a row `settings set`
+// writes — the file is the machine's own, the shape the `triage` row above it
+// has — so the named list carries one key more rather than reaching it by
+// prefix.
+//
+// WS3 of docs/workspace-service/ is the last mover, by six rows and by none:
+// the member's pin gains the address its runs call the workspace's credentials
+// service at (R3), the member row gains where its database lives and splits its
+// job service accounts into the account and the repositories it is a job of (R6,
+// D2992), and the owner's shared list is three rows of its own (D1298). All six
+// name the `workspace` family, whose writer is `fugaro workspace` and never the
+// generic path (D853), so the allowlist carries no key of them and the rows
+// without a generic writer move by the six.
+//
+// W3 of docs/config-ownership is the last mover, by two names and by none: the
+// repository's `workflows.*.needs` (R1) and `workflows.*.ab.reviewer_arm` (B1.4)
+// are rows whose owner column named the generic writer while no name in the
+// allowlist reached them, so a concrete spelling was refused by the path its own
+// row pointed at (F13), and naming the two is the whole of what makes a write
+// land on them. `mobile_allow` — the block a person declares a phone in (D231,
+// D2603) — is the third name and it moves no figure: the registry holds the
+// three `mobile_allow.*` leaf rows and no row for the block, so the block is
+// admitted by its own name and the row an entry write is about is built from its
+// leaves rather than counted here.
+// LP0 of docs/location-preference/ is the last mover, by four rows and by none:
+// the local project config gains the `locations` block, the record of where this
+// machine read the installation's Firestore database, its Realtime Database, the
+// replication of its secret containers and its run-log bucket to be (D3087), and
+// it is one machine's own — never published, never an input — so no name and no
+// prefix in the allowlist reaches any of its four rows.
 const (
-	cfmRegistryRows   = 506
-	cfmAllowlistNamed = 118
+	cfmRegistryRows   = 517
+	cfmAllowlistNamed = 121
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

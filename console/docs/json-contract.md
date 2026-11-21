@@ -649,37 +649,48 @@ reads:
 | `artifact_count` | int | **yes** | what an artifact run's record says it delivered; absent for every run that has none, and the count `runs ls`'s `ARTIFACTS` column shows — its total is `artifact_bytes` |
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
 | `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
-| `rigor` | `*runstore.RigorRecord` | **yes** | the mode the run resolved, the layer that won and the areas that matched (docs/rigor-modes D22, D24, D25): `mode`, `from`, `areas`, `at` and `revision` below. **Absent for a run that resolved none** — a record written before the field existed, a run that died before bootstrap, or a block that cannot be read as a decision — and absence means **"no record of this run's rigor"**, never "it resolved nothing" (the `-` cell of `runs ls`'s `MODE` column) |
+| `rigor` | `*runstore.RigorRecord` | **yes** | the level the run resolved, the layer that won and the areas that matched (docs/rigor-modes D22, D24, D25): `level` and `mode` — the one value under the axis's two keys — then `from`, `areas`, `at` and `revision` below. **Absent for a run that resolved none** — a record written before the field existed, a run that died before bootstrap, or a block that cannot be read as a decision — and absence means **"no record of this run's rigor"**, never "it resolved nothing" (the `-` cell of `runs ls`'s `MODE` column) |
 | `owner_decisions` | `*runstore.OwnerDecisions` | **yes** | what the run's review left for the repository's owner to settle (OD1): `decisions` (each one `file`° and `summary`, below) and `total`. **Absent for a run that left none** — every run whose review named no such finding, every run that stopped for its own reason, and every record written before the field existed — and absence means **"nothing is pending"**, never "the review had nothing to say" (the row's `reason` says the same sentence, and the `halt.reason` of `owner_decision` is the other half of the same fact where the loop stopped on the finding) |
 
-**`rigor` is the mode the run resolved, and it is read from the base branch.**
-The block is one decision (docs/rigor-modes D24), carrying the mode, the layer
+**`rigor` is the level the run resolved, and it is read from the base branch.**
+The block is one decision (docs/rigor-modes D24), carrying the level, the layer
 that decided it (`area`, `repo`, `project`, `default` or `request` — never
 `reached`, which is the resolver's answer to a later moment asking again and
 which the fold replaces with the earlier, narrower reason), every area rule
-that matched with the mode it sets and the moment it was first applied at
+that matched with the level it sets and the moment it was first applied at
 (`bootstrap`, `round` or `finalize` — D22's three moments) and the revision the
-configuration was read from. The mode's configuration comes from the **base
+configuration was read from. The level's configuration comes from the **base
 branch** for every run kind (D25), so a run's other keys may come from the
 checked-out ref while its rigor comes from what it will merge into: `revision`
 is how a reader tells those apart, and it is written either way. The block is
-D22's monotone fold — a later moment never lowers the mode, and the moment it
+D22's monotone fold — a later moment never lowers the level, and the moment it
 names is the last one that changed the block.
+
+**The level is carried under two keys (LD2).** The axis is spelled `level` now
+— in `fugaro.yaml`, in the project layer and in everything a person reads — and
+`mode` is the name it went by before, which stays because this block is a wire
+shape a reader outside the CLI's binary consumes and **a field never changes
+meaning** (CLAUDE.md). Every block this runner writes carries both, with the
+same value; a record written by a CLI before LD2 carries `mode` alone. A reader
+therefore **prefers `level` and falls back to `mode`** — `runstore.RigorRecord`'s
+`LevelOf` on the Go side, `readRigor` in `console/src/shared/rigor.ts` here —
+and the record's own `version` stays 1: the key was added, never retyped.
 
 | Field | Type | omitempty | Note |
 |---|---|---|---|
-| `mode` | string | no | the resolved mode: `poc`, `startup`, `pro`, `critical` or `hotfix` (`pro` is Fugaro's built-in default, D19) |
-| `from` | string | no | the layer that decided it; **never `reached`**, which is the resolver holding an earlier moment's mode (D22) — the fold keeps the layer that actually set it (D24's "the layer that won"), so a block that says `reached` is not one this runner writes and `Bounded` refuses it |
-| `areas` | `[]object` | **yes** | every rule that matched, **strictest first** (D23) and at most `rigor.MaxAreas` = **100** of them, each `name` (the rule's own name), `mode` (the mode that rule sets) and `at` (the moment it was first applied). **Absent when none matched** — a reader must not see "there were rules" where the answer is "there were none". The order is one the record establishes, not one it is handed: `Applied` sorts when it folds a moment in and `Bounded` sorts a block the job wrote, so the first entry is the rule whose mode decided — the one `runs ls`'s `MODE` column names |
+| `level` | string | no | the resolved level: `poc`, `startup`, `pro`, `critical` or `hotfix` (`pro` is Fugaro's built-in default, D19). It is the same fact as `mode` beside it on every block this runner writes; **LD2** |
+| `mode` | string | no | the same level under the name this axis had before LD2, written beside `level` with the same value. A block written before the rename carries this one alone, which is why a reader prefers `level` and falls back to it |
+| `from` | string | no | the layer that decided it; **never `reached`**, which is the resolver holding an earlier moment's level (D22) — the fold keeps the layer that actually set it (D24's "the layer that won"), so a block that says `reached` is not one this runner writes and `Bounded` refuses it |
+| `areas` | `[]object` | **yes** | every rule that matched, **strictest first** (D23) and at most `rigor.MaxAreas` = **100** of them, each `name` (the rule's own name), `level` and `mode` (the level that rule sets, under the two keys the block carries it under) and `at` (the moment it was first applied). **Absent when none matched** — a reader must not see "there were rules" where the answer is "there were none". The order is one the record establishes, not one it is handed: `Applied` sorts when it folds a moment in and `Bounded` sorts a block the job wrote, so the first entry is the rule whose level decided — the one `runs ls`'s `MODE` column names |
 | `at` | string | no | the moment of the resolution the block records: the last one that changed it |
 | `revision` | string | **yes** | where the configuration was read from, `origin/<base branch>`; absent when the run could not name it |
 
 **The reader bounds it again.** The block is job-writable, so `runview.Join`
 does not pass it through as written: `RigorRecord.Bounded` refuses a block
-whose mode, layer or moment is outside its vocabulary — the row then carries no
+whose level, layer or moment is outside its vocabulary — the row then carries no
 block, the same answer as a record that has none — and re-applies the caps
 (`rigor.MaxAreas` rules, `rigor.MaxAreaName` = 40 runes a name, 120 runes of
-revision), dropping an area whose own mode or moment is unreadable, and sorting
+revision), dropping an area whose own level or moment is unreadable, and sorting
 the rules strictest first before it caps them, so the rules that survive are the
 strictest ones and the first of them is the rule a reader names. A tampered
 `result.json` therefore reaches the console as no block or as a bounded one,
@@ -2727,6 +2738,14 @@ registry (D1102).
 | `owner` | string | never | never | the command that writes the key (`settingsOwnerCommands`, `internal/cli/settings_read.go`, D1178): `fugaro settings set` on a row the generic path writes, the family that writes one it does not (`fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`, `fugaro workspace`, `fugaro image map`), and, for a key no command edits, a sentence naming the command that carries its file — `fugaro setup` and `fugaro update` for the installation's own keys, `fugaro config publish` for a key the layer file states and `fugaro config init` for one the repository's own file is opened with. **A `writable: false` row never spells the generic writer**: the write is what decides (D1102), and a row whose owner were `fugaro settings set` would say a command writes a key it has just refused. **`""` is a row no command writes** — the literal `*` of a wildcard row, which `settings set` writes only in its concrete spellings — and it is also what a CLI that predates D1178 wrote on every row it did not name, so a consumer treats the empty and the absent member the same way, and the screen draws this member only on a row `writable: false` — which is the one member a screen's drawing turns on |
 | `target_layer` | string | never | never | the layer a write with **no** `--layer` lands in: the narrowest of `repo`, `project` and `local` the key may be set in (`settingsDefaultLayer`, `internal/cli/settings_set.go`), and the layer the console passes back as `--layer` — what the window showed is what is spawned (D1105). **It is a fact about the key and not about the generic path's allowlist**, so it is **non-empty on a row the generic path refuses**: `mailbox.keychain_item` is `writable: false` with `owner: fugaro secrets` and `target_layer: "local"`. `""` is a key none of the three layers holds, which is a row no edit may target — a document from a CLI older than D1102 carries no such member at all, and it reads the same — and **empty is not a layer a screen can pass**: such a row gains no pencil, whatever `writable` says |
 | `levels` | array of level rows | **yes** | never | one row per layer that sets the key, for `--why`. Absent when the read did not compute them |
+| `label` | string | **yes** | never | the setting's human-readable name, at most six words (`settings.Meta.Label`, D2908) |
+| `description` | string | **yes** | never | one sentence saying what the setting does (`settings.Meta.Description`) |
+| `group` | string | **yes** | never | the accordion group the setting is filed under, one of `settings.MetaGroups` in the order the console draws the panels: `Runs`, `Budget`, `Repositories`, `Workflows`, `Profiles`, `Credentials`, `Reviews`, `Follow-ups`, `Watching`, `This machine` |
+| `type` | string | **yes** | never | the control the value calls for (`settings.MetaTypes`): `string`, `bool`, `int`, `float`, `duration` or `enum` |
+| `enum` | array of string | **yes** | never | the closed set of values a `type: enum` row accepts, in the order a select draws them. Absent on every other type |
+| `min` | string | **yes** | never | the low bound of an `int`, `float` or `duration` value, in the value's own spelling (`0`, `0.5`, `5m`). Absent when the key has no bound on that side, and on every other type |
+| `max` | string | **yes** | never | the high bound, spelled as `min` is |
+| `format` | string | **yes** | never | the shape the CLI already validates for a string value (`settings.MetaFormats`, less its empty member): `duration`, `repo` (`owner/name`), `email`, `url` (an https clone URL), `memory` (`512Mi`) or `branch` |
 
 **The default block is the built-in default, and exactly one of its two
 spellings is set:**
@@ -2744,6 +2763,24 @@ spellings is set:**
 | `layer` | string | never | never | the layer's own name |
 | `value` | string | never | never | what that layer gives the key |
 | `outcome` | string | never | never | that layer's part in the result (`wins`, and the tightening or union rules of the keys whose layers combine) |
+
+**The eight metadata members describe the setting to a person, and all eight are
+optional** (D2908): `label`, `description`, `group` and `type` are what
+`internal/settings`' metadata table answers for the key, `enum` is the closed set
+a `type: enum` row accepts, `min` and `max` bound an `int`, `float` or `duration`
+value, and `format` names the shape the CLI already validates for a string. They
+are members **added within version 1** (D848) — a document an older CLI wrote
+carries none of them and is the same document — and the table behind them is
+deliberately sparse: only the keys that have metadata write them, and a key
+without metadata writes none of the eight. **A missing member means the console
+falls back to the key and a text control**: the raw key drawn under the console's
+own "Other" group, and a plain text field for a value whose `type` the CLI never
+named (SU1 of the console-improvements plan). The four a control branches on are
+written together or not at all — `settings.Register` refuses an entry missing its
+label, its description, its group or its type — while `enum` is written on a
+`type: enum` row alone and `min`/`max` on a bounded `int`, `float` or `duration`
+row alone, each in the value's own spelling because that is the spelling
+`settings set -- <VALUE>` takes.
 
 **The three writability members are the whole point of the console's half**
 (D1102), and they are the reason no list of the generic path's keys is kept in

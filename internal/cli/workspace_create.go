@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -117,6 +120,20 @@ func workspaceConfirmLeft() initflow.Left {
 // created.
 func workspaceAccount(project string) string {
 	return tf.WorkspaceServiceAccountID + "@" + project + ".iam.gserviceaccount.com"
+}
+
+// workspaceIAMAccount is the address of the SA fallback's IAM account: the
+// SECOND account this stage's root creates (WU3 of the workspace-projects-users
+// plan, D2803), which Terraform grants nothing and which a member's owner later
+// gives roles/owner on their own project (WU20). It is named wherever the stage
+// says what it creates, because on an installation that is already converged —
+// the service account and its grant are in the cloud — this account is the ONLY
+// change the plan carries: a sentence naming the service account alone asks the
+// owner to type their project's name for a change it never described, and the
+// account it leaves out is the one that ends up holding authority over every
+// linked member.
+func workspaceIAMAccount(project string) string {
+	return tf.WorkspaceIAMAccountID + "@" + project + ".iam.gserviceaccount.com"
 }
 
 // declared is whether this installation is a workspace's own, and where it is
@@ -257,11 +274,11 @@ func (s *workspaceProjectStage) Check(ctx context.Context) (initflow.Status, err
 }
 
 // workspaceProjectTodo is what the stage says when it has something to do, in
-// Check and in the plan view: the account and the grant, with the root's own
-// name for what reaches what.
+// Check and in the plan view: the root's two accounts and the one grant, with
+// the root's own name for what reaches what.
 func workspaceProjectTodo(lc *localcfg.Config) string {
-	return fmt.Sprintf("the workspace's own service account %s and its one grant %s on %s are planned when applied",
-		workspaceAccount(lc.GCPProject), tf.WorkspaceDatabaseRole(lc.GCPProject), lc.GCPProject)
+	return fmt.Sprintf("the workspace root's two accounts (the workspace's own service account %s and the SA fallback's IAM account %s) and the one grant %s on %s are planned when applied",
+		workspaceAccount(lc.GCPProject), workspaceIAMAccount(lc.GCPProject), tf.WorkspaceDatabaseRole(lc.GCPProject), lc.GCPProject)
 }
 
 // workspaceProjectSkip is why this installation has no workspace's own project
@@ -322,12 +339,13 @@ func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (init
 	}
 	project := s.e.lc.GCPProject
 	account := workspaceAccount(project)
+	iamAccount := workspaceIAMAccount(project)
 	if plan == nil {
 		fmt.Fprintf(s.e.r.w, "No changes: the workspace's own service account %s holds %s on %s.\n", account, tf.WorkspaceDatabaseRole(project), project)
 		return initflow.Outcome{Detail: "the workspace's own service account and its one grant are already there"}, nil
 	}
 	fmt.Fprint(s.e.r.w, tf.Summary(plan))
-	confirmed, reachable, err := s.e.r.askTyped(fmt.Sprintf("creates the workspace's own service account %s in GCP project %s and grants it %s on that project's database (%s): the account is the one identity that reaches the workspace's database, because the database's rules deny every client — and it is a GRANT, so no flag confirms it; %s)", account, project, tf.WorkspaceDatabaseRole(project), counts.String(), initflow.AgentAdvice))
+	confirmed, reachable, err := s.e.r.askTyped(fmt.Sprintf("creates the workspace's own service account %s in GCP project %s and grants it %s on that project's database (%s), and creates the SA fallback's IAM account %s, which this root grants nothing: the service account is the one identity that reaches the workspace's database, because the database's rules deny every client — and it is a GRANT, so no flag confirms it; %s)", account, project, tf.WorkspaceDatabaseRole(project), counts.String(), iamAccount, initflow.AgentAdvice))
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
@@ -342,8 +360,8 @@ func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (init
 	}
 	s.applied = true
 	s.e.r.res.Applied = true
-	fmt.Fprintf(s.e.r.w, "created the workspace's own service account %s and its one grant (%s on %s)\n", account, tf.WorkspaceDatabaseRole(project), project)
-	return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("applied: %s (the workspace's own service account %s)", counts.String(), account)}, nil
+	fmt.Fprintf(s.e.r.w, "created the workspace root's two accounts and its one grant: the workspace's own service account %s, the SA fallback's IAM account %s, and %s on %s\n", account, iamAccount, tf.WorkspaceDatabaseRole(project), project)
+	return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("applied: %s (the workspace's own service account %s and the SA fallback's IAM account %s)", counts.String(), account, iamAccount)}, nil
 }
 
 // Verify re-reads what the apply claims: a fresh plan of the same root over the
@@ -393,15 +411,70 @@ func (s *workspaceProjectStage) readPlan(ctx context.Context, guard bool) (*tf.P
 	return plan, &counts, nil
 }
 
-// guard is this root's cover: the plan is the workspace's own role, its
-// service account and that account's one grant, and nothing else.
-// tf.WorkspaceNotCovered answers what of
-// the plan is not, so the message can name it rather than say "refused".
+// guard is this root's cover: the plan is the workspace's own role, its two
+// accounts (its service account and the SA fallback's IAM account), that
+// service account's one grant on the workspace's database, the
+// workspace's own credentials service, its ONE bundle accessor and its members'
+// invoke grants, and nothing else. tf.WorkspaceNotCovered answers what of the
+// plan is not, so the message can name it rather than say "refused".
+//
+// Its hand-written arguments are the half of the plan a reader outside it has
+// to supply, because none of them is a value any plan carries: the workspace's
+// own bundle container is DERIVED from the workspace's name
+// (credsvc.WorkspaceBundleSecretID — the same container this project's own
+// installation already holds every model credential in), the members' job
+// accounts are the owner's member table, which is this machine's config and not
+// terraform's, and the image identity the service is held to is the recorded
+// owner's released pin (workspaceImageCover). A rule that read any of them out
+// of the plan would accept whatever the plan named.
 func (s *workspaceProjectStage) guard(plan *tf.Plan) error {
-	if why := tf.WorkspaceNotCovered(plan, s.e.lc.GCPProject, tf.WorkspaceServiceAccountID); len(why) > 0 {
-		return userErr("the workspace root's plan is not the workspace's own role, its service account and that account's one grant on the workspace's database (%s); nothing was applied, and a plan that carries anything else is not this root's to apply: read it with terraform in %s", strings.Join(why, "; "), s.dir)
+	cover := workspaceImageCover(s.e.lc)
+	project := s.e.lc.GCPProject
+	why := cover.WorkspaceNotCovered(plan, project, tf.WorkspaceServiceAccountID,
+		credsvc.WorkspaceBundleSecretID(s.e.lc.Name), workspaceMemberAccounts(s.e.lc))
+	if len(why) > 0 {
+		return userErr("the workspace root's plan is not the workspace's own role, its two accounts (the workspace's own service account %s and the SA fallback's IAM account %s) and the one grant that binds the service account to %s's database, its own credentials service with the ONE bundle accessor and the members' invoke grants (%s); nothing was applied, and a plan that carries anything else is not this root's to apply: read it with terraform in %s",
+			workspaceAccount(project), workspaceIAMAccount(project), project, strings.Join(why, "; "), s.dir)
 	}
 	return nil
+}
+
+// workspaceImageCover is the image identity the workspace root's cover holds its
+// service to: the registry, the remote (pull-through) repository and the owner
+// this machine's config records — tf.Cover's own three fields, built the way
+// init's review and managedCover build them, so the workspace's service is held
+// to the same pin shape an installation's credentials service is
+// (tf.Cover.credentialsImageOK). The owner is the half of that pin no plan
+// holds and no tfvars may choose: an operator holds
+// roles/artifactregistry.writer on this project's own repositories, so a
+// reference whose owner was read out of the reference itself would admit the
+// code of whoever pushed it, run as the account that reads every model
+// credential the workspace holds.
+func workspaceImageCover(lc *localcfg.Config) tf.Cover {
+	c := tf.Cover{Ghcr: infra.GhcrRegistry, Owner: baseOwner(lc)}
+	if host, err := infra.RegistryHost(lc); err == nil {
+		c.Registry, _, _ = strings.Cut(host, "/")
+	}
+	return c
+}
+
+// workspaceMemberAccounts is the member table's job accounts, in one flat list:
+// the principals the workspace root's cover admits an invoke grant to (F17), and
+// the same set the root's own `members` variable makes a grant per. An entry
+// that names no account contributes nothing, and a config that declares no
+// workspace members at all — every installation that is not a workspace's own —
+// answers an empty list, which is a plan that may hold no invoke grant.
+func workspaceMemberAccounts(lc *localcfg.Config) []string {
+	if lc.WorkspaceMembers == nil {
+		return nil
+	}
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(*lc.WorkspaceMembers)) {
+		for _, a := range (*lc.WorkspaceMembers)[name].JobAccounts {
+			out = append(out, a.Account)
+		}
+	}
+	return out
 }
 
 // prepare writes the workspace workdir's tfvars and backend and inits it.

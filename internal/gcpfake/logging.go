@@ -134,6 +134,39 @@ func (l *Logging) AddBucket(project, location, id, state, description string) {
 
 var logBucketRE = regexp.MustCompile(`^/v2/(projects/[^/]+/locations/[^/]+/buckets/[^/:]+)$`)
 
+// logBucketsRE is the listing's parent: projects/<p>/locations/<l>, with <l>
+// possibly "-", which is every location.
+var logBucketsRE = regexp.MustCompile(`^/v2/(projects/[^/]+/locations/[^/]+)/buckets$`)
+
+// listBuckets answers a log bucket listing. A parent naming "-" as its
+// location lists the buckets in every location, which is what a reader that
+// does not know where its bucket is sends (fugaro update reads the
+// installation's log bucket that way, plan location-preference LP7).
+func (l *Logging) listBuckets(w http.ResponseWriter, parent string) {
+	p := strings.Split(parent, "/")
+	prefix, location := "projects/"+p[1]+"/locations/", p[3]
+	l.mu.Lock()
+	names := make([]string, 0, len(l.buckets))
+	for name := range l.buckets {
+		if !strings.HasPrefix(name, prefix) || (location != "-" && !strings.HasPrefix(name, prefix+location+"/")) {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]any, 0, len(names))
+	for _, name := range names {
+		b := l.buckets[name]
+		body := map[string]any{"name": name, "lifecycleState": b.state, "retentionDays": 30}
+		if b.description != "" {
+			body["description"] = b.description
+		}
+		out = append(out, body)
+	}
+	l.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"buckets": out})
+}
+
 // getBucket answers a log bucket's get.
 func (l *Logging) getBucket(w http.ResponseWriter, name string) {
 	l.mu.Lock()
@@ -309,6 +342,10 @@ func resourceProject(name string) string {
 }
 
 func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
+	if m := logBucketsRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {
+		l.listBuckets(w, m[1])
+		return
+	}
 	if m := logBucketRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {
 		l.getBucket(w, m[1])
 		return

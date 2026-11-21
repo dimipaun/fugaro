@@ -39,7 +39,15 @@ var errDaemonDied = errors.New("the daemon died here")
 
 func (c crashLauncher) Launch(ctx context.Context, spec orchestrator.Spec, runID string) (string, error) {
 	if c.stored {
-		if _, _, err := c.real.prepare(ctx, spec, runID); err != nil {
+		// The two steps of the real Launch this launcher takes before it dies,
+		// in its order: the brief is built first — for an item that came from an
+		// issue, that is the ticket read back and checked — and then the task is
+		// stored.
+		brief, err := c.real.briefForAttempt(ctx, spec, runID)
+		if err != nil {
+			return "", err
+		}
+		if _, _, err := c.real.prepare(ctx, spec, brief, runID); err != nil {
 			return "", err
 		}
 	}

@@ -773,7 +773,7 @@ stop_fake_gcp() {
 # that stops on a diff is this shape having come loose from the CLI's.
 write_scratch_config() {
   cat >"$SCRATCH_CONFIG/fugaro/projects/$SCRATCH_PROJECT.yaml" <<CONFIG_EOF
-version: 2
+version: 3
 name: $SCRATCH_PROJECT
 gcp_project: $SCRATCH_PROJECT
 region: $SCRATCH_REGION

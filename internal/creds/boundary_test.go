@@ -179,6 +179,63 @@ func TestBoundaryDeniesRunsTheRepoAuthRecord(t *testing.T) {
 // and the Bitbucket shape a task's own slug has.
 var boundarySlugs = []string{"gh-acme-app-1a2b", "bb-acme-web-9f8e"}
 
+// TestRoutePathIsGrantedInTheDeployedRules: the pair above is a denial — the
+// document grants a run's token nothing on the path the code builds — and this
+// is its converse, for the one path of this package that a run's own token MUST
+// reach. The route record says which service serves a repository's model, GitHub
+// and Bitbucket credentials (C2), and the run reads it once at bootstrap and
+// mints an identity token for the address it names (WS11): a document that
+// refuses that read leaves every run of a member that pinned a workspace served
+// by the project, silently, which is the failure R3 exists to prevent.
+//
+// What the grant may be is as narrow as the denial is wide: the leaf is per
+// repository — a read on the parent would hand every repository's address to
+// every run — and the read holds the record to the token's own slug claim, which
+// is the same escape RoutePath keys the node with, so one repository's run never
+// reads another's. WS22 wrote the rule and this test is the guard the wire
+// contract asks for (docs/workspace-service/contract-wire.md, "The import
+// boundary this contract crosses"): it holds a non-Go spelling — the template's
+// path, through the document the golden pins — to the constant here, and it
+// lives in this package because the package whose file the template is cannot
+// import this one (credsImporters).
+func TestRoutePathIsGrantedInTheDeployedRules(t *testing.T) {
+	rules := rulesDocument(t)
+	for _, slug := range boundarySlugs {
+		path := RoutePath(slug)
+		node, ok := rulesNodeAt(rules, path)
+		if !ok {
+			t.Fatalf("the rules document carries no node at /%s: the record's home is a policy-side leaf a run reads its own route from, and RTDB grants nothing at a path no rule names (WS22, R3, R4)", path)
+		}
+		cond, _ := node[".read"].(string)
+		if cond == "" {
+			t.Errorf("the rules document grants no read of /%s, so a run of this repository is served by the project and never learns its route (R3, F23)", path)
+		} else if !strings.Contains(cond, "auth.token.fs == $slug") {
+			t.Errorf("the read of /%s is %q, which does not hold the record to the run's own slug claim (auth.token.fs == $slug): a read granted without it admits every repository's run, or none, to an address a run mints an identity token for", path, cond)
+		}
+		if v, has := node[".write"]; !has || v != false {
+			t.Errorf("/%s carries .write = %#v, want the explicit false: no token but the member's admins' writes the route, and a client that could write one would point a later run at a service of its own (F23, R4, D2981)", path, v)
+		}
+	}
+	// The parent is where a grant would cascade from, so it carries none: it is
+	// the member's own update that walks it to remove the records of the
+	// repositories it no longer publishes.
+	assertDenied(t, rules, RoutePathParent(), "a read granted on the parent cascades to every repository's record")
+}
+
+// rulesNodeAt walks a path the code builds through the document and returns the
+// node its last segment reaches, false when the document says nothing about it.
+func rulesNodeAt(rules map[string]any, path string) (map[string]any, bool) {
+	node := rules
+	for _, segment := range strings.Split(path, "/") {
+		next, ok := rulesChildAt(node, segment)
+		if !ok {
+			return nil, false
+		}
+		node = next
+	}
+	return node, true
+}
+
 // rulesDocument is the rules document the generator produces, read from the
 // golden that pins it (internal/budget/rules/testdata/rules.golden.json, which
 // TestCredsIsDeniedByAnExplicitNode holds the generated document to).

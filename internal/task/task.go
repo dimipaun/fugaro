@@ -358,7 +358,7 @@ type Spec struct {
 	// Validate below, by the launcher before it writes anything, and by the
 	// resolver's own Known — a near miss is a launcher's bug, not a run's
 	// opinion about its own rigor.
-	Rigor rigor.Mode `json:"rigor,omitempty"`
+	Rigor rigor.Rigor `json:"rigor,omitempty"`
 	// Paths are the paths the run declares it will touch (fugaro run --path,
 	// repeatable): D22's first moment, where the area rules are matched
 	// before any of the work is done. Nil for every launch that declares
@@ -716,7 +716,7 @@ var Importances = []Importance{ImportanceImportant, ImportanceMinor}
 func KnownImportance(i Importance) bool { return slices.Contains(Importances, i) }
 
 // ImportanceList is Importances as a message names the vocabulary, the way
-// rigor.ModeList and tier.List are read by a refusal.
+// rigor.RigorList and tier.List are read by a refusal.
 func ImportanceList() string {
 	names := make([]string, len(Importances))
 	for i, im := range Importances {
@@ -1223,7 +1223,7 @@ type ProjectLayer struct {
 
 // ABArm, ABPublish, ABChallengerSource and ABSlot are the pair block's four
 // closed vocabularies. Each is a named string type with one exported list, as
-// rigor.Mode and tier.Tier are, because a near miss is a launcher's bug
+// rigor.Rigor and tier.Tier are, because a near miss is a launcher's bug
 // rather than a run's opinion about which arm it is — and a named type is
 // what keeps an arbitrary string out of a field the schemas pin to an enum.
 type (
@@ -1264,7 +1264,7 @@ const (
 )
 
 // ABArms, ABPublishes, ABChallengerSources and ABSlots are each whole
-// vocabulary, closed the way rigor.Modes and tier.Tiers are: a value outside
+// vocabulary, closed the way rigor.Rigors and tier.Tiers are: a value outside
 // one is refused where it is written, never matched as an unknown arm later.
 var (
 	ABArms              = []ABArm{ABArmChampion, ABArmChallenger}
@@ -1844,7 +1844,7 @@ func (s *Spec) Validate() error {
 	// the run then refuses at bootstrap), and an absent request is legal —
 	// it is what every launch without the flags carries.
 	if s.Rigor != "" && !rigor.Known(s.Rigor) {
-		bad("task spec: rigor %q must be one of %s or empty", s.Rigor, rigor.ModeList())
+		bad("task spec: rigor %q must be one of %s or empty", s.Rigor, rigor.RigorList())
 	}
 	// The expectation envelope's own two fields (T8.1): the tier's vocabulary
 	// is closed the way rigor's is, and the expected scope is bounded the way

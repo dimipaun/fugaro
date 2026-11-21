@@ -875,8 +875,11 @@ export function allowListedReachFailures(files) {
 
 /** Every production source that names `host`, or []. */
 export function reachFailures(files, host) {
+  // A host ends where a name does: the app's secure-store key prefix only begins with the same
+  // letters as the host, so a bare substring match refused it.
+  const named = new RegExp(`${host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9-])`)
   return files
-    .filter((file) => file.text.includes(host))
+    .filter((file) => named.test(file.text))
     .map(
       (file) =>
         `${file.rel} names ${host}: that is a host this project operates, and the privacy page states that the CLI and the console talk "to nothing the Fugaro project operates" except the licence service — a source that names it is a source that has found a service to reach, and either the sentence moves with it or the source is one of the two kinds recorded above (a service's own code, or the licence client the sentence names)`,

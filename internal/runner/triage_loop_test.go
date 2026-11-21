@@ -414,7 +414,7 @@ func TestARepeatedDeferralIsFiledOnce(t *testing.T) {
 // level 2's judge deferred — a finding the fixer is handed, and one the record
 // must not still be calling a follow-up.
 func TestADeferralIsTakenBackWhenTheRaisedModeStopsTriaging(t *testing.T) {
-	block := "rigor:\n  default: startup\n  areas:\n    - { name: app, match: feature.txt, mode: critical }\n"
+	block := "rigor:\n  default: startup\n  areas:\n    - { name: app, match: feature.txt, level: critical }\n"
 	h := newHarness(t, triageCfg(t, block, 3, ""), nil)
 	rec, err := h.run(t,
 		implement("feature"),

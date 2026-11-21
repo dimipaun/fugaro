@@ -78,8 +78,15 @@ func (a *scriptedAgent) Run(ctx context.Context, req agent.Request) (agent.Resul
 }
 
 type harness struct {
-	files     map[string]string
-	deps      runner.Deps
+	files map[string]string
+	deps  runner.Deps
+	// budget is the fake budget database this run's job carries: the address
+	// and the key its environment names, the harness's own unless a test asked
+	// for none (noBudget). Deps.Backend stays zero here and is a test's own
+	// business: a run with one has a launcher's token and the runs bucket that
+	// carries it, which attachBackend builds (backend_test.go) and every other
+	// test would be given whether it meant one or not.
+	budget    *testutil.Budget
 	store     *runstore.Store
 	bucket    *blob.Bucket
 	provider  *fake.Provider
@@ -215,11 +222,21 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 		},
 		store: store, bucket: bucket, provider: p, agent: a, remote: remote, failsFile: failsFile,
 	}
+	h.budget = testutil.NewBudget(t)
+	h.deps.Env = append(h.deps.Env, h.budget.Env()...)
 	// Every harness starts its sidecar through the fake, so no test spawns a
 	// real process; a test that never turns compression on never calls it.
 	h.deps.StartHeadroom = h.startFakeSidecar
 	a.before = h.beforeStage
 	return h
+}
+
+// noBudget asks the harness for a run whose job carries no budget database at
+// all: the state this work refuses a run for (a run whose job names no
+// database address has no policy to read and no session to open).
+func (h *harness) noBudget() {
+	h.budget = testutil.NoBudget()
+	h.deps.Env = filterEnv(filterEnv(h.deps.Env, runner.RTDBURLEnv), runner.FirebaseAPIKeyEnv)
 }
 
 // setTask replaces the task text the run bootstraps from: the bootstrap's own
@@ -596,7 +613,7 @@ func TestDecideToleratedHotfixRoundFilesNothing(t *testing.T) {
 // thing, leaves the block as the round left it.
 func TestRigorRoundMomentRaisesTheModeFromTheRunsOwnDiff(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n",
-		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", level: critical }\nagent:\n", 1)
 	h := newHarness(t, cfg, nil)
 	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
@@ -617,7 +634,7 @@ func TestRigorRoundMomentRaisesTheModeFromTheRunsOwnDiff(t *testing.T) {
 	if rg.At != runstore.RigorAtRound {
 		t.Errorf("the block was decided at %q; want %q — a mode a run's own diff reached must not wait for finalize (D22)", rg.At, runstore.RigorAtRound)
 	}
-	want := []runstore.RigorArea{{Name: "app", Mode: rigor.Critical, At: runstore.RigorAtRound}}
+	want := []runstore.RigorArea{{Name: "app", Mode: rigor.Critical, Level: rigor.Critical, At: runstore.RigorAtRound}}
 	if !slices.Equal(rg.Areas, want) {
 		t.Errorf("the areas = %+v; want %+v", rg.Areas, want)
 	}
@@ -649,7 +666,7 @@ func TestReviewRoundsTheModeRaisedBetweenRoundsSuppliesMore(t *testing.T) {
 		t.Fatal("the fixture has no review_rounds: 2 to drop, so the mode would not be the one supplying the number")
 	}
 	cfg = strings.Replace(cfg, "agent:\n",
-		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", level: critical }\nagent:\n", 1)
 	h := newHarness(t, cfg, nil)
 	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")

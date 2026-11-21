@@ -1846,7 +1846,7 @@ func TestReviewFloorDecodeStrict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := map[rigor.Mode][]policy.Level{rigor.Pro: {policy.LevelL2}, rigor.Critical: {policy.LevelL2, policy.LevelL3}}; !reflect.DeepEqual(floor, want) {
+	if want := map[rigor.Rigor][]policy.Level{rigor.Pro: {policy.LevelL2}, rigor.Critical: {policy.LevelL2, policy.LevelL3}}; !reflect.DeepEqual(floor, want) {
 		t.Errorf("ReviewFloorPolicy = %v, want %v", floor, want)
 	}
 	if none, err := Parse([]byte(sample)); err != nil {
@@ -2749,24 +2749,30 @@ func TestWorkspaceMemberEntryValidation(t *testing.T) {
 	entry := func(fields string) string {
 		return sample + "workspace_members:\n  aurora:\n" + fields
 	}
-	whole := entry("    job_service_accounts: [\"marker-job@aurora-gcp.iam.gserviceaccount.com\"]\n    firebase_project: aurora-fb\n    fp: aurora\n    exchange_url: https://exchange.example.com/v1\n")
+	account := func(fields string) string {
+		return entry("    job_service_accounts:\n      - account: marker-job@aurora-gcp.iam.gserviceaccount.com\n" + fields)
+	}
+	whole := account("        repos: [marker-org/aurora]\n    database_region: europe-west1\n    firebase_project: aurora-fb\n    fp: aurora\n    exchange_url: https://exchange.example.com/v1\n")
 	if _, err := Parse([]byte(whole)); err != nil {
 		t.Fatalf("a whole entry was refused: %v", err)
 	}
 	for name, tc := range map[string]struct{ yaml, msg string }{
-		"nothing at all":       {entry(""), "declares nothing"},
-		"a list twice":         {entry("    repos: [owner/repo-a, owner/repo-a]\n"), "lists owner/repo-a twice"},
-		"a bad repo":           {entry("    repos: [nope]\n"), "must look like owner/name"},
-		"a bad account":        {entry("    job_service_accounts: [marker-job]\n"), "is not a service account address"},
-		"an account twice":     {entry("    job_service_accounts: [\"a@b.iam.gserviceaccount.com\", \"a@b.iam.gserviceaccount.com\"]\n"), "lists a@b.iam.gserviceaccount.com twice"},
-		"a bad firebase":       {entry("    firebase_project: Aurora_FB\n"), "is not a GCP project ID"},
-		"a GCP project as fp":  {entry("    fp: aurora-gcp\n"), ""},
-		"a bad fp":             {entry("    fp: Aurora\n"), "is not a project name"},
-		"a plain http url":     {entry("    exchange_url: http://exchange.example.com/v1\n"), "must be an https URL"},
-		"a url with userinfo":  {entry("    exchange_url: https://person-1@exchange.example.com/v1\n"), "must be an https URL"},
-		"a url with no host":   {entry("    exchange_url: https:///v1\n"), "must be an https URL"},
-		"a bad member name":    {sample + "workspace_members:\n  Aurora:\n    fp: aurora\n", "is not a project name"},
-		"a localhost exchange": {entry("    exchange_url: https://localhost:8080/v1\n"), ""},
+		"nothing at all":           {entry(""), "declares nothing"},
+		"a list twice":             {entry("    repos: [owner/repo-a, owner/repo-a]\n"), "lists owner/repo-a twice"},
+		"a bad repo":               {entry("    repos: [nope]\n"), "must look like owner/name"},
+		"a bad account":            {entry("    job_service_accounts:\n      - account: marker-job\n        repos: [marker-org/aurora]\n"), "is not a service account address"},
+		"an account twice":         {entry("    job_service_accounts:\n      - account: a@b.iam.gserviceaccount.com\n        repos: [marker-org/aurora]\n      - account: a@b.iam.gserviceaccount.com\n        repos: [marker-org/aurora]\n"), "lists a@b.iam.gserviceaccount.com twice"},
+		"a repo that is a pattern": {account("        repos: [marker-org/*]\n"), "must look like owner/name"},
+		"a repo twice":             {account("        repos: [marker-org/aurora, marker-org/aurora]\n"), "lists marker-org/aurora twice"},
+		"a bad region":             {account("        repos: [marker-org/aurora]\n    database_region: Europe-West1\n"), "is not a region name"},
+		"a bad firebase":           {entry("    firebase_project: Aurora_FB\n"), "is not a GCP project ID"},
+		"a GCP project as fp":      {entry("    fp: aurora-gcp\n"), ""},
+		"a bad fp":                 {entry("    fp: Aurora\n"), "is not a project name"},
+		"a plain http url":         {entry("    exchange_url: http://exchange.example.com/v1\n"), "must be an https URL"},
+		"a url with userinfo":      {entry("    exchange_url: https://person-1@exchange.example.com/v1\n"), "must be an https URL"},
+		"a url with no host":       {entry("    exchange_url: https:///v1\n"), "must be an https URL"},
+		"a bad member name":        {sample + "workspace_members:\n  Aurora:\n    fp: aurora\n", "is not a project name"},
+		"a localhost exchange":     {entry("    exchange_url: https://localhost:8080/v1\n"), ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(tc.yaml))
@@ -2780,6 +2786,74 @@ func TestWorkspaceMemberEntryValidation(t *testing.T) {
 				t.Fatalf("err = %v, want ~%q", err, tc.msg)
 			}
 		})
+	}
+	// An entry whose account names no repository is read rather than refused,
+	// and the narrow reading is the point: it is exactly what
+	// foldLegacyMemberAccounts writes for a version-2 file, which named the
+	// member's accounts and never their jobs, so a load that refused it would
+	// leave every command in that project — `fugaro update` among them —
+	// unable to read the file the release behind wrote. The service holds a
+	// run's verified slug to this list, so an account with none is served
+	// nothing; `fugaro workspace member add` is where writing one is refused.
+	none, err := Parse([]byte(account("")))
+	if err != nil {
+		t.Fatalf("an account that names no repos was refused: %v", err)
+	}
+	if got := (*none.WorkspaceMembers)["aurora"].JobAccounts; len(got) != 1 ||
+		got[0].Account != "marker-job@aurora-gcp.iam.gserviceaccount.com" || len(got[0].Repos) != 0 {
+		t.Fatalf("job accounts = %+v, want the account with no repositories", got)
+	}
+}
+
+// TestVersionTwoMemberAccountsFold: a version-2 file spells
+// `workspace_members.*.job_service_accounts` as a list of service account
+// addresses and this release reads a list of entries carrying the address and
+// its repositories (ConfigVersion 3, R6, D2992), so the document's own version
+// is what tells the two shapes apart and a version-2 document is folded rather
+// than refused: a config the release behind wrote must keep parsing, and every
+// command in that project — `fugaro update` above all — reads it through Parse.
+func TestVersionTwoMemberAccountsFold(t *testing.T) {
+	doc := func(version, table string) string {
+		return strings.Replace(sample, "version: 1", "version: "+version, 1) +
+			"workspace_members:\n  aurora:\n    fp: aurora\n" + table
+	}
+	// The address the version-2 file states becomes the account, and the fold
+	// states nothing more: the old file never said which job the account is,
+	// and filling the repositories in from the member's own list would hand
+	// the account a reach its owner never declared — the shared project job is
+	// exactly the case where the two differ.
+	c, err := Parse([]byte(doc("2", "    job_service_accounts:\n      - marker-job@aurora-gcp.iam.gserviceaccount.com\n")))
+	if err != nil {
+		t.Fatalf("a version-2 member row was refused: %v", err)
+	}
+	if c.Version != ConfigVersion {
+		t.Errorf("the folded document is read as version %d, want %d", c.Version, ConfigVersion)
+	}
+	accounts := (*c.WorkspaceMembers)["aurora"].JobAccounts
+	if len(accounts) != 1 || accounts[0].Account != "marker-job@aurora-gcp.iam.gserviceaccount.com" || len(accounts[0].Repos) != 0 {
+		t.Fatalf("job accounts = %+v, want the address with no repositories", accounts)
+	}
+	// An entry the version-2 file already wrote in this shape is left exactly
+	// as it is, repositories and all: the fold moves a spelling, and a table
+	// that is already this shape is not one it has anything to say about.
+	table := "    job_service_accounts:\n" +
+		"      - marker-job@aurora-gcp.iam.gserviceaccount.com\n" +
+		"      - account: marker-second@aurora-gcp.iam.gserviceaccount.com\n" +
+		"        repos: [marker-org/aurora]\n"
+	c, err = Parse([]byte(doc("2", table)))
+	if err != nil {
+		t.Fatalf("a version-2 row already in this shape was refused: %v", err)
+	}
+	if accounts = (*c.WorkspaceMembers)["aurora"].JobAccounts; len(accounts) != 2 ||
+		len(accounts[0].Repos) != 0 || len(accounts[1].Repos) != 1 || accounts[1].Repos[0] != "marker-org/aurora" {
+		t.Fatalf("job accounts = %+v, want the folded address and the entry the file wrote", accounts)
+	}
+	// The fold is the ONE reader of the old shape, and it reads it from the
+	// version alone: a document that says this version carries this version's
+	// shape, so an address left in the list there is refused by the decode
+	// rather than quietly read as an entry with no account at all.
+	if _, err := Parse([]byte(doc(fmt.Sprintf("%d", ConfigVersion), "    job_service_accounts:\n      - marker-job@aurora-gcp.iam.gserviceaccount.com\n"))); err == nil {
+		t.Fatal("a bare address in a document at this version was accepted")
 	}
 }
 
@@ -2816,13 +2890,16 @@ func TestWorkspaceCapRefusesAnAmountTheFileCannotState(t *testing.T) {
 	}
 }
 
-// TestWorkspaceKeysAreLocalOnly: the membership, the pin, the member table and
-// the cap are this machine's own -- a launcher who could write one into the
-// runs bucket's shared file would be choosing which workspace reaches this
-// project's runs, and aiming this project's exchange -- so Shared drops all
-// four and a published file that carries one is refused.
+// TestWorkspaceKeysAreLocalOnly: the membership, the pin, the member table, the
+// cap and the owner's shared list are this machine's own -- a launcher who could
+// write one into the runs bucket's shared file would be choosing which workspace
+// reaches this project's runs, aiming this project's exchange, and handing this
+// project's credentials to whoever the list names -- so Shared drops all five
+// and a published file that carries one is refused.
 func TestWorkspaceKeysAreLocalOnly(t *testing.T) {
-	lc, err := Parse([]byte(workspaceSample + "workspace_members:\n  aurora:\n    fp: aurora\nworkspace_cap:\n  monthly: 50\n"))
+	lc, err := Parse([]byte(workspaceSample +
+		"workspace_members:\n  aurora:\n    fp: aurora\nworkspace_cap:\n  monthly: 50\n" +
+		"workspace_shared:\n  anthropic-api-key:\n    kind: model\n    projects: [aurora]\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2830,7 +2907,7 @@ func TestWorkspaceKeysAreLocalOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"workspace:", "workspace_pin", "workspace_members", "workspace_cap", "marker-assertion-key", "project-ws"} {
+	for _, forbidden := range []string{"workspace:", "workspace_pin", "workspace_members", "workspace_cap", "workspace_shared", "marker-assertion-key", "project-ws", "anthropic-api-key"} {
 		if strings.Contains(string(out), forbidden) {
 			t.Errorf("the published file carries %q:\n%s", forbidden, out)
 		}

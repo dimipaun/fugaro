@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -170,7 +171,53 @@ type WorkspaceConfig struct {
 	// routes that answer about the workspace. It is a function rather than one
 	// client because a deployment has one client per member, and the URL is the
 	// only thing that says which member's state a call may read.
+	//
+	// **It answers a Getter, and that is the fence rather than a convenience**
+	// (R8): a member's database is opened read-only, so no code of this service
+	// can write a member even by mistake — the deployment's own grant is the
+	// read-only role the live check measures it with (check 771). What is
+	// therefore NOT reachable through this field is a member's state store, and
+	// none is wanted: the cascade's state is the workspace's own (State below).
 	Open func(databaseURL string) (Getter, error)
+	// State is the workspace's OWN credential state: the marks, the leases, a
+	// run's placement and the round-robin counter, for the workspace's one pool
+	// (R8, D1299 as amended). It is the store the workspace's own database is
+	// opened over, and it is a field of its own rather than a member's because
+	// the facts it holds are facts about the pool: a cooldown or a rotation
+	// position belongs to the credential the workspace pays with, not to
+	// whichever member's run happened to draw it.
+	//
+	// **A member's database is never one, and the type is what says so.** Open
+	// answers a Getter and this is a creds.Store, so a deployment cannot hand
+	// the cascade a member's handle however its table is written; and the
+	// workspace's service holds no write on any member at all, which is a
+	// property of this field rather than a promise about the code.
+	//
+	// It is required, for Open's reason: a service that started without a store
+	// would serve its pool through a nil one — a panic at best, and at worst a
+	// cascade that reads no mark and treats every credential of the pool as
+	// available.
+	State creds.Store
+	// Kills is the workspace's OWN stop switch, read from the workspace's own
+	// database: `config/kill/global` there is the node `fugaro budget kill
+	// --workspace <name>` writes (D1302, internal/cli/budget_kill_workspace.go,
+	// which spells it out: "the switch is the workspace's own global one and
+	// never a repository's"), and it is the stop an operator under pressure
+	// has — the one that reaches every member at once without any member being
+	// written to.
+	//
+	// **It is a field of the workspace's own and not of a member, and a
+	// workspace-mode call is held to it AS WELL AS to the calling member's own
+	// pair.** contract-scope.md leaves that choice to the workspace's scope and
+	// asks for the decision in its comment; the decision and its reasons are on
+	// workspaceKills (scope_workspace.go), which is the one reader of this
+	// field. `*rtdb.Client` is one.
+	//
+	// It is required, for State's reason: a deployment that started without it
+	// would serve every shared-credential call with the workspace's own stop
+	// switch unread, which is the one control that does not depend on a
+	// member's honesty (spec.md §8).
+	Kills budget.KillGetter
 	// Now is the clock, for tests; nil means time.Now.
 	Now func() time.Time
 }
@@ -334,6 +381,8 @@ type Workspace struct {
 	byProject   map[string]WorkspaceMember
 	auths       map[string]*Authenticator
 	databases   map[string]Getter
+	state       creds.Store
+	kills       budget.KillGetter
 	front       *Authenticator
 }
 
@@ -353,6 +402,10 @@ func NewWorkspace(cfg WorkspaceConfig) (*Workspace, error) {
 		return nil, fmt.Errorf("%w: no key source for the callers", ErrWorkspaceConfig)
 	case cfg.Open == nil:
 		return nil, fmt.Errorf("%w: no database opener, so no member's state could be read", ErrWorkspaceConfig)
+	case cfg.State == nil:
+		return nil, fmt.Errorf("%w: no store of its own, so the pool's marks and leases would be written into no database (R8)", ErrWorkspaceConfig)
+	case cfg.Kills == nil:
+		return nil, fmt.Errorf("%w: no stop switch of its own, so a call this deployment serves would be held to the calling member's switches alone and `fugaro budget kill --workspace` would stop nothing (D1302)", ErrWorkspaceConfig)
 	case len(cfg.Members) == 0:
 		return nil, fmt.Errorf("%w: the table names no member, so the deployment could admit nobody", ErrWorkspaceConfig)
 	}
@@ -382,6 +435,8 @@ func NewWorkspace(cfg WorkspaceConfig) (*Workspace, error) {
 		byProject:   make(map[string]WorkspaceMember, len(cfg.Members)),
 		auths:       make(map[string]*Authenticator, len(cfg.Members)),
 		databases:   make(map[string]Getter, len(cfg.Members)),
+		state:       cfg.State,
+		kills:       cfg.Kills,
 		front:       front,
 	}
 	if err := w.readMembers(cfg); err != nil {
@@ -675,6 +730,24 @@ func (w *Workspace) Policy(ctx context.Context, c MemberCall) (*projectpolicy.Po
 	return RTDBPolicy{DB: db}.Shared(ctx)
 }
 
+// State is the workspace's own credential state, and never a member's: it is
+// what the scope answers a call's State() with, and it is the ONE reader of a
+// workspace-mode call that is not read from the caller's own database (C1's
+// rule 2, R8). The narrow type is the contract's (StateStore is
+// creds.CascadeState, and never creds.Store), so a route passing this to a
+// selection cannot reach the per-repository auth record through it — that read
+// is RepoAuth's below, and it is the MEMBER's database that answers it.
+func (w *Workspace) State() StateStore { return w.state }
+
+// Kills is the workspace's own stop switch, and it is the deployment's and not
+// a caller's: it is read from the workspace's own database — the node
+// `fugaro budget kill --workspace <name>` writes — and it is the workspace's
+// own because a member holds no grant on that database at all and reads no node
+// of it (spec.md §9). It is what the workspace-mode scope reads BESIDE the
+// calling member's own pair, and the decision to read both is workspaceKills'
+// (scope_workspace.go).
+func (w *Workspace) Kills() budget.KillGetter { return w.kills }
+
 // Shared is the effective set of the workspace's pool for this caller: the
 // credentials the workspace offers this member (the node's shared entries with
 // the tiers the bundle carries, D1298's allow-list) whose name the member's own
@@ -709,23 +782,28 @@ func (w *Workspace) Policy(ctx context.Context, c MemberCall) (*projectpolicy.Po
 // refuses it, and the pool cannot widen a member by serving a decision that
 // member's database no longer holds.
 //
-// **The slug is the run's own repository, and it is NOT held to the calling job
-// account.** The identity Verify returned carries the slug its own token proved
-// and this route reads the copy Verify kept (MemberCall.slug), so the child read
-// here is the run's repository and not one a caller named — but nothing compares
-// it with the repository the calling job account belongs
-// to. The installation's front door does exactly that
-// (`!bound || ja.Slug != id.Slug`, internal/credsvc/server.go), because its
-// table binds each job account to the repository its service account is derived
-// from; this deployment's per-member table names a member's job accounts and no
-// repository, so there is no slug to compare and an account admitted for one
-// repository can present a run identity of another (review finding N1). What
-// that reaches is bounded by the member's own lists, because the two legs above
-// are asked over the identity's own slug: a second repository has to be one the
-// member's own policy scopes this credential to, so the confusion crosses no
-// member and leaves no list the member itself wrote. That pairing is all
-// docs/workspaces/spec.md §8's residual risk 7 still holds: stated there, an
-// open item for the owner, and the column this service does not carry.
+// **The slug is the run's own repository, and this function does not hold it to
+// the calling job account — the SCOPE does, one layer up (F28, R19).** The
+// identity Verify returned carries the slug its own token proved and this
+// function reads the copy Verify kept (MemberCall.slug), so the child read here
+// is the run's repository and not one a caller named. What no longer stands is
+// what this comment used to say beside that: the account is not compared with
+// the repository here, but it is compared with it before this function is ever
+// reached, because the scope answers `Repos()` with the repositories the
+// workspace owner's node declares for the CALLING account (C3's
+// JobAccountRepos, D2992) and the front door resolves the run's slug through
+// that table (internal/credsvc/server.go's pairing, C1's rule 3). A run of a
+// repository the owner did not declare for its account is refused there,
+// whatever the member's own lists say — so the second repository this comment
+// used to be about (review finding N1, docs/workspaces/spec.md §8's residual
+// risk 7) can no longer be presented at all, and the two legs below are asked
+// only for a slug the owner's own declaration already holds the account to.
+//
+// This function is unchanged by that and stays honest on its own: called
+// without a scope — as its own tests do — it answers the intersection for
+// whatever slug the call verified, and nothing here reads the node's
+// per-account repositories. Holding the two together is the scope's job, and
+// TestWorkspaceScopeHoldsTheSlugToTheCallingAccount is where that is pinned.
 //
 // The refusal an operator reads for one named credential is creds.AdmitShared's,
 // and this answers the SET, which is what the cascade is offered: the legs are
@@ -802,14 +880,14 @@ func canonicalOfSlug(allowRepos []string, slug string) (string, bool) {
 // repository — and the slug read is MemberCall.slug, the field Verify set, not
 // the exported Identity it was copied from, so a call whose Identity.Slug was
 // rewritten after Verify is refused by refuseUnverified instead of naming the
-// node to read. What is not asked is whether that repository is the calling
-// ACCOUNT's: the table names a member's job accounts and no repository, so the
-// pairing the installation's front door makes has no slug to be made on here
-// (Shared's own doc, and docs/workspaces/spec.md §8's residual risk 7). The
-// shipped behaviour is pinned either way — the node read is the run's own
-// repository and nothing falls back to another — by
+// node to read. What is not asked HERE is whether that repository is the calling
+// ACCOUNT's; that question is the scope's, and it is answered by the
+// repositories the workspace owner's node declares for the account (Shared's own
+// doc, and TestWorkspaceScopeHoldsTheSlugToTheCallingAccount). The shipped
+// behaviour of this function is pinned either way — the node read is the run's
+// own repository and nothing falls back to another — by
 // TestWorkspaceSharedReadsTheRepositoryOfTheRunIdentityNotTheCallers, so a
-// change that closes the gap and a change that widens it both have to say so.
+// change that widens it has to say so.
 func (w *Workspace) admittedOn(ctx context.Context, c MemberCall) (map[string]bool, error) {
 	db, err := w.database(c)
 	if err != nil {

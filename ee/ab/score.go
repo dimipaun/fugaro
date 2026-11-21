@@ -219,11 +219,11 @@ func sameArmInputs(champion, challenger runstore.Record) bool {
 // of its mode: Bounded refuses a block whose layer or moment is unreadable,
 // which is a question about the block's honesty, while R2 asks only whether
 // the two arms agree.
-func recordMode(rec runstore.Record) rigor.Mode {
+func recordMode(rec runstore.Record) rigor.Rigor {
 	if rec.Rigor == nil {
 		return ""
 	}
-	return rec.Rigor.Mode
+	return rec.Rigor.LevelOf()
 }
 
 // recordTier is the tier the record carries, "" for one that carried none:
@@ -380,7 +380,7 @@ type Result struct {
 	// Mode is the mode the signals were read under: the pair's own mode, R2
 	// having refused a pair whose arms resolved different ones, and the mode
 	// the report groups by.
-	Mode rigor.Mode
+	Mode rigor.Rigor
 	// Winner is the arm that took the pair on the signals this mode reads, and
 	// empty for a pair that does not count at all (Counted).
 	Winner Winner
@@ -427,7 +427,7 @@ type Result struct {
 // Pair that reached this function is one it made. The kept arm's follow-up
 // count is context and decides nothing (D562), as is everything else the
 // records hold; there is no weight to argue about and no model to call (D561).
-func Score(p Pair, mode rigor.Mode, v Verdict) Result {
+func Score(p Pair, mode rigor.Rigor, v Verdict) Result {
 	res := Result{
 		PairID:     p.ID,
 		Mode:       mode,
@@ -452,7 +452,7 @@ func Score(p Pair, mode rigor.Mode, v Verdict) Result {
 
 // armSignals reads one arm's record into D561's signals. Nothing is inferred
 // from the other arm, and no field of the record is asked twice.
-func armSignals(rec runstore.Record, mode rigor.Mode) Signals {
+func armSignals(rec runstore.Record, mode rigor.Rigor) Signals {
 	s := Signals{
 		Halted:    rec.Halt != nil,
 		FinalHead: rec.HeadSHA,
@@ -538,7 +538,7 @@ func verifiedAtHead(records []verify.Record, head string) bool {
 // Both need a field the record does not have. Until the format carries the
 // resolved levels, this is the reading a record can support, and it errs
 // towards the draft.
-func decidingRound(rec runstore.Record, mode rigor.Mode) *runstore.ReviewSummary {
+func decidingRound(rec runstore.Record, mode rigor.Rigor) *runstore.ReviewSummary {
 	decider := deciderRank(rec, mode)
 	for i := len(rec.Reviews) - 1; i >= 0; i-- {
 		if reviewRank(rec.Reviews[i].Tier) == decider {
@@ -577,7 +577,7 @@ func reviewRank(tier string) int {
 // shows ran (a level above the mode's default is one a layer turned on, and the
 // round it wrote is the round it decided on), and level 3 where the security
 // escalation took effect.
-func deciderRank(rec runstore.Record, mode rigor.Mode) int {
+func deciderRank(rec runstore.Record, mode rigor.Rigor) int {
 	decider := deciderDefault(mode)
 	for _, round := range rec.Reviews {
 		if rank := reviewRank(round.Tier); rank > decider {
@@ -608,7 +608,7 @@ func escalated(rec runstore.Record) bool {
 //
 // A mode outside the vocabulary is read as the strictest set — level 3's —
 // which is the reading signalVector gives it too.
-func deciderDefault(mode rigor.Mode) int {
+func deciderDefault(mode rigor.Rigor) int {
 	levels, err := rigor.DefaultLevels(mode)
 	if err != nil {
 		return rankAdversary
@@ -674,7 +674,7 @@ func bounceCount(records []runstore.ReviewSummary) int {
 // what makes the comparison lexicographic without a weight: a difference on
 // the first entry ends the question, and two arms equal on every entry are a
 // tie (D561).
-func signalVector(s Signals, mode rigor.Mode) []int {
+func signalVector(s Signals, mode rigor.Rigor) []int {
 	v := []int{signalFlag(s.Halted || s.FinalHead == ""), signalFlag(!s.Verified)}
 	switch mode {
 	case rigor.POC:
