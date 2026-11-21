@@ -548,6 +548,38 @@ func TestSkillNeverTellsTheSessionToApprove(t *testing.T) {
 	}
 }
 
+// TestSkillSaysNothingClearsThePlanFactOnATick (R5, D2721): the
+// plan_in_flight fact is written once, as the daemon adopts the runs already in
+// flight (internal/orchestrator's Adopt), and no tick of the loop deletes a
+// fact — the only two ways one goes are the `fact_delete` op and the retention
+// trim that drops whatever key sorts last. A skill that told a session the
+// daemon clears it on its next tick would have the session read a standing
+// request as a spent one, and so leave a plan nobody imported.
+func TestSkillSaysNothingClearsThePlanFactOnATick(t *testing.T) {
+	files := map[string]string{
+		"plugin/skills/orchestrator/SKILL.md":           orchestratorSkill(t),
+		"plugin/skills/orchestrator/reference/state.md": orchestratorReference(t),
+	}
+	cleared := []string{
+		"cleared on the daemon's next tick",
+		"clears the fact on its next tick",
+		"imports once and moves on",
+	}
+	for path, body := range files {
+		for _, claim := range cleared {
+			if strings.Contains(body, claim) {
+				t.Errorf("%s says %q, and nothing clears the fact on a tick: it is written at adoption and stands until it is deleted", path, claim)
+			}
+		}
+		if !strings.Contains(body, "stands until somebody removes it") {
+			t.Errorf("%s never says the fact stands until somebody removes it, which is what a session finding it twice needs to know", path)
+		}
+		if !strings.Contains(body, "fact_delete") {
+			t.Errorf("%s does not name `fact_delete`, the op that removes a fact", path)
+		}
+	}
+}
+
 // opTableRow is one op's row of reference/state.md's op table, whole.
 func opTableRow(t *testing.T, body, op string) string {
 	t.Helper()

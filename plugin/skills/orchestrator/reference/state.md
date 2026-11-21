@@ -52,7 +52,7 @@ A `work_item_upsert` from anyone but the daemon may not carry `phase`, `run_id`,
 
 Facts are free key and value pairs, and three keys are written on purpose for a reader outside the daemon to act on:
 
-- `plan_in_flight_<plan>` — one per plan that a run the daemon adopted at its start belongs to (D2721). It is the request in the brief a session answers: import that plan, so the plan's items and the adopted run meet on the same `plan_task`, and the daemon clears the fact on its next tick.
+- `plan_in_flight_<plan>` — one per plan that a run the daemon adopted at its start belongs to (D2721). It is the request in the brief a session answers: import that plan, so the plan's items and the adopted run meet on the same `plan_task`. Nothing clears it on a tick: adoption writes it once, and it stands until somebody removes it with `fact_delete` — the node's own retention ages facts out like anything else, and that is the only other way one goes. A session that finds the same request later answers it, says the plan is imported, and takes the fact down itself.
 - `graph_suspect_<run>` — what one run reported that the graph did not have, in the run's own words: an item it needed first, or a merge conflict with an item that merged since its attempt began (D2719, D2747).
 - `graph_edge_<digest>` — one per dependency the daemon added from such a report: the item, the edge and the run that caused it, because the added edge is part of the spec a person approved, so that item waits for their approval again (D2740).
 
