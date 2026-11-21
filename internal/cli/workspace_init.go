@@ -137,8 +137,8 @@ func newWorkspaceInitCmd(d workspaceInitDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init <workspace>",
 		Short: "Create a workspace: its mechanism, its folder and its first admin (D2803, R8)",
-		Long: `Create a workspace: the first write of ` + "`workspaceRosters/<name>`" + ` and the one
-command that sets a workspace up.
+		Long: `Create a workspace: the one command that sets one up, and the first write of
+its roster node.
 
 The mechanism is detected and not chosen (D2803). An organization the caller's
 own credentials can see — an organization it can create a folder in — means the
@@ -189,9 +189,11 @@ func workspaceInit(cmd *cobra.Command, d workspaceInitDeps, name string) error {
 	// create-once record: an opener that resolved the wrong workspace would have
 	// `init` create one workspace and record another, in a node no later command
 	// corrects. It is a wiring fault and not a person's, so it is not userErr.
-	if want, err := workspace.PathRoster(name); err != nil {
+	want, err := workspace.PathRoster(name)
+	if err != nil {
 		return err
-	} else if t.Store.Path() != want {
+	}
+	if t.Store.Path() != want {
 		return fmt.Errorf("workspace init was handed the roster node %s for the workspace %s, whose node is %s: refusing before anything is created, because a roster is the workspace's own record and a node written under another name is a record of a workspace that does not exist", t.Store.Path(), name, want)
 	}
 	// The roster is read before anything is created. A workspace that has one is
