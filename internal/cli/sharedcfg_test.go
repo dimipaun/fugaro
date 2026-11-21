@@ -251,6 +251,106 @@ func publishedRepos(t *testing.T, dir string) map[string]localcfg.Repo {
 	return lc.Repos
 }
 
+// publishedOptIn is the opt-in fact of the object the runs bucket holds: what
+// every machine without a local config of its own reads, and therefore the value
+// a publish has to have left there (R15).
+func publishedOptIn(t *testing.T, dir string) string {
+	t.Helper()
+	data, err := os.ReadFile(sharedObjectPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Parse(data)
+	if err != nil {
+		t.Fatalf("%v:\n%s", err, data)
+	}
+	if lc.Batch == nil {
+		t.Fatalf("the published object carries no batch block:\n%s", data)
+	}
+	return lc.Batch.OptIn
+}
+
+// TestPublishingRefreshesTheLocalCopyOfTheOptIn: the object a publish writes
+// carries the installation's opt-in fact, and its value is the published copy's
+// however the publishing machine's own block reads (R15, BR19). That object is
+// the local config of every teammate who has none — the reference they get from
+// `fugaro project share` and the copy their launches read the fact off — so a
+// publish refreshes every machine's copy of the field from the published one,
+// and the machine whose file says something else does not get to write what it
+// says into the bucket. The two writers R15 names are the only publishes that
+// change the value, through publishSharedOptIn: an operator's selection passes
+// `in` (R2, BR18) and the opt-out passes `withdrawn` (R16, BR20) — the value is
+// passed explicitly because no other publish may write one.
+//
+// What a publish does NOT write is the machine's own FILE: the block the merge
+// builds is this machine's own, with the one field taken from the published copy,
+// and the file is rewritten by the block writer `fugaro update` runs
+// (init_compute.go, BR16) — which is the update O19's "a machine with a local
+// config follows at its next `fugaro update`" names.
+func TestPublishingRefreshesTheLocalCopyOfTheOptIn(t *testing.T) {
+	f := newCloudFixture(t)
+	f.noBudget(t)
+	dir := filepath.Join(f.dir, "runs")
+	ctx := context.Background()
+	batch := func(optIn string) *localcfg.Batch {
+		return &localcfg.Batch{Image: "us-east5-docker.pkg.dev/proj-1234/fugaro/acme-web:1", OptIn: optIn}
+	}
+	// The installation is opted in by its operator, whose own block does not
+	// carry the fact yet: the writer's value is what the bucket gets.
+	lc := publishable(t)
+	lc.Batch = batch("")
+	if written, err := publishSharedOptIn(ctx, lc, localcfg.BatchOptInOn, func(string) {}); err != nil || !written {
+		t.Fatalf("written=%v err=%v", written, err)
+	}
+	if got := publishedOptIn(t, dir); got != localcfg.BatchOptInOn {
+		t.Fatalf("the opt-in writer published %q, want %q", got, localcfg.BatchOptInOn)
+	}
+	// The machine whose own file still says `in` withdraws the fact: its copy has
+	// not followed the published one yet (the window O19 is about), and the value
+	// the writer passed is the one that reaches every other machine.
+	stale := publishable(t)
+	stale.Batch = batch(localcfg.BatchOptInOn)
+	if written, err := publishSharedOptIn(ctx, stale, localcfg.BatchOptInWithdrawn, func(string) {}); err != nil || !written {
+		t.Fatalf("written=%v err=%v", written, err)
+	}
+	if got := publishedOptIn(t, dir); got != localcfg.BatchOptInWithdrawn {
+		t.Errorf("a stale local `in` published over the withdrawal: %q", got)
+	}
+	// And every publish that passes no value keeps the published one: the same
+	// stale machine publishing again leaves the withdrawal standing, rather than
+	// putting the installation back in from its own copy.
+	if written, err := publishSharedWarn(ctx, stale, func(string) {}); err != nil || !written {
+		t.Fatalf("written=%v err=%v", written, err)
+	}
+	if got := publishedOptIn(t, dir); got != localcfg.BatchOptInWithdrawn {
+		t.Errorf("a publish with no value of its own dropped the withdrawal: %q", got)
+	}
+	// Opting in again is that writer's own value over it (R2): with the machine's
+	// copy still saying `in`, nothing but the passed value could publish `in`.
+	if written, err := publishSharedOptIn(ctx, stale, localcfg.BatchOptInOn, func(string) {}); err != nil || !written {
+		t.Fatalf("written=%v err=%v", written, err)
+	}
+	if got := publishedOptIn(t, dir); got != localcfg.BatchOptInOn {
+		t.Errorf("the opt-in writer's value did not reach the published copy: %q", got)
+	}
+	// Where the published copy is refused and replaced (O18), the fact published
+	// is the one this publish was given: the replacement is the machine's view,
+	// and the warning beside it is the one that already says so.
+	writePublished(t, dir, strings.Replace(publishedWithOtherRepo, "gcp_project: proj-1234", "gcp_project: other-proj", 1))
+	other := publishable(t)
+	other.Batch = batch(localcfg.BatchOptInOn)
+	var warned []string
+	if written, err := publishSharedOptIn(ctx, other, localcfg.BatchOptInWithdrawn, func(m string) { warned = append(warned, m) }); err != nil || !written {
+		t.Fatalf("written=%v err=%v", written, err)
+	}
+	if len(warned) != 1 || !strings.Contains(warned[0], "the published shared config was refused (") || !strings.Contains(warned[0], "replacing it") {
+		t.Errorf("warnings = %q", warned)
+	}
+	if got := publishedOptIn(t, dir); got != localcfg.BatchOptInWithdrawn {
+		t.Errorf("the replacement published the machine's own copy %q, not the writer's value", got)
+	}
+}
+
 func TestPublishSharedKeepsTheReposOfOtherMachines(t *testing.T) {
 	f := newCloudFixture(t)
 	f.noBudget(t)

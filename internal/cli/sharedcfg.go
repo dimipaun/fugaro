@@ -47,6 +47,29 @@ func publishShared(ctx context.Context, lc *localcfg.Config) error {
 // gcp_project, or content ParseShared refuses). written says whether the
 // object was written.
 func publishSharedWarn(ctx context.Context, lc *localcfg.Config, warn func(string)) (written bool, err error) {
+	return publishSharedValue(ctx, lc, "", warn)
+}
+
+// publishSharedOptIn is the publish of the two writers that CHANGE an
+// installation's opt-in fact (R15): an operator selecting Cloud Batch passes
+// localcfg.BatchOptInOn (R2) and the opt-out passes localcfg.BatchOptInWithdrawn
+// (R16). It is the only way a new value of the fact reaches the runs bucket,
+// and the value is passed explicitly because every other publish keeps the
+// published copy's own (localcfg.MergeSharedOptIn): one machine's block is
+// never the authority on a fact of the installation, so a stale local `in`
+// cannot publish a withdrawal away — nor a stale local withdrawal an opt-in.
+//
+// Where the published copy is refused or too large and is replaced by this
+// machine's view, the value passed here is published with it (O18): the
+// replacement IS the machine's own block, which is the case O18 accepts, and
+// the warning printed beside it is the one that says the copy was replaced.
+func publishSharedOptIn(ctx context.Context, lc *localcfg.Config, optIn string, warn func(string)) (written bool, err error) {
+	return publishSharedValue(ctx, lc, optIn, warn)
+}
+
+// publishSharedValue is the publish both entry points above are, with optIn the
+// opt-in fact this publish is writing ("" for every publish that writes none).
+func publishSharedValue(ctx context.Context, lc *localcfg.Config, optIn string, warn func(string)) (written bool, err error) {
 	anchor := SharedAnchor{Name: lc.Name, GCPProject: lc.GCPProject, Bucket: "fugaro-runs-" + lc.GCPProject, ImageSource: lc.ImageSource}
 	if lc.RunsBucketName() != anchor.Bucket {
 		warn(fmt.Sprintf("not publishing the shared config: the runs bucket is %q, and a shared config needs the default runs bucket name %s, which teammates find from gcp_project", lc.RunsBucketName(), anchor.Bucket))
@@ -80,15 +103,18 @@ func publishSharedWarn(ctx context.Context, lc *localcfg.Config, warn func(strin
 	if refused != "" {
 		warn(fmt.Sprintf("the published shared config was refused (%s); replacing it", refused))
 	}
-	data, err := localcfg.MergeShared(published, src).Marshal()
+	data, err := localcfg.MergeSharedOptIn(published, src, optIn).Marshal()
 	if err != nil {
 		return false, err
 	}
 	if len(data) > localcfg.SharedMaxBytes && published != nil {
 		// A writer bloated the published object (model_prices) to just under
 		// the cap, so every merge goes over: replace it with the local view.
+		// That view carries the opt-in value this publish was given and never a
+		// value read off the machine's block, the same rule as the merge above
+		// (R15, O18).
 		warn("the published shared config was too large to merge; replacing it with this machine's view")
-		if data, err = localcfg.MergeShared(nil, src).Marshal(); err != nil {
+		if data, err = localcfg.MergeSharedOptIn(nil, src, optIn).Marshal(); err != nil {
 			return false, err
 		}
 	}
