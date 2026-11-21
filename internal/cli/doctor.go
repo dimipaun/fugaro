@@ -462,6 +462,14 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	if c := doctorWorkspaceSplitCheck(lc); c != nil {
 		o.Checks = append(o.Checks, *c)
 	}
+	// Where the installation's data is: the region, its place and where each
+	// thing this machine's locations record knows about is (LP12 of
+	// docs/location-preference/, D3087, D3091). Read from the local config
+	// alone, like the workspace line above, and never a failure: a database
+	// outside the installation's place is the cloud's own answer.
+	if c := doctorLocationsCheck(lc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
 	// Both sides' checks, in the order main has them: the catalog's age (P7),
 	// the ZDR note (P9), and the project-wide provider secrets' own checks.
 	o.Checks = append(o.Checks, doctorPriceCatalog(budgetNow()))
