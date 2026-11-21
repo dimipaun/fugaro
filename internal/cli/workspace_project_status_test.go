@@ -28,9 +28,12 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
@@ -219,6 +222,10 @@ type wu11FakeCloud struct {
 
 	caps    memberCaps
 	capsErr error
+	// capNames is the member each caps read was asked about: the figure is the
+	// workspace's own meter, so the read carries the member whose entry of it the
+	// row compares, once per member and never the same name for both.
+	capNames []string
 
 	accounts   map[string]accountAccess
 	accountErr error
@@ -241,7 +248,8 @@ func (c *wu11FakeCloud) reads() workspaceMemberReads {
 		images: func(context.Context, *localcfg.Config) ([]imageJob, error) {
 			return slices.Clone(c.images), c.imagesErr
 		},
-		caps: func(context.Context, *localcfg.Config) (memberCaps, error) {
+		caps: func(_ context.Context, name string) (memberCaps, error) {
+			c.capNames = append(c.capNames, name)
 			return c.caps, c.capsErr
 		},
 		account: func(_ context.Context, account string) (accountAccess, error) {
@@ -545,6 +553,132 @@ func TestStatusRowsInOrder(t *testing.T) {
 	}
 	if h.probe.calls != 2 {
 		t.Fatalf("the probe was asked %d times for two members, want once each", h.probe.calls)
+	}
+}
+
+// TestStatusCapsReadTheWorkspaceMeter is the caps row's own fact, which the
+// acceptance names as "caps set and use against them": the figure compared with
+// the cap is this member's entry of the workspace's METER -- the quantity the
+// workspace's cap governs (D1301), which the workspace's own credentials service
+// keeps -- asked for under the member's name and never read out of the member's
+// own ledger, which is a different quantity under a different cap. Every state
+// the row can be in is pinned here, the fail included: a member whose whole cap
+// is spent has every call of it refused until the window turns.
+func TestStatusCapsReadTheWorkspaceMeter(t *testing.T) {
+	h := wu11New(t)
+	r := wu11Row(t, h.doc(""), "alpha", rowCaps)
+	if r.Status != wsPass {
+		t.Fatalf("a member inside its cap is %s: %q", r.Status, r.Detail)
+	}
+	if !strings.Contains(r.Detail, wsUSD(100_000_000)) || !strings.Contains(r.Detail, wsUSD(10_000_000)) {
+		t.Fatalf("the row does not state the cap and the use against it: %q", r.Detail)
+	}
+	if !slices.Equal(h.cloud.capNames, []string{"alpha", "beta"}) {
+		t.Fatalf("the caps were read for %v, want each member's own figure of the workspace's meter", h.cloud.capNames)
+	}
+
+	// A member with its whole cap spent is a fail -- every further call of it is
+	// refused -- and the fix is the one command that raises the cap.
+	h = wu11New(t)
+	h.cloud.caps = memberCaps{Set: true, Monthly: 100_000_000, Spent: 100_000_000, SpentRead: true}
+	r = wu11Row(t, h.doc(""), "alpha", rowCaps)
+	if r.Status != wsFail {
+		t.Fatalf("a member at its cap is %s, want fail: %q", r.Status, r.Detail)
+	}
+	if !strings.Contains(r.Fix, " workspace cap set --workspace acme --monthly ") {
+		t.Fatalf("the fail does not name the command that raises the cap: %q", r.Fix)
+	}
+	if _, err := h.screen("", false); err == nil {
+		t.Fatal("a member over its cap did not make the command exit nonzero")
+	}
+
+	// A month the meter did not answer for is a warn that says so: the figure
+	// nobody produced is not a spend of zero.
+	h = wu11New(t)
+	h.cloud.caps = memberCaps{Set: true, Monthly: 100_000_000, Why: "the workspace's own meter did not answer"}
+	r = wu11Row(t, h.doc(""), "alpha", rowCaps)
+	if r.Status != wsWarn {
+		t.Fatalf("an unread meter is %s, want warn: %q", r.Status, r.Detail)
+	}
+	if !strings.Contains(r.Detail, "was not measured") || !strings.Contains(r.Detail, h.cloud.caps.Why) {
+		t.Fatalf("the row does not say the use was not measured and why: %q", r.Detail)
+	}
+	if strings.Contains(r.Detail, wsUSD(0)) {
+		t.Fatalf("an unread meter was reported as a spend: %q", r.Detail)
+	}
+
+	// No cap at all: nothing bounds what the workspace's credentials pay for.
+	h = wu11New(t)
+	h.cloud.caps = memberCaps{Set: false, SpentRead: true}
+	r = wu11Row(t, h.doc(""), "alpha", rowCaps)
+	if r.Status != wsWarn || !strings.Contains(r.Fix, " workspace cap set --workspace acme --monthly ") {
+		t.Fatalf("no cap is %s with fix %q", r.Status, r.Fix)
+	}
+}
+
+// TestStatusCapsMeterIsReadFromTheWorkspaceDatabase drives the read the caps
+// row's figure comes out of, against the RTDB fake: the use against the cap is
+// this member's entry of the workspace's own meter for the month, read at the
+// workspace's own path, with the room its calls in flight hold counted in and
+// another member's spend left out. The three answers a month can give are all
+// pinned here: a node holding figures, no node at all, and a read the database
+// refused.
+func TestStatusCapsMeterIsReadFromTheWorkspaceDatabase(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	db, err := rtdb.New(f.URL, rtdb.Auth{IDToken: func() string { return "test-id-token" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := NewWorkspaceMemberCloud(
+		&localcfg.Config{Name: "acme", WorkspaceCap: &localcfg.WorkspaceCap{Monthly: 100}}, db)
+
+	now := time.Now()
+	month := budget.MonthKey(now)
+	node := budget.PathWorkspaceSpend("acme", month)
+	f.Set(node, map[string]any{
+		"month":        month,
+		"members":      map[string]any{"alpha": 30_000_000, "beta": 1_000_000},
+		"reservations": map[string]any{"call-1": map[string]any{"member": "alpha", "amount": 5_000_000, "at": now.Add(-time.Minute).UnixMilli()}},
+	})
+
+	got, err := reads.caps(context.Background(), "alpha")
+	if err != nil {
+		t.Fatalf("reading the workspace's meter: %v", err)
+	}
+	if !got.Set || got.Monthly != 100_000_000 {
+		t.Fatalf("the workspace's own cap is %+v, want $100.00 set", got)
+	}
+	if !got.SpentRead {
+		t.Fatalf("a month with a node is not read: %+v", got)
+	}
+	if got.Spent != 35_000_000 {
+		t.Fatalf("alpha's use against the cap is %d micros, want its settled 30.00 plus its 5.00 in flight", got.Spent)
+	}
+	if reqs := f.Requests(); !slices.ContainsFunc(reqs, func(r gcpfake.Request) bool {
+		return strings.HasSuffix(r.Path, "/"+node+".json")
+	}) {
+		t.Fatalf("the meter was not read at the workspace's own path %s: %v", node, reqs)
+	}
+
+	// A month with no node is not a spend of zero: nothing has measured it, and
+	// the row's warn says so rather than passing a figure nobody produced.
+	f.Set(node, nil)
+	got, err = reads.caps(context.Background(), "alpha")
+	if err != nil {
+		t.Fatalf("reading a month with no node: %v", err)
+	}
+	if got.SpentRead || got.Spent != 0 {
+		t.Fatalf("a month with no node was read as a spend: %+v", got)
+	}
+	if got.Why == "" || !strings.Contains(got.Why, month) {
+		t.Fatalf("the unread month is not explained: %+v", got)
+	}
+
+	// A refused read is a refusal, and the row reports it as one: a meter nobody
+	// could read is not a meter reading zero.
+	f.DenyRead(node)
+	if _, err := reads.caps(context.Background(), "alpha"); err == nil {
+		t.Fatal("a refused read of the meter answered a figure")
 	}
 }
 
@@ -923,6 +1057,7 @@ func TestStatusEscapesMemberStrings(t *testing.T) {
 	}
 	h.s.lc.WorkspaceMembers = &table
 	h.cloud.creds.Stored = []memberCredential{{Name: "anthropic" + esc, Stored: true, Created: wu11Now}}
+	h.cloud.creds.Missing = []string{"beta" + esc}
 	h.cloud.accounts[wu11Account] = accountAccess{
 		Keys:  []accountKey{{ID: "key" + esc, Created: wu11Now}},
 		ActAs: []string{"user:stranger" + esc + "@example.com"},

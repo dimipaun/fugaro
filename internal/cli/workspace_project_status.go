@@ -77,6 +77,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -696,7 +697,7 @@ func (s *WorkspaceProjectStatus) gather(ctx context.Context, m wsMember, roster 
 	}
 	if s.cloud.caps != nil {
 		var err error
-		f.caps, err = s.cloud.caps(ctx, f.member)
+		f.caps, err = s.cloud.caps(ctx, m.Name)
 		if err != nil {
 			f.capsErr = oneLineCLI(err.Error())
 		}
@@ -869,6 +870,14 @@ func memberFixIn(name string) string {
 	return selfCommand() + " doctor --project " + wsEsc(name) + " (on that project's own machine)"
 }
 
+// wsCapFix is the one command the caps row names: the workspace's own cap, which
+// is the only cap this side can state (the members' own budgets are their own
+// machines' business). The family has no read subcommand, so naming one would
+// name a command that does not exist.
+func wsCapFix(workspace string) string {
+	return selfCommand() + " workspace cap set --workspace " + wsEsc(workspace) + " --monthly <amount>"
+}
+
 // rowReachable is the first row: the member's own project answering a read at
 // all. A member the table does not let this machine place is named here, because
 // every row under it was then read of a project nobody named.
@@ -948,7 +957,7 @@ func (s *WorkspaceProjectStatus) rowCredentials(m wsMember, f wsMemberFacts) wsP
 		}
 		return wsRow(id, wsFail,
 			fmt.Sprintf("the member's config names the Claude account(s) %s, and this member's project holds no container for them: a run of a repository allowed one of them has no token to mount", strings.Join(names, ", ")),
-			selfCommand()+" accounts add "+missing[0]+" (on "+wsEsc(m.Name)+"'s own machine)")
+			selfCommand()+" accounts add "+wsEsc(missing[0])+" (on "+wsEsc(m.Name)+"'s own machine)")
 	}
 	if len(f.creds.Broken) > 0 {
 		names := make([]string, 0, len(f.creds.Broken))
@@ -1052,22 +1061,22 @@ func (s *WorkspaceProjectStatus) rowCaps(m wsMember, f wsMemberFacts) wsProjectR
 	if f.capsErr != "" {
 		return wsRow(id, wsWarn,
 			"the member's caps were not read here: "+f.capsErr,
-			selfCommand()+" workspace cap show")
+			wsCapFix(s.lc.Name))
 	}
 	if !f.caps.Set {
 		return wsRow(id, wsWarn,
 			"the workspace states no cap, so nothing bounds what its own credentials pay for this member's calls",
-			selfCommand()+" workspace cap set <monthly>")
+			wsCapFix(s.lc.Name))
 	}
 	if !f.caps.SpentRead {
 		return wsRow(id, wsWarn,
-			fmt.Sprintf("the workspace's cap is %s a month, and what this member has spent against it was not measured here: %s", wsUSD(f.caps.Monthly), f.caps.Why),
-			selfCommand()+" budget show")
+			fmt.Sprintf("the workspace's cap is %s a month, and what this member has spent against it was not measured: %s", wsUSD(f.caps.Monthly), f.caps.Why),
+			wsCapFix(s.lc.Name))
 	}
 	line := fmt.Sprintf("the workspace's cap is %s a month and this member has spent %s of it", wsUSD(f.caps.Monthly), wsUSD(f.caps.Spent))
 	if f.caps.Spent >= f.caps.Monthly {
 		return wsRow(id, wsFail, "the member has spent its whole cap: "+line+", so every call of it is refused until the next window",
-			selfCommand()+" workspace cap set <monthly>")
+			wsCapFix(s.lc.Name))
 	}
 	return wsRow(id, wsPass, line, "")
 }
@@ -1379,7 +1388,7 @@ func (s *WorkspaceProjectStatus) accountRows(ctx context.Context, roster *worksp
 		}
 		rows = append(rows, wsRow(rowAccountKeys, wsWarn,
 			fmt.Sprintf("the workspace IAM account %s holds %d user-managed key(s): %s. %s", wsEsc(account), len(acc.Keys), strings.Join(parts, ", "), wsKeyOutlivesRemove),
-			"gcloud iam service-accounts keys delete KEY_ID --iam-account "+account+", or disable the account; "+wsKeyOutlivesRemove))
+			"gcloud iam service-accounts keys delete KEY_ID --iam-account "+wsEsc(account)+", or disable the account; "+wsKeyOutlivesRemove))
 	}
 	// The principals that can act as the account are compared against the
 	// record's admins: a workspace admin holding actAs is the mechanism working
@@ -1401,7 +1410,7 @@ func (s *WorkspaceProjectStatus) accountRows(ctx context.Context, roster *worksp
 	} else {
 		rows = append(rows, wsRow(rowAccountActAs, wsWarn,
 			fmt.Sprintf("the workspace IAM account %s can be acted as by %s, who the record does not list as an admin: whoever can act as this account holds the workspace's own authority over every member. %s", wsEsc(account), strings.Join(strangers, ", "), wsKeyOutlivesRemove),
-			"gcloud iam service-accounts remove-iam-policy-binding "+account+" --member=MEMBER --role=ROLES/IAM.SERVICEACCOUNTUSER; "+wsKeyOutlivesRemove))
+			"gcloud iam service-accounts remove-iam-policy-binding "+wsEsc(account)+" --member=MEMBER --role=ROLES/IAM.SERVICEACCOUNTUSER; "+wsKeyOutlivesRemove))
 	}
 	return rows
 }
@@ -1599,8 +1608,9 @@ type workspaceMemberReads struct {
 	// images reads the member's rebuild Scheduler jobs and their last success.
 	images func(ctx context.Context, member *localcfg.Config) ([]imageJob, error)
 	// caps reads the workspace's cap and what the workspace's own credentials
-	// have paid for this member.
-	caps func(ctx context.Context, member *localcfg.Config) (memberCaps, error)
+	// have paid for this member: the owner's file, and the workspace's own
+	// meter node for the member the name belongs to.
+	caps func(ctx context.Context, name string) (memberCaps, error)
 	// account reads one workspace IAM account's user-managed keys and every
 	// principal that can act as it.
 	account func(ctx context.Context, account string) (accountAccess, error)
@@ -1866,10 +1876,24 @@ func (c *workspaceMemberCloud) images(ctx context.Context, member *localcfg.Conf
 }
 
 // caps is the workspace's own cap (the owner's file) and what the workspace's
-// credentials have paid for this member. The spend is not read here, and the row
-// says so: a per-member spend is a figure of the member's own budget record,
-// which is read on the member's machine.
-func (c *workspaceMemberCloud) caps(ctx context.Context, member *localcfg.Config) (memberCaps, error) {
+// credentials have paid for one member, which is the workspace's own METER: the
+// month's node the workspace's credentials service reserves and settles in
+// (D1301, internal/budget/workspace.go), in the workspace's own database. It is
+// the figure the workspace's cap governs and not the member's own ledger, which
+// is a different quantity with its own cap (spec §5: the member's gateway keeps
+// enforcing the member's own budget, and neither figure answers the other's
+// question). What is counted is what the calls have settled for this member plus
+// the room the calls still in flight hold for it, which is the meter's own
+// reading of a member's month.
+//
+// A month with NO NODE is not read as a spend of zero. It is one absent node for
+// two different facts -- a workspace whose credentials have paid for nothing
+// this month, and a workspace whose service does not meter yet -- and today it is
+// the second: nothing writes the meter, because the credentials service's
+// paid-call path takes no reservation (internal/credsvc/workspace_cap.go says so
+// itself). SpentRead stays false and Why says exactly that, so the row warns
+// with the truth instead of passing a figure nobody produced.
+func (c *workspaceMemberCloud) caps(ctx context.Context, name string) (memberCaps, error) {
 	var out memberCaps
 	if c.lc.WorkspaceCap != nil {
 		monthly, err := pricing.FromUSD(c.lc.WorkspaceCap.Monthly)
@@ -1879,7 +1903,23 @@ func (c *workspaceMemberCloud) caps(ctx context.Context, member *localcfg.Config
 		out.Set = true
 		out.Monthly = int64(monthly)
 	}
-	out.Why = "a member's own spend is a figure of its own budget record, which is read on the member's own machine (" + selfCommand() + " budget show there)"
+	if c.db == nil {
+		out.Why = errNoWorkspaceSide("the workspace's own spend meter").Error()
+		return out, nil
+	}
+	now := c.now()
+	month := budget.MonthKey(now)
+	spend, found, err := budget.ReadWorkspaceSpend(ctx, c.db, c.lc.Name, month)
+	if err != nil {
+		return out, fmt.Errorf("the workspace's own spend meter: %v", err)
+	}
+	if !found {
+		out.Why = fmt.Sprintf("the workspace's own meter holds no node for %s, and this build's credentials service takes no reservation on the paid-call path yet, so nothing has measured what its credentials pay for here: a month with no node is not a spend of zero", month)
+		return out, nil
+	}
+	live := spend.Live(now)
+	out.Spent = int64(live.Members[name] + live.ReservedBy(name))
+	out.SpentRead = true
 	return out, nil
 }
 
