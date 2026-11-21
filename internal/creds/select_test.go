@@ -505,14 +505,22 @@ func TestBrokenNeverSelected(t *testing.T) {
 	}
 }
 
-// Tier C is reserved: this release does not select a third-party route for a
-// Claude model (D150, C3.6). A caller offering one is refused rather than
-// quietly served from another tier.
+// Tier C is a named provider key, and D3000's gate is the Claude one: a call
+// whose only credential is a provider's, for a Claude model, waits for Check 50
+// (D150, C3.6, R3). It is refused rather than quietly served from another tier
+// — there is none to be served from — and the refusal names the credential, the
+// reason and the decision.
+//
+// The model is the caller's and not this package's (Selector.Model), and the
+// non-Claude half of the same rule is select_provider_test.go's
+// (TestANonClaudeProviderModelIsServed).
 func TestSelectRefusesReservedTierC(t *testing.T) {
 	st := newFakeStore()
-	_, _, err := selector(st, noWindow()).Select(ctx, run, []Credential{b1, {Name: "openrouter", Tier: TierC}})
+	s := selector(st, noWindow())
+	s.Model = claudeModel
+	_, _, err := s.Select(ctx, run, []Credential{{Name: "openrouter", Tier: TierC}})
 	if err == nil || errors.Is(err, ErrNoCredential) {
-		t.Fatalf("a tier C candidate was not refused: %v", err)
+		t.Fatalf("a tier C candidate was not refused for a Claude model: %v", err)
 	}
 	// Refused by name, and for the reason it was not built: a caller that
 	// offered a tier C route is told that, and not merely that its tier is
