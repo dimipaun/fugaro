@@ -148,14 +148,14 @@ that finds the contract wrong raises a contract change (section 7).
 
 **Slice 0, inert:** C1, BRS, BR0 — the level-0 tasks. C1 rewrites nothing a user meets, because its
 sides do not exist yet; BRS and BR0 are merged.
-**Slice 1, the sides:** the level-1 tasks, BR1, BR2, BR4, BR6, BR7, BR8, BR9, BR11, BR13, BR14,
+**Slice 1, the sides:** the level-1 tasks, BR1, BR2, BR4, BR6, BR7, BR8, BR9, BR13, BR14,
 BR19 and the contract change. They are not all inert: BR6 and BR16 change what `fugaro update`
 applies, and BR1 with BR16 turns the refusal into a launch that cannot yet be claimed. So no CLI
 release is cut from `main` between the merge of BR1, BR6, BR16, BR18 or BR22 and I1, BR23's
 retirement included — a release that ships half of this pair would ship a Batch launch that no
 service can serve.
-**Slice 2** is levels 2 and 3 (BR3, BR5, BR10, BR12, BR16, BR17, BR15, BR18, BR21, BR22, BR23) and
-**slice 3** is level 4 (BR20) with I1. After I1, and after the launcher plan's own I1, an updated
+**Slice 2** is levels 2 and 3 (BR3, BR5, BR10, BR11, BR12, BR16, BR17, BR15, BR18, BR21, BR22, BR23)
+and **slice 3** is level 4 (BR20) with I1. After I1, and after the launcher plan's own I1, an updated
 installation on Batch launches.
 
 **Every task F18 of the launcher plan lists is rewritten, kept or dropped one by one, from its own
@@ -463,20 +463,23 @@ environment it builds.
 - Reviewer tier: opus, mandatory independent review.
 
 ### BR11: nothing is mounted on a Batch job (`service-credentials`)
-**Kept by LM19** as written (D3104, D3107).
+**Kept by LM19** as written (D3104, D3107), with one correction: it writes
+`internal/cli/launch_batch.go` and its test, which BR1 creates, so it amends BR1's files and runs a
+level below BR1 rather than writing them beside it.
 - Acceptance: a Batch job carries no `secretVariables`; a launch on Batch for a repository the
   credentials service does not serve is refused before the mint, with its fix; row E5 leaves the
   secret-readers table and its document together, saying D3107 supersedes D2075.
 - Files: `deploy/terraform/secret_readers_test.go`, `docs/secrets-brokering/secret-readers.md`,
   `internal/backend/batch/secrets.go`, `internal/backend/batch/secrets_test.go` (new),
-  `internal/cli/launch_batch.go` (new), `internal/cli/launch_batch_test.go` (new),
+  `internal/cli/launch_batch.go`, `internal/cli/launch_batch_test.go`,
   `internal/cli/run.go`, `internal/cli/cloud_openers_test.go`. Past five; the first two are one row.
 - Interfaces: consumes BRS (`secrets.go`).
 - Tests: `TestABatchJobMountsNothing`, `TestAnUnservedRepositoryIsRefusedOnBatchWithItsFix`,
   `TestTheRefusalComesBeforeTheMint`.
 - Command: `go test ./internal/backend/batch/ -run BatchJobMountsNothing -count=1 && go test ./internal/cli/ -run 'UnservedRepositoryIsRefusedOnBatch|RefusalComesBeforeTheMint|Openers|Docs' -count=1 && go test ./deploy/terraform/ -run SecretReaders -count=1`.
 - Red step: a job with `batch.secrets` set still carries `secretVariables`.
-- Depends on: BRS (kept: one file).
+- Depends on: BRS (kept: one file); BR1 (kept: two files, `launch_batch.go` and
+  `launch_batch_test.go`, which this task amends rather than creates).
 - Commit: `batch: a run's credentials come from the service alone (BR11, D3104, D3107, R10)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -749,10 +752,18 @@ it (R21).
   moved to) and the block's own file, which it renames.
 - Tests: `TestNoConstructorNamesTheSealKey`, `TestTheSettingsRegistryHasNoBatchKeyFact`,
   `TestAnOldBlockWithAKeyFactStillLoads`, `TestTheOptInFactStaysWhereItMoved`.
-- Command: `go build ./... && ! git grep -n 'sealkey\|seal_key\|SealKey\|FUGARO_BUDGET_TOKEN_WRAPPED' -- '*.go' ':!*_test.go' && go test ./internal/localcfg/ -run 'OldBlockWithAKeyFact|OptInFactStays' -count=1 && go test ./internal/settings/ -run RegistryCoversEveryConfigField -count=1 && go test ./internal/backend/batch/ ./internal/credsvc/ -count=1`.
+- Command: `go build ./... && ! git grep -nE 'BatchSealKey|ParseSealKeyPublicKey|FUGARO_BUDGET_TOKEN_WRAPPED|sealkey_wire|wrap_contract' -- '*.go' ':!*_test.go' ':!internal/cli/init_compute.go' ':!internal/localcfg/batch.go' && go test ./internal/localcfg/ -run 'OldBlockWithAKeyFact|OptInFactStays' -count=1 && go test ./internal/settings/ -run RegistryCoversEveryConfigField -count=1 && go test ./internal/backend/batch/ ./internal/credsvc/ -count=1`.
+  The grep names the identifiers this task deletes, **not the words `seal` and `key`**, which many
+  things this task does not own spell: `ErrSealKey` and the Cloud Run seal in
+  `internal/budget/token/` stay until the launcher plan's LM18, and the Batch backend's `SealKey`
+  option is a field of `internal/backend/batch/seal.go`, BR1's file. The two exclusions are the
+  acceptance's own text sites: `internal/cli/init_compute.go`, BR16's block writer, which this task
+  does not wait on, and `internal/localcfg/batch.go`, this task's own reader, which skips the one
+  retired key so a block an un-updated machine still holds loads.
 - Red step: the build fails on a deleted file's last user.
 - Depends on: C1; BR1, BR2, BR4 and BR17 (kept: each stops using the code this deletes, one file
-  at a time). It does not wait on BR16, and the pass records that wait as broken by the contract:
+  at a time); BR19 (kept: two files, `sharedcfg.go` and `shared_test.go`, which both tasks write).
+  It does not wait on BR16, and the pass records that wait as broken by the contract:
   the block's writer names the retired key as text and no field of it, so there is nothing in it to
   stop compiling. It starts after the owner has run Check 830, so that the link's read is the one
   the surviving code names (R4).
@@ -794,8 +805,8 @@ registration route is replaced, and the merged code's retirement is BR23's rathe
 | Level | Tasks |
 | --- | --- |
 | 0 | C1, BRS, BR0 |
-| 1 | BR1, BR2, BR4, BR6, BR7, BR8, BR9, BR11, BR13, BR14, BR19; and `R-C1-link-permission` and `R-C1-project-job-account` once the owner has run Check 830 and answered O1 |
-| 2 | BR3, BR5, BR10, BR12, BR16, BR17 |
+| 1 | BR1, BR2, BR4, BR6, BR7, BR8, BR9, BR13, BR14, BR19; and `R-C1-link-permission` and `R-C1-project-job-account` once the owner has run Check 830 and answered O1 |
+| 2 | BR3, BR5, BR10, BR11, BR12, BR16, BR17 |
 | 3 | BR15, BR18, BR21, BR22, BR23 |
 | 4 | BR20 |
 | 5 | I1 |
@@ -831,6 +842,7 @@ critical path BR0 → `R-C1-link-permission` → BR12 → BR18 → BR20 → I1, 
 | --- | --- |
 | BR1, BR8, BR10, BR11 after BRS | one file: each owns a helper BRS creates |
 | BR9 after BRS | the one name BRS defines; a contract for one constant would cost more than the edge |
+| BR11 after BR1 | two files, `launch_batch.go` and `launch_batch_test.go`: BR11 amends the launcher BR1 creates |
 | `R-C1-link-permission` after BR0; BR3, BR5 and BR12 after it | data: the owner's measurement and his answer decide which fact is the link and which permission reads it (R4, O1) |
 | BR16 after BR6 | one file, `init_compute.go` |
 | BR21 after BR16 and BR5 | one file, `init_compute.go`; and behaviour: it applies the root with the input BR5 adds |
@@ -842,9 +854,10 @@ critical path BR0 → `R-C1-link-permission` → BR12 → BR18 → BR20 → I1, 
 | BR10 after BR8 | behaviour: a project job's environment is what BR8 builds |
 | BR13 after BR0 | two files, the checklist and the scripts' list |
 | BR23 after BR1, BR2, BR4 and BR17 | behaviour: each stops using the code it deletes, and a deletion that lands first leaves the build broken |
+| BR23 after BR19 | two files, `sharedcfg.go` and `shared_test.go` |
 | I1 after all | it wires the real sides and proves them together |
 
-**The gain**, as `fugaro plan graph` reports it: 13 edges broken, 23 kept, 4 added; the critical
+**The gain**, as `fugaro plan graph` reports it: 13 edges broken, 25 kept, 4 added; the critical
 path was 8 tasks of weight 16 and is 6 tasks of weight 11. **The critical path** is BR0,
 `R-C1-link-permission`, BR12, BR18, BR20, I1 — and BR0 is the bottleneck: between it and the
 contract change stand the owner's run of Check 830 and his answer on the second read, and the whole
@@ -860,15 +873,15 @@ meanwhile.
 | `internal/backend/batch/seal.go` | BRS (0), BR1 (1) |
 | `internal/backend/batch/env.go` | BRS (0), BR8 (1) |
 | `internal/backend/batch/account.go` | BRS (0), BR10 (2) |
-| `internal/backend/batch/secrets.go` | BRS (0), BR11 (1) |
+| `internal/backend/batch/secrets.go` | BRS (0), BR11 (2) |
 | `internal/credsvc/server.go` | BR17 (2), I1 (5) |
 | `internal/credsvc/audit.go` | BR2 (1) |
 | `internal/credsvc/identity_claim.go` | BR2 (1) |
 | `internal/gcpfake/batch.go`, `internal/gcpfake/compute.go` | BR3 (2) |
 | `internal/backend/batch/reap.go` | BR14 (1) |
 | `internal/cli/docs_budget_token_channel_test.go` | BRS (0), BR1 (1) |
-| `deploy/terraform/secret_readers_test.go` | BRS (0), BR11 (1), BR15 (3) |
-| `docs/secrets-brokering/secret-readers.md` | BR11 (1), BR15 (3) |
+| `deploy/terraform/secret_readers_test.go` | BRS (0), BR11 (2), BR15 (3) |
+| `docs/secrets-brokering/secret-readers.md` | BR11 (2), BR15 (3) |
 | `internal/cli/docs_security_test.go` | BR12 (2), BR15 (3) |
 | `deploy/terraform/terraform_test.go` | BR5 (2) |
 | `docs/design/budget-token-channel.md`, `docs/design/compute-backend.md` | BR1 (1) |
@@ -883,7 +896,7 @@ meanwhile.
 | `internal/cli/validate_batch.go` | BR7 (1) |
 | `internal/cli/backends.go` | BR18 (3), BR20 (4) |
 | `internal/cli/backends_use_test.go` | BR18 (3) |
-| `internal/cli/run.go`, `internal/cli/cloud_openers_test.go` | BR11 (1) |
+| `internal/cli/run.go`, `internal/cli/cloud_openers_test.go` | BR11 (2) |
 | `internal/runner/budget_session.go`, `internal/gitops/gitops.go` | BR4 (1) |
 | `internal/runner/projectjob.go` | BR9 (1) |
 | `internal/cli/cloud.go` | I1 (5) |
@@ -894,7 +907,8 @@ meanwhile.
 | `internal/infra/compute.go`, the release notes | BR16 (2) |
 | `internal/localcfg/shared.go` | BR19 (1) |
 | `internal/localcfg/shared_test.go`, `internal/cli/sharedcfg.go`, `internal/cli/sharedcfg_validate_test.go` | BR19 (1), BR23 (3) |
-| `internal/cli/launch_batch.go` | BR11 (1), BR20 (4) |
+| `internal/cli/launch_batch.go` | BR1 (1), BR11 (2), BR20 (4) |
+| `internal/cli/launch_batch_test.go` | BR1 (1), BR11 (2) |
 | `docs/design/update-in-flight.md` | BR21 (3) |
 | `internal/infra/tf/cover.go`, the compute module and root | BR5 (2) |
 | `internal/settings/registry.go`, `schemas/settings.schema.json`, `internal/localcfg/testdata/shared.golden.yaml`, `internal/cli/writers_labels.go` | BR23 (3) |

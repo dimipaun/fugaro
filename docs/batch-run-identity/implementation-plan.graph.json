@@ -798,6 +798,11 @@
       "reason": "one file: secrets.go"
     },
     {
+      "task": "BR11",
+      "needs": "BR1",
+      "reason": "two files: launch_batch.go and launch_batch_test.go"
+    },
+    {
       "task": "BR10",
       "needs": "BR8",
       "reason": "behaviour: a project job's environment is what BR8 builds"
@@ -886,6 +891,11 @@
       "task": "BR23",
       "needs": "BR17",
       "reason": "behaviour: the registration replaces the seal-key registration"
+    },
+    {
+      "task": "BR23",
+      "needs": "BR19",
+      "reason": "two files: sharedcfg.go and shared_test.go"
     }
   ],
   "decoupling": [
