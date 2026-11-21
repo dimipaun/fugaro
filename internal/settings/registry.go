@@ -250,6 +250,12 @@ var yamlMeta = map[string]Row{
 	"agent.max_run_tokens":             {Merge: Tighten, Default: unset("the ceiling's")},
 	"agent.first_line_review":          {Default: value(config.FirstLineAuto, "config.FirstLineAuto")},
 	"agent.first_line_rounds":          {Default: unset("the run's rigor mode decides (rigor.DefaultRounds)")},
+	// The keep-warm beat's switch (R10, D2985). On is the default and the
+	// constant is the literal "true" rather than a config constant, as
+	// git.pr.early_draft's is: the readers are the accessor
+	// (config.Agent.WorkspaceBeatOn) and this row, and a Go constant between
+	// them would be a third name for one value.
+	"agent.workspace_beat": {Default: value("true", ""), Doc: docWorkspaceService},
 	// The per-level review block (L1.3, D722). The model a level resolves to
 	// when the block names none is the resolver's rule (L3.1): level 2 and
 	// level 3 are the reviewer's model, level 1 the coder's.
@@ -386,6 +392,15 @@ var yamlMeta = map[string]Row{
 		Doc:     "docs/rigor-modes/spec.md",
 	},
 	"rigor.areas": {Owner: "rigor", Merge: Union, Default: unset("no area rules"), Doc: "docs/rigor-modes/spec.md"},
+	// The project layer's per-repository level (LD4, LF4): the key is the
+	// layer's alone — a repository's fugaro.yaml may not state it at all, and
+	// says the level it runs at with its own rigor.default — and the file it is
+	// stated in is the layer, which `fugaro config publish` carries. That is why
+	// the owner is not "rigor", the family that edits an area rule's own fields,
+	// and why it is not the fallback `settings set`: the generic path's allowlist
+	// is the keys a repository is edited into, and it refuses this one, which is
+	// the F13 shape the four header keys above are.
+	"rigor.repos": {Owner: "config", Doc: docRigor},
 
 	// The security list is rigor.areas' twin in the two fields a Scopes row
 	// cannot answer. Its merge is Union and not the default Replace (D1506):
@@ -547,6 +562,12 @@ const (
 	// §5 and §6). The folder's own README, reconciliation and plan are not the
 	// document a key's meaning is stated in, so the row points at the spec.
 	docWorkspace = "docs/workspaces/spec.md"
+	// docWorkspaceService is the document that states the keep-warm beat's
+	// switch (R10, D2985). It is the folder's reconciliation and not its spec:
+	// the spec is the owner's brief and the ruling the switch comes from is
+	// R10, which only the reconciliation states — the plan writes it as WS13's
+	// acceptance and no document of the folder has it as a spec sentence.
+	docWorkspaceService = "docs/workspace-service/reconciliation.md"
 	// docPeriodicReviews is the document that states the project's jobs:
 	// block (R13). It is the work's plan rather than a spec, for
 	// docOrchestrator's reason: the two keys and the default that turns a
@@ -765,6 +786,7 @@ var layerRows = []Row{
 	layerRow("defaults.agent.max_budget_usd", "25", "settings set", docLayer),
 	layerRow("defaults.agent.first_line_review", "auto", "settings set", docLayer),
 	layerRow("defaults.agent.first_line_rounds", "the run's rigor mode decides (rigor.DefaultRounds)", "settings set", docLayer),
+	layerRow("defaults.agent.workspace_beat", "true", "settings set", docWorkspaceService),
 	layerRow("defaults.agent.levels.l1.model", "the coder's model", "models", docModels),
 	layerRow("defaults.agent.levels.l1.effort", "the model's own default", "models", docModels),
 	layerRow("defaults.agent.levels.l1.none", "the run's rigor mode and the recipe decide", "settings set", docLayer),
@@ -784,6 +806,21 @@ var layerRows = []Row{
 	layerRow("defaults.rigor.areas.*.name", "none", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.match", "none", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.level", "none", "rigor", docRigor),
+	// What an area of the project layer is made of (LD4): each member is a
+	// repository of the project, or a repository with the paths of it that are
+	// in the area. No command of the settings surface writes them yet — a
+	// project area is written by hand, or by the project's own tooling — so the
+	// row names the generic writer and the write refuses the spelling, exactly
+	// as the other rows of a shape no family owns do.
+	layerRow("defaults.rigor.areas.*.members.*.repo", "none", "settings set", docRigor),
+	layerRow("defaults.rigor.areas.*.members.*.paths", "none", "settings set", docRigor),
+	// The project layer's per-repository level, one entry per repository of the
+	// project it names one by one (LD4). Written by hand like the members above:
+	// the key a repository sets about itself is its own rigor.default, and
+	// `fugaro rigor set --layer repo` writes that one. Its row under the
+	// fugaro.yaml spelling is yamlMeta's, which names `config` as the owner
+	// because a repository's own file may not set the key at all.
+	layerRow("defaults.rigor.repos", "none", "settings set", docRigor),
 	// The planning pass's switch, read the way defaults.git.pr.early_draft
 	// above is: a layer that states nothing leaves it as the fugaro.yaml row
 	// says (docs/contract-first-decoupling, D1813).
@@ -981,6 +1018,17 @@ var localRows = []Row{
 	loc("batch.secrets", "none", "secrets", "docs/backends.md"),
 	loc("batch.socket_gid", "the image's own docker group", "setup", "docs/backends.md"),
 	loc("batch.task_timeout", "Fugaro's own task timeout", "setup", "docs/backends.md"),
+	// The Batch installation's two identity facts (R2, R13, D3110, D3111). Their
+	// owner is `update` and not `setup` and not a settings family, and that is
+	// the rule rather than a column: R13 says `fugaro update` writes the key
+	// fact from the compute root's own output and no settings command writes it,
+	// because a key fact a settings command could write is a substituted public
+	// key — and a substituted one hands its holder every seal key wrapped to it.
+	// The opt-in fact is an OPERATOR's, written by opting in (R2) and by opting
+	// out (R16), and never by a machine that merely selects the backend again.
+	loc("batch.opt_in", "the installation has not opted in, so no compute root is applied", "update", "docs/backends.md"),
+	loc("batch.seal_key.public_key", "none: without the key fact a sealed launch is refused", "update", "docs/backends.md"),
+	loc("batch.seal_key.version", "none: without the key fact a sealed launch is refused", "update", "docs/backends.md"),
 
 	loc("build.service_account", "the project's default service account", "setup", docSetup),
 	{Key: "build.machine_type", Layers: []string{LayerLocal, LayerShared}, Merge: Replace, Owner: "setup", Doc: docSetup},
@@ -1487,6 +1535,16 @@ var localRows = []Row{
 	// the same reason: every key a config file can hold is one a settings
 	// read has to be able to name.
 	loc("repos.*.credentials_service_ready", "false: no update has applied this repository's root with the service on — its bundle holds no model credential, or its agent.auth is not the cascade", "project", docSetup),
+	// The two facts the same record carries beside the switch (R12, KS19):
+	// whether the bundle holds an entry for every provider credential this
+	// repository's config names — the fact a routed call is sent through the
+	// service for — and whether a stage account of this repository is one the
+	// service serves. Both are machine-written like the switch, both are read
+	// back by the plan a repository's root is built with (infra's
+	// providerKeysServed/stageAccountServed) and both are written off as
+	// well as on, so a row here for the same reason the switch has one.
+	loc("repos.*.provider_keys_served", "false: no update has found this repository's bundle holding an entry for every provider credential its config names, or the deployed service is not at the release that serves one, or the project publishes no allow-list", "project", docSetup),
+	loc("repos.*.stage_account_served", "false: no update has found a stage account this repository mixes with a provider key, or the deployed service is not at the release that serves one", "project", docSetup),
 
 	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all seventeen of
 	// them local-only: the pin is the member's own trust and the member table

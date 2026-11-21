@@ -155,6 +155,16 @@ func TestCloudOpenersHoldBackendOpensContract(t *testing.T) {
 // TestBatchOptionsAreTheProjectConfigs: every field the config can set reaches
 // batch.Options, because a field the opener drops is a run launched with a
 // default rather than with the installation's own fact.
+//
+// The one field whose reaching Options is no longer a launch fact is Secrets
+// (BR11, D3104): a Batch job mounts nothing, so the map is not what a run's
+// credential comes from any more, and what it is for is the shape check
+// batch.New holds it to (internal/backend/batch's checkSecrets) -- the block is
+// still read rather than refused until `fugaro update` rewrites it (R10), and a
+// map with a secret's value in either slot is refused at startup rather than
+// mounted. That a job built from these options carries nothing of it is the
+// backend's own pin (TestABatchJobMountsNothing): only a job definition can say
+// what a job carries.
 func TestBatchOptionsAreTheProjectConfigs(t *testing.T) {
 	rig := newBatchRig(t, 412)
 	o := batchOptions(rig.lc)

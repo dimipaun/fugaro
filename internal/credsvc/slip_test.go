@@ -1288,6 +1288,8 @@ func TestServedRoutesAreExactly(t *testing.T) {
 	served := []struct{ method, path string }{
 		{http.MethodPost, MessagesPath},
 		{http.MethodPost, CountTokensPath},
+		{http.MethodPost, ProviderRoutePath},
+		{http.MethodPost, ProviderCountTokensPath},
 		{http.MethodPost, MintPath},
 		{http.MethodPost, ContextTokenPath},
 		{http.MethodPost, SignPath},
@@ -1356,7 +1358,7 @@ func TestServedRoutesAreExactly(t *testing.T) {
 			if e.Error != "not_found" {
 				t.Errorf("the refusal is %q, want not_found", e.Error)
 			}
-			for _, p := range []string{MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, LabelPath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath, identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath, identitywire.DevicePath, identitywire.ProbePath} {
+			for _, p := range []string{MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, LabelPath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath, identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath, identitywire.DevicePath, identitywire.ProbePath} {
 				if !strings.Contains(e.Message, p) {
 					t.Errorf("the 404's sentence does not name the route %q: %s", p, e.Message)
 				}
@@ -1394,6 +1396,8 @@ func TestServedRoutesCensus(t *testing.T) {
 	census := []servedRouteRow{
 		{http.MethodPost, MessagesPath},
 		{http.MethodPost, CountTokensPath},
+		{http.MethodPost, ProviderRoutePath},
+		{http.MethodPost, ProviderCountTokensPath},
 		{http.MethodPost, MintPath},
 		{http.MethodPost, ContextTokenPath},
 		{http.MethodPost, SignPath},

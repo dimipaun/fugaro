@@ -92,7 +92,13 @@ type cloudRig struct {
 	// names unless the test asked for none (noBudget). The jobs a launch
 	// starts are given it by the launcher, never by this rig: a container's
 	// own environment is Cloud Run's, and a database on a loopback address
-	// is refused there (internal/runner's BackendFromEnv).
+	// is refused there (internal/runner's BackendFromEnv). So every execution
+	// in this file is a job that carries no database address at all, and from
+	// AB1a on that is a run with no budget session — the shape these
+	// end-to-end tests run the container's entry point with on purpose. Such
+	// a run runs on; one the launcher marked as minted a token is refused
+	// instead (internal/runner's strayTokenNoBackend), and AB4 refuses that
+	// launch before it starts.
 	budget *testutil.Budget
 
 	mu      sync.Mutex

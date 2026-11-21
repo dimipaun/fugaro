@@ -335,6 +335,16 @@ type Snapshot struct {
 	Workspace string
 	// Member is the member whose settings and spend summary are saved. It is the
 	// zero one for the workspace's audit export, which is not any member's.
+	//
+	// Its two fields are named the way the workspace names a member, not the way
+	// the member-reaching calls of this package name one: Project is the
+	// member's Fugaro project name -- the key of the owner's member table, the
+	// record's members[].project and the name the workspace's credentials node
+	// is read by (spec.md §5) -- and Firebase is the member's Firebase project,
+	// which is the project a snapshot of that member is read from. A save runs
+	// on the workspace owner's machine, which holds no GCP project id for a
+	// member at all, and no snapshot reaches a member's GCP project: a caller
+	// that needs that pair takes it from MemberTarget's other consumers.
 	Member MemberTarget
 	// Audit is true for the workspace's audit export and false for a member's
 	// settings and spend summary.

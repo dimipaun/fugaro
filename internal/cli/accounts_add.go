@@ -399,11 +399,15 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	}
 	if profile == "" {
 		if config.KeyCredentialType(typ) {
-			serves := "the credentials service, which reads the value from the bundle `fugaro creds set` writes"
+			serves := "the credentials service, which reads the value from the bundle"
 			if config.CredentialServingPath(typ) == config.CredentialPathRunner {
-				serves = "the run's own gateway, whose job of the provider of that name mounts the key once that provider entry exists"
+				// The mount a provider job still carries is named rather than
+				// denied: this write enters no version of it, and a line that
+				// said the job mounts the key would send the owner to look at a
+				// container this run left empty.
+				serves = "the credentials service, which serves the provider's address and auth out of the bundle's entry for each repository claude_accounts." + pluginwire.Printable(name) + ".allow_data_to names — the mount of " + pluginwire.Printable(config.CredentialSecret(name)) + " that job carries is left without a version"
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "no job is deployed for %s: a key credential is not a run's Claude account token, so no profile lists it — what carries its key to a call is the half its type is served by: %s\n", pluginwire.Printable(name), serves)
+			fmt.Fprintf(cmd.OutOrStdout(), "no job is deployed for %s: a key credential is not a run's Claude account token, so no profile lists it — what carries its key to a call is %s\n", pluginwire.Printable(name), serves)
 		} else {
 			fmt.Fprintf(cmd.OutOrStdout(), "no profile serves %s yet: this project's jobs do not select it until one does\n", name)
 		}
@@ -665,14 +669,23 @@ func accountsAddWhat(lc *localcfg.Config, name, profile string, beyond []string,
 	if profile != "" {
 		what += fmt.Sprintf("; profile profiles.%s.claude_accounts += %s", pluginwire.Printable(profile), pluginwire.Printable(name))
 	}
-	what += fmt.Sprintf("; secret a new version of %s (project-wide)", accountsAddSecretName(name, accountsAddSecretType(lc, name, typ)))
+	keyType := config.KeyCredentialType(accountsAddSecretType(lc, name, typ))
+	// A provider key has no container of its own since KS2 (R2, D1670 reversed):
+	// the value goes into the credentials service's bundle, under C1's name,
+	// once for each repository the credential is bound to, and the sentence
+	// naming a version of `credential-<name>-key` would describe a container
+	// this command no longer writes.
+	if keyType && config.CredentialServingPath(accountsAddSecretType(lc, name, typ)) == config.CredentialPathRunner {
+		what += fmt.Sprintf("; enter %s's key in the credentials service's bundle, one entry per repository in the list above, and write no container of the credential's own", pluginwire.Printable(name))
+	} else {
+		what += fmt.Sprintf("; secret a new version of %s (project-wide)", accountsAddSecretName(name, accountsAddSecretType(lc, name, typ)))
+	}
 	// A key credential (MC22) is in none of the three clauses below the way an
 	// account's token is: no profile lists it, so the node carries no
 	// accounts.<name> entry for it, no job of its own exists, and what a run
 	// beyond this checkout may reach is the credential's reach — its key sent to
 	// a call, not a token printed by a run. The sentence says each of those in
 	// the word that belongs to it rather than the account's word (D1670).
-	keyType := config.KeyCredentialType(accountsAddSecretType(lc, name, typ))
 	if repos, ok := accountsAddPublishedRepos(lc, name); ok && !keyType {
 		what += fmt.Sprintf("; publish accounts.%s.allow_repos = [%s] into the policy node", pluginwire.Printable(name), strings.Join(repos, ", "))
 	} else if keyType {

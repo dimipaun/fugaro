@@ -96,8 +96,8 @@ import (
 //
 // A deployment whose environment is incomplete does not serve: the refusal is
 // by name, and no port is bound. That is the fail-closed direction this whole
-// work is held to (D143: an unreachable service halts a run, and no code path
-// falls back to a key in the job). A revision that fails to start is what
+// work is held to (D143: an unreachable service is waited for, and then halts
+// the run, and no code path falls back to a key in the job). A revision that fails to start is what
 // tells an owner the image they deployed cannot serve, while a service that
 // answered every call with a refusal would look healthy and halt every run
 // that reached it. Guessing a fact is what this command must not do either: a
@@ -994,14 +994,9 @@ func credentialsWorkspaceService(ctx context.Context, workspace string, env map[
 		Open: func(databaseURL string) (credsvc.Getter, error) {
 			return credentialsDatabase(ctx, databaseURL, ts)
 		},
-		// The workspace's own store and its own stop switch, over the same
-		// client and therefore the same database this mode reads its node and
-		// keeps its cap in (R8, D1302): a workspace that kept the pool's marks
-		// and leases in a member's database would have them written where no
-		// route of this deployment reads them, and `fugaro budget kill
-		// --workspace` would have nothing to set — NewWorkspace refuses both,
-		// so the two are wired here rather than left to the installation's
-		// configuration, which this mode does not build.
+		// The pool's state and the stop switch are the workspace's own
+		// database's, the one FUGARO_RTDB_URL names; no member's database is
+		// ever handed to either (R8, D1302).
 		State: &creds.RTDBStore{DB: db},
 		Kills: db,
 	})
