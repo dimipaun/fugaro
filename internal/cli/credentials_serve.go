@@ -994,6 +994,16 @@ func credentialsWorkspaceService(ctx context.Context, workspace string, env map[
 		Open: func(databaseURL string) (credsvc.Getter, error) {
 			return credentialsDatabase(ctx, databaseURL, ts)
 		},
+		// The workspace's own store and its own stop switch, over the same
+		// client and therefore the same database this mode reads its node and
+		// keeps its cap in (R8, D1302): a workspace that kept the pool's marks
+		// and leases in a member's database would have them written where no
+		// route of this deployment reads them, and `fugaro budget kill
+		// --workspace` would have nothing to set — NewWorkspace refuses both,
+		// so the two are wired here rather than left to the installation's
+		// configuration, which this mode does not build.
+		State: &creds.RTDBStore{DB: db},
+		Kills: db,
 	})
 	if err != nil {
 		return credentialsWorkspaceDeployment{}, userErr("the workspace's service cannot verify its callers, so it will not start: %v", err)
