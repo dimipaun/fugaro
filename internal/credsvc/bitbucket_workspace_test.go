@@ -149,7 +149,7 @@ func (st *wsTokenStore) asked() []wsTokenAsk {
 	return append([]wsTokenAsk(nil), st.asks...)
 }
 
-// bbWsScope is a workspace's scope, cut down to what the proxy route asks of one:
+// wsProxyScope is a workspace's scope, cut down to what the proxy route asks of one:
 // the caller, the member's policy, the switches, the calling job account's
 // repository table and the forge reader.
 //
@@ -158,7 +158,7 @@ func (st *wsTokenStore) asked() []wsTokenAsk {
 // own state, or for the member's auth record, would fail here rather than read a
 // test's stand-in and pass — the honest answer, because which database each of
 // those is read from is WS2's decision and not this file's.
-type bbWsScope struct {
+type wsProxyScope struct {
 	caller Identity
 	table  map[string]string
 	policy PolicyReader
@@ -166,30 +166,30 @@ type bbWsScope struct {
 	forge  ForgeReader
 }
 
-func (sc bbWsScope) Caller() Identity { return sc.caller }
+func (sc wsProxyScope) Caller() Identity { return sc.caller }
 
-func (sc bbWsScope) Policy() PolicyReader { return sc.policy }
+func (sc wsProxyScope) Policy() PolicyReader { return sc.policy }
 
-func (sc bbWsScope) Kills() KillReader { return sc.kills }
+func (sc wsProxyScope) Kills() KillReader { return sc.kills }
 
-func (sc bbWsScope) State() StateStore { return nil }
+func (sc wsProxyScope) State() StateStore { return nil }
 
-func (sc bbWsScope) RepoAuth() RepoAuthReader { return nil }
+func (sc wsProxyScope) RepoAuth() RepoAuthReader { return nil }
 
-func (sc bbWsScope) Outcomes() OutcomeReader { return nil }
+func (sc wsProxyScope) Outcomes() OutcomeReader { return nil }
 
 // Repos is the CALLING job account's own table (C1, D2992): the repositories the
 // workspace owner declared for the account the call was verified from, and never
 // the workspace's whole coverage.
-func (sc bbWsScope) Repos() map[string]string { return sc.table }
+func (sc wsProxyScope) Repos() map[string]string { return sc.table }
 
-func (sc bbWsScope) Offering() OfferingReader { return nil }
+func (sc wsProxyScope) Offering() OfferingReader { return nil }
 
-func (sc bbWsScope) Forge() ForgeReader { return sc.forge }
+func (sc wsProxyScope) Forge() ForgeReader { return sc.forge }
 
 // Meter answers nil: this deployment declares no workspace cap, and the git
 // proxy pays for nothing either way — no model call is made on this route.
-func (sc bbWsScope) Meter() *WorkspaceMeter { return nil }
+func (sc wsProxyScope) Meter() *WorkspaceMeter { return nil }
 
 // Serves is the workspace's own route set (R14, D2988), as the spec fixes it: the
 // model routes; the forge routes a run calls — the git proxy under this file's
@@ -198,7 +198,7 @@ func (sc bbWsScope) Meter() *WorkspaceMeter { return nil }
 // the build tokens, the review signing and verification, and the merge, label and
 // issue routes stay the installation's, and a member's run keeps calling its own
 // project's service for them.
-func (sc bbWsScope) Serves(path string) bool {
+func (sc wsProxyScope) Serves(path string) bool {
 	if strings.HasPrefix(path, BitbucketProxyPrefix) {
 		return true
 	}
@@ -211,7 +211,7 @@ func (sc bbWsScope) Serves(path string) bool {
 
 // AcceptsSlip answers false: a call to the workspace's service carries the job's
 // identity and the run's token and nothing else of the member's (R18).
-func (sc bbWsScope) AcceptsSlip() bool { return false }
+func (sc wsProxyScope) AcceptsSlip() bool { return false }
 
 // wsResolver is the deployment's resolver as a workspace's answers one, cut down
 // to what this file needs.
@@ -222,7 +222,7 @@ func (sc bbWsScope) AcceptsSlip() bool { return false }
 // served under another caller's scope — the one property the double must have,
 // standing where the service's own verification stands.
 type wsResolver struct {
-	scopes map[string]bbWsScope
+	scopes map[string]wsProxyScope
 }
 
 func (r wsResolver) Resolve(_ context.Context, req *http.Request) (Scope, error) {
@@ -280,8 +280,8 @@ type wsWorld struct {
 	s      *svc
 	up     *proxyUpstream
 	store  *wsTokenStore
-	base   bbWsScope
-	scopes map[string]bbWsScope
+	base   wsProxyScope
+	scopes map[string]wsProxyScope
 	// token is the workspace bundle's own value for wsTokenName, so that a test
 	// can hold what bitbucket.org was shown to the bundle without either being
 	// written down.
@@ -296,7 +296,7 @@ type wsWorld struct {
 // bearing on a call served under a workspace's scope, and a route that still
 // resolved its repositories through the configuration would fail every test that
 // follows rather than one of them.
-func newWSWorld(t *testing.T, cfg wsConfig, mutate ...func(*svc, *Config, *bbWsScope)) *wsWorld {
+func newWSWorld(t *testing.T, cfg wsConfig, mutate ...func(*svc, *Config, *wsProxyScope)) *wsWorld {
 	t.Helper()
 	up := newProxyUpstream(t)
 	doc, values := proxyTokenBundle(t, cfg.legacyBundle, wsTokenName)
@@ -305,7 +305,7 @@ func newWSWorld(t *testing.T, cfg wsConfig, mutate ...func(*svc, *Config, *bbWsS
 		t:      t,
 		up:     up,
 		store:  store,
-		scopes: map[string]bbWsScope{},
+		scopes: map[string]wsProxyScope{},
 		token:  values[config.BitbucketTokenKey(wsTokenName)],
 	}
 	table := map[string]string{}
@@ -316,7 +316,7 @@ func newWSWorld(t *testing.T, cfg wsConfig, mutate ...func(*svc, *Config, *bbWsS
 	for _, repo := range cfg.covered {
 		covered = append(covered, testCanonical(t, repo))
 	}
-	sc := &bbWsScope{
+	sc := &wsProxyScope{
 		table: table,
 		policy: &fakePolicy{
 			shared:      decodeTestPolicy(t, wsMemberPolicyDoc(t, cfg.admitted...)),
@@ -693,7 +693,7 @@ func TestWorkspaceProxyStreamsAndHoldsNothing(t *testing.T) {
 		accountRepos: []string{wsMemberRepo},
 		covered:      []string{wsMemberRepo},
 		admitted:     []string{wsMemberRepo},
-	}, func(_ *svc, c *Config, _ *bbWsScope) { c.Client = up.client() })
+	}, func(_ *svc, c *Config, _ *wsProxyScope) { c.Client = up.client() })
 
 	req, err := http.NewRequest(http.MethodPost, w.s.http.URL+proxyPath(wsGitPath(wsMemberRepo, "git-upload-pack")), bytes.NewReader(big))
 	if err != nil {

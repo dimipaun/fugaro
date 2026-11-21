@@ -140,6 +140,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	top := maps1(tree)
 	delete(top, "workflows")
 	overlay(merged, top, "", SourceRepo, res.Sources)
+	dropLayerRigorRepos(merged, res.Sources)
 	wfs, profileOf, ps := resolveWorkflows(tree, repo, l, res.Sources)
 	if len(ps) > 0 {
 		return nil, nil, ps
@@ -428,6 +429,27 @@ func dropSources(sources map[string]string, path string) {
 	}
 }
 
+// dropLayerRigorRepos removes defaults.rigor.repos from the document the merged
+// config is decoded from. The map is the project layer's alone (LD4): it names
+// the level each repository of the project runs at, and a repository's own file
+// cannot write it — Rigor.UnmarshalYAML refuses a key that is not default or
+// areas — so the key has no repository half to merge with and, left in the
+// merged block, the strict decode below refuses it ("field repos not found in
+// type config.Rigor") and every repository of the project stops resolving. The
+// layer keeps the map, and ProjectRigor reads it there.
+func dropLayerRigorRepos(merged map[string]any, sources map[string]string) {
+	r, ok := merged["rigor"].(map[string]any)
+	if !ok {
+		return
+	}
+	if _, ok := r["repos"]; !ok {
+		return
+	}
+	delete(r, "repos")
+	delete(sources, "rigor.repos")
+	dropSources(sources, "rigor.repos")
+}
+
 // markLeaves records source for every leaf of v under path.
 func markLeaves(v any, path, source string, sources map[string]string) {
 	if m, ok := v.(map[string]any); ok {
@@ -481,10 +503,37 @@ func setsRigorScalar(tree map[string]any) bool {
 // rigorAreaLevelWritten is whether a decoded rigor: value writes the `level:`
 // key of one of its area rules: the shared walk behind setsRigorLevel and
 // ProjectLayer.SetsRigorLevel, which read it out of a repository's tree and a
-// layer's respectively. The rules are a mapping's value in this tree only when
-// the whole rigor: block is one, so the list arrives as the node Resolve keeps
-// it as (nodeTree's answer for a sequence) and is walked as nodes.
+// layer's respectively.
 func rigorAreaLevelWritten(node any) bool {
+	return rigorAreaKeyWritten(node, "level")
+}
+
+// rigorMembersWritten is whether a decoded rigor: value writes what LD4 adds
+// to the project layer's rigor block: a `members:` key of one of its area
+// rules, or the per-repository `repos:` map beside them. It is what
+// ProjectLayer.SetsRigorMembers answers, and both keys are the project
+// layer's alone — a repository's own file knows no repos: and refuses members:
+// on a rule of its own (rigor.Area.Validate) — so a runner older than
+// rigorMembersSince (internal/cli) refuses either as something its KnownFields
+// decoder does not know, in the layer it decodes at bootstrap, for every
+// repository of the project at once.
+func rigorMembersWritten(node any) bool {
+	m, ok := node.(map[string]any)
+	if !ok {
+		return false
+	}
+	if _, ok := m["repos"]; ok {
+		return true
+	}
+	return rigorAreaKeyWritten(node, "members")
+}
+
+// rigorAreaKeyWritten is whether a decoded rigor: value writes key as a key of
+// one of its area rules, at any value. The rules are a mapping's value in this
+// tree only when the whole rigor: block is one, so the list arrives as the node
+// Resolve keeps it as (nodeTree's answer for a sequence) and is walked as
+// nodes.
+func rigorAreaKeyWritten(node any, key string) bool {
 	m, ok := node.(map[string]any)
 	if !ok {
 		return false
@@ -498,7 +547,7 @@ func rigorAreaLevelWritten(node any) bool {
 			continue
 		}
 		for i := 0; i+1 < len(rule.Content); i += 2 {
-			if rule.Content[i].Value == "level" {
+			if rule.Content[i].Value == key {
 				return true
 			}
 		}

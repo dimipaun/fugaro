@@ -788,7 +788,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 
 	first, firstSent, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
-		if rt.provider == nil && s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
+		if s.serviceCall(rt) && errors.Is(err, errServiceUnidentified) {
 			// C1.15 (service.go), D143: a service call this job cannot
 			// present its own identity on is a run the service cannot serve
 			// at all. The metadata server is the only place the job's ID
@@ -804,9 +804,9 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	}
 	up, sent, resp, err, lost := s.sendRetryingOnce(ctx, first, firstSent, func() (*http.Request, *atomic.Bool, error) {
 		return s.upstreamRequest(ctx, r, rt, body)
-	}, p.model, rt.provider != nil)
+	}, p.model, rt.provider != nil && !rt.provider.Served)
 	if err != nil {
-		if rt.provider == nil && s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
+		if s.serviceCall(rt) && s.serviceUnreachable(w, s.base, r.Context()) {
 			// C1.15 (service.go), D143: an unreachable credentials service
 			// halts the run -- it never falls back to a credential of the
 			// job's own, which this upstream has none of. Nothing reached
@@ -841,7 +841,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return zeroOutcome(p.model, true), lost
 	}
 	*status = resp.StatusCode
-	if rt.provider == nil && s.o.Upstream.Kind == KindService {
+	if s.serviceCall(rt) {
 		// C1.15 (service.go): what the service said about this call is read
 		// here, where it leaves the upstream and before a byte of it reaches
 		// the agent -- the tier the call settles by, the credential's name,
@@ -849,12 +849,26 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		// are never relayed. A model answer (2xx, or a model error the
 		// service relayed) is not touched: it goes on to the pump below.
 		//
-		// A routed call is never one of these, even beside a service
-		// upstream: it went to the provider's own endpoint (withRoute,
-		// upstreamRequest), so its answer is the provider's and carries no
-		// tier -- read as the service's, it would halt the run for an answer
-		// that is exactly what R6/D1634 keep on the runner path.
-		st, done, served, probes := s.serviceAnswer(w, resp, true)
+		// A SERVED route is one of these (KS5, R1/R12): its key is the
+		// service's, so the service's provider route answered, and its
+		// refusals are the service's own (provider_not_served,
+		// provider_not_allowed) and halt the run rather than reaching the
+		// agent. What it is NOT asked for is a tier: a provider route relays
+		// the provider's own answer, which carries none, and this call
+		// settles from the provider's reported usage exactly as a routed call
+		// always has (fromUsage) -- so needTier is false for it and the
+		// answer is read for the contract's typed refusals alone. Everything
+		// else it carries is the provider's, and is relayed below as the
+		// path where the job holds the key relays a provider's error
+		// (providerError): a provider's own 401, 403 or rate limit reaches
+		// the agent and never stops the run.
+		//
+		// A route the job holds the key for is never one of these, even
+		// beside a service upstream: it went to the provider's own endpoint
+		// (withRoute, upstreamRequest), so its answer is the provider's --
+		// read as the service's it would halt the run for an answer that is
+		// exactly what R6/D1634 keep on the runner path.
+		st, done, served, probes := s.serviceAnswer(w, resp, rt.provider == nil, rt.provider != nil && rt.provider.Served)
 		*tier = served // "" when the answer carried none, which is a halt or a relayed error
 		*probed = probes
 		if done {
@@ -999,11 +1013,13 @@ var upstreamRetryDelay = 250 * time.Millisecond
 // the service retries its own calls across the credentials it holds, inside
 // the one answer it gives this gateway, and D143 makes an unreachable service
 // a halt rather than a call this gateway sends again. That is the service's
-// calls and not the upstream's kind: a switched api-key run's provider routes
-// sit beside the same service upstream (R6, D1634), a routed call is the
-// provider's own and no one else's, and it is retried here exactly as it is
-// beside the Anthropic upstream — routed says which of the two this call is,
-// because only the caller holds the route.
+// calls and not the upstream's kind: a route the job holds the key for sits
+// beside the same service upstream (R6, D1634), such a call is the provider's
+// own and no one else's, and it is retried here exactly as it is beside the
+// Anthropic upstream — direct says which of the two this call is, because only
+// the caller holds the route. A SERVED route is the service's own call and not
+// one of these (KS5, R1/R12): it went to the service's provider route, and the
+// retry above is the service's there too.
 //
 // What the narrow form costs, stated: the first attempt may have reached an
 // upstream that then generated and answered nothing, and this gateway read no
@@ -1035,10 +1051,10 @@ var upstreamRetryDelay = 250 * time.Millisecond
 // `granted` with nothing to show for it. A first attempt that answered a
 // status is not this: the upstream refused that call or asked for it later,
 // and generated nothing this gateway has to account for.
-func (s *Server) sendRetryingOnce(ctx context.Context, up *http.Request, sent *atomic.Bool, next func() (*http.Request, *atomic.Bool, error), model string, routed bool) (*http.Request, *atomic.Bool, *http.Response, error, bool) {
+func (s *Server) sendRetryingOnce(ctx context.Context, up *http.Request, sent *atomic.Bool, next func() (*http.Request, *atomic.Bool, error), model string, direct bool) (*http.Request, *atomic.Bool, *http.Response, error, bool) {
 	resp, err := s.client.Do(up)
 	reason, status := upstreamRetryReason(resp, err)
-	if reason == "" || (s.o.Upstream.Kind == KindService && !routed) || ctx.Err() != nil {
+	if reason == "" || (s.o.Upstream.Kind == KindService && !direct) || ctx.Err() != nil {
 		return up, sent, resp, err, false
 	}
 	lost := reason == "transport" && sent.Load()
@@ -1448,6 +1464,21 @@ func (s *Server) upstreamRequest(ctx context.Context, r *http.Request, rt route,
 		// IDs, no SDK telemetry.
 		up.Header = providerHeaders(r.Header)
 		s.scrubToken(up.Header)
+		if rt.provider.Served {
+			// R1/R12 (KS5): a served route's key is the credentials
+			// service's, so this is a service call — the same two identities
+			// every service call carries (serviceUpstream) — with the
+			// provider's name on it, and no key of the job's anywhere. The
+			// provider's name is set from the route and never from a header
+			// the agent wrote (serviceUpstream drops any it sent).
+			h, err := s.serviceUpstream(ctx, rt, up.Header)
+			if err != nil {
+				return nil, nil, err
+			}
+			h.Set(HeaderProvider, rt.provider.Name)
+			up.Header = h
+			return up, sent, nil
+		}
 		if _, err := rt.provider.attachCredential(up.Header); err != nil {
 			return nil, nil, err
 		}
@@ -1927,7 +1958,7 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 		// answer is not asked for a tier -- but a refusal is the service's
 		// own answer here too, and is acted on rather than copied to the
 		// agent (D143). A model answer passed through.
-		if _, done, _, _ := s.serviceAnswer(w, resp, false); done {
+		if _, done, _, _ := s.serviceAnswer(w, resp, false, false); done {
 			return
 		}
 	}

@@ -3457,7 +3457,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   claude-oauth-token                    the default Claude account's OAuth token (tier A)
   claude-oauth-token-<account>       a named Claude account's OAuth token (tier A)
   anthropic-api-key                the project's Anthropic API key (tier B)
-  credential-<name>-key        one declared credential's own key (tier B): the service-served half of a credential the credentials block declares anthropic, and the ONE NAME this command REFUSES for a type the runner path serves (openrouter), whose key is mounted in the job that spends it rather than read from here. It is read by a credentials service from 0.26.0 on: where the service that serves the bundle is older, this write is refused and `fugaro update` is the one command that moves it
+  credential-<name>-key        one declared credential's own key: the service-served credential (anthropic) at tier B, and the runner-path one (openrouter) written into the repository-credential entries the service serves a routed call from, one per repository `claude_accounts.<name>.allow_data_to` names — the entry's own name carries the repository, so the names it writes are not this one. Either half is read by a credentials service from 0.26.0 (0.27.0 for the runner path) on: where the service that serves the bundle is older, this write is refused and `fugaro update` is the one command that moves it
   github-app-key                  the GitHub App's private key (no tier: the mint signs with it)
   bitbucket-token                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, whose jobs mount no copy of their own, and every other Bitbucket repository's job keeps its own mounted copy)
   bitbucket-read-consumer             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
@@ -10249,8 +10249,12 @@ at user scope are all it writes).
 
 In a checkout of a repository of this project, the converge's secrets stage
 asks, at hidden prompts, for the secrets its jobs mount (the git credential,
-the Claude credential agent.auth names, none for vertex, the allowed model
-providers' keys, the workflows' own), and skips what is already stored. It
+the Claude credential agent.auth names, none for vertex, the workflows' own),
+and skips what is already stored. A model provider's key is not one of them:
+since 0.27.0 it is entered in the credentials service's bundle, one entry per
+repository, and the stage names the command that writes this repository's
+entry (fugaro secrets set NAME --repo owner/name) instead of prompting for a
+value it would refuse to store. It
 prompts only in your own terminal: never with
 --json (--json never prompts; the stage then exits 1 with the one-line
 fugaro secrets set commands), never when stdin, stdout or stderr is not a
