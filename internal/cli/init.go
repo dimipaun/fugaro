@@ -889,6 +889,14 @@ type initRun struct {
 	credsBitbucket       bool
 	credsBitbucketTyped  bool
 	credsRepoCredentials map[string]bool
+	// credsProviderKey is the same reading's answer for the project's provider
+	// key (config.ProviderKeySecret), which is the one model credential that is
+	// not an account: credsNames cannot carry it, because a caller reaches it
+	// under the account name config.ProviderKeyAccount rather than under the
+	// credential's own name. The credential-route stage reads it, since a
+	// project whose model calls ride the provider key serves its own model kind
+	// (update_route.go's modelServes).
+	credsProviderKey bool
 
 	// credsUnreadMarker is the marker of a session whose own rule kept the
 	// bundle unopened — a coding agent's session or a Fugaro run's own process

@@ -1168,6 +1168,7 @@ probe account carries predefined grants only).
 | 781 | **A non-Claude provider model served through the credentials service, end to end** ([`docs/keys-through-service/`](keys-through-service/implementation-plan.md), its **Check 781** and task **KS17**; the reconciliation's **R6**, **F13** and **D3005**): after Release A, a real run of a sandbox repository whose job mounts **no** model key at all — the job carries the credentials service's address instead — whose provider call was served **from the installation's one bundle**, and which was charged the **provider's own reported cost** | See "Check 781" below; **the script is how you run it**: `bash scripts/live-checks/check781.sh --sandbox <a sandbox repository checkout>`, with the test that drives every step of it against fakes, `scripts/live-checks/check781_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on a **sandbox installation, project and repository only** (**never `belong`**), and **no agent runs any step of it** | One sandbox run, followed to a terminal state, then read four ways and never for a value: the job the run's execution names is **fed from no model credential** — no `credential-<name>-key` container, no `anthropic-api-key`, no `claude-oauth-token*`, no `FUGARO_PROVIDER_KEY_*` variable with a value — while the service's own address **is** in its environment; the gateway's `model call` lines for that execution carry `route`, which only a call that went to a provider ever emits, with their `serving_model`, `priced_as` and the provider's `reported_micros`; `result.json`'s `cost.reported_usd`, `cost.route_by` and `cost.model_usd` agree with them; and the service's own `credsvc: audit` line for the run names the credential it served, its tier and its purpose `forward` with status `ok`, which is the service saying the key came from the bundle. A bundle that is missing, a job that still mounts a provider key, a job with no service address, calls that all went direct, a routed call nobody reported, a denied forward, a run that never ends and a record that is another run's are each a row of their own. **OWNER-RUN, NOT RUN.** |
 | 790 | **The upgrade that gives an installation its budget database, watched across a run that is already in flight** ([`docs/always-a-budget/`](always-a-budget/implementation-plan.md), its task **AB14** and its "Check 790"; the reconciliation's **U1**, **U2** and **U4**, and **D3023** read with **R3**, **R12** and **C1**): on a real installation **at the previous release with no budget database at all** — the repository's job carries no `FUGARO_RTDB_URL` and the installation's own state refuses (`fugaro project policy show --project <installation> --json`, which an installation with no budget backend has no node to answer, so it names the missing backend), which is the **premise** that stops the check on one the release has already reached — **ONE** run is launched and left in flight while a **project owner's** `fugaro update --project <installation>` — and then `fugaro update --repo --project <installation>` in the checkout, the pair the plan's after-deploy steps name — runs; the same job is read back **carrying `FUGARO_RTDB_URL`** with the update's own output **naming the database it created**; the run that was in flight is followed to a terminal row and must **not** have been killed by the rules deployed underneath it (**U2**); a **second** run launched after the update lands on an execution whose own environment carries the database address and **mounts no model key** (the agent's environment holds no API key for want of a gateway, **AB1b**, **D3009**); when the job's image still **predates the release**, the re-applied job must name `FUGARO_BUDGET_MODE` **`observe`** (a job that names no mode is a FAIL: a runner from before the release resolves its mode from exactly that variable, and would read the off the release removed) and the post-update run's own **record out of the runs bucket** must read budget mode **`observe`** (**U4**: an unset mode IS observe, **C1**); and a **second installation** at the previous release is updated with an **operator's** own credential, whose command must **change nothing** (no job of the project that installation's own config names may carry a database address, and a config naming no project leaves that half UNVERIFIED) and must **say that a project owner has to run it** (**U1**, **D3023**) | See "Check 790" below; `bash scripts/live-checks/check790.sh --installation <name> --sandbox <a sandbox repository checkout> --job <that repository's Cloud Run job> --gcp-project <project> --region <region> [--operator-config <a second installation's local config file>]` is the whole of it, its sibling test `scripts/live-checks/check790_test.sh` drives it against fake `gcloud`, `fugaro` and `git` only (no network, no cloud, nothing spent), and **you** run it, at your own terminal, on an installation you may upgrade and a sandbox repository you may spend on, **never `belong`** (a coding agent's session is refused outright, as is a traced shell); **no agent runs any step of it** | **TWO billable runs** — the one in flight across the update and the one after it, both on the sandbox repository's own budget — plus the budget database the update creates, at the design's own estimate of about two dollars a month (**F18**). Everything else is a read: the job's own `describe` before and after, the installation's own refusal, `fugaro runs ls`, the run's own record out of the runs bucket, the newest execution and the update's output. The premise row **stops the check (exit 2)** on an installation the release has already reached, **before any run is launched**. Its scratch directory is removed from the exit trap and the `restore` row says whether it really went; the two runs are left to end on their own, as any run is, and nothing else was created. **OWNER-RUN, NOT RUN.** |
 | 791 | **The two refusals the release adds under a mode that refuses nothing** ([`docs/always-a-budget/`](always-a-budget/implementation-plan.md), its task **AB14** and its "Check 791"; **D3020** and **D3022** read under **D3010**'s `observe`): on a sandbox repository whose **published mode is `observe`** (the mode in force is the premise, and a mode that is not observe makes both rows below rows about another mode), **a model with no price is refused in EVERY mode, and the refusal NAMES the `model_prices` entry that clears it** (**D3020** — the prices come from the embedded table, the provider catalog and the project's own `model_prices`, and a mode of off used to skip the check while observe no longer does); and, when the repository's **COMMITTED** `fugaro.yaml` says **`budget.mode: off`** (read with `git show HEAD:fugaro.yaml`, never the working tree), **a launch from that checkout is rejected AT ONCE and the refusal NAMES the word `off`** (**D3022** — off is accepted nowhere, AB2, rather than read as unset for one release). The refusal's **exit status** is what says it refused: a warning that names the fix and exits 0 is a FAIL and not the reading D3020 writes. A repository whose model IS priced, or whose committed file does not say off, leaves that row **UNVERIFIED** — the check names what to point it at rather than inventing a reading | See "Check 791" below; `bash scripts/live-checks/check791.sh --sandbox <a sandbox repository checkout> [--installation <name>]` is the whole of it, its sibling test `scripts/live-checks/check791_test.sh` drives it against a fake `fugaro` and a **real local git repository** in a temp directory (no network, no cloud, nothing spent), and **you** run it, at your own terminal, on a sandbox checkout, **never `belong`** (a coding agent's session is refused outright, as is a traced shell); **no agent runs any step of it** | **Nothing, as long as the release holds**: no model is called, no build is made and no write is made anywhere — `fugaro validate` spends nothing, and the one launch spends nothing when the refusal happens, because the refusal is a config load's, made before anything is built or run. A launch the release does NOT refuse is a real, billable run, and the `mode-off` row then names it and the `fugaro cancel --now <run id>` that stops it. Every row is a read of a document the repository or the installation already wrote: its committed `fugaro.yaml`, its HEAD's own tree, the published policy and the refusals themselves. Its scratch directory is removed from the exit trap and the `restore` row says whether it really went. **OWNER-RUN, NOT RUN.** |
+| 830 | What links a Batch VM to its job, and what a launcher can put on one ([`docs/batch-run-identity/`](batch-run-identity/implementation-plan.md), its task **BR0** and the plan's own **Check 830**; **U1** — which Google-made fact ties a VM to its job, and which permission reads it — is the owner's **O1**, **U2** is what the identity token in full format carries inside the task's container (the carrier of **D3101**), **U3** is where a job's variable reaches (**F3**, **R7**: the wrapped blob of **R5** must not be published anywhere), and **U8** is how soon a deleted job's name can be used again — with **R1** and **D3108** the reason U1's answer decides whether **BR3** can be built on it at all): with a throwaway Batch job in `fugaro-dev` shaped like a real run, a second job that writes the first job's uid and name into every launcher-controlled field it has (the job's own labels, the labels Batch puts on the VMs, and the task's variables), and a plain Compute Engine VM for **O8**'s avenue, the container reads the metadata server itself — so the link is judged on what the VM says about itself rather than on a naming convention, and a field a launcher can write is caught by the second job and by the plain VM rather than assumed safe. Run by **you**, at your own terminal, as **one command**: `CHK830_OWNER_RUN=yes bash scripts/live-checks/check-830.sh` (`--dry-run` prints every command and touches no project), with the test that drives it against a fake `gcloud` on PATH, `scripts/live-checks/check-830_test.sh` (run by `go test ./scripts`). **No agent runs any step of it**, and the plan blocks **BR3** on the result (**R4**). It costs two small `e2-standard-4` jobs and one VM alive for seconds, and deletes every job and instance it made. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -22769,3 +22770,93 @@ output, the launch's own answer and the task file the check wrote — is removed
 on a Ctrl-C as well, and the `restore` row is that reading (a FAILed row names the directory to remove by
 hand). Nothing else was created and nothing was changed: the checkout, its branches and the installation are
 exactly as they were. **OWNER-RUN, NOT RUN: no agent runs any step of it.**
+
+## Check 830: what links a Batch VM to its job, and what a launcher can put on one (the sandbox project `fugaro-dev` only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **BR0** of
+[docs/batch-run-identity/implementation-plan.md](batch-run-identity/implementation-plan.md) — its
+row for **830** — as the probe the plan blocks **BR3** (the VM-to-job link the credentials service
+releases a job's blob on), **BR5** and **BR12** on (**R4**). It settles the owner's **O1** (which
+fact links a VM to its job and which permission reads it) and the four UNVERIFIED questions the
+reconciliation carries. **No agent runs any step of it**, and **BR3 starts only after this result is
+recorded**.
+
+**What it settles.**
+
+- **U1 — the link, and its forge.** Which Google-made fact ties a Batch VM to its job: a field of
+  the instance's own object (readable only with `compute.instances.get` on the VM — the second read
+  **D3102** asks about, and one that cannot be scoped to Fugaro's VMs), a field of the job's own
+  object (read with the `batch.jobs.get` the service already holds, **F26**), something visible
+  **inside** the VM only, or nothing at all. The row names the field and the read it costs, because
+  **BR3** is written against exactly that. A second job then tries to **forge** it: it carries the
+  probe job's uid and name in every field a launcher controls — its own labels, the labels Batch
+  puts on the VMs, and the task's variables — and its VM is read for the field the probe's own VM
+  carries the probe's identity in. **A field a launcher can write there must not be the link**
+  (**R1**, **D3108**): a launcher who can name another job's uid in it would be handed that job's
+  release. The same attempt is made against a **plain Compute Engine VM** named after the probe job
+  (**O8**): anyone holding `compute.instances.create` and `actAs` on a run account can make one.
+  Each avenue carries a **control** — how many of the written keys reached that VM at all — so an
+  attempt Batch copies nowhere reads as inert rather than as a pass.
+- **U2 — the identity token.** Whether a task's container can reach the metadata server at all, and
+  whether the token in **full** format carries the instance's **id**, **name**, **project** and
+  **zone**. Those claims are what **D3101** matches a VM to its job with, so a claim that is not
+  there cannot be matched on. The token itself is a bearer credential for that VM and is never
+  printed, here or in the container's own lines.
+- **U3 — where a job's variable reaches.** Whether the value of a variable the job carries — the
+  wrapped key's own variable (**R5**) with a generated stand-in value — appears in the probe job's
+  own log entries, anywhere in the project's Cloud Logging, in the instance metadata or the
+  instance's own object, or in the **`CreateJob` audit record**. The row is **fail-closed**: it
+  passes only when the value reached the container's own environment (the positive control, so the
+  job carried it) **and** every reading was taken and saw nothing, including the audit record,
+  which is waited for within a bound. The value is compared and never printed — a block that
+  printed it would be a block that had to be treated as secret — so the row names the readings
+  instead.
+- **U8 — reusing a deleted job's name.** The probe job is deleted, the same name is submitted again
+  in a bounded loop, and the seconds to acceptance are printed, with the first refusal's own
+  message. The re-created job is deleted at once; it existed to hold a name, not to run. **D3108**'s
+  registration does not depend on this answer.
+
+**What has to exist before it runs.** Nothing of the work: the check creates its own job and is
+built to run before a line of **C1**'s sides is written. It reads the tree it lives in — the log
+filter out of `internal/backend/batch/logs.go`, the managed label pair out of
+`internal/backend/gcp/names.go` and the wrapped variable's name out of `docs/batch-run-identity/` —
+so it must be run from the checkout whose commit you record. It needs `gcloud`, `bash`, `python3`
+and `git` on PATH, and nothing is installed or fetched.
+
+**The command.** It is **one command**, and the owner marker is the whole of the ceremony:
+
+```sh
+CHK830_OWNER_RUN=yes bash scripts/live-checks/check-830.sh
+```
+
+It names GCP project `fugaro-dev` and region `us-east5` itself: there is no `--project` flag and no
+variable that could point another project at it, and `belong`, EdgeWeb and EdgeServer are refused by
+name. `--dry-run` runs the guards and the tree reads, prints every command a real run would run, and
+touches no cloud project. A traced shell (`bash -x`) is refused, because a trace would print the
+commands into the log you paste back. Every bound is a knob — `CHK830_WAIT_LINES`, `CHK830_WAIT_AUDIT`,
+`CHK830_REUSE_BOUND`, `CHK830_LINGER_A`, `CHK830_LINGER_B` — because a slow project should be given
+longer rather than read as a `FAIL`.
+
+**What it reads, and what the block says.** One block on stdout headed `CHECK 830 RESULT`, whose last
+line is `CHECK 830 RESULT: PASS|FAIL`, with **one row per fact**: `u1-link` (the field, and the
+permission that reads it), `u1-forge` (whether a second job reproduced it, with the per-avenue
+control), `u1-handmade` (`O8`'s plain VM), `u2-token` (the four claims), `u3-marker` (the three
+readings, fail-closed), `u8-name` (the seconds) — beside the rows that say what ran: the probe job,
+the container's own readings, the VM, the guards and `restore`. Paste the **whole block** into this
+section, with the date and `fugaro version`. If `u1-link` is `FAIL`, or `u1-forge` is `FAIL`, or
+`u1-handmade` is `FAIL`, the work returns to **you** rather than falling back to **K1** (**R4**):
+that is the answer, and it is the reason this probe runs before **BR3** is written.
+
+**Restore.** The check deletes everything it made — the probe job, the forging job, the re-created
+job and the plain VM — and its `restore` row names anything an interrupted run left behind with the
+one command that removes it. Two small `e2-standard-4` jobs alive for their linger (300 s and 120 s by
+default), one VM alive for seconds, and a dozen `gcloud` reads: no model call, no build, no run of
+the backend, no image built. The scratch directory always goes, including on a Ctrl-C.
+
+**What waits on it.** **BR3** (**R4**), and through the owner's **O1** answer also **BR5** and
+**BR12**; the plan's critical path starts here, and the row **830** in the implementation plan's
+table says "after BR0 merges, before `R-C1-link-permission`, BR3, BR5 and BR12 start".
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** The script's own test,
+`scripts/live-checks/check-830_test.sh`, drives it entirely against a fake `gcloud` on PATH — no
+network, no project, no resource — and is run by `go test ./scripts` like every other check's.
