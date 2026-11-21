@@ -5977,6 +5977,19 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		return res, false, exhausted
 	}
 
+	// A call that could not reach the credentials service at all ended this
+	// stage (D2983), the way an exhausted answer does and with the same
+	// reading: the stage did not fail, nothing is recorded about it, and stage
+	// waits for the instant the answer names and resumes the stage's session.
+	// It has no counterpart of noteStageExhausted above: which service the
+	// call goes to is not a walk, and the call the resumed stage makes is
+	// served by the same one.
+	var unreachable *unreachableError
+	if errors.As(context.Cause(stageCtx), &unreachable) && (err != nil || res.IsError) {
+		r.save(ctx)
+		return res, false, unreachable
+	}
+
 	// The message's stop, before everything below: the agent stopped itself
 	// at a quiet point between two tool calls because the ask closed (rules 2
 	// and 3), so this attempt did not fail and must not be read as one — not
