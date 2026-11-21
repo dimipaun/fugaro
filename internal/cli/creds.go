@@ -154,7 +154,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   ` + config.ClaudeOAuthToken + `                    the default Claude account's OAuth token (tier A)
   ` + config.ClaudeOAuthTokenPrefix + `<account>       a named Claude account's OAuth token (tier A)
   ` + config.AnthropicSecret + `                the project's Anthropic API key (tier B)
-  ` + config.CredentialSecretPrefix + `<name>` + config.CredentialKeySuffix + `        one declared credential's own key (tier B): the service-served half of a credential the credentials block declares ` + config.CredentialTypeAnthropic + `, and the ONE NAME this command REFUSES for a type the runner path serves (` + config.CredentialTypeOpenRouter + `), whose key is mounted in the job that spends it rather than read from here. It is read by a credentials service from ` + keyCredentialSince + ` on: where the service that serves the bundle is older, this write is refused and ` + "`fugaro update`" + ` is the one command that moves it
+  ` + config.CredentialSecretPrefix + `<name>` + config.CredentialKeySuffix + `        one declared credential's own key: the service-served credential (` + config.CredentialTypeAnthropic + `) at tier B, and the runner-path one (` + config.CredentialTypeOpenRouter + `) written into the repository-credential entries the service serves a routed call from, one per repository ` + "`claude_accounts.<name>.allow_data_to`" + ` names — the entry's own name carries the repository, so the names it writes are not this one. Either half is read by a credentials service from ` + keyCredentialSince + ` (` + repoCredentialSince + ` for the runner path) on: where the service that serves the bundle is older, this write is refused and ` + "`fugaro update`" + ` is the one command that moves it
   ` + config.GitHubAppKeySecret + `                  the GitHub App's private key (no tier: the mint signs with it)
   ` + config.BitbucketSecret + `                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, whose jobs mount no copy of their own, and every other Bitbucket repository's job keeps its own mounted copy)
   ` + credsvc.BitbucketReadConsumerSecret + `             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
@@ -710,9 +710,16 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool, bt
 	// with nothing typed at a terminal.
 	providerKey, providerKeyWrite := "", false
 	if credName, ok := config.CredentialBySecret(name); ok {
-		if err := credsKeyCredentialHalfRefusal(lc, name, credName); err != nil {
+		if err := keyCredentialDeclarationRefusal(lc, name, credName); err != nil {
 			return err
 		}
+		// Which HALF serves the credential's type decides which entry this write
+		// sets, and no longer whether it is admitted (KS2, D1670 reversed by
+		// D2975): a service-served credential (anthropic) keeps the tier-B entry
+		// under the credential's own name, and a runner-path one (openrouter) is
+		// written into C1's repository-credential entries — one per repository
+		// claude_accounts.<name>.allow_data_to names — which is where the
+		// credentials service reads a provider key from now.
 		if cred, declared := config.CredentialNamed(lc.Credentials, credName); declared && config.CredentialServingPath(cred.Type) == config.CredentialPathRunner {
 			providerKey, providerKeyWrite = credName, true
 		}
@@ -1182,41 +1189,6 @@ func credsNameRefusal() error {
 		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix, readConsumerShape, providerShape)
 }
 
-// credsKeyCredentialHalfRefusal refuses `fugaro creds set` on a key
-// credential's own derived name when the half that serves the credential's type
-// is not the bundle (D1670, MC23). The bundle is one of the two halves a run is
-// served by, and the type is what puts a credential on one of them
-// (config.CredentialServingPath), so the entry this command would write is
-// either the one the credentials service offers a craft's calls or a copy no
-// call of that type ever reads.
-//
-// The three states, in the order the config answers them:
-//
-//   - a key type the service serves (anthropic): this document is where its
-//     value goes, and the write is admitted — it is the tier-B entry the
-//     service offers under the credential's name, exactly as it offers the
-//     project's own Anthropic key;
-//   - a key type the runner serves (openrouter): refused, because what carries
-//     that key to a call is the job's own mount (internal/infra's SecretMounts,
-//     built from this very config) — and the refusal says so rather than
-//     leaving the operator to wonder where the key went, since the container
-//     `fugaro accounts add` stored it in is what the mount reads;
-//   - a name no credentials entry declares, or one declared `claude-oauth`:
-//     refused, because the bundle holds no credential of that name
-//     (keyCredentialDeclarationRefusal, which `fugaro secrets set` answers the same
-//     two states with).
-func credsKeyCredentialHalfRefusal(lc *localcfg.Config, secret, name string) error {
-	if err := keyCredentialDeclarationRefusal(lc, secret, name); err != nil {
-		return err
-	}
-	cred, _ := config.CredentialNamed(lc.Credentials, name)
-	if config.CredentialServingPath(cred.Type) == config.CredentialPathCredsvc {
-		return nil
-	}
-	return userErr("%s is the key of %s, which is declared %s, and the runner path serves that type: its key is mounted in the job that spends it — internal/infra builds that mount from this installation's config, out of this very container — so the bundle is not where its value goes, and no caller of the credentials service ever reads an entry for it. A run whose craft's access names %s is served from the job's own mount, which is the container this command would have written; fugaro accounts add --type %s says where that mount reads it",
-		pluginwire.Printable(secret), pluginwire.Printable(name), pluginwire.Printable(cred.Type), pluginwire.Printable(name), pluginwire.Printable(cred.Type))
-}
-
 // keyCredentialDeclarationRefusal is the refusal a name of the key credential
 // namespace takes when the config declares no such key credential (MC22, MC23):
 // the two states it can be in, each answered with what the owner would have to
@@ -1225,7 +1197,7 @@ func credsKeyCredentialHalfRefusal(lc *localcfg.Config, secret, name string) err
 // It is one function because it is one rule at two write paths — `fugaro
 // secrets set credential-<name>-key` refuses the container as a project-wide
 // secret (projectWideRefusal), and `fugaro creds set` refuses the entry
-// (credsKeyCredentialHalfRefusal) — and an operator who meets both commands must
+// (credsSet's own check on the name) — and an operator who meets both commands must
 // not read two stories about the same name. The name the first state asks for is
 // the credential's, which is what `accounts add` takes, and never the secret's.
 // nil is the config's answer that the name IS a declared key credential's.

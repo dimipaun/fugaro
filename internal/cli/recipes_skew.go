@@ -902,10 +902,11 @@ const bitbucketTokenSince = "0.24.0"
 // `fugaro creds set` is the bundle's only writer, so the guard is at that write
 // too (creds.go's refuseAnEntryTheServiceCannotRead, which judges the release
 // that SERVES the document rather than the installation's pin). It is the
-// guard's third entry and not a second writer: the runner-path key types are
-// refused at the same write and never reach the document
-// (credsKeyCredentialHalfRefusal), so no document of this release holds an
-// entry of this family that a second write path could create.
+// guard's third entry and not a second writer: a RUNNER-path key type has been
+// refused at that write since KS2 (D1670 reversed by D2975) and its key is
+// written into repoCredentialSince's family instead, so the entries of THIS
+// family are the service-served credentials' alone and no write of a provider
+// key adds one.
 //
 // It names 0.26.0, the release this work ships in, and it is the first constant
 // of this file whose reader has never been in a released image: MC22's
