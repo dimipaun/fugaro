@@ -883,6 +883,19 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 		// provider's credential the day the key is renamed to the convention.
 		return providerConventionRefusal(p, name)
 	}
+	if p, provider := config.ProviderBySecret(s.e.lc.Providers, name); provider {
+		// A configured provider's key has been the credentials service's
+		// bundle's since KS2 (R2, D1670 reversed by D2975), and this stage
+		// writes a container of whatever name it is handed. Taking one here
+		// would make a per-repository copy the service never reads — the one
+		// writer left that still makes a container for a provider key — and it
+		// would read the value at this prompt where every writer of the bundle's
+		// entry reads it from stdin. So it is refused, before a value is read,
+		// with the command that writes this repository's own entry named
+		// (Left() would hand the bare one, which stores the project's copy of a
+		// name this repository's own key is not).
+		return providerKeyInitRefusal(p, name, s.tg.repo)
+	}
 	defer noCoreDumps()()
 	var (
 		value []byte

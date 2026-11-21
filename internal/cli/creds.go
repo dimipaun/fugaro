@@ -2390,6 +2390,28 @@ func providerKeyCredentialRepos(lc *localcfg.Config, credential string) []string
 	return slices.Clone(lc.ClaudeAccounts[credential].AllowDataTo)
 }
 
+// providerKeySecretCredential is the credential a name is a RUNNER-path key
+// credential's own derived secret for (`credential-<name>-key`), which is the
+// second spelling a provider key reaches `fugaro secrets set` under. The
+// credential of that name is a provider key, and its name IS the provider's
+// (infra's runnerKeyCredential reads the same pair for the mount it used to
+// build), so the entry's name and the provider's facts are both decided by it.
+//
+// A service-served credential is not one: its container is the copy the
+// credentials service's bundle entry is completed by, written by the same
+// command, and KS2 left that path alone.
+func providerKeySecretCredential(lc *localcfg.Config, secret string) (string, bool) {
+	name, ok := keyCredentialBySecret(lc, secret)
+	if !ok {
+		return "", false
+	}
+	cred, declared := config.CredentialNamed(lc.Credentials, name)
+	if !declared || config.CredentialServingPath(cred.Type) != config.CredentialPathRunner {
+		return "", false
+	}
+	return name, true
+}
+
 // providerKeyProviderRepos is the same for a provider's own secret
 // (providers.<p>.secret) stored project-wide: the repositories
 // providers.<p>.allow_data_to names literally.
@@ -2422,6 +2444,17 @@ func providerKeyNoReposRefusal(lc *localcfg.Config, provider string) error {
 	}
 	return userErr("claude_accounts.%s.allow_data_to names no repository, so %s's key may be sent to no repository and there is no entry to write: it is the one field that bounds the key, and the bundle's entry is written for each repository it names. Add the repositories the key is for — claude_accounts.%s.allow_data_to = [owner/name, ...] — and store it again; nothing was read from you and nothing was written",
 		pluginwire.Printable(provider), pluginwire.Printable(provider), pluginwire.Printable(provider))
+}
+
+// providerKeyInitRefusal is the fourth writer's refusal (initsecrets.go): the
+// secrets stage of `fugaro setup` and `fugaro update` prompts at a terminal and
+// writes a container of the name it was handed, which is neither of the two
+// things a provider key's write is now — a bundle entry, read from stdin. It
+// names the command that writes this repository's own entry, because the bare
+// form Left() hands the same name stores the project's copy instead.
+func providerKeyInitRefusal(provider, name, repo string) error {
+	return userErr("%s is %s's key, and a provider key is entered in the credentials service's bundle since KS2 (D1670 reversed), one entry per repository, rather than stored in a container of its own: this step stores a value in Secret Manager and cannot write that entry. Nothing was read from you and nothing was written. Run `%s secrets set %s --repo %s` in your own terminal to enter the key for this repository, and run it once more for each further repository the key is for",
+		pluginwire.Printable(name), pluginwire.Printable(provider), selfCommand(), pluginwire.Printable(name), pluginwire.Printable(repo))
 }
 
 // providerKeyRepoSlug is one repository's slug, the half of C1's entry name
@@ -2477,26 +2510,17 @@ func providerKeyEntry(lc *localcfg.Config, provider, repo string) (string, error
 // sentence about the config, rather than by the loader as a document the
 // service refuses.
 func providerKeyValueNode(lc *localcfg.Config, provider string, value []byte) (*yaml.Node, error) {
-	p, declared := lc.Providers[provider]
-	if !declared {
-		return nil, userErr("providers.%s is not declared in this project's config, and C1's entry carries the provider's OWN address and auth — the destination of a routed call is the entry's and never the caller's (F45, D1418) — so there is nothing to build the entry from. Declare the provider first (fugaro models add %s, or the providers block of the project config) with its kind, base_url, auth and models, then store the key; nothing was read from you and nothing was written",
-			pluginwire.Printable(provider), pluginwire.Printable(provider))
-	}
-	if err := config.CheckProviderBaseURL(p.BaseURL); err != nil {
-		return nil, userErr("providers.%s.base_url is not one of C1's entries may hold (%v): the entry's base_url is the destination of every routed call spent on this key, and the loader and the gateway's routes hold it to the same rule. Fix providers.%s in the project config and store the key again; nothing was read from you and nothing was written",
-			pluginwire.Printable(provider), err, pluginwire.Printable(provider))
-	}
-	if p.Auth != providerAuthBearer && p.Auth != providerAuthXAPIKey {
-		return nil, userErr("providers.%s.auth is %s, and one of C1's entries may hold only the two shapes the gateway can send: %s or %s. Fix providers.%s in the project config and store the key again; nothing was read from you and nothing was written",
-			pluginwire.Printable(provider), pluginwire.Printable(p.Auth), providerAuthBearer, providerAuthXAPIKey, pluginwire.Printable(provider))
+	baseURL, auth, err := providerKeyFacts(lc, provider)
+	if err != nil {
+		return nil, err
 	}
 	fields := []struct {
 		name  string
 		value string
 	}{
 		{"key", string(value)},
-		{"base_url", p.BaseURL},
-		{"auth", p.Auth},
+		{"base_url", baseURL},
+		{"auth", auth},
 	}
 	root := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	for _, f := range fields {
@@ -2505,6 +2529,31 @@ func providerKeyValueNode(lc *localcfg.Config, provider string, value []byte) (*
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: f.value, Style: yaml.DoubleQuotedStyle})
 	}
 	return root, nil
+}
+
+// providerKeyFacts is the provider's own two routing facts — the address a
+// routed call goes to and the shape of the header the key rides in — held to
+// the rules the service's loader holds them to before they are written.
+//
+// It is a step of its own and not the node builder's body because the writers
+// ask for it before they read a value: a config the entry cannot be built from
+// is refused with nothing typed at a terminal, which is the rule every refusal
+// of this family keeps.
+func providerKeyFacts(lc *localcfg.Config, provider string) (string, string, error) {
+	p, declared := lc.Providers[provider]
+	if !declared {
+		return "", "", userErr("providers.%s is not declared in this project's config, and C1's entry carries the provider's OWN address and auth — the destination of a routed call is the entry's and never the caller's (F45, D1418) — so there is nothing to build the entry from. Declare the provider first (fugaro models add %s, or the providers block of the project config) with its kind, base_url, auth and models, then store the key; nothing was read from you and nothing was written",
+			pluginwire.Printable(provider), pluginwire.Printable(provider))
+	}
+	if err := config.CheckProviderBaseURL(p.BaseURL); err != nil {
+		return "", "", userErr("providers.%s.base_url is not one of C1's entries may hold (%v): the entry's base_url is the destination of every routed call spent on this key, and the loader and the gateway's routes hold it to the same rule. Fix providers.%s in the project config and store the key again; nothing was read from you and nothing was written",
+			pluginwire.Printable(provider), err, pluginwire.Printable(provider))
+	}
+	if p.Auth != providerAuthBearer && p.Auth != providerAuthXAPIKey {
+		return "", "", userErr("providers.%s.auth is %s, and one of C1's entries may hold only the two shapes the gateway can send: %s or %s. Fix providers.%s in the project config and store the key again; nothing was read from you and nothing was written",
+			pluginwire.Printable(provider), pluginwire.Printable(p.Auth), providerAuthBearer, providerAuthXAPIKey, pluginwire.Printable(provider))
+	}
+	return p.BaseURL, p.Auth, nil
 }
 
 // providerKeyBundleDoc is the document a provider-key write leaves in place:
@@ -2600,19 +2649,30 @@ func providerKeyBundleWrite(ctx context.Context, cmd *cobra.Command, st *report.
 // anything is read; the container, so a project with no bundle is answered with
 // the apply that creates it; the project-owner probe (D3006, F36) — the ONE
 // probe of that question — before the document is fetched and before the value
-// is read; then the read, the write and the version.
+// is read; the provider's own two facts, so a config the entry cannot be built
+// from is refused with nothing typed; then the read, the write and the version.
+//
+// prompt is the name the person is answering for — the secret they typed, which
+// is not always the credential's own derived name (`secrets set <provider>-api-key`
+// is a provider key's other spelling) and is the name a hidden prompt would
+// show. credential is the credential the entry is named after, which is the
+// provider's name (a runner-path key credential is named after the provider it
+// serves).
 //
 // asJSON is the caller's --json: the document printed is `secrets set --json`'s
 // shape with the BUNDLE's container in it, because the bundle is the container
 // this write added a version to — no version of a repository's or a provider's
 // own container is written for a provider key any more.
-func providerKeyBundleStore(run *stepRun, cmd *cobra.Command, st *report.Step, lc *localcfg.Config, credential string, repos []string, asJSON bool) (string, string, error) {
+func providerKeyBundleStore(run *stepRun, cmd *cobra.Command, st *report.Step, lc *localcfg.Config, credential, prompt string, repos []string, asJSON bool) (string, string, error) {
 	ctx := cmd.Context()
 	if err := providerKeyOwnerOnly(os.Getenv, "stored"); err != nil {
 		return "", "", err
 	}
 	if len(repos) == 0 {
 		return "", "", providerKeyNoReposRefusal(lc, credential)
+	}
+	if _, _, err := providerKeyFacts(lc, credential); err != nil {
+		return "", "", err
 	}
 	store, err := openBundleStore(ctx, lc)
 	if err != nil {
@@ -2628,7 +2688,7 @@ func providerKeyBundleStore(run *stepRun, cmd *cobra.Command, st *report.Step, l
 	if err != nil {
 		return "", "", remoteErr(err, nil)
 	}
-	value, err := readStoreValue(run, cmd, config.CredentialSecret(credential))
+	value, err := readStoreValue(run, cmd, prompt)
 	if err != nil {
 		return "", "", err
 	}

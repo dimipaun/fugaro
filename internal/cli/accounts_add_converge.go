@@ -172,7 +172,7 @@ func accountsAddNodeAccount(ctx context.Context, lc *localcfg.Config, name strin
 func accountsAddStoreSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, lc *localcfg.Config, name, typ, secret string) (string, error) {
 	if config.KeyCredentialType(typ) && config.CredentialServingPath(typ) == config.CredentialPathRunner {
 		return secretsStoreStep(run, secret, func(st *report.Step) (string, string, error) {
-			return providerKeyBundleStore(run, cmd, st, lc, name, providerKeyCredentialRepos(lc, name), false)
+			return providerKeyBundleStore(run, cmd, st, lc, name, secret, providerKeyCredentialRepos(lc, name), false)
 		})
 	}
 	return secretsStoreStep(run, secret, func(st *report.Step) (string, string, error) {

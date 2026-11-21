@@ -1014,7 +1014,7 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string, hasName bool)
 	// container is never written.
 	if provider, isProvider := config.ProviderBySecret(env.lc.Providers, name); isProvider {
 		_, err = secretsStoreStep(run, name, func(st *report.Step) (string, string, error) {
-			id, version, werr := providerKeyBundleStore(run, cmd, st, env.lc, provider, []string{r.repo}, o.asJSON)
+			id, version, werr := providerKeyBundleStore(run, cmd, st, env.lc, provider, name, []string{r.repo}, o.asJSON)
 			if werr != nil {
 				return "", "", werr
 			}
@@ -1788,11 +1788,31 @@ func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, st *report.Step, en
 		// is read; the line printed beside it is the list of repositories the key
 		// is now entered for, which is the one thing the person who stored the
 		// value has to be able to read back.
-		id, version, err := providerKeyBundleStore(run, cmd, st, env.lc, provider, repos, o.asJSON)
+		id, version, err := providerKeyBundleStore(run, cmd, st, env.lc, provider, name, repos, o.asJSON)
 		if err != nil {
 			return "", "", err
 		}
 		fmt.Fprint(cmd.ErrOrStderr(), providerKeyWrittenLine(env.lc, provider, repos, version))
+		return id, version, nil
+	}
+	// The credential's own derived name is a provider key's second spelling
+	// (providerKeySecretCredential): the name is in the key credential namespace,
+	// it is a credential a pool may list, and the value under it is the key of
+	// the provider the credential is named after. It writes the same entries as
+	// the provider's own secret does, and no container: `fugaro creds set
+	// credential-<name>-key` is the command that spells this write for a runner
+	// path today, and a container written under this name would be one the
+	// service never reads (F33).
+	if credential, isRunnerKey := providerKeySecretCredential(env.lc, name); isRunnerKey {
+		repos := providerKeyCredentialRepos(env.lc, credential)
+		if len(repos) == 0 {
+			return "", "", providerKeyNoReposRefusal(env.lc, credential)
+		}
+		id, version, err := providerKeyBundleStore(run, cmd, st, env.lc, credential, name, repos, o.asJSON)
+		if err != nil {
+			return "", "", err
+		}
+		fmt.Fprint(cmd.ErrOrStderr(), providerKeyWrittenLine(env.lc, credential, repos, version))
 		return id, version, nil
 	}
 	// Design §5's precedence has no override-the-override, and §6 step 4a is
