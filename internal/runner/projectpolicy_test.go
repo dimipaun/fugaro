@@ -141,20 +141,22 @@ func TestRunnerHaltsOnADeniedReadWhenTheMarkerExists(t *testing.T) {
 	}
 }
 
-// The path with no database at all (B1, AB1a): the job's environment carries no
-// backend, so there is nothing to read a policy with, no session opens and the
-// environment ceiling applies. From AB1a on this is the *only* state that opens
-// no session — every run is accounted for (D3009, R3), so the absence of a
-// credential is never read as "this project has published nothing": a job that
-// names a database and cannot be read with stops on the shipped refusal, which
-// is what the three subtests below pin one credential at a time.
+// The path with nothing to read (B1, AB1a): a launch the launcher minted
+// nothing for opens no session and holds the environment ceiling. The mode used
+// to be what said so, and from AB1a on every run is accounted for (D3009, R3),
+// so what says it now is the launcher's own marker — evidence about this launch
+// rather than about the mode: the launcher mints a token whenever it can see a
+// shared budget or a published policy, so markless is an installation whose
+// mode is off or unset and which has published nothing, and such a run has
+// nothing to read. The three subtests below pin the shapes it takes.
 //
-// The absence being safe is the launcher's half: it mints a token whenever it
-// can see a shared budget or a published policy, so a job with no backend and
-// no marker and no token object is the job of a project with nothing published
-// (refuseStrayToken reads the bucket for the markless case, and a token there
-// stops the run).
-func TestRunnerWithNoDatabaseAnywhereOpensNoSession(t *testing.T) {
+// The other absences stay refusals: a job that names a database and carries no
+// web API key stops on the missing key (the third subtest), and one whose token
+// object cannot be read stops when the launcher's marker says this run had one
+// (the fourth; the marked form is TestRunnerWithTheMintedMarkerRefusesAMissingToken).
+// The markless absent token is the one arm still standing, and AB4 is what
+// closes it, by making the launcher mint on every launch.
+func TestALaunchThatMintedNothingOpensNoSession(t *testing.T) {
 	t.Run("the job carries no backend", func(t *testing.T) {
 		g := newGW(t, gwConfig(t, ""), "off", "")
 		h := withBucket(g.harness)
@@ -171,33 +173,30 @@ func TestRunnerWithNoDatabaseAnywhereOpensNoSession(t *testing.T) {
 		}
 	})
 	t.Run("the bucket holds no token", func(t *testing.T) {
-		// A database, its key, no marker — a job of a project whose launcher
-		// minted nothing — and no token object: the run cannot tell a bucket
-		// aged out from a launch that never minted one, and from AB1a on
-		// neither is read as "this project has published nothing". The
-		// refusal is the shipped one (B1), and the run stops before the agent.
+		// A database, its key, no marker — a launch the launcher minted nothing
+		// for — and no token object: the run cannot tell a bucket aged out from
+		// a launch that never minted one, so the marker is what it reads, and
+		// markless is "there was nothing here" (B1). This is the one arm AB1a
+		// left standing, and it is the deployment it exists for: the launcher
+		// mints nothing for an installation whose mode is off or unset which
+		// has published no policy, and the refusal that used to stand here
+		// named fugaro update as its fix, which cannot change what that
+		// launcher mints until AB4 makes every launch mint. The run holds the
+		// environment ceiling, as it did before AB1a.
 		b := newBK(t, gwConfig(t, ""), "off", "")
 		b.unmarked()
 		if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 			t.Fatal(err)
 		}
 		rec, err := b.run(t, implement("feature"), review("ship", 0))
-		if err == nil || rec.Status == runstore.StatusSucceeded || rec.Budget != nil {
-			t.Fatalf("rec = %+v, err = %v: a job that names a database and holds no token must stop", rec, err)
-		}
-		for _, want := range []string{"could not be read", "fugaro update", "start a new run"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("the refusal does not name %q: %v", want, err)
-			}
+		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
+			t.Fatalf("rec = %+v, err = %v: a markless launch with no token has nothing to read", rec, err)
 		}
 		if n := len(b.db.Credentials()); n != 0 {
-			t.Fatalf("a run with no token made %d database requests", n)
+			t.Fatalf("a run with nothing to read made %d database requests", n)
 		}
 		if b.itk.Exchanges() != 0 {
-			t.Fatal("a run with no token exchanged one")
-		}
-		if len(b.agent.calls) != 0 {
-			t.Fatal("a stage ran")
+			t.Fatal("a run with nothing to read exchanged a token")
 		}
 	})
 	t.Run("the job carries no web API key", func(t *testing.T) {
@@ -301,78 +300,27 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 		}
 	})
 	t.Run("no marker", func(t *testing.T) {
-		// The marker is the launcher's; a job without one is a launch that
-		// never minted (an installation with nothing published, or a local
-		// run). Its missing token object reads the same way from AB1a on —
-		// the run cannot tell it from a bucket aged out, and no mode turns
-		// that into "no policy here" (D3009, R3) — so this is the markless
-		// form of the same refusal, and the sentence for it is the one
-		// TestTheMissingTokenRefusalWithoutTheMarkerReadsRight reads for
-		// shape.
+		// The marker is the launcher's, and without one the absent token is
+		// the launcher's own answer that it minted nothing for this launch:
+		// nothing to read, so the run holds the environment ceiling, as it did
+		// before AB1a. This is the arm AB1a left standing (budgetClient's
+		// markless ErrNoToken case), and AB4 closes it by making the launcher
+		// mint on every launch. The mode is not what says which arm this is any
+		// more (D3009, R3) — the marker is — so the job's own mode going away
+		// changed nothing here.
 		b := policyRun(t, gwConfig(t, ""), "off", "", policy)
 		b.unmarked()
 		if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 			t.Fatal(err)
 		}
-		rec, err := b.run(t, implement("feature"))
-		if err == nil || rec.Status == runstore.StatusSucceeded || rec.Budget != nil {
-			t.Fatalf("rec = %+v, err = %v: a job with a database and no token must stop, marker or not", rec, err)
+		rec, err := b.run(t, implement("feature"), review("ship", 0))
+		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
+			t.Fatalf("rec = %+v, err = %v: a markless launch with no token has nothing to read", rec, err)
 		}
-		for _, want := range []string{"could not be read", "fugaro update"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("the refusal does not name %q: %v", want, err)
-			}
-		}
-		assertBalancedParens(t, err.Error())
 		if n := len(b.db.Credentials()); n != 0 {
-			t.Fatalf("a run with no token made %d database requests", n)
+			t.Fatalf("a run with nothing to read made %d database requests", n)
 		}
 	})
-}
-
-// The other half of the same refusal: a budget-on job whose token object
-// cannot be read and whose launch records no marker. It carries the same grant
-// and the same remedy, and this is the sentence the unbalanced parenthesis was
-// in for the other case too — one constant, two sentences, so a test of one of
-// them pins the shape of both.
-func TestTheMissingTokenRefusalWithoutTheMarkerReadsRight(t *testing.T) {
-	const policy = `{"version":9,"budget":{"mode":"enforce","per_run_usd":0.09}}`
-	b := policyRun(t, gwConfig(t, ""), "enforce", "5", policy, capScript(3)...)
-	b.unmarked()
-	if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
-		t.Fatal(err)
-	}
-	rec, err := b.run(t, implement("feature"))
-	if err == nil {
-		t.Fatalf("a budget-on run whose token cannot be read must stop: rec = %+v", rec)
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, "was not launched with one") {
-		t.Fatalf("err = %v, want the refusal a launch with no marker gets", err)
-	}
-	for _, want := range []string{"tokens/", "read grant", "fugaro update", "start a new run (fugaro run with the same task)"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("the refusal does not say %q: %v", want, err)
-		}
-	}
-	// The sentence carries two causes and two cures, and they are told apart
-	// rather than run together: the grant's cure (the operator's `fugaro update
-	// --repo`, inside the aside) and the new run that follows either cause.
-	// Reading it as a list — "…not launched with one, or <grant>, then start a
-	// new run…: … reports it; launch the run again" — left the reader to work
-	// out which cure belonged to which cause, and read as though the init were
-	// optional (review finding m5). The dashes are the shape, so they are what
-	// is pinned: an edit that flattens them back into commas fails here.
-	if !strings.Contains(msg, "— either way, start a new run") {
-		t.Errorf("the two causes and the two cures are not told apart: %v", err)
-	}
-	if !strings.Contains(msg, "reports it — and when the grant is the cause") {
-		t.Errorf("the refusal does not say what to do when the grant is the cause: %v", err)
-	}
-	assertBalancedParens(t, msg)
-	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
-		t.Fatalf("the run went on without its token: calls = %d, rec = %+v", len(b.agent.calls), rec)
-	}
 }
 
 // assertBalancedParens fails unless every "(" in s closes, and none closes
