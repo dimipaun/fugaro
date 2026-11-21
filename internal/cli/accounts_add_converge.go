@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/report"
 )
 
 // This file is the second half of `fugaro accounts add` (spec §2.2 steps 5–8,
@@ -81,7 +82,7 @@ func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcf
 	// allow_data_to lists no repository: the field has to exist first (spec §2.2
 	// step 5).
 	secret := accountsAddSecretName(name, accountsAddSecretType(after, name, typ))
-	version, err := accountsAddStoreSecret(run, cmd, env, secret)
+	version, err := accountsAddStoreSecret(run, cmd, env, after, name, accountsAddSecretType(after, name, typ), secret)
 	if err != nil {
 		return err
 	}
@@ -152,8 +153,12 @@ func accountsAddNodeAccount(ctx context.Context, lc *localcfg.Config, name strin
 	return acc.AllowRepos, ""
 }
 
-// accountsAddStoreSecret runs the project-wide store (secretsSetProjectWide,
-// spec §2.2 step 5) and answers the version it wrote. secret is the name the
+// accountsAddStoreSecret runs the store of step 5 and answers the version it
+// wrote: project-wide, as a new version of the secret this run's type owns
+// (secretsSetProjectWide, spec §2.2 step 5), or — for a provider key, whose
+// home is the credentials service's bundle since KS2 (R2, D1670 reversed) —
+// the bundle entries C1's family names, one per repository the credential is
+// bound to, and no container of the credential's own. secret is the name the
 // credential's value lives under, resolved by the caller from this run's type
 // and from the type the config declares the name with (accountsAddSecretType):
 // it is passed in rather than derived here so the step, the sentence and the
@@ -164,9 +169,14 @@ func accountsAddNodeAccount(ctx context.Context, lc *localcfg.Config, name strin
 // then reaches this command's block as the store's answer and not as a line read
 // back out of its output (CL7a): the step and the block are two accounts of one
 // store, and neither is parsed out of the other.
-func accountsAddStoreSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, secret string) (string, error) {
-	return secretsStoreStep(run, secret, func() (string, string, error) {
-		return secretsSetProjectWide(run, cmd, env, secretsOptions{}, secret)
+func accountsAddStoreSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, lc *localcfg.Config, name, typ, secret string) (string, error) {
+	if config.KeyCredentialType(typ) && config.CredentialServingPath(typ) == config.CredentialPathRunner {
+		return secretsStoreStep(run, secret, func(st *report.Step) (string, string, error) {
+			return providerKeyBundleStore(run, cmd, st, lc, name, providerKeyCredentialRepos(lc, name), false)
+		})
+	}
+	return secretsStoreStep(run, secret, func(st *report.Step) (string, string, error) {
+		return secretsSetProjectWide(run, cmd, st, env, secretsOptions{}, secret)
 	})
 }
 
@@ -488,12 +498,15 @@ func accountsAddKeyServingLine(lc *localcfg.Config, name, typ string) string {
 	shown := pluginwire.Printable(name)
 	secret := pluginwire.Printable(config.CredentialSecret(name))
 	if config.CredentialServingPath(typ) == config.CredentialPathRunner {
-		if _, served := lc.Providers[name]; !served {
-			return fmt.Sprintf("%s is declared and its key is stored under %s; the runner path serves %s, and its key is mounted in the job of the provider of that name — no providers.%s entry exists yet, so no job mounts it and a run cannot authenticate with it until one does.\n",
-				shown, secret, shown, shown)
-		}
-		return fmt.Sprintf("Nothing else to run: %s is declared and its key is stored under %s, and the job of the provider %s mounts it as that provider's key for the repositories claude_accounts.%s.allow_data_to names.\n",
-			shown, secret, shown, shown)
+		// A provider key's home is the credentials service's bundle since KS2
+		// (R2, D1670 reversed by D2975): the value this command stored went into
+		// C1's named entries, one per repository the credential is bound to, and
+		// the service serves a routed call out of them. The job of the provider
+		// of that name no longer mounts the key — the address and the auth it
+		// forwards to are the entry's own, read from providers.<name> — so the
+		// line may not tell the operator to go and look for a mount.
+		return fmt.Sprintf("Nothing else to run: %s is declared and its key is entered in the credentials service's bundle, one entry per repository claude_accounts.%s.allow_data_to names. The service serves a routed call from that entry, whose address and auth are providers.%s's, so no job of the credential's own exists and no job mounts the key.\n",
+			shown, shown, shown)
 	}
 	return fmt.Sprintf("%s is declared and its key is stored under %s. The credentials service serves %s from the bundle it reads, and that bundle is written by one command: run `fugaro creds set %s` at your own terminal to put the value where the service reads it — a run whose craft's access names %s cannot authenticate with it until then.\n",
 		shown, secret, shown, secret, shown)
@@ -533,7 +546,8 @@ func accountsAddPublishLine(name, typ string, st initflow.StageResult, allow []s
 // A key credential has no job of its own, and that is not a job missing: the
 // name is in no profile (accounts_add.go), which is exactly what keeps a job
 // from mounting an empty claude-oauth-token-<name> as the account's token. What
-// carries its key to a call is the serving half of its type (D1670, MC23).
+// carries its key to a call is the credentials service, for either of the two
+// serving paths (KS2, R2): no job mounts the key at all.
 func accountsAddDeployLine(lc *localcfg.Config, typ, profile, name string, st initflow.StageResult) string {
 	switch st.State {
 	case "":
@@ -551,15 +565,12 @@ func accountsAddDeployLine(lc *localcfg.Config, typ, profile, name string, st in
 	}
 	if profile == "" {
 		if config.KeyCredentialType(typ) {
-			// Which half serves the type is what the line adds to the fact that
-			// the credential has no job of its own: the job of the provider that
-			// spends a runner-path credential's key mounts it, and a
-			// service-served one is read from the bundle and mounted nowhere
-			// (D1670, MC23).
-			if config.CredentialServingPath(typ) == config.CredentialPathRunner {
-				return "no job: a key credential rides no job of its own — the job of the provider " + pluginwire.Printable(name) + " mounts its key (" + pluginwire.Printable(config.CredentialSecret(name)) + ")"
-			}
-			return "no job: a key credential rides no job of its own — the credentials service serves it from the bundle, and no job mounts it"
+			// The line says where the key IS served, since neither serving path
+			// mounts it: a runner-path credential's entries in the bundle are the
+			// provider's address and auth for the repositories its declaration
+			// names, and a service-served one is read from the same bundle
+			// (KS2, D1670 reversed by D2975).
+			return "no job: a key credential rides no job of its own — the credentials service serves its key from the bundle, one entry per repository claude_accounts." + pluginwire.Printable(name) + ".allow_data_to names, and no job mounts it"
 		}
 		return "no job: no profile serves " + pluginwire.Printable(name) + " yet"
 	}

@@ -931,6 +931,35 @@ const bitbucketTokenSince = "0.24.0"
 // docs/release.md's ("Before you tag") list carries that reading.
 const keyCredentialSince = "0.26.0"
 
+// repoCredentialSince is the first fugaro release whose credentials service
+// reads the bundle's repository-credential family (credsvc.RepoCredentialPrefix,
+// credsvc.RepoCredentialKey, C1 of docs/keys-through-service): the entries
+// repo-credential--<slug>--<credential>, one per (repository, provider
+// credential) pair, each holding the provider key and the two routing facts the
+// service attaches when it forwards a call (credsvc's providerFacts). It is a
+// fourth entry of the same kind as providerEntrySince above and a constant of
+// its own for the reason that entry's comment gives: the loader refuses the
+// WHOLE document for a key it does not know, so the release a document is
+// readable by is decided by the newest entry it holds.
+//
+// The guard is no longer one write's: the family has THREE writers (F27) — the
+// key credential's own `fugaro creds set credential-<name>-key`, `fugaro
+// accounts add --type openrouter`, and `fugaro secrets set` of a model
+// provider's own secret, at repository scope and project-wide — and all three
+// go through refuseAnEntryTheServiceCannotRead before the value is read
+// (creds.go's providerKeyBundleWrite).
+//
+// It names 0.27.0, the release this work ships in, and it is the second
+// constant of this file whose reader has never been in a released image: C1's
+// wire and KS1's loader are newer than the `v0.26.1` tag, so the release before
+// this one serves a bundle without the family and cannot read a document that
+// holds it. The direction the siblings' tests protect holds from 0.27.0 on: a
+// value ABOVE the tag that shipped the family refuses every provider-key write
+// on installations whose deployed service already reads it, with `fugaro
+// update` no remedy for them. docs/release.md's ("Before you tag") list carries
+// that reading, and TestRepoCredentialSinceHasAReleaseBullet holds its bullet.
+const repoCredentialSince = "0.27.0"
+
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
 // check job's own rebuild names the secret ID Readiness resolved, so a
