@@ -422,6 +422,92 @@ func TestAStreamedSettleThatFailsIsServedAndUncharged(t *testing.T) {
 	}
 }
 
+// An answer that is not a 2xx is a call the provider did not bill for, and the
+// workspace is charged nothing for it — whatever the body holds, and however
+// much the run wanted the answer. The member's own gateway settles every
+// non-2xx at zero (internal/gateway/forward.go, zeroOutcome), so a reservation
+// left charged here is a figure the two ledgers disagree on, and a run that
+// retries an overloaded answer the way Claude Code does would use the
+// workspace's month up with spend that never happened.
+//
+// The 529 is the answer an overloaded upstream gives and the one an agent
+// retries by itself. The two the cascade retries its own way — a 401 and a 429 —
+// are settled at zero for the same reason and are pinned by the test below.
+// What is NOT settled at zero is an answer whose body could not be read: nothing
+// about it is known, not even that it arrived, so the reservation stands
+// (TestAFailedSettleRefuses's neighbourhood, and the tail of the cut 2xx).
+func TestAnErrorAnswerSettlesAtZero(t *testing.T) {
+	f := newWSMeterSvc(t, wsCapUSD, nil, wsPaidOnly)
+	f.up.Script = []anthropicfake.Reply{{
+		Status: 529,
+		Body:   `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`,
+	}}
+
+	resp, body := f.call(t, callBody("ws8-overloaded"))
+	if resp.StatusCode != 529 {
+		t.Fatalf("the call answered %d %s, want the upstream's own 529 relayed", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "overloaded_error") {
+		t.Errorf("the answer the run received is %q, want the upstream's own error body: the workspace's accounting is the service's business, not the run's", body)
+	}
+	if room := f.wsRoom(t); room.Settled != 0 || room.Reserved != 0 {
+		t.Errorf("the month holds %v settled and %v reserved after an overloaded answer, want nothing of either: the provider billed nothing for it and the reservation is not its price", room.Settled.USD(), room.Reserved.USD())
+	}
+	cap := wsMicros(t, wsCapUSD)
+	if got, want := resp.Header.Get(gateway.WorkspaceHeadroomHeader), strconv.FormatInt(int64(cap), 10); got != want {
+		t.Errorf("%s = %q, want the whole ceiling %q: the call spent none of the workspace's month", gateway.WorkspaceHeadroomHeader, got, want)
+	}
+}
+
+// The two answers the cascade retries ITSELF are settled at zero as the relayed
+// 529 above is, and for the same reason: neither is a call the provider billed
+// for, and the member's gateway writes a zero for both. A 401 marks the
+// credential broken and a 429 its usage limit, and the attempt either one
+// answers served the run nothing — so a reservation charged here is the
+// workspace paying for an attempt that bought it nothing, and a run stuck at a
+// limit can meet several of them in a row.
+//
+// The fixture admits ONE credential (the repository's own paid key, the O4
+// path), so the retry each answer asks for has nothing left to run on and the
+// run is answered the wait — which is not this test's subject, only the reason
+// the call returns here with the month to read.
+func TestARetriedAttemptSettlesAtZero(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		status int
+		header http.Header
+		body   string
+	}{
+		{
+			name:   "a 401",
+			status: http.StatusUnauthorized,
+			body:   `{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`,
+		},
+		{
+			name:   "a 429",
+			status: http.StatusTooManyRequests,
+			header: http.Header{"Retry-After": []string{"3600"}},
+			body:   `{"type":"error","error":{"type":"` + rateLimitEventType + `","message":"usage limit reached"}}`,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newWSMeterSvc(t, wsCapUSD, nil, wsPaidOnly)
+			f.up.Script = []anthropicfake.Reply{{Status: c.status, Header: c.header, Body: c.body}}
+
+			resp, body := f.call(t, callBody("ws8-retry-error"))
+			if resp.StatusCode == http.StatusOK {
+				t.Fatalf("the call answered 200 %s, want the attempt's own refusal: this fixture has one credential and it cannot serve the call", body)
+			}
+			if n := f.up.Count(); n != 1 {
+				t.Errorf("the upstream saw %d requests, want 1: nothing else this fixture holds can serve the call", n)
+			}
+			if room := f.wsRoom(t); room.Settled != 0 || room.Reserved != 0 {
+				t.Errorf("the month holds %v settled and %v reserved after the attempt, want nothing of either: the provider billed nothing for an answer it refused", room.Settled.USD(), room.Reserved.USD())
+			}
+		})
+	}
+}
+
 // A probe the workspace cannot pay for is the RUN's refusal and not the
 // credential's: the service owes a backed-off credential a probe (C1.12), the
 // meter refuses that probe before it is made, and the run waiting on the call

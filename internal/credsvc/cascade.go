@@ -851,14 +851,16 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// an authentication error it cannot act on is a run that stops for
 			// the wrong reason.
 			//
-			// The attempt's reservation is settled first, at what the call was
-			// charged for it (no answer is relayed, so no usage is read): the
-			// attempt happened, and a settle that cannot be written is the
-			// refusal the run gets — the credential's mark is not written,
-			// because the call is over either way and an unrecorded cost is the
-			// thing an operator has to act on.
+			// The attempt's reservation is settled first, at the zero a 401 is
+			// worth (no answer is relayed, so no usage is read): a 401 is not a
+			// call the provider billed for, and the member's own gateway settles
+			// it at zero too — a reservation charged here would be the
+			// workspace's month paying for an attempt nobody served. A settle
+			// that cannot be written is the refusal the run gets — the
+			// credential's mark is not written, because the call is over either
+			// way and an unrecorded cost is the thing an operator has to act on.
 			ans.resp.Body.Close()
-			if fail := s.settleCall(ctx, cl, nil); fail != nil {
+			if fail := s.settleCall(ctx, cl, unchargedUsage()); fail != nil {
 				s.refuseMeter(ctx, w, id, PurposeForward, fail)
 				return
 			}
@@ -880,8 +882,12 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// the same reason: the retry that may follow is a SECOND call with a
 			// reservation of its own, and the one this attempt took must not be
 			// left standing on the strength of a settle that was never made.
+			// What it settles AT is the zero a 429 is worth, which is what the
+			// member's own gateway settles that answer at: an unbilled attempt
+			// must not eat the workspace's month, and a run that meets a usage
+			// limit on one credential can meet several.
 			ans.resp.Body.Close()
-			if fail := s.settleCall(ctx, cl, nil); fail != nil {
+			if fail := s.settleCall(ctx, cl, unchargedUsage()); fail != nil {
 				s.refuseMeter(ctx, w, id, PurposeForward, fail)
 				return
 			}
@@ -1069,6 +1075,14 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 			// as the bytes go to the client (the tee below) and the call
 			// settles after the stream ends.
 			use = newCallUsage(true)
+		}
+		// An answer that is not a 2xx was not billed for, and it is the STATUS
+		// that says so rather than the body: an error body reports no usage, and
+		// a call the provider refused must not be charged the reservation it
+		// took. A body that could not be read is handed on as it is (nil), which
+		// keeps the reservation — nothing about that answer is known.
+		if use != nil {
+			use.uncharged = ans.resp.StatusCode < 200 || ans.resp.StatusCode > 299
 		}
 		if !stream {
 			if fail := s.settleCall(ctx, cl, use); fail != nil {

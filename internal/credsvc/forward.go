@@ -591,7 +591,14 @@ func (s *Server) settleCall(ctx context.Context, cl *call, use *callUsage) *mete
 		return nil
 	}
 	actual := cm.hold.Amount
-	if use != nil && use.complete {
+	switch {
+	case use != nil && use.uncharged:
+		// The provider billed nothing for this answer, so the workspace is
+		// charged nothing for it: what is released is the room the reservation
+		// took, and the figure the member's own gateway settles for the same
+		// answer is a zero too.
+		actual = 0
+	case use != nil && use.complete:
 		actual = cm.row.Rates.Cost(use.usage(cm.row.Rates, cm.ttl))
 	}
 	room, err := cm.meter.Settle(context.WithoutCancel(ctx), cm.hold, actual)
@@ -612,6 +619,14 @@ func (s *Server) settleCall(ctx context.Context, cl *call, use *callUsage) *mete
 	cm.room, cm.hasRoom = room, true
 	return nil
 }
+
+// unchargedUsage is what settleCall is handed for an attempt the provider did
+// not bill for: the 401 and 429 an attempt is retried after (cascade.go's
+// forward), whose bodies are closed unread. Their status is the whole of what
+// the service knows about the cost, and it says zero — the same figure the
+// member's own gateway settles those answers at (gateway.forward's
+// zeroOutcome) and the reason the two ledgers agree on a retry.
+func unchargedUsage() *callUsage { return &callUsage{uncharged: true} }
 
 // answerHeadroom is the advisory figure an answer carries
 // (gateway.WorkspaceHeadroomHeader, SetWorkspaceHeadroom): what the workspace's
@@ -871,6 +886,18 @@ func meterDollars(m pricing.Micros) string {
 //     its reservation.
 //   - a whole body: one JSON object whose usage names an input count and an
 //     output count, and nothing after it.
+//
+// One rule comes from the ANSWER's status rather than from its body, and it is
+// the reader's unless the body could not be read at all: a response that is not
+// a 2xx costs nothing, whatever it holds (uncharged). A provider does not bill
+// for a call it refused — an overloaded 529, a 500, a 400 for a request it
+// would not take — and the member's own gateway settles every non-2xx at zero
+// (gateway.forward's zeroOutcome). Reading such an answer with the 2xx rules
+// charges the workspace the call's whole worst case for spend that never
+// happened: an agent that retries an overload the way Claude Code does would
+// use the workspace's month up without a call to show for it. A body that could
+// not be read keeps the reservation, because nothing about that answer is
+// known — not even that it arrived.
 type callUsage struct {
 	stream   bool
 	p        meterSSE
@@ -881,6 +908,15 @@ type callUsage struct {
 	deltas   bool
 	complete bool
 	broken   bool
+
+	// uncharged is the status's verdict over the usage's own: the answer was
+	// not a 2xx, so the provider billed nothing for it and it is settled at
+	// zero rather than at its reservation. An error body reports no usage, so
+	// without it the reservation — the call's whole worst case — would stand
+	// for a call nobody paid for. It is set only where a body was read at all:
+	// an answer whose body could not be read hands a nil usage on and keeps the
+	// reservation, since nothing about it is known.
+	uncharged bool
 
 	acc meterAcc
 }
