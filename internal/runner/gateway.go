@@ -953,9 +953,13 @@ const execName = "fugaro exec"
 // that is in flight, so it takes no lock of its own beyond noteExhausted's
 // and does nothing a caller could block on.
 //
-// Two answers are acted on. The exhausted one is a decision about the stage in
+// Three answers are acted on. The exhausted one is a decision about the stage in
 // flight: the stage ends -- it did not fail -- and the runner waits for the
-// reset and resumes it (C1.17, D138). The other is the name of the credential
+// reset and resumes it (C1.17, D138). An unreachable one is that same decision
+// for the same reason (D2983): a call could not reach the service at all, the
+// stage in flight ends, and the run waits for the instant the gateway's bound
+// names and resumes the stage -- the gateway halts the run instead once that
+// bound is spent, naming the service. The third is the name of the credential
 // that answered (C1.19): a cascade run is the one run whose credential is not
 // its own, so it is the one run that has to record which one it spent on --
 // the record `/runs/<id>/result.json` carries (D140) and the registry entry
@@ -979,14 +983,19 @@ func (r *run) serviceAnswer(a gateway.ServiceAnswer) {
 		// computed for that move.
 		r.recordSwitch(a.Switch, a.SwitchCost)
 	}
-	if a.Exhausted == nil {
-		return
+	if a.Exhausted != nil {
+		tried := make([]credsvc.Tried, 0, len(a.Exhausted.Tried))
+		for _, tr := range a.Exhausted.Tried {
+			tried = append(tried, credsvc.Tried{Name: tr.Name, Tier: tr.Tier, Reason: tr.Reason})
+		}
+		r.noteExhausted(credsvc.ExhaustedUntil{ResetAt: a.Exhausted.ResetAt, Tried: tried})
 	}
-	tried := make([]credsvc.Tried, 0, len(a.Exhausted.Tried))
-	for _, tr := range a.Exhausted.Tried {
-		tried = append(tried, credsvc.Tried{Name: tr.Name, Tier: tr.Tier, Reason: tr.Reason})
+	if a.Unreachable != nil {
+		// The gateway's own answer and not the service's (D2983): no service
+		// answered this call, so it carries no tier, no credential name and no
+		// switch, and the wait it starts is the wait an exhausted answer starts.
+		r.noteUnreachable(*a.Unreachable)
 	}
-	r.noteExhausted(credsvc.ExhaustedUntil{ResetAt: a.Exhausted.ResetAt, Tried: tried})
 }
 
 // metadataIDToken mints the job service account's Google ID token for
