@@ -1,6 +1,7 @@
 package ciselect
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -82,16 +83,14 @@ func TestSelectIsFullForEveryDoubtOfR8(t *testing.T) {
 			},
 		},
 		{
+			// The real map, because this is the doubt a catch-all entry would
+			// silently swallow: `**` and `*/*` are the scan's own record of a
+			// path it could not name, and a test over a hand-written map could
+			// not tell that they leave this one unable to fire.
 			name: "a path no package owns and no entry names",
 			want: ReasonUnmapped,
 			input: func(t *testing.T) Input {
-				in := selectRealInput(t, "notes/random.txt")
-				in.Root = selectWriteRoot(t, map[string]string{
-					"go.mod":    "module example.com/m\n\ngo 1.24\n",
-					readMapPath: `{"packages":[{"package":"./internal/cli","reads":["internal/cli/cli.go"]}]}` + "\n",
-				})
-				in.Command.(*fakeCommand).graph = []byte(selectTinyGraph)
-				return in
+				return selectRealInput(t, "notes/random.txt")
 			},
 		},
 		{
@@ -146,7 +145,10 @@ func TestSelectIsFullForEveryDoubtOfR8(t *testing.T) {
 			}
 		})
 	}
-	t.Run("a mapped path is not a doubt", func(t *testing.T) {
+	// The two ways a path is accounted for, each against the real map and the
+	// real graph: the doubt above is about a path nothing names, not about
+	// every path no package of the graph happens to own.
+	t.Run("a path the graph owns is not a doubt", func(t *testing.T) {
 		in := selectRealInput(t, "internal/other/other.go")
 		in.Root = selectWriteRoot(t, map[string]string{
 			"go.mod":    "module example.com/m\n\ngo 1.24\n",
@@ -155,6 +157,39 @@ func TestSelectIsFullForEveryDoubtOfR8(t *testing.T) {
 		in.Command.(*fakeCommand).graph = []byte(selectTinyGraph)
 		if out := selectIn(t, in); out.Full {
 			t.Errorf("Reason = %q, want the owned path selected", out.Reason)
+		}
+	})
+	t.Run("a path the real map names is not a doubt", func(t *testing.T) {
+		// No package of the graph owns this file: the map names it with
+		// "images/**", "images/base/**" and the path itself.
+		if out := selectIn(t, selectRealInput(t, "images/base/Dockerfile")); out.Full {
+			t.Errorf("Reason = %q, want the named path selected", out.Reason)
+		}
+	})
+	t.Run("a catch-all entry makes a package run without naming a path", func(t *testing.T) {
+		// ./internal/cli reads "**" among far more: that is R4's reason to run
+		// it, not a reason to believe it knows where any particular file lives.
+		// Reading the two questions as one is what left the doubt above unable
+		// to fire on the committed map.
+		m, err := LoadReadMap(filepath.Join(selectRoot(t), readMapPath))
+		if err != nil {
+			t.Fatalf("read map: %v", err)
+		}
+		g, err := ParseGraph(bytes.NewReader(selectListing(t, BuildTags)))
+		if err != nil {
+			t.Fatalf("graph: %v", err)
+		}
+		var cli PackageReads
+		for _, p := range m.Packages {
+			if p.Package == "./internal/cli" {
+				cli = p
+			}
+		}
+		if !readsAny(cli, []string{"notes/random.txt"}) {
+			t.Fatal("./internal/cli no longer reads \"**\", so this subtest says nothing")
+		}
+		if mapped("notes/random.txt", m, g) {
+			t.Error("mapped = true for a path only a catch-all matches")
 		}
 	})
 }

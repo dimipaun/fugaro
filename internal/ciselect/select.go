@@ -508,7 +508,32 @@ func mapped(f string, m ReadMap, g *Graph) bool {
 		return true
 	}
 	for _, p := range m.Packages {
-		if readsAny(p, []string{f}) || ignoredBy(p, f) {
+		for _, pattern := range p.Reads {
+			if names(pattern, f) {
+				return true
+			}
+		}
+		if ignoredBy(p, f) {
+			return true
+		}
+	}
+	return false
+}
+
+// names reports whether a read-map pattern names a path rather than describing
+// a shape the scan could not name: it matches, and one of its segments is a
+// literal. "**", "*" and "*/*" are what the scan records for a path a test
+// builds at run time — which is why that package is `any` — and reading one as
+// a name would map every path in the repository: R8's unmapped-path doubt, the
+// one doubt that catches a file nothing is known to read, could then never
+// fire. Such a pattern still makes its package run (readsAny, R4); it does not
+// answer where the path is known to be read.
+func names(pattern, f string) bool {
+	if !matchPath(pattern, f) {
+		return false
+	}
+	for _, seg := range strings.Split(pattern, "/") {
+		if seg != "" && !hasGlob(seg) {
 			return true
 		}
 	}
