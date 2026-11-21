@@ -33,6 +33,7 @@ module "installation" {
   state_bucket              = var.state_bucket
   names                     = var.names
   log_bucket_description    = var.log_bucket_description
+  log_bucket_location       = var.log_bucket_location
   bucket_lifecycle          = var.bucket_lifecycle
   enable_vertex             = var.enable_vertex
   manage_apis               = var.manage_apis

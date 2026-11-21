@@ -106,6 +106,22 @@ variable "log_bucket_description" {
   }
 }
 
+variable "log_bucket_location" {
+  description = "Where the run log bucket is: the installation's region where Cloud Logging offers a bucket there, else the place's multi-region (us, eu), else global (place.For, D3082). fugaro update writes it, and on an installation that has a bucket already it is the location discovery read, because a bucket's location is permanent: the resource below ignores the field, so this decides what is CREATED and never moves what exists (R5)."
+  type        = string
+  # `global`, which is where every installation made before this mapping has
+  # its bucket and what the module wrote before the variable existed: the root
+  # always names a location (fugaro update writes place.For's answer), and this
+  # default is what a direct caller of the module gets instead of a plan that
+  # refuses for a variable it never had.
+  default = "global"
+
+  validation {
+    condition     = can(regex("^[a-z]+(-[a-z]+[0-9]+)?$", var.log_bucket_location))
+    error_message = "log_bucket_location must be a log bucket location: a region such as us-east5, the multi-region us or eu, or global."
+  }
+}
+
 variable "bucket_lifecycle" {
   description = "The runs bucket's lifecycle, in days: the three rules the bootstrap set, the one the bucket's versioning adds (a noncurrent version under runs/, cache/, locks/, tokens/ or issues/ is purged this many days after it stops being current), the one the stored reports get (reports/ is deleted this many days after an object is created, which is E3's 18 months held in whole days, as the other members are), and the one a person's message to a running run gets (tokens/…/messages/NNNN.msg.json is deleted this many days after it is written, F11's 7, which is the owner's answer O1)."
   type = object({
