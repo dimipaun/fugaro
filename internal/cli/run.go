@@ -1953,6 +1953,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := contextReposRefusal(ctx, env, slug, spec); err != nil {
 		return config.Inputs{}, err
 	}
+	// The Batch backend's own gate, beside the two above and for the same
+	// reason: a Batch job mounts nothing, so a launch there whose repository
+	// the credentials service does not serve is a run with no model credential
+	// at all, refused here rather than started (batchLaunchRefusal, BR11).
+	if err := batchLaunchRefusal(ctx, env, spec); err != nil {
+		return config.Inputs{}, err
+	}
 	co, kind, clone, shared, mode, err := launchWorkflowShape(ctx, env, spec)
 	if err != nil {
 		return config.Inputs{}, err
