@@ -707,7 +707,9 @@ interface Drawn {
  * words (`id`, `title`, `source` and its columns, in order) and how many rows the
  * document above puts in its table. `rows` is the document's own count, so a
  * table that drew nothing, drew a row per column or drew one document's rows
- * twice fails here. */
+ * twice fails here. `columns` is read off the drawn heading, so the one kind
+ * whose document holds nothing -- which draws the empty sentence instead of a
+ * table -- has none to list. */
 interface KindFacts {
   readonly id: string
   readonly title: string
@@ -739,10 +741,15 @@ const EXPECTED: readonly { readonly group: string; readonly kinds: readonly Kind
         rows: 1,
       },
       {
+        // The one kind whose document holds nothing, so it draws the empty
+        // sentence in place of a table and its heading is not there to read:
+        // `columns` is what the drawn table's own heading holds, so the fact
+        // here is none, and the descriptor's two columns are
+        // `test/unit/manage-people.test.ts`'s.
         id: 'accounts',
         title: 'Claude accounts',
         operation: 'accounts.inventory',
-        columns: ['account', 'state'],
+        columns: [],
         rows: 0,
       },
     ],
