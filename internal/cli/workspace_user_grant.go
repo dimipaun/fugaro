@@ -18,8 +18,8 @@ package cli
 // this file calls them rather than restating them, because a second spelling of
 // the subset rule is a second answer to "what may this person do here".
 //
-// Four things are this command's own, and each is a refusal rather than a
-// guess.
+// Four things are this command's own, and it refuses or says each of them
+// rather than guessing at one.
 //
 //   - **The member's own list is the gate (D2813).** Every membership write
 //     mirrors the workspace's member list into the member's database
