@@ -645,6 +645,27 @@ test_a_log_read_that_never_carries_the_execution_stops() {
   expect_contains "$out" "FACT restore: PASS" "an unread log still leaves nothing behind"
 }
 
+# A run of this check inside the freshness window leaves its own lines in the
+# project, and the log read is by job name: the check must read THIS execution's
+# block and not an earlier execution's, whose claims carry its own name — a claim
+# read from the wrong block would judge U1 on a token this run did not mint.
+test_a_log_carrying_an_earlier_execution_reads_only_this_one() {
+  setup_case older-log
+  write_log plain ""
+  cat >>"$dir/state/log.txt" <<EOF
+CHK840 exec=${PROBE}-older
+CHK840 marker=marker-of-an-earlier-run
+CHK840 token_len=999
+CHK840 claim=email=earlier@dev-installation-1234.iam.gserviceaccount.com
+CHK840 claim=run.googleapis.com/execution=${PROBE}-older
+EOF
+  run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
+  expect_status "$status" 0 "an earlier execution's block beside this run's"
+  expect_contains "$out" "FACT claims: PASS — the identity token carries 8 claim(s)" "only this execution's claims are read (the earlier block's two would make ten)"
+  expect_contains "$out" "FACT u1: PASS" "an earlier execution's claim is not read as this execution's"
+  expect_contains "$out" "FACT u2: PASS" "this run's own override is still the one read back"
+}
+
 test_a_job_that_already_exists_is_refused() {
   setup_case adopted
   printf '1\n' >"$dir/state/probe-exists"
@@ -813,6 +834,7 @@ t test_a_first_exchange_that_is_refused_stops
 t test_a_job_without_the_web_key_stops
 t test_a_launch_that_is_refused_stops_and_removes_the_job
 t test_a_log_read_that_never_carries_the_execution_stops
+t test_a_log_carrying_an_earlier_execution_reads_only_this_one
 t test_a_job_that_already_exists_is_refused
 t test_a_missing_token_stops
 t test_belong_is_refused

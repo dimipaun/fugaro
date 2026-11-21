@@ -763,12 +763,24 @@ want = sys.argv[2]
 claims = []
 marker = ""
 length = ""
+# ONE execution's lines, and only its own. A run of this check within the
+# freshness window leaves its own lines behind, and the read is by job name, so
+# the output can carry two executions' blocks: the probe prints `exec=` first,
+# the read is newest first, and the block is taken as the lines between this
+# execution's `exec=` line and the next one -- and only when that name is the
+# execution this run launched.
+mine = False
 for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
     line = line.strip()
     if not line.startswith("CHK840 "):
         continue
     body = line[len("CHK840 "):]
     if body.startswith("exec="):
+        if mine:
+            break
+        mine = body[len("exec="):] == want
+        continue
+    if not mine:
         continue
     if body.startswith("claim="):
         name, _, value = body[len("claim="):].partition("=")
