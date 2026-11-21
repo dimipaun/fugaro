@@ -2,7 +2,7 @@
 
 Checked against `origin/main` at `fb0aeb9aa` on 2026-11-20. **Where this file disagrees with
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
-**D3020–D3028**, all answered by the owner on 2026-11-20 (D3023–D3025 were added by review
+**D3020–D3029**, all answered by the owner on 2026-11-20 (D3023–D3025 were added by review
 round 1, D3026 by round 2, D3027 and D3028 after round 3, on its open items O10 and O6). It carries out **D3009, D3010 and
 D3011** of [every model key through the credentials service](../keys-through-service/reconciliation.md),
 and it reverses the part of **D2071** that guards a mode that no longer exists.
@@ -286,6 +286,12 @@ update still does everything it can and names the rest.
 | **D3027** | The Firestore location's confirmation comes before the budget database's write (F4). What changes? | The stage writes the budget database first. The ruling on the permanent location stands, and where that confirmation is left for a person only the history database waits | answered after review round 3, on O10; as recommended |
 | **D3028** | On a managed project, does creating the budget database happen under the managed gate, once the stage needs no flag (F25)? | **Yes: it is created under the gate**, like any converging step | answered after review round 3, on O6; **not the recommendation** (adopt under the gate, create outside it) |
 
+| **D3029** | The budget database's location is a constant (`us-central1`) and can never be changed once created, and AB7 creates one on every installation. Should it follow a location the installation chose? | Yes. A location preference set at setup drives where the databases are created; it is a spec of its own, and AB7 waits on it | the owner's ruling of 2026-11-20, on the coordinator's recommendation |
+
+**What D3029 means here.** AB7 is not launched before the location-preference spec's plan has
+merged the part that says where a new budget database goes. Otherwise this plan would create a
+database in the United States, permanently, for an installation that would have chosen Europe.
+
 **What D3028 means.** On a managed project `fugaro update` creates the budget database, with its
 custom role and project IAM grants, with no confirmation, and from a coding agent's session too,
 because that is what the gate allows a converging step. The gate's own conditions still decide
@@ -382,6 +388,7 @@ No two answers pull against each other.
   too (F8). Today only installations that chose a budget carry that dependency.
 - **O3.** D3020, D3022 and D3023 stop some runs that work today until a person acts (§4).
 - **O4.** Cloud Batch can launch nothing after this work, until a design of its own (D3021).
+  That design is [batch-run-identity](../batch-run-identity/README.md).
 - **O5.** The database costs about two dollars a month at the design's own estimate and needs
   billing on the project (F18). An installation with no billing gets R2's line with that fix, and
   launches nothing until it is linked.
@@ -395,6 +402,8 @@ No two answers pull against each other.
 - **O10.** *Answered by D3027.* What remains: a run with no terminal that carries no answer still
   writes nothing, because the stage's ordinary confirmation is unanswered (F4). D3027 helps where
   that one is answered and the location's is not.
+- **O13.** AB7 waits on a spec that is not written yet (D3029). AB0, C1, AB14 and the level 1
+  tasks that do not need AB7 can go ahead.
 - **O11.** Review round 3's fixes are the last commit and were not reviewed again; three rounds is
   the cap.
 - **O12.** The graph cannot say that AB2, AB8a and AB8b wait for C1. A launcher follows the plan's

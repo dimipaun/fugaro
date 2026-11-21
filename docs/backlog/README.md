@@ -17,7 +17,7 @@ retires, is [the rigor modes reconciliation](../rigor-modes/reconciliation.md)
 
 ## Open
 
-| id | title | mode | area | status | filed-by | date |
-| --- | --- | --- | --- | --- | --- | --- |
-| [20261021-01](20261021-01-cross-repo-backlog-filing.md) | A run cannot file a backlog item into a repository other than its own | none | project | open | dimipaun | 2026-10-21 |
-| [20261021-02](20261021-02-hotfix-followup-scheduler.md) | Nothing reacts to a merge, so a Hotfix follow-up is run by hand | none | repo | open | dimipaun | 2026-10-21 |
+| id | title | level | kind | area | status | filed-by | date |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [20261021-01](20261021-01-cross-repo-backlog-filing.md) | A run cannot file a backlog item into a repository other than its own | none | deferred | project | open | dimipaun | 2026-10-21 |
+| [20261021-02](20261021-02-hotfix-followup-scheduler.md) | Nothing reacts to a merge, so a Hotfix follow-up is run by hand | none | deferred | repo | open | dimipaun | 2026-10-21 |

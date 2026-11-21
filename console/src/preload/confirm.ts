@@ -4,13 +4,17 @@
 // do (design section 5.1 rule 11; console V2.5.1a part 2b-1).
 //
 // **Two methods, and that is the whole surface**: `fields()`, which reads the
-// display-only view this window was opened for, and `answer(true|false, ticked?)`,
-// which is the operator's answer -- the second argument being a widening's tick,
-// which the window draws for one shape of question (rule 12, D1109) and which the
-// main process checks rather than trusts. There is no read of the CLI, no spawn, no
-// `openExternal`, no `installation.*` row and no channel of the dashboard's: the
-// window shows the task and asks one question, and everything else it might want
-// is something it must not have.
+// display-only view this window was opened for, and `answer(...)`, which is the
+// operator's answer to the question that view is. The answer is **one object**
+// (SU1, D2902): `{answer: 'no'}` is the way out of either question,
+// `{answer: 'yes', ticked?}` is a confirmation -- `ticked` being a widening's
+// checkbox, which the window draws for one shape of question (rule 12, D1109) and
+// which the main process checks rather than trusts -- and
+// `{answer: 'submit', value}` is the entry form's OK, carrying the value the
+// operator typed or `null` for the reset. There is no read of the CLI, no spawn,
+// no `openExternal`, no `installation.*` row and no channel of the dashboard's:
+// the window shows the task -- or the form -- and asks one question at a time,
+// and everything else it might want is something it must not have.
 //
 // It is a third preload rather than a second document on one of the others for
 // the reason `src/preload/installations.ts` gives: the dashboard's preload
@@ -63,14 +67,28 @@ export type ConfirmReply =
   | { readonly ok: true; readonly data: unknown }
   | { readonly ok: false; readonly reason: string }
 
-/** ConfirmBridge is what the confirmation document sees. `ticked` is the
- * widening's checkbox and it is read for a yes: a no is a no whatever a tick
- * says, and the main process ignores it there. A window that draws no tick sends
- * none, and `answer` is the only method whose argument set depends on the
- * question. */
+/** ConfirmAnswer is the one argument of `answer`, and it mirrors
+ * `src/main/confirm.ts`'s own type of the same name: the sandboxed renderer
+ * cannot import the main process's module, so the shape is stated twice and
+ * `test/unit/confirm.test.ts` holds the two to each other. It is one object
+ * rather than a positional boolean (and an optional tick) because the entry form
+ * answers with a **value**, and because the three answers have three different
+ * consequences the main process checks against the phase the window is in.
+ *
+ * `value` is required and explicit on a `submit`: `null` is "Reset to default"
+ * -- which writes no value at all (`settings unset`, A4) -- and a message that
+ * merely forgot the member is not that. */
+export type ConfirmAnswer =
+  | { readonly answer: 'no' }
+  | { readonly answer: 'yes'; readonly ticked?: boolean }
+  | { readonly answer: 'submit'; readonly value: string | null }
+
+/** ConfirmBridge is what the confirmation document sees: the view it was opened
+ * for, and its answer to it. A window that draws no tick sends none, and
+ * `answer` is the only method whose argument depends on the question. */
 export interface ConfirmBridge {
   readonly fields: () => Promise<ConfirmReply>
-  readonly answer: (yes: boolean, ticked?: boolean) => Promise<ConfirmReply>
+  readonly answer: (answer: ConfirmAnswer) => Promise<ConfirmReply>
 }
 
 /** isConfirmReply narrows what came back off the channel. A main process that
@@ -110,8 +128,7 @@ async function invokeConfirm(
 export function createConfirmBridge(renderer: RendererLike): ConfirmBridge {
   return Object.freeze({
     fields: () => invokeConfirm(renderer, 'fields', []),
-    answer: (yes: boolean, ticked?: boolean) =>
-      invokeConfirm(renderer, 'answer', ticked === undefined ? [yes] : [yes, ticked]),
+    answer: (answer: ConfirmAnswer) => invokeConfirm(renderer, 'answer', [answer]),
   })
 }
 

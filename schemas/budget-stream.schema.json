@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/budget-stream.schema.json",
+  "title": "Fugaro budget show --stream",
+  "description": "One line of the newline-delimited feed `fugaro budget show --stream --json` writes (docs/console-improvements spec §7, D2906, O3): the caps listing `budget show --json` prints whole, written as one record per line so a consumer draws the caps table as its lines arrive instead of holding the document. The schema is of ONE LINE and not of the feed: a reader validates each line as it reads it, and the feed is the lines in order. Three kinds, and a reader may rely on nothing else: `row` carries one repository of the whole document's own `repos` array, unchanged and in the document's own order (by slug), or the project's kill switch as a row of its own; `end` is the last line of a feed that ran to completion, carrying how many `row` lines went before it and the version of the shape they were written in; `error` is a feed that failed once at least one row had gone out, carrying the sentence the command would have printed, in one line. A feed with no `end` line is an interrupted read -- which is why the count is carried, since a listing that ended early and a read that is still going are otherwise the same bytes. The line shape is the one `runs ls --stream` writes (schemas/runs-stream.schema.json) and its first version is 1 (budgetStreamDocVersion in internal/cli/budget_stream.go): it is the feed's own version, because the document `budget show --json` prints without `--stream` is unchanged by the flag, member for member and byte for byte, and the caps document carries no `version` member at all. Members are only ever added within a version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's feed. The feed carries the rows and the project's kill switch and nothing else of the document: the project's own counters, the defaults, the mode, the runs in flight and the warnings are not rows, and a consumer that needs them reads the whole document.",
+  "oneOf": [
+    { "$ref": "#/$defs/row" },
+    { "$ref": "#/$defs/end" },
+    { "$ref": "#/$defs/error" }
+  ],
+  "$defs": {
+    "row": {
+      "type": "object",
+      "description": "One row of the feed. Two kinds and both carry `slug`, which is how a consumer tells them apart and how it places the row: a repository's row is exactly one element of the `repos` array the whole document carries, unchanged -- the same members, in the same order, with the same values (`showRepo` in internal/cli/budget.go; its members, its `kill` and its `running` entries included, are that struct's, and a second telling of them here would be a shape that drifts from it) -- and the project's own kill switch is a row whose `slug` is the literal `kill`, which no repository's slug can be, since budget.Key's slugs are provider-prefixed (`github/acme/app`). The rows arrive in the document's own order (by slug), and the project's kill switch is the last row before the `end` line.",
+      "required": ["type", "row"],
+      "properties": {
+        "type": {
+          "const": "row",
+          "$comment": "streamLineRow in internal/cli/runs_stream.go."
+        },
+        "row": {
+          "type": "object",
+          "description": "The row. A repository's is showRepo, exactly as `budget show --json` writes it under `repos`: `slug`, `repo` when a config or the registry names one, `daily_cap_usd` and `daily_cap_source`, `per_run_cap_usd` and `per_run_cap_source`, `counted_usd`, `spent_usd`, `notional_usd`, `compute_usd` (only under --compute, and null rather than 0 where the day recorded no estimate), `leased_usd`, `headroom_usd`, `kill` (null when the repository has no switch of its own) and `running` (the runs in flight in it, one entry each, empty when none). The project's kill switch row is `{\"slug\": \"kill\", \"kill\": {...}}`, with `kill` null when the switch is not on: the row's presence says which switch it is, and a row that vanished when the switch was off would leave a consumer unable to tell an unfired switch from a feed that never carried one.",
+          "required": ["slug"],
+          "properties": {
+            "slug": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The row's scope: a repository's escaped slug (`budget.Key`, which is provider-prefixed), or the literal `kill` for the project's own switch."
+            },
+            "kill": {
+              "type": ["object", "null"],
+              "description": "The kill switch this row carries: the repository's own on a repository's row, the project's on the `kill` row. `budget show --json` writes it as `{by, at, reason}` and omits the members a switch did not record, so a consumer reads a missing member as the CLI saying it has nothing; a killed switch always carries `by` and `at`."
+            }
+          }
+        }
+      }
+    },
+    "end": {
+      "type": "object",
+      "description": "The last line of a feed that ran to completion. Its presence is the whole of it: a consumer that read rows and no end line is holding a read that was interrupted, and the count is what tells it how many it lost.",
+      "required": ["type", "count", "version"],
+      "properties": {
+        "type": {
+          "const": "end",
+          "$comment": "streamLineEnd in internal/cli/runs_stream.go."
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many `row` lines the feed carried before this one, the project's kill switch row included -- not what the project's counters say about any repository. --repo and --all page the rows, so a feed of a page counts the page."
+        },
+        "version": {
+          "const": 1,
+          "$comment": "budgetStreamDocVersion in internal/cli/budget_stream.go."
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "description": "A feed that failed after at least one row had gone out, and the last line of it: the command exits non-zero, and there is no `end` line, so a consumer reads this feed as an interrupted read either way and this line is what says why. A failure before the first row writes no line at all -- there is nothing a consumer could have drawn -- so this line is never the first line of a feed.",
+      "required": ["type", "error"],
+      "properties": {
+        "type": {
+          "const": "error",
+          "$comment": "streamLineError in internal/cli/runs_stream.go."
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The sentence the command would have printed on stderr, made safe for a terminal and for one line: its control sequences are dropped and a newline inside it would forge a second line of the feed, so it carries none (safetext.OneLine). Text the bucket's writer wrote can reach it, so a consumer classifies it as text and never as an instruction."
+        }
+      }
+    }
+  }
+}

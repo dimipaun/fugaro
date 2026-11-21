@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/dimipaun/fugaro/internal/budget"
@@ -29,7 +30,7 @@ import (
 // internal/budget/rules); and no step of the update writes a run's registry
 // entry, its ledger, its day counters or its record.
 //
-// Seven steps can still reach one, and the note names every one of them this run
+// Eight steps can still reach one, and the note names every one of them this run
 // can take — naming a step, rather than either claiming a safety that is not
 // there or dropping the claim: the budget mode's raise to enforce, which a
 // session re-reads on every lease and every report while the policy node is read
@@ -47,10 +48,13 @@ import (
 // service meeting a node it cannot read for the length of one apply; the
 // creation fact, which a run of the release behind re-reads per command and
 // refuses once it is rewritten, so that run keeps the typed confirmation it
-// would have applied without; and a retirement, which deletes an orphaned Cloud
-// Run job and takes the executions running on it with it (`deleteOrphanedJob`,
-// init_retire.go). None of the seven is the update stopping a run, and none of
-// them is asked to wait.
+// would have applied without; the workspace credentials node that stage's
+// neighbour publishes, which the workspace's own service re-reads as it serves
+// (R13), so a member this run takes out of the table, or an entry it unshares,
+// stops being served at that service's next read; and a retirement, which
+// deletes an orphaned Cloud Run job and takes the executions running on it with
+// it (`deleteOrphanedJob`, init_retire.go). None of the eight is the update
+// stopping a run, and none of them is asked to wait.
 //
 // The note is the count's own line and then ONE SHORT LINE PER STEP, because the
 // owner met it with fourteen runs in flight and could not find what they were
@@ -182,6 +186,10 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 	if e.bitbucketProxySwitchTurns() {
 		steps = append(steps, inFlightStep{
 			line: "bitbucket proxy switch: the address is set; the job's mount drops next update"})
+	}
+	if e.workspaceDropsReach(ctx, db) {
+		steps = append(steps, inFlightStep{
+			line: "workspace: a removed member or an unshared entry stops being served by the service"})
 	}
 	if e.markerConverges(ctx) {
 		steps = append(steps, inFlightStep{
@@ -398,6 +406,64 @@ func (e *initEngine) tokensPublishReachesRuns(ctx context.Context, db *rtdb.Clie
 func (e *initEngine) bitbucketProxySwitchTurns() bool {
 	_, turn := e.bitbucketProxyFlip()
 	return turn
+}
+
+// workspaceDropsReach is whether this run's workspace write can take a member, or
+// a pool entry, out of the published credentials node that a run in flight is
+// served by (R11): a member row the local table no longer declares, or an entry
+// the local shared list no longer holds.
+//
+// The workspace's own service re-reads that node as it serves a call (R13), so
+// the run of a member it no longer resolves — or a run whose repository the pool
+// offers no credential to any more — is refused at the service's next call, with
+// the refusal that names the workspace owner's `fugaro update`. That is the one
+// reach this stage has on a run in flight, and it is why the line is about who
+// is served rather than about the run being untouched.
+//
+// What it asks is the pair of names, and not the stage's own decision: the node
+// as it stands, read here before any stage of this run has written, against the
+// member table and the shared list of this machine's config. Whether the stage
+// gets as far as publishing at all, whether the removal is a whole row or one of
+// its accounts, and what else the same write states are the stage's own reads,
+// and the diff it prints names every one of them. A node that is not there —
+// every member's installation, and every owner who has not published yet — and a
+// read that failed are silence, as every other read in this file answers.
+func (e *initEngine) workspaceDropsReach(ctx context.Context, db *rtdb.Client) bool {
+	if e.lc == nil || e.lc.Name == "" {
+		return false
+	}
+	var raw json.RawMessage
+	found, err := db.Get(ctx, projectpolicy.PathWorkspaceCredentials(e.lc.Name), &raw)
+	if err != nil || !found {
+		return false
+	}
+	node, _, err := projectpolicy.DecodeWorkspaceCredentials(raw)
+	if err != nil || node == nil {
+		return false
+	}
+	members := map[string]bool{}
+	if e.lc.WorkspaceMembers != nil {
+		for name := range *e.lc.WorkspaceMembers {
+			members[name] = true
+		}
+	}
+	for _, row := range node.Members {
+		if !members[row.Project] {
+			return true
+		}
+	}
+	shared := map[string]bool{}
+	if e.lc.WorkspaceShared != nil {
+		for name := range *e.lc.WorkspaceShared {
+			shared[name] = true
+		}
+	}
+	for _, s := range node.Shared {
+		if !shared[s.Name] {
+			return true
+		}
+	}
+	return false
 }
 
 // markerConverges is whether this update rewrites the installation's creation

@@ -19,6 +19,13 @@
 // where no block below changes, and the checks here see none of the three.
 // TestInfraTheRootIsOneFormOfConfiguration refuses all of them.
 //
+// Two tests hold the readers themselves, on a source no file here writes: a
+// header spaced the other ways HCL reads as one space
+// (TestInfraTheReadersReadWhitespaceTheWayHCLDoes, which the cramped spelling's
+// own test does not cover), and an exported account key appended to a copy of
+// main.tf (TestInfraTheSweepSeesAnExportedAccountKey, the second way to sign
+// that writes no attribute a grant is written with).
+//
 // The key's purpose, algorithm and protection level are pinned as the key
 // service's suite pins its own (A3), and the rest of the acceptance — the signer
 // role, the key-set bucket, the four sign-in methods, the JWKS route and the
@@ -769,16 +776,46 @@ func tfEnv(t *testing.T, container string) map[string]string {
 	return out
 }
 
-// tfGrants reports whether a block hands an identity a role, whatever the block
-// is called. It is deliberately loose — an IAM resource type, or an attribute a
-// grant is written with — and it is loose in the safe direction: the sweep's
-// other half is a list of the grants this root is allowed to hold, so a block
-// the sweep thinks grants something and finds unlisted fails, while being wrong
-// about a block that grants nothing costs only a message. The attribute test is
-// on the compacted body, because `role="x"` and `role = "x"` are one grant.
+// tfRoute is one way an identity reaches the signer's account without a grant
+// this suite reads as one, and the sentence it is refused with.
+type tfRoute struct{ needle, what string }
+
+// tfAccountRoutes is every such way, and the whole of them: an exported account
+// key can be downloaded and carries the useToSign the ring grant gives the
+// account, so it is a second way to sign with the assertion key and its private
+// half lands in the state file; a grant on the account itself is a second
+// identity that mints with the signer role; and a service account address
+// written as text is an identity named by no reference.
+//
+// The first two name resource types, so the sweep's allowlist refuses a block
+// that writes one — a resource whose only suspicious part is its type writes
+// none of the attributes the sweep also tests, which is how an exported account
+// key would otherwise pass it. All three are searched for by their text in every
+// file of the root, and tfGrants reads the same list out of a block's header,
+// where a resource type is what appears (A3, D2792, O7).
+var tfAccountRoutes = []tfRoute{
+	{"google_service_account_key", "an exported account key can be downloaded and carries the ring's useToSign with it, which is a second way to sign with the assertion key, and its private half is written into the state file, where whoever reads the state holds the account"},
+	{"google_service_account_iam", "a grant on the account itself is a second identity that mints with the signer role"},
+	{"iam.gserviceaccount.com", "a service account address written as text names an identity the sweep cannot see, and a job or a service handed it runs as the signer"},
+}
+
+// tfGrants reports whether a block hands an identity a role, or reaches the
+// signer's account without a grant, whatever the block is called. It is
+// deliberately loose — an IAM resource type, an attribute a grant is written
+// with, or one of the types tfAccountRoutes names — and it is loose in the safe
+// direction: the sweep's other half is a list of the grants this root is allowed
+// to hold, so a block the sweep thinks grants something and finds unlisted
+// fails, while being wrong about a block that grants nothing costs only a
+// message. The attribute test is on the compacted body, because `role="x"` and
+// `role = "x"` are one grant.
 func tfGrants(header, compact string) bool {
 	if strings.Contains(header, "_iam_") {
 		return true
+	}
+	for _, route := range tfAccountRoutes {
+		if strings.Contains(header, route.needle) {
+			return true
+		}
 	}
 	for _, attr := range []string{"member=", "members=", "role=", "role_id=", "permissions=", "policy_data="} {
 		if strings.Contains(compact, attr) {
@@ -786,6 +823,51 @@ func tfGrants(header, compact string) bool {
 		}
 	}
 	return false
+}
+
+// tfAccountRouteWrites answers the routes to the signer's account written in one
+// source, in the order tfAccountRoutes holds them. It takes the text rather than
+// reading a file so that a test can hand it a copy with one more block in it,
+// which is the only way to show the route search reading a block this root does
+// not write.
+func tfAccountRouteWrites(src string) []tfRoute {
+	compact := tfCompact(src)
+	var out []tfRoute
+	for _, route := range tfAccountRoutes {
+		if strings.Contains(compact, route.needle) {
+			out = append(out, route)
+		}
+	}
+	return out
+}
+
+// tfUnsanctionedGrants answers every block of one source that grants a role — or
+// reaches the signer's account, which tfGrants reads as the same thing — and is
+// not on the list of grants this root may hold, as the block's own text. It takes
+// the text for the same reason tfAccountRouteWrites does: the sweep's refusal is
+// the other half a test has to show firing on an appended block.
+func tfUnsanctionedGrants(src string) []string {
+	var out []string
+	for _, block := range tfBlocks(src, `resource "`) {
+		header := tfHeader(block)
+		if !tfGrants(header, tfCompact(block)) {
+			continue
+		}
+		if _, ok := tfSanctionedGrants[header]; !ok {
+			out = append(out, strings.TrimSpace(block))
+		}
+	}
+	return out
+}
+
+// tfHeaders answers the normalised header of every block of one kind in a
+// source, which is what a check counts, compares and looks a block up by.
+func tfHeaders(src, kind string) []string {
+	out := make([]string, 0, 8)
+	for _, block := range tfBlocks(src, kind) {
+		out = append(out, tfHeader(block))
+	}
+	return out
 }
 
 // tfListCounts renders the blocks that may name an identity and how often each
@@ -963,14 +1045,8 @@ func TestInfraTheSignerRoleIsTheNarrowestThatSigns(t *testing.T) {
 	}, "the identity a Cloud Run service runs as is the identity it IS, so a template naming another account holds the signer role from wherever that account's code runs (A3)")
 
 	for _, rel := range tfFiles(t) {
-		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
-			header := tfHeader(block)
-			if !tfGrants(header, tfCompact(block)) {
-				continue
-			}
-			if _, ok := tfSanctionedGrants[header]; !ok {
-				t.Errorf("%s holds a grant this root is not allowed:\n%s\nthe signer role is the only route to useToSign and it reaches one account, the service's own, so that a reader of the plan sees every identity that can mint an assertion (A3, D2792, O7). The whole list of grants this root may hold is:\n%s", rel, strings.TrimSpace(block), tfList(tfSanctionedGrants))
-			}
+		for _, block := range tfUnsanctionedGrants(tfSource(t, rel)) {
+			t.Errorf("%s holds a grant this root is not allowed:\n%s\nthe signer role is the only route to useToSign and it reaches one account, the service's own, so that a reader of the plan sees every identity that can mint an assertion (A3, D2792, O7). The whole list of grants this root may hold is:\n%s", rel, block, tfList(tfSanctionedGrants))
 		}
 	}
 
@@ -1007,23 +1083,17 @@ func TestInfraTheSignerRoleIsTheNarrowestThatSigns(t *testing.T) {
 	}
 
 	// Three ways to the account are refused outright rather than counted, because
-	// none of them is a block this root may write however it is spelled, and the
-	// third is the one the sweep above cannot see at all: an account key exports
-	// the account's private half into the state file, a grant on the account
-	// itself is a second identity that mints with the signer role — an
+	// none of them is a block this root may write however it is spelled: an
+	// account key exports the account's private half into the state file and,
+	// downloaded, is a second way to sign — so the sweep above reads its type as
+	// a grant and refuses it through the allowlist as well — a grant on the
+	// account itself is a second identity that mints with the signer role — an
 	// impersonator's token carries it — and an address written as text is an
 	// identity named by no reference, which is what a job or a service running as
-	// the signer would be.
+	// the signer would be and the one of the three no block here writes.
 	for _, rel := range tfFiles(t) {
-		compact := tfCompact(tfSource(t, rel))
-		for _, route := range []struct{ needle, what string }{
-			{"google_service_account_key", "an exported key of the account puts a private half of it in the state file, where whoever reads the state holds the account"},
-			{"google_service_account_iam", "a grant on the account itself is a second identity that mints with the signer role"},
-			{"iam.gserviceaccount.com", "a service account address written as text names an identity the sweep above cannot see, and a job or a service handed it runs as the signer"},
-		} {
-			if strings.Contains(compact, route.needle) {
-				t.Errorf("%s writes %s: the signer's account is the only holder of the signer role and the private half of the signing key never leaves Cloud KMS — %s (A3, D2792, O7, .claude/rules/ee.md)", rel, route.needle, route.what)
-			}
+		for _, route := range tfAccountRouteWrites(tfSource(t, rel)) {
+			t.Errorf("%s writes %s: the signer's account is the only holder of the signer role and the private half of the signing key never leaves Cloud KMS — %s (A3, D2792, O7, .claude/rules/ee.md)", rel, route.needle, route.what)
 		}
 	}
 }
@@ -1363,6 +1433,147 @@ moved{ from = google_kms_crypto_key.older, to = google_kms_crypto_key.signing }
 	for _, kind := range tfSecondForms {
 		if found := tfBlocks(src, kind.header); len(found) != 1 {
 			t.Errorf("%s: the reader finds %d blocks in a source that writes one, want exactly 1 — HCL does not need the space a search for %q used to look for, and a root-form check that missed the block would call a tree with a module, an import or a moved block one form of configuration (A3)", kind.what, len(found), kind.header)
+		}
+	}
+}
+
+// TestInfraTheReadersReadWhitespaceTheWayHCLDoes: HCL reads any whitespace
+// between a block's keyword and what it writes as one separator, and one run of
+// it is the same as any other — `resource "google_x" "y" {`,
+// `resource  "google_x" "y" {`, one with a tab after the keyword and one whose
+// brace is on the next line are one block written its other ways. Every check
+// above
+// decides what this root writes by cutting each file into blocks and reading
+// their headers, so a reader that looked for the single-space spelling would
+// answer nothing at all about a block written any other way, and five of those
+// checks would each miss one: the sweep would leave a grant in the plan,
+// TestInfraTheSigningKeyIsNonExportable would count one key where the root holds
+// two, TestInfraTheRootIsOneFormOfConfiguration would not refuse a module, the
+// key-set bucket's grant count would miss a second grant on the bucket and the
+// output count in TestInfraTheServiceSignsWithThisKeyAndServesTheJWKS would miss
+// a second output.
+//
+// Each block below is appended to a copy of main.tf and to nothing on disk, so
+// that every one of those readers is exercised on a spelling no file here holds.
+// The grant's own case checks the other half of a cut as well: the header has to
+// end the block above it, or the block before the appended one reads as a grant
+// that writes a role it never wrote.
+func TestInfraTheReadersReadWhitespaceTheWayHCLDoes(t *testing.T) {
+	clean := tfSource(t, "main.tf")
+	for _, show := range []struct {
+		what   string
+		block  string
+		kind   string
+		header string
+		grant  bool
+	}{
+		{
+			what:   "a grant with two spaces after its keyword",
+			block:  "\nresource  \"google_project_iam_member\" \"extra\" {\n  role   = \"roles/owner\"\n  member = \"user:extra@example.com\"\n}\n",
+			kind:   `resource "`,
+			header: `resource "google_project_iam_member" "extra"`,
+			grant:  true,
+		},
+		{
+			what:   "a second key with a tab after its keyword",
+			block:  "\nresource\t\"google_kms_crypto_key\" \"second\" {\n  key_ring = google_kms_key_ring.signing.id\n  purpose  = \"ENCRYPT_DECRYPT\"\n}\n",
+			kind:   `resource "`,
+			header: `resource "google_kms_crypto_key" "second"`,
+		},
+		{
+			what:   "a second grant on the key-set bucket with two spaces",
+			block:  "\nresource  \"google_storage_bucket_iam_member\" \"extra\" {\n  bucket = google_storage_bucket.keyset.name\n  role   = \"roles/storage.objectAdmin\"\n  member = google_service_account.signer.member\n}\n",
+			kind:   `resource "`,
+			header: `resource "google_storage_bucket_iam_member" "extra"`,
+		},
+		{
+			what:   "a module with a tab after its keyword",
+			block:  "\nmodule\t\"extra\" {\n  source = \"./x\"\n}\n",
+			kind:   `module "`,
+			header: `module "extra"`,
+		},
+		{
+			what:   "an import with two spaces before its brace",
+			block:  "\nimport  {\n  to = google_kms_crypto_key.signing\n  id = \"projects/p/locations/l/keyRings/r/cryptoKeys/k\"\n}\n",
+			kind:   "import {",
+			header: "import",
+		},
+		{
+			what:   "a moved block whose brace is on the next line",
+			block:  "\nmoved\n{\n  from = google_kms_crypto_key.older\n  to   = google_kms_crypto_key.signing\n}\n",
+			kind:   "moved {",
+			header: "moved",
+		},
+		{
+			what:   "a second output with two spaces after its keyword",
+			block:  "\noutput  \"extra\" {\n  value = 1\n}\n",
+			kind:   `output "`,
+			header: `output "extra"`,
+		},
+	} {
+		src := clean + show.block
+		if got, want := len(tfBlocks(src, show.kind)), len(tfBlocks(clean, show.kind))+1; got != want {
+			t.Errorf("the reader of %s answers %d blocks in a file with %s appended, want %d: the block is written the way HCL reads it, and a finder that answered nothing for it would leave whatever it holds out of every check that reads this kind (A3)", show.kind, got, show.what, want)
+			continue
+		}
+		if headers := tfHeaders(src, show.kind); !slices.Contains(headers, show.header) {
+			t.Errorf("the reader of %s answers the headers %q for a file with %s appended, want %s among them: the header is how a check looks a block up and how the count it feeds is taken", show.kind, headers, show.what, show.header)
+		}
+		if show.grant {
+			var holders []string
+			for _, block := range tfBlocks(src, `resource "`) {
+				if strings.Contains(block, "roles/owner") {
+					holders = append(holders, tfHeader(block))
+				}
+			}
+			if !slices.Equal(holders, []string{show.header}) {
+				t.Errorf("the appended grant is read as %q, want a block of its own at %s: the header begins the appended block and ends the one above it, and a cut that missed it would read the grant as part of the block before, where no check would refuse it (A3, D2792)", holders, show.header)
+			}
+			if refused := tfUnsanctionedGrants(src); len(refused) != 1 || !strings.Contains(refused[0], `"google_project_iam_member" "extra"`) {
+				t.Errorf("the sweep refuses %d blocks of a file holding %s (%s), want that one block: what a block writes is what the sweep refuses it for, and the spacing of its header is not part of either (A3, D2792)", len(refused), show.what, strings.Join(refused, "\n"))
+			}
+		}
+	}
+}
+
+// TestInfraTheSweepSeesAnExportedAccountKey: a `google_service_account_key` for
+// the signer's account is a second way to sign — its private half can be
+// downloaded, and it carries the useToSign the ring grant gives the account —
+// and the block writes none of the attributes a grant is written with, so a
+// sweep that looked only for an `_iam_` type or a `role`/`member` attribute
+// would pass it while every other check here stayed green.
+//
+// The block is appended to a copy of main.tf and to nothing on disk, and both
+// mechanisms of the refusal are exercised on that source: the search for the
+// routes to the signer's account, which names the type, and the allowlist, whose
+// sweep reads the type as a grant and refuses a block it did not sanction. The
+// two spellings of the header are both tried, because the sweep reads a header
+// and not a line (A3, D2792, O7).
+func TestInfraTheSweepSeesAnExportedAccountKey(t *testing.T) {
+	clean := tfSource(t, "main.tf")
+	if routes := tfAccountRouteWrites(clean); len(routes) != 0 {
+		t.Fatalf("the root's own main.tf writes %d of the routes to the signer's account, want none: the refusals below are shown on an appended block, and a route already in this file would make the two halves of the fixture one", len(routes))
+	}
+	if refused := tfUnsanctionedGrants(clean); len(refused) != 0 {
+		t.Fatalf("the root's own main.tf holds %d blocks the sweep refuses, want none:\n%s\nthe appended block is the one the sweep has to refuse, and a second one would leave it unclear which of them fired", len(refused), strings.Join(refused, "\n"))
+	}
+
+	for _, spelling := range []struct{ what, gap string }{
+		{"one space", " "},
+		{"two spaces", "  "},
+	} {
+		src := clean + "\nresource" + spelling.gap + `"google_service_account_key" "signer_key" {` + "\n  service_account_id = google_service_account.signer.name\n}\n"
+
+		var written []string
+		for _, route := range tfAccountRouteWrites(src) {
+			written = append(written, route.needle)
+		}
+		if !slices.Equal(written, []string{"google_service_account_key"}) {
+			t.Errorf("the search for the routes to the signer's account answers %q for a file holding an exported account key (%s), want the one route `google_service_account_key`: an account key names no identity the ref count reads, so the type is what the search is for", written, spelling.what)
+		}
+		refused := tfUnsanctionedGrants(src)
+		if len(refused) != 1 || !strings.Contains(refused[0], "google_service_account_key") {
+			t.Errorf("the sweep refuses %d blocks of a file holding an exported account key (%s), want that one block:\n%s\nthe key is a private half of the signer's account that can be downloaded and holds the ring grant with it, so a sweep that read it as no grant would leave a second way to sign in the plan (A3, D2792, O7)", len(refused), spelling.what, strings.Join(refused, "\n"))
 		}
 	}
 }

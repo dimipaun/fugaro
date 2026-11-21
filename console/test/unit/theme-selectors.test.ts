@@ -102,7 +102,16 @@ const INSTALLATION_FAILURES: readonly string[] = Object.freeze([
  * adds each: Task 6.3 wrote `base.css` and Task 6.4 appends `screens.css` here,
  * in the same commit that creates it -- a stylesheet the bundler serves and this
  * scan does not read is a stylesheet whose selectors nothing checks. */
-const SCANNED: readonly string[] = Object.freeze(['flight-deck.css', 'base.css', 'screens.css'])
+const SCANNED: readonly string[] = Object.freeze([
+  'flight-deck.css',
+  'base.css',
+  'screens.css',
+  // The Manage section's (the console-improvements plan's task MO-SH), appended
+  // in the commit that creates it for the reason above: the file is served by
+  // the bundler, so its selectors are checked here or nowhere. Its hooks are the
+  // `manage-` family, which `HOOK` and `CLASS_HOOK` name below.
+  'manage.css',
+])
 
 /** RAIL_HOOKS is the rail's fourteen classes, which §2.1 names and §4.1 draws as
  * fifteen elements (the name line, the warning mark and the empty-state line
@@ -146,8 +155,15 @@ const ELEMENT_PREFIX = /^(?:a|aside|button|code|dd|details|div|dl|figure|form|g|
  * land on the Project tab like the `projects-` ones, but CM7 named them after
  * the command they draw -- `project policy show` -- rather than after the tab,
  * so a scan that knew only the screen's prefix would refuse every rule written
- * against them; the prefix a hook is read by is the one §2.5's table spells. */
-const HOOK = /^(?:(?:live|spend|projects|policy|run|degraded|graph|coordinator|console|unavailable|installation|notice)(?:-[a-z0-9-]+)?|(?:data|aria)-[a-z0-9-]+|hidden)$/
+ * against them; the prefix a hook is read by is the one §2.5's table spells.
+ *
+ * **`manage-` joins them with §2.15** (the console-improvements plan's task
+ * MO-SH). The Manage section is not one of the five screens: it is a section
+ * drawn by `src/renderer/manage/shell.ts`, mounted inside the Project tab, and
+ * its hooks are named after the section rather than after the tab, because a
+ * person reading the tree cannot tell a kind's table from the tab's own panels
+ * otherwise. §2.15 is the table that names them. */
+const HOOK = /^(?:(?:live|spend|projects|policy|run|degraded|graph|coordinator|console|unavailable|installation|notice|manage)(?:-[a-z0-9-]+)?|(?:data|aria)-[a-z0-9-]+|hidden)$/
 
 /** CLASS_HOOK is the class half of `HOOK`, and `SUFFIX` is the shorthand §2.7
  * and §2.8 write their hook sets with: the degraded screen's section is two
@@ -177,7 +193,7 @@ const HOOK = /^(?:(?:live|spend|projects|policy|run|degraded|graph|coordinator|c
  * follows, and any token that is neither is skipped -- so the `-num` of §2.10's
  * prose, which follows a `cell(...)` signature rather than a hook, licenses
  * nothing. */
-const CLASS_HOOK = /^(?:live|spend|projects|policy|run|degraded|graph|coordinator|console|unavailable|installation|notice)-[a-z0-9-]+$/
+const CLASS_HOOK = /^(?:live|spend|projects|policy|run|degraded|graph|coordinator|console|unavailable|installation|notice|manage)-[a-z0-9-]+$/
 
 /** SUFFIX is one `-suffix`, or a run of them joined by `/` as §2.7's
  * `-word`/`-at`/`-age` is written. */

@@ -32,6 +32,39 @@
 // keeps no copy of (D1102); P3's document carries no `shadowed` field, and the
 // plan says the console uses one if it ever grows there instead of comparing.
 
+import { SETTINGS_ENTRY_CAVEAT, controlFor } from '../shared/settingsentry'
+import type {
+  SettingsEntryDefault,
+  SettingsEntryMeta,
+  SettingsEntryView,
+} from '../shared/settingsentry'
+
+export type {
+  SettingsEntryControl,
+  SettingsEntryDefault,
+  SettingsEntryMeta,
+  SettingsEntryView,
+} from '../shared/settingsentry'
+export {
+  SETTINGS_ENTRY_ABOVE_MAX,
+  SETTINGS_ENTRY_BELOW_MIN,
+  SETTINGS_ENTRY_BRANCH,
+  SETTINGS_ENTRY_CAVEAT,
+  SETTINGS_ENTRY_DURATION,
+  SETTINGS_ENTRY_EMAIL,
+  SETTINGS_ENTRY_MEMORY,
+  SETTINGS_ENTRY_NUMBER,
+  SETTINGS_ENTRY_READONLY,
+  SETTINGS_ENTRY_REPO,
+  SETTINGS_ENTRY_REQUIRED,
+  SETTINGS_ENTRY_SELECT,
+  SETTINGS_ENTRY_TOGGLE,
+  SETTINGS_ENTRY_URL,
+  SETTINGS_ENTRY_WHOLE,
+  controlFor,
+  settingsEntryError,
+} from '../shared/settingsentry'
+
 /**
  * SETTINGS_VIEW_DOC_VERSION is the dry run's document version this window reads
  * (`settingsWriteDocVersion`, `internal/cli/settings_set.go`). A document of
@@ -305,4 +338,60 @@ export function settingsView(inputs: SettingsViewInputs): SettingsViewRead {
  */
 export function settingsConfirmAnswerable(view: SettingsView, ticked: boolean): boolean {
   return !view.confirmNeedsTick || ticked
+}
+
+// ---------------------------------------------------------------------------
+// The entry form (SU1, D2902)
+// ---------------------------------------------------------------------------
+//
+// The row this path writes, and the view builder the flow and the window read
+// from. The view type itself, the controls and every validation rule live in
+// `src/shared/settingsentry.ts`, because the renderer draws the form and cannot
+// import from `src/main/`, and they are re-exported below so that the half that
+// builds a view and the half that draws it name one set of names.
+
+/** SettingsEntryRow is the read's own row as the entry form needs it: C2's four
+ * members, plus the write's own answer (`writable`, D1102), the command the read
+ * names for a key this path does not write (`owner`, D1178), and the two blocks
+ * above. It is a structural superset of `SettingsViewRow`, so the flow decodes
+ * one row and both halves of the window are built from it. */
+export interface SettingsEntryRow extends SettingsViewRow {
+  readonly writable: boolean
+  readonly owner: string
+  readonly meta: SettingsEntryMeta
+  readonly default: SettingsEntryDefault
+}
+
+/** SettingsEntryInputs is what the form is built from: the project the window
+ * writes (its identity, `settingsConfirmID`) and the read's row for the key the
+ * operator asked to edit. */
+export interface SettingsEntryInputs {
+  readonly project: string
+  readonly row: SettingsEntryRow
+}
+
+/** settingsEntryView builds the form's content for one row. The label falls back
+ * to the raw key (D2908) so that every row has a name, and the control falls
+ * back to text so that every row can be typed into. */
+export function settingsEntryView(inputs: SettingsEntryInputs): SettingsEntryView {
+  const { row } = inputs
+  const writable = row.writable && row.targetLayer !== ''
+  return Object.freeze({
+    kind: 'settings-entry' as const,
+    project: inputs.project,
+    key: row.key,
+    label: row.meta.label !== '' ? row.meta.label : row.key,
+    description: row.meta.description,
+    current: row.value ?? '',
+    defaultValue: row.default.value,
+    defaultUnset: row.default.unset,
+    caveat: SETTINGS_ENTRY_CAVEAT,
+    control: writable ? controlFor(row.meta) : null,
+    options: Object.freeze([...row.meta.enum]),
+    min: row.meta.min,
+    max: row.meta.max,
+    format: row.meta.format,
+    type: row.meta.type,
+    command: writable ? '' : row.owner,
+  })
 }

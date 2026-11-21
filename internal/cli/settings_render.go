@@ -6,7 +6,16 @@ import (
 	"io"
 	"text/tabwriter"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/settings"
 )
+
+// settingsMetaOf is the metadata lookup this file emits from, a seam like
+// settingsNow: the table lives in internal/settings, is filled by the families'
+// own files at init, and offers no way to drop an entry once registered, so a
+// test of what this file emits hands in a table of its own rather than
+// registering into the binary's.
+var settingsMetaOf = settings.MetaOf
 
 // settingsDocVersion is the --json document's version (D848). Members are only
 // ever added within a version: a renamed or re-meant member is a new member
@@ -54,6 +63,41 @@ type settingsJSON struct {
 	Owner       string            `json:"owner"`
 	TargetLayer string            `json:"target_layer"`
 	Levels      []settingsLevelJS `json:"levels,omitempty"`
+
+	// The eight metadata members (D2908): what a person calls the setting, what
+	// it does, the accordion group it sits in, and the control its value calls
+	// for. They are written from settings.MetaOf and only for a key the table
+	// has an entry for; each is `omitempty`, so a row without metadata — or a
+	// metadata entry with no value for that member — leaves it out rather than
+	// writing it empty. The absence is the answer a consumer branches on: a row
+	// with no `type` is a row the console draws as the raw key and a text
+	// control, which is the fallback the contract states (SM-E, D2908).
+	//
+	// All eight are members added within version 1 (D848), like the writability
+	// trio above them: an older CLI's document carries none of them and is still
+	// the same document.
+	Label       string   `json:"label,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Group       string   `json:"group,omitempty"`
+	Type        string   `json:"type,omitempty"`
+	Enum        []string `json:"enum,omitempty"`
+	Min         string   `json:"min,omitempty"`
+	Max         string   `json:"max,omitempty"`
+	Format      string   `json:"format,omitempty"`
+}
+
+// settingsRowMeta copies key's metadata onto the row, and leaves the eight
+// members out when the table has no entry for the key. The vocabularies come
+// over as their own strings: Meta.Group, Meta.Type and Meta.Format are named
+// types of internal/settings, and the document's spelling is theirs.
+func settingsRowMeta(row *settingsJSON, key string) {
+	m, ok := settingsMetaOf(key)
+	if !ok {
+		return
+	}
+	row.Label, row.Description = m.Label, m.Description
+	row.Group, row.Type, row.Format = string(m.Group), string(m.Type), string(m.Format)
+	row.Enum, row.Min, row.Max = m.Enum, m.Min, m.Max
 }
 
 // settingsDefault is the built-in default: the value and the constant that
@@ -77,7 +121,20 @@ type settingsLevelJS struct {
 // scope under --repo and --all-repos: without it a reader of two repositories'
 // agent.review_rounds sees one key twice with different values and nothing
 // saying which is which.
-func writeSettingsTable(w io.Writer, rows []setting, why bool) error {
+//
+// name names the setting above the table, which is what `settings get` asks for
+// and the wide read does not (D2908): a person who names one key should not have
+// to read a dotted name to know what it is, while every key of the registry with
+// two lines of prose above it is a document rather than a table. The label and
+// the description are printed only when the read came out to one row and that
+// key has metadata; a key without it prints the table alone, which already
+// carries the raw key.
+func writeSettingsTable(w io.Writer, rows []setting, why, name bool) error {
+	if name && len(rows) == 1 {
+		if m, ok := settingsMetaOf(rows[0].Key); ok {
+			fmt.Fprintf(w, "%s\n%s\n", m.Label, m.Description)
+		}
+	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "KEY\tSCOPE\tVALUE\tWINS\tDEFAULT\tSTATE")
 	for _, s := range rows {
@@ -123,6 +180,7 @@ func writeSettingsJSON(w io.Writer, r *settingsRead, rows []setting, now time.Ti
 			v := s.Value
 			row.Value = &v
 		}
+		settingsRowMeta(&row, s.Key)
 		for _, l := range s.Levels {
 			row.Levels = append(row.Levels, settingsLevelJS{Layer: l.Layer, Value: l.Value, Outcome: l.Outcome})
 		}

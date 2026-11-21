@@ -227,7 +227,12 @@ func (s *Server) labelBitbucketGet(ctx context.Context, w http.ResponseWriter, c
 	}
 	key, secret, consumerWorkspace, ok := b.BitbucketReadConsumer()
 	if !ok {
-		s.refuseLabel(ctx, w, caller, host.slug, credential, StatusUnavailable, ErrorStateUnavailable, ErrReadNoConsumer.Error())
+		// The one failure of this read a caller acts on rather than retries, so
+		// the one that carries a code of its own: the daemon's merge read
+		// records it once per repository as a fact naming the fix, where an
+		// outage — the status every other refusal of this read shares — is left
+		// to the next cadence (G3, D2736). The sentence is still the operator's.
+		s.refuseLabel(ctx, w, caller, host.slug, credential, StatusUnavailable, ErrorNoReadConsumer, ErrReadNoConsumer.Error())
 		return
 	}
 	if host.owner != consumerWorkspace {

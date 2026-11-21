@@ -537,7 +537,7 @@ guard_project() {
   # all three causes: a foreign checkout, a --project that disagrees with it,
   # or a doctor that could not run here at all.
   local doctor_out
-  doctor_out=$(fugaro doctor --project fugaro || true)
+  doctor_out=$(fugaro doctor --project fugaro --all || true)
   if ! printf '%s\n' "$doctor_out" | grep '^project: .*(GCP fugaro-dev,' >/dev/null; then
     stop "this is not the fugaro-dev installation: fugaro doctor --project fugaro printed no 'project: ... (GCP fugaro-dev,' line. Either this is not the fugaro-dev installation, or --project fugaro disagrees with this checkout's project:, or doctor itself failed (doctor is not offline: it needs usable credentials and reads the installation's billing and IAM policy). Run 'fugaro doctor --project fugaro' here yourself and read its output before going on — this check runs on the sandbox installation only, never belong"
   fi
