@@ -35,6 +35,26 @@ Then say at most one sentence about what matters in it:
 
 If the command refuses because there is no cached brief yet, say so in one sentence and carry on: the daemon writes the cache after its first tick, so a project whose daemon has never run has none. The live read — the same command without `--offline` — is the explicit command for when the user asks what the state is now; it is never this print, whose whole point is that it reaches no network. The cached file is a copy the daemon wrote for this print; the store is the Realtime Database.
 
+## Who launches the runs
+
+A project whose orchestrator is on has a daemon of its own on somebody's machine, and that daemon is what launches its runs. Two reads tell a session where it stands, and a session makes them before it starts a run of its own:
+
+- `fugaro settings orchestrator_enabled --json` — the project's switch, one top-level key of its published policy, `true` unless a layer tightened it to `false`. Publishing it is a project write at the owner's terminal, so the session reads it and never sets it.
+- `fugaro orchestrator status` — whether this machine has the login unit that keeps a daemon running, and whether that file is what this release would write. A machine with no unit runs no daemon, whatever the switch says; and the brief's stamp, which the print at the start of the session already showed, says how recently the daemon on this project ticked.
+
+**With the switch on and a daemon live, the daemon is the launcher: hand the work over as items, and never launch, sweep or watch a run yourself — never `fugaro run`, never `fugaro watch`, and never `fugaro orchestrator run`, which is the login unit's job and no session's.** A run started beside the daemon is a second run of work the daemon is already doing, a poll for runs that have finished is the daemon's tick rather than a session's job, and a session that sits and waits on one holds a run the daemon tracks anyway. What goes over instead:
+
+- **A piece of work the session would have launched** is a work item: the `work_item_upsert` op of the section below, which is the same door everything else the session writes through.
+- **A plan** goes over whole: `fugaro orchestrator import --plan docs/<plan>` reads the plan's graph in the checkout and writes the plan's own node, one item per task, at the tier the graph gives it and with the graph's edges as their dependencies. Run it from the checkout the plan is in, and mention `--json` when the user wants the ids and digests.
+
+The brief's facts are where the daemon asks a session for something, and one key is a request: at the start of a session, a `plan_in_flight_<plan>` fact names a plan that one of the runs the daemon adopted as it started belongs to, and the session imports that plan. The import keys its items by `<plan>/<task>`, which is the key the adopted run's item already carries, so the plan is not queued twice — and the fact is cleared on the daemon's next tick, so a session that finds one imports once and moves on.
+
+An import approves nothing, and neither does a session. The items arrive queued and unapproved, and the approval is the person's own word at their own terminal: one `plan_approve` op naming the plan's node and the `{id, digest}` pairs the import printed with `--json`, which the person sends with `fugaro orchestrator patch` themselves. Ask the person for it and stop there — say which plan, and that the daemon launches none of it until they approve — and never write it or look for a flag of the session's own that would land it.
+
+`fugaro orchestrator status` reporting no login unit, or the switch read as `false`, is the other answer: no daemon is launching anything here, so drive the runs as before. Launch them, watch them, follow them up exactly as this skill's siblings describe; the item queue is the record of the work either way, and the person's approval is what the daemon launches on when it is there again.
+
+"Let's fix this" is backlog rather than an issue of Fugaro's own: `fugaro backlog add --title "…"` files the item in the project's backlog node, queued and unapproved like everything else (D2717), and prints the id it minted. `fugaro issue` is the other thing entirely — a bug in Fugaro itself, saved on this machine for the user to send — so it adds no work to this project, and work the user wants done here never goes in it.
+
 ## What a session writes
 
 Write into the document as things happen rather than at the end of the session: a fact the user just settled, a question that now waits on someone, a work item the user asked to queue. One command does all of it, and it takes the patch document on stdin:
