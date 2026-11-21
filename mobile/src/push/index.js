@@ -7,9 +7,14 @@
 // A screen imports `src/push/index.js` and gets `createPush` -- the switches and
 // the registration over one account -- plus the vocabulary it renders:
 // `pushScreen` for the two facts it shows (registered or not, and what the
-// switches are), the state and code lists those answers are made of, and the
-// piece `mobile/index.js` builds once per installation (`firebaseTokenSource`,
-// which names the Firebase app instance the token is minted on -- D259).
+// switches are), the state and code lists those answers are made of, and
+// `firebaseTokenSource`, which names the Firebase app instance the token is
+// minted on (D259). **That last one is built by the app's entry and not here**:
+// `mobile/index.js` is the only file that may import `@react-native-firebase/*`
+// (`write-path.test.js` rule 5), so it is where the messaging namespace and the
+// app name arrive -- and no task has put push on a screen yet, so nothing there
+// builds it today. Until something does, a caller that already has both builds
+// this door itself, which is what its tests do.
 //
 // **What is deliberately NOT here.** No Firebase SDK (`messaging.js` is handed
 // the messaging namespace as an object, because the suite runs in a fresh clone
