@@ -103,9 +103,10 @@ const driftTrailWindow = 30 * time.Minute
 
 // The roles the workspace-side bindings of R13 are held at, and the roles that
 // make a principal an implicit admin of a member. They are restated here rather
-// than imported from internal/infra, which this package cannot name (the
-// dependency runs through internal/projectpolicy), exactly as Role and
-// CanonicalAddress are.
+// than imported, as Role and CanonicalAddress are: internal/infra names this
+// package's types (WU2's Folders, and WU12's SetIamPolicyLog here), so this
+// package cannot name its, and each of these is an IAM spelling that the member's
+// own Terraform is what applies.
 const (
 	// driftFolderOwnerRole is roles/owner on the workspace's folder, inherited by
 	// every project in it: a folder owner holds it on each member, which is what
@@ -136,8 +137,9 @@ type MemberGrant struct {
 
 // SetIamPolicyChange is one IAM change Cloud Audit Logs records: the entry a
 // person can look up, when Google logged it, who made it, and one binding the
-// change ADDED. It is the shape internal/infra/auditlogs.go reads; the two
-// packages cannot name each other's types, so I1 adapts one onto the other.
+// change ADDED. internal/infra/auditlogs.go returns these, and the shape is
+// declared here for the arrangement WU2's Folders has: the read's consumer states
+// what it reads, the provider implements it, and I1 hands one in with no adapter.
 //
 // A removal is not one of these: a change's REMOVED binding is an absence and
 // not a binding, and drift's question is what the member's policy was left
@@ -160,7 +162,8 @@ type SetIamPolicyChange struct {
 }
 
 // SetIamPolicyLog reads a project's Admin Activity log for the policy changes
-// made to it. `internal/infra/auditlogs.go` is the implementation; I1 adapts it.
+// made to it. internal/infra's AuditLogs is the implementation and satisfies this
+// interface directly, so I1 wires it in as it wires WU2's Folders.
 //
 // A caller that has none passes nil, and drift says so in `Unmeasured` rather
 // than reporting a cross-check it never made -- the one answer that would let an
@@ -363,7 +366,7 @@ func ComputeDrift(ctx context.Context, src DriftSources, m MemberTarget) (DriftR
 	unmeasured, adminExtra := workspaceAdminDrift(src, m, admins, claimed)
 	extra = append(extra, adminExtra...)
 
-	changes, err := consoleChanges(ctx, src, m, projects, record, roster, live)
+	changes, err := consoleChanges(ctx, src, projects, record, roster, live)
 	if err != nil {
 		return DriftReport{}, err
 	}
@@ -412,10 +415,10 @@ func workspaceAdminDrift(src DriftSources, m MemberTarget, admins []string, clai
 		if claimed[address] {
 			continue
 		}
-		kind := driftPrincipalKind(a)
+		principal := driftPrincipalKind(a)
 		extra = append(extra, DriftBinding{
-			Project: project, Principal: address, Role: role, Kind: kind,
-			External: kind == PrincipalPerson && outsideDomains(address, src.Node.Domains),
+			Project: project, Principal: address, Role: role, Kind: principal,
+			External: principal == PrincipalPerson && outsideDomains(address, src.Node.Domains),
 			Implicit: slices.Contains(driftImplicitAdminRoles, role),
 		})
 	}
@@ -439,7 +442,7 @@ func workspaceAdminDrift(src DriftSources, m MemberTarget, admins []string, clai
 // project, the caller, the address the change was made to and the moment, and
 // not by the role, because the trail records Fugaro's roles and the log
 // Google's (trailHolds).
-func consoleChanges(ctx context.Context, src DriftSources, m MemberTarget, projects []string, record, roster map[driftPair]bool, live map[driftPair]driftLive) ([]ConsoleChange, error) {
+func consoleChanges(ctx context.Context, src DriftSources, projects []string, record, roster map[driftPair]bool, live map[driftPair]driftLive) ([]ConsoleChange, error) {
 	if src.Changes == nil {
 		return nil, nil
 	}
