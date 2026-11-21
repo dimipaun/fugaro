@@ -15,7 +15,7 @@ It builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md
 - **D2217:** every writing command refuses an unmanaged project.
 - **D2218** (not the recommendation): a managed read that fails warns and proceeds.
 - **D2219:** the in-run commands are exempt.
-- **D3160** (not the recommendation; amended after review): `fugaro user offboard` is exempt. Confirmation is open.
+- **D3160** (not the recommendation; amended after review): `fugaro user offboard` is exempt. Confirmed by the owner 2026-11-21.
 - **TN1:** `update` never marks a project; it stops.
 - **R1–R10:** the reconciliation's resolutions.
 
