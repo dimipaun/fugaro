@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 )
 
 // The installation's scope (WS1, R1): the deployment this service has always
@@ -179,6 +180,13 @@ func aheadOfTheSharedParse(r *http.Request) bool {
 	}
 	switch r.URL.Path {
 	case VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, BuildTokenPath, BuildCredentialsPath, IssuePath, SlipPath:
+		return true
+	}
+	if _, isIdentity := identitywire.RouteFor(r.URL.Path); isIdentity {
+		// The five identity routes (C1, R2): the slip's grant reason and not a
+		// new one — a ticket is asked for before the run exists and a claim is
+		// the run's own first call, so their caller holds no run identity
+		// either, and each route reads its own class and its own body.
 		return true
 	}
 	return false

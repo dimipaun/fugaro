@@ -38,6 +38,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -93,6 +94,8 @@ func TestInstallationScopeIsTodaysBehaviour(t *testing.T) {
 	routes := []string{MessagesPath, CountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath,
 		BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath,
 		WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath, WorkspaceKeepWarmPath,
+		identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath, identitywire.DevicePath,
+		identitywire.ProbePath,
 		BitbucketProxyPrefix + "acme/aurora.git/info/refs"}
 	for _, path := range routes {
 		if !sc.Serves(path) {
@@ -100,7 +103,9 @@ func TestInstallationScopeIsTodaysBehaviour(t *testing.T) {
 		}
 	}
 	early := []string{VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, BuildTokenPath,
-		BuildCredentialsPath, IssuePath, SlipPath}
+		BuildCredentialsPath, IssuePath, SlipPath,
+		identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath, identitywire.DevicePath,
+		identitywire.ProbePath}
 	for _, path := range early {
 		r := httptest.NewRequest(http.MethodPost, path, nil)
 		got, err := s.server.resolver.Resolve(ctx, r)
