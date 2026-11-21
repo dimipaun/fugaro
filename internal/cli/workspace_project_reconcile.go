@@ -221,6 +221,20 @@ func workspaceProjectReconcile(cmd *cobra.Command, o *workspaceReconcileOptions,
 		boundAdmin = wu13BoundAdmin(live)
 	}
 
+	// The caller's own address is read BEFORE anything is written, once, and it
+	// is the address every event in the trail is filed under (D2811). Reading it
+	// after the write would make a credential nobody can read an address from --
+	// a service account, an expired one, an outage at userinfo -- a roster
+	// change no event accounts for; read here, that same failure is a refusal
+	// with nothing written. A --dry-run writes nothing and asks for no address.
+	actor := ""
+	if !o.dryRun {
+		actor, err = workspaceReconcileActor(ctx)
+		if err != nil {
+			return userErr("nothing was written: the address of the person running this change could not be read, and every change is filed in the workspace's trail under it (D2811): %v", err)
+		}
+	}
+
 	// The report is computed once; what a write does to the roster is judged
 	// against the bytes really there, which is why a pass that lost the ETag
 	// race is made again rather than failed (C2).
@@ -262,7 +276,7 @@ func workspaceProjectReconcile(cmd *cobra.Command, o *workspaceReconcileOptions,
 	if o.dryRun || len(made) == 0 {
 		return nil
 	}
-	return wu13Audit(ctx, d, member, made)
+	return wu13Audit(ctx, d, member, made, actor)
 }
 
 // wu13Change is one change of the plan: one person and one role, added to the
@@ -564,12 +578,13 @@ func wu13Print(w io.Writer, workspaceName string, member workspace.MemberTarget,
 // wu13Audit files one event per change in the workspace's trail, created and
 // never updated (D2811): the person's address as the subject, the member's
 // project as the project, and the role the change carried.
-func wu13Audit(ctx context.Context, d workspaceReconcileDeps, member workspace.MemberTarget, made []wu13Change) error {
-	actor, err := workspaceReconcileActor(ctx)
-	if err != nil {
-		return err
-	}
-	for _, c := range made {
+//
+// The actor is the caller's own address, already read by the run: this function
+// is reached only after the roster write, and a lookup that could fail here
+// would leave a written change with no entry and no refusal, which is the one
+// thing the trail exists to prevent.
+func wu13Audit(ctx context.Context, d workspaceReconcileDeps, member workspace.MemberTarget, made []wu13Change, actor string) error {
+	for i, c := range made {
 		now := workspaceReconcileNow()
 		id, err := workspace.NewAuditEventID(now, crand.Reader)
 		if err != nil {
@@ -593,8 +608,23 @@ func wu13Audit(ctx context.Context, d workspaceReconcileDeps, member workspace.M
 			return err
 		}
 		if err := d.Audit.Create(ctx, id, raw); err != nil {
-			return fmt.Errorf("the member's roster was written, and the audit entry for %s did not land: %w", safetext.Field(c.address), err)
+			// Everything from this change on has no entry, and all of it is
+			// named: the changes already filed are accounted for, and a stop
+			// that reported only the one the sink refused would leave the rest
+			// of a written roster unaccounted for and unnamed.
+			return fmt.Errorf("the member's roster was written, and the audit entries for %s did not land (%d change(s) the workspace's trail does not account for): %w",
+				strings.Join(wu13Addresses(made[i:]), ", "), len(made)-i, err)
 		}
 	}
 	return nil
+}
+
+// wu13Addresses is a run's changes as the list a message names them by, in the
+// order they were written and escaped for a terminal (safetext's rule).
+func wu13Addresses(changes []wu13Change) []string {
+	addresses := make([]string, len(changes))
+	for i, c := range changes {
+		addresses[i] = safetext.Field(c.address)
+	}
+	return addresses
 }

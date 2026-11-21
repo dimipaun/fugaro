@@ -17,6 +17,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -236,10 +237,14 @@ type wu13FakeAudit struct {
 	ids    []string
 	events []workspace.AuditEvent
 	err    error
+	// failAfter is how many Creates land before err is answered, so a test can
+	// refuse the sink part-way through a multi-change run: 0 -- the zero value,
+	// which is what every other test means -- is the first Create.
+	failAfter int
 }
 
 func (a *wu13FakeAudit) Create(_ context.Context, id string, event []byte) error {
-	if a.err != nil {
+	if a.err != nil && len(a.ids) >= a.failAfter {
 		return a.err
 	}
 	if len(a.ids) > 0 && a.ids[len(a.ids)-1] == id {
@@ -725,29 +730,80 @@ func TestReconcileMemberRefusesInAnAgentSession(t *testing.T) {
 }
 
 // TestReconcileReportsATrailThatDidNotLand: the roster write and the audit
-// entry are two stores, and the failure to be loud about is the half that
-// landed: a change nobody can account for. The error says the roster was
-// written and the entry was not.
+// entries are two stores, and the failure to be loud about is the half that
+// landed: a change nobody can account for. The sink here refuses PART-WAY --
+// the first entry is filed and the second is not -- so the error has to name
+// every change still without an entry and not only the one the sink refused,
+// and the rule is create-only: an id is never reused for a change already
+// filed.
 func TestReconcileReportsATrailThatDidNotLand(t *testing.T) {
 	ops := &wu13FakeOps{t: t,
-		raw:   wu13Grants(t, wu13Grant("alice@example.com", "operator"), wu13Grant("bob@example.com", "admin")),
+		raw: wu13Grants(t,
+			wu13Grant("alice@example.com", "operator"),
+			wu13Grant("bob@example.com", "admin"),
+			wu13Grant("carol@example.com", "admin"),
+			wu13Grant("dave@example.com", "admin")),
 		etag:  "wu13-etag-1",
 		found: true}
-	audit := &wu13FakeAudit{t: t, err: rtdb.ErrPrecondition}
+	audit := &wu13FakeAudit{t: t, err: rtdb.ErrPrecondition, failAfter: 1}
 	d := wu13Deps(t, workspace.DriftReport{
-		Extra: []workspace.DriftBinding{wu13Extra("bob@example.com", "admin", workspace.PrincipalPerson)},
+		Extra: []workspace.DriftBinding{
+			wu13Extra("bob@example.com", "admin", workspace.PrincipalPerson),
+			wu13Extra("carol@example.com", "admin", workspace.PrincipalPerson),
+			wu13Extra("dave@example.com", "admin", workspace.PrincipalPerson),
+		},
 	}, ops, audit)
 
 	_, err := wu13Run(t, d, wu13Member.Project)
 	if err == nil {
 		t.Fatal("a change whose audit entry did not land was reported as done")
 	}
-	for _, want := range []string{"was written", "did not land", "bob@example.com"} {
+	for _, want := range []string{"was written", "did not land", "carol@example.com", "dave@example.com", "2 change(s)"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error %q does not name %q", err, want)
 		}
 	}
+	if strings.Contains(err.Error(), "bob@example.com") {
+		t.Errorf("the error %q names the change whose entry DID land as one nobody can account for", err)
+	}
 	if len(ops.writes) != 1 {
-		t.Errorf("the roster was written %d times, want the one change the error is about", len(ops.writes))
+		t.Errorf("the roster was written %d times, want the one write the three changes went in with", len(ops.writes))
+	}
+	if len(audit.ids) != 1 {
+		t.Errorf("the trail holds %d events, want the one entry that landed", len(audit.ids))
+	}
+}
+
+// TestReconcileResolvesTheActorBeforeAnyWrite: every event is filed under the
+// caller's own address, so a credential nobody can read an address from must
+// not leave a written roster that no event accounts for. The address is read
+// before the write and its failure is a refusal with nothing written (D2811).
+func TestReconcileResolvesTheActorBeforeAnyWrite(t *testing.T) {
+	ops := &wu13FakeOps{t: t,
+		raw:   wu13Grants(t, wu13Grant("alice@example.com", "operator")),
+		etag:  "wu13-etag-1",
+		found: true}
+	audit := &wu13FakeAudit{t: t}
+	d := wu13Deps(t, workspace.DriftReport{
+		Extra: []workspace.DriftBinding{wu13Extra("alice@example.com", "operator", workspace.PrincipalPerson)},
+	}, ops, audit)
+	old := workspaceReconcileActor
+	workspaceReconcileActor = func(context.Context) (string, error) {
+		return "", errors.New("the credential has no address at userinfo")
+	}
+	t.Cleanup(func() { workspaceReconcileActor = old })
+
+	_, err := wu13Run(t, d, wu13Member.Project)
+	if err == nil {
+		t.Fatal("a change was written with no address to file its event under")
+	}
+	if !strings.Contains(err.Error(), "nothing was written") {
+		t.Errorf("the refusal %q does not say that nothing was written", err)
+	}
+	if len(ops.writes) != 0 {
+		t.Errorf("the roster was written %d times before the caller's own address could be read, want none", len(ops.writes))
+	}
+	if len(audit.ids) != 0 {
+		t.Errorf("the trail holds %d events, want none", len(audit.ids))
 	}
 }
