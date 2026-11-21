@@ -913,6 +913,18 @@ type initRun struct {
 	// struct writes into the local config, so a run that first names a backend
 	// gives the stage its database after the stage's read-only pass is over.
 	workspaceStage *workspaceStage
+	// rootPlanEmpty and rootApplied are the LAST install-root call's own
+	// outcome: whether the plan it made changed nothing, and whether it reached
+	// an apply at all. installRoot's cycle sets them, and the one stage that
+	// asks — the installation-2 stage, around the call that carries the
+	// resident orchestrator's block — resets them first, because every earlier
+	// stage plans that same root and a plan of theirs says nothing about the
+	// orchestrator. The pair is what decides whether the block that stage's
+	// writer has already put in the workdir has become a fact about the
+	// installation or has to be taken back out (init_stages.go's
+	// unsetOrchestratorBlock).
+	rootPlanEmpty bool
+	rootApplied   bool
 	// The retirement (init_retire.go): what the run read before its first
 	// plan -- the state's addresses, the retirement set of design §3.1a and
 	// the notes Orphans returned -- and whether its flow ran and applied, so
@@ -3373,6 +3385,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			return nil, remote(err)
 		}
 		if !changed {
+			r.rootPlanEmpty = true
 			r.res.Changes = &infra.PlanCounts{}
 			fmt.Fprintln(r.stageDetail(), "No changes: the installation matches the plan.")
 			if r.o.planOnly {
@@ -3443,6 +3456,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		if err := r.landFlaggedLists(ctx); err != nil {
 			return plan, err
 		}
+		// Set BEFORE the apply, so a run that fails inside it is one that
+		// reached an apply: what it may have created is state, and the
+		// document that names it must stay the one that is planned.
+		r.rootApplied = true
 		if err := r.applyAndRecord(ctx, t); err != nil {
 			return plan, err
 		}

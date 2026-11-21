@@ -1474,13 +1474,24 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 // configure it with; and it runs the released image, so a run that cannot
 // resolve this release's pin — a development build, or a registry read that
 // failed — must not write a block whose image would have to be invented.
-func (e *initEngine) ensureOrchestratorBlock(ctx context.Context) error {
+//
+// The write is the PLAN's input and not yet a fact: it lands in the workdir
+// before the apply the block needs, so the run in between can still end with
+// nothing created — the plan refused, the owner's answer a no, --plan-only's
+// stop. What comes back is therefore the spec it composed and whether it wrote
+// anything, and the caller is what decides which of the two the run's outcome
+// makes true: the block stays where the apply carried it or where the plan
+// found the installation already holding it, and is taken back out of the
+// document everywhere else (unsetOrchestratorBlock). An installation that
+// already holds the block wrote nothing here and is the caller's to leave
+// alone — this is a no-op, not a second opt-in.
+func (e *initEngine) ensureOrchestratorBlock(ctx context.Context) (infra.OrchestratorSpec, bool, error) {
 	if !e.r.o.orchestrator {
-		return nil
+		return infra.OrchestratorSpec{}, false, nil
 	}
 	base, err := e.wd.Vars()
 	if err != nil {
-		return userErr("reading the installation's tfvars: %v", err)
+		return infra.OrchestratorSpec{}, false, userErr("reading the installation's tfvars: %v", err)
 	}
 	if len(base) == 0 {
 		base = e.wd.PrevVars
@@ -1490,33 +1501,69 @@ func (e *initEngine) ensureOrchestratorBlock(ctx context.Context) error {
 	}
 	recorded, err := infra.OrchestratorRecorded(base)
 	if err != nil {
-		return userErr("reading the installation's %s: %v", infra.VarsFile, err)
+		return infra.OrchestratorSpec{}, false, userErr("reading the installation's %s: %v", infra.VarsFile, err)
 	}
 	if recorded {
-		return nil
+		return infra.OrchestratorSpec{}, false, nil
 	}
 	if _, have, err := infra.CredentialsServiceImageOf(base); err != nil {
-		return userErr("reading the installation's %s: %v", infra.VarsFile, err)
+		return infra.OrchestratorSpec{}, false, userErr("reading the installation's %s: %v", infra.VarsFile, err)
 	} else if !have {
-		return userErr("--orchestrator turns on the resident orchestrator, which is the credentials service's own caller class — the label route and the gated merge mint admit its account by name, and the module binds roles/run.invoker on the service for it — and this installation's %s carries no credentials_service block: run 'fugaro update --firebase-project <gcp-project-id>' without --orchestrator first, which deploys the service, then run 'fugaro update --firebase-project <gcp-project-id> --orchestrator'", infra.VarsFile)
+		return infra.OrchestratorSpec{}, false, userErr("--orchestrator turns on the resident orchestrator, which is the credentials service's own caller class — the label route and the gated merge mint admit its account by name, and the module binds roles/run.invoker on the service for it — and this installation's %s carries no credentials_service block: run 'fugaro update --firebase-project <gcp-project-id>' without --orchestrator first, which deploys the service, then run 'fugaro update --firebase-project <gcp-project-id> --orchestrator'", infra.VarsFile)
 	}
 	pinned, err := e.credentialsResolve(ctx)
 	if err != nil {
-		return userErr("the resident orchestrator runs this release's image, resolved exactly as the credentials service's and the intake's are, and this run cannot resolve it: %v", err)
+		return infra.OrchestratorSpec{}, false, userErr("the resident orchestrator runs this release's image, resolved exactly as the credentials service's and the intake's are, and this run cannot resolve it: %v", err)
 	}
 	spec, err := infra.Orchestrator(e.lc, pinned)
 	if err != nil {
-		return err
+		return infra.OrchestratorSpec{}, false, err
 	}
 	doc, err := infra.SetOrchestrator(base, spec)
 	if err != nil {
-		return userErr("setting the resident orchestrator in the installation's %s: %v", infra.VarsFile, err)
+		return infra.OrchestratorSpec{}, false, userErr("setting the resident orchestrator in the installation's %s: %v", infra.VarsFile, err)
+	}
+	if err := e.wd.WriteVars(doc); err != nil {
+		return infra.OrchestratorSpec{}, false, userErr("writing the installation's %s: %v", infra.VarsFile, err)
+	}
+	return spec, true, nil
+}
+
+// unsetOrchestratorBlock takes the block ensureOrchestratorBlock wrote back out
+// of the installation's tfvars, for the run that never applied it.
+//
+// Nothing is created and nothing is promised then: the document is the one the
+// run's own writers left, minus the key, so a later plain `fugaro update` — or
+// a managed project's, which asks nobody — plans no orchestrator at all, which
+// is the state the owner's silence has to leave behind (the opt-in's refusal of
+// --yes and of a run with no terminal is worth nothing if the block outlives
+// the run that failed to get an answer). A tfvars the run cannot read back, or
+// one this program cannot write, is a failure of its own rather than a silent
+// leave-behind: the caller joins it with whatever ended the run.
+func (e *initEngine) unsetOrchestratorBlock() error {
+	vars, err := e.wd.Vars()
+	if err != nil {
+		return userErr("reading the installation's tfvars: %v", err)
+	}
+	if len(vars) == 0 {
+		return nil
+	}
+	doc, err := infra.UnsetOrchestrator(vars)
+	if err != nil {
+		return userErr("removing the resident orchestrator from the installation's %s: %v", infra.VarsFile, err)
 	}
 	if err := e.wd.WriteVars(doc); err != nil {
 		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}
-	fmt.Fprintf(e.r.w, "the installation is opted in to the resident orchestrator: %s will run the service %s in %s, woken every minute by the Scheduler job %s, holding the design's section 4.3 table and nothing else. The next fugaro update carries the block and moves only the image in it.\n", infra.OrchestratorAccountID+"@"+e.lc.GCPProject+".iam.gserviceaccount.com", spec.Service, e.lc.Region, spec.SchedulerJob)
+	fmt.Fprintf(e.r.w, "the resident orchestrator was not applied: this run created nothing for it, so the installation's %s carries no orchestrator block and a later run plans none. Run 'fugaro %s --firebase-project %s --orchestrator' again to opt in.\n", infra.VarsFile, e.r.o.doorName(), e.lc.GCPProject)
 	return nil
+}
+
+// announceOrchestrator is what the opt-in's run says once the block it wrote is
+// a fact about the installation: the apply carried it, or the plan found the
+// installation already holding every resource the block names.
+func (e *initEngine) announceOrchestrator(spec infra.OrchestratorSpec) {
+	fmt.Fprintf(e.r.w, "the installation is opted in to the resident orchestrator: %s will run the service %s in %s, woken every minute by the Scheduler job %s, holding the design's section 4.3 table and nothing else. The next fugaro update carries the block and moves only the image in it.\n", infra.OrchestratorAccountID+"@"+e.lc.GCPProject+".iam.gserviceaccount.com", spec.Service, e.lc.Region, spec.SchedulerJob)
 }
 
 // specReviewJobsOfTheService replaces this run's review set with the one the
@@ -1970,10 +2017,44 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 				// signer), and the write is a no-op for a run that was not
 				// asked for one and for an installation that already holds the
 				// block (ensureOrchestratorBlock).
-				if err := e.ensureOrchestratorBlock(ctx); err != nil {
+				spec, wrote, err := e.ensureOrchestratorBlock(ctx)
+				if err != nil {
 					return err
 				}
-				return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
+				// The two answers below are THIS call's and no other's: every
+				// stage before this one planned the same root, and a plan of
+				// theirs that changed nothing says nothing about the block
+				// this run has just written.
+				e.r.rootPlanEmpty, e.r.rootApplied = false, false
+				err = e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
+				switch {
+				case !wrote:
+					return err
+				case e.r.rootApplied, e.r.rootPlanEmpty:
+					// The block is a fact about the installation: the apply
+					// carried it, or the plan found every resource it names
+					// already there (an empty plan is Terraform's statement
+					// that the state holds them, and a document that dropped
+					// the key would be the plan of their removal, which D1551
+					// refuses rather than applies).
+					e.announceOrchestrator(spec)
+					return err
+				}
+				// The run ended between the write and its apply — the plan
+				// refused, the confirmation declined, --plan-only's stop — so
+				// nothing of the opt-in exists and the block goes back out of
+				// the document. Left behind, it would be the whole of the gate
+				// gone: the next run that asks nobody (a plain `fugaro update
+				// --yes`, a managed project's) would bring the account, its
+				// bindings and the service up for an installation whose owner
+				// never answered.
+				if undoErr := e.unsetOrchestratorBlock(); undoErr != nil {
+					if err == nil {
+						return undoErr
+					}
+					return errors.Join(err, undoErr)
+				}
+				return err
 			}
 			return e.r.installCatalogCheck(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 		},

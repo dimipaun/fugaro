@@ -220,6 +220,80 @@ func TestOrchestratorBlockIsWrittenOnlyWhenOptedIn(t *testing.T) {
 	})
 }
 
+// TestOrchestratorOptInIsTakenBackWhenTheRunNeverAppliesIt is the window
+// between the write and the apply the block exists for.
+//
+// ensureOrchestratorBlock writes the block into the workdir BEFORE the plan
+// that carries it, because the plan reads the document on disk — and a run can
+// end inside that window with nothing created: a plan that cannot be read, a
+// plan the guard refuses, the confirmation declined, --plan-only's stop. A
+// block left behind there is not the record of an opt-in, it IS the opt-in:
+// var.orchestrator is the module's switch, so a later `fugaro update --yes` —
+// precisely the run checkOrchestrator refuses the flag's own reading of — would
+// bring up the account, its five bindings, the pairing container and the
+// service on a document nobody answered for, and the flag's whole gate (a real
+// terminal, no --yes, no coding agent's session) would be worth nothing.
+//
+// The failure is aimed at the installation root's plan in THIS stage, which is
+// the one the block was written for: with --firebase-project the installation
+// stage is skipped ("applied as the first step of the firebase backend"), so
+// the root is planned by the Firebase engine's own first step and again by the
+// audience fill the Firebase stage ends with — both before the block exists —
+// and the third plan is this one.
+//
+// The run after it is the plain one, and it is the door a leftover block would
+// open: nobody asks it anything (the rig is a managed project, whose gate
+// stands in for every confirmation) and it applies whatever the document on
+// disk names.
+func TestOrchestratorOptInIsTakenBackWhenTheRunNeverAppliesIt(t *testing.T) {
+	r := orchestratorRig(t)
+	// The installation root is planned three times in a --firebase-project run:
+	// as the Firebase engine's first step, by the audience fill the Firebase
+	// stage ends with, and here. The first two report changes and apply; the
+	// third — this stage's, with the block written — fails, and the fake
+	// repeats a list's last step for every plan past its end, which is what the
+	// plain update after it gets.
+	r.script["plan@installation"] = []map[string]any{
+		{"exit": 2},
+		{"exit": 2},
+		{"exit": 1, "stderr": "Error: Error building changes: the installation root's plan failed"},
+		{"exit": 2},
+	}
+	r.save(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--orchestrator")
+	if err == nil {
+		t.Fatalf("the installation root's plan failed, yet the opt-in run succeeded:\n%s%s", out, errOut)
+	}
+	if stage := stoppedStage(out); stage != initflow.Installation2 {
+		t.Fatalf("the run stopped at %q, want %s: the failure has to land in the window between the write and the apply it was written for, or this test proves nothing\n%s%s", stage, initflow.Installation2, out, errOut)
+	}
+	if !strings.Contains(out+errOut, "was not applied") {
+		t.Errorf("the run did not say the block it wrote was taken back out:\n%s%s", out, errOut)
+	}
+	if block := orchestratorBlockIn(t, r); block != nil {
+		t.Errorf("a run that applied nothing left the block in the workdir:\n%v\nthe next run that asks nobody would bring the account, its bindings and the service up from it", block)
+	}
+
+	applies := len(r.ran(t, "apply"))
+	out, errOut, err = executeStdin(t, "", "update", "--firebase-project", fpID)
+	if err != nil {
+		t.Fatalf("the plain update after the failed opt-in failed: %v\n%s%s", err, out, errOut)
+	}
+	if len(r.ran(t, "apply")) == applies {
+		t.Fatalf("the plain update applied nothing: a document that planned no changes cannot show whether it carried an orchestrator\n%s%s", out, errOut)
+	}
+	if block := orchestratorBlockIn(t, r); block != nil {
+		t.Errorf("the plain update carried an orchestrator block:\n%v\nwant the installation the run behind it was: no account, no service, no diff", block)
+	}
+	// The account's own name is too short a needle — "fugaro-orch" is a prefix
+	// of the "-orchestrator" service and unit names every run prints — so the
+	// search is for its address and for the sentence the opt-in writes.
+	if s := out + errOut; strings.Contains(s, infra.OrchestratorAccountID+"@") || strings.Contains(s, "opted in") {
+		t.Errorf("the plain update said something about the resident orchestrator:\n%s", s)
+	}
+}
+
 // orchestratorConvergeRig is the installation one release behind as this
 // door's own convergence test needs it: the converge rig — a checkout, a
 // published node and a plugin pin from convergePrev — with the credentials

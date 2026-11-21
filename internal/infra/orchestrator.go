@@ -180,6 +180,44 @@ func SetOrchestrator(vars []byte, spec OrchestratorSpec) ([]byte, error) {
 	return setVarsKey(vars, OrchestratorKey, raw)
 }
 
+// UnsetOrchestrator returns the installation root's tfvars vars without the
+// resident orchestrator's block, and every other entry byte-for-byte what it
+// was.
+//
+// It is SetOrchestrator's undo, and it exists for the window in which a block
+// can be written without becoming a fact about the installation:
+// ensureOrchestratorBlock (internal/cli) writes it BEFORE the plan that carries
+// it, because the plan reads the document on disk, and everything between that
+// write and the apply — the guard, the owner's own answer, a plan that cannot be
+// read, the stop --plan-only makes — can end the run with nothing created. A
+// block left behind by such a run is not the record of an opt-in, it IS the
+// opt-in, taken by a run nobody answered: var.orchestrator is the module's
+// switch, so the next `fugaro update --yes`, or a managed project's run, which
+// asks nobody, would bring up the account, its five bindings, the pairing
+// container and the service for an installation whose owner declined or was
+// never asked. The write is what the plan needs; the answer it was written for
+// is the fact that keeps it.
+//
+// It deletes the ONE key, so the document it hands back is what the run's own
+// writers left — the discovery, the images the stages before moved, this
+// release's history job — with the entry the run decided not to make taken out
+// of it, exactly as SetOrchestrator's write kept everything it found. A
+// document that carries no block is returned as it was FOUND and not
+// re-serialized: a caller asking twice, or asking for a write that never
+// happened, writes nothing back.
+func UnsetOrchestrator(vars []byte) ([]byte, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	block, ok := doc[OrchestratorKey]
+	if !ok || block == nil {
+		return vars, nil
+	}
+	delete(doc, OrchestratorKey)
+	return sortedJSON(doc)
+}
+
 // OrchestratorOf returns the block the installation root's tfvars carry for the
 // resident orchestrator, and false when they carry none (the variable is off)
 // or an empty one. It is IntakeOf's reader, on the key that decides whether an
