@@ -301,6 +301,77 @@ func TestASharedProviderKeyIsOfferedToItsMembers(t *testing.T) {
 	}
 }
 
+// TestAModelEntryNamedLikeTheProviderKeyIsTheProviderKey: the one name in this
+// document that two credentials answer, and the arm that decides between them.
+//
+// A Claude account may legally be named "provider-key" — ClaudeAccountNameRE
+// admits the name and config reserves only config.BitbucketSecret — so a bundle
+// holds the project's provider key (the document key config.ProviderKeySecret,
+// KindProvider, tier C) AND that account (the document key
+// claude-oauth-token-provider-key, whose CredentialKey-resolved name is the same
+// "provider-key", KindModel, tier A). The KindProvider arm of the duplicate rule
+// is what admits both, and the two indices are what keeps them apart: the
+// provider key is reached by KIND (ProviderKey) and the account by NAME
+// (Lookup, byName) — measured here, because that is the trap.
+//
+// A node's shared list speaks ONE name, so the arm that reads it has to say
+// which credential the name means, and WC1's write and its help both say
+// `provider-key` is the provider key. Reading the model index first would answer
+// the ACCOUNT and offer members the owner's Claude credential under the name the
+// owner read as the provider key, while the provider key stayed unshareable —
+// one name serving two credentials, which is exactly what the pool's answer, the
+// policy's leg and the service's audit line cannot tell apart.
+func TestAModelEntryNamedLikeTheProviderKeyIsTheProviderKey(t *testing.T) {
+	accountName := config.ClaudeOAuthTokenPrefix + config.ProviderKeySecret
+	if _, kind, tier, ok := CredentialKey(accountName); !ok || kind != KindModel || tier != creds.TierA {
+		t.Fatalf("CredentialKey(%s) = %v at tier %v (ok %v), want the account family's tier-A entry: this test is about the name two credentials share", accountName, kind, tier, ok)
+	}
+	if name, _, _, _ := CredentialKey(accountName); name != config.ProviderKeySecret {
+		t.Fatalf("the account %s resolves to %q, want %q: the collision this test pins is on the RESOLVED name", accountName, name, config.ProviderKeySecret)
+	}
+	doc := append(providerKeyDoc(t, testProviderBase, providerAuthBearer),
+		[]byte(accountName+": "+fakeCred(t, "an-account-named-after-the-key")+"\n")...)
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("a document holding the provider key and an account of its name: %v", err)
+	}
+	// The trap, measured: the index answers the ACCOUNT for that name.
+	acct, ok := b.Lookup(config.ProviderKeySecret)
+	if !ok || acct.Kind != KindModel || acct.Tier != creds.TierA {
+		t.Fatalf("Lookup(%q) = %+v (present %v), want the tier-A account: the provider key is absent from the model index by design, so the name alone cannot be the answer", config.ProviderKeySecret, acct, ok)
+	}
+	key, ok := b.ProviderKey()
+	if !ok || key.Tier != creds.TierC {
+		t.Fatalf("ProviderKey() = %+v (present %v), want the tier-C provider key", key, ok)
+	}
+	if e, held := modelEntryOf(b, config.ProviderKeySecret); !held || e.Tier != creds.TierC {
+		t.Fatalf("modelEntryOf(%q) = %+v (held %v), want the PROVIDER KEY: a node entry naming it is the credential `fugaro workspace share provider-key` wrote, and the account's own entry is named by the account's name only", config.ProviderKeySecret, e, held)
+	}
+
+	// And the pool's answer follows from that arm: the offering carries the
+	// provider key, not the account, so what a member is offered is the
+	// credential the owner declared — the third-party one, refused for a Claude
+	// model by the selection's own rule (D3000) rather than an account nobody
+	// asked to share.
+	node := &projectpolicy.WorkspaceCredentials{
+		Name: wsWorkspace,
+		Shared: []projectpolicy.WorkspaceShared{
+			{Name: config.ProviderKeySecret, Kind: projectpolicy.SharedKindModel, Projects: []string{wsMemberA}},
+		},
+	}
+	if err := node.Validate(); err != nil {
+		t.Fatalf("the test's own node is not one C3 accepts: %v", err)
+	}
+	got := WorkspaceShared(b, node)
+	want := []creds.Shared{{
+		Credential: creds.Credential{Name: config.ProviderKeySecret, Tier: creds.TierC},
+		Projects:   []string{wsMemberA},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("WorkspaceShared =\n%+v\nwant\n%+v\nthe name names the provider key: offering the account of that name would serve a credential the owner did not declare", got, want)
+	}
+}
+
 // kindOf is what credsvc.CredentialKey answers for a name, in the order this
 // file reads it: the tests hold their own names to the reader that decides what
 // a bundle key is, rather than to a kind written beside them.

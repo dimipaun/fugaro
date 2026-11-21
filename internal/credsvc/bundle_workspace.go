@@ -147,17 +147,32 @@ func WorkspaceShared(b *Bundle, node *projectpolicy.WorkspaceCredentials) []cred
 // modelEntryOf answers the bundle's entry for a model arm's name, which is the
 // name the node carries and the bundle's own spelling of the credential.
 //
-// The model index first (Bundle.Lookup) is every credential a coding caller's
+// **The provider key is asked FIRST, and it is the one name two credentials of
+// one document can answer.** An account may legally be named after it
+// (ClaudeAccountNameRE admits "provider-key", and the account's document key is
+// claude-oauth-token-provider-key), so the model index holds that account under
+// the very name the provider key's own document key resolves to — CredentialKey
+// answers both, and the KindProvider arm of the duplicate rule is what lets
+// the document hold the two without either hiding the other (ProviderKey,
+// byName). A node entry naming that name is the provider key, which is what
+// `fugaro workspace share provider-key` writes and what its own help says the
+// name means; the other order would offer the member the owner's Claude account
+// under the name the owner read as the provider key — one name serving two
+// credentials, the hazard the model family's duplicate rule exists to keep out
+// of this document. A bundle holding no provider key is unchanged by the order:
+// ProviderKey answers false and the index decides, as it always did.
+//
+// The model index (Bundle.Lookup) is every credential a coding caller's
 // candidate list holds — the accounts, the project's own Anthropic key and the
 // service-served key credentials — and it is what every entry of a version-1
-// node, and every entry that names a Claude credential, is read through. The two
-// provider keys WC1 makes shareable are deliberately NOT in that index, so each
-// is asked for by the accessor that owns its kind, and by its KIND rather than by
-// the name the bundle would answer to a lookup (AK6b's reason, and R2's):
+// node, and every entry that names a Claude credential, is read through. Both
+// provider shapes WC1 makes shareable are deliberately NOT in that index, so
+// each is asked for by the accessor that owns its kind, and by its KIND rather
+// than by the name the bundle would answer to a lookup (AK6b's reason, and R2's):
 //
-//   - the project's provider key (KindProvider), which ProviderKey selects by
-//     kind because an account may legally be named "provider-key", so this arm is
-//     the one place the node's name and the entry's meet;
+//   - the project's provider key (KindProvider), asked above and by kind,
+//     because an account may legally be named "provider-key" — and the index is
+//     in fact holding one when this arm matters most;
 //   - one repository's named entry for a provider (KindRepoCredential), which is
 //     keyed by its DOCUMENT KEY because two repositories' entries for one
 //     provider answer the same credential's name, and whose key is therefore what
@@ -172,10 +187,10 @@ func WorkspaceShared(b *Bundle, node *projectpolicy.WorkspaceCredentials) []cred
 // fact of the kind that is not the entry's own text (KindRepoCredential, and
 // CredentialKey's own arm).
 func modelEntryOf(b *Bundle, name string) (Entry, bool) {
-	if e, ok := b.Lookup(name); ok {
+	if e, ok := b.ProviderKey(); ok && e.Name == name {
 		return e, true
 	}
-	if e, ok := b.ProviderKey(); ok && e.Name == name {
+	if e, ok := b.Lookup(name); ok {
 		return e, true
 	}
 	if i, ok := b.repoCredentials[name]; ok {
