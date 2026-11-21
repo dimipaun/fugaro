@@ -1367,6 +1367,9 @@ func TestInitSecretsDoesNotTakeAProviderKey(t *testing.T) {
 	if strings.Contains(text, "Paste the value for or-key") {
 		t.Fatalf("the stage prompted for a provider's key: %q", text)
 	}
+	if !strings.Contains(text, "fugaro secrets set or-key --repo acme/app") {
+		t.Fatalf("the run says nothing about where the provider's key is entered: %q", text)
+	}
 	noLeak(t, tokenValue, text)
 }
 
