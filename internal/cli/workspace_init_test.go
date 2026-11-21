@@ -28,6 +28,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
@@ -348,6 +349,13 @@ func TestWorkspaceInitPlacesTheWorkspaceProject(t *testing.T) {
 	if r.folders.placed != wu24TestName {
 		t.Errorf("the workspace's own project placed in the folder is %q, and it is %q: R8 puts the roster node and the workspace's audit trail in the workspace's own project, which is the project the workspace is named after (A1, D1290)", r.folders.placed, wu24TestName)
 	}
+	// The folder path's live binding is the folder's owner and nothing else, so
+	// the mechanism's authority is never reached for one (D2823, R6): an AddAdmin
+	// beside CreateFolder would be a second, SA-model grant for a workspace whose
+	// roster records the folder mechanism.
+	if len(r.auth.admins) != 0 {
+		t.Errorf("workspace init bound %v as an admin through the mechanism's authority on the folder path, and the first admin's binding there is the folder's owner, which CreateFolder already made in the call above: a second AddAdmin is a duplicate grant, and a folder workspace's roster would then carry the SA model's bindings as well (D2823, R6)", r.auth.admins)
+	}
 	if got := r.roster().FolderID; got != r.folders.folder {
 		t.Errorf("the roster records the folder %q, and the folder the authority created is %q: the roster names the folder that really exists, which is the id the authority answered and not a name this command composed", got, r.folders.folder)
 	}
@@ -489,6 +497,105 @@ func TestWorkspaceInitWritesNoRosterWhenTheLiveBindingFails(t *testing.T) {
 	}
 	if ExitCode(r.err) != ExitUserError {
 		t.Errorf("the refusal exits %d, and an account this credential cannot write is the caller's own state to fix", ExitCode(r.err))
+	}
+}
+
+// TestWorkspaceInitRefusesALostRace is C1's create-once contract at the one
+// place a race really lands: the read answered that the node was absent, and by
+// the write another writer had made it, so the database refuses the revision
+// (rtdb.ErrPrecondition). That is an ANSWER and not a failure (D2817, R6) — a
+// workspace holds one mechanism — so this command refuses, says the roster it
+// built was not written, and names what is already real.
+func TestWorkspaceInitRefusesALostRace(t *testing.T) {
+	r := wu24Init(t, func(r *wu24Rig) { r.store.writeErr = rtdb.ErrPrecondition })
+	if r.err == nil {
+		t.Fatalf("workspace init finished although its conditional write was refused, and it printed %q", r.out)
+	}
+	if len(r.store.writes) != 0 {
+		t.Errorf("the roster was written although the write was refused under the revision this command read: a lost race leaves the winner's roster and nothing of this one")
+	}
+	if len(r.audit.events) != 0 {
+		t.Errorf("workspace init created %d audit entries for a roster that was never written: an entry is written after the change it records and never instead of it (C1's contract)", len(r.audit.events))
+	}
+	got := ErrorText(r.err)
+	if !strings.Contains(got, "was NOT written") {
+		t.Errorf("the refusal reads %q, and it has to say the roster was not written: the node holds the winner's record, and a person who cannot tell a lost race from a plain failure goes looking for a broken workspace", got)
+	}
+	if !strings.Contains(got, r.store.path) {
+		t.Errorf("the refusal reads %q and does not name the node %q the race was lost on", got, r.store.path)
+	}
+	if !strings.Contains(got, r.folders.folder) {
+		t.Errorf("the refusal reads %q and does not name the folder %q that was created: the folder and its owner binding are real whatever the roster does, and a person told only that the write failed would not know to look at them", got, r.folders.folder)
+	}
+	if ExitCode(r.err) != ExitUserError {
+		t.Errorf("a lost race exits %d, and another writer creating this workspace first is the caller's own state to read rather than a fault of the program", ExitCode(r.err))
+	}
+}
+
+// TestWorkspaceInitWritesNothingWhenASeamFails covers the four calls whose
+// failure is not an answer: the roster read (C1's contract is explicit — a read
+// that FAILS is not "no roster", and every caller refuses on it), the
+// organization search, the folder create, and the roster write itself. A
+// workspace is created whole or not at all, so each of them refuses with the
+// call's own words and leaves no create-once roster behind; where the folder is
+// already real, the refusal says so.
+func TestWorkspaceInitWritesNothingWhenASeamFails(t *testing.T) {
+	for _, tc := range []struct {
+		branch  string
+		setup   func(r *wu24Rig)
+		want    string
+		folders int
+		real    bool
+	}{
+		{
+			branch: "roster read",
+			setup:  func(r *wu24Rig) { r.store.readErr = errors.New("the roster node answered 403") },
+			want:   "the roster node answered 403",
+		},
+		{
+			branch: "organization search",
+			setup:  func(r *wu24Rig) { r.folders.orgErr = errors.New("the organization search answered 503") },
+			want:   "the organization search answered 503",
+		},
+		{
+			branch:  "folder create",
+			setup:   func(r *wu24Rig) { r.folders.createErr = errors.New("the folder quota is exhausted") },
+			want:    "the folder quota is exhausted",
+			folders: 1,
+		},
+		{
+			branch:  "roster write",
+			setup:   func(r *wu24Rig) { r.store.writeErr = errors.New("the database is unavailable") },
+			want:    "the database is unavailable",
+			folders: 1,
+			real:    true,
+		},
+	} {
+		t.Run(tc.branch, func(t *testing.T) {
+			r := wu24Init(t, tc.setup)
+			if r.err == nil {
+				t.Fatalf("workspace init finished although the %s failed, and it printed %q", tc.branch, r.out)
+			}
+			if len(r.store.writes) != 0 {
+				t.Errorf("the roster was written although the %s failed: this node is the workspace's create-once record, and a half-created workspace is one no later command can finish (C1's contract)", tc.branch)
+			}
+			if len(r.audit.events) != 0 {
+				t.Errorf("an audit entry was created for a workspace whose %s failed and whose roster was never written", tc.branch)
+			}
+			if len(r.auth.admins) != 0 {
+				t.Errorf("the caller's own binding was made although the %s failed: nothing holds an admin entry when no roster lands (D2823)", tc.branch)
+			}
+			if len(r.folders.calls) != tc.folders {
+				t.Errorf("workspace init made %d folder creates with the %s failing, and this branch reaches the folder %d times", len(r.folders.calls), tc.branch, tc.folders)
+			}
+			got := ErrorText(r.err)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("the refusal reads %q, and it has to carry what the failing call answered (%q): the person has to see whether it was a permission, a state, or the API's own words", got, tc.want)
+			}
+			if tc.real && !strings.Contains(got, r.folders.folder) {
+				t.Errorf("the refusal reads %q and does not name the folder %q that already exists: what is real survives the failed write, and a refusal that says only what failed hides it", got, r.folders.folder)
+			}
+		})
 	}
 }
 
