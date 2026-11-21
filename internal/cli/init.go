@@ -185,6 +185,15 @@ type initOptions struct {
 	// question phase applies nothing.
 	rigor string
 
+	// --location is the wizard's place question answered without a terminal
+	// (LP4 of docs/location-preference; R2, D3081): us or eu, and nothing
+	// else, because a region typed in full is --region's own answer to the
+	// same question (D3080). It is not stored anywhere: settleLocation
+	// (init_inputs.go) turns it into the region this run carries, which is the
+	// one setting an installation keeps, and refuses one that disagrees with
+	// --region.
+	location string
+
 	// answersFile is --answers-file: the wizard's five questions answered as
 	// one document, whose members fill the fields above and nothing else
 	// (setup_answers.go, D2904 of docs/console-improvements). "-" reads it from
@@ -537,6 +546,10 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// is the run's own state (a project config, or not) rather than the verb
 	// the reader typed. `fugaro run --mode hotfix` is named here because it is
 	// the one door hotfix has, and it is not a layer's to set (D834).
+	// The place question (LP4 of docs/location-preference; R2, D3080, D3081,
+	// D3086). It names no door: what says the question is a first run's is the
+	// run's own state (a project config, or not).
+	f.StringVar(&o.location, "location", "", "answer the wizard's place question without a terminal: where the installation lives, us or eu. US is the suggestion and its region is us-east5; EU's is europe-west1. The region is what the installation stores and the place is read back from it (D3080), so --region answers this same question precisely — a region typed in full, such as europe-west4 — and the two given together must agree: a run whose --location and --region name different places is refused at once, naming both. Like every question of the first run, a run that cannot ask and was given neither is refused with both flags")
 	f.StringVar(&o.rigor, "rigor", "", "answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set")
 	// --answers-file answers every question the wizard asks from one document
 	// (setup_answers.go, D2904 of docs/console-improvements): the surface that
@@ -544,7 +557,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// this is where its answers travel. The help names the members because the
 	// file is the reader's whole contract, and it says what the file is not: an
 	// answer is not a confirmation.
-	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the five questions a first run asks (--gcp-project, --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
+	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the five questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
@@ -1046,6 +1059,14 @@ func runInit(r *initRun) error {
 	// wizard's questions' flags, so a run that reads one is a run that was
 	// passed them (setup_answers.go).
 	if err := r.applySetupAnswers(); err != nil {
+		return err
+	}
+	// The place answer becomes the region before anything is checked or asked
+	// (R2, D3080): a --location and a --region that name different places are
+	// refused at once, here, and a place with no region beside it takes the
+	// place's default region — so every later reader, the questions included,
+	// sees the one answer the installation stores (settleLocation).
+	if err := o.settleLocation(); err != nil {
 		return err
 	}
 	if o.checkApp {
@@ -4537,6 +4558,12 @@ func (o *initOptions) installationFlags() []string {
 		// both would drop the answer. Refused by name instead, in the sentence
 		// each of those two walks already has for a flag it cannot act on.
 		"--rigor": o.rigor != "",
+		// --location is the place a first run of `fugaro setup` chooses, and a
+		// --repo run creates no installation: it would drop the answer the
+		// same way (LP4 of docs/location-preference). A --region is not in
+		// this table: on these commands it is the per-invocation override it
+		// has always been, and it is the region itself rather than a place.
+		"--location": o.location != "",
 	}
 	var set []string
 	for _, f := range slices.Sorted(maps.Keys(installationOnly)) {
@@ -4557,6 +4584,13 @@ func runInitRepo(r *initRun, args []string) error {
 	// asks none of the wizard's questions, and the flags its answers fill are
 	// refused by name rather than dropped (installationFlags).
 	if err := r.applySetupAnswers(); err != nil {
+		return err
+	}
+	// The place answer is settled exactly as on the converge, so the two doors
+	// refuse a --location and a --region that disagree in one sentence
+	// (settleLocation). A --repo run refuses --location by name below either
+	// way: it creates no installation, so it has no place to choose.
+	if err := o.settleLocation(); err != nil {
 		return err
 	}
 	if o.checkApp {

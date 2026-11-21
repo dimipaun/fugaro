@@ -58,8 +58,11 @@ lives in, and that project is Fugaro's, and managed, from its creation. On a
 first run it asks its questions once, in this order, each with a suggestion
 Enter takes, and writes the local config, so later runs ask nothing: the new
 GCP project's ID (--gcp-project; a project named after this one,
-fugaro-<name>, which Enter takes; never gcloud's default project), the region
-(--region; us-east5), the project's name (--name; from the repository's
+fugaro-<name>, which Enter takes; never gcloud's default project), where the
+installation lives (--location; US, whose region is us-east5 and which Enter
+takes, or EU, whose region is europe-west1; a region typed in full answers the
+same question and is --region's own form, and the two given together must
+agree), the project's name (--name; from the repository's
 owner, else this directory's), the project's rigor mode (--rigor; how much
 review every run of it gets — poc, startup, pro, the built-in default that is
 listed first, or critical — and the one question with no suggestion, so Enter
@@ -395,10 +398,18 @@ var setupQuestions = []wizardQuestion{
 		missing: "--gcp-project <id>",
 	},
 	{
-		what:    "the region the installation's jobs and the scheduler run in",
-		label:   "Region (the installation's jobs and the scheduler)",
-		flag:    "--region",
-		missing: "--region <region>",
+		// The place question (LP4 of docs/location-preference; D3080, D3081,
+		// D3086). It is the wizard's region question in a person's words and
+		// not a second question (F2): the answer is us, eu, or a region typed
+		// in full, --region answers the same question precisely, and the
+		// region stays the one setting the installation stores (D3080). The
+		// suggestion is US, which is today's default region; the region itself
+		// is not in the row, because a place answer names one region and the
+		// mapping's own line says which (R7).
+		what:    "the place the installation lives in (US, EU, or a region typed in full)",
+		label:   "Place (US, EU, or a region: where the installation's jobs and its data go)",
+		flag:    "--location",
+		missing: "--location <us|eu>",
 	},
 	{
 		what:    "the Fugaro project's name",
