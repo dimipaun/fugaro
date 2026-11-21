@@ -72,6 +72,10 @@ SIGNER="fugaro-token-signer@${PROJECT}.iam.gserviceaccount.com"
 SA="fugaro-job@${PROJECT}.iam.gserviceaccount.com"
 EXEC_FULL="projects/${PROJECT}/locations/${REGION}/jobs/${PROBE}/executions/${PROBE}-abcde"
 EXEC_SHORT="${PROBE}-abcde"
+# The execution's own uid, which the execution document carries and the identity
+# token must not: U1 is about the platform being able to tell two executions of
+# one job apart, and a uid is such an identifier.
+EXEC_UID="1176507698234567890"
 OP="projects/${PROJECT}/locations/${REGION}/operations/op-840"
 
 # Three sentinels, and no credential is handled anywhere in this test: the
@@ -137,6 +141,16 @@ case "${1:-} ${2:-}" in
   answer "$FAKE840_DIR/roles.json" "$FAKE840_DIR/roles.code" "$FAKE840_DIR/roles.err"
   ;;
 "logging read")
+  # A case can stage a log that is incomplete at first and whole on a later
+  # read (log-later.txt), which is how the check's wait for a WHOLE block is
+  # measured rather than asserted: the first answer is partial ingestion, the
+  # next one is not.
+  reads=$(cat "$FAKE840_DIR/log-reads" 2>/dev/null || printf '0')
+  reads=$((reads + 1))
+  printf '%s\n' "$reads" >"$FAKE840_DIR/log-reads"
+  if [ "$reads" -gt 1 ] && [ -f "$FAKE840_DIR/log-later.txt" ]; then
+    answer "$FAKE840_DIR/log-later.txt" "$FAKE840_DIR/log.code" "$FAKE840_DIR/log.err"
+  fi
   answer "$FAKE840_DIR/log.txt" "$FAKE840_DIR/log.code" "$FAKE840_DIR/log.err"
   ;;
 *)
@@ -350,16 +364,17 @@ PY
 # `yes` (the override's env is there, with the value the check set) or `no` (the
 # execution carries the job's env and not the override).
 write_execution() {
-  python3 - "$dir/state/execution.json" "$1" "$MARKER_ENV" "$MARKER_VALUE" "$SA" "$EXEC_FULL" <<'PY'
+  python3 - "$dir/state/execution.json" "$1" "$MARKER_ENV" "$MARKER_VALUE" "$SA" "$EXEC_FULL" "$EXEC_UID" <<'PY'
 import json
 import sys
 
-out, marker, name, value, account, full = sys.argv[1:7]
+out, marker, name, value, account, full, uid = sys.argv[1:8]
 env = [{"name": "FUGARO_RTDB_URL", "value": "https://dev-installation.firebaseio.com"}]
 if marker == "yes":
     env.append({"name": name, "value": value})
 doc = {
     "name": full,
+    "uid": uid,
     "completionTime": "2026-11-21T00:00:01Z",
     "template": {"containers": [{"image": "gcr.io/google.com/cloudsdktool/cloud-sdk:slim", "env": env}],
                  "serviceAccount": account},
@@ -368,20 +383,20 @@ json.dump(doc, open(out, "w", encoding="utf-8"))
 PY
 }
 
-# write_log CLAIMS_VARIANT WHAT_NAMES_THE_EXECUTION: the probe's own lines, as
-# `logging read` answers them. CLAIMS_VARIANT is `plain` (the identity token's
-# claims, with nothing of the execution in them) or `names-execution` (a claim
-# whose value carries the execution's name); WHAT_NAMES_THE_EXECUTION is inserted
-# as that value.
+# write_log CLAIMS_VARIANT WHAT_NAMES_THE_EXECUTION [FILE]: the probe's own
+# lines, as `logging read` answers them, closed by the probe's own `end=` line
+# announcing how many claims it printed. CLAIMS_VARIANT is `plain` (the identity
+# token's claims, with nothing of the execution in them), `names-execution` (a
+# claim whose value carries the execution's name) or `uid-execution` (a claim
+# whose value carries the uid of the execution's own document);
+# WHAT_NAMES_THE_EXECUTION is inserted as that value. FILE defaults to the log
+# the fake gcloud answers with.
 write_log() {
-  python3 - "$dir/state/log.txt" "$1" "$2" "$EXEC_SHORT" "$EXEC_FULL" "$MARKER_VALUE" <<'PY'
+  python3 - "$dir/state/${3:-log.txt}" "$1" "$2" "$EXEC_SHORT" "$EXEC_FULL" "$MARKER_VALUE" "$EXEC_UID" <<'PY'
 import sys
 
-out, variant, subject, short, full, marker = sys.argv[1:7]
-lines = [
-    "CHK840 exec=%s" % short,
-    "CHK840 marker=%s" % marker,
-    "CHK840 token_len=1234",
+out, variant, subject, short, full, marker, uid = sys.argv[1:8]
+claims = [
     "CHK840 claim=aud=https://chk840-check.invalid/",
     "CHK840 claim=azp=1234567890",
     "CHK840 claim=email=fugaro-job@dev-installation-1234.iam.gserviceaccount.com",
@@ -392,7 +407,14 @@ lines = [
     "CHK840 claim=sub=104729384756102938475",
 ]
 if variant == "names-execution":
-    lines.append("CHK840 claim=run.googleapis.com/execution=%s" % (subject or full))
+    claims.append("CHK840 claim=run.googleapis.com/execution=%s" % (subject or full))
+elif variant == "uid-execution":
+    claims.append("CHK840 claim=run.googleapis.com/execution_uid=%s" % uid)
+lines = [
+    "CHK840 exec=%s" % short,
+    "CHK840 marker=%s" % marker,
+    "CHK840 token_len=1234",
+] + claims + ["CHK840 end=%d" % len(claims)]
 open(out, "w", encoding="utf-8").write("\n".join(lines) + "\n")
 PY
 }
@@ -614,14 +636,17 @@ test_the_three_readings_hold() {
   expect_contains "$(cat "$dir/state/modes" 2>/dev/null || true)" "signin.2.json 600" "the file the second ID token was written to is 0600"
   expect_contains "$out" "aud=https://chk840-check.invalid/" "the claims row names the audience the probe minted for"
   expect_contains "$out" "email=$SA" "the claims row names the account the execution ran as"
+  expect_contains "$out" "azp,email,email_verified,exp,iat,iss,sub" "the claims row names EVERY claim the token carries, with the values of all but its four left out: a row that named only some of them would hide the claim U1 is about"
   expect_contains "$(cat "$dir/state/calls")" "url https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/jobs/$PROBE:run" "the override went through the API's jobs.run, which is the one call gcloud has no flag for"
   expect_contains "$(cat "$dir/state/calls")" "url https://run.googleapis.com/v2/$EXEC_FULL" "the read-back is the API's run.executions.get"
+  expect_contains "$(cat "$dir/state/calls")" "serviceAccounts/$SIGNER:signJwt" "the custom token is minted as the installation's own signer, the account the launcher's runs mint as"
   expect_contains "$(cat "$dir/state/calls")" "logging read" "the probe's own lines are read out of Cloud Logging"
   expect_contains "$(cat "$dir/state/calls")" "--order=asc" "ascending, so an execution's block arrives in the order the probe printed it: descending reverses the lines within the block and the claims would read as none"
   expect_contains "$(cat "$dir/state/calls")" "gcloud run jobs create $PROBE" "the probe job is the check's own, created by name"
   expect_contains "$(cat "$dir/state/calls")" "--service-account $SA" "the probe runs as the installation job's own account, whose name the identity token then carries"
   expect_contains "$(probe_source "$dir")" "metadata.google.internal" "the probe reads the execution's own metadata identity endpoint"
   expect_contains "$(probe_source "$dir")" "$MARKER_ENV" "the probe prints the marker the override sets"
+  expect_contains "$(probe_source "$dir")" 'end=' "the probe closes its block with the count of claims it printed, which is what says the log holds the whole block"
   expect_contains "$(cat "$dir/state/signin.1.body" 2>/dev/null || true)" "$CUSTOM_SENTINEL" "the custom token travelled in the body FILE of the first exchange, never on a command line"
   expect_contains "$(cat "$dir/state/signin.2.body" 2>/dev/null || true)" "$CUSTOM_SENTINEL" "the same token was exchanged a second time"
   expect_contains "$(cat "$dir/state/conf.url" 2>/dev/null || true)" "$APIKEY_SENTINEL" "the web API key travelled inside the config file's URL, never on a command line"
@@ -646,6 +671,77 @@ test_a_claim_naming_the_execution_fails_u1() {
   # And the check still removed what it created: a FAIL is not a reason to leave
   # a job behind.
   expect_contains "$out" "FACT restore: PASS" "an installation whose U1 does not hold is still left clean"
+}
+
+# The execution's own uid is an identifier U1 turns on as much as its name is:
+# the platform puts one on the execution document, and a token carrying it tells
+# two executions of one job apart exactly as a claim by name would. A check that
+# looked for the name alone would report the design's assumption holding from a
+# token it never read as carrying anything of the execution.
+test_a_claim_carrying_the_executions_uid_fails_u1() {
+  setup_case u1-uid
+  write_log uid-execution ""
+  run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
+  expect_status "$status" 1 "an identity token carrying the execution's uid"
+  expect_contains "$out" "FACT u1: FAIL" "an identity token carrying the execution's uid"
+  local row
+  row=$(printf '%s\n' "$out" | sed -n 's/^FACT u1: FAIL — //p' | head -1)
+  expect_contains "$row" "the claim run.googleapis.com/execution_uid carries the execution's uid" "the row names the claim and what it carried"
+  expect_absent "$row" "$EXEC_UID" "the claim's own value is not printed"
+  expect_contains "$out" "FACT verdict: FAIL" "the verdict reads the row"
+  expect_contains "$out" "FACT restore: PASS" "a FAIL of U1 is still no reason to leave the job behind"
+}
+
+# Cloud Logging ingests a container's lines one at a time, so the block's own
+# `exec=` line can be in the log while its claims are still on their way: read as
+# a whole block that is a claim set with claims missing, and U1 is judged on a
+# token whose claims were never seen — a PASS when the claim that would have
+# named the execution had not arrived, a FAIL when the last claim had not. The
+# probe closes its block with its own count and the read waits for that line.
+test_a_half_ingested_block_is_waited_for() {
+  setup_case half-block
+  write_log plain ""
+  cp "$dir/state/log.txt" "$dir/state/log-later.txt"
+  grep -v '^CHK840 end=' "$dir/state/log-later.txt" >"$dir/state/log.txt"
+  RUN840_ENV=(CHECK840_LOG_TRIES=2 CHECK840_LOG_SECONDS=0)
+  run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
+  expect_status "$status" 0 "a block the log held in part on the first read"
+  expect_contains "$out" "FACT claims: PASS — the identity token carries 8 claim(s)" "the block that was finally read whole is the one judged"
+  expect_contains "$out" "FACT u1: PASS" "the block that was finally read whole is the one judged"
+  local reads
+  reads=$(grep -c 'gcloud logging read' "$dir/state/calls" 2>/dev/null) || reads=0
+  [ "$reads" = 2 ] || fail "a half-ingested block: expected the read to be made twice (once incomplete, once whole), got $reads"
+
+  # And a block the log never holds whole is a stop and not a reading: a claim
+  # set read in part is not the token's, in either direction.
+  setup_case half-block-for-good
+  write_log plain ""
+  grep -v '^CHK840 end=' "$dir/state/log.txt" >"$dir/state/partial.txt"
+  mv "$dir/state/partial.txt" "$dir/state/log.txt"
+  RUN840_ENV=(CHECK840_LOG_TRIES=2 CHECK840_LOG_SECONDS=0)
+  run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
+  expect_status "$status" 2 "a block whose closing line never arrives"
+  expect_contains "$out" "FACT claims: FAIL" "a block whose closing line never arrives"
+  expect_contains "$out" "WHOLE" "the row says the block was never read whole"
+  expect_contains "$out" "FACT u1: FAIL — not reached" "nothing is judged from a claim set read in part"
+  expect_contains "$out" "FACT restore: PASS" "a run that measured nothing still leaves nothing behind"
+
+  # The closing line is not on its own what makes a block whole: a read that
+  # delivers it and drops a claim BEFORE it (lines of one execution share a
+  # timestamp) is a claim set with a claim missing — and the claim that is
+  # missing can be the one U1 is about, which is the false reading either way.
+  # What the probe said it printed is compared with what came back, and the two
+  # not agreeing is not a reading.
+  setup_case block-lost-a-claim
+  write_log plain ""
+  grep -v '^CHK840 claim=sub=' "$dir/state/log.txt" >"$dir/state/cut.txt"
+  mv "$dir/state/cut.txt" "$dir/state/log.txt"
+  RUN840_ENV=(CHECK840_LOG_TRIES=2 CHECK840_LOG_SECONDS=0)
+  run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
+  expect_status "$status" 2 "a block whose closing count does not match the claims read back"
+  expect_contains "$out" "FACT claims: FAIL" "a block whose closing count does not match the claims read back"
+  expect_contains "$out" "a read held 7 of the 8 claim(s) the probe closed its block with" "the row says which read held how much, so the owner knows what the log did"
+  expect_contains "$out" "FACT u1: FAIL — not reached" "a claim set with a claim missing judges nothing"
 }
 
 test_overrides_that_do_not_come_back_fail_u2() {
@@ -809,6 +905,7 @@ test_a_token_with_no_claims_stops() {
 CHK840 exec=$EXEC_SHORT
 CHK840 marker=$MARKER_VALUE
 CHK840 token_len=0
+CHK840 end=0
 CHK840 error=not-a-jwt
 EOF
   run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
@@ -832,6 +929,7 @@ CHK840 marker=marker-of-an-earlier-run
 CHK840 token_len=999
 CHK840 claim=email=earlier@dev-installation-1234.iam.gserviceaccount.com
 CHK840 claim=run.googleapis.com/execution=${PROBE}-older
+CHK840 end=2
 EOF
   run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
   expect_status "$status" 0 "an earlier execution's block beside this run's"
@@ -1030,6 +1128,8 @@ t() {
 
 t test_the_three_readings_hold
 t test_a_claim_naming_the_execution_fails_u1
+t test_a_claim_carrying_the_executions_uid_fails_u1
+t test_a_half_ingested_block_is_waited_for
 t test_overrides_that_do_not_come_back_fail_u2
 t test_a_marker_the_container_did_not_see_fails_the_verdict
 t test_a_launcher_role_without_the_permission_fails_it

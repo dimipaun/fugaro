@@ -541,7 +541,11 @@ PY
 # the token — plus the account and the marker the override set. The audience goes
 # in through a placeholder rather than through the shell, so no `$` of this
 # check's own reaches the file and the file is the one that runs inside the
-# container.
+# container. The last line it prints announces HOW MANY claims it printed
+# (`CHK840 end=<n>`): Cloud Logging ingests a container's lines one at a time and
+# lags the execution, so a block that opens with `exec=` can be in the log
+# without its claims — read as a whole block that is a claim set with claims
+# missing, which judges U1 from a token that is not there.
 write_probe() {
   cat >"$SCRATCH/probe.tmpl" <<'PROBE_EOF'
 set -euo pipefail
@@ -559,14 +563,18 @@ import sys
 tok = sys.argv[1].strip()
 parts = tok.split(".")
 if len(parts) != 3:
+    print("CHK840 end=0")
     raise SystemExit("CHK840 error=not-a-jwt")
 pad = parts[1] + "=" * (-len(parts[1]) % 4)
 claims = json.loads(base64.urlsafe_b64decode(pad))
+n = 0
 for name in sorted(claims):
     value = claims[name]
     if isinstance(value, (dict, list)):
         value = json.dumps(value, sort_keys=True)
     print("CHK840 claim=%s=%s" % (name, value))
+    n += 1
+print("CHK840 end=%d" % n)
 PY
 PROBE_EOF
   sed -e "s|__AUDIENCE__|${PROBE_AUDIENCE}|" -e "s|__MARKER__|${MARKER_ENV}|" \
@@ -684,7 +692,21 @@ read_execution() {
       stop "run.executions.get for $EXEC_FULL answered HTTP $code (the line above). Nothing is concluded about the override"
     fi
     if grep -q '"completionTime"' "$SCRATCH/execution.json" 2>/dev/null; then
-      fact probe-exec PASS "the execution was read back through the API's run.executions.get ($RUN_URL_BASE/$EXEC_FULL answered HTTP 200), with the owner's own credential, until it reported a completion time"
+      # The execution's own uid, off the document the API answered with, is the
+      # third identifier U1 looks for in the token (with the name and the full
+      # resource name). It comes from the platform's answer here and never from
+      # the container.
+      EXEC_UID=$(python3 - "$SCRATCH/execution.json" <<'PY'
+import json
+import sys
+
+try:
+    print(json.load(open(sys.argv[1])).get("uid") or "")
+except Exception:
+    print("")
+PY
+      )
+      fact probe-exec PASS "the execution was read back through the API's run.executions.get ($RUN_URL_BASE/$EXEC_FULL answered HTTP 200), with the owner's own credential, until it reported a completion time; its own document's uid is ${EXEC_UID:-not in the document}, which is the third identifier U1 looks for in the token"
       return 0
     fi
     i=$((i + 1))
@@ -761,17 +783,41 @@ judge_u2() {
 # the lines after its `exec=` line. Descending, this execution's claims arrive
 # before the `exec=` line that opens the block and are read as none. The
 # register's own checks pass it for the same reason (check-580.sh, check610.sh).
-PROBE_LOG=""
+PROBE_READ=""
+PROBE_NOTE=""
 read_probe_log() {
-  local filter i=0
+  local filter i=0 end count
   filter="resource.type=\"cloud_run_job\" resource.labels.job_name=\"$PROBE_JOB\""
+  write_log_reader
   while [ "$i" -lt "$LOG_TRIES" ]; do
     gcloud logging read "$filter" --project "$P" --freshness=1h --limit=200 \
       --order=asc --format='value(textPayload,jsonPayload.message)' \
       >"$SCRATCH/log.txt" 2>"$SCRATCH/log.err" || true
-    if grep -q "CHK840 exec=$EXEC_SHORT" "$SCRATCH/log.txt" 2>/dev/null; then
-      PROBE_LOG="$SCRATCH/log.txt"
-      return 0
+    # This execution's block, and only a WHOLE one: its opening `exec=` line
+    # alone is not enough, because ingestion is per line and in no order — the
+    # claims can still be on their way when the line that closes the block has
+    # arrived. A block read while it is half there is a claim set with claims
+    # missing, which judges U1 either way on a token whose claims were never
+    # seen, so the read waits for the probe's own closing line AND for the claims
+    # it announces to be there. What is waited for is the log's own content, and
+    # never a count of lines it happens to hold.
+    if python3 "$SCRATCH/log_reader.py" "$SCRATCH/log.txt" "$EXEC_SHORT" \
+      >"$SCRATCH/reader.out" 2>"$SCRATCH/log_reader.err"; then
+      end=$(sed -n 's/^end=//p' "$SCRATCH/reader.out" | head -1)
+      count=$(grep -c '^claim|' "$SCRATCH/reader.out" 2>/dev/null) || count=0
+      count=${count:-0}
+      if [ -n "$end" ] && [ "$end" = "$count" ]; then
+        PROBE_READ="$SCRATCH/reader.out"
+        PROBE_NOTE=""
+        return 0
+      fi
+      if [ -n "$end" ]; then
+        PROBE_NOTE="a read held $count of the $end claim(s) the probe closed its block with"
+      else
+        PROBE_NOTE="a read held this execution's opening line without the line that closes its block"
+      fi
+    else
+      PROBE_NOTE="a read could not be parsed"
     fi
     i=$((i + 1))
     [ "$i" -lt "$LOG_TRIES" ] && sleep "$LOG_SECONDS"
@@ -789,8 +835,8 @@ write_log_reader() {
 """Reads the probe's own lines and prints the claim set it recorded.
 
 One `name|value` line per claim of the identity token, and one `key=value` line
-for the marker and the length. The token is not in this file's input: the probe
-prints claims and never the token.
+for the marker, the length and the count the probe's closing line announced. The
+token is not in this file's input: the probe prints claims and never the token.
 """
 import sys
 
@@ -798,12 +844,15 @@ want = sys.argv[2]
 claims = []
 marker = ""
 length = ""
+ended = ""
 # ONE execution's lines, and only its own. A run of this check within the
 # freshness window leaves its own lines behind, and the read is by job name, so
 # the output can carry two executions' blocks: the probe prints `exec=` first,
 # the read is asked for in ascending order, and the block is taken as the lines
 # between this execution's `exec=` line and the next one -- and only when that
-# name is the execution this run launched.
+# name is the execution this run launched. The block ENDS at the probe's own
+# `end=` line: the lines after it belong to no block of this probe's, and an
+# `end=` the block does not have is what says the log holds only part of it.
 mine = False
 for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
     line = line.strip()
@@ -820,12 +869,16 @@ for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
     if body.startswith("claim="):
         name, _, value = body[len("claim="):].partition("=")
         claims.append((name, value))
+    elif body.startswith("end="):
+        ended = body[len("end="):]
+        break
     elif body.startswith("marker="):
         marker = body[len("marker="):]
     elif body.startswith("token_len="):
         length = body[len("token_len="):]
 sys.stdout.write("marker=%s\n" % marker)
 sys.stdout.write("token_len=%s\n" % length)
+sys.stdout.write("end=%s\n" % ended)
 for name, value in claims:
     sys.stdout.write("claim|%s|%s\n" % (name, value))
 LOG_EOF
@@ -833,11 +886,10 @@ LOG_EOF
 
 judge_u1() {
   local out
-  write_log_reader
-  if ! out=$(python3 "$SCRATCH/log_reader.py" "$PROBE_LOG" "$EXEC_SHORT" 2>"$SCRATCH/log_reader.err"); then
-    fact claims FAIL "the probe's own lines could not be parsed, so the identity token's claims were not read ($(first_line "$SCRATCH/log_reader.err"))"
-    stop "the probe's own lines could not be parsed (the line above). Nothing is concluded about the identity token"
-  fi
+  # The reader's answer for this execution's block, taken by read_probe_log over
+  # the log read: it holds the block only when the probe's own closing line is in
+  # it, so what is judged here is a whole claim set.
+  out=$(cat "$PROBE_READ" 2>/dev/null || true)
   printf '%s\n' "$out" | grep '^claim|' >"$SCRATCH/claims" || true
   local marker len count
   marker=$(printf '%s\n' "$out" | sed -n 's/^marker=//p' | head -1)
@@ -852,16 +904,18 @@ judge_u1() {
     fact claims FAIL "the execution's identity token answered with $count claim(s) — too few to be a Google ID token — so nothing is judged about what it carries (the probe's own lines are in this run's log read)"
     stop "the identity token the execution minted carried $count claims (the row above), which cannot be the token this check is about. Nothing is concluded"
   fi
-  # The account and the audience are what the token is FOR; sub is the account's
-  # own number. Only these are named in the block, and no other claim's value is
-  # printed: a claim set is not a credential, but a reader of the block does not
-  # need the rest of it.
-  local aud email iss sub
+  # Every claim NAME is in the block — a name is what says what the token
+  # carries, and a partial list would hide exactly the claim U1 is about. The
+  # account and the audience are what the token is FOR; sub is the account's own
+  # number. Those four are the only VALUES named: a claim set is not a
+  # credential, but a reader of the block does not need the rest of it.
+  local aud email iss sub names
   aud=$(claim_value aud)
   email=$(claim_value email)
   iss=$(claim_value iss)
   sub=$(claim_value sub)
-  fact claims PASS "the identity token carries $count claim(s) for the audience $PROBE_AUDIENCE ($len bytes of token): aud=$aud, email=$email, iss=$iss, sub=$sub. The token itself is never printed, and neither is the rest of the claim set"
+  names=$(sed -n 's/^[^|]*|\([^|]*\)|.*/\1/p' "$SCRATCH/claims" | paste -sd, -)
+  fact claims PASS "the identity token carries $count claim(s) for the audience $PROBE_AUDIENCE ($len bytes of token): aud=$aud, email=$email, iss=$iss, sub=$sub, and, with their values left out, $names. The token itself is never printed, and neither is any other claim's value"
   # The override's echo inside the container has a key and a verdict row of its
   # own. It is a reading in its own right -- the launch put the marker on the
   # execution and the container either saw it or did not -- and the block prints
@@ -875,19 +929,34 @@ judge_u1() {
   fi
 
   # U1's question: does anything in this token belong to THIS execution? The
-  # execution's own name was read off the platform's own answer, not off the
-  # container, so a claim carrying it is the platform's, not a self-report.
-  local name value culprit=""
+  # execution's own name and uid were read off the platform's own answer (the
+  # operation's metadata and the execution's document), not off the container, so
+  # a claim carrying either is the platform's, not a self-report. All three
+  # identifiers the platform gives an execution are looked for — the name, the
+  # full resource name, and the uid of the execution's own document — because a
+  # token that carries any of them tells one execution of a job from another,
+  # which is the whole of F11's reading. The row names WHICH claim carries it and
+  # what it carried, and never the value.
+  local name value culprit="" carried=""
   while IFS='|' read -r _ name value; do
     [ -n "$name" ] || continue
     case "$value" in
-    *"$EXEC_SHORT"* | *"$EXEC_FULL"*) culprit="$name"; break ;;
+    *"$EXEC_FULL"*) culprit="$name"; carried="the execution's full resource name" ;;
+    *"$EXEC_SHORT"*) culprit="$name"; carried="the execution's name" ;;
+    *)
+      if [ -n "$EXEC_UID" ]; then
+        case "$value" in
+        *"$EXEC_UID"*) culprit="$name"; carried="the execution's uid" ;;
+        esac
+      fi
+      ;;
     esac
+    if [ -n "$culprit" ]; then break; fi
   done <"$SCRATCH/claims"
   if [ -n "$culprit" ]; then
-    fact u1 FAIL "the identity token DOES carry something of the execution: the claim $culprit names it ($EXEC_SHORT). F11 reads the platform as unable to tell two executions of one job apart, and this says otherwise — the finding the reconciliation's R15 and its R-C1-execution exist for: a contract change binds the run's claim to this claim, and the residual in R5 closes for Cloud Run"
+    fact u1 FAIL "the identity token DOES carry something of the execution: the claim $culprit carries $carried. F11 reads the platform as unable to tell two executions of one job apart, and this says otherwise — the finding the reconciliation's R15 and its R-C1-execution exist for: a contract change binds the run's claim to this claim, and the residual in R5 closes for Cloud Run"
   else
-    fact u1 PASS "nothing in the identity token is the execution's: the claims name the account ($email) and the audience ($aud), and no claim value carries $EXEC_SHORT or its resource name. Two executions of one job minting for one audience get this same claim set, which is F11's reading of the platform and the reason a claim by a run proves the job rather than the execution"
+    fact u1 PASS "nothing in the identity token is the execution's: the claims name the account ($email) and the audience ($aud), and no claim value carries $EXEC_SHORT, its full resource name${EXEC_UID:+ or its uid}. Two executions of one job minting for one audience get this same claim set, which is F11's reading of the platform and the reason a claim by a run proves the job rather than the execution"
   fi
 }
 
@@ -1394,8 +1463,8 @@ main() {
   read_execution
   judge_u2
   if ! read_probe_log; then
-    fact claims FAIL "the execution's own log lines were not found in ${LOG_TRIES} read(s) of $P's Cloud Logging for $PROBE_JOB, so the identity token's claims were never read. Its lines are written under resource.type=cloud_run_job, and ingestion lags the execution; raise CHECK840_LOG_TRIES and run again, or read them by hand ($(first_line "$SCRATCH/log.err"))"
-    stop "the execution's own log lines did not arrive (the row above), so the identity token was never read. Nothing is concluded about U1"
+    fact claims FAIL "the execution's own log lines were never found WHOLE in ${LOG_TRIES} read(s) of $P's Cloud Logging for $PROBE_JOB — its block is read only when the probe's own closing line (CHK840 end=<n>) is there WITH the claims it announces, and ${PROBE_NOTE:-no read answered} — so the identity token's claim set was never read. Its lines are written under resource.type=cloud_run_job, and ingestion lags the execution line by line; raise CHECK840_LOG_TRIES and run again, or read them by hand ($(first_line "$SCRATCH/log.err"))"
+    stop "the execution's own log lines did not arrive whole (the row above), so the identity token's claims were never read. Nothing is concluded about U1"
   fi
   judge_u1
   read_launcher_role
@@ -1410,6 +1479,7 @@ LOG_TRIES=${CHECK840_LOG_TRIES:-12}
 LOG_SECONDS=${CHECK840_LOG_SECONDS:-5}
 EXEC_FULL=""
 EXEC_SHORT=""
+EXEC_UID=""
 MARKER_VALUE=""
 JOB_SA=""
 
