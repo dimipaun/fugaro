@@ -1880,7 +1880,13 @@ var knownCommands = [][2][]string{
 // D2301), which is the class the build route admits and the only list that
 // class is on, and — only on one that runs a resident orchestrator — the
 // daemon's own account (F19, O2), which is the class the label route and the
-// gated merge mint are served to. No secret ID and no secret value,
+// gated merge mint are served to, and — once the module renders them (LM12) —
+// the identity half's three (LM22): the account the runs' identities are
+// signed as (D3121), the roster's service accounts (D3123) and the implicit
+// admins the CLI's own gate reads (F29, R16). The identity three are on this
+// list AHEAD of the module, which is the order F28 states, and
+// CredentialsServiceEnvAwaitingTheModule names them until it renders them. No
+// secret ID and no secret value,
 // because the loader
 // derives the container from the project name and reads it as the service's own
 // account, and both job sets are derived from their triples rather than
@@ -1906,6 +1912,18 @@ var credentialsServiceEnv = []string{
 	// the run path at all, and it reaches no model credential: what the
 	// process does with it is match a caller's email claim.
 	"FUGARO_ORCHESTRATOR_ACCOUNTS",
+	// ... and the three names of the identity half (LM22): the account a run's
+	// identity is signed as (D3121), the roster's serviceAccount: entries
+	// (D3123) and the implicit admins the CLI's own gate reads out of the
+	// machine's configuration (F29, R16). None of them is a credential — the
+	// signer is an address, the other two are lists of addresses, and the
+	// service holds the minter row on the signer rather than a key of it — and
+	// all three are read by `credentials serve` into values nothing uses yet
+	// (internal/cli's credentialsServiceConfig), which is what makes them the
+	// cover's before they are the module's.
+	"FUGARO_SIGNER_ACCOUNT",
+	"FUGARO_ROSTER_SERVICE_ACCOUNTS",
+	"FUGARO_IMPLICIT_ADMINS",
 }
 
 // intakeServiceArgs and intakeServiceEnv are the argv and the environment
@@ -2047,13 +2065,28 @@ var (
 // list in the change that made installation/credentials.tf render it (DS2.2),
 // and FUGARO_REVIEW_JOB_ACCOUNTS left it the same way before that.
 //
+// The identity half's three are on it now with it (LM22, D3121, D3123, R16):
+// FUGARO_SIGNER_ACCOUNT, FUGARO_ROSTER_SERVICE_ACCOUNTS and
+// FUGARO_IMPLICIT_ADMINS, which `credentials serve` reads into values nothing
+// uses yet and the installation module renders next (LM12, which drops them
+// from this list in the same change that makes credentials.tf set them). They
+// are not classes the service admits a caller by — nothing is served from them
+// until the issuer is wired in (I1) — and the service must keep starting
+// wherever they are absent, which is why each is read as an OPTIONAL value on
+// internal/cli's side and the two ends move in that order.
+//
 // The function is the tripwire and not a carve-out: two tests hold it —
 // the golden test below fails on a name that is both here and on the plan, and
 // internal/cli's TestCredentialsServiceEnvIsTheDeploymentsOwn fails on one that
 // is here and in the module's own source — so a name added ahead of its module
 // cannot be left behind once the module renders it.
 func CredentialsServiceEnvAwaitingTheModule() []string {
-	return []string{"FUGARO_SHARED_JOB_ACCOUNTS"}
+	return []string{
+		"FUGARO_SHARED_JOB_ACCOUNTS",
+		"FUGARO_SIGNER_ACCOUNT",
+		"FUGARO_ROSTER_SERVICE_ACCOUNTS",
+		"FUGARO_IMPLICIT_ADMINS",
+	}
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;
