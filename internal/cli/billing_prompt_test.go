@@ -107,6 +107,30 @@ func pickerRun(t *testing.T, terminal bool, stdin string, o *initOptions) (*init
 	return &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader(stdin)), cmd: NewRootCmd()}, out
 }
 
+// withoutPlacement is a run's transcript with R7's placement block taken out
+// (docs/location-preference): a first run says where each thing it creates
+// will go before it asks the billing question, and that block is a statement
+// about the mapping rather than a question or a list of accounts. Its own line
+// — the intro, with the rows indented under it — goes, and what a test reads
+// is what is left, so an assertion about "what the run wrote" means what it
+// says without exempting the run from R7.
+func withoutPlacement(out string) string {
+	var keep []string
+	skipping := false
+	for _, l := range strings.Split(out, "\n") {
+		switch {
+		case strings.Contains(l, whereEachThingGoesIntro):
+			skipping = true
+		case skipping && strings.HasPrefix(l, "  "):
+			// One of the block's own rows.
+		default:
+			skipping = false
+			keep = append(keep, l)
+		}
+	}
+	return strings.Join(keep, "\n")
+}
+
 // pickerAnswers is the stdin that answers the wizard's questions before the
 // billing one — the GCP project (there is none to suggest here, so Enter is
 // not an answer), the region (Enter), the name (Enter), the rigor mode (the
@@ -348,8 +372,8 @@ func TestPickerNeverRunsUnderJSON(t *testing.T) {
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if out.Len() != 0 {
-		t.Errorf("--json is a document, and the wizard wrote a question into it:\n%s", out)
+	if rest := strings.TrimSpace(withoutPlacement(out.String())); rest != "" {
+		t.Errorf("--json is a document, and the wizard wrote a question into it:\n%s", rest)
 	}
 	if r.o.linkBilling != "" || billingListCalls(f) != 0 {
 		t.Errorf("the picker ran under --json: linkBilling %q, %d list call(s)\n%s", r.o.linkBilling, billingListCalls(f), out)
@@ -369,8 +393,8 @@ func TestPickerNeverRunsNonInteractive(t *testing.T) {
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if out.Len() != 0 {
-		t.Errorf("--non-interactive is a run nobody answers, and the wizard asked something:\n%s", out)
+	if rest := strings.TrimSpace(withoutPlacement(out.String())); rest != "" {
+		t.Errorf("--non-interactive is a run nobody answers, and the wizard asked something:\n%s", rest)
 	}
 	if r.o.linkBilling != "" || billingListCalls(f) != 0 {
 		t.Errorf("the picker ran with --non-interactive: %q, %d list call(s)\n%s", r.o.linkBilling, billingListCalls(f), out)
@@ -426,8 +450,8 @@ func TestBillingChoiceFailsAtOnceWithoutATerminal(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--link-billing") {
 		t.Errorf("exit %d, %v: the refusal does not name the flag that answers it", ExitCode(err), err)
 	}
-	if out.Len() != 0 {
-		t.Errorf("a pipe is no terminal, and the wizard asked something into it:\n%s", out)
+	if rest := strings.TrimSpace(withoutPlacement(out.String())); rest != "" {
+		t.Errorf("a pipe is no terminal, and the wizard wrote something besides R7's placement block into it:\n%s", rest)
 	}
 	if r.o.linkBilling != "" || billingListCalls(f) != 0 {
 		t.Errorf("the picker ran without a terminal: %q, %d list call(s)\n%s", r.o.linkBilling, billingListCalls(f), out)
@@ -499,8 +523,8 @@ func TestPickerNeverRunsUnderYes(t *testing.T) {
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if out.Len() != 0 {
-		t.Errorf("--yes wants no question answered, and the wizard asked one:\n%s", out)
+	if rest := strings.TrimSpace(withoutPlacement(out.String())); rest != "" {
+		t.Errorf("--yes wants no question answered, and the wizard asked one:\n%s", rest)
 	}
 	if r.o.linkBilling != "" || billingListCalls(f) != 0 {
 		t.Errorf("the picker ran under --yes: %q, %d list call(s)\n%s", r.o.linkBilling, billingListCalls(f), out)
@@ -563,6 +587,11 @@ func TestPickerNoSourceSaysSoAndRecordsNothing(t *testing.T) {
 		t.Errorf("the question does not say the accounts could not be listed, so the operator cannot tell this run from one with no picker at all:\n%s", out)
 	}
 	// Value-free: nothing of the answer that could not be read is repeated.
+	// Read without R7's placement block, which is the run's own reading of the
+	// mapping and not part of the question: the nearest Realtime Database's
+	// line names `asia-southeast1)` quite innocently, and that is not a
+	// numbered list.
+	asked := withoutPlacement(out.String())
 	for _, leak := range []string{
 		acct,
 		"the operator's own account",
@@ -571,7 +600,7 @@ func TestPickerNoSourceSaysSoAndRecordsNothing(t *testing.T) {
 		"The caller does not have permission", // the API's own words
 		"1)",                                  // a numbered list
 	} {
-		if strings.Contains(out.String(), leak) {
+		if strings.Contains(asked, leak) {
 			t.Errorf("the line about the unreadable list carries %q:\n%s", leak, out)
 		}
 	}
