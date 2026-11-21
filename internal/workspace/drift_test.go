@@ -437,6 +437,43 @@ func TestDriftNamesAnImplicitAdminOnAStatedPrincipal(t *testing.T) {
 	}
 }
 
+// TestDriftReadsTheRecordsRoleOnBothProjects is the implicit admin rule on a
+// member whose Firebase project is a project of its own. A node grant is keyed to
+// the member's GCP project, so the member's own roster is the only statement the
+// Firebase project has -- and the member's own admins hold that roster's write,
+// which is why the record is what the rule reads (D2813). Bob's roster entry says
+// admin and the record says viewer: the budget admin's role the update applied to
+// the Firebase project is drift beside his own viewer grant, and the change that
+// added it is named.
+func TestDriftReadsTheRecordsRoleOnBothProjects(t *testing.T) {
+	node := wu12Node(t,
+		[]Person{{Address: wu12Alice, Kind: KindHuman}, {Address: wu12Bob, Kind: KindHuman}},
+		[]string{wu12Alice}, []string{wu12Domains},
+		[]StoredGrant{wu12Person(wu12Member, wu12Bob, RoleViewer)})
+	at := wu12Now.Add(-time.Hour)
+	src := wu12Sources(node, wu12Authority{t: t, kind: AuthorityFolder, admins: []string{iamMember(wu12Alice)}})
+	src.Grants = []MemberGrant{{User: wu12Bob, Role: RoleAdmin}}
+	src.Bindings = []MemberBinding{
+		wu12Bound(wu12Member, wu12Bob, "roles/firebasedatabase.viewer", PrincipalPerson),
+		wu12Bound(wu12Firebase, wu12Bob, "roles/firebasedatabase.admin", PrincipalPerson),
+	}
+	src.Changes = &wu12Changes{changes: map[string][]SetIamPolicyChange{
+		wu12Firebase: {{
+			Project: wu12Firebase, Principal: "owner@corp.example", Member: iamMember(wu12Bob),
+			Role: "roles/firebasedatabase.admin", Entry: "budget-entry", At: at,
+		}},
+	}}
+	report := wu12Compute(t, src, MemberTarget{Project: wu12Member, Firebase: wu12Firebase})
+	wantExtra := []DriftBinding{{Project: wu12Firebase, Principal: wu12Bob, Role: "roles/firebasedatabase.admin", Kind: PrincipalPerson, Implicit: true}}
+	if !reflect.DeepEqual(report.Extra, wantExtra) {
+		t.Fatalf("the record's role for a person governs both of its projects (D2813, D689):\n got %+v\nwant %+v", report.Extra, wantExtra)
+	}
+	wantChanges := []ConsoleChange{{Project: wu12Firebase, Principal: "bob@corp.example", Role: "roles/firebasedatabase.admin", Entry: "budget-entry", At: at}}
+	if !reflect.DeepEqual(report.ConsoleChanges, wantChanges) {
+		t.Fatalf("the change that made a stated viewer a budget admin is named (D2811, R13):\n got %+v\nwant %+v", report.ConsoleChanges, wantChanges)
+	}
+}
+
 // TestDriftRosterExplainsTheFirebaseProject is F2 and R10 on the roster's side:
 // a member whose Firebase project is a project of its own derives that project's
 // bindings from the one roster it holds, so a person the roster names is not

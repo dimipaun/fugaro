@@ -338,12 +338,24 @@ func ComputeDrift(ctx context.Context, src DriftSources, m MemberTarget) (DriftR
 		// record stays the one grant's own project (rosterStatements): a grant the
 		// node does not state is D2805's unmapped binding on the project it names,
 		// not one widened into a second row.
+		// The record's role for this person on the member's own GCP project governs
+		// the member's Firebase project too: a node grant is keyed to the GCP
+		// project, so the roster would otherwise be the only statement there -- and
+		// the member's own admins hold that roster's write. A roster they rewrote to
+		// turn a viewer into an admin must not be what the implicit admin rule reads
+		// on the project the budget admin's role lands on.
+		recordRole, recordStates := stated[driftPair{m.Project, driftAddress(g.User)}]
 		for _, project := range memberProjects(m) {
 			p := driftPair{project, driftAddress(g.User)}
 			roster[p] = true
-			if _, ok := stated[p]; !ok {
-				stated[p] = g.Role
+			if _, ok := stated[p]; ok {
+				continue
 			}
+			if recordStates {
+				stated[p] = recordRole
+				continue
+			}
+			stated[p] = g.Role
 		}
 	}
 	live := map[driftPair]driftLive{}
