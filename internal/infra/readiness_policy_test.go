@@ -280,13 +280,14 @@ func TestReadinessWarnsWhenAnApplyWouldRemoveTheJobFirebaseBackend(t *testing.T)
 	}
 }
 
-// The drift note above is asked before the generic "your budget is on and you
-// carry no backend" one, and this is why: a config that lost its
-// budget.rtdb_url still carries the mode its owner set (budgetEnv writes the
-// mode whenever it is not off), so both notes are true at once, and only the
-// drift one names the damage — that this apply is what removes the policy from
-// the jobs that can read it today. Asking about the mode first would answer
-// "nothing refuses this deploy" for exactly that apply.
+// The drift note above is asked before the generic "the config names a budget
+// and you carry no backend" one, and this is why: a config that lost its
+// budget.rtdb_url still names a budget, so both notes are true at once
+// (AB5 keys the generic one on the config rather than on the job's
+// FUGARO_BUDGET_MODE, which every job carries now), and only the drift one
+// names the damage — that this apply is what removes the policy from the jobs
+// that can read it today. Asking the generic one first would answer "nothing
+// refuses this deploy" for exactly that apply.
 func TestReadinessPrefersTheDriftNoteOverTheModeNote(t *testing.T) {
 	f := newCloud(t)
 	spec, err := Repo(budgetInputs(t, "\nbudget:\n  mode: enforce\n  per_run_usd: 5\n"))

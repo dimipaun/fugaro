@@ -61,8 +61,8 @@ const (
 	// restricted web API key (not a secret) that signs a run's token in go to
 	// every job whenever the installation has them, whatever the mode (D11,
 	// plan task 1.4 step 1); how long the backend may be unreachable before
-	// the run halts is set only when the config sets one, and only when the
-	// mode is not off.
+	// the run halts is set whenever the config sets one, whatever the mode
+	// (AB5: every job names the mode too, and the grace goes with it).
 	RTDBURLEnv        = runner.RTDBURLEnv
 	FirebaseAPIKeyEnv = runner.FirebaseAPIKeyEnv
 	BudgetGraceEnv    = runner.BudgetGraceEnv
