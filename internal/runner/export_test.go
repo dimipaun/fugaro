@@ -157,6 +157,16 @@ func (h *RunHandle) NoteExhausted(reset time.Time) {
 	h.r.noteExhausted(credsvc.ExhaustedUntil{ResetAt: reset})
 }
 
+// NoteUnreachable is a call that could not reach the credentials service
+// (D2983) as the gateway's own answer delivers it: it ends the stage in flight,
+// and stage then waits for the bound the answer names and resumes the stage's
+// session. retryAt is when the gateway stops waiting (its own bound measured
+// from the first call that could not reach the service), and service is which
+// service it was, as the gateway names it.
+func (h *RunHandle) NoteUnreachable(retryAt time.Time, service string) {
+	h.r.noteUnreachable(gateway.Unreachable{RetryAt: retryAt, Service: service})
+}
+
 // ServiceAnswer is the same answer arriving the way it does in a real run:
 // internal/gateway parses the credentials service's answer out of its wire
 // body and hands it to the run through the upstream's OnServiceAnswer hook
