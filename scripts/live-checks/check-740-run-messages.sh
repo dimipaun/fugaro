@@ -150,6 +150,37 @@ owner() { printf '%s: %s\n' "$PROG" "$*" >&4; }
 ABORT_REASON=""
 REACHED_END=no
 CLEANUP_RUNNING=no
+# Everything the steps hand each other, empty until the step that reads it. A
+# step that ends early (a launch that refused, a run that never ended) leaves the
+# ones after it with nothing to read, and they say so; with `set -u` an
+# uninitialised name would end the run instead, with no block for the owner.
+RUN_ID=""
+RUN_REF=""
+SLUG=""
+LAUNCH_REPO=""
+LAUNCH_STATUS=""
+MESSAGE_KEY=""
+SEQ_PLAIN=""
+SEQ_NOW=""
+RECORD_READ=no
+RUN_ENDED=no
+PROJECT=""
+REGION=""
+BUCKET=""
+EXECUTION=""
+EXEC_PROJECT=""
+EXEC_LOCATION=""
+EXEC_JOB=""
+ACCEPTING=""
+ROW_STAGE=""
+ROW_STATUS=""
+ROW_TERMINAL=""
+TELL_SEQ=""
+TELL_ERR=""
+FUGARO_BIN=""
+TS_DECISION=""
+TS_NOTE=""
+PROJECT_JOBS=""
 die() { say "$*"; ABORT_REASON=$*; exit 2; }
 
 # stop REASON: records a FAILed fact and ends the run. The EXIT trap prints the
@@ -382,22 +413,33 @@ CALL_PID=""
 run_call() { # run_call SECONDS OUT LOG cmd...
   local secs=$1 out=$2 log=$3
   shift 3
+  # job control, so the call is a process group of its own and the deadline
+  # reaches whatever the call started rather than only the call itself.
   set -m
   "$@" </dev/null >"$out" 2>"$log" &
   CALL_PID=$!
-  local waited=0
-  while kill -0 "$CALL_PID" 2>/dev/null; do
-    if [ "$waited" -ge "$secs" ]; then
-      local pid=$CALL_PID
-      stop_call
-      wait "$pid" 2>/dev/null || true
-      return 124
-    fi
-    sleep 1
-    waited=$((waited + 1))
-  done
-  local status=0
+  # A watchdog rather than a poll: `kill -0` cannot tell a running child from one
+  # that has exited and not been reaped, so a poll would sleep a whole tick on
+  # every call that is already done. The watchdog's marker file is what tells the
+  # two endings apart -- its own kill from the call's.
+  local fired="$SCRATCH/.watchdog.$$" watchdog="" status=0
+  rm -f "$fired"
+  # The watchdog's own descriptors are cut off from this script's: it sleeps for
+  # the whole deadline, and an output descriptor left open in it would hold a
+  # pipe open long after the call it watched has ended (which is what a caller
+  # capturing this script's output would then be waiting on). Its own process
+  # group is what makes the kill below reach the sleep it is running.
+  (
+    sleep "$secs"
+    : >"$fired"
+    kill -TERM -- "-$CALL_PID" 2>/dev/null || kill -TERM "$CALL_PID" 2>/dev/null || true
+  ) </dev/null >/dev/null 2>&1 &
+  watchdog=$!
   wait "$CALL_PID" || status=$?
+  kill -TERM -- "-$watchdog" 2>/dev/null || kill -TERM "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
+  if [ -f "$fired" ]; then status=124; fi
+  rm -f "$fired"
   CALL_PID=""
   return "$status"
 }
@@ -406,6 +448,7 @@ stop_call() {
   if [ -n "${CALL_PID:-}" ] && kill -0 "$CALL_PID" 2>/dev/null; then
     kill -TERM -- "-$CALL_PID" 2>/dev/null || kill -TERM "$CALL_PID" 2>/dev/null || true
     kill -KILL -- "-$CALL_PID" 2>/dev/null || true
+    wait "$CALL_PID" 2>/dev/null || true
   fi
   CALL_PID=""
 }
@@ -735,6 +778,11 @@ step_release() {
   local v feature=no status=0
   run_call "$CALL_SECONDS" "$SCRATCH/version.out" "$SCRATCH/version.err" "$FUGARO_BIN" version || status=$?
   v=$(head -n 1 "$SCRATCH/version.out" 2>/dev/null | head -c 60 || true)
+  # A release build prints its number bare (internal/cli's versionTemplate:
+  # exactly the Version variable and a newline); a leading v is dropped if one
+  # is there, so `v0.27.0` is read as the release it is rather than as a build
+  # that names no version.
+  v=${v#v}
   fact fugaro-version PASS "${v:-fugaro version printed nothing}"
   local help=""
   status=0
@@ -954,6 +1002,7 @@ step_end() {
     unmeasured run-ended "the run had not ended after ${RUN_SECONDS}s (last row: stage=${ROW_STAGE:-unknown}, status=${ROW_STATUS:-unknown}), so its record was NOT read: a record read while a run is still working is whatever was there before. This is not a finding about the message channel — the rows below are the ones it leaves unmeasured. Watch it with 'fugaro watch ${RUN_ID}'"
     return 0
   fi
+  RUN_ENDED=yes
   fact run-ended PASS "${RUN_REF} ended in ${waited}s, status ${ROW_STATUS:-unknown} — read from 'fugaro runs ls --json'. Every fate below is this run's own record whatever its ending: what the messages became is the runner's statement, and a run that failed after delivering them still delivered them"
 }
 
@@ -963,8 +1012,10 @@ step_end() {
 step_record() {
   if [ -z "$RUN_ID" ]; then
     unmeasured record "there is no run whose record could be read: the row above says why"
-    unmeasured message-plain "there is no record to read a fate from: the row above says why"
-    unmeasured message-now "there is no record to read a fate from: the row above says why"
+    return 0
+  fi
+  if [ "$RUN_ENDED" != yes ]; then
+    unmeasured record "the run had not ended when this check's own bound ran out, and a record read while a run is still working is whatever was there before: the record was NOT read, so no fate below it was either. The run is not cancelled by this check stopping — watch it with 'fugaro watch ${RUN_ID}' and run this check again, or read its record yourself with 'gcloud storage cat gs://${BUCKET}/runs/${SLUG}/${RUN_ID}/result.json'"
     return 0
   fi
   local key="runs/${SLUG}/${RUN_ID}/result.json"
@@ -1001,6 +1052,7 @@ step_record() {
     fact record FAIL "${key} carries no accepting messages block (accepting=${ACCEPTING:-none}), so this run's runner reads no message at all: it is a runner from before ${RELEASE}, or a recipe with no coder stage, and the two messages this check sent were refused or will never be read. The run's job image is built from the release the repository is on — 'fugaro update' rebuilds it"
     return 0
   fi
+  RECORD_READ=yes
   fact record PASS "${key} records ${RUN_ID} (accepting=${ACCEPTING}, format=$(field_of format "$REC"), flags=$(field_of flags "$REC"), $(field_of messages "$REC") message(s)), read from the bucket as you would read it. The runner is on ${RELEASE} or later and reads messages"
 }
 
@@ -1014,6 +1066,11 @@ step_record() {
 # forced stop` when a forced stop left a session that could not be resumed and
 # the stage went on in a fresh one. Each of those is quoted as it stands.
 step_messages() {
+  if [ "$RECORD_READ" != yes ]; then
+    unmeasured message-plain "the run's own record was NOT read — the record row above says why — and a fate can be read only from the record the runner wrote. Nothing about this message is concluded here"
+    unmeasured message-now "the run's own record was NOT read — the record row above says why — so whether a quiet point was found (U2, U3) was NOT measured"
+    return 0
+  fi
   if [ -z "${SEQ_PLAIN:-}" ]; then
     unmeasured message-plain "no plain message was sent, so the record holds no fate for one: the rows above say why"
   else
@@ -1398,7 +1455,8 @@ usage() {
   printf 'rule (U4).\n'
   printf '\n'
   printf '  --installation NAME  the installation to read (the local config in force must answer it; belong is refused)\n'
-  printf '  --repo OWNER/NAME    the repository the small run is launched in (a REAL launch: it opens a pull request)\n'
+  printf '  --repo OWNER/NAME    the repository the small run is launched in, as owner/name (a REAL\n'
+  printf '                       launch: it pushes a branch and opens a pull request there)\n'
   printf '  --recipe NAME        the recipe that run uses (default: the repository'"'"'s own)\n'
   printf '  --dry-run            print the plan and touch nothing\n'
   printf '\n'
@@ -1448,7 +1506,7 @@ parse_args() {
   [ -n "$REPO" ] || die "--repo is required: this check launches a run, and a run is launched in a repository. usage: $USAGE"
   case "$REPO" in
   */*) ;;
-  *) die "--repo '$REPO' is not a repository as owner/name (or a path inside a checkout): this check launches by name, so it needs the owner/name form. usage: $USAGE" ;;
+  *) die "--repo '$REPO' is not a repository as owner/name (nor a path inside a checkout): this check launches by name, so it needs the owner/name form and knows nothing about your checkout. usage: $USAGE" ;;
   esac
 }
 
