@@ -123,6 +123,13 @@ type Secrets struct {
 	// a run lists the versions of many — and a test asking whether a secret
 	// was touched at all asks the other question.
 	versionLists map[string]int
+	// held is what a secrets.testIamPermissions call answers, by secret ID: the
+	// subset of the asked permissions the caller holds. It is nil for a test that
+	// never set it, and nil holds EVERY permission asked — the fake cannot model
+	// a project's IAM, and the default a test should have to opt OUT of is the
+	// one that changes no other test's behaviour. SetHeldPermissions is how a test
+	// says a caller is not an owner (SetHeldPermissions(id) with no permission).
+	held map[string][]string
 }
 
 type fakeSecret struct {
@@ -171,11 +178,16 @@ var (
 	// prints and the time beside them are one version's.
 	accessRE       = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/(latest|[0-9]+):access$`)
 	secretPolicyRE = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+):getIamPolicy$`)
-	versionRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+)$`)
-	destroyRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):destroy$`)
-	disableRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):disable$`)
-	enableRE       = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):enable$`)
-	labelTermRE    = regexp.MustCompile(`^labels\.([a-z0-9_-]+)=([a-z0-9_-]*)$`)
+	// secretPermissionsRE is the pre-flight probe every writer of a provider key
+	// makes before it reads a value (the project-owner probe, KS2 of
+	// docs/keys-through-service): it answers which of the asked permissions the
+	// caller holds on ONE container, and never a policy.
+	secretPermissionsRE = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+):testIamPermissions$`)
+	versionRE           = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+)$`)
+	destroyRE           = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):destroy$`)
+	disableRE           = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):disable$`)
+	enableRE            = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):enable$`)
+	labelTermRE         = regexp.MustCompile(`^labels\.([a-z0-9_-]+)=([a-z0-9_-]*)$`)
 )
 
 // NewSecrets starts a Secret Manager fake that lives until the test ends.
@@ -359,6 +371,23 @@ func (f *Secrets) SetPolicy(id string, bindings []Binding) {
 	s.policy = cloneBindings(bindings)
 }
 
+// SetHeldPermissions is what a secrets.testIamPermissions call answers for secret
+// id: the permissions the caller holds there. A call with none held is the
+// caller that is no project owner, which is the state the provider-key writers
+// refuse. A test that never calls this gets an unset held, which holds
+// everything asked (Secrets.held).
+func (f *Secrets) SetHeldPermissions(id string, permissions ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.secrets[id] == nil {
+		f.t.Fatalf("gcpfake: SetHeldPermissions(%q): no such secret", id)
+	}
+	if f.held == nil {
+		f.held = map[string][]string{}
+	}
+	f.held[id] = append([]string(nil), permissions...)
+}
+
 func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	if r.Method == http.MethodPost && secretsPathRE.MatchString(r.URL.Path) && f.OnCreate != nil {
 		f.OnCreate(r.URL.Query().Get("secretId"))
@@ -425,6 +454,41 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		servePolicy(w, r.URL.Query(), s.policy)
+	case (r.Method == http.MethodGet || r.Method == http.MethodPost) && secretPermissionsRE.MatchString(p):
+		m := secretPermissionsRE.FindStringSubmatch(p)
+		s := f.secrets[m[2]]
+		if s == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Secret ["+m[2]+"] not found.")
+			return
+		}
+		// The generated client sends the permissions in the POST body
+		// (projects.secrets.testIamPermissions takes its request there), while a
+		// hand-made GET carries them in the query; both are served, so a test
+		// can drive the probe either way.
+		asked := r.URL.Query()["permissions"]
+		if r.Method == http.MethodPost && len(body) != 0 {
+			var req struct {
+				Permissions []string `json:"permissions"`
+			}
+			if err := json.Unmarshal(body, &req); err == nil && len(req.Permissions) != 0 {
+				asked = req.Permissions
+			}
+		}
+
+		// An unset held (nil) holds everything asked: the fake models no IAM, and
+		// the answer every existing test's write already relies on is the one that
+		// keeps this probe from refusing writes those tests are not about.
+		if f.held == nil {
+			writeJSON(w, http.StatusOK, map[string]any{"permissions": asked})
+			return
+		}
+		held := make([]string, 0, len(asked))
+		for _, want := range asked {
+			if slices.Contains(f.held[m[2]], want) {
+				held = append(held, want)
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"permissions": held})
 	case r.Method == http.MethodDelete && secretPathRE.MatchString(p):
 		m := secretPathRE.FindStringSubmatch(p)
 		if f.secrets[m[2]] == nil {

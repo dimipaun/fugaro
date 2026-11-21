@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 )
 
 // TestStubScopeRefusesEveryCall is C1's red step and its whole test. The stub
@@ -60,6 +61,8 @@ func TestStubScopeRefusesEveryCall(t *testing.T) {
 		SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath,
 		MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath,
 		WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath,
+		identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath,
+		identitywire.DevicePath, identitywire.ProbePath,
 	} {
 		if !servedRoute(&http.Request{Method: http.MethodPost, URL: &url.URL{Path: path}}) {
 			t.Errorf("servedRoute(%q) is false: this list is the service's own routes, and a route that stopped being served has to change here rather than read as one no scope serves", path)

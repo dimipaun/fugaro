@@ -782,18 +782,28 @@ var policyAdmittedRules = []string{
 	fmt.Sprintf("this machine's config is not behind the published node (D854), which is the state in which publishing writes version %d over a node this binary's own may write", projectpolicy.Version),
 }
 
-// gateStep judges the workspace node this stage is about to publish, and answers
-// whether the gate admitted it: the workspace stage's version of the policy
-// stage's gateStep, for the second stage of this command whose document is the
-// database node it writes rather than a plan.
+// gateStep judges the document the workspace stage is about to publish, and
+// answers whether the gate admitted it: the workspace stage's version of the
+// policy stage's gateStep, for the second stage of this command whose document
+// is the database node it writes rather than a plan.
 //
-// The document is p.body — the bytes the stage's conditional write puts at
-// workspaces/<name>, built once and confirmed against, so the document the gate
-// judged and the document that lands are the same bytes (the ETag the write is
-// conditional on is the read the diff was made from). The two questions are
-// workspaceAdmittedRules, which the stage answered before it built the
-// document: the database is this installation's (budgetDBUnadopted, D1017) and
-// the node in play is one this binary's own may write over.
+// The document is the one this step's write puts: the record's bytes (p.body),
+// built once and confirmed against, so the document the gate judged and the
+// document that lands are the same bytes (the ETag the write is conditional on
+// is the read the diff was made from) — or, on the run whose record already
+// carries what this installation declares, the credentials node's bytes
+// (p.creds.body), which is the only document that run writes. Both are one
+// declaration of one stage, and "the record is already right and the node is
+// what this run writes" is the ordinary case: every workspace owner upgrading
+// from the release that published the record, and every later change to the
+// pool alone, has a run whose whole write is the node. Judging the absent
+// record there would refuse that run, and the workspace's own service would
+// have nothing to resolve a caller by. The two questions are the ones the stage
+// answered before it built the document: the database is this installation's
+// (budgetDBUnadopted, D1017) and the node in play is one this binary's own may
+// write over — workspaceAdmittedRules for the record, and
+// workspaceCredentialsAdmittedRules for the run whose document is the
+// credentials node, which has a version of its own.
 //
 // A publish that ADMITS something is initflow.Typed, the class D846 gives the
 // policy stage's raised ceiling and the one D1026 refuses whatever a plan gate
@@ -808,30 +818,43 @@ var policyAdmittedRules = []string{
 // ("it runs under the gate `update` already opens", §6; reconciliation F32
 // names it the cloud write of the two that the gate ADMITS).
 //
-// The widening's refusal is read off p.widens and the session's own marker
-// (D1555): a fence read off a class the same release deletes would have left
-// the membership unfenced. What a widening therefore still is is a step the
-// gate never admits and a coding agent's session never writes.
+// The widening's refusal is read off p.allWidens() and the session's own marker
+// (D1555): the confirmation's own list, which is the record's widening and the
+// credentials node's pool — a pool-only write puts credentials in the
+// workspace's callers' reach, so it is a step no plan gate judges exactly as a
+// member is (allWidens states the class from the other side). A fence read off a
+// class the same release deletes would have left the group unfenced. What a
+// widening therefore still is is a step the gate never admits and a coding
+// agent's session never writes.
 func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) (bool, error) {
 	r := s.e.r
 	if !r.gateUnderway() {
 		return false, nil
 	}
-	doc := p.body
+	// The document is the one this step's write puts: the record when it has
+	// bytes to write, and the credentials node otherwise — the run whose record
+	// already carries what this installation declares writes that node and
+	// nothing else, which is this stage's ordinary case (the comment above).
+	doc, rules := p.body, workspaceAdmittedRules
+	if len(doc) == 0 && p.creds != nil {
+		doc, rules = p.creds.body, workspaceCredentialsAdmittedRules
+	}
 	if len(doc) == 0 {
-		// A node write with no bytes to write is the stage's own contract
+		// A step with no bytes to write at all is the stage's own contract
 		// broken, and it is refused rather than published: an empty document is
 		// the one thing this gate must never hand to a write.
-		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the workspace node this step would publish is empty"), Refusal: initflow.GateRefusedUnread}
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the workspace document this step would publish is empty: it writes neither the record nor the credentials node"), Refusal: initflow.GateRefusedUnread}
 	}
-	conv := managedmode.ConvergeAdmitted(doc, workspaceAdmittedRules)
-	if len(p.widens) > 0 {
+	conv := managedmode.ConvergeAdmitted(doc, rules)
+	if len(p.allWidens()) > 0 {
 		// The record decides who is in the group, so a publish that admits a
 		// member — the whole membership on a workspace that has no published
 		// record yet included — is a step no plan gate judges, whatever the
 		// document looks like (D1026): nothing stands in for the owner's own
-		// word and nothing is recorded for it.
-		conv = managedmode.ConvergeUnjudged(doc, workspaceAdmittedRules)
+		// word and nothing is recorded for it. The pool is that rule's other
+		// half: what it puts in a caller's reach is the workspace's own money,
+		// and allWidens reads both because one run's write admits both at once.
+		conv = managedmode.ConvergeUnjudged(doc, rules)
 	}
 	mg, err := r.gate.g.admit(ctx, conv)
 	if err != nil {
@@ -841,14 +864,15 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 	if !initflow.GateStandsIn(r.conditions(), mg) {
 		// The publish that admits something to the group is the owner's own
 		// step, and the fence on it is the session's (D1555, the same fence as
-		// D1552's): a widening is what refuses here — p.widens is every write
-		// that puts more in the group, the first record which chooses the whole
-		// of it included — and the marker is what asks it, which is what keeps
-		// refusing a coding agent's session now the class system is gone
-		// (D1555's own reason for the fence being this one). What D1026 keeps
-		// out of a plan gate's reach is the step itself: a widening is one no
-		// plan gate may judge, so the sentence below names that rule and no
-		// rule that passed.
+		// D1552's): a widening is what refuses here — p.allWidens() is every
+		// write that puts more in the group, the record's own list (the first
+		// record, which chooses the whole of it, included) and the pool the
+		// credentials node puts in a caller's reach — and the marker is what
+		// asks it, which is what keeps refusing a coding agent's session now the
+		// class system is gone (D1555's own reason for the fence being this
+		// one). What D1026 keeps out of a plan gate's reach is the step itself:
+		// a widening is one no plan gate may judge, so the sentence below names
+		// that rule and no rule that passed.
 		//
 		// The sentence is the coding agent's alone, and the person at a real
 		// terminal on a managed project is not asked for the typed name (the
@@ -863,7 +887,7 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 		// the gate has no sentence for it: a mark revoked between the two reads
 		// is a project that is not managed at this moment, and a fallback
 		// inventory is not a verdict about this document either.
-		if len(p.widens) > 0 && marker != "" {
+		if len(p.allWidens()) > 0 && marker != "" {
 			refused := conv.Refuse()
 			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedUnjudged}
 		}
@@ -884,6 +908,18 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 var workspaceAdmittedRules = []string{
 	"the database is this installation's: budgetDBUnadopted admitted it (D1017)",
 	fmt.Sprintf("the published node is one this binary's own may write over: there is none, or it is at version %d (or at a version the migration carries to it in place)", projectpolicy.WorkspaceVersion),
+}
+
+// workspaceCredentialsAdmittedRules is the same record for the run whose whole
+// write is the credentials node (gateStep's second document): the stage's two
+// questions are the same two — the database is this installation's, and the node
+// in play is one this binary's own may write over — and only the version the
+// second one names differs, because that document has a version of its own and
+// the record's is not being written at all. Recording the record's version there
+// would put a rule in the audit record that no question of that run asked.
+var workspaceCredentialsAdmittedRules = []string{
+	"the database is this installation's: budgetDBUnadopted admitted it (D1017)",
+	fmt.Sprintf("the published credentials node is one this binary's own may write over: there is none, or it is at version %d (or at a version the migration carries to it in place)", projectpolicy.WorkspaceCredentialsVersion),
 }
 
 // gateApplied records the step the gate admitted, AFTER the step's own write

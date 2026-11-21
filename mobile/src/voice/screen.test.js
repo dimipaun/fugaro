@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
-// The voice screen's rules (mobile plan, Task P3.5; D122, D127, D126, D118).
+// The voice screen's rules (mobile plan, Task P3.5; D122, D127, D126, D118),
+// and its two P5.3.7 additions at the end: the indicator's place (§4.2's badge,
+// never blank, never a guess) and the engine tag on each transcript line.
 //
 // The plan's verification is four sentences, and this file is those four, in
 // order, over the fakes -- no device, no network, no database, no microphone
@@ -47,7 +49,8 @@ import { LICENCE_SPEECH, LICENCE_STATE_CODES, LICENCE_STATES } from '../licence/
 import { GATE_CODES } from '../mailbox/gate.js';
 import { macOf } from '../mailbox/mac.js';
 import { MemoryMailboxStore } from '../mailbox/store.js';
-import { QUEUE_CAP, createVoiceScreen } from './screen.js';
+import { renderIndicator, withConsent } from '../voice-switch/index.js';
+import { QUEUE_CAP, SCREEN_CODES, createVoiceScreen } from './screen.js';
 import { DIALOGUE_OUTCOME, createVoiceDialogue } from './dialogue.js';
 import { INTERRUPT_SWITCH } from './interrupt.js';
 import { createPipelineSpeaker } from './speaker.js';
@@ -146,6 +149,8 @@ async function harness(options = {}) {
     ...(options.switch === undefined ? {} : { switch: options.switch }),
     ...(options.queueCap === undefined ? {} : { queueCap: options.queueCap }),
     ...(options.utterance === undefined ? {} : { utterance: options.utterance }),
+    ...(options.indicator === undefined ? {} : { indicator: options.indicator }),
+    ...(options.engine === undefined ? {} : { engine: options.engine }),
   });
   return {
     audioIn,
@@ -870,6 +875,7 @@ test('the screen shows what it is doing, in one frozen snapshot', async () => {
   const state = h.screen.state();
   assert.equal(Object.isFrozen(state), true);
   assert.deepEqual(Object.keys(state).sort(), [
+    'indicator',
     'lease',
     'leaseRefused',
     'microphone',
@@ -885,7 +891,8 @@ test('the screen shows what it is doing, in one frozen snapshot', async () => {
   assert.equal(Object.isFrozen(state.queued), true);
   // Nothing has happened yet, and the snapshot says so rather than guessing:
   // no presence is `offline: false`, because P1.4 has not answered.
-  assert.deepEqual({ ...state }, {
+  const { indicator, ...rest } = state;
+  assert.deepEqual(rest, {
     switch: 'off',
     presence: null,
     offline: false,
@@ -898,14 +905,195 @@ test('the screen shows what it is doing, in one frozen snapshot', async () => {
     transcript: null,
     refused: null,
   });
+  // The indicator has its place and is never blank (P5.3.7, design §4.2): one
+  // badge per direction, and P5.3.6's fail-closed badge until the switch
+  // answers -- which is `local — checking`, engine local, send false. This
+  // harness wires no switch, so there is nothing to ask and the stand-in is
+  // what a screen renders.
+  assert.equal(Object.isFrozen(indicator), true);
+  assert.deepEqual(Object.keys(indicator).sort(), ['stt', 'tts']);
+  for (const [direction, badge] of Object.entries(indicator)) {
+    assert.deepEqual(Object.keys(badge).sort(), [
+      'direction', 'dismissible', 'engine', 'inFlight', 'persistent', 'provider', 'reason', 'refusal', 'send', 'state', 'text',
+    ], direction);
+    assert.equal(badge.direction, direction);
+    assert.equal(badge.text, 'local — checking');
+    assert.equal(badge.state, 'checking');
+    assert.equal(badge.engine, 'local');
+    assert.equal(badge.provider, null);
+    assert.equal(badge.send, false, 'a badge the app could not build is never permission to send');
+    assert.equal(badge.persistent, true);
+    assert.equal(badge.dismissible, false);
+    assert.equal(badge.refusal.code, SCREEN_CODES.NO_BADGE);
+  }
   // ... and it follows the pipeline rather than caching: the user speaking is
   // in it, and so is the partial they are still saying.
   await h.screen.start();
   h.audioIn.speechStart();
   h.stt.partial('run the');
   assert.equal(h.screen.state().turn, true);
-  assert.deepEqual(h.screen.state().transcript, { text: 'run the', final: false });
+  assert.deepEqual(h.screen.state().transcript, { text: 'run the', final: false, engine: 'local' });
   h.audioIn.speechEnd();
   h.stt.final('run the tests');
-  assert.deepEqual(h.screen.state().transcript, { text: 'run the tests', final: true });
+  assert.deepEqual(h.screen.state().transcript, { text: 'run the tests', final: true, engine: 'local' });
+});
+
+// --- P5.3.7: the indicator's place, and the engine on each line -------------
+
+/** A badge built by P5.3.6's own renderer, never by hand: a fixture that spelled
+ * a badge itself could agree with `isBadge` about a shape the switch never
+ * produces. */
+function badgeFor(direction) {
+  const consent = withConsent(null, 'deepgram', Date.UTC(2026, 9, 19)).consent;
+  return renderIndicator({
+    direction,
+    settings: { stt: 'remote', tts: 'local' },
+    consent,
+    status: { ok: true, providers: ['deepgram'], direction: { stt: true, tts: false }, reason: null },
+    lastCallInDirection: null,
+  });
+}
+
+test('the indicator has its place, and the switch’s answer is what it shows', async () => {
+  const asked = [];
+  const h = await harness({
+    indicator: async (direction) => {
+      asked.push(direction);
+      return badgeFor(direction);
+    },
+  });
+  // The screen asks once as it is built (design §4.2: the badge is in place
+  // before anything is spoken): the first direction's ask is already made by
+  // the time a caller holds the screen, with no call of its own.
+  assert.ok(asked.length > 0, 'the screen asks the switch as it is built');
+  // ... and the app asks again on the design's own events, for both directions:
+  // the switch is per direction, and one badge over two directions would be a
+  // badge about neither.
+  const built = asked.length;
+  await h.screen.refreshIndicator();
+  assert.ok(asked.length >= built + 2, 'a refresh asks both directions');
+  assert.deepEqual([...new Set(asked)].sort(), ['stt', 'tts']);
+
+  const { indicator } = h.screen.state();
+  assert.deepEqual({ ...indicator.stt }, {
+    ...indicator.stt,
+    text: 'remote (deepgram)',
+    state: 'remote',
+    engine: 'remote',
+    provider: 'deepgram',
+    send: true,
+    reason: null,
+    inFlight: false,
+    persistent: true,
+    dismissible: false,
+    refusal: null,
+  });
+  assert.equal(indicator.stt.direction, 'stt');
+  // The other direction's switch is `local`, and its badge says so: two
+  // directions, two answers, in one snapshot.
+  assert.equal(indicator.tts.text, 'local');
+  assert.equal(indicator.tts.engine, 'local');
+  assert.equal(indicator.tts.send, false);
+
+});
+
+test('the badge is in the snapshot before the switch has answered, and it is never blank', async () => {
+  // A source that never settles is what the slot before the first answer is
+  // for: the screen is waiting on the hop, and §4.2 says the owner sees
+  // `local — checking` rather than nothing while they wait. An app that
+  // rendered a blank badge would be showing a blank where a promise about the
+  // owner's speech belongs.
+  const h = await harness({ indicator: () => new Promise(() => {}) });
+  const { indicator } = h.screen.state();
+  for (const direction of ['stt', 'tts']) {
+    assert.equal(indicator[direction].text, 'local — checking', direction);
+    assert.equal(indicator[direction].engine, 'local', direction);
+    assert.equal(indicator[direction].provider, null, direction);
+    assert.equal(indicator[direction].send, false, direction);
+    assert.equal(indicator[direction].refusal.code, SCREEN_CODES.NO_BADGE, direction);
+  }
+});
+
+test('a badge source that throws, or answers what is not a badge, leaves the fail-closed badge', async () => {
+  const h = await harness({
+    indicator: async (direction) => {
+      if (direction === 'stt') throw new Error('the record could not be read');
+      // A badge with a field the screen does not know is not a badge: the field
+      // set is P5.3.6's, and rendering an unknown field would be rendering a
+      // shape the switch never promised.
+      return { ...badgeFor(direction), extra: true };
+    },
+  });
+  await h.screen.refreshIndicator();
+
+  const { indicator } = h.screen.state();
+  for (const direction of ['stt', 'tts']) {
+    assert.equal(indicator[direction].text, 'local — checking', direction);
+    assert.equal(indicator[direction].engine, 'local', direction);
+    assert.equal(indicator[direction].send, false, direction);
+    assert.equal(indicator[direction].refusal.code, SCREEN_CODES.NO_BADGE, direction);
+  }
+  // A screen whose switch cannot be read keeps working: the badge is a
+  // stand-in, and nothing else in the snapshot changed.
+  assert.equal(h.screen.state().refused, null, 'the badge is not a refusal of the owner’s message');
+});
+
+test('the engine that produced an utterance is tagged on that line, and stays with it', async () => {
+  let engine = 'local';
+  const h = await harness({ engine: () => engine });
+  await h.screen.start();
+
+  h.audioIn.speechStart();
+  h.stt.final('run the tests');
+  assert.deepEqual(h.screen.state().transcript, { text: 'run the tests', final: true, engine: 'local' });
+
+  // The tag is a fact about the utterance, not about the route taken later: a
+  // line read after the second utterance went to a provider still says `local`.
+  engine = 'deepgram';
+  assert.equal(h.screen.state().transcript.engine, 'local');
+
+  h.audioIn.speechStart();
+  h.stt.final('and the linter');
+  assert.deepEqual(h.screen.state().transcript, { text: 'and the linter', final: true, engine: 'deepgram' });
+});
+
+test('an engine that cannot be named leaves its line untagged, and never tagged local', async () => {
+  const bad = [
+    () => { throw new Error('no route'); },
+    () => '',
+    () => 7,
+    () => undefined,
+  ];
+  for (const engine of bad) {
+    const h = await harness({ engine });
+    await h.screen.start();
+    h.audioIn.speechStart();
+    h.stt.final('run the tests');
+    // Not `local`: a line that said local about words that may have reached a
+    // provider is the one lie the badge exists to prevent (§4.2).
+    assert.equal(h.screen.state().transcript.engine, null);
+    assert.equal(h.screen.state().transcript.text, 'run the tests', 'and the words are still shown');
+  }
+});
+
+test('a badge source or an engine that is not a function is refused where the screen is built', async () => {
+  const h = await harness();
+  for (const indicator of ['renderIndicator', {}, 7]) {
+    assert.throws(
+      () => createVoiceScreen({
+        pipeline: h.pipeline, client: h.client, now: h.now, holder: PHONE, indicator,
+      }),
+      TypeError,
+      String(indicator),
+    );
+  }
+  for (const engine of ['local', {}, 7]) {
+    assert.throws(
+      () => createVoiceScreen({
+        pipeline: h.pipeline, client: h.client, now: h.now, holder: PHONE, engine,
+      }),
+      TypeError,
+      String(engine),
+    );
+  }
 });
