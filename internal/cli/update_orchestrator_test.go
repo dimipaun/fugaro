@@ -220,6 +220,143 @@ func TestOrchestratorBlockIsWrittenOnlyWhenOptedIn(t *testing.T) {
 	})
 }
 
+// orchestratorConvergeRig is the installation one release behind as this
+// door's own convergence test needs it: the converge rig — a checkout, a
+// published node and a plugin pin from convergePrev — with the credentials
+// service deployed under the previous release's image, and the resident
+// orchestrator's block written by hand exactly as an operator without a writer
+// wrote it (the task's own before-state). withBlock is the two fixtures the
+// HARD RULE names: an installation that opted in under the release behind, and
+// one that never did.
+//
+// The installation root's plan holds the two images moving, because a plan
+// that reports no changes is never applied (TF.Plan) and the whole point here
+// is the document Terraform is handed. The outputs are the ones that apply
+// reads back, and they carry the credentials service this run's tfvars name
+// (the installation stage refuses the half-carried state).
+func orchestratorConvergeRig(t *testing.T, withBlock bool) *convergeRig {
+	t.Helper()
+	r := newConvergeRig(t, currentNode())
+	currentRelease(t)
+	publishCredentialsImage(t, r.imagesRig, convergeRelease)
+	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
+	if withBlock {
+		seedOrchestratorBlock(t, r.imagesRig, oldCredentialsRef(convergePrev))
+	}
+	// The rig's document answers the state reads under "show -json" while the
+	// plan answers under "show@installation"; without the first, the fallback
+	// the fake documents (a script naming only "show" answers the state too)
+	// would let this stage's plan be read as the installation's state, which
+	// manages nothing.
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	changes := []planChange{change("module.installation.google_cloud_run_v2_service.credentials", "update")}
+	if withBlock {
+		changes = append(changes, change("module.installation.google_cloud_run_v2_service.orchestrator", "update"))
+	}
+	r.setPlanAt(t, "installation", changes...)
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
+	})}
+	r.save(t)
+	return r
+}
+
+// TestUpdateConvergesAnInstallationAtThePreviousVersionWithAndWithoutTheBlock
+// is the HARD RULE's own fixture, in both directions: `fugaro update` alone
+// converges an installation at the release behind whether or not it holds the
+// resident orchestrator's block (plan tasks P5.1b and P5.1c).
+//
+// Holding the block is the direction that can destroy something. The account
+// and its five bindings are STATE, and the spec this run rebuilds the root's
+// document from never carries the key (Orchestrator is the one writer that
+// echoes the installation's own opt-in). A run whose carry dropped it would
+// hand Terraform a document without var.orchestrator, which is the plan of the
+// account's removal — a google_service_account is data-bearing under D1551 and
+// the removal rule REFUSES that plan rather than applying it (tf/cover.go's
+// RefusesRemovalType), so the installation would not merely lose its daemon,
+// it would stop converging: every later update repeats the refusal. What the
+// run must leave is therefore the block it found, with one member moved.
+//
+// The moved member is the image, onto the pin this release resolved for the
+// credentials service — `fugaro orchestrator serve` is a subcommand of that
+// same binary — and NOTHING else about the block moves: the account, the two
+// names of its token-minter row, the service, the tick and the database are
+// the installation's record, and a run that recomposed them would be
+// re-deciding grants the design's section 4.3 fixes.
+//
+// And the second update plans what the first left: the document handed to
+// Terraform is the one the first run wrote, byte for byte, which is what "the
+// installation has converged" means for the one member a release moves.
+//
+// The empty direction is the switch's own promise, checked where it matters —
+// on an installation that is genuinely at the release behind and converging
+// for other reasons. No run invents the block: not the one that writes the
+// others (the credentials service's, the intake's), and not one that would
+// have to derive every field of it anyway, since the credentials service is
+// there and the config's budget block is not empty.
+func TestUpdateConvergesAnInstallationAtThePreviousVersionWithAndWithoutTheBlock(t *testing.T) {
+	t.Run("holding a block written by hand", func(t *testing.T) {
+		r := orchestratorConvergeRig(t, true)
+		before := orchestratorBlockIn(t, r.imagesRig)
+		if before == nil || before["image"] != oldCredentialsRef(convergePrev) {
+			t.Fatalf("the fixture's block is not the release behind's: %v", before)
+		}
+
+		convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+		after := orchestratorBlockIn(t, r.imagesRig)
+		if after == nil {
+			t.Fatalf("after fugaro update, the installation's %s carries no orchestrator block. The account and its bindings are state, and the document this run handed Terraform is the plan of their destruction — which the removal rule refuses (a google_service_account is data-bearing under D1551), so the installation stops converging rather than losing only its daemon", infra.VarsFile)
+		}
+		if got := after["image"]; got != r.credentialsRefAt(convergeRelease) {
+			t.Errorf("the orchestrator's image after the update = %v, want this release's pin %s: `fugaro orchestrator serve` is a subcommand of the binary the credentials service runs, so a daemon left on the release behind's process reads this run's state with the reader behind it", got, r.credentialsRefAt(convergeRelease))
+		}
+		want := map[string]any{}
+		for k, v := range before {
+			want[k] = v
+		}
+		want["image"] = r.credentialsRefAt(convergeRelease)
+		if !reflect.DeepEqual(after, want) {
+			t.Errorf("the update changed more of the block than the image:\n%v\nwant\n%v\n: the account, its grants, the service, the tick and the database are the installation's own record of what it opted into", after, want)
+		}
+
+		// And the installation converges: the daemon's identity is armed (the
+		// block is the record the account exists, orchestratorIdentityOf), and
+		// a second update hands Terraform the document the first left.
+		if !orchestratorBlockHeld(initProject) {
+			t.Errorf("after fugaro update, the installation's %s holds no block the daemon's identity can read (orchestratorIdentityOf): a block the run carried but the reader cannot read is an identity that mints nothing", infra.VarsFile)
+		}
+		// The document above is the one a second update plans from, and that is
+		// the whole of "a second update plans nothing" as this rig can hold it:
+		// the door is not run twice here, for the reason TestUpdateIsIdempotent
+		// gives — this rig's first run onboards the repository, which leaves the
+		// checkout different from the default branch, and the second run's
+		// repository stage stops for the user over exactly that (its own,
+		// correct refusal). What a second run does to the block is pinned where
+		// the rig can run the door twice, on the opt-in's own rig
+		// (TestOrchestratorImageFollowsTheReleasePin's second run: the same
+		// document, byte for byte, and no apply at all).
+	})
+
+	t.Run("holding no block", func(t *testing.T) {
+		r := orchestratorConvergeRig(t, false)
+		if orchestratorBlockIn(t, r.imagesRig) != nil {
+			t.Fatalf("the fixture already carries a block: %v", orchestratorBlockIn(t, r.imagesRig))
+		}
+
+		convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+		if block := orchestratorBlockIn(t, r.imagesRig); block != nil {
+			t.Errorf("fugaro update wrote the resident orchestrator's block %v on an installation that never opted in: the account holds iam.serviceAccounts.signJwt on the budget signer, so it may exist only where an owner asked for it — and the run that wrote the credentials service's block and the intake's is not that ask", block)
+		}
+		if orchestratorBlockHeld(initProject) {
+			t.Error("after fugaro update, the daemon's identity is armed on an installation whose tfvars carry no block: the account does not exist there, and the identity would be an impersonation of an address no project holds, refused on every tick")
+		}
+	})
+}
+
 // marshalBlock renders a tfvars block for comparison, so an assertion about
 // "unchanged" reads the whole object rather than a member or two.
 func marshalBlock(t *testing.T, block map[string]any) string {
@@ -284,10 +421,27 @@ func TestOrchestratorImageFollowsTheReleasePin(t *testing.T) {
 	// A second run has nothing to do: the image is this release's, and the
 	// document it leaves is the one it found.
 	held := marshalBlock(t, after)
-	if out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID); err != nil {
-		t.Fatalf("the second update failed: %v\n%s%s", err, out, errOut)
+	// And with the installation converged there is nothing left to apply: the
+	// images stage's stale test reads the block's image (servicesImageStale), so
+	// a block it left behind would send the credentials-service stage through
+	// the move and the apply a second time, for ever — an upgrade nobody
+	// finishes.
+	appliesBefore := len(r.ran(t, "apply"))
+	r.script["plan"] = map[string]any{"exit": 0}
+	r.setPlanAt(t, "installation")
+	r.setPlan(t)
+	out, errOut, err = executeStdin(t, "", "update", "--firebase-project", fpID)
+	s = out + errOut
+	if err != nil {
+		t.Fatalf("the second update failed: %v\n%s", err, s)
 	}
 	if got := marshalBlock(t, orchestratorBlockIn(t, r)); got != held {
 		t.Errorf("a second update moved the block again:\n%s\nwant\n%s", got, held)
+	}
+	if after := len(r.ran(t, "apply")); after != appliesBefore {
+		t.Errorf("the second update applied %d time(s): a run after a converged update has nothing left to do\n%s", after-appliesBefore, s)
+	}
+	if !strings.Contains(s, "No changes") {
+		t.Errorf("the second update does not report a converged installation:\n%s", s)
 	}
 }
