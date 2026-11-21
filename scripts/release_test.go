@@ -2053,9 +2053,18 @@ func TestReleaseGateAcceptsTheMobileStreamsTag(t *testing.T) {
 }
 
 // runGate runs scripts/release-gate.sh from r.local against the commit sha, with
-// the fake gh on PATH and g's checks: the gate reads the tag's check-runs, so
-// its answer depends on the same state a release.sh run would see.
+// the fake gh on PATH and g's checks: the gate reads the ci runs on the tag's
+// commit and their check suites, so its answer depends on the same state a
+// release.sh run would see.
 func runGate(t *testing.T, r *releaseRepo, g *ghState, sha, tag string) runResult {
+	t.Helper()
+	return runGateEnv(t, r, g, sha, tag)
+}
+
+// runGateEnv is runGate with extra environment appended after the gate's own
+// defaults, for a test that has to move one of them (GATE_WAIT_SECONDS, or the
+// console release's GATE_REQUIRE_CONSOLE=1).
+func runGateEnv(t *testing.T, r *releaseRepo, g *ghState, sha, tag string, extra ...string) runResult {
 	t.Helper()
 	bin := fakeBinDir(t)
 	cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release-gate.sh"), tag)
@@ -2068,10 +2077,190 @@ func runGate(t *testing.T, r *releaseRepo, g *ghState, sha, tag string) runResul
 		"GATE_POLL_SECONDS=1",
 	)
 	cmd.Env = append(cmd.Env, g.env...)
+	cmd.Env = append(cmd.Env, extra...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()
 	return runResult{out: out.String(), err: err}
+}
+
+// ciRuns writes the fake's ci_runs state file: one "<sha><TAB><title><TAB>
+// <suite>" line per `ci` run on that commit, which is what the gate's read of
+// the commit's runs answers with. An optional fourth field is the run's
+// run_number, which is what orders the runs when a commit has more than one --
+// the gate reads the newest full one -- and defaults to the line's position. A
+// commit the file does not name has no `ci` run at all -- what a tag on a commit
+// nobody dispatched CI on looks like.
+func ciRuns(t *testing.T, g *ghState, lines ...string) {
+	t.Helper()
+	body := ""
+	if len(lines) > 0 {
+		body = strings.Join(lines, "\n") + "\n"
+	}
+	g.write(t, "ci_runs", body)
+}
+
+// tagCommit is the commit these gate tests cut their tag on: the fixture's
+// HEAD, which is origin/main's tip, so the gate's dispatch hint names `main`.
+func tagCommit(t *testing.T, r *releaseRepo) string {
+	t.Helper()
+	return strings.TrimSpace(testutil.Git(t, r.local, "rev-parse", "HEAD"))
+}
+
+// commitTree is the git tree id of a commit in dir, which the identical-tree
+// fallback compares between the tag's commit and a pull request head.
+func commitTree(t *testing.T, dir, sha string) string {
+	t.Helper()
+	return strings.TrimSpace(testutil.Git(t, dir, "rev-parse", sha+"^{tree}"))
+}
+
+// TestGateCountsAFullRunsChecks: `test`, `terraform` and `rules` come from the
+// check suite of the full `ci` run on the tag's commit, and from nothing else
+// (R1, D3040). A selected run on the same commit is not merged in -- its suite
+// answers failed for every required name in the fake, so a gate that read it
+// could not pass -- and a red check in the full run's own suite is the refusal.
+func TestGateCountsAFullRunsChecks(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks())
+	runGate(t, r, g, sha, "v0.12.0").requireSuccess(t)
+
+	ciRuns(t, g, sha+"\tci (full)\t"+sha, sha+"\tci (selected)\t"+sha+"-selected")
+	runGate(t, r, g, sha, "v0.12.0").requireSuccess(t)
+
+	red := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_TEST=failed")
+	runGate(t, r, red, sha, "v0.12.0").requireFailureContaining(t, "required check 'test' is failed")
+}
+
+// TestGateIgnoresASelectedRun: a `ci (selected)` run does not vouch for a tag.
+// The commit's own check runs used to be enough, and a selected run's `test` was
+// one of them; now the gate refuses at once -- it does not wait out
+// GATE_WAIT_SECONDS for a full run's checks to appear -- and prints the command
+// that dispatches the full run, naming main because the commit is main's tip.
+func TestGateIgnoresASelectedRun(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, sha+"\tci (selected)\t"+sha+"-selected")
+
+	start := time.Now()
+	res := runGateEnv(t, r, g, sha, "v0.12.0", "GATE_WAIT_SECONDS=45")
+	if res.err == nil {
+		t.Fatalf("the gate accepted a tag on a commit whose only ci run is selected:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "gh workflow run ci --ref main -f full=true") {
+		t.Errorf("the refusal does not print the command that dispatches a full run on main's tip:\n%s", res.out)
+	}
+	if elapsed := time.Since(start); elapsed > 20*time.Second {
+		t.Errorf("the gate waited %s on a commit whose ci runs can never satisfy it: it must refuse at once", elapsed)
+	}
+}
+
+// TestGateAcceptsTheOldTitle: every run a ci.yml without a run-name: produced is
+// titled exactly `ci`, and a tag cut before that change lands must still pass the
+// gate. A third title names no full run, so it does not.
+func TestGateAcceptsTheOldTitle(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, sha+"\tci\t"+sha)
+	runGate(t, r, g, sha, "v0.12.0").requireSuccess(t)
+
+	ciRuns(t, g, sha+"\tci (nightly)\t"+sha)
+	res := runGate(t, r, g, sha, "v0.12.0")
+	if res.err == nil {
+		t.Fatalf("the gate accepted a title that names neither `ci (full)` nor `ci`:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "no ci run on that commit is a full one") {
+		t.Errorf("the refusal does not say why the commit's runs do not count:\n%s", res.out)
+	}
+}
+
+// TestGateReadsTheNewestFullRun: only the newest full run's checks count, so a
+// re-dispatch that went green clears a red full run before it -- the reading
+// this replaces took the latest run per name, and a commit-level merge of every
+// full run's suite would block the tag for good. The rows come back in the order
+// the api listed them, which is why the fake writes the red run first: a gate
+// that took the first full row instead of the highest run number would refuse
+// here. The newest run being the red one is still the refusal.
+func TestGateReadsTheNewestFullRun(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks())
+
+	ciRuns(t, g,
+		sha+"\tci (full)\t"+sha+"-red\t7",
+		sha+"\tci (full)\t"+sha+"\t8")
+	runGate(t, r, g, sha, "v0.12.0").requireSuccess(t)
+
+	ciRuns(t, g,
+		sha+"\tci (full)\t"+sha+"\t8",
+		sha+"\tci (full)\t"+sha+"-red\t7")
+	runGate(t, r, g, sha, "v0.12.0").requireSuccess(t)
+
+	ciRuns(t, g,
+		sha+"\tci (full)\t"+sha+"\t7",
+		sha+"\tci (full)\t"+sha+"-red\t8")
+	runGate(t, r, g, sha, "v0.12.0").requireFailureContaining(t, "required check 'test' is failed")
+}
+
+// TestGateFallbackAppliesTheTitleRule: the identical-tree fallback reads the
+// merged pull request head's checks with the same rule as the target's, so a
+// head whose only `ci` run is selected vouches for nothing -- and one whose run
+// is full does. The target has no `ci` run of its own at all, which is the state
+// the fallback exists for.
+func TestGateFallbackAppliesTheTitleRule(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	// The head of the pull request merged as the target: an empty commit, so the
+	// same tree, pushed on the branch the fake reports as the PR's head.
+	testutil.Git(t, r.local, "checkout", "--quiet", "-b", "release/v0.12.0")
+	testutil.Git(t, r.local, "commit", "--quiet", "--allow-empty", "-m", "the pull request head")
+	head := strings.TrimSpace(testutil.Git(t, r.local, "rev-parse", "HEAD"))
+	testutil.Git(t, r.local, "push", "--quiet", "origin", "HEAD:refs/heads/release/v0.12.0")
+	testutil.Git(t, r.local, "checkout", "--quiet", "main")
+	if headTree, targetTree := commitTree(t, r.local, head), commitTree(t, r.local, sha); headTree != targetTree {
+		t.Fatalf("the fixture head's tree is %s, not the target's %s: the fallback is about identical trees", headTree, targetTree)
+	}
+
+	g := newGHState(t, r, greenChecks()).with("FAKE_GH_IDENTICAL_PR=1")
+	g.write(t, "pr_branch", "release/v0.12.0")
+	g.write(t, "pr_merge_sha", sha)
+
+	ciRuns(t, g, head+"\tci (full)\t"+head)
+	res := runGate(t, r, g, sha, "v0.12.0")
+	res.requireSuccess(t)
+	if !strings.Contains(res.out, "using the checks of "+head+" (identical tree)") {
+		t.Errorf("the fallback did not use the full run on the head:\n%s", res.out)
+	}
+
+	ciRuns(t, g, head+"\tci (selected)\t"+head+"-selected")
+	res = runGate(t, r, g, sha, "v0.12.0")
+	if res.err == nil {
+		t.Fatalf("the gate let a selected run on the pull request head vouch for the tag:\n%s", res.out)
+	}
+	if strings.Contains(res.out, "identical tree") {
+		t.Errorf("a selected run's checks must not vouch:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "required check 'test' is missing on "+sha) {
+		t.Errorf("the gate refused for the wrong reason:\n%s", res.out)
+	}
+}
+
+// TestGateKeepsTheConsoleLegsReading: with GATE_REQUIRE_CONSOLE=1 the console
+// release's gate requires the two matrix legs as it always did, and reads them
+// from the commit's own check runs: they come from console-tests.yml, and no
+// `ci` run's suite carries them -- a gate that looked for them in one could not
+// pass at all.
+func TestGateKeepsTheConsoleLegsReading(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := tagCommit(t, r)
+	g := newGHState(t, r, greenChecks())
+	runGateEnv(t, r, g, sha, "v0.12.0", "GATE_REQUIRE_CONSOLE=1").requireSuccess(t)
+
+	red := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_CONSOLE_MACOS=failed")
+	runGateEnv(t, r, red, sha, "v0.12.0", "GATE_REQUIRE_CONSOLE=1").
+		requireFailureContaining(t, "required check 'console (macos-latest)' is failed")
 }
 
 // TestLatestTagIgnoresNonStrictTags: -rc and four-part tags never count as
@@ -2920,6 +3109,19 @@ func TestReleaseGateAcceptsAPatchOnItsMaintenanceBranch(t *testing.T) {
 		t.Errorf("the gate did not say it took the maintenance path:\n%s", accepted.out)
 	}
 	runGate(t, r, g, git("rev-parse", "main"), "v1.2.1").requireSuccess(t)
+
+	// A patch whose only `ci` run is a selected one is refused at once, and the
+	// command it prints names the branch the commit is on rather than main: a
+	// dispatch is by ref, and release/1.2 is the ref that points at the fix.
+	sel := newGHState(t, r, greenChecks())
+	ciRuns(t, sel, fix+"\tci (selected)\t"+fix+"-selected")
+	selected := runGate(t, r, sel, fix, "v1.2.1")
+	if selected.err == nil {
+		t.Fatalf("the gate accepted a patch whose only ci run is a selected one:\n%s", selected.out)
+	}
+	if want := "gh workflow run ci --ref release/1.2 -f full=true"; !strings.Contains(selected.out, want) {
+		t.Errorf("want %q in:\n%s", want, selected.out)
+	}
 
 	// A commit on a branch that is not the line's own, cut from the same tag.
 	git("checkout", "--quiet", "-b", "scratch", "v1.2.0")

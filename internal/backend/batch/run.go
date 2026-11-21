@@ -159,13 +159,11 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 	// backend adds, so a run whose own watchdog is late is still bounded by
 	// Batch. maxRunDuration bounds a task once it is running; nothing bounds
 	// the queue, which is the reaper's queue deadline (design §1.4).
+	// The environment's variables are the whole of it: a Batch job mounts no
+	// secret (secrets.go, D3104), so the run's credentials arrive from the
+	// credentials service and nowhere else -- the launcher refuses a launch the
+	// service does not serve, before the mint, so no job is ever built for one.
 	env := &batch.Environment{Variables: vars}
-	// Names, never values: the VM reads the named secrets itself, and secrets.go
-	// is what mounts them (and what refuses a name the job's own variables
-	// already carry).
-	if err := b.secretVariables(env, full); err != nil {
-		return nil, err
-	}
 	return &batch.Job{
 		// The labels go in both fields (C13): Job.labels reach the job and
 		// its LogEntries, AllocationPolicy.labels reach the VMs.

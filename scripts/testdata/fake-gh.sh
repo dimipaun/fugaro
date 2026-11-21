@@ -11,6 +11,12 @@
 #   FAKE_GH_CHECK_TEST / _TERRAFORM / _RULES   success (default) |
 #                    failed | missing | pending | cancelled: what the
 #                    check-runs api reports for that name
+#   FAKE_GH_CHECK_CONSOLE_UBUNTU / _CONSOLE_MACOS  the same for the two console
+#                    legs scripts/release-gate.sh adds under
+#                    GATE_REQUIRE_CONSOLE=1, which it reads from the commit's
+#                    check runs (they come from console-tests.yml) and from
+#                    FAKE_GH_POST_CONSOLE_* / FAKE_GH_HEAD_CONSOLE_* once a PR
+#                    has merged
 #   FAKE_GH_POST_TEST / _TERRAFORM / _RULES   same, but only once a
 #                    PR has merged (overrides the above from then on)
 #   FAKE_GH_PRE_PENDING_CALLS  before the merge, the api reports "pending"
@@ -40,6 +46,21 @@
 #                    arguments start with FAKE_GH_FLAKY fail as a dropped
 #                    connection does ("net/http: TLS handshake timeout"), and
 #                    do nothing else
+#   ci_runs          a state FILE (not an env var): one
+#                    "<sha><TAB><title><TAB><suite>[<TAB><number>]" line per `ci`
+#                    run, which is what the gate's read of a commit's runs
+#                    answers with. The number is the run's run_number, the line's
+#                    own position when it is not written, and it is what orders
+#                    the runs: the gate counts the newest full one, so a re-
+#                    dispatch is a higher number than the run it replaced. The
+#                    lines come back in the order they are written, as the API
+#                    lists them. Without the file every commit has one full run,
+#                    whose check suite is the commit itself. A suite id that is
+#                    a commit sha answers that commit's checks; "<sha>-selected"
+#                    is a `ci (selected)` run's suite and "<sha>-red" a full
+#                    run's whose checks failed, both answering failed for every
+#                    required name, so a gate that read one of them where a
+#                    green run's suite was called for could not pass.
 #   FAKE_GH_RUN_RELEASE / FAKE_GH_RUN_IMAGES / FAKE_GH_RUN_WINDOWS
 #                    success (default) | failure | cancelled | pending |
 #                    missing: what the runs api reports for that workflow's
@@ -84,6 +105,8 @@ head_conclusion() {
     test) printf '%s' "${FAKE_GH_HEAD_TEST:-success}" ;;
     terraform) printf '%s' "${FAKE_GH_HEAD_TERRAFORM:-success}" ;;
     rules) printf '%s' "${FAKE_GH_HEAD_RULES:-success}" ;;
+    "console (ubuntu-latest)") printf '%s' "${FAKE_GH_HEAD_CONSOLE_UBUNTU:-success}" ;;
+    "console (macos-latest)") printf '%s' "${FAKE_GH_HEAD_CONSOLE_MACOS:-success}" ;;
   esac
 }
 
@@ -92,6 +115,11 @@ check_conclusion() {
     test) pre=${FAKE_GH_CHECK_TEST:-success} post=${FAKE_GH_POST_TEST:-$pre} ;;
     terraform) pre=${FAKE_GH_CHECK_TERRAFORM:-success} post=${FAKE_GH_POST_TERRAFORM:-$pre} ;;
     rules) pre=${FAKE_GH_CHECK_RULES:-success} post=${FAKE_GH_POST_RULES:-$pre} ;;
+    # The console legs, which only console-release.yml's gate requires
+    # (GATE_REQUIRE_CONSOLE=1): they come from console-tests.yml, so the gate
+    # reads them from the commit's check runs, never from a `ci` run's suite.
+    "console (ubuntu-latest)") pre=${FAKE_GH_CHECK_CONSOLE_UBUNTU:-success} post=${FAKE_GH_POST_CONSOLE_UBUNTU:-$pre} ;;
+    "console (macos-latest)") pre=${FAKE_GH_CHECK_CONSOLE_MACOS:-success} post=${FAKE_GH_POST_CONSOLE_MACOS:-$pre} ;;
   esac
   if [ -s "$dir/pr_merge_sha" ]; then
     n=$(($(cat "$dir/api_calls_$1" 2>/dev/null || echo 0) + 1))
@@ -210,6 +238,33 @@ case "$1 ${2:-}" in
   "api "*)
     case "$2" in
       */actions/runs*)
+        case "$*" in
+          *".display_title"*)
+            # scripts/release-gate.sh's read of a commit's `ci` runs: one
+            # tab-separated line per run, in the shape its --jq asks for
+            # ([run_number, check_suite_id, display_title] | @tsv), in the order
+            # the lines are written, exactly as the api lists runs -- the gate
+            # orders them itself, so this fake must not. The runs come from
+            # $dir/ci_runs (see the header); the gate keeps the newest row whose
+            # title says the run was full and reads that run's check suite.
+            sha=$(printf '%s' "$2" | sed -n 's|.*head_sha=\([^&]*\).*|\1|p')
+            if [ -f "$dir/ci_runs" ]; then
+              # A real tab: this file runs under /bin/sh, where $'\t' is not an
+              # escape but the four literal characters it is written with.
+              tab=$(printf '\t')
+              number=0
+              while IFS="$tab" read -r rsha title suite rnumber; do
+                [ -n "$rsha" ] || continue
+                number=$((number + 1))
+                [ "$rsha" = "$sha" ] || continue
+                printf '%s\t%s\t%s\n' "${rnumber:-$number}" "$suite" "$title"
+              done <"$dir/ci_runs"
+            else
+              printf '1\t%s\t%s\n' "$sha" "ci (full)"
+            fi
+            exit 0
+            ;;
+        esac
         # scripts/verify-release.sh's read of the runs a tag push started: one
         # tab-separated line per run, in the shape its --jq asks for
         # ([name, status, conclusion, head branch, event] | @tsv). The tag's own
@@ -274,6 +329,31 @@ case "$1 ${2:-}" in
     sha=$(printf '%s' "$2" | sed -n 's|.*/commits/\([^/?]*\)/check-runs.*|\1|p')
     gsha=$(printf '%s' "$2" | sed -n 's|.*/git/commits/\([^/?]*\)$|\1|p')
     psha=$(printf '%s' "$2" | sed -n 's|.*/commits/\([^/?]*\)/pulls.*|\1|p')
+    ssuite=$(printf '%s' "$2" | sed -n 's|.*/check-suites/\([^/?]*\)/check-runs.*|\1|p')
+    # The gate reads test, terraform and rules from the check suite of the full
+    # `ci` run it found, never from a selected one's (R1). A suite id that is a
+    # commit sha is that commit's own checks, read exactly as the commit arm
+    # below reads them; "<sha>-selected" is a selected run's suite and
+    # "<sha>-red" a full run's whose checks failed, and both answer failed for
+    # every required name: they are red here on purpose, so a gate that let
+    # either count where a green full run's suite was called for cannot pass.
+    if [ -n "$ssuite" ]; then
+      case "$ssuite" in
+        *-selected | *-red)
+          for name in test terraform rules; do
+            case "$*" in
+              *".name == \"$name\""*)
+                printf failed
+                exit 0
+                ;;
+            esac
+          done
+          echo "fake-gh.sh: the api asked a red or selected run's check suite about a required check name this fake has no arm for: $*" >&2
+          exit 1
+          ;;
+        *) sha=$ssuite ;;
+      esac
+    fi
     merge=$(cat "$dir/pr_merge_sha" 2>/dev/null || true)
     if [ -n "$gsha" ]; then
       [ -z "${FAKE_GH_GIT_FAIL:-}" ] || { echo "fake-gh.sh: git commits api down" >&2; exit 1; }
@@ -317,6 +397,25 @@ case "$1 ${2:-}" in
           ;;
       esac
     done
+    # The console legs, which only console-release.yml's gate requires
+    # (GATE_REQUIRE_CONSOLE=1). They come from console-tests.yml, so the gate
+    # reads them from the commit's check runs and never from a `ci` run's
+    # suite: a check-suites read that asks for one is the error below, not an
+    # answer, because no `ci` run's suite carries it.
+    if [ -z "$ssuite" ]; then
+      for name in "console (ubuntu-latest)" "console (macos-latest)"; do
+        case "$*" in
+          *".name == \"$name\""*)
+            if [ -n "$merge" ] && [ -s "$dir/pr_branch" ] && [ "$sha" = "$(head_sha)" ]; then
+              head_conclusion "$name"
+            else
+              check_conclusion "$name"
+            fi
+            exit 0
+            ;;
+        esac
+      done
+    fi
     printf 'fake-gh.sh: the api asked about a required check name this fake has no arm for: %s\n' "$*" >&2
     exit 1
     ;;

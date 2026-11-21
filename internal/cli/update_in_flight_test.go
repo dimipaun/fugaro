@@ -273,15 +273,18 @@ func TestUpdateSaysNothingWhenNothingRuns(t *testing.T) {
 	}
 }
 
-// TestUpdateInFlightLineNamesEveryStepThatCanReachARun: the audit found six
+// TestUpdateInFlightLineNamesEveryStepThatCanReachARun: the audit found eight
 // steps of the update that can still reach a run in flight — the budget mode's
 // raise to enforce, which a session re-reads on every lease while the policy
 // node is read once; the policy node itself, which a project routed through the
 // credentials cascade re-reads on every model call; the credentials service's
-// own replacement; the Bitbucket tokens that same publish carries; the creation
-// fact; and a retirement, which deletes an orphaned job and takes the executions
-// running on it with it — and the door's note names every one this run can take,
-// one short line each.
+// own replacement; the Bitbucket tokens that same publish carries; the Bitbucket
+// proxy switch the same stage turns on in the local config; the workspace
+// credentials node, which the workspace's own service re-reads as it serves, so
+// a member this run takes out of the table or an entry it unshares stops being
+// served; the creation fact; and a retirement, which deletes an orphaned job and
+// takes the executions running on it with it — and the door's note names every
+// one this run can take, one short line each.
 //
 // The rows are the mutation check of that reading: each one turns exactly one
 // step on and asserts the line is there, and the others are not. The first row
@@ -311,8 +314,11 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 		"routing":     map[string]any{"claude": map[string]any{"via": projectpolicy.RouteCascade}},
 	}
 	for _, tc := range []struct {
-		name    string
+		name string
+		// node is the published policy node, creds the published WORKSPACE
+		// credentials node: the two documents a row turns its own step on with.
 		node    map[string]any
+		creds   map[string]any
 		mode    string
 		managed bool
 		retire  bool
@@ -368,6 +374,18 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			notWant: []string{"budget mode", "policy:"},
 		},
 		{
+			// The workspace credentials node (C3, WS4), which the workspace's own
+			// service re-reads as it serves a call (R13): the node this row
+			// publishes carries a member the owner's table no longer declares, so
+			// the write this run makes takes a run in flight out of what the
+			// service serves. The fixture's config declares no workspace table at
+			// all, which is the same fact from the other side.
+			name: "the workspace credentials node a member is served by", mode: budget.ModeEnforce,
+			creds:   wsNodeWith(t, "aurora", []string{"member-gone"}),
+			want:    []string{"1 run in flight", "workspace:", "removed member", "service"},
+			notWant: []string{"budget mode", "policy:", "retirement"},
+		},
+		{
 			// The Bitbucket proxy switch (S6, D2306), and the step whose reach
 			// is the one this row is the mutation check of: the policy stage
 			// writes it at the operator's own machine and publishes the block
@@ -393,6 +411,9 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			}
 			if tc.node != nil {
 				f.db.Set(projectpolicy.PathShared(), tc.node)
+			}
+			if tc.creds != nil {
+				f.db.Set(projectpolicy.PathWorkspaceCredentials("aurora"), tc.creds)
 			}
 			f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
 			h := newMigrationRig(t, f, &initOptions{retire: tc.retire})

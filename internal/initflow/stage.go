@@ -153,6 +153,23 @@ const (
 	// stage and skips it — a member holds no grant on the workspace's project
 	// at all — so it is the owner's installation that publishes.
 	Workspace = "workspace"
+	// CredentialsRoute is the MEMBER's published record of where each of its
+	// repositories' credentials is served from (internal/cli/update_route.go,
+	// WS9, D2973/D2982): `config/policy/route/<slug>` in the member's own
+	// database, one record per repository, carrying the workspace's service
+	// address from the member's own pin and, per kind, whether the project's
+	// own copy serves it or the workspace's service does. A run reads it once
+	// at bootstrap and keeps the answer, so this stage is what writes the only
+	// leaves a run's reads are made of.
+	//
+	// It comes after the policy and the workspace stages: what it publishes is
+	// derived from the policy node the same run publishes (which credentials
+	// the member's own policy admits) and from the membership key and pin the
+	// workspace stage's own subjects declare — recording a route before the
+	// node it is derived from would publish a decision no policy backs. It
+	// comes BEFORE the layer's, and it needs neither the layer nor the
+	// checkout: the record is a database write and nothing else.
+	CredentialsRoute = "credentials-route"
 	// WorkspaceProject is the workspace's OWN project's root
 	// (internal/cli/workspace_create.go, W3): the workspace's own service
 	// account and the one grant that reaches the workspace's database, in the
@@ -297,6 +314,13 @@ var order = []slot{
 	// after the policy one because the two are the run's published documents
 	// and the policy node is what every run of the project is admitted by.
 	{name: Workspace, needs: []string{Installation2, Policy}},
+	// The route is the member's own record of where each repository's
+	// credentials are served (internal/cli/update_route.go). It needs the
+	// policy stage, because which kind the member's own copy serves is a
+	// question asked of the node that stage publishes, and it needs the
+	// installation's own stages for the database it writes into — the same
+	// two the workspace record needs and for the same reason.
+	{name: CredentialsRoute, needs: []string{Installation2, Policy}},
 	// The layer is what the checkout's images are built from, so it is
 	// published before the refresh that reads it: the checkout stage's cloud
 	// step builds this checkout's images off the layer that applies, and a
