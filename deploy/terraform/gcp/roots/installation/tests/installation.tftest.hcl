@@ -39,8 +39,8 @@ variables {
   # installation made before the mapping has its bucket and what discovery
   # reads back for one (LP6, R5).
   log_bucket_location = "us"
-  launchers              = ["user:launcher@example.com"]
-  operators              = ["user:operator@example.com"]
+  launchers           = ["user:launcher@example.com"]
+  operators           = ["user:operator@example.com"]
   # A viewer is in the fixture on purpose (RS4 of docs/roles-scopes): the
   # viewer's read-only role and its two reads only exist when the list is not
   # empty, so a fixture that names none plans an installation whose viewer
