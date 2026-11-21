@@ -32,7 +32,11 @@ package workspace
 //   - the MEMBER'S OWN ROSTER, decoded by the caller and handed in: this package
 //     cannot read that format (internal/access reaches it through
 //     internal/projectpolicy) and a second reader of it would be a second
-//     spelling of a wire format two CLIs share (C2's contract, §3);
+//     spelling of a wire format two CLIs share (C2's contract, §3). It is one
+//     list for both of the member's projects -- its own roots derive each of
+//     them from it (F2, R10) -- so a person it names explains a binding on
+//     either, while the grant the record is compared against stays on the one
+//     project the node keyed it to;
 //   - the MEMBER'S LIVE IAM, placed by WU4's `Bindings` (D2806, F17).
 //
 // EXTRA is a statement the member holds that the record does not state: a roster
@@ -309,8 +313,17 @@ func ComputeDrift(ctx context.Context, src DriftSources, m MemberTarget) (DriftR
 	var rosterStatements []driftStatement
 	for _, g := range src.Grants {
 		p := driftPair{m.Project, driftAddress(g.User)}
-		roster[p] = true
 		rosterStatements = append(rosterStatements, driftStatement{pair: p, role: g.Role, kind: PrincipalPerson, external: outsideDomains(g.User, src.Node.Domains)})
+		// The one roster is what the member's own roots derive BOTH projects'
+		// bindings from, so it explains a person on either of them (F2, R10) --
+		// without this every healthy member whose Firebase project is a project of
+		// its own reports its own people as extra. What is compared against the
+		// record stays the one grant's own project (rosterStatements): a grant the
+		// node does not state is D2805's unmapped binding on the project it names,
+		// not one widened into a second row.
+		for _, project := range memberProjects(m) {
+			roster[driftPair{project, driftAddress(g.User)}] = true
+		}
 	}
 	live := map[driftPair]driftLive{}
 	var liveBindings []driftLive

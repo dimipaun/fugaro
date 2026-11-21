@@ -396,6 +396,42 @@ func TestDriftExtraAndMissing(t *testing.T) {
 	}
 }
 
+// TestDriftRosterExplainsTheFirebaseProject is F2 and R10 on the roster's side:
+// a member whose Firebase project is a project of its own derives that project's
+// bindings from the one roster it holds, so a person the roster names is not
+// extra there. Without that, every healthy member of this shape reports its own
+// people as rows -- and reconcile removes extras on the member's roster (WU13) --
+// and the cross-check names the update that applied them as a hand-made change.
+func TestDriftRosterExplainsTheFirebaseProject(t *testing.T) {
+	node := wu12Node(t,
+		[]Person{{Address: wu12Alice, Kind: KindHuman}},
+		[]string{wu12Alice}, []string{wu12Domains},
+		[]StoredGrant{wu12Person(wu12Member, wu12Alice, RoleOperator)})
+	at := wu12Now.Add(-time.Hour)
+	src := wu12Sources(node, wu12Authority{t: t, kind: AuthorityFolder, admins: []string{iamMember(wu12Alice)}})
+	src.Grants = []MemberGrant{{User: wu12Alice, Role: RoleOperator}}
+	src.Bindings = []MemberBinding{
+		wu12Bound(wu12Member, wu12Alice, "roles/editor", PrincipalPerson),
+		// The three the member's Firebase root derives from the roster.
+		wu12Bound(wu12Firebase, wu12Alice, "roles/datastore.viewer", PrincipalPerson),
+		wu12Bound(wu12Firebase, wu12Alice, "roles/firebasedatabase.viewer", PrincipalPerson),
+		wu12Bound(wu12Firebase, wu12Alice, "roles/serviceusage.serviceUsageConsumer", PrincipalPerson),
+	}
+	src.Changes = &wu12Changes{changes: map[string][]SetIamPolicyChange{
+		wu12Firebase: {{
+			Project: wu12Firebase, Principal: "owner@corp.example", Member: iamMember(wu12Alice),
+			Role: "roles/firebasedatabase.viewer", Entry: "firebase-entry", At: at,
+		}},
+	}}
+	report := wu12Compute(t, src, MemberTarget{Project: wu12Member, Firebase: wu12Firebase})
+	if len(report.Extra) != 0 || len(report.Missing) != 0 {
+		t.Fatalf("the member's own roster explains its Firebase project:\n extra %+v\n missing %+v", report.Extra, report.Missing)
+	}
+	if len(report.ConsoleChanges) != 0 {
+		t.Fatalf("the member's own update on its Firebase project is not a change made in the console: %+v", report.ConsoleChanges)
+	}
+}
+
 // TestDriftNamesConsoleChangeNotUpdate is the cross-check (D2811, R13): a
 // SetIamPolicy whose resulting binding is drift and which no trail of Fugaro's
 // holds is named, and a member's own `fugaro update` never is -- the binding it
