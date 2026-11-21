@@ -268,7 +268,7 @@ func (o *WorkspaceMemberOps) Bindings(ctx context.Context, m workspace.MemberTar
 	own := memberOwnAccounts(m, outs, fo)
 
 	var out []workspace.MemberBinding
-	for _, project := range memberProjects(m) {
+	for _, project := range memberPolicyProjects(m) {
 		pol, err := c.CRM.Projects.GetIamPolicy(project, &cloudresourcemanager.GetIamPolicyRequest{
 			Options: &cloudresourcemanager.GetPolicyOptions{RequestedPolicyVersion: 3},
 		}).Context(ctx).Do()
@@ -547,10 +547,10 @@ func sortBindings(bindings []workspace.MemberBinding) {
 	})
 }
 
-// memberProjects is the member's projects whose policies are read, in the order
+// memberPolicyProjects is the member's projects whose policies are read, in the order
 // they are read: the GCP project first, and the Firebase project when it is a
 // project of its own (F2, R10) — the same pairing WU20's saProjects makes.
-func memberProjects(m workspace.MemberTarget) []string {
+func memberPolicyProjects(m workspace.MemberTarget) []string {
 	if m.Firebase == "" || m.Firebase == m.Project {
 		return []string{m.Project}
 	}
