@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/workspace-users.schema.json",
+  "title": "Fugaro workspace user ls",
+  "description": "The document `fugaro workspace user ls --json` prints: the workspace's members, what each of them is, and what the workspace knows about their access. It is a named set of fields and not a marshalled workspace.Roster (the `config list` rule): the roster node at `workspaceRosters/<name>` is read by this program and by nothing else, and a consumer reads this document instead. The node's own schema is schemas/workspace-roster.schema.json, and the two are different documents with different readers -- this one carries no folder id, no mechanism detail and no grant the workspace wrote, and every array of it is seeded rather than absent. What an `admin` row says here is the workspace's own admin LIST entry, which is a claim about a binding and not the binding itself: only an entry the live binding backs is trusted (D2823), and `status` is what reports the difference. Members are only ever added within a version, so removing or re-meaning one is what bumps it; no object here is closed for that reason, because a consumer that refused a field this schema does not know would refuse a newer CLI's document of the same version.",
+  "type": "object",
+  "required": [
+    "version",
+    "workspace",
+    "mechanism",
+    "domains",
+    "members"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "workspaceUsersDocVersion in internal/cli/workspace_user.go. 1 is the first version of this document: `workspace user ls` and the schema were published together, so no consumer reads an older one and nothing is owed an explanation yet."
+    },
+    "workspace": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The workspace the flag named, in the spelling the flag carried (a workspace name uses the project-name grammar, config.ProjectNameRE, F21). It is echoed back because a consumer merging two documents -- two workspaces read on one machine, or a document read beside a run's record -- has nothing else in the file that names it."
+    },
+    "mechanism": {
+      "type": "string",
+      "enum": [
+        "folder",
+        "sa"
+      ],
+      "description": "How the workspace holds the projects in it (workspace.Mechanisms, D2803): `folder` owns the folder its members' projects are moved into and an admin is a folder owner, `sa` reaches a member through an account of that member's own project. It is here because an admin binding reads differently under the two: a folder owner is read from the folder's IAM, a token creator from the account's."
+    },
+    "domains": {
+      "type": "array",
+      "description": "The workspace's allowed domains (D2812), folded and in the order the node holds them. This is the list `fugaro workspace domains` edits, and it is the whole of it: a machine-reader that asked that command for a document would be reading a second contract with a second version. An empty array is a workspace that admits nobody without the external mark, and not a list nobody has read.",
+      "items": {
+        "$ref": "#/$defs/domain"
+      }
+    },
+    "members": {
+      "type": "array",
+      "description": "One row per person and machine the workspace's roster holds, in address order (the node's own rule). An empty array is refused by the node's reader rather than written -- a roster names at least one person -- so a consumer that sees one is reading a document from something other than this command.",
+      "items": {
+        "$ref": "#/$defs/member"
+      }
+    }
+  },
+  "$defs": {
+    "domain": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One allowed domain, lower-cased as an address is folded (workspace.CanonicalAddress), and held to the node's own domain grammar by the reader that wrote it."
+    },
+    "member": {
+      "type": "object",
+      "required": [
+        "address",
+        "kind",
+        "external",
+        "admin",
+        "roles",
+        "grants"
+      ],
+      "description": "One member of the workspace, with what the workspace knows about their access. Nothing here is a credential, and nothing here is a grant the member's own roster has not been asked for: `grants` is read from the members themselves.",
+      "properties": {
+        "address": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The member's address in its canonical spelling (workspace.CanonicalAddress): a person's email address, or the service account's address a machine is named by. It is what the workspace's roster holds and what the audit trail's subject field carries."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "human",
+            "sa"
+          ],
+          "description": "Whether the member is a person or a machine (workspace.Kinds, D2806)."
+        },
+        "external": {
+          "type": "boolean",
+          "description": "D2812's mark: the person was admitted while their domain was not one of `domains`. It is written on every row, false included, because it is a statement about how somebody was admitted and not a default: the drift check COMPUTES it from `domains` rather than trusting it, so a row whose mark disagrees with the list is a difference that check reports. It is false on every machine, which comes from no domain."
+        },
+        "admin": {
+          "type": "boolean",
+          "description": "The workspace's own admin list names this member. It is a claim about a binding and not the binding: only an entry the live binding backs -- the folder's `roles/owner`, or the workspace IAM account's token creator -- is trusted (D2823), and `fugaro status` is what reports an entry with nothing behind it. It is false on every machine, which is never a workspace admin."
+        },
+        "roles": {
+          "type": "array",
+          "description": "A MACHINE's expected per-project roles (D2806): the workspace's record of what it expects the machine to hold, which `status` compares against the live IAM, and not a grant. It is empty on every person, whose roles are grants in the members' own rosters and appear under `grants` instead.",
+          "items": {
+            "$ref": "#/$defs/role"
+          }
+        },
+        "grants": {
+          "type": "array",
+          "description": "The stored grants this member holds in the members' own rosters, one entry per member and per role read there: the member projects in name order, and within one project the order that member's own roster holds. It is empty for a machine, because a member's own roster accepts only `user:` members and a machine is recorded in the workspace alone (D2806). A grant the workspace has written but the member's own `fugaro update` has not applied is not here: what a member holds is read from that member.",
+          "items": {
+            "$ref": "#/$defs/grant"
+          }
+        }
+      }
+    },
+    "role": {
+      "type": "object",
+      "required": [
+        "project",
+        "role"
+      ],
+      "description": "One project a machine is expected to hold a role in.",
+      "properties": {
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The member project the expectation is about, in the workspace's own spelling of it."
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "viewer",
+            "operator",
+            "admin"
+          ],
+          "description": "The role the workspace expects the machine to hold there (workspace.Roles)."
+        }
+      }
+    },
+    "grant": {
+      "type": "object",
+      "required": [
+        "project",
+        "role",
+        "scope"
+      ],
+      "description": "One grant a member holds in one member project's own roster: the role and what it covers. The node it is read from is that member's `config/admin/access` (internal/access), whose scope grammar is D1583: `project` for the whole project, `all-repos` for every repository the published policy admits, or the canonical repository patterns it covers, comma-separated.",
+      "properties": {
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The member project the grant is held in, which is one of the members the workspace links."
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "viewer",
+            "operator",
+            "admin"
+          ],
+          "description": "The role granted there, in the member's own roster's vocabulary (internal/access's Role)."
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What the role covers, in the scope grammar the member's roster stores (internal/access's Scope.String): `project`, `all-repos`, or the comma-separated canonical repository patterns of a narrower grant."
+        }
+      }
+    }
+  }
+}
