@@ -44,14 +44,16 @@ type claimCall struct {
 
 // claimCalls returns the calls the fixture's upstream read on the claim route.
 // A cascade run sends every call it makes to the credentials service to the one
-// host (C1.15), so this is where the run's claim is read.
-func claimCalls(t *testing.T, b *bk) []claimCall {
+// host (C1.15), so this is where the run's claim is read -- and the tests that
+// assert a run made none read the same list, so the absence is this upstream's
+// observation and not the run's own account of itself.
+func claimCalls(t *testing.T, f *anthropicfake.Fake) []claimCall {
 	t.Helper()
-	seen := b.fake.Seen()
+	seen := f.Seen()
 	var out []claimCall
 	for i, r := range seen {
 		if r.URL.Path == identitywire.ClaimPath {
-			out = append(out, claimCall{method: r.Method, header: r.Header, body: b.fake.Body(i)})
+			out = append(out, claimCall{method: r.Method, header: r.Header, body: f.Body(i)})
 		}
 	}
 	return out
@@ -134,7 +136,7 @@ func TestRunnerClaimsItsIdentity(t *testing.T) {
 	if err != nil || rec == nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("a run that claims its identity must finish on it: rec = %+v, err = %v", rec, err)
 	}
-	calls := claimCalls(t, b)
+	calls := claimCalls(t, b.fake)
 	if len(calls) != 1 {
 		t.Fatalf("the credentials service was asked to claim %d times, want the run's one: a claim is taken once (R5)", len(calls))
 	}
@@ -211,7 +213,7 @@ func TestRunnerHaltsWhenTicketAlreadyClaimed(t *testing.T) {
 	if !strings.Contains(rec.Halt.Detail, "fugaro run") {
 		t.Errorf("the halt's detail names no fix: %q", rec.Halt.Detail)
 	}
-	if got := len(claimCalls(t, b)); got != 1 {
+	if got := len(claimCalls(t, b.fake)); got != 1 {
 		t.Errorf("the service was asked to claim %d times after refusing one, want one: a refusal is an answer, and asking again answers the same thing", got)
 	}
 	if rec.Halt.Detail == "" || !strings.Contains(rec.Halt.Detail, "already claimed") {
@@ -250,7 +252,7 @@ func TestRunnerRetriesThenHaltsWhenIssuerUnreachable(t *testing.T) {
 	if !strings.Contains(rec.Halt.Detail, "fugaro run") {
 		t.Errorf("the halt's detail names no fix: %q", rec.Halt.Detail)
 	}
-	calls := claimCalls(t, b)
+	calls := claimCalls(t, b.fake)
 	if len(calls) < 2 {
 		t.Fatalf("the service saw %d claim attempts, want the retry: an attempt nothing answered is asked again", len(calls))
 	}
@@ -290,7 +292,7 @@ func TestRunnerStillOpensASealedToken(t *testing.T) {
 	if err != nil || rec == nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("a marked launch must open its sealed object as before: rec = %+v, err = %v", rec, err)
 	}
-	if got := len(claimCalls(t, b)); got != 0 {
+	if got := len(claimCalls(t, b.fake)); got != 0 {
 		t.Errorf("the run claimed its identity %d times with no ticket on its execution, want none: R7's other arm is the sealed object", got)
 	}
 }
@@ -323,5 +325,175 @@ func TestTheTicketIsReadFromTheJobEnvironment(t *testing.T) {
 		if bad != "" && strings.Contains(err.Error(), bad) {
 			t.Errorf("the ticket %q reaches the error text: %v", bad, err)
 		}
+	}
+}
+
+// TestRunnerWithATicketAndNoBackendRefuses is the ticket's half of M2's
+// refusal (the marker's is TestRunnerWithTheMarkerAndNoBackendRefuses): a job
+// whose launcher asked an issuer for this run's identity -- which it does only
+// when the project has a shared budget or a published policy -- and whose
+// environment carries no database to read it in. The run stops instead of going
+// on with the environment ceiling, no session and no kill switch.
+//
+// The two mechanisms answer M2 through one predicate (Backend.Issued), and that
+// is exactly what this test holds: a run that read the ticket as "nothing was
+// provisioned here" would find no backend, call this project's having published
+// nothing, and run on the ceiling the policy was published to replace.
+//
+// The run makes no claim on the way to that refusal, and that is an
+// observation of the placement rather than an incidental one: an identity is
+// claimed after the ceiling is known, so a run that asked the service for one
+// before knowing whether this installation has a budget would have taken it to
+// spend where nothing accounts for it.
+//
+// Mutation (verified, run and restored): make Backend.Issued answer
+// b.TokenMarked alone -- the run goes on, and both this test and
+// TestRunnerWithATicketAndNoBackendRefusesBeforeTheClone fail: this one on the
+// stage it reached (there is no refusal and no bootstrap halt at all), that one
+// on the git credential it handed out on the way to the clone.
+func TestRunnerWithATicketAndNoBackendRefuses(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "off", "")
+	withBucket(g.harness)
+	g.deps.Backend = runner.Backend{Ticket: ticketFixture}
+	rec, err := g.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a claimed run with no backend in its job must stop: rec = %+v", rec)
+	}
+	for _, want := range []string{identitywire.TicketEnv, runner.RTDBURLEnv, "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The refusal is M2's, met where the identity was taken, and not the
+	// claim's own: a run that got as far as the service would have a sentence
+	// about the claim and about the service.
+	if !strings.Contains(err.Error(), "carries no budget backend") {
+		t.Errorf("the refusal is not the missing backend's: %v", err)
+	}
+	if len(g.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+		t.Fatalf("the run went on: calls = %d, rec = %+v", len(g.agent.calls), rec)
+	}
+	if got := len(claimCalls(t, g.fake)); got != 0 {
+		t.Errorf("the run claimed its identity %d times with no backend to be accounted in, want none: an identity claimed there would carry no session, no cap and no kill switch", got)
+	}
+}
+
+// TestRunnerWithATicketAndNoBackendRefusesBeforeTheClone is the ticket's half of
+// the same regression, met at the policy read: the refusal has to come before
+// admissionCheck and before the provider is opened. Stopping later is the
+// fail-open direction -- the policy read answered "no policy", so the
+// allow-list was never consulted, a git credential was handed out and the
+// repository was cloned on a ceiling nobody had published.
+//
+// Mutation (verified, run and restored): make Backend.Issued answer
+// b.TokenMarked alone -- this test fails on the credential count ("N git
+// credential requests were made before the refusal") and on nothing else.
+func TestRunnerWithATicketAndNoBackendRefusesBeforeTheClone(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "off", "", "")
+	b.deps.Backend = runner.Backend{Ticket: ticketFixture}
+	rec, err := b.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a claimed run with no backend in its job must stop: rec = %+v", rec)
+	}
+	for _, want := range []string{identitywire.TicketEnv, runner.RTDBURLEnv, "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if b.auths == nil {
+		t.Fatal("the fixture is not counting git credential requests")
+	}
+	if *b.auths != 0 {
+		t.Errorf("%d git credential requests were made before the refusal: the run read its job's ticket as nothing having been provisioned, skipped admission and cloned", *b.auths)
+	}
+	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("a stage ran or an outcome was written: calls = %d, rec = %+v", len(b.agent.calls), rec)
+	}
+	if got := len(claimCalls(t, b.fake)); got != 0 {
+		t.Errorf("the run claimed its identity %d times before the refusal, want none: the claim is taken after the ceiling is known", got)
+	}
+}
+
+// TestRunnerHaltsWhenTheClaimURLIsNotThisRunToSend: the job's address for the
+// credentials service is http on a host that is not this machine, and the claim
+// carries the job's own Google ID token, the ticket and the nonce, so it would
+// travel in cleartext. A slip is given up over this and the run goes on without
+// one; a claim is not optional -- a run with a ticket holds no seal key -- so
+// the run halts (D143) rather than presenting them.
+//
+// Mutation (verified, run and restored): drop the checkSlipServiceURL call from
+// claimBudgetIdentity -- this test fails on the halt's detail (the run then
+// spends the retry trying to reach the host and halts saying it could not be
+// reached) and on nothing else.
+func TestRunnerHaltsWhenTheClaimURLIsNotThisRunToSend(t *testing.T) {
+	b := newCascade(t, cascadeConfig(t), &cascadeService{})
+	// A claim this run must never make: answered a success, so a run that made
+	// one would go on and look like a run that claimed properly.
+	answerClaim(t, b, func(int, http.Header, []byte) anthropicfake.Reply {
+		return claimAnswer(t, b.mintToken(repoSlug, runID, time.Now()))
+	})
+	claimed(t, b)
+	b.deps.Env = append(filterEnv(b.deps.Env, runner.CredentialsServiceURLEnv),
+		runner.CredentialsServiceURLEnv+"=http://credentials.example.invalid:8443")
+
+	rec, err := b.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatalf("a halt is an outcome and not an error: %v", err)
+	}
+	if rec == nil || rec.Status != runstore.StatusHalted {
+		t.Fatalf("the run did not halt on a URL it will not present its identity to: %+v", rec)
+	}
+	if rec.Halt == nil || rec.Halt.Reason != runstore.HaltBudgetUnavailable {
+		t.Fatalf("the halt is %+v, want %s", rec.Halt, runstore.HaltBudgetUnavailable)
+	}
+	if !strings.Contains(rec.Halt.Detail, "not https") {
+		t.Errorf("the halt's detail does not say why the claim was not made: %q", rec.Halt.Detail)
+	}
+	if !strings.Contains(rec.Halt.Detail, "fugaro run") {
+		t.Errorf("the halt's detail names no fix: %q", rec.Halt.Detail)
+	}
+	if got := len(claimCalls(t, b.fake)); got != 0 {
+		t.Errorf("the claim was sent %d times to a URL this run refuses, want none: the token, the ticket and the nonce would be in cleartext", got)
+	}
+}
+
+// TestRunnerHaltsWhenTheJobNamesNoCredentialsService: the execution carries a
+// ticket -- so the installation has an issuer, and this job cannot reach it --
+// and nothing of the launch can be spent anywhere else. The run halts rather
+// than going on with no identity at all.
+//
+// Mutation (verified, run and restored): make the missing-URL arm return the
+// run's usual path (nil, nil) instead of halting -- this test fails: the run
+// goes on with an empty identity, and what reaches it first is the budget
+// backend refusing "budget token: invalid: not a JWT" as an error, not a halt.
+// A run that got that far has already been admitted with no identity at all.
+func TestRunnerHaltsWhenTheJobNamesNoCredentialsService(t *testing.T) {
+	b := newCascade(t, cascadeConfig(t), &cascadeService{})
+	answerClaim(t, b, func(int, http.Header, []byte) anthropicfake.Reply {
+		return claimAnswer(t, b.mintToken(repoSlug, runID, time.Now()))
+	})
+	claimed(t, b)
+	// The job of an installation whose service address landed after this job
+	// was applied (U4): the ticket is on the execution and there is nowhere to
+	// present it.
+	b.deps.Env = filterEnv(b.deps.Env, runner.CredentialsServiceURLEnv)
+
+	rec, err := b.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatalf("a halt is an outcome and not an error: %v", err)
+	}
+	if rec == nil || rec.Status != runstore.StatusHalted {
+		t.Fatalf("the run did not halt with no credentials service to claim from: %+v", rec)
+	}
+	if rec.Halt == nil || rec.Halt.Reason != runstore.HaltBudgetUnavailable {
+		t.Fatalf("the halt is %+v, want %s", rec.Halt, runstore.HaltBudgetUnavailable)
+	}
+	for _, want := range []string{identitywire.TicketEnv, runner.CredentialsServiceURLEnv, "fugaro update"} {
+		if !strings.Contains(rec.Halt.Detail, want) {
+			t.Errorf("the halt's detail does not name %q: %q", want, rec.Halt.Detail)
+		}
+	}
+	if got := len(claimCalls(t, b.fake)); got != 0 {
+		t.Errorf("the claim was sent %d times with no service address in the job, want none", got)
 	}
 }
