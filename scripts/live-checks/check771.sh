@@ -34,13 +34,20 @@
 # Usage:      bash scripts/live-checks/check771.sh
 #             bash scripts/live-checks/check771.sh --dry-run
 #             bash scripts/live-checks/check771.sh --help
-# Needs:      bash, mktemp, python3, gcloud (authenticated as an OWNER of the
-#             project: the check reads the role, the IAM policy and the service's
-#             log) and fugaro (the guards).
-# Where:      the member's own installation, which for the dogfood installation
-#             is fugaro-dev in us-east5; both are hard-coded in this file. A
-#             project, region, account or service naming belong is refused by
-#             name.
+# Needs:      bash, mktemp, python3, gcloud (authenticated as an OWNER of BOTH
+#             projects: the member's, where the role and the IAM policy are read,
+#             and the workspace's own, where its service and its log are) and
+#             fugaro (the guards).
+# Where:      TWO projects, because the rows read two: the workspace's Cloud Run
+#             service and its log live in the WORKSPACE's own project (the
+#             project its own root deploys, deploy/terraform/gcp/roots/
+#             workspace/main.tf), which is named with CHECK771_WORKSPACE_PROJECT
+#             — there is no default, because the member's project carries no
+#             such service — and the member-side role and the binding that holds
+#             it live in the MEMBER's project, which for the dogfood installation
+#             is fugaro-dev. The region is us-east5, hard-coded in this file. A
+#             project, region, account, service or role naming belong is refused
+#             by name.
 # Creates:    nothing. The copies of the role, the IAM policy, the service
 #             document and the log entries this run reads sit in a scratch
 #             directory (mode 0700) removed from the exit trap even on a
@@ -55,14 +62,17 @@
 #             check could not measure. In the block, a key the run never reached
 #             reads `FAIL — not reached`.
 #
-# Knobs (all CHECK771_*): DRY_RUN, KEEP_SCRATCH, SERVICE, INSTALLATION,
-# WINDOW_MINUTES (how far back the log is read, 60 by default), ROLE (the
-# member-side custom role, `fugaroWorkspaceRead`), JOB_ACCOUNT (the member's job
-# service account the admission row looks for; unset, any job account will do),
-# CEILING_AT and REMOVED_AT (the moment you made the call at the ceiling, and
-# the moment you removed the member — epoch seconds or RFC 3339; unset, the two
-# rows are not measured), GRACE_SECONDS (how long a refusal may take after that
-# moment, 60 by default).
+# Knobs (all CHECK771_*): DRY_RUN, KEEP_SCRATCH, WORKSPACE_PROJECT (the
+# workspace's own GCP project, the one its service and its log live in;
+# REQUIRED, there is no default), MEMBER_PROJECT (the member's GCP project, where
+# the role and its binding are read; fugaro-dev, the installation the guard
+# checks), SERVICE, INSTALLATION, WINDOW_MINUTES (how far back the log is read,
+# 60 by default), ROLE (the member-side custom role, `fugaroWorkspaceRead`),
+# JOB_ACCOUNT (the member's job service account the admission row looks for;
+# unset, any job account will do), CEILING_AT and REMOVED_AT (the moment you made
+# the call at the ceiling, and the moment you removed the member — epoch seconds
+# or RFC 3339; unset, the two rows are not measured), GRACE_SECONDS (how long a
+# refusal may take after that moment, 60 by default).
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: this run reads an IAM
@@ -201,14 +211,18 @@ finish() {
 }
 
 # ------------------------------------------------------------------- the tools
-gcloud_admin() { gcloud --project="$P" --quiet "$@"; }
+# Two projects, two helpers: the workspace's project carries the service and its
+# log, the member's carries the role and the binding. A read that went to the
+# wrong one would be a reading of something else, so each call names its own.
+gcloud_member() { gcloud --project="$P" --quiet "$@"; }
+gcloud_workspace() { gcloud --project="$WP" --quiet "$@"; }
 
 ADMITTED_LINE_MARK='credsvc: audit'
 REFUSED_LINE_MARK='credsvc: refused'
 
 # read_log FILTER DEST: the service's own lines, over the window.
-read_log() { # read_log FILTER DEST
-  gcloud_admin logging read "$1" --freshness="${WINDOW_MINUTES}m" --limit=2000 --format=json \
+read_log() { # read_log FILTER DEST — the workspace's service's log
+  gcloud_workspace logging read "$1" --freshness="${WINDOW_MINUTES}m" --limit=2000 --format=json \
     >"$2" 2>"$SCRATCH/logs.err" || true
 }
 
@@ -410,35 +424,35 @@ guard_project() {
   local doctor_out v
   doctor_out=$(fugaro doctor --project "$INSTALLATION" --all || true)
   if ! printf '%s\n' "$doctor_out" | grep -q '^project: .*(GCP fugaro-dev,'; then
-    stop "this is not the fugaro-dev installation: fugaro doctor --project ${INSTALLATION} --all printed no 'project: ... (GCP fugaro-dev,' line. Run it here yourself and read its output before going on — this check reads the member's role and the service in ${P} and in no other project, and never belong"
+    stop "this is not the fugaro-dev installation: fugaro doctor --project ${INSTALLATION} --all printed no 'project: ... (GCP fugaro-dev,' line. Run it here yourself and read its output before going on — this check reads the member-side role and its binding in ${P} and the workspace's service and log in ${WP}, and never belong"
   fi
-  case "${P}${L}${ACCOUNT:-}${SERVICE}${ROLE:-}" in
+  case "${P}${WP}${L}${ACCOUNT:-}${SERVICE}${ROLE:-}" in
   *belong*) stop "the project, region, account, service or role this check names is belong: this check is never run there" ;;
   esac
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing} (this check reads the platform's role, policy and log, not a run: any build will do)"
-  fact "project-region" PASS "${P}/${L} (installation ${INSTALLATION}, sandbox only; never belong)"
+  fact "project-region" PASS "${P}/${L} for the member's role and binding, ${WP}/${L} for the workspace's service and log (installation ${INSTALLATION}, sandbox only; never belong)"
 }
 
 # ------------------------------------------------------------------- the steps
 step_service() {
-  gcloud_admin run services describe "$SERVICE" --region="$L" --format=json \
+  gcloud_workspace run services describe "$SERVICE" --region="$L" --format=json \
     >"$SCRATCH/service.json" 2>"$SCRATCH/service.err" || true
   if [ ! -s "$SCRATCH/service.json" ]; then
-    die "the Cloud Run service ${SERVICE} could not be described in ${P}/${L} ($(last_line "$(cat "$SCRATCH/service.err" 2>/dev/null || true)")): this check is about what a REAL deployment admits, and there is none to read. Run 'gcloud run services describe $SERVICE --project $P --region $L' here yourself to read the error, or name the service with CHECK771_SERVICE"
+    die "the Cloud Run service ${SERVICE} could not be described in the workspace's own project ${WP}/${L} ($(last_line "$(cat "$SCRATCH/service.err" 2>/dev/null || true)")): this check is about what a REAL deployment admits, and there is none to read. The service is the workspace's, deployed by its own root (deploy/terraform/gcp/roots/workspace/main.tf) — not one in the member's ${P}. Run 'gcloud run services describe $SERVICE --project $WP --region $L' here yourself to read the error, name the workspace's project with CHECK771_WORKSPACE_PROJECT, or name the service with CHECK771_SERVICE"
   fi
   local out
   out=$(reader service "$SCRATCH/service.json") || die "the service document could not be read ($(last_line "$out"))"
   SERVICE_URL=$(field_of url "$out")
   REVISION=$(field_of revision "$out")
   SERVICE_ACCOUNT=$(field_of service_account "$out")
-  fact service PASS "${SERVICE} in ${P}/${L} at ${SERVICE_URL:-<no url>}, latest ready revision ${REVISION:-unknown}, running as ${SERVICE_ACCOUNT:-a platform-assigned account}: this is the deployment the rows below read, and every call this check is about was answered by it"
+  fact service PASS "${SERVICE} in the workspace's project ${WP}/${L} at ${SERVICE_URL:-<no url>}, latest ready revision ${REVISION:-unknown}, running as ${SERVICE_ACCOUNT:-a platform-assigned account}: this is the deployment the rows below read, and every call this check is about was answered by it"
 }
 
 # step_role: U3's "alone" half. A role that carries a second permission is the
 # answer U3 asks for already given, and the wrong one.
 step_role() {
-  gcloud_admin iam roles describe "$ROLE" --format=json >"$SCRATCH/role.json" 2>"$SCRATCH/role.err" || true
+  gcloud_member iam roles describe "$ROLE" --format=json >"$SCRATCH/role.json" 2>"$SCRATCH/role.err" || true
   if [ ! -s "$SCRATCH/role.json" ]; then
     unmeasured role "the custom role ${ROLE} does not exist in ${P} ($(last_line "$(cat "$SCRATCH/role.err" 2>/dev/null || true)")): it is created with the member's installation (deploy/terraform/gcp/modules/firebase/workspace_access.tf) and applied by 'fugaro update' on that member. Read it yourself: gcloud iam roles describe $ROLE --project $P"
     return 0
@@ -460,7 +474,7 @@ step_role() {
 # step_binding: the read is this check's subject, so the account it is bound to
 # has to be the one the deployment runs as.
 step_binding() {
-  gcloud_admin projects get-iam-policy "$P" --format=json >"$SCRATCH/policy.json" 2>"$SCRATCH/policy.err" || true
+  gcloud_member projects get-iam-policy "$P" --format=json >"$SCRATCH/policy.json" 2>"$SCRATCH/policy.err" || true
   if [ ! -s "$SCRATCH/policy.json" ]; then
     unmeasured binding "the project's IAM policy could not be read ($(last_line "$(cat "$SCRATCH/policy.err" 2>/dev/null || true)")): reading it needs roles/resourcemanager.projectIamGet on ${P}, which its owner holds. Read it yourself: gcloud projects get-iam-policy $P --format=json | grep -A3 $ROLE"
     return 0
@@ -484,7 +498,7 @@ step_binding() {
 step_reads() {
   read_log "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\"" "$SCRATCH/logs.json"
   if [ ! -s "$SCRATCH/logs.json" ]; then
-    unmeasured reads "the service's log could not be read ($(last_line "$(cat "$SCRATCH/logs.err" 2>/dev/null || true)")): reading it needs roles/logging.viewer on ${P}. Read it yourself: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $P --freshness=${WINDOW_MINUTES}m --format=json | head -50"
+    unmeasured reads "the service's log could not be read ($(last_line "$(cat "$SCRATCH/logs.err" 2>/dev/null || true)")): it is the workspace's own service's log, in ${WP}, and reading it needs roles/logging.viewer there. Read it yourself: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $WP --freshness=${WINDOW_MINUTES}m --format=json | head -50"
     return 0
   fi
   LOG_OUT=$(reader log "$SCRATCH/logs.json" "$ADMITTED_LINE_MARK" "$REFUSED_LINE_MARK") || die "the log entries could not be parsed ($(last_line "$LOG_OUT"))"
@@ -509,7 +523,7 @@ step_reads() {
 # account is a real deployment having admitted it.
 step_admitted() {
   if [ -z "${LOG_OUT:-}" ]; then
-    unmeasured admitted "not read: the log was not read (see the reads row). The evidence is one ${ADMITTED_LINE_MARK} line naming the member's job account: run a member's call and read gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $P --freshness=${WINDOW_MINUTES}m --format=json"
+    unmeasured admitted "not read: the log was not read (see the reads row). The evidence is one ${ADMITTED_LINE_MARK} line naming the member's job account: run a member's call and read gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $WP --freshness=${WINDOW_MINUTES}m --format=json"
     return 0
   fi
   local admitted candidates="${LOG_OUT:-}"
@@ -531,18 +545,26 @@ step_admitted() {
 # words name the ceiling.
 step_ceiling() {
   if [ -z "${LOG_OUT:-}" ]; then
-    unmeasured ceiling "not read: the log was not read (see the reads row). Put the workspace's cap at its ceiling, make ONE call through the workspace's credentials, and read the log: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $P --freshness=5m --format=json"
+    unmeasured ceiling "not read: the log was not read (see the reads row). Put the workspace's cap at its ceiling, make ONE call through the workspace's credentials, and read the log: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $WP --freshness=5m --format=json"
     return 0
   fi
-  local refusals named
+  local refusals named in_grace
   refusals=$(lines_of line "$LOG_OUT" | grep -F "$REFUSED_LINE_MARK" || true)
   if [ -n "$CEILING_AT" ]; then
-    named=$(refusals_in_grace "$refusals" "$CEILING_AT" "$GRACE_SECONDS")
+    # A refusal at the moment is not enough on its own: a member whose call was
+    # refused for any other reason writes the same line, so the refusal has to
+    # be the ceiling's own — its words name the ceiling.
+    in_grace=$(refusals_in_grace "$refusals" "$CEILING_AT" "$GRACE_SECONDS")
+    named=$(printf '%s\n' "$in_grace" | grep -i 'ceiling' || true)
     if [ -n "$named" ]; then
       fact ceiling PASS "the call made at the workspace's ceiling was refused $(grace_phrase "$CEILING_AT" "$GRACE_SECONDS"): $(printf '%s' "$named" | head -n 1 | head -c 300). A workspace's ceiling is what its owner set (fugaro workspace cap set --monthly ...), and a call that would pass it is refused rather than served — the member sees a refusal, and the workspace's own spend does not pass the ceiling"
       return 0
     fi
-    unmeasured ceiling "no refusal follows the moment you named (CHECK771_CEILING_AT=${CEILING_AT}) within ${GRACE_SECONDS}s in the last ${WINDOW_MINUTES}m. Either the call was served — which is the finding, and O2/WS8's own question about where the ceiling is checked — or the moment is the wrong one, or the call never happened. Look for it: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $P --freshness=${WINDOW_MINUTES}m --format=json | grep -i ceiling"
+    if [ -n "$in_grace" ]; then
+      unmeasured ceiling "a refusal was written $(grace_phrase "$CEILING_AT" "$GRACE_SECONDS"), but it does not name the ceiling: $(printf '%s' "$in_grace" | head -n 1 | head -c 300). A refusal from the service for ANY other reason — an unverified identity, a removed member, a read the role did not carry — is written the same way, so it is not the ceiling having been checked: this row reads only a refusal whose own words name the ceiling. Read the line yourself: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $WP --freshness=${WINDOW_MINUTES}m --format=json | grep -i 'ceiling\\|refused'. If the call really was at the ceiling and the refusal says something else, that is the finding this row exists to make — record it in docs/workspace-service/reconciliation.md (O2/WS8) with the line's own words"
+      return 0
+    fi
+    unmeasured ceiling "no refusal follows the moment you named (CHECK771_CEILING_AT=${CEILING_AT}) within ${GRACE_SECONDS}s in the last ${WINDOW_MINUTES}m. Either the call was served — which is the finding, and O2/WS8's own question about where the ceiling is checked — or the moment is the wrong one, or the call never happened. Look for it: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $WP --freshness=${WINDOW_MINUTES}m --format=json | grep -i ceiling"
     return 0
   fi
   named=$(printf '%s\n' "$refusals" | grep -i 'ceiling' || true)
@@ -560,21 +582,48 @@ step_ceiling() {
 # verified run to name — so the reading is the request's own status.
 step_removed() {
   if [ -z "${LOG_OUT:-}" ]; then
-    unmeasured removed "not read: the log was not read (see the reads row). Remove the member (fugaro workspace member rm <workspace> <project>), make one call from that member's job account, and read the log: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $P --freshness=5m --format=json"
+    unmeasured removed "not read: the log was not read (see the reads row). Remove the member (fugaro workspace member rm <workspace> <project>), make one call from that member's job account, and read the log: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $WP --freshness=5m --format=json"
     return 0
   fi
   if [ -z "$REMOVED_AT" ]; then
     unmeasured removed "CHECK771_REMOVED_AT was not set, so this run does not know when the member was removed and cannot measure how long the refusal took. Record the moment — 'date -u +%s' right before 'fugaro workspace member rm <workspace> <project>' — and run this check again as CHECK771_REMOVED_AT=<that> bash scripts/live-checks/check771.sh"
     return 0
   fi
-  local codes named
+  local codes named skip in_grace
   codes=$(lines_of status "$LOG_OUT")
-  named=$(statuses_in_grace "$codes" "$REMOVED_AT" "$GRACE_SECONDS" '^4[0-9][0-9]$')
+  # The ceiling's own refusal is a 4xx at the service like any other, and the
+  # ceiling would have refused the removed member's call whether the member was
+  # still on the workspace or not — so the moments of the refusals that name the
+  # ceiling are excluded: this row reads a 4xx that is not already the ceiling's.
+  skip=$(ceiling_moments "$LOG_OUT")
+  in_grace=$(statuses_in_grace "$codes" "$REMOVED_AT" "$GRACE_SECONDS" '^4[0-9][0-9]$')
+  named=$(exclude_moments "$in_grace" "$skip")
   if [ -z "$named" ]; then
-    unmeasured removed "no 4xx request follows the moment you named (CHECK771_REMOVED_AT=${REMOVED_AT}) within ${GRACE_SECONDS}s: either the removed member's call was SERVED — the finding, because R13 says the service re-reads its node within a minute — or the call was never made, or the moment is the wrong one. Remove the member, call once from that member's job account, and read the log by hand: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $P --freshness=5m --format=json"
+    if [ -n "$in_grace" ]; then
+      unmeasured removed "the only 4xx(es) after the member was removed arrived $(grace_phrase "$REMOVED_AT" "$GRACE_SECONDS"), and every one of them is the CEILING's own refusal (its words name the ceiling), which the ceiling row already reads: the ceiling refuses a call that would pass it whether or not the member is still on the workspace, so those statuses say nothing about the removal having taken effect. That is not a pass — the removed member's call is either SERVED, which is the finding R13 forbids, or it was never made or the moment is the wrong one. Call once from that member's job account and read the log by hand: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $WP --freshness=5m --format=json"
+      return 0
+    fi
+    unmeasured removed "no 4xx request follows the moment you named (CHECK771_REMOVED_AT=${REMOVED_AT}) within ${GRACE_SECONDS}s: either the removed member's call was SERVED — the finding, because R13 says the service re-reads its node within a minute — or the call was never made, or the moment is the wrong one. Remove the member, call once from that member's job account, and read the log by hand: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $WP --freshness=5m --format=json"
     return 0
   fi
-  fact removed PASS "the first 4xx after the member was removed arrived $(grace_phrase "$REMOVED_AT" "$GRACE_SECONDS"): status $(printf '%s' "$named" | head -n 1 | cut -d' ' -f2) at $(printf '%s' "$named" | head -n 1 | cut -d' ' -f1). The service re-reads its own node when it is older than 60 seconds (R13), so the removal took effect with no new revision and no update — and a call refused before its identity is verified writes neither the audit line nor the refusal line by design, which is why the status is the whole of this reading"
+  fact removed PASS "the first 4xx after the member was removed that is NOT the ceiling's own refusal arrived $(grace_phrase "$REMOVED_AT" "$GRACE_SECONDS"): status $(printf '%s' "$named" | head -n 1 | cut -d' ' -f2) at $(printf '%s' "$named" | head -n 1 | cut -d' ' -f1). The service re-reads its own node when it is older than 60 seconds (R13), so the removal took effect with no new revision and no update — and a call refused before its identity is verified writes neither the audit line nor the refusal line by design, which is why the status is the whole of this reading"
+}
+
+# ceiling_moments LINES: the moments, comma-joined, of the refusals whose own
+# words name the ceiling. They are the statuses the removal's reading has to
+# leave out, because a call the ceiling refused says nothing about a removal.
+ceiling_moments() {
+  lines_of line "$1" | grep -F "$REFUSED_LINE_MARK" | grep -i 'ceiling' \
+    | cut -d' ' -f1 | tr '\n' ',' || true
+}
+
+# exclude_moments LINES MOMENTS: the lines whose first field is not one of the
+# comma-joined MOMENTS.
+exclude_moments() {
+  local lines=$1 skip=$2
+  [ -n "${lines//[[:space:]]/}" ] || return 0
+  printf '%s\n' "$lines" | awk -v skip="$skip" '
+    { n = split(skip, s, ","); for (i = 1; i <= n; i++) if (s[i] != "" && $1 == s[i]) next; print }'
 }
 
 # refusals_in_grace LINES MOMENT SECONDS: the lines whose timestamp falls in
@@ -644,10 +693,10 @@ plan() {
   local key
   say "CHECK 771 plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [network, read] the guards: fugaro doctor --project ${INSTALLATION} --all and fugaro version"
-  say "  [network, read] gcloud run services describe ${SERVICE} --project ${P} --region ${L} --format=json — the revision and the account it runs as"
+  say "  [network, read] gcloud run services describe ${SERVICE} --project ${WP} --region ${L} --format=json — the workspace's OWN project: the revision and the account it runs as"
   say "  [network, read] gcloud iam roles describe ${ROLE} --project ${P} — the member-side permissions, which U3 says are instances.get alone"
   say "  [network, read] gcloud projects get-iam-policy ${P} — which member holds that role"
-  say "  [network, read] gcloud logging read — the window's ${ADMITTED_LINE_MARK} and ${REFUSED_LINE_MARK} lines and request statuses"
+  say "  [network, read] gcloud logging read --project ${WP} — the workspace's service's log: the window's ${ADMITTED_LINE_MARK} and ${REFUSED_LINE_MARK} lines and request statuses"
   say "  [not run] the three calls the rows read: a member's run, a call at the ceiling, and a call after the removal"
   say "  [nothing created] no member, no job, no binding, no grant, no revision; the scratch directory is removed at the end"
   for key in fugaro-version project-region xtrace service role binding reads admitted ceiling removed calls-prompt; do
@@ -693,6 +742,12 @@ on_signal() {
 }
 
 # ---------------------------------------------------------------------- inputs
+# P is the MEMBER's GCP project, where the role and the binding are read; WP is
+# the WORKSPACE's own GCP project, where its service and its log live. They are
+# two projects because the feature is two-sided: the service runs in the
+# workspace's own project (deploy/terraform/gcp/roots/workspace/main.tf) and the
+# role that lets it read a member's database is created in the member's
+# (deploy/terraform/gcp/modules/firebase/workspace_access.tf).
 P=fugaro-dev
 L=us-east5
 DRY_RUN_CLI=""
@@ -707,6 +762,10 @@ for arg in "$@"; do
   esac
 done
 
+WORKSPACE_PROJECT=${CHECK771_WORKSPACE_PROJECT:-}
+WP=$WORKSPACE_PROJECT
+MEMBER_PROJECT=${CHECK771_MEMBER_PROJECT:-$P}
+P=$MEMBER_PROJECT
 SERVICE=${CHECK771_SERVICE:-fugaro-workspace-credentials}
 INSTALLATION=${CHECK771_INSTALLATION:-fugaro}
 WINDOW_MINUTES=${CHECK771_WINDOW_MINUTES:-60}
@@ -734,6 +793,10 @@ main() {
   guard_agent
   guard_xtrace
   guard_project
+  # The workspace's service and its log are in the workspace's OWN project, and
+  # there is no default: the member's project carries the role and the binding
+  # but no such service, so guessing it would describe the wrong deployment.
+  [ -n "$WP" ] || die "CHECK771_WORKSPACE_PROJECT was not set: the workspace's Cloud Run service and its log live in the WORKSPACE's own project (the one its own root deploys, deploy/terraform/gcp/roots/workspace/main.tf), which is not the member's ${P} where the role and its binding are read. Reading the service from ${P} would describe a deployment that is not this check's subject, so name the workspace's project: CHECK771_WORKSPACE_PROJECT=<the workspace's GCP project> bash scripts/live-checks/check771.sh"
   if [ -n "$DRY_RUN" ]; then
     plan
     return 0

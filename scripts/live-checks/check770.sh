@@ -276,9 +276,14 @@ service  argv: `gcloud run services describe --format=json`'s file. Prints the
          concurrency. A limit the document does not carry prints `unknown`
          rather than a guess — the shapes differ between the Cloud Run one and
          the Knative one gcloud sometimes renders.
-logs     argv: a log-entry listing's file. Prints requests=, instances= (how
-         many DISTINCT instance ids answered), statuses= (one `status=NNN count`
-         line per status), max_ms=, and a `slow=` line for the slowest entry.
+logs     argv: a log-entry listing's file. Prints requests= (the entries that
+         carry an `httpRequest` — a plain application line the service wrote in
+         the same window is NOT a request, and counting it as one would read a
+         window with no load in it as a window with a load), entries= (how many
+         entries the listing held, so a read that came back at the limit can be
+         told from one that came back whole), instances= (how many DISTINCT
+         instance ids answered a request), statuses= (one `status=NNN count`
+         line per status), max_ms=, and a `slow=` line for the slowest request.
          An entry with no instance id contributes nothing to instances, which is
          a reading a reader has to be able to tell from "one instance answered".
 meter    argv: the meter node's JSON, the month to read. Prints month=, settled
@@ -368,7 +373,12 @@ def logs(path):
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        request = entry.get("httpRequest") if isinstance(entry.get("httpRequest"), dict) else {}
+        request = entry.get("httpRequest")
+        if not isinstance(request, dict):
+            # Not a request: the service writes its own application lines into
+            # the same revision log (credsvc's audit and refusal lines), and one
+            # of those is not a call that was served.
+            continue
         requests += 1
         status = str(request.get("status") or "")
         if status:
@@ -393,6 +403,7 @@ def logs(path):
                 ids.append(candidate)
                 break
     print("requests=%d" % requests)
+    print("entries=%d" % len(entries))
     print("instances=%d" % len(ids))
     print("max_ms=%d" % max_ms)
     if slow:
@@ -534,15 +545,23 @@ step_limits() {
 # many calls there were, how many instances served them, what was refused, and
 # how slow the worst one was.
 step_window() {
-  local since_ms waited=0 out="" cutoff
+  local since_ms waited=0 out="" cutoff entries
+  # Filtered to the requests themselves: the service writes its own application
+  # lines into the same revision log, and a window whose newest entries are all
+  # application lines is a window with no load in it.
   gcloud_admin logging read \
-    "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\"" \
-    --freshness="${WINDOW_MINUTES}m" --limit=1000 --format=json >"$SCRATCH/logs.json" 2>"$SCRATCH/logs.err" || true
+    "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\" AND httpRequest.status>=0" \
+    --freshness="${WINDOW_MINUTES}m" --limit="$LOG_LIMIT" --format=json >"$SCRATCH/logs.json" 2>"$SCRATCH/logs.err" || true
   if [ ! -s "$SCRATCH/logs.json" ]; then
     unmeasured load-window "the service's log entries could not be read ($(last_line "$(cat "$SCRATCH/logs.err" 2>/dev/null || true)")): reading them needs roles/logging.viewer on ${P}. Read them yourself: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\"' --project $P --freshness=${WINDOW_MINUTES}m --format=json | head -50"
     return 0
   fi
   out=$(reader logs "$SCRATCH/logs.json") || die "the log entries could not be parsed ($(last_line "$out"))"
+  entries=$(field_of entries "$out")
+  if [ "${entries:-0}" -ge "$LOG_LIMIT" ]; then
+    unmeasured load-window "the read came back at its own limit: ${entries} entries, which is the --limit=${LOG_LIMIT} this check asked for, so what the service logged OLDER than the newest ${LOG_LIMIT} of them was never read — and the refusals and the instance count a load leaves behind are exactly what the oldest of them would have shown. A row read from a truncated window is no reading at all. Narrow CHECK770_WINDOW_MINUTES to the minutes the load itself ran in, or read a shorter window by hand: gcloud logging read 'resource.labels.service_name=\"${SERVICE}\" AND httpRequest.status>=0' --project $P --freshness=${WINDOW_MINUTES}m --limit=20000 --format=json | head -50"
+    return 0
+  fi
   local requests instances max_ms slow statuses=""
   requests=$(field_of requests "$out")
   instances=$(field_of instances "$out")
@@ -628,7 +647,7 @@ plan() {
   say "CHECK 770 plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [network, read] the guards: fugaro doctor --project ${INSTALLATION} --all (it reads the installation's config, policy and billing, and the update check, so this is the dry run's one network read) and fugaro version"
   say "  [network, read] gcloud run services describe ${SERVICE} --project ${P} --region ${L} --format=json — the url, the revision and the three limits"
-  say "  [network, read] gcloud logging read — the last ${WINDOW_MINUTES}m of the service's own requests: how many, over how many instances, refused how, and the slowest"
+  say "  [network, read] gcloud logging read — the last ${WINDOW_MINUTES}m of the service's own REQUESTS (httpRequest entries only), at most ${LOG_LIMIT} of them: how many, over how many instances, refused how, and the slowest. A read that comes back at the limit measures nothing and says so"
   if [ -n "$DATABASE_URL" ] && [ -n "$WORKSPACE" ]; then
     say "  [network, read] one GET of <database>/meter/workspace/<workspace>/<month>.json — the reservations still held for calls that never settled"
   else
@@ -703,6 +722,7 @@ done
 SERVICE=${CHECK770_SERVICE:-fugaro-workspace-credentials}
 INSTALLATION=${CHECK770_INSTALLATION:-fugaro}
 WINDOW_MINUTES=${CHECK770_WINDOW_MINUTES:-60}
+LOG_LIMIT=${CHECK770_LOG_LIMIT:-1000}
 RUNS=${CHECK770_RUNS:-100}
 MEMBERS=${CHECK770_MEMBERS:-2}
 MAX_INSTANCES=${CHECK770_MAX_INSTANCES:-10}
@@ -724,6 +744,7 @@ main() {
   need_tools
   [ -n "$ACCOUNT" ] || die "gcloud prints no account ('gcloud config get-value account'): the check reads the service's log and the meter with that account's own roles. Run 'gcloud auth login' first"
   [ "$WINDOW_MINUTES" -gt 0 ] || die "CHECK770_WINDOW_MINUTES is ${WINDOW_MINUTES}: the window is minutes of the service's log, so it has to be a positive number"
+  [ "$LOG_LIMIT" -gt 0 ] || die "CHECK770_LOG_LIMIT is ${LOG_LIMIT}: the limit is how many of the window's newest request entries are read, so it has to be a positive number"
   [ "$RUNS" -gt 0 ] || die "CHECK770_RUNS is ${RUNS}: the load is a number of concurrent runs, so it has to be a positive number"
   scratch_up
   trap on_error ERR

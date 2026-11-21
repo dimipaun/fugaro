@@ -12,6 +12,13 @@
 # the readings the check has to be honest about not having taken: no admitted
 # call in the window, no refusal at the ceiling, no moment for the removal.
 #
+# The fake gcloud is PROJECT-AWARE, because this check reads TWO projects: the
+# workspace's service and its log are the workspace's own project's and the role
+# and its binding are the member's. A read that names the other project is
+# refused here exactly as gcloud would refuse it for a service that is not there,
+# so a check that read the service from the member's project — the bug this fake
+# exists to catch — fails every case rather than passing them.
+#
 # Usage: bash scripts/live-checks/check771_test.sh
 set -euo pipefail
 
@@ -72,25 +79,47 @@ cat >"$work/bin/gcloud" <<'SH'
 set -euo pipefail
 mode=${FAKE_MODE:-ok}
 fx=${FAKE_FX:?}
+ws=${FAKE_WS_PROJECT:?}
+member=${FAKE_MEMBER_PROJECT:?}
 args="$*"
+project=""
+for arg in "$@"; do
+  case "$arg" in
+  --project=*) project=${arg#--project=} ;;
+  esac
+done
+# where KIND WANT: the service and its log are the workspace's project's, the
+# role and its binding are the member's. gcloud would find nothing at the other
+# project, and this fake refuses it the same way — loudly, so a case can assert
+# which project a read named.
+where() {
+  [ "$project" = "$2" ] || {
+    echo "fake gcloud: $1 is in $2, not in ${project:-<no project named>}" >&2
+    exit 1
+  }
+}
 case "$args" in
 *"config get-value account"*) echo "owner@example.com" ;;
 *"auth print-access-token"*) echo "fake-access-token" ;;
 *"run services describe"*)
+  where "the workspace's service" "$ws"
   if [ "$mode" = no-service ]; then echo "fake: no such service" >&2; exit 1; fi
   cat "$fx/service.json"
   ;;
+*"logging read"*)
+  where "the workspace's service's log" "$ws"
+  if [ "$mode" = no-log ]; then echo "fake: logging denied" >&2; exit 1; fi
+  cat "$fx/logs.json"
+  ;;
 *"iam roles describe"*)
+  where "the member's role" "$member"
   if [ "$mode" = no-role ]; then echo "fake: no such role" >&2; exit 1; fi
   cat "$fx/role.json"
   ;;
 *"projects get-iam-policy"*)
+  where "the member's IAM policy" "$member"
   if [ "$mode" = no-policy ]; then echo "fake: permission denied" >&2; exit 1; fi
   cat "$fx/policy.json"
-  ;;
-*"logging read"*)
-  if [ "$mode" = no-log ]; then echo "fake: logging denied" >&2; exit 1; fi
-  cat "$fx/logs.json"
   ;;
 *) echo "fake gcloud: unknown invocation $args" >&2; exit 2 ;;
 esac
@@ -98,8 +127,10 @@ SH
 chmod +x "$work/bin/gcloud"
 
 # ---------------------------------------------------------------- the fixtures
-WORKSPACE_SA="fugaro-workspace-credentials@fugaro-workspace.iam.gserviceaccount.com"
-MEMBER_JOB="member-job@fugaro-dev.iam.gserviceaccount.com"
+WORKSPACE_PROJECT="fugaro-workspace"
+MEMBER_PROJECT="fugaro-dev"
+WORKSPACE_SA="fugaro-workspace-credentials@${WORKSPACE_PROJECT}.iam.gserviceaccount.com"
+MEMBER_JOB="member-job@${MEMBER_PROJECT}.iam.gserviceaccount.com"
 
 service_json() {
   cat <<JSON
@@ -153,11 +184,16 @@ fixtures_ok() {
   logs_json ""
 }
 
+# Every case runs the check against the workspace's own project; a case that
+# bends the project names its own with RUN771_ENV.
+all_options=(CHECK771_WORKSPACE_PROJECT=$WORKSPACE_PROJECT)
+
 run771() {
   status=0
   out=$(env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE \
     -u CURSOR_AGENT -u AI_AGENT \
     PATH="$work/bin:$PATH" FAKE_MODE="${FAKE_MODE:-ok}" FAKE_FX="$fx" TMPDIR="$work" \
+    FAKE_WS_PROJECT="$WORKSPACE_PROJECT" FAKE_MEMBER_PROJECT="$MEMBER_PROJECT" \
     ${RUN771_ENV[@]+"${RUN771_ENV[@]}"} \
     bash "$script" "$@" 2>"$work/err") || status=$?
   err=$(cat "$work/err")
@@ -194,10 +230,10 @@ test_an_admitted_member_and_a_refused_ceiling_pass() {
     \"textPayload\": \"credsvc: refused type=budget_unavailable status=403 read= policy_shared message=the workspace's own ceiling would be passed by this call\",
     \"resource\": {\"labels\": {\"instance_id\": \"inst-1\"}},
     \"httpRequest\": {\"status\": 403, \"latency\": \"0.010s\", \"requestUrl\": \"https://svc/v1/messages\"}},
-   {\"timestamp\": \"$(stamp 65)\",
+   {\"timestamp\": \"$(stamp 20)\",
     \"resource\": {\"labels\": {\"instance_id\": \"inst-1\"}},
     \"httpRequest\": {\"status\": 403, \"latency\": \"0.010s\", \"requestUrl\": \"https://svc/v1/messages\"}}"
-  RUN771_ENV=("CHECK771_CEILING_AT=$(date -u +%s)" "CHECK771_REMOVED_AT=$(date -u +%s)")
+  RUN771_ENV=(CHECK771_WORKSPACE_PROJECT=$WORKSPACE_PROJECT "CHECK771_CEILING_AT=$(date -u +%s)" "CHECK771_REMOVED_AT=$(date -u +%s)")
   run771
   expect_status "$status" 0 "every measured criterion held"
   expect_contains "$out" "FACT service: PASS" "the deployment was read"
@@ -294,7 +330,7 @@ test_no_ceiling_moment_and_no_ceiling_refusal_is_unmeasured() {
 
 test_a_served_call_at_the_ceiling_is_unmeasured_with_the_moment() {
   fixtures_ok
-  RUN771_ENV=("CHECK771_CEILING_AT=$(date -u +%s)")
+  RUN771_ENV=(CHECK771_WORKSPACE_PROJECT=$WORKSPACE_PROJECT "CHECK771_CEILING_AT=$(date -u +%s)")
   run771
   expect_status "$status" 2 "a call at the ceiling that left no refusal is not a pass"
   expect_contains "$out" "FACT ceiling: FAIL" "the ceiling row reads FAIL"
@@ -312,19 +348,26 @@ test_a_removal_with_no_moment_is_unmeasured() {
 
 test_a_removal_refused_within_the_minute_passes() {
   fixtures_ok
-  # One 4xx twenty seconds after the removal, and a refusal naming the ceiling
-  # five seconds after the moment the owner names: both rows are read off it.
-  logs_json "{\"timestamp\": \"$(stamp 5)\",
+  # The ceiling's own refusal five seconds after the moment the owner names, and
+  # a 4xx with no refusal line at all twenty seconds after it: the ceiling's is
+  # EXCLUDED from the removal's reading, and the removal passes on the other one.
+  local at ceiling_at later
+  at=$(date -u +%s)
+  ceiling_at=$(stamp 5)
+  later=$(stamp 20)
+  logs_json "{\"timestamp\": \"$ceiling_at\",
     \"textPayload\": \"credsvc: refused type=budget_unavailable status=403 read= message=the workspace's own ceiling would be passed by this call\",
     \"resource\": {\"labels\": {\"instance_id\": \"inst-1\"}},
     \"httpRequest\": {\"status\": 403, \"latency\": \"0.010s\", \"requestUrl\": \"https://svc/v1/messages\"}},
-   {\"timestamp\": \"$(stamp 20)\",
+   {\"timestamp\": \"$later\",
     \"resource\": {\"labels\": {\"instance_id\": \"inst-1\"}},
     \"httpRequest\": {\"status\": 403, \"latency\": \"0.010s\", \"requestUrl\": \"https://svc/v1/messages\"}}"
-  RUN771_ENV=("CHECK771_CEILING_AT=$(date -u +%s)" "CHECK771_REMOVED_AT=$(date -u +%s)")
+  RUN771_ENV=(CHECK771_WORKSPACE_PROJECT=$WORKSPACE_PROJECT "CHECK771_CEILING_AT=$at" "CHECK771_REMOVED_AT=$at")
   run771
   expect_status "$status" 0 "a 4xx inside the grace is the removal taking effect"
   expect_contains "$out" "FACT removed: PASS" "the removed row is a pass"
+  expect_contains "$out" "NOT the ceiling's own refusal" "the row says which 4xx it read"
+  expect_contains "$out" "status 403 at $later" "and it is the one that is not the ceiling's"
   expect_contains "$out" "The service re-reads its own node when it is older than 60 seconds (R13)" "the row names what the minute is"
 }
 
@@ -333,7 +376,7 @@ test_a_removal_that_was_served_is_unmeasured() {
   logs_json "{\"timestamp\": \"$(stamp 900)\",
     \"resource\": {\"labels\": {\"instance_id\": \"inst-1\"}},
     \"httpRequest\": {\"status\": 403, \"latency\": \"0.010s\", \"requestUrl\": \"https://svc/v1/messages\"}}"
-  RUN771_ENV=("CHECK771_REMOVED_AT=$(date -u +%s)")
+  RUN771_ENV=(CHECK771_WORKSPACE_PROJECT=$WORKSPACE_PROJECT "CHECK771_REMOVED_AT=$(date -u +%s)")
   run771
   expect_status "$status" 2 "a refusal fifteen minutes later is not within the minute"
   expect_contains "$out" "FACT removed: FAIL" "the removed row reads FAIL"
@@ -343,11 +386,74 @@ test_a_removal_that_was_served_is_unmeasured() {
 test_a_job_account_named_by_knob_has_to_appear() {
   fixtures_ok
   service_json >"$fx/service.json"
-  RUN771_ENV=("CHECK771_JOB_ACCOUNT=some-other-job@fugaro-dev.iam.gserviceaccount.com")
+  RUN771_ENV=(CHECK771_WORKSPACE_PROJECT=$WORKSPACE_PROJECT "CHECK771_JOB_ACCOUNT=some-other-job@fugaro-dev.iam.gserviceaccount.com")
   run771
   expect_status "$status" 2 "an account that never appears is not an admission"
   expect_contains "$out" "FACT admitted: FAIL" "the admitted row reads FAIL"
   expect_contains "$out" "some-other-job@fugaro-dev.iam.gserviceaccount.com" "the row names the account it looked for"
+}
+
+test_a_ceiling_refusal_that_does_not_name_the_ceiling_is_unmeasured() {
+  fixtures_ok
+  # A refusal inside the grace whose own words are about something else: the
+  # service writes every refusal the same way, so a line like this is NOT the
+  # ceiling having been checked.
+  local at
+  at=$(date -u +%s)
+  logs_json "{\"timestamp\": \"$(stamp 5)\",
+    \"textPayload\": \"credsvc: refused type=identity_unverified status=401 read= message=the caller's identity could not be verified\",
+    \"resource\": {\"labels\": {\"instance_id\": \"inst-1\"}},
+    \"httpRequest\": {\"status\": 401, \"latency\": \"0.010s\", \"requestUrl\": \"https://svc/v1/messages\"}}"
+  RUN771_ENV=(CHECK771_WORKSPACE_PROJECT=$WORKSPACE_PROJECT "CHECK771_CEILING_AT=$at")
+  run771
+  expect_status "$status" 2 "a refusal that is not the ceiling's measures nothing at the ceiling"
+  expect_contains "$out" "FACT ceiling: FAIL" "the ceiling row reads FAIL"
+  expect_contains "$out" "does not name the ceiling" "the row says what the refusal was missing"
+  expect_contains "$out" "identity could not be verified" "the row quotes the refusal it found"
+}
+
+test_a_removal_with_only_the_ceiling_refusal_is_unmeasured() {
+  fixtures_ok
+  # The bug this case exists for: the removal's own call was SERVED, and the only
+  # 4xx in its window is the ceiling's refusal of a different call. Reading that
+  # 4xx as the removal having taken effect would print PASS over a served call.
+  local at
+  at=$(date -u +%s)
+  logs_json "{\"timestamp\": \"$(stamp 5)\",
+    \"textPayload\": \"credsvc: refused type=budget_unavailable status=403 read= message=the workspace's own ceiling would be passed by this call\",
+    \"resource\": {\"labels\": {\"instance_id\": \"inst-1\"}},
+    \"httpRequest\": {\"status\": 403, \"latency\": \"0.010s\", \"requestUrl\": \"https://svc/v1/messages\"}}"
+  RUN771_ENV=(CHECK771_WORKSPACE_PROJECT=$WORKSPACE_PROJECT "CHECK771_REMOVED_AT=$at")
+  run771
+  expect_status "$status" 2 "the ceiling's refusal is not the removal taking effect"
+  expect_contains "$out" "FACT removed: FAIL" "the removed row reads FAIL, not PASS"
+  expect_absent "$out" "FACT removed: PASS" "a served removal is never a pass"
+  expect_contains "$out" "every one of them is the CEILING's own refusal" "the row says what it found"
+  expect_contains "$out" "which the ceiling row already reads" "the row says why that is not this row's evidence"
+}
+
+test_a_member_project_read_is_not_the_workspace_project_read() {
+  fixtures_ok
+  # The split, made visible: the member's project is where the role and the
+  # binding are read, and the workspace's service and log are NOT there. A check
+  # that read the service from the member's project would fail here, because the
+  # fake refuses the read the way gcloud would.
+  CHECK771_TEST_ENV=(CHECK771_MEMBER_PROJECT=another-project)
+  run_check
+  expect_status "$status" 2 "a role read at another project is not a reading"
+  expect_contains "$out" "FACT role: FAIL" "the role row reads FAIL"
+  expect_contains "$out" "does not exist in another-project" "the row names the project it read"
+  expect_contains "$out" "the member's role is in $MEMBER_PROJECT, not in another-project" "the row quotes the fake's refusal at the wrong project"
+  expect_contains "$out" "FACT service: PASS" "the workspace's service was read from the workspace's own project"
+}
+
+test_no_workspace_project_is_refused() {
+  fixtures_ok
+  RUN771_ENV=()
+  run771 --dry-run
+  expect_status "$status" 2 "the workspace's project is a reading this check cannot guess"
+  expect_contains "$err" "CHECK771_WORKSPACE_PROJECT was not set" "the refusal names the knob it needs"
+  expect_contains "$err" "roots/workspace/main.tf" "the refusal says where the service is deployed from"
 }
 
 test_the_installation_guard_refuses_another_project() {
@@ -368,7 +474,7 @@ SH
 
 test_an_agent_session_is_refused() {
   fixtures_ok
-  RUN771_ENV=(CLAUDECODE=1)
+  RUN771_ENV=(CHECK771_WORKSPACE_PROJECT=$WORKSPACE_PROJECT CLAUDECODE=1)
   run771
   expect_status "$status" 1 "no agent runs any step of Check 771"
   expect_contains "$err" "CLAUDECODE" "the refusal names the marker it found"
@@ -412,6 +518,10 @@ t test_a_removal_with_no_moment_is_unmeasured
 t test_a_removal_refused_within_the_minute_passes
 t test_a_removal_that_was_served_is_unmeasured
 t test_a_job_account_named_by_knob_has_to_appear
+t test_a_ceiling_refusal_that_does_not_name_the_ceiling_is_unmeasured
+t test_a_removal_with_only_the_ceiling_refusal_is_unmeasured
+t test_a_member_project_read_is_not_the_workspace_project_read
+t test_no_workspace_project_is_refused
 t test_the_installation_guard_refuses_another_project
 t test_an_agent_session_is_refused
 t test_an_unknown_argument_is_refused

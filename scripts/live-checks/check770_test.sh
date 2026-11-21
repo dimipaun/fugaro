@@ -8,10 +8,12 @@
 # behind, and the readings that decide its rows are the ones a fixture can bend:
 # a service whose document carries no limits, a log with no request in it, a log
 # with a 429 in it, a log with fewer requests than a load of 100 runs leaves, a
-# meter node with a reservation older than the TTL, a database that refuses the
-# read, a token gcloud will not mint, and a shell that is a coding agent's
-# session. Each of those is a run that has to end as it says it does — and none
-# of them may end 0 without having measured the row it is about.
+# log whose newest entries are the service's own application lines rather than
+# requests, a read that comes back at its own limit, a meter node with a
+# reservation older than the TTL, a database that refuses the read, a token
+# gcloud will not mint, and a shell that is a coding agent's session. Each of
+# those is a run that has to end as it says it does — and none of them may end 0
+# without having measured the row it is about.
 #
 # Usage: bash scripts/live-checks/check770_test.sh
 set -euo pipefail
@@ -122,6 +124,10 @@ case "$args" in
   ;;
 *"logging read"*)
   if [ "$mode" = no-log ]; then echo "fake: logging denied" >&2; exit 1; fi
+  # The arguments are kept, so a case can assert WHICH window and WHICH filter
+  # the read asked for: the log holds the service's own application lines beside
+  # its requests, and the filter is what keeps them out of a load's count.
+  printf '%s\n' "$args" >"$fx/logging-args"
   cat "$fx/logs.json"
   ;;
 *"iam roles describe"*)
@@ -423,6 +429,62 @@ test_a_token_gcloud_will_not_mint_is_refused() {
   expect_contains "$out" "FACT reservations: FAIL — not reached" "the row was never reached"
 }
 
+test_application_lines_beside_one_request_are_not_a_load() {
+  service_json 10 40 >"$fx/service.json"
+  # 150 of the service's OWN lines in the window — credsvc writes an audit line
+  # for every served call — and ONE request entry. Counting the application lines
+  # as requests reads this window as 151 requests and passes the load row over a
+  # window with no load in it.
+  python3 - "$fx/logs.json" <<'PY'
+import json
+import sys
+out = []
+for i in range(150):
+    out.append({"timestamp": "2026-11-21T00:%02d:00Z" % (i % 60),
+                "textPayload": "credsvc: audit run=2026 repository=owner/repo purpose=messages status=ok",
+                "resource": {"labels": {"instance_id": "inst-1"}}})
+out.append({"timestamp": "2026-11-21T00:59:00Z",
+            "httpRequest": {"status": 200, "latency": "0.120s", "requestUrl": "https://svc/v1/messages"},
+            "resource": {"labels": {"instance_id": "inst-1"}}})
+with open(sys.argv[1], "w") as fh:
+    json.dump(out, fh)
+PY
+  meter_with_reservation 1
+  run_check
+  expect_status "$status" 2 "one request is not a load of 100 runs, however many lines sit beside it"
+  expect_contains "$out" "FACT load-window: FAIL" "the row reads FAIL rather than PASS"
+  expect_absent "$out" "FACT load-window: PASS" "the application lines are not a served load"
+  expect_contains "$out" "which is fewer than the 100" "the row counts the requests, not the entries"
+  expect_contains "$(cat "$fx/logging-args")" "httpRequest.status>=0" "the read asked the log for its request entries"
+}
+
+test_a_read_at_its_own_limit_is_unmeasured() {
+  service_json 10 40 >"$fx/service.json"
+  # Five entries and a limit of five: the read came back full, so whatever the
+  # service logged older than the newest five was never read — and a truncated
+  # window's refusals are exactly what a pass would be hiding.
+  python3 - "$fx/logs.json" <<'PY'
+import json
+import sys
+out = []
+for i in range(5):
+    out.append({"timestamp": "2026-11-21T00:%02d:00Z" % i,
+                "httpRequest": {"status": 200, "latency": "0.120s", "requestUrl": "https://svc/v1/messages"},
+                "resource": {"labels": {"instance_id": "inst-1"}}})
+with open(sys.argv[1], "w") as fh:
+    json.dump(out, fh)
+PY
+  meter_with_reservation 1
+  CHECK770_TEST_ENV=(CHECK770_LOG_LIMIT=5)
+  run_check
+  expect_status "$status" 2 "a window read at its limit is a window nobody read"
+  expect_contains "$out" "FACT load-window: FAIL" "the row reads FAIL rather than PASS"
+  expect_absent "$out" "FACT load-window: PASS" "a truncated read is never a pass"
+  expect_contains "$out" "the read came back at its own limit" "the row says what happened"
+  expect_contains "$out" "--limit=5" "the row names the limit it read at"
+  expect_contains "$out" "Narrow CHECK770_WINDOW_MINUTES" "the row says how to read it whole"
+}
+
 test_the_installation_guard_refuses_another_project() {
   fixtures_ok
   meter_with_reservation 1
@@ -533,6 +595,8 @@ t test_a_refusal_in_the_window_fails
 t test_an_empty_window_is_not_a_measurement
 t test_a_window_too_small_for_the_load_is_unmeasured
 t test_a_log_that_cannot_be_read_is_unmeasured
+t test_application_lines_beside_one_request_are_not_a_load
+t test_a_read_at_its_own_limit_is_unmeasured
 t test_a_stale_reservation_fails
 t test_a_database_that_refuses_the_read_is_unmeasured
 t test_no_database_url_is_not_asked_for
