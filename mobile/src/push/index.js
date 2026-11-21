@@ -11,7 +11,7 @@
 // `firebaseTokenSource`, which names the Firebase app instance the token is
 // minted on (D259). **That last one is built by the app's entry and not here**:
 // `mobile/index.js` is the only file that may import `@react-native-firebase/*`
-// (`write-path.test.js` rule 5), so it is where the messaging namespace and the
+// (`write-path.test.js` rule 5), so it is where the two SDK namespaces and the
 // app name arrive -- and no task has put push on a screen yet, so nothing there
 // builds it today. Until something does, a caller that already has both builds
 // this door itself, which is what its tests do.
