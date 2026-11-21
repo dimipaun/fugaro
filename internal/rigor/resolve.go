@@ -58,7 +58,8 @@ var Layers = []Layer{FromArea, FromRepo, FromProject, FromDefault, FromRequest, 
 func KnownLayer(l Layer) bool { return slices.Contains(Layers, l) }
 
 // Config is the rigor configuration of one run: the two layers that may set
-// a level (D20), each with its own area list.
+// a level (D20), each with its own area list, and the project layer's map of
+// one level per repository of the project.
 //
 // The two area lists are kept apart rather than merged into one because both
 // are in effect at once (D20c): a repository rule and a project rule that
@@ -70,6 +71,15 @@ type Config struct {
 	Project Rigor
 	// ProjectAreas is defaults.rigor.areas; nil sets none.
 	ProjectAreas []Area
+	// ProjectRepos is defaults.rigor.repos: the level the project layer sets
+	// for one repository of the project, by the "owner/name" a run's own
+	// repo carries. nil sets none. It is the project's own answer for a
+	// whole repository, beside the areas that answer for parts of them, and
+	// it is keyed by a repository name the layer cannot check against the
+	// published allow_repos — the shape is checked where the layer is
+	// written, and `fugaro doctor` warns about a name the policy does not
+	// admit.
+	ProjectRepos map[string]Rigor
 	// Repo is fugaro.yaml's rigor.default; "" sets none.
 	Repo Rigor
 	// RepoAreas is fugaro.yaml's rigor.areas; nil sets none.
@@ -81,13 +91,13 @@ type Config struct {
 }
 
 // Configured reports whether a repository opted in to rigor levels: its
-// fugaro.yaml has a rigor: block, or the project layer sets a rigor default
-// or area. An unconfigured repository still resolves Default (D19), which the
-// budget fraction reads, but it files no backlog item (the owner's ruling of
-// 2026-10-24): filing is opt-in, so a repository that never named a level
-// gains no docs/backlog/ it did not ask for.
+// fugaro.yaml has a rigor: block, or the project layer sets a rigor default,
+// area or per-repository level. An unconfigured repository still resolves
+// Default (D19), which the budget fraction reads, but it files no backlog item
+// (the owner's ruling of 2026-10-24): filing is opt-in, so a repository that
+// never named a level gains no docs/backlog/ it did not ask for.
 func (c Config) Configured() bool {
-	return c.RepoBlock || c.Repo != "" || len(c.RepoAreas) > 0 || c.Project != "" || len(c.ProjectAreas) > 0
+	return c.RepoBlock || c.Repo != "" || len(c.RepoAreas) > 0 || c.Project != "" || len(c.ProjectAreas) > 0 || len(c.ProjectRepos) > 0
 }
 
 // Areas is every rule in effect, the project layer's first. The order
@@ -135,6 +145,14 @@ type Request struct {
 	// turns the adversarial pass on for the run whatever level it is at
 	// (internal/runner/plan.go).
 	Level Rigor
+	// Repo is the repository the run is for, in the "owner/name" spelling a
+	// task's own Repo carries; "" for a caller that has none. It is what the
+	// project layer's members are matched on (LD4) and what
+	// Config.ProjectRepos is read by, so a resolution for a run that names
+	// no repository falls back to what the layers set for the project and
+	// for the paths alone — which is what every caller resolved before
+	// members and the per-repository map existed.
+	Repo string
 	// Paths are the paths the run touches, matched against the area rules
 	// (D20c): the paths a caller declared at bootstrap, and the run's own
 	// measured diff at finalize (D22).
@@ -184,10 +202,11 @@ type Resolved struct {
 }
 
 // Resolve is the one resolver (D6): the narrowest layer that sets the level
-// wins — an area the run's paths match, then the repository's own value,
-// then the project default, then Fugaro's own default — and on top of that
-// the run's own request may raise and never lower it, except for Hotfix,
-// which the request takes whole (Rigor.PerRun).
+// wins — an area the run's repo and paths match, then the repository's own
+// value, then the project layer's value for that repository or for the whole
+// project, then Fugaro's own default — and on top of that the run's own
+// request may raise and never lower it, except for Hotfix, which the request
+// takes whole (Rigor.PerRun).
 //
 // A narrower layer may set a *lower* level than a wider one (D21): the order
 // is a precedence, not an only-tightens rule — that is what a default is
@@ -204,11 +223,20 @@ func Resolve(cfg Config, req Request) Resolved {
 	if Known(cfg.Project) {
 		level, from = cfg.Project, FromProject
 	}
+	// The project layer's own answer for one repository of the project is
+	// narrower than its default for all of them (LD4, LF4): it is read
+	// beside the areas, which answer for parts of repositories, and below
+	// the repository's own file, which answers for itself.
+	if req.Repo != "" {
+		if lvl, ok := cfg.ProjectRepos[req.Repo]; ok && Known(lvl) {
+			level, from = lvl, FromProject
+		}
+	}
 	if Known(cfg.Repo) {
 		level, from = cfg.Repo, FromRepo
 	}
 	var areas []Area
-	if matched := Select(cfg.Areas(), req.Paths); len(matched) > 0 {
+	if matched := Select(cfg.Areas(), req.Repo, req.Paths); len(matched) > 0 {
 		// An area replaces the value below it whole, in either direction
 		// (D21), and the rules are kept whatever the level turns out to be
 		// (D23: the record lists every area that matched).

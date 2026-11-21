@@ -149,12 +149,9 @@ func (st *wsTokenStore) asked() []wsTokenAsk {
 	return append([]wsTokenAsk(nil), st.asks...)
 }
 
-// wsProxyScope is a workspace's scope, cut down to what the proxy route asks of
-// one: the caller, the member's policy, the switches, the calling job account's
-// repository table and the forge reader. Its name is its own because
-// scope_workspace_test.go's wsScope is that file's resolver fixture, and a
-// package cannot declare one name twice -- which is what these two files did
-// between WS2's and WS16's merges, and is why the tree did not build.
+// wsProxyScope is a workspace's scope, cut down to what the proxy route asks of one:
+// the caller, the member's policy, the switches, the calling job account's
+// repository table and the forge reader.
 //
 // The readers this route never asks are here because Scope declares them, and
 // they answer nil: a route of this deployment that reached for the workspace's

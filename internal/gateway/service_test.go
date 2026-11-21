@@ -141,7 +141,8 @@ func TestServiceUpstreamSendsIDTokenAndRunIdentity(t *testing.T) {
 		"x-fugaro-credential", "a-credential-the-agent-invented",
 		"x-fugaro-switch", `{"from":"x","to":"y","reason":"exhausted"}`,
 		"x-fugaro-slip", "a-slip-the-agent-invented",
-		"x-fugaro-slip-claim", "a-claim-the-agent-invented")
+		"x-fugaro-slip-claim", "a-claim-the-agent-invented",
+		"x-fugaro-provider", "a-provider-the-agent-invented")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("the call: %d %s", resp.StatusCode, body)
 	}
@@ -165,7 +166,12 @@ func TestServiceUpstreamSendsIDTokenAndRunIdentity(t *testing.T) {
 	if got := up.Header.Get("x-api-key"); got != "" {
 		t.Errorf("the gateway token travelled to the service in x-api-key")
 	}
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderSlip, HeaderSlipClaim} {
+	// The provider's name is one of them (KS5, R2): on a Messages call the
+	// route the gateway routed to is the only writer of it, and this call has
+	// none -- so the only name that could travel is the agent's, and on the
+	// service's side that name is what decides which of the repository's
+	// provider keys a call is served with.
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderSlip, HeaderSlipClaim, HeaderProvider} {
 		if got := up.Header.Values(k); len(got) > 0 {
 			t.Errorf("the agent's %s reached the service as %q", k, got)
 		}
@@ -280,13 +286,16 @@ func TestServiceUpstreamReadsTierAndCredential(t *testing.T) {
 }
 
 // TestServiceNeverSentToProviderRoute is D143's other half, on
-// TestOAuthNeverSentToProviderRoute's shape: a route is a provider's own
-// endpoint and is reached with the job's own key for that provider, which a
-// cascade run does not have. A cascade's service upstream therefore takes no
-// routes at all -- not at start-up, and not from a Route built in code past
-// validation either. (A switched api-key run's does: it is the one service
-// upstream with a key of its own, and
-// TestSwitchedAPIKeyServiceUpstreamKeepsItsProviderRoutes is that case.)
+// TestOAuthNeverSentToProviderRoute's shape: a route the job holds the key for
+// is a provider's own endpoint, reached with that key, which a cascade run does
+// not have. A cascade's service upstream therefore takes no such route -- not
+// at start-up, and not from a Route built in code past validation either. (Two
+// service upstreams do take routes: a switched api-key run's, which is the one
+// with a key of its own, and the case
+// TestSwitchedAPIKeyServiceUpstreamKeepsItsProviderRoutes pins; and any
+// upstream beside a SERVED route, whose key is the credentials service's and
+// whose calls the service's provider route answers -- KS5,
+// route_service_test.go.)
 func TestServiceNeverSentToProviderRoute(t *testing.T) {
 	_, psrv := anthropicfake.New(t, anthropicfake.MessageOK(dsModel, smallUsage))
 	cred := func() (string, error) { return "provider-key-" + t.Name(), nil }
@@ -298,7 +307,8 @@ func TestServiceNeverSentToProviderRoute(t *testing.T) {
 		}
 	}
 
-	// 1. A service upstream takes no routes at all, whatever they point at.
+	// 1. A service upstream takes no route the job holds a key for, whatever
+	//    it points at.
 	for _, base := range []string{psrv.URL + "/api", psrv.URL, "https://api.anthropic.com"} {
 		gw, err := Start(context.Background(), Options{
 			Upstream: Upstream{Kind: KindService, BaseURL: "https://creds.example", Service: svc()},
@@ -331,7 +341,7 @@ func TestServiceNeverSentToProviderRoute(t *testing.T) {
 		t.Errorf("validateRoutes refused a service upstream with no routes: %v", err)
 	}
 
-	// 3. The upstream's own path refuses a provider route even if one were
+	// 3. The upstream's own path refuses such a route even if one were
 	//    handed to it: the check is where the job's identity is attached,
 	//    not only at start-up.
 	pr := &Route{Name: "openrouter", BaseURL: psrv.URL + "/api", Auth: "bearer", Credential: cred}

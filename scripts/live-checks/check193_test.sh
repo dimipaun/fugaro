@@ -207,9 +207,9 @@ elif args[:1] == ["project"] and args[1:2] == ["policy"]:
                                   "proxy": mode != "no-proxy"}}
     # A policy that carries no budget block at all: what a `show` on an
     # installation with nothing published answers, and the shape whose absent
-    # mode must never read as one that is not off (D2071's third leg).
+    # mode must never read as a mode the gateway exists in (D2071's third leg).
     if mode != "policy-no-mode":
-        policy["budget"] = {"mode": "off" if mode == "mode-off" else "observe"}
+        policy["budget"] = {"mode": "observe"}
     print(json.dumps({"policy": policy}))
 else:
     sys.stderr.write("fugaro: unknown command: %s\n" % " ".join(args))
@@ -770,24 +770,11 @@ test_a_repository_off_the_switch_is_a_failure() {
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "off the switch: no run was launched"
 }
 
-# The budget mode is read at `update` (D2071), and a switched repository whose
-# mode is off is one whose jobs hold no mount and whose runs have nothing to be
-# served from: the three legs of the switch are read together for that reason.
-test_a_budget_mode_of_off_is_a_failure() {
-  local dir=$work/modeoff
-  prepare "$dir"
-  run193 "$dir" FAKE_FUGARO_MODE=mode-off
-  expect_status "$status" 1 "mode off: the verdict"
-  expect_contains "$out" "FACT switch: FAIL" "mode off: the row"
-  expect_contains "$out" "budget mode is 'off'" "mode off: the row says why"
-  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "mode off: no run was launched"
-}
-
-# `fugaro project policy show --json` failing is not a policy that is not off:
-# the read leaves an empty document, the reader answers `mode=None` for it, and
-# a row that read that as "not off" would PASS D2071's third leg on a mode
-# nobody read — while the two throwaway runs below it would be launched on a
-# switch nobody settled.
+# `fugaro project policy show --json` failing is not a policy that carries a
+# mode the gateway exists in: the read leaves an empty document, the reader
+# answers `mode=None` for it, and a row that read that as a published mode would
+# PASS D2071's third leg on a mode nobody read — while the two throwaway runs
+# below it would be launched on a switch nobody settled.
 test_a_policy_that_could_not_be_read_leaves_the_switch_unmeasured() {
   local dir=$work/policyfail
   prepare "$dir"
@@ -804,8 +791,9 @@ test_a_policy_that_could_not_be_read_leaves_the_switch_unmeasured() {
 }
 
 # The same leg one step further in: the command answered, and the document it
-# printed carries no budget block at all. `None` is not a mode that is not off,
-# so the leg is unmeasured and never a PASS on a value nobody published.
+# printed carries no budget block at all. `None` is not a mode the gateway
+# exists in, so the leg is unmeasured and never a PASS on a value nobody
+# published.
 test_a_policy_with_no_budget_mode_leaves_the_switch_unmeasured() {
   local dir=$work/policynomode
   prepare "$dir"
@@ -1353,7 +1341,6 @@ t test_project_guard
 t test_xtrace_is_refused
 t test_the_repos_guard
 t test_a_repository_off_the_switch_is_a_failure
-t test_a_budget_mode_of_off_is_a_failure
 t test_a_policy_that_could_not_be_read_leaves_the_switch_unmeasured
 t test_a_policy_with_no_budget_mode_leaves_the_switch_unmeasured
 t test_a_pair_that_is_not_one_api_key_and_one_oauth_stops
