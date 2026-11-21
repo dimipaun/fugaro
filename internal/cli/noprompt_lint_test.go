@@ -733,7 +733,11 @@ var dataReadSites = map[string]string{
 // FOUND, like a sanctioned site, so it cannot outlive the read it explains. A
 // prompt does not belong here: it belongs nowhere.
 var notADecisionSites = map[string]string{
+	// The blank line below keeps the two entries in separate gofmt alignment
+	// groups, so adding this one does not reflow the entry it sits beside.
 	"pair.go:pairReadCode": "the --json caller's own line: a console asks the operator for the code and hands the command the answer on stdin (§4.1, \"the typed code is read as one stdin line\"), so what arrives is data a caller delivered rather than a question the CLI put to a person; the interactive half reads the same value through readValue and is not this shape",
+
+	"workspace_project.go:readRoster": "the workspace's own roster node (C1's Store): a Realtime Database document read under the revision a conditional write is made at, which arrives as `(Revision, []byte, error)` and fails on the read's own error rather than on EOF, so no person is behind it. It is this shape and not the package's `Read(ctx, key)` one because C1's reader takes the context alone (internal/workspace/rosterstore.go), and the entry covers every reader of it: `workspace project add` reads the node once to judge against and again inside each round of its conditional write",
 }
 
 // pendingSites is every decision read the package still makes and the task of
