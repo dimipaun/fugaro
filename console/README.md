@@ -1617,7 +1617,7 @@ catch:
   sign now comes from the rounded text a person actually reads, so a negative
   that rounds away is drawn as zero and one that survives keeps its sign.
 
-### Eleven classes, deny-by-default
+### Fourteen classes, deny-by-default
 
 `src/shared/sanitize.ts` is the display layer's **copy** of the recorder's rules
 (design §5.1 rule 7: the sanitization is re-applied here rather than trusted to
@@ -1656,6 +1656,7 @@ truncated.
 | `label` | a short rendered field (`stage`, `round`, `verify`, `models`, `recipe`, `workflow`) | refused past 200 characters, or if it is not a single line |
 | `repository` | `owner/name`, at most 200 characters, no `..` | refused |
 | `repoPattern` | a policy allow-list entry: `*`, or three segments or more — `provider/owner/name`, a path that nests included — each matching the CLI's own segment grammar (`[a-z0-9*._-]`, a star matched inside a segment and never across a `/`, no `.` or `..` segment and no `.git` ending), at most 255 characters (`projectpolicy.MaxPatternLen`) | refused |
+| `scope` | a stored grant's scope: `project`, `all-repos`, or a comma-separated list of canonical repository patterns, each provider-qualified and at most 255 characters (`projectpolicy.MaxPatternLen`), with the two rules `internal/access`'s `ParseScope` adds to the allow-list's grammar — the provider segment is never `*` (a grant names the repositories it covers) and a `*` is matched inside one path segment, so no segment carries `**` | refused |
 | `imageRef` | a container image reference, the CLI's own `catalogImageRE` (`registry[:port]/path[:tag][@sha256:…]`, lower-case, at most 255 characters) | refused |
 | `slug` | the console's own slug grammar | refused |
 | `branch` | a git ref, no leading/trailing slash, no `.lock` | refused |

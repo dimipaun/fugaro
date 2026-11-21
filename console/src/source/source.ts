@@ -1052,4 +1052,23 @@ export type CliBackedHandlers = Omit<
   | 'link.openPullRequest'
   | 'licence.read'
   | 'licence.save'
+  // The nine console-improvements operations (AL) are omitted here for the
+  // reason the six above are, read one row at a time: each needs something a
+  // `CliSource` of the active installation is not -- `setup.plan` and
+  // `setup.apply` a file of bytes main holds and a deadline of their own,
+  // `settings.editor.open` the confirmation window, and the three streams and
+  // the three one-shot reads the version-floored handlers `src/source/
+  // new-reads.ts` builds (SRC). The entry point joins every one of them over
+  // this surface, and `registerConsoleHandlers` still demands the whole
+  // surface, so a console that forgets the join fails to register rather than
+  // answering an operation with nothing.
+  | 'runs.stream'
+  | 'spend.stream'
+  | 'budget.stream'
+  | 'whoami'
+  | 'image.catalog.ls'
+  | 'recipes.ls'
+  | 'setup.plan'
+  | 'setup.apply'
+  | 'settings.editor.open'
 >

@@ -250,6 +250,12 @@ var yamlMeta = map[string]Row{
 	"agent.max_run_tokens":             {Merge: Tighten, Default: unset("the ceiling's")},
 	"agent.first_line_review":          {Default: value(config.FirstLineAuto, "config.FirstLineAuto")},
 	"agent.first_line_rounds":          {Default: unset("the run's rigor mode decides (rigor.DefaultRounds)")},
+	// The keep-warm beat's switch (R10, D2985). On is the default and the
+	// constant is the literal "true" rather than a config constant, as
+	// git.pr.early_draft's is: the readers are the accessor
+	// (config.Agent.WorkspaceBeatOn) and this row, and a Go constant between
+	// them would be a third name for one value.
+	"agent.workspace_beat": {Default: value("true", ""), Doc: docWorkspaceService},
 	// The per-level review block (L1.3, D722). The model a level resolves to
 	// when the block names none is the resolver's rule (L3.1): level 2 and
 	// level 3 are the reviewer's model, level 1 the coder's.
@@ -556,6 +562,12 @@ const (
 	// §5 and §6). The folder's own README, reconciliation and plan are not the
 	// document a key's meaning is stated in, so the row points at the spec.
 	docWorkspace = "docs/workspaces/spec.md"
+	// docWorkspaceService is the document that states the keep-warm beat's
+	// switch (R10, D2985). It is the folder's reconciliation and not its spec:
+	// the spec is the owner's brief and the ruling the switch comes from is
+	// R10, which only the reconciliation states — the plan writes it as WS13's
+	// acceptance and no document of the folder has it as a spec sentence.
+	docWorkspaceService = "docs/workspace-service/reconciliation.md"
 	// docPeriodicReviews is the document that states the project's jobs:
 	// block (R13). It is the work's plan rather than a spec, for
 	// docOrchestrator's reason: the two keys and the default that turns a
@@ -774,6 +786,7 @@ var layerRows = []Row{
 	layerRow("defaults.agent.max_budget_usd", "25", "settings set", docLayer),
 	layerRow("defaults.agent.first_line_review", "auto", "settings set", docLayer),
 	layerRow("defaults.agent.first_line_rounds", "the run's rigor mode decides (rigor.DefaultRounds)", "settings set", docLayer),
+	layerRow("defaults.agent.workspace_beat", "true", "settings set", docWorkspaceService),
 	layerRow("defaults.agent.levels.l1.model", "the coder's model", "models", docModels),
 	layerRow("defaults.agent.levels.l1.effort", "the model's own default", "models", docModels),
 	layerRow("defaults.agent.levels.l1.none", "the run's rigor mode and the recipe decide", "settings set", docLayer),

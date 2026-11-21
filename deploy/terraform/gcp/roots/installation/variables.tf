@@ -502,8 +502,9 @@ variable "orchestrator" {
   # installation's node out of, and the tick's Scheduler job name and region.
   # The module's type is this same object and its validations are the ones that
   # hold them to their shape, so this root declares the value and decides
-  # nothing about it; nothing in internal/infra composes the block yet (the
-  # module variable's description says so), so the one installation that has it
-  # is one whose owner wrote it into terraform.tfvars.json by hand.
+  # nothing about it. internal/infra composes the block (Orchestrator) for the
+  # one door that may write it — `fugaro update --firebase-project <id>
+  # --orchestrator` — and every run that was not asked for an orchestrator
+  # leaves the key exactly as it found it.
   default = null
 }

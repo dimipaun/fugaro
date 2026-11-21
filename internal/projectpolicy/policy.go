@@ -686,6 +686,17 @@ type Policy struct {
 	// what it was.
 	IssueSync *IssueSync `json:"issue_sync,omitempty"`
 
+	// Mobile is the project's mobile block (D2784, D2785, D2796): the switches
+	// and the lists the pairing route, the app's session and the phone's own
+	// decisions are read from. Its own file (mobile.go) carries the block, its
+	// rules and the argument for its home on this node.
+	//
+	// It is a pointer for the reason the two members above are: a project that
+	// has not run the update that publishes it writes no member, so its node
+	// stays byte for byte what it was — and a node with no block reads as
+	// mobile disabled (F40, O9).
+	Mobile *Mobile `json:"mobile,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -724,6 +735,11 @@ var knownTopLevelKeys = map[string]bool{
 	// UnknownKeys and keep reading the policy (F35, F46).
 	"orchestrator_enabled": true,
 	"issue_sync":           true,
+	// The mobile block (P6 of docs/mobile-identity-pairing): a top-level key and
+	// not a member of a block, for the reason the two above are — a reader of
+	// the release behind lists it and keeps reading the policy, which is what
+	// lets an update publish it while runs are in flight (F35, F46).
+	"mobile": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -1715,6 +1731,17 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, err
 		}
 		p.IssueSync = block
+	}
+	// The mobile block is read on its own: no member of it is judged against
+	// another block, and it is held to its own rules (decodeMobile). A written
+	// null is the absent key, which is the one state that reads as mobile
+	// disabled — the block's presence is the surface's switch (mobile.go).
+	if mraw, ok := doc["mobile"]; ok && !IsNull(mraw) {
+		block, err := decodeMobile(mraw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.Mobile = block
 	}
 	if vraw, ok := doc["verifier_accounts"]; ok && !IsNull(vraw) {
 		if err := json.Unmarshal(vraw, &p.VerifierAccounts); err != nil {

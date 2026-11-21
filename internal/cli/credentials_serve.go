@@ -96,8 +96,8 @@ import (
 //
 // A deployment whose environment is incomplete does not serve: the refusal is
 // by name, and no port is bound. That is the fail-closed direction this whole
-// work is held to (D143: an unreachable service halts a run, and no code path
-// falls back to a key in the job). A revision that fails to start is what
+// work is held to (D143: an unreachable service is waited for, and then halts
+// the run, and no code path falls back to a key in the job). A revision that fails to start is what
 // tells an owner the image they deployed cannot serve, while a service that
 // answered every call with a refusal would look healthy and halt every run
 // that reached it. Guessing a fact is what this command must not do either: a

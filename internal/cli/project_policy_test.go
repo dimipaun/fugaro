@@ -4283,7 +4283,7 @@ func TestVerifierAccountsIsDroppedOnAnExplicitEmptyList(t *testing.T) {
 // exactly that gap. A config that is silent about the list names nothing — it
 // keeps the node's, which is the rule above.
 func TestVerifierAccountsDriftNamesTheMember(t *testing.T) {
-	node := &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}}
+	node := &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}, Mobile: projectpolicy.DefaultMobile()}
 	lc := &localcfg.Config{
 		Budget:           &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
 		VerifierAccounts: &[]string{"person-1@example.com"},
@@ -4312,7 +4312,7 @@ func TestVerifierAccountsDriftNamesTheMember(t *testing.T) {
 // same statement as the absent key, so an entry for it would report a
 // difference the publish does not close and the stage would ask again forever.
 func TestOrchestratorDriftNamesTheMember(t *testing.T) {
-	node := &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}}
+	node := &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}, Mobile: projectpolicy.DefaultMobile()}
 	lc := &localcfg.Config{
 		Budget:       &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
 		Orchestrator: &policy.Orchestrator{MaxRunning: 4},
@@ -4668,5 +4668,65 @@ func TestProjectPolicyPublishKeepsTheOrchestratorSwitchAndIssueSync(t *testing.T
 		if !strings.Contains(out, want) {
 			t.Errorf("the publish does not say %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestProjectPolicyPublishKeepsTheMobileBlock: the mobile block is the node's
+// own too (P6 of the mobile-identity-pairing plan, D2796) — no key of this
+// machine's config states it, the update's policy stage is what writes it, and
+// the node is the only place it exists. A publish that built a node without it
+// would turn mobile pairing off for a project whose owner turned it on and take
+// a written `sync: false` away from a project that chose to store nothing in
+// the identity project, silently, from a machine whose config predates the key.
+//
+// The diff has to say it was kept, the two lines above it: the member is
+// unchanged, so no +/- line above mentions it, and an operator who set these
+// switches would read that silence as "they are gone".
+func TestProjectPolicyPublishKeepsTheMobileBlock(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"allow_repos": []string{"github/acme/app"},
+		"mobile": map[string]any{
+			"enabled":             true,
+			"sync":                false,
+			"accepted_providers":  []string{"google.com"},
+			"max_auth_age":        "6h",
+			"strict_new_device":   true,
+			"costly_modes":        []string{"critical"},
+			"biometric_on_costly": true,
+		},
+	})
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("the publish refused a node carrying the mobile block: %v", err)
+	}
+	p := publishedPolicy(t, f)
+	if p.Mobile == nil {
+		t.Fatal("the published node carries no mobile block: the publish dropped the project's own switches rather than keeping them")
+	}
+	if !p.MobileEnabled() {
+		t.Error("MobileEnabled() = false, want true: the publish turned pairing off over a written true")
+	}
+	if p.MobileSync() {
+		t.Error("MobileSync() = true, want false: the publish turned sync back on over a written false")
+	}
+	if got := p.MobileAcceptedProviders(); !slices.Equal(got, []string{projectpolicy.ProviderGoogle}) {
+		t.Errorf("MobileAcceptedProviders() = %v, want the one provider the node names: the publish widened a list the project narrowed", got)
+	}
+	if got := p.MobileMaxAuthAge(); got != 6*time.Hour {
+		t.Errorf("MobileMaxAuthAge() = %s, want 6h", got)
+	}
+	if !p.MobileStrictNewDevice() || !p.MobileBiometricOnCostly() {
+		t.Errorf("MobileStrictNewDevice() = %v and MobileBiometricOnCostly() = %v, want both true", p.MobileStrictNewDevice(), p.MobileBiometricOnCostly())
+	}
+	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Critical}) {
+		t.Errorf("MobileCostlyModes() = %v, want [critical]", got)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"mobile"`) {
+		t.Errorf("the node no longer carries mobile:\n%s", raw)
+	}
+	if want := "mobile kept: pairing on, sync off, providers google.com, auth age 6h, a new device needs a QR code, costly modes critical, biometric on a costly start"; !strings.Contains(out, want) {
+		t.Errorf("the publish does not say %q:\n%s", want, out)
 	}
 }
