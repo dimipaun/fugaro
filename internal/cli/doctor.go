@@ -583,6 +583,12 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// projectpolicy.Read and answer their own questions from it — and it is not
 	// gated on the credentials service — pools predate it.
 	o.Checks = append(o.Checks, doctorLegacyOpenPoolChecks(ctx, lc)...)
+	// The workspace this project is in, or the one it is (WS14, F20): the
+	// workspace's own three lines on the machine that deploys and publishes it,
+	// a member's pin and the credential route each of this project's
+	// repositories publishes on the machine that takes from it (R3, R4). It
+	// reads the cloud and writes nothing, and it computes no alarm (D2991).
+	o.Checks = append(o.Checks, doctorWorkspaceChecks(ctx, lc)...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {
 		iamSvc, err := iam.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.IAM)...)
