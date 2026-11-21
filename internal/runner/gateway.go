@@ -1014,7 +1014,16 @@ func (r *run) serviceAnswer(a gateway.ServiceAnswer) {
 // the token, and on failure it is the metadata server's own text about a
 // request this code made. Only the status is reported.
 func metadataIDToken(ctx context.Context, env []string, audience string) (string, error) {
-	u := metadataIdentityURL(env, audience)
+	return metadataToken(ctx, metadataIdentityURL(env, audience))
+}
+
+// metadataToken is the read both of the metadata server's identity tokens are
+// made with: this job's own, short format, and the attestation a Batch run's
+// claim carries, in the full format (batch_attest.go). They are one function
+// because the read is one — the same header, the same bound, the same refusal
+// of anything that is not one clean token — and only the URL they are asked at
+// tells them apart.
+func metadataToken(ctx context.Context, u string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return "", errors.New("the metadata request could not be built")
@@ -1033,9 +1042,12 @@ func metadataIDToken(ctx context.Context, env []string, audience string) (string
 		return "", errors.New("the metadata server's answer could not be read")
 	}
 	tok := strings.TrimSpace(string(b))
-	// One clean header value, at the bound the service reads a presented
-	// token by: a token with a newline in it, or one longer than that bound,
-	// is refused here rather than sent to be refused there.
+	// One clean token, at the bound the service reads a presented one by: a
+	// token with a newline or a space in it, or one longer than that bound, is
+	// refused here rather than sent to be refused there. The job's own token
+	// is presented as a header value and could carry neither anyway; the
+	// attestation travels in a body, and this refuses the same shapes rather
+	// than reading a second rule.
 	if len(tok) > maxIDTokenBytes || !printableToken(tok) {
 		return "", errors.New("the metadata server answered with no usable identity token")
 	}
