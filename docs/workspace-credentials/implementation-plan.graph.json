@@ -89,7 +89,9 @@
           "internal/infra/tf/workspace.go",
           "internal/infra/tf/workspace_test.go",
           "internal/cli/workspace_create.go",
-          "SECURITY.md"
+          "deploy/terraform/gcp/roots/workspace/tests/workspace.tftest.hcl",
+          "SECURITY.md",
+          "website/content/security.md"
         ]
       }
     },
@@ -108,7 +110,10 @@
           "internal/infra/launchers.go",
           "internal/infra/tfvars.go",
           "internal/cli/intake_serve.go",
-          "internal/intake/server.go"
+          "internal/intake/server.go",
+          "internal/infra/launchers_test.go",
+          "internal/cli/intake_serve_test.go",
+          "internal/intake/server_test.go"
         ]
       }
     },
@@ -129,6 +134,7 @@
           "internal/credsvc/scope_workspace_test.go",
           "internal/credsvc/scope_installation_test.go",
           "SECURITY.md",
+          "website/content/security.md",
           "docs/workspaces/*.md"
         ]
       }
@@ -202,7 +208,9 @@
           "internal/gateway/workspace_route_test.go",
           "internal/runner/gateway.go",
           "internal/runner/budget_session.go",
-          "SECURITY.md"
+          "internal/runner/gateway_service_internal_test.go",
+          "SECURITY.md",
+          "website/content/security.md"
         ]
       }
     },
@@ -217,9 +225,7 @@
         "prediction": true,
         "paths": [
           "internal/cli/secrets_intake.go",
-          "internal/cli/secrets_intake_test.go",
-          "website/content/cli-reference.md",
-          "internal/cli/noprompt_harness_test.go"
+          "internal/cli/secrets_intake_test.go"
         ]
       }
     },
@@ -285,7 +291,6 @@
         "paths": [
           "docs/releases/*.md",
           "docs/workspaces/README.md",
-          "docs/workspace-credentials/README.md",
           "plugin/skills/working/SKILL.md"
         ]
       }
@@ -402,14 +407,14 @@
       "reason": "the owner's answers to the threat model's review"
     },
     {
-      "task": "WC14",
-      "needs": "WC0",
-      "reason": "the owner's answers to the threat model's review"
-    },
-    {
       "task": "WC7",
       "needs": "C1",
       "reason": "the grant's request and answer"
+    },
+    {
+      "task": "WC14",
+      "needs": "WC0",
+      "reason": "the owner's answers to the threat model's review"
     },
     {
       "task": "WC8",
