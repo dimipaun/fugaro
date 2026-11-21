@@ -197,12 +197,14 @@ type Options struct {
 	// JobEnv is the installation's own values as the deployed job this run
 	// stands in for carries them -- the runs bucket, the budget backend, the
 	// credentials service's URL, the price tables, the caps and the rest --
-	// keyed by the environment variable's name. **BR8 fills a run's job from
-	// this** (env.go): today a Batch job's variables are the six that name the
-	// run and a Docker socket, and nothing tells the run which bucket to write
-	// to, so a Batch run cannot do what the deployed job's run does. BR8
-	// writes these into the task's environment beside the identity entries and
-	// reserves each against the launch's own entries (F8). Empty means the
+	// keyed by the environment variable's name (internal/infra's JobEnvNames
+	// is that key set). **BR8 fills a run's job from this** (env.go): a Batch
+	// job's variables are the run's whole environment, so these are written
+	// into the task's environment beside the identity entries, each reserved
+	// against the launch's own entries bar the credentials service's URL, which
+	// a switched launch is itself the writer of (env.go), and a run can write
+	// its results and open its session where it could not before (F8). Empty
+	// means the
 	// installation's values are not passed in, which is every launch today;
 	// the values are the launcher's to read, because a backend that read them
 	// itself would be the config layer this seam deliberately is not.
@@ -236,9 +238,12 @@ type Options struct {
 	// rather than run as an identity the project's policy did not choose.
 	JobAccounts map[string]string
 	// Secrets maps an environment variable name to a Secret Manager secret
-	// name -- never a value. They are sent as Environment.secretVariables,
-	// so the values never enter the job definition, which anyone with read
-	// access to the job can read (design §1.6, C10).
+	// name -- never a value. Nothing is mounted from it (BR11, D3104): a Batch
+	// job carries no secret, and a run's credentials come from the credentials
+	// service alone. The field stays because the block that carries it does
+	// (R10: a block mid-upgrade is read, not refused), and what it is read for
+	// is checkSecrets' shape check, which refuses a value that reached either
+	// slot of the map before anything is created (secrets.go, design §1.6, C10).
 	Secrets map[string]string
 	// SealKey is the installation's budget seal key as a sealed launch needs
 	// it (batch-run-identity R13, F3): the key version's name and that
