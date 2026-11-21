@@ -27,13 +27,16 @@ import (
 //     a delete; internal/budget/token/object.go), and the take is still shared:
 //     exactly once per run, handed to the policy read and to budget.Open both
 //     (finding 2).
-//   - The mode-off path is entered by the job's own budget mode being off,
-//     never by an absence of a credential and never by a failure the run sees
-//     (B1). A budget-on run with no FUGARO_FIREBASE_API_KEY, or with no token
-//     object in the runs bucket, stops on the shipped refusals below; an
-//     exchange that fails halts the run the way the session's own Open does.
-//     A failure is never read as "no policy here", which would drop the run
-//     to the environment ceiling with the project's policy unenforced (R2-3).
+//   - The path with no database at all is entered by the job's environment
+//     carrying no backend, never by an absence of a credential and never by a
+//     failure the run sees (B1). From AB1a on every run is accounted for
+//     (D3009, R3), so no mode can turn a run down this path either: a run with
+//     no FUGARO_FIREBASE_API_KEY, or with no token object in the runs bucket,
+//     or with a value this image cannot parse, stops on the shipped refusals
+//     below; an exchange that fails halts the run the way the session's own
+//     Open does. A failure is never read as "no policy here", which would drop
+//     the run to the environment ceiling with the project's policy unenforced
+//     (R2-3).
 //   - Whether a policy exists at all may not be guessed from a read this run
 //     cannot make. The rules marker decides (projectpolicy.Read): before the
 //     policy rules are deployed, no policy can have been published here, so an
@@ -57,8 +60,7 @@ type policyRead struct {
 // both must be the same identity, so this is memoized on the run.
 //
 // db nil and err nil mean this run has no database to read: the job carries no
-// backend, or its budget is off and the bucket holds no token (see
-// budgetClient).
+// backend at all (see budgetClient).
 type budgetIdentity struct {
 	done   bool
 	cfg    budget.Config
@@ -104,7 +106,7 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 		// backend it could not parse is not that absence (L-b), and neither is
 		// one whose launcher minted a token (M2): both name something that only
 		// exists when a policy or a shared budget does, so both go through
-		// budgetClient, which refuses them whatever the run's mode. Answering
+		// budgetClient, which refuses them. Answering
 		// "no policy" here for a marked job is the fail-open M2 closed one step
 		// too late: admissionCheck would never see the allow-list, and the
 		// clone would be made before startBudgetBackend refused.
@@ -347,13 +349,12 @@ func (r *run) unreadablePolicy(err error) error {
 // (finding 2).
 //
 // A nil client with a nil error means this run has no database to read: the job
-// carries no backend, or its budget is off and the runs bucket holds no token
-// for it, or its budget is off and the job carries no web API key. The second is
-// safe to read as "no policy here" because the launcher
-// mints a token whenever it can see a policy, whatever the mode
-// (internal/cli's mint decision): off, with no token, is a job of a project
-// with nothing published. Every other failure is returned as the error that
-// ends bootstrap, already classified.
+// carries no backend at all. From AB1a on every run is accounted for (D3009,
+// R3), so an absence stands for nothing else: a job that names a database and
+// cannot be read with — no web API key, no token object in the runs bucket, a
+// value this image cannot parse — is refused here, on the shipped error, and
+// never read as "this project has published nothing". Every failure is
+// returned as the error that ends bootstrap, already classified.
 func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 	c := &r.ident
 	if c.done {
@@ -361,24 +362,20 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 	}
 	c.done = true
 	if r.d.BackendErr != nil {
-		// The job's environment does not describe a usable backend. A
-		// budget-off run ignores it when it describes no backend at all
-		// (MalformedEnv false: a stray grace value, an API key with no URL), as
-		// it ignores the rest of the backend's environment; a budget-on run
-		// stops on the shipped error, before anything else (its text is the one
-		// startBudgetBackend has always returned for it).
+		// The job's environment does not describe a usable backend, and from
+		// AB1a on that stops every run: the run is accounted for whatever its
+		// mode is (D3009, R3), so a value it cannot parse is damage to the
+		// ceiling's own environment rather than something a run ignores — its
+		// text is the one startBudgetBackend has always returned for it.
 		//
 		// An environment that *carries* the URL or the launcher's marker and
-		// cannot be parsed stops the run whatever its mode (L-b of the security
-		// review of PR #379). This is the one place the marker did not fail
-		// closed: BackendFromEnv returns a zero Backend with the error, so the
-		// marker was lost, and a job whose launcher had minted a token — proof
-		// that a policy exists — read the missing backend as "this project has
-		// published nothing" and ran on the environment ceiling with no
-		// session, no cap and no kill switch.
-		if !r.d.Spend.On() && !r.d.Backend.MalformedEnv {
-			return nil, nil
-		}
+		// cannot be parsed is the state this arm exists for (L-b of the
+		// security review of PR #379). This is the one place the marker did not
+		// fail closed: BackendFromEnv returns a zero Backend with the error, so
+		// the marker was lost, and a job whose launcher had minted a token —
+		// proof that a policy exists — read the missing backend as "this
+		// project has published nothing" and ran on the environment ceiling
+		// with no session, no cap and no kill switch.
 		c.err = fmt.Errorf("the budget backend in the job's environment: %w", r.d.BackendErr)
 		return nil, c.err
 	}
@@ -396,44 +393,20 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		}
 		return nil, nil
 	}
-	if r.d.Backend.APIKey == "" && !r.d.Spend.On() && !r.d.Backend.TokenMarked {
-		// A job that names a database and carries no web API key: the token
-		// exchange needs that key, so this run cannot read the marker or the
-		// node at all. The key is a credential, and on a budget-off job its
-		// absence is the mode-off path, exactly as an absent backend or an
-		// absent token object is (B1, P3): the mode-off path is entered by the
-		// job's own mode being off, never by an absence of a credential, and
-		// the refusal for this job is the launcher's readiness gate — a job
-		// that cannot read a published policy is not deployed (task 1.4).
-		// The run cannot tell "no policy" from "no key" here, which is why the
-		// gate and not the runner is the refusal.
-		//
-		// A budget-on job stops on the shipped error below, and so does a job
-		// whose launcher minted a token: with the mode off the launcher mints
-		// only when a policy exists (internal/cli's budgetMintOn), so the
-		// marker says this launch had one to read, and the run must not read
-		// its own missing credential as "this project has published nothing"
-		// (M2). So does a budget-off job whose environment names a backend it
-		// cannot parse (BackendErr above, L-b), which never reaches here.
-		return nil, nil
-	}
 	custom, err := r.takeBudgetToken(ctx)
 	switch {
 	case err == nil:
-	case errors.Is(err, token.ErrNoToken) && !r.d.Spend.On() && !r.d.Backend.TokenMarked:
-		// No token, and the job's own mode is off, and no launcher said it
-		// minted one: nothing to read.
-		return nil, nil
 	case errors.Is(err, token.ErrNoToken):
-		// A budget-on run whose token object cannot be read is the shipped
-		// refusal (B1, budget_session.go's startBudgetBackend said the same
-		// before this read existed). So is a job whose environment carries
-		// the launcher's marker (M2): the launcher mints whenever it can see
-		// a policy, whatever the mode, so a marker means this run HAD a token.
-		// Reading its absence as "no policy here" would run a mode-off job of
-		// a policy-enforcing project with no session, no cap and no kill
-		// switch. The marker is a fact about this launch, so it is the one
-		// the run trusts.
+		// A run whose token object cannot be read is the shipped refusal (B1,
+		// budget_session.go's startBudgetBackend said the same before this read
+		// existed) — every run is accounted for from AB1a on (D3009, R3), so
+		// there is no mode in which an absent token means "no policy here". A
+		// job whose environment carries the launcher's marker (M2) gets the
+		// same refusal worded for it: the launcher mints whenever it can see a
+		// policy, so a marker means this run HAD a token. Reading its absence as
+		// "no policy here" would run a job of a policy-enforcing project with no
+		// session, no cap and no kill switch. The marker is a fact about this
+		// launch, so it is the one the run trusts.
 		//
 		// What the absence means changed with the seal (D16): the take is
 		// read-only and no run can delete a queued run's object, so "already

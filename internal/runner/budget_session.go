@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -234,11 +235,12 @@ type Backend struct {
 	// be parsed: the fields above are then only as far as the parse got, and
 	// the run must not read the zero value as "this job has no backend" (L-b
 	// of the security review of PR #379). Losing the marker that way is what
-	// would let a budget-off job skip the read of the project's policy without
-	// a word, which is the one place the marker did not fail closed. A
-	// malformed value that describes no backend at all (a stray grace, an API
-	// key with no URL) leaves it false, and a budget-off run ignores it as it
-	// ignores the rest of the backend's environment.
+	// would let a job skip the read of the project's policy without a word,
+	// which is the one place the marker did not fail closed. A malformed value
+	// that describes no backend at all (a stray grace, an API key with no URL)
+	// leaves it false: such a value is damage to the ceiling's environment
+	// like any other, and from AB1a on (D3009, R3) it stops the run too, but it
+	// is not a state in which the run lost something it was told it had.
 	MalformedEnv bool
 	// Tune, for tests only, adjusts the session's configuration (the fakes'
 	// URLs, short intervals).
@@ -265,8 +267,8 @@ func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backen
 	marker, hasMarker := lookup(BudgetTokenEnv)
 	grace, hasGrace := lookup(BudgetGraceEnv)
 	// Everything but the two below describes no backend on its own: a stray
-	// grace or an API key with no URL is damage a budget-off run ignores, as it
-	// ignores the rest of the backend's environment.
+	// grace or an API key with no URL is damage to the ceiling's environment
+	// rather than a backend this job carries.
 	b.MalformedEnv = hasURL || hasMarker
 	if hasURL {
 		if err := rtdb.ValidateURL(url, loopbackOK); err != nil {
@@ -317,10 +319,11 @@ func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backen
 	return b, nil
 }
 
-// backendOn reports whether this run uses the budget backend: a backend is
-// configured and the merged budget mode is observe or enforce. A run whose
-// budget is off never touches it (D14 exempts off).
-func (r *run) backendOn() bool { return r.d.Backend.On() && r.spend.On() }
+// backendOn reports whether this run reads the budget backend: the job's
+// environment carries the database. The mode is not asked — from AB1a on every
+// run is accounted for (D3009, R3), so no mode decides whether the backend is
+// used.
+func (r *run) backendOn() bool { return r.d.Backend.On() }
 
 // budgetHalt records a halt the session found and stops the run: the
 // running stage is cancelled and the gateway refuses every call and cuts the
@@ -439,27 +442,28 @@ func strayTokenNoBackend() error {
 // reads the caps and the kill switches, halts the run if it may not begin,
 // creates the registry entry and starts the heartbeat and the kill watch.
 // A halt here has outcome none and exit 0: nothing was locked or pushed.
-// startBudgetBackend opens the run's budget session. It is reached only after
-// admissionCheck has admitted this run — bootstrap calls the check before the
-// lock and before this, and nothing else calls either — so the slug the session
-// is keyed by (r.d.Store.Slug, through the identity the policy read built) is
-// the one task.Slug of the job's provider and the task's repository computes,
-// for the profile the job's own name pins (plan task 3.3: the ordering is the
-// security property, and this is the lease it protects).
+// startBudgetBackend opens the run's budget session, and from AB1a on it opens
+// it for every run: every mode is accounted for — a mode left unset is observe
+// (C1, D3009, R3) — so nothing here asks the mode before it takes the run's
+// identity. What a run can still meet is a job with no database to open a
+// session against, and that is the two refusals below, both naming their fix.
+// It is reached only after admissionCheck has admitted this run — bootstrap
+// calls the check before the lock and before this, and nothing else calls
+// either — so the slug the session is keyed by (r.d.Store.Slug, through the
+// identity the policy read built) is the one task.Slug of the job's provider
+// and the task's repository computes, for the profile the job's own name pins
+// (plan task 3.3: the ordering is the security property, and this is the lease
+// it protects).
 func (r *run) startBudgetBackend(ctx context.Context) error {
 	// The launcher's marker says it minted this run a budget token, which it
 	// only does when the project has a shared budget or a published policy.
 	// A job with no backend in its environment then cannot read that policy,
-	// and a run whose own mode is off would go on with the environment
-	// ceiling, no session and no kill switch (M2; refuseStrayToken below is
-	// the same refusal for a budget-on job, found by reading the bucket).
-	// The marker is proof enough: nothing else writes it.
+	// and the run would go on with the environment ceiling, no session and no
+	// kill switch (M2; refuseStrayToken below is the same refusal for a job
+	// that can read the bucket, found there). The marker is proof enough:
+	// nothing else writes it.
 	if r.d.Backend.TokenMarked && !r.d.Backend.On() {
 		return strayTokenNoBackend()
-	}
-	// A run whose budget is off ignores the budget's environment entirely.
-	if !r.spend.On() {
-		return nil
 	}
 	// The run's identity, taken out of the runs bucket once and shared with
 	// the project policy's read (projectpolicy.go): one take, so the policy
@@ -503,11 +507,15 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 			"node", projectpolicy.PathRulesMarker(), "err", r.redact(rerr.Error()))
 	}
 
-	mode := r.spend.Mode
+	// The mode the run is accounted for, read through C1: a mode no layer set —
+	// and the word that was a mode — is observe, which is what result.json
+	// records and what the session enforces at (D3009, R3; the record's enum
+	// holds the two live modes and nothing else).
+	mode := policy.Mode(r.spend.Mode).Effective()
 	// The configuration the policy read already built and Tuned; only the
 	// fields that depend on the merged policy are set here.
 	cfg := ident.cfg
-	cfg.PolicyCap, cfg.CommittedDaily, cfg.LocalEnforce = r.spend.Cap, r.committedDaily(), mode == policyEnforce
+	cfg.PolicyCap, cfg.CommittedDaily, cfg.LocalEnforce = r.spend.Cap, r.committedDaily(), mode == policy.ModeEnforce
 	cfg.RulesGeneration = deployed
 	if r.rec.Deadline != nil {
 		cfg.Deadline = *r.rec.Deadline
