@@ -51,7 +51,7 @@ Three more facts about the lists matter here.
   administered address (D224, resolved at the write), and the pairing user's highest project-scope role
   where no entry names it; `--role` may only lower that, never below the entry the address already has
   (`docs/mobile/pairing-cli-plan.md:477`, decision 13, amended 2026-11-13). That role comes
-  from the grants node (`internal/cli/pair.go:1057`) — a repository role is no scope a device holds.
+  from the grants node (`internal/cli/pair.go:1062`) — a repository role is no scope a device holds.
 - **A pairing session is a third identity**, the one-shot `pu` claim (`pairingClaim`,
   `internal/budget/rules/rules.go:552`). It reaches the two pairing nodes and nothing else.
 - **A run is not a person.** A run's job account holds no role on the Firebase project
@@ -109,7 +109,7 @@ Read together, that table says who can do what today:
   `:101`). The `viewer` word exists in exactly two places: `internal/mobileauth`'s closed set, and
   the `--role` flag on a pairing, where it can only be reached by *lowering* a launcher's or
   operator's device, and only where no allowlist entry names the address yet
-  (`internal/cli/pair.go:1172`). It has never been enforced by anything, and it
+  (`internal/cli/pair.go:1177`). It has never been enforced by anything, and it
   grants nothing: a device whose node says `viewer` reaches precisely what any other device node
   reaches.
 - **Nobody is a viewer in practice, and seats can only be estimated** (F7, `:103`): Firebase Auth
@@ -184,8 +184,8 @@ variables, `internal/cli/roles.go`'s comments and every operator's config file.
 
 Whatever the owner answers, one thing is already fixed by what exists: `fugaro pair --role` writes
 the device words `viewer`, `operator` and `admin`, and the word a pairing writes is the role the
-allowlist resolves for the administered address (`internal/cli/pair.go:1181`) — the grants' own, the
-pairing user's highest project-scope grant (`internal/cli/pair.go:1057`), only where no entry names
+allowlist resolves for the administered address (`internal/cli/pair.go:1186`) — the grants' own, the
+pairing user's highest project-scope grant (`internal/cli/pair.go:1062`), only where no entry names
 it. The two IAM vocabularies meet the roles in `fugaro update`'s migration, and which list becomes
 which role there (D681) is the answer's to state.
 

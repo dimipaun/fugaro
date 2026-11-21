@@ -800,6 +800,135 @@ func TestCredentialsServiceOrchestratorClassReachesTheAuthenticator(t *testing.T
 	}
 }
 
+// TestCredentialsServeReadsTheIdentityEnv is LM22's reading end (D3121, D3123,
+// F29/R16): the three names of the identity half are read out of the
+// deployment's environment into C1's configuration, and NOTHING USES THEM YET.
+//
+// The three are the values the issuer will be configured with — the account a
+// run's identity is signed as, the roster's `serviceAccount:` entries and the
+// implicit admins the CLI's own gate reads out of its configuration — and each
+// is read here as an OPTIONAL value, because the module that renders them is
+// LM12: an installation whose module does not render one yet must start the
+// service it always did, on the bridge the identity routes answer "not served"
+// from (R7), rather than refuse to bind a port.
+//
+// Nothing serves a caller by these values yet, and the test says so by what it
+// does NOT assert: the configuration is built and the service starts with a
+// signer set, and no route reads it — the five identity routes answer the
+// contract's "not served" whatever this holds until I1 wires the issuer in and
+// deletes credsvc's identity stub. What is pinned here is the read, which is
+// the whole of what this task produces: the values arrive in the fields
+// credsvc.IdentityConfig names for them (I1 hands them to the routes), and a
+// deployment that is wrong is refused by name and never by value.
+//
+// Mutation (verified, run and restored): change credentialsServiceSigner's last
+// line to return the empty string — the first half below fails with an empty
+// Signer, which no other assertion here could tell from an installation whose
+// module renders no entry.
+func TestCredentialsServeReadsTheIdentityEnv(t *testing.T) {
+	const (
+		signer = "fugaro-token-signer@proj-1234.iam.gserviceaccount.com"
+		ci     = "ci-deploy@proj-1234.iam.gserviceaccount.com"
+		admin  = "owner@example.com"
+	)
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	fakeCredentialsService(t)
+
+	// Half one: the three values reach C1's configuration, each in its own
+	// field and unchanged. The roster's list and the admins' are pinned as
+	// lists and not as "non-empty", because the two are different questions —
+	// one address where the module renders a list is a document this reader
+	// must not repair, and a list that arrived as one string would serve a
+	// caller class nobody deployed.
+	t.Setenv(envSignerAccount, signer)
+	t.Setenv(envRosterServiceAccounts, `["`+ci+`"]`)
+	t.Setenv(envImplicitAdmins, `["`+admin+`"]`)
+	cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err != nil {
+		t.Fatalf("credentialsServiceConfig with the identity half set: %v", err)
+	}
+	if cfg.Identity.Signer != signer {
+		t.Errorf("the configuration's signer is %q, want the address %s carries: a service that dropped it would serve an installation with no issuer once I1 wires the routes", cfg.Identity.Signer, envSignerAccount)
+	}
+	if !slices.Equal(cfg.Identity.ServiceAccounts, []string{ci}) {
+		t.Errorf("the configuration's service accounts are %q, want %q: %s is the roster's one serviceAccount: entry", cfg.Identity.ServiceAccounts, []string{ci}, envRosterServiceAccounts)
+	}
+	if !slices.Equal(cfg.Identity.ImplicitAdmins, []string{admin}) {
+		t.Errorf("the configuration's implicit admins are %q, want %q: %s is what the machine's own configuration names", cfg.Identity.ImplicitAdmins, []string{admin}, envImplicitAdmins)
+	}
+	if _, err := credsvc.NewServer(cfg); err != nil {
+		t.Fatalf("NewServer with the identity half configured: %v (an installation whose module renders the three must be a service that starts)", err)
+	}
+
+	// Half two: absent and empty are the zero value, and the service starts —
+	// the state every installation is in until LM12 renders the entries. The
+	// three are read outside credentialsServiceEnvNames for exactly this
+	// reason, which is the verifier list's rule (TestCredentialsServeStartsWithoutTheVerifierList).
+	for _, raw := range []string{"", "[]"} {
+		t.Setenv(envSignerAccount, "")
+		t.Setenv(envRosterServiceAccounts, raw)
+		t.Setenv(envImplicitAdmins, raw)
+		cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err != nil {
+			t.Fatalf("credentialsServiceConfig with %s and %s = %q: %v (the module renders none of the three yet, so a deployment that carries none must start the same service it always did)", envSignerAccount, envRosterServiceAccounts, raw, err)
+		}
+		if cfg.Identity.Signer != "" || len(cfg.Identity.ServiceAccounts) != 0 || len(cfg.Identity.ImplicitAdmins) != 0 {
+			t.Errorf("the configuration carries %+v with the three names absent: an installation whose module renders none has no issuer, and a value here would be one this process invented", cfg.Identity)
+		}
+		if _, err := credsvc.NewServer(cfg); err != nil {
+			t.Fatalf("NewServer with the three names absent: %v", err)
+		}
+	}
+
+	// Half three: a value that is present and is not the document the module
+	// renders is a deployment that is wrong, refused by name and never by
+	// value. The signer is held to one address — the coordinator's own rule,
+	// because a single value is not a document: what is refused is a space or
+	// a control byte around the address and not its spelling, which is left to
+	// whoever consumes it (I1) — and the two lists to the array every class
+	// list is read as, which refuses a quoted string, a row and any element
+	// that is not one.
+	for _, tc := range []struct {
+		name  string
+		entry string
+		read  func(string) error
+		raw   []string
+	}{
+		{envSignerAccount, signer, func(raw string) error { _, err := credentialsServiceSigner(raw); return err },
+			[]string{signer + " ", " " + signer, "\t" + signer, signer + "\n", signer + " " + signer, signer + "\r\n"}},
+		{envRosterServiceAccounts, ci, func(raw string) error { _, err := credentialsServiceRosterServiceAccounts(raw); return err },
+			[]string{"not json", `"` + ci + `"`, `[{"email":"` + ci + `"}]`, `["` + ci + `",3]`}},
+		{envImplicitAdmins, admin, func(raw string) error { _, err := credentialsServiceImplicitAdmins(raw); return err },
+			[]string{"not json", `"` + admin + `"`, `[{"user":"` + admin + `"}]`, `["` + admin + `",3]`}},
+	} {
+		for _, raw := range tc.raw {
+			err := tc.read(raw)
+			if err == nil {
+				t.Errorf("reading %s = %q is accepted: the value is the document the module renders or nothing", tc.name, raw)
+				continue
+			}
+			if !strings.Contains(err.Error(), tc.name) {
+				t.Errorf("the refusal for %s = %q is %q, want it to name the variable", tc.name, raw, err)
+			}
+			if strings.Contains(err.Error(), tc.entry) {
+				t.Errorf("the refusal for %s = %q carries the account itself: %q (this process's log is a line an operator reads)", tc.name, raw, err)
+			}
+		}
+		// ... and the same value through the builder, which is where the
+		// refusal reaches an operator: a malformed entry is a deployment that
+		// is wrong and not a value to be read as empty.
+		t.Setenv(tc.name, tc.raw[0])
+		if _, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard); err == nil || ExitCode(err) != ExitUserError {
+			t.Errorf("err = %v for %s = %q, want a user error (exit 1)", err, tc.name, tc.raw[0])
+		} else if !strings.Contains(err.Error(), tc.name) {
+			t.Errorf("the builder's refusal for %s = %q is %q, want it to name the variable", tc.name, tc.raw[0], err)
+		}
+		t.Setenv(tc.name, "")
+	}
+}
+
 // TestCredentialsServiceConfigBuildsFromAFullEnvironment is the headline: the
 // whole of this task is that the service can be configured at all, so a
 // complete environment must build a credsvc.Config that NewServer accepts --
@@ -1241,20 +1370,23 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 // The other direction is a name this command reads that nothing sets, which is
 // a fact the service silently does not have.
 //
-// The list is the seven REQUIRED names plus the eight optional ones, which is
+// The list is the seven REQUIRED names plus the eleven optional ones, which is
 // the whole of what the module renders and what this command reads: the
 // optional ones belong here because a name the module sets and this command
 // does not read is the same mistake whether the command requires it or reads it
 // outside the loop. Which of the names is which is pinned by the tests around
 // this one, not by this comparison.
 //
-// All eight are rendered conditionally — the module sets each of them only on
+// All eleven are rendered conditionally — the module sets each of them only on
 // an installation where it applies — and the reason they belong here rather than
-// in credentialsServiceEnvNames is pinned by the tests around this one. One of
-// them is rendered by no module yet and is read from
+// in credentialsServiceEnvNames is pinned by the tests around this one. Four of
+// them are rendered by no module yet and are read from
 // CredentialsServiceEnvAwaitingTheModule below: FUGARO_SHARED_JOB_ACCOUNTS
 // (B5.1), whose reader arrived ahead of the module that will render it — the
-// same cover-first order FUGARO_REVIEW_JOB_ACCOUNTS followed.
+// same cover-first order FUGARO_REVIEW_JOB_ACCOUNTS followed — and the identity
+// half's three (LM22: FUGARO_SIGNER_ACCOUNT, FUGARO_ROSTER_SERVICE_ACCOUNTS and
+// FUGARO_IMPLICIT_ADMINS), which the installation module renders next (LM12)
+// and which nothing serves a caller by yet.
 //
 // internal/infra/tf's credentialsServiceEnv is the third side of this, and it
 // is held to the module by that package's own test (the cover's allow-list
@@ -1267,7 +1399,7 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 		inModule[m[1]] = true
 	}
 	pending := infraTF.CredentialsServiceEnvAwaitingTheModule()
-	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envLauncherAccounts, envCoordinatorAccount, envReviewJobAccounts, envSharedJobAccounts, envBuildAccounts, envOrchestratorAccounts)
+	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envLauncherAccounts, envCoordinatorAccount, envReviewJobAccounts, envSharedJobAccounts, envBuildAccounts, envOrchestratorAccounts, envSignerAccount, envRosterServiceAccounts, envImplicitAdmins)
 	for _, n := range read {
 		if slices.Contains(pending, n) {
 			if inModule[n] {

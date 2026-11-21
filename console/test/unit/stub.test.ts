@@ -70,6 +70,13 @@ describe('the stub’s command keys', () => {
       // key here whose command path is also a group the never table refuses,
       // so `models ls` is the whole of what the stub may be asked for.
       'models ls',
+      // The models write's two phases (MW1, D2903): `models.add.plan` is the
+      // dry run and `models.add` is the write, so `--dry-run` is the mode word
+      // that tells the two apart -- the same shape `setup`'s `--plan-only` and
+      // the three `--stream` reads have. The model ID behind `--` and the three
+      // `=`-form values are the rows' own arguments and never words of the key.
+      'models add --dry-run',
+      'models add',
       // The settings-edit plan's C1 (`settings.read` / `readSettings`): the
       // Project tab's third read. Its key is the command alone -- the group's
       // other words are not on the spawn table at all -- and the scenario
