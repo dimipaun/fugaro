@@ -669,8 +669,12 @@ func TestExecGatewayUpstreamLoopbackOnly(t *testing.T) {
 	}
 }
 
-// The managed settings path moves only with a loopback upstream, or when no
-// gateway runs: a job with the real upstream writes the real path.
+// The managed settings path moves only with a loopback upstream: a job with
+// the real upstream writes the real path. The mode used to be the second way
+// in — an off ceiling, or an off mode in the file, let the path move — and
+// from AB1a every run's budget is on whatever its job or its file says
+// (D3009, R3), so the modes that used to buy the real path are refused with
+// the rest.
 func TestExecManagedSettingsFlag(t *testing.T) {
 	on := runner.Spend{Mode: "observe"}
 	off := runner.Spend{Mode: "off"}
@@ -685,12 +689,12 @@ func TestExecManagedSettingsFlag(t *testing.T) {
 	}{
 		{"committed enforce under an off ceiling", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "enforce", true},
 		{"committed observe, no ceiling", execOptions{managedSettings: "/tmp/m.json"}, runner.Spend{}, nil, "observe", true},
-		{"committed off", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "off", false},
+		{"committed off", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "off", true},
 		{"budget on, real upstream", execOptions{managedSettings: "/tmp/m.json"}, on, nil, "", true},
 		{"budget on, real upstream, even a real URL", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: "https://api.anthropic.com"}, on, nil, "", true},
 		{"malformed budget counts as on", execOptions{managedSettings: "/tmp/m.json"}, runner.Spend{}, errors.New("bad"), "", true},
 		{"budget on, loopback upstream", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: lo}, on, nil, "", false},
-		{"budget off", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "", false},
+		{"budget off", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "", true},
 		{"unset", execOptions{}, on, nil, "", false},
 	}
 	for _, c := range cases {
