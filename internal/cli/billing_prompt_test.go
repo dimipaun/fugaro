@@ -1290,8 +1290,8 @@ func TestEnablingIsTheRunsOwnConfirmationAndNothingStandsInForIt(t *testing.T) {
 		if err := r.gatherInputs(t.Context()); err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
-		if out.Len() != 0 {
-			t.Errorf("a run that carries its own answer wants no question asked, and the wizard asked one:\n%s", out)
+		if rest := strings.TrimSpace(withoutPlacement(out.String())); rest != "" {
+			t.Errorf("a run that carries its own answer wants no question asked, and the wizard asked one:\n%s", rest)
 		}
 		if len(pickerEnables(ran)) != 0 {
 			t.Errorf("a run that carries its own answer enabled the API: %v", pickerEnables(ran))

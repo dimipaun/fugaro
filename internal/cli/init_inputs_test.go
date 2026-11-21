@@ -445,11 +445,13 @@ func TestFirstRunAsksWithSuggestions(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The ID's suggestion is the new project named after this one (D4); the
-	// project the credentials name exists, so setup does not offer it.
+	// project the credentials name exists, so setup does not offer it. The
+	// place question's suggestion is US — the region us-east5 is what the place
+	// settles rather than what the question offers (LP4, D3086).
 	if o := r.o; o.name != "acme" || o.cloud.gcpProject != "fugaro-acme" || o.cloud.region != "us-east5" {
 		t.Errorf("name %q, project %q, region %q\n%s", o.name, o.cloud.gcpProject, o.cloud.region, out.String())
 	}
-	for _, want := range []string{"[acme]", "[fugaro-acme]", "[us-east5]"} {
+	for _, want := range []string{"[acme]", "[fugaro-acme]", "[" + string(place.US) + "]"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("no suggestion %s:\n%s", want, out.String())
 		}
