@@ -682,7 +682,11 @@ func (r *initRun) noFlagBudgetDatabase(ctx context.Context, c *infra.Clients, t 
 		r.warn(fmt.Sprintf("project %s already has a Realtime Database (%s) and this machine records none: the Firebase root adopts what is there rather than creating a second one", fp, strings.Join(urls, ", ")))
 	}
 	// F4/R2: whether anything would answer the stage's ordinary confirmation.
-	if r.stepConfirmation(true) == stepLeave {
+	// The managed gate is asked first: on a managed project this stage performs
+	// under it with no confirmation at all, a coding agent's session included
+	// (D3028, R11), so a run the gate stands in for is not a run that has
+	// nothing to answer with.
+	if !r.gateStandsIn() && r.stepConfirmation(true) == stepLeave {
 		r.declined = "no budget database was created: nothing answers this run's confirmation (no terminal, --json, a pipe and a coding agent never do); a project owner runs " + selfCommand() + " " + r.o.doorName() + " once"
 		return true, nil
 	}
@@ -764,7 +768,7 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 	if fs.CreatesDatabase() {
 		what += fmt.Sprintf("; this does NOT create the Firestore database: its creation in %s, whose location is permanent and can never be changed, is asked next, separately (its own confirmation, with nothing typed)", infra.FirestoreLocation)
 	}
-	if err := r.confirmOrdinary(what, "the database was not written", r.firebaseReason()); err != nil {
+	if err := r.confirmDatabase(what); err != nil {
 		return false, err
 	}
 	if len(acts) > 0 {
@@ -780,6 +784,26 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 		fmt.Fprintln(r.w, "initialized Identity Platform (no sign-in providers)")
 	}
 	return true, nil
+}
+
+// confirmDatabase is the budget database's own confirmation: the stage's
+// ordinary one, or the managed gate's sentence where the gate stands in for the
+// stage's confirmations (D3028, R11 — on a managed project the database is
+// created with nobody confirming, and from a coding agent's session too, which
+// is the owner's own choice of the two answers O6 puts side by side).
+//
+// The gate is what answers here and not the run's review: the review is not
+// asked on a managed project at all (runCovers' gateStandsIn arm), so a step
+// that waited for it would wait for a confirmation nobody is shown. What is
+// left to a person is the Firestore location, whose own confirmation is not
+// this function's and stays where it is: it is permanent, and D1026 admits no
+// plan gate's answer for a step like that.
+func (r *initRun) confirmDatabase(what string) error {
+	if r.gateStandsIn() {
+		fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+		return nil
+	}
+	return r.confirmOrdinary(what, "the database was not written", r.firebaseReason())
 }
 
 // confirmLocation is the Firestore database's own confirmation: its location
