@@ -148,3 +148,45 @@ func TestTheBlocksAccountIsNotRead(t *testing.T) {
 		t.Fatalf("a launch refused for want of an account created a job: %v", got)
 	}
 }
+
+// TestADefaultComputeAccountRecordedForAJobIsRefused: New keeps the rule for
+// the block's own field (checkServiceAccount), and it has to hold for the
+// account a job is really built with too -- otherwise the record BR10 reads is
+// the way around it, and a run's VMs are Editor on the whole project under an
+// account that never went through New's check.
+//
+// Both classes of deployed job, because what the rule is about is the account
+// a launch runs as rather than the field it came from; the account is named in
+// the refusal and nothing is created.
+func TestADefaultComputeAccountRecordedForAJobIsRefused(t *testing.T) {
+	const defaultAccount = "123456789-compute@developer.gserviceaccount.com"
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		job    string
+		launch func() backend.LaunchSpec
+	}{
+		{"a per-repository workflow", gcp.JobName(backendtest.Slug, backendtest.Workflow), spec},
+		{"a workflow on a shared project job", projectJob(), func() backend.LaunchSpec {
+			s := spec()
+			s.Job = projectJob()
+			return s
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, bf, _, _ := newTestBackend(t, func(o *Options) {
+				o.JobAccounts = map[string]string{tc.job: defaultAccount}
+			})
+			_, err := b.Launch(ctx, tc.launch())
+			if !errors.Is(err, backend.ErrRejected) {
+				t.Fatalf("Launch with %s recorded for the job %s = %v, want ErrRejected", defaultAccount, tc.job, err)
+			}
+			if !strings.Contains(err.Error(), defaultAccount) {
+				t.Errorf("the refusal %q does not name the account it refuses (%s)", err, defaultAccount)
+			}
+			if got := bf.Creates(); len(got) != 0 {
+				t.Fatalf("a launch refused for its account created a job: %v", got)
+			}
+		})
+	}
+}
