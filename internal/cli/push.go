@@ -104,24 +104,6 @@ const (
 	pushMaxRows = 200
 )
 
-// pushHaltReasons are the halt reasons this category is about: a run the budget
-// stopped over a cap. evaluate.go's halt reasons are these four plus
-// `kill_switch`, which is not here because a kill switch is derived from the
-// switch node itself and not from a run — a switch that halts a run and a switch
-// that halts nothing are the same news, and the run-side spelling would buzz
-// once per run for one switch.
-//
-// `no_cap` belongs with the three cap reasons rather than apart from them: it is
-// the refusal that every side of the comparison is unset, and it halts a run
-// exactly as a reached cap does — the person's run stopped for the budget, which
-// is what the category tells them.
-var pushHaltReasons = map[string]bool{
-	string(budget.ReasonRunCap):         true,
-	string(budget.ReasonRepoDailyCap):   true,
-	string(budget.ReasonGlobalDailyCap): true,
-	string(budget.ReasonNoCap):          true,
-}
-
 // pushEvent is one thing a sweep derived: the category, and the state-change key
 // that makes it ONE event rather than one per sweep (§3.7 — the key is the
 // transition, not the event). A budget event's key names the run it is about, so
@@ -554,15 +536,98 @@ func pushKillKey(scope string, k *budget.Kill) string {
 	return "kill:" + scope
 }
 
-// capEvents derives the cap categories from the registry: a run the budget
-// halted on a cap is "cap reached", and a run whose spend is at or past
-// pushCapNearPercent of its own per-run cap is "cap near" (off by default, §3.8).
-//
-// The registry is read the way the sweeper reads it — the same tree, the same
-// per-run entry — and the caps are read from the same nodes a run reads them
-// from. A run the registry does not hold is not an event: the sender sends what
-// the installation's own state says, never a guess about a run that has ended.
+// capEvents derives the two cap categories, and they are read from different
+// places on purpose.
 func (p *pushSender) capEvents(ctx context.Context) ([]pushEvent, error) {
+	reached, err := p.capReachedEvents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	near, err := p.capNearEvents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append(reached, near...), nil
+}
+
+// capReachedEvents is "a cap is binding on a run": every run whose share of the
+// day has reached the cap that binds it, read from the two families the phone
+// reads this category from — `config/caps/**` and `spend/$day/**` (§1) — and
+// never from the run registry.
+//
+// The registry is not a source for it, and this is the reason rather than a
+// preference: a halted run deletes its own entry as it ends, and the same job's
+// registry phase reaps a hard-killed run's entry before this one runs, so a
+// derivation from the entry's `halted` sees a halted run only in the window
+// between the halt and its end — against a 15-minute sweep. §3.7's "a cap that
+// is still reached on the next sweep sends one cap reached" describes a
+// condition that OUTLIVES the run's entry, and the spend node is where that
+// condition lives. It is also the only place the phone can see it, which is what
+// makes the buzz resolvable when the tap lands (§3.2): an event the app cannot
+// resolve against what it may read is a lock-screen lie.
+//
+// The day is the sweep's own UTC day (D5), the one a person reading the app is
+// in, and the cap is budget.Caps.PerRun() — the smallest of the repository's own
+// per-run cap or the default, and the project's global one — so the comparison
+// is the budget's own and not a second reading of the same nodes. The day is
+// also the window: a run over its cap in an earlier day's share is not an event
+// of this one, because the day's share is the figure the phone resolves against.
+// A run with no per-run cap set anywhere is not an event either: nothing binds
+// it, and the app has no cap to resolve the category against.
+func (p *pushSender) capReachedEvents(ctx context.Context) ([]pushEvent, error) {
+	day := budget.Day(p.now())
+	var shares map[string]map[string]budget.Counters
+	if _, err := p.db.Get(ctx, "spend/"+budget.DayKey(day)+"/runs", &shares); err != nil {
+		return nil, fmt.Errorf("reading spend/%s/runs: %w", budget.DayKey(day), err)
+	}
+	slugs := make([]string, 0, len(shares))
+	for key := range shares {
+		slugs = append(slugs, key)
+	}
+	sort.Strings(slugs)
+	var events []pushEvent
+	for _, slugKey := range slugs {
+		slug, err := budget.Unkey(slugKey)
+		if err != nil || slug == "" {
+			continue
+		}
+		caps, err := p.pushCaps(ctx, slug)
+		if err != nil {
+			return nil, err
+		}
+		perRun, hasCap := caps.PerRun()
+		if !hasCap {
+			continue
+		}
+		runs := make([]string, 0, len(shares[slugKey]))
+		for key := range shares[slugKey] {
+			runs = append(runs, key)
+		}
+		sort.Strings(runs)
+		for _, runKey := range runs {
+			run, err := budget.Unkey(runKey)
+			if err != nil || run == "" {
+				continue
+			}
+			if shares[slugKey][runKey].Spent < perRun {
+				continue
+			}
+			// The run's name is the key: "one per category per run per hour"
+			// (§3.7) is the key's own doing, and a run that is still over its cap
+			// on the next sweep is one event, not one per sweep.
+			events = append(events, pushEvent{category: pushCapReached, key: "cap:" + slug + "/" + run})
+		}
+	}
+	return events, nil
+}
+
+// capNearEvents is "a run is approaching the ceiling that will stop it", and the
+// registry is the right source for it: it is about a run still burning toward
+// its own cap — a live run's trajectory, which the entry it heartbeats is the
+// record of — and the quantity compared is the run's own lifetime spend
+// (AgentEntry.Spent), the same one Evaluate's per-run side compares. A run whose
+// entry is gone is not near a cap; it has ended.
+func (p *pushSender) capNearEvents(ctx context.Context) ([]pushEvent, error) {
 	var tree map[string]map[string]json.RawMessage
 	if _, err := p.db.Get(ctx, "agents", &tree); err != nil {
 		return nil, fmt.Errorf("reading the registry: %w", err)
@@ -605,20 +670,44 @@ func (p *pushSender) capEvents(ctx context.Context) ([]pushEvent, error) {
 			if json.Unmarshal(tree[slugKey][runKey], &e) != nil {
 				continue
 			}
-			name := slug + "/" + run
-			if pushHaltReasons[e.Halted] {
-				events = append(events, pushEvent{category: pushCapReached, key: "cap:" + name + ":" + e.Halted})
-				continue
-			}
 			if hasCap && perRun > 0 && e.Spent >= perRun*budget.Micros(pushCapNearPercent)/100 {
-				events = append(events, pushEvent{category: pushCapNear, key: "cap-near:" + name})
+				events = append(events, pushEvent{category: pushCapNear, key: "cap-near:" + slug + "/" + run})
 			}
 		}
 	}
 	return events, nil
 }
 
+// pushCaps reads the three nodes a run's cap can come from — the project's, the
+// defaults and the repository's own — as the budget's own Caps value, so the
+// comparison made on it is budget.Caps's and not this file's. The mode is not
+// read: the phone may read config/caps/** and cannot read config/mode, so a
+// category it resolves from the caps alone must not turn on a node it cannot
+// see.
+func (p *pushSender) pushCaps(ctx context.Context, slug string) (budget.Caps, error) {
+	var caps budget.Caps
+	if found, err := p.db.Get(ctx, budget.PathCapsGlobal, &caps.Global); err != nil {
+		return caps, fmt.Errorf("reading %s: %w", budget.PathCapsGlobal, err)
+	} else if !found {
+		caps.Global = nil
+	}
+	if found, err := p.db.Get(ctx, budget.PathCapsDefaults, &caps.Defaults); err != nil {
+		return caps, fmt.Errorf("reading %s: %w", budget.PathCapsDefaults, err)
+	} else if !found {
+		caps.Defaults = nil
+	}
+	if found, err := p.db.Get(ctx, budget.PathCapsRepo(slug), &caps.Repo); err != nil {
+		return caps, fmt.Errorf("reading %s: %w", budget.PathCapsRepo(slug), err)
+	} else if !found {
+		caps.Repo = nil
+	}
+	return caps, nil
+}
+
 // pushPerRunCap is a repository's per-run cap: its own node, else the default.
+// It is cap-near's comparison (capNearEvents); the cap that BINDS a run —
+// budget.Caps.PerRun(), the smallest of the three sides — is read by pushCaps,
+// because cap_reached is about the cap that really stops the run.
 func pushPerRunCap(repo *budget.RepoCaps, defaults *budget.DefaultCaps) (budget.Micros, bool) {
 	if repo != nil && repo.PerRunMicros != nil {
 		return *repo.PerRunMicros, true

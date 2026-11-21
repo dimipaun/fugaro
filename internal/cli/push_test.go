@@ -90,6 +90,17 @@ func (f *pushFixture) entry(run, halted string, spent int64) {
 	})
 }
 
+// stoppedByCap leaves the installation as a run the budget stopped leaves it:
+// the repository's per-run cap, and the run's share of the day at or past it.
+// Nothing is written to the registry, which is the production shape rather than
+// an omission — the run deletes its own entry as it ends, and the sweep's
+// registry phase reaps a hard-killed run's entry before the sender's phase runs
+// — so a test that only plants an entry is testing a window, not the state.
+func (f *pushFixture) stoppedByCap(run string, perRun, spent int64) {
+	f.db.Set(budget.PathCapsRepo(appSlug), map[string]any{"perRunMicros": perRun})
+	f.db.Set(budget.PathSpendRun(budget.Day(f.now), appSlug, run), map[string]any{"spent": spent})
+}
+
 // kill turns the installation's kill switch on, which is the event every test
 // that only needs *an* event uses: it needs no run and no account state.
 func (f *pushFixture) kill() {
@@ -141,7 +152,7 @@ func TestPushSendsOnePerCategoryPerRunPerHour(t *testing.T) {
 	f.pair(t, mailboxSwitchState(nil))
 	plant := func() {
 		for i := 1; i <= 7; i++ {
-			f.entry(fmt.Sprintf("2026100%d-090000-aaaa", i), string(budget.ReasonRunCap), 0)
+			f.stoppedByCap(fmt.Sprintf("2026100%d-090000-aaaa", i), 1_000_000, 1_000_000)
 		}
 	}
 	plant()
@@ -185,6 +196,63 @@ func TestPushSendsOnePerCategoryPerRunPerHour(t *testing.T) {
 	}
 }
 
+// TestPushDerivesCapReachedWithoutTheRunsRegistryEntry is the PRODUCTION shape
+// of §3.6 (B)'s derivation, and the reason this category is not read from the
+// run registry: a halted run deletes its own entry as it ends, and this job's
+// registry phase reaps a hard-killed run's entry before the sender's phase runs,
+// so at the 15-minute cadence the sweep almost never meets the entry of a run it
+// stopped. What it meets is the run's share of the day against the cap that
+// binds it — the two families §1 lets the phone read, which is what makes the
+// buzz resolvable when it is tapped (§3.2) — so this test leaves the registry
+// empty entirely and the event is still derived.
+//
+// The last two halves are the key and the comparison: the key names the run, so
+// a condition still true on the next sweep is one event and not one per sweep
+// (§3.7), and a run under its cap is not an event at all.
+func TestPushDerivesCapReachedWithoutTheRunsRegistryEntry(t *testing.T) {
+	const run = "20261001-090000-aaaa"
+	f := newPushFixture(t, pushTestNow)
+	f.pair(t, mailboxSwitchState(nil))
+	f.stoppedByCap(run, 1_000_000, 1_000_000)
+	if v := f.db.Value("agents"); v != nil {
+		t.Fatalf("the fixture left registry entries (%v): the shape under test is a halted run whose entry is already gone", v)
+	}
+
+	out, _ := f.sweep(t)
+	if got := f.categories(); !slices.Equal(got, []string{pushCapReached}) {
+		t.Fatalf("sent %v, want cap_reached with no registry entry in the tree", got)
+	}
+	if !strings.Contains(out, "1 sent") {
+		t.Errorf("output = %q, want the one notification counted", out)
+	}
+	rows := f.pushRows(t)
+	row, _ := rows[budget.Key(pushCapReached+":cap:"+appSlug+"/"+run)].(map[string]any)
+	if row == nil {
+		t.Fatalf("the ledger holds %v, want the row keyed by the run: the key is what makes the event one per run per hour", rows)
+	}
+	if got := mailboxNodeString(t, row, "key"); got != "cap:"+appSlug+"/"+run {
+		t.Errorf("the row's key = %q, want the run named in it", got)
+	}
+
+	// The condition outlives the sweeps that see it: the same state-change key
+	// on the next sweep is not a second buzz.
+	before := len(f.sent)
+	f.sweep(t)
+	if len(f.sent) != before {
+		t.Errorf("a second sweep sent %v (%v), want none: the key is the transition, not the sweep", len(f.sent)-before, f.categories()[before:])
+	}
+
+	// A run under its cap is not an event: "reached" is the cap, and the run's
+	// share of the day is what is compared against it.
+	f2 := newPushFixture(t, pushTestNow)
+	f2.pair(t, mailboxSwitchState(nil))
+	f2.stoppedByCap(run, 1_000_000, 500_000)
+	f2.sweep(t)
+	if len(f2.sent) != 0 {
+		t.Errorf("sent %v for a run under its cap", f2.categories())
+	}
+}
+
 // TestPushSuppressesACategoryTheAccountTurnedOff is §3.8's server-side switch:
 // a category the account turned off is decided **before the provider is called**
 // at all, so no token is spent, nothing reaches the OS, and no ledger row is
@@ -195,7 +263,7 @@ func TestPushSuppressesACategoryTheAccountTurnedOff(t *testing.T) {
 	prefs["kill_switch"] = false
 	f.pair(t, prefs)
 	f.kill()
-	f.entry("20261001-090000-aaaa", string(budget.ReasonRunCap), 0)
+	f.stoppedByCap("20261001-090000-aaaa", 1_000_000, 1_000_000)
 
 	out, _ := f.sweep(t)
 	if got := f.categories(); !slices.Equal(got, []string{pushCapReached}) {
@@ -216,7 +284,7 @@ func TestPushSuppressesACategoryTheAccountTurnedOff(t *testing.T) {
 	}
 	f2.pair(t, off)
 	f2.kill()
-	f2.entry("20261001-090000-aaaa", string(budget.ReasonRunCap), 0)
+	f2.stoppedByCap("20261001-090000-aaaa", 1_000_000, 1_000_000)
 	f2.sweep(t)
 	if len(f2.sent) != 0 {
 		t.Fatalf("an account with every category off was sent %v", f2.categories())
