@@ -569,6 +569,16 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"never falls back",
 		"the mount is the switch's, not the outage's",
 		"halts at the service's door rather than being answered from the App key its container still holds",
+		// WS12 (D2983): an unreachable service is waited for before it halts,
+		// which is the one shape of an outage a wait can end — a service that
+		// is up and answers unreadably, or refuses, still halts the run at
+		// once. Pinned with the bound and the naming, because the paragraph
+		// said "halts" flat before this task, while a run now spends minutes
+		// of its own budget on the wait and reports which service it was.
+		"**Unreachable waits, then halts, and never falls back.**",
+		"is waited for and retried for a bounded time",
+		"a reason that names **which** service could not be reached",
+		"its reason is already known, so it halts the run at once",
 		// The stop flag.
 		"fugaro budget kill --all",
 		// The database role's reach, said plainly rather than left to be
@@ -737,6 +747,17 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		// still there, the runner just no longer reads the key.
 		"the release after the owner's live Check 96 proves the deployed service mints",
 		"no longer reads the key and mints at the service instead",
+		// KS4's own limit (D3003, R11): the service checks the route for
+		// every caller, and the cap is still the gateway's, so a call an
+		// agent builds itself and posts to the provider route directly is
+		// served under the policy's rules and never priced. Stated here
+		// rather than only where the route is described, because a reader
+		// who takes "the service holds the credentials" as the whole story
+		// would conclude the run's cap bounds every call that spends one.
+		"a hand-built call reaches the service without the gateway, and escapes the run's cost cap",
+		"whoever built the request",
+		"is not counted against the run's own cap",
+		"Metering these calls in the service was considered and declined",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the `### The credentials service` section does not state the known limit %q: a limit that is not stated is read as a guarantee", want)

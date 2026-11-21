@@ -11,17 +11,20 @@
 // cannot show a 16 KiB task scrollably, and the design names the window for
 // exactly that reason.
 //
-// **One window, two questions** (the owner's ruling of 2026-11-01, D1115), and
-// **one modal for entry, diff and confirmation** (D2902, SU1). The launch (rule
-// 11) and a settings edit (rule 12) are the same window, the same gate and the
-// same keyboard: what differs is the *subject* -- `ConfirmSubject`, the union of
-// a frozen launch's view, a settings edit's entry form and the diff that
-// replaces it in the same window -- and the gates a question carries: the tick a
-// widening needs (D1109, `CONFIRM_TICK_NEEDED`), and, for the entry form, the
-// answer being a **value** rather than a yes. Two windows would have been two
-// copies of the three properties below, and the copy is the one that would
-// drift; a second window for the diff would have been a second question asked
-// after a first one had already been answered, which is what D2902 rules out.
+// **One window, every question the console asks before it acts** (the owner's
+// ruling of 2026-11-01, D1115), and **one modal for entry, diff and
+// confirmation** (D2902, SU1), with a **first setup** joined to them (SW3a,
+// D2904). The launch (rule 11), a settings edit (rule 12) and a setup are the
+// same window, the same gate and the same keyboard: what differs is the
+// *subject* -- `ConfirmSubject`, the union of a frozen launch's view, a settings
+// edit's entry form, the diff that replaces it in the same window, and a setup's
+// own view -- and the gates a question carries: the tick a widening needs
+// (D1109, `CONFIRM_TICK_NEEDED`), the entry form's answer being a **value**
+// rather than a yes, and a setup's yes being the go for a run whose answers main
+// already holds. Two windows would have been two copies of the three properties
+// below, and the copy is the one that would drift; a second window for the diff
+// would have been a second question asked after a first one had already been
+// answered, which is what D2902 rules out.
 //
 // **The three properties that make it a confirmation rather than a prompt.**
 //
@@ -53,10 +56,11 @@
 //      case it does not, is on `CONFIRM_READY_DELAY_MS` below.
 //
 // What the window is shown is `ConfirmSubject`, a deep-frozen copy built once by
-// `confirmView` or by `settingsView` -- never the `FrozenLaunch`, which carries
-// the plan, the child's environment and the task's `Uint8Array`, and never the
-// dry run's raw document, which is the CLI's own bytes with no bound on what a
-// later version of the CLI may hold.
+// `confirmView`, `settingsView` or `setupView` -- never the `FrozenLaunch`,
+// which carries the plan, the child's environment and the task's `Uint8Array`,
+// never the dry run's raw document, which is the CLI's own bytes with no bound on
+// what a later version of the CLI may hold, and never the setup's held answers,
+// which are the `Uint8Array` the child is spawned with.
 //
 // **The other way a window goes away.** `close(id)` is the caller's, and it is
 // rule 11's "an installation removed or re-chosen while the window is open closes
@@ -71,6 +75,7 @@ import { join } from 'node:path'
 import type { BrowserWindow, BrowserWindowConstructorOptions, Session } from 'electron'
 
 import type { ConfirmSubject, LaunchConfirmer, SettingsConfirmView } from './launch'
+import { setupConfirmID } from './setupview'
 import type { ConsoleEventLike, IpcMainLike } from './ipc'
 import { SENDER_REFUSAL } from './ipc'
 import type { SettingsEditorAnswer, SettingsEditorConfirmer } from './settingsedit'
@@ -203,9 +208,14 @@ export const CONFIRM_TICK_NEEDED = 'this confirmation raises a limit: tick the b
  * one that must know a project's identity without loading this one's Electron.
  * The two settings subjects sharing one identity is what makes the entry form's
  * window and the diff it settles into **one window** for a caller that only
- * knows the project. */
+ * knows the project. A setup's is `setupConfirmID(project)`, defined beside its
+ * own view (`setupview.ts`) for the same reason: the wizard is what knows the
+ * project its answers stand up, and nothing here may load the wizard's spawn
+ * side to ask it. */
 export function confirmSubjectID(subject: ConfirmSubject): string {
-  return subject.kind === 'launch' ? subject.runId : settingsConfirmID(subject.project)
+  if (subject.kind === 'launch') return subject.runId
+  if (subject.kind === 'setup') return setupConfirmID(subject.project)
+  return settingsConfirmID(subject.project)
 }
 
 /** CONFIRM_ALREADY_ANSWERED is what a second answer for one window is answered
@@ -439,14 +449,23 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): ConfirmWindowSeams
 
   /** phaseTakes is whether the question the window is **currently** asking is
    * answered this way (D2902's one window asks two questions in turn): the entry
-   * form takes a submit, a launch or a diff takes a yes, and every phase takes a
-   * no. It is a check rather than a guess because the two questions have
-   * different consequences -- a yes spawns the write's argv, a submit only starts
-   * a dry run -- and because the subject the window holds is what says which one
-   * is on screen. */
+   * form takes a submit, a launch or a diff or a setup takes a yes, and every
+   * phase takes a no. It is a check rather than a guess because the two
+   * questions have different consequences -- a yes spawns the write's argv, a
+   * submit only starts a dry run -- and because the subject the window holds is
+   * what says which one is on screen. */
   function phaseTakes(subject: ConfirmSubject, answer: ConfirmAnswer): boolean {
     if (answer.answer === 'no') return true
-    return (subject.kind === 'settings-entry') === (answer.answer === 'submit')
+    if (subject.kind === 'settings-entry') return answer.answer === 'submit'
+    // Every other subject -- a launch, a diff, a setup (SW3a) -- is answered
+    // with a yes and nothing else, written per subject rather than as the entry
+    // form's complement. The biconditional this replaces
+    // (`(kind === 'settings-entry') === (answer === 'submit')`) refuses the same
+    // answers for these four subjects, so this is not a fix to it: what the
+    // spelling buys is a rule that reads one line per subject, which is what a
+    // fifth subject, or one that takes both a yes and a submit, needs and what a
+    // complement cannot say.
+    return answer.answer === 'yes'
   }
 
   /** settleReply delivers a form's held answer, at most once: the window answers
