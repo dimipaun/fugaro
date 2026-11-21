@@ -418,12 +418,11 @@ func SameInstallation(published, local *Config) bool {
 // repos read the other way round (mergeRepoRecords); scalar and pointer fields
 // take the local value when it is non-zero, else the published one; name,
 // gcp_project, runs_bucket and version always come from local. The batch: block
-// is read the other way round for its two identity facts and for nothing else
-// (mergeBatchBlock, R15): the opt-in fact comes from the published copy, and the
-// retired key fact is never published at all. What Shared
-// drops is
-// never taken from published either. A published object of another
-// installation (SameInstallation) is ignored. Neither argument is modified.
+// is read the other way round for its opt-in fact and for nothing else
+// (mergeBatchBlock, R15): that fact is the published copy's, and the retired key
+// fact is never published at all. What Shared drops is never taken from
+// published either. A published object of another installation
+// (SameInstallation) is ignored. Neither argument is modified.
 //
 // The two writers that CHANGE the opt-in fact — an operator's selection of the
 // backend (R2) and the opt-out (R16) — are MergeSharedOptIn, which is this
