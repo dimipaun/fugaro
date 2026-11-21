@@ -198,8 +198,11 @@ layer.defaults.model_grades.strongest.access	open:writer-unproven
 layer.defaults.model_grades.strongest.model	open:no-writer
 layer.defaults.rigor.areas.src.level	open:writer-unproven
 layer.defaults.rigor.areas.src.match	open:writer-unproven
+layer.defaults.rigor.areas.src.members.conformance.paths	open:writer-unproven
+layer.defaults.rigor.areas.src.members.conformance.repo	open:writer-unproven
 layer.defaults.rigor.areas.src.name	open:writer-unproven
 layer.defaults.rigor.default	open:writer-unproven
+layer.defaults.rigor.repos	open:writer-unproven
 layer.gcp_project	label:file
 layer.profiles.web.base	open:writer-unproven
 layer.profiles.web.cache.conformance.key	open:writer-unproven
