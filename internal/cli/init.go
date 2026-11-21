@@ -873,12 +873,22 @@ type initRun struct {
 	// same question about the named token family (D2350), which the proxy
 	// serves as readily (T15): S6's flip asks the two together
 	// (bundleHoldsBitbucketToken).
-	credsRead           bool
-	credsNames          map[string]bool
-	credsAppKey         bool
-	credsRecord         bool
-	credsBitbucket      bool
-	credsBitbucketTyped bool
+	//
+	// credsRepoCredentials is the reading's last answer, the members of C1's
+	// named-provider family the document holds, by their own document keys
+	// (withoutRepoCredentials): R12's first fact asks whether the entry this
+	// repository's own slug and a provider it names is among them, and it is a
+	// question about the document just read rather than a second read of the
+	// secret. It is nil wherever the family is absent and wherever no document
+	// was read at all, which are two states the fact's reader asks no
+	// difference of (neither holds an entry).
+	credsRead            bool
+	credsNames           map[string]bool
+	credsAppKey          bool
+	credsRecord          bool
+	credsBitbucket       bool
+	credsBitbucketTyped  bool
+	credsRepoCredentials map[string]bool
 	// credsProviderKey is the same reading's answer for the project's provider
 	// key (config.ProviderKeySecret), which is the one model credential that is
 	// not an account: credsNames cannot carry it, because a caller reaches it
@@ -4756,6 +4766,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateRigorSpelling(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// The members and the per-repo map LD4 adds to that block are the same
+	// kind of break on the newer rigorMembersSince, and the layer's alone: a
+	// repository's file refuses members: on a rule of its own and has no
+	// repos: key at all, so no repository half is judged here.
+	if err := r.gateRigorMembers(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	// The governance: block, in either file, is the same kind of break, on
 	// governanceSince.
 	if err := r.gateGovernance(o, repo, lc, cfg); err != nil {
@@ -4996,7 +5013,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// and not the document's agent.oauth_token alone: they are the accounts its
 	// jobs go out on and the ones the record below names, so a launch on any of
 	// them (`--token`, D2070 (a)) is a run this bundle reading has to cover.
-	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, lc, repo), policyBudgetMode(in.Policy))
+	r.recordCredentialsServiceReady(ctx, lc, outs, cfg, in.Policy, repo, cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, lc, repo), policyBudgetMode(in.Policy))
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
@@ -5384,6 +5401,23 @@ func (r *initRun) gateGovernance(o *initOptions, repo string, lc *localcfg.Confi
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseGovernanceSkew(repo, cfg.RepoGovernanceSet, cfg.Layer.SetsGovernance(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateRigorMembers is fugaro update --repo's gate for rigorMembersSince:
+// refuseRigorMembersSkew, with gateRigor's escapes and for its reason. The keys
+// are the project layer's alone — a repository's fugaro.yaml refuses members: on
+// one of its own rigor.areas rules and knows no repos: key — so the repository
+// half the other gates carry is absent: what is judged is the layer this
+// repository's configuration resolves over, and the refusal names it.
+func (r *initRun) gateRigorMembers(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseRigorMembersSkew(repo, cfg.Layer.SetsRigorMembers(), lc.BaseImage(config.BaseKind), w)
 }
 
 // gateJobs is fugaro update --repo's gate for jobsSince: refuseJobsSkew, with
@@ -6244,10 +6278,20 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 	// runs would then be answered 503 no_candidate_credentials by the
 	// credentials service while the node this publish writes still carries the
 	// admission, which is the state this key exists to end.
-	var ready *bool
+	// The same care extends to R12's two facts, which the same door wrote on
+	// the same entry a moment ago (recordCredentialsServiceReady, KS19): this
+	// write is the one `fugaro update` publishes for the installation, so a
+	// fact it did not carry over would be erased from the record of the very
+	// run that judged it — which is every run, the repository door writing this
+	// entry each time it converges. They travel with the switch, nil included,
+	// and for the same reason: an entry no update has judged must stay
+	// unjudged, and only the reading that judged it writes one.
+	var ready, providerKeysServed, stageAccountServed *bool
 	var accounts []string
 	if entry, ok := lc.Repos[key]; ok {
 		ready = entry.CredentialsServiceReady
+		providerKeysServed = entry.ProviderKeysServed
+		stageAccountServed = entry.StageAccountServed
 		accounts = entry.ClaudeAccounts
 	}
 	next.Repos[key] = localcfg.Repo{
@@ -6257,6 +6301,8 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 		GitHubAppID:             spec.GitHubAppID,
 		Vertex:                  spec.UsesVertex(),
 		CredentialsServiceReady: ready,
+		ProviderKeysServed:      providerKeysServed,
+		StageAccountServed:      stageAccountServed,
 		ClaudeAccounts:          accounts,
 	}
 	if spec.UsesVertex() && !lc.UsesVertex() {

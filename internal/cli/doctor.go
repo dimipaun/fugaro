@@ -2597,6 +2597,13 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	if c := doctorAllowListUncovered(lc, p); c != nil {
 		checks = append(checks, *c)
 	}
+	// The project layer's own rigor names (LD4), judged against the same node:
+	// an area's member or a per-repo entry that names a repository the published
+	// allow_repos does not admit describes a level no run of it will ever take,
+	// because the run is refused before it starts.
+	if c := layerRigorRepoAdmissionCheck(lc, layer.RigorRepos, p); c != nil {
+		checks = append(checks, *c)
+	}
 	checks = append(checks, doctorCredsRules(ctx, db, p, lc)...)
 	if c := doctorPolicyVsJobs(lc); c != nil {
 		checks = append(checks, *c)
@@ -2852,6 +2859,13 @@ func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why strin
 type doctorRoutingLayer struct {
 	Claims map[string][]string
 	Repo   string
+	// RigorRepos are the repository names the layer's defaults.rigor states,
+	// as members of its areas and as keys of its per-repo map
+	// (config.RigorRepoNamesOf). They travel beside the claims because the
+	// policy node is read once, further down this file, and the admission
+	// check over them (layerRigorRepoAdmissionCheck) is one of the questions
+	// asked of it.
+	RigorRepos []string
 }
 
 // claimsFor are the layer's claims for repo, nil when this machine did not read
@@ -2882,17 +2896,18 @@ func doctorRoutingLayerOf(ctx context.Context, rf *resolvedFile) doctorRoutingLa
 	if rf == nil {
 		return doctorRoutingLayer{}
 	}
+	rigorRepos := config.RigorRepoNamesOf(rf.Layer.Layer)
 	claims := config.ClaudeClaimsOf(rf.Layer.Layer)
 	if claims == nil {
-		return doctorRoutingLayer{}
+		return doctorRoutingLayer{RigorRepos: rigorRepos}
 	}
 	// The repository the claims were resolved for is the checkout's own: it is
 	// that repository's fugaro.yaml the layer was applied to.
 	repo, err := originRepo(ctx)
 	if err != nil {
-		return doctorRoutingLayer{Claims: claims}
+		return doctorRoutingLayer{Claims: claims, RigorRepos: rigorRepos}
 	}
-	return doctorRoutingLayer{Claims: claims, Repo: repo}
+	return doctorRoutingLayer{Claims: claims, Repo: repo, RigorRepos: rigorRepos}
 }
 
 // doctorRoutes are the routes a run of repo carries: this machine's providers

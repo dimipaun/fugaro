@@ -57,11 +57,12 @@ type ProjectJob struct {
 	// null for a job whose profile the service does not serve. It is the whole
 	// of the switch on this side — the module turns it into the job account's
 	// one roles/run.invoker grant on that service (modules/project/sa.tf) and
-	// otherwise changes nothing about the job, which keeps every mount it has
-	// (G17: the drop is B5.7's flip, behind the owner's check). Absent when
-	// null, so the document of a job the service does not serve is byte for
-	// byte what it was. See projectJobServesTheCredentialsService for what
-	// "served" means here.
+	// reads it again for the model mounts the same profile gives up
+	// (local.is_shared_job_served_model, B5.7) — and, null, it moves nothing at
+	// all about the job, which keeps every mount it has and every accessor on
+	// them (G9, D147). Absent when null, so the document of a job the service
+	// does not serve is byte for byte what it was. See
+	// projectJobServesTheCredentialsService for what "served" means here.
 	CredentialsService *CredentialsService `json:"credentials_service,omitempty"`
 }
 
@@ -440,10 +441,11 @@ func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []stri
 		// two values a repository root hands its own module (name and region,
 		// the URL left behind: an object conversion in Terraform drops an
 		// extra attribute silently).
-		credentials := repoCredentialsService(installationCredentialsService(lc), projectJobServesTheCredentialsService(lc, pr))
+		served := projectJobServesTheCredentialsService(lc, pr)
+		credentials := repoCredentialsService(installationCredentialsService(lc), served)
 		for _, account := range config.ClaudeAccountTokenNames(lc.Credentials, config.ProjectJobAccounts(pr)) {
-			jobSecrets := maps.Clone(secretEnv)
-			if err := projectAccountMount(lc, name, pr, account, jobSecrets, env); err != nil {
+			jobSecrets, err := projectJobMounts(lc, name, pr, account, secretEnv, env, served)
+			if err != nil {
 				return nil, err
 			}
 			// The variables this job mounts secrets as, for the runner's
@@ -1074,7 +1076,10 @@ func installationCredentialsService(lc *localcfg.Config) *CredentialsService {
 // projectJobServesTheCredentialsService is the profile's switch: whether this
 // profile's shared jobs reach the installation's credentials service, and
 // therefore whether the module grants each of their accounts roles/run.invoker
-// on it (B5.2, D505, G17 — the grant alone; the mounts stay until B5.7's flip).
+// on it (B5.2, D505, G17) and whether those jobs give up the model credentials
+// the service serves their runs (B5.7, config.SharedJobServedClasses): the
+// grant arrived one release before the drop, which is G17's order — no mount is
+// lost before the service serves that credential to the image the job runs.
 //
 // Two conditions, and the second is what a profile's auth is on this side of
 // the wire. There is no auth in a profile's own declaration — a profile names a
@@ -1122,6 +1127,35 @@ func installationCredentialsService(lc *localcfg.Config) *CredentialsService {
 // repositories, never a repository's files, and the job set (one job per
 // profile, provider and account) does not move with the answer.
 func projectJobServesTheCredentialsService(lc *localcfg.Config, pr config.JobProfile) bool {
+	return CredentialsServiceServesProfile(lc, pr)
+}
+
+// CredentialsServiceServesProfile is that same answer for a reader outside the
+// deployer, and there is exactly one: the launcher, which judges a launch on a
+// shared project job with the answer its drop was taken on
+// (internal/cli's credentialsServiceLaunchEnv, B5.7). The drop is the
+// profile's — a shared job is ONE job for every repository a profile serves,
+// so one switched repository takes the model mounts off every repository's
+// runs on it — and the address each of those runs is handed has to be the
+// profile's for the same reason: judged per repository, a repository of a
+// served profile whose own record says off (or whose document the launching
+// machine cannot read at all) would be handed no address and would have no
+// mount to fall back on either, and its run would die at its first model call
+// (G17, D143). So this is the deployer's function, exported, and never a
+// second spelling of it: the two answers are one answer, and a profile the
+// switch holds off keeps every mount and every accessor on both sides (G9,
+// D147).
+//
+// The launcher asks it of the same two facts the deployer does — the config's
+// per-repository records and the profile's own definition — and of no third
+// one: a launch on a shared job is judged by the profile even where this
+// machine cannot read the repository's document at all, which is a state the
+// per-repository path does need a document for. What it does beside this answer
+// is not a second one: the installation's URL has to be there to hand anything
+// at all, and a run whose auth the service does not serve is told nothing
+// whatever the profile says, because it reads none of the service's credentials
+// and the address would move its git traffic onto a mint it does not need.
+func CredentialsServiceServesProfile(lc *localcfg.Config, pr config.JobProfile) bool {
 	if lc == nil || lc.CredentialsService == nil {
 		return false
 	}
@@ -1165,10 +1199,19 @@ func projectJobServesTheCredentialsService(lc *localcfg.Config, pr config.JobPro
 // re-derive immediately before the tfvars that plan the root.
 //
 // The set's KEYS never move — this is the same jobs, one per (profile,
-// provider, account), with one field re-read — so G17's mounts and every other
-// field stay exactly what the first derivation built. A job whose profile the
-// config no longer declares is answered off: there is no profile left for a
-// repository to be served through.
+// provider, account) — so every field a job is more than its switch stays what
+// the first derivation built. A job whose profile the config no longer declares
+// is answered off: there is no profile left for a repository to be served
+// through.
+//
+// What moves with the switch is the mounts it takes away, and they are
+// re-derived beside it (refreshProjectJobMounts, B5.7's flip): the switch is
+// the same condition the class list's drop is read behind, so a set where the
+// switch moved and the mounts did not is a job carrying neither the model
+// credential an On record had taken away nor an address to fetch one from —
+// a job whose every run dies at its first model call (G17, D143). The
+// re-derivation is exactly the derivation: a refreshed set equals the set the
+// same config composes from scratch (TestTheProjectJobsSwitchFollowsTheRecordsOfTheRun).
 func RefreshProjectJobCredentialsService(jobs map[string]ProjectJob, lc *localcfg.Config) map[string]ProjectJob {
 	if len(jobs) == 0 || lc == nil {
 		return jobs
@@ -1176,10 +1219,47 @@ func RefreshProjectJobCredentialsService(jobs map[string]ProjectJob, lc *localcf
 	out := maps.Clone(jobs)
 	for name, job := range out {
 		pr, declared := lc.Profiles[job.Profile]
-		job.CredentialsService = repoCredentialsService(installationCredentialsService(lc), declared && projectJobServesTheCredentialsService(lc, pr))
+		served := declared && projectJobServesTheCredentialsService(lc, pr)
+		job.CredentialsService = repoCredentialsService(installationCredentialsService(lc), served)
+		if declared {
+			job = refreshProjectJobMounts(job, pr, lc, served)
+		}
 		out[name] = job
 	}
 	return out
+}
+
+// refreshProjectJobMounts re-derives one job's mounts — and the redaction list
+// that mirrors them — from the config as it stands, and returns the job
+// carrying them.
+//
+// A config that no longer resolves the profile's own mounts leaves the job
+// exactly as it was: a mount that stays is a mount the job's account may still
+// read, while a derivation that guessed in the other direction would leave a
+// container nothing mounts and a credential nothing carries. The error itself
+// is the deployer's to print, and it has already printed it — the config that
+// reaches here was composed by ProjectJobs, which refuses one it cannot resolve
+// (projectJobSecrets) before any job exists to refresh.
+//
+// The environment handed back is the job's own, less the redaction list, which
+// IS the mounts (the same pair ProjectJobs writes): a stale list would leave a
+// run publishing the value of a variable it no longer carries, or hiding one it
+// does.
+func refreshProjectJobMounts(job ProjectJob, pr config.JobProfile, lc *localcfg.Config, served bool) ProjectJob {
+	env := maps.Clone(job.Env)
+	delete(env, runner.SecretEnvsVar)
+	profileSecrets, err := projectJobSecrets(lc, job.Profile, env, pr)
+	if err != nil {
+		return job
+	}
+	mounts, err := projectJobMounts(lc, job.Profile, pr, job.Account, profileSecrets, env, served)
+	if err != nil {
+		return job
+	}
+	env[runner.SecretEnvsVar] = redactionEnvs(mounts)
+	job.SecretEnv = mounts
+	job.Env = env
+	return job
 }
 
 // ProjectJobsCredentialsServiceStale reports whether the switch on these jobs
@@ -1342,6 +1422,43 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 	return secretEnv, nil
 }
 
+// projectJobMounts is ONE job's own mount set: the profile's mounts
+// (projectJobSecrets), plus the account's token (projectAccountMount), less
+// everything the credentials service serves this profile's repositories
+// (config.SharedJobServedClasses, B5.7).
+//
+// It is a function of its own because the answer depends on the switch, and
+// the switch moves INSIDE a run: the set has to be re-derivable from the
+// config as it stands then, which is what RefreshProjectJobCredentialsService
+// does with it — a job whose switch went off keeps the mounts an On record had
+// taken away, or it runs with neither a credential nor an address to fetch one
+// from (G17, D143).
+//
+// served is the profile's own switch, read once per profile by the caller
+// (projectJobServesTheCredentialsService) and handed to both halves. Both are
+// needed to move a mount: the class list alone would take the credential from a
+// profile the service does not serve, and the switch alone from a profile whose
+// class is not listed yet — which is the same pair of clauses the module's
+// local.is_shared_job_served_model spells, and they have to answer the same per
+// variable, or a job keeps an accessor it never uses or loses one its container
+// still mounts (C2.3). A class the list does not carry leaves every mount
+// exactly where it is, whatever the switch says, so an empty list is a set
+// derived as it was derived before the flip (D147).
+func projectJobMounts(lc *localcfg.Config, profile string, pr config.JobProfile, account string, secretEnv, env map[string]string, served bool) (map[string]string, error) {
+	mounts := maps.Clone(secretEnv)
+	if served {
+		for v := range mounts {
+			if config.IsSharedJobServedModelEnv(v) {
+				delete(mounts, v)
+			}
+		}
+	}
+	if err := projectAccountMount(lc, profile, pr, account, mounts, env, served); err != nil {
+		return nil, err
+	}
+	return mounts, nil
+}
+
 // projectAccountMount adds the one secret_env entry that delivers an account
 // job's Claude OAuth token: CLAUDE_CODE_OAUTH_TOKEN → the account's own
 // logical secret (config.ClaudeAccountSecret). It is the carrier the
@@ -1350,8 +1467,10 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 // (design project-named-oauth-tokens §4.3, D1).
 //
 // It is deliberately ONE function, and it is the seam the security service
-// replaces (§4.6). When the credentials proxy lands, this function stops
-// adding the entry and nothing else moves: not the job's name (a function of
+// replaces (§4.6). The credentials proxy has landed (B5.1, B5.2) and this is
+// where its flip arrives: served — the profile's own switch, B5.7's condition —
+// stops the entry being added, and nothing else moves: not the job's name (a
+// function of
 // the (profile, provider, account) triple, gcp.ProjectJobName, and of no
 // mount), not its profile, not the policy's accounts block, and not the grant
 // — modules/project/sa.tf's google_secret_manager_secret_iam_member.job
@@ -1386,7 +1505,7 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 // projectSecretContainers turns into a container — so this is the backstop
 // that keeps the two rules from drifting apart, and the one that fires if
 // either stops holding.
-func projectAccountMount(lc *localcfg.Config, profile string, pr config.JobProfile, account string, secretEnv, env map[string]string) error {
+func projectAccountMount(lc *localcfg.Config, profile string, pr config.JobProfile, account string, secretEnv, env map[string]string, served bool) error {
 	// The axis's non-account values are the project's own Anthropic API key and
 	// the project's provider key (config.AnthropicKeyAccount,
 	// config.ProviderKeyAccount): each names a credential held outside the
@@ -1429,6 +1548,21 @@ func projectAccountMount(lc *localcfg.Config, profile string, pr config.JobProfi
 	// would swap one credential for another if that rule ever moved.
 	if prev, dup := secretEnv[v]; dup {
 		return userErr("profiles.%s: the secret variable %s is already mounted from %s, so the account's token cannot be mounted as it", profile, v, prev)
+	}
+	// The S5 flip (B5.7): a profile the credentials service serves mounts no
+	// model credential, and this one is its own account's — the run's model
+	// calls are the service's for this profile's repositories (B5.1, B5.2), so
+	// the container this function used to name is the service's to read. The
+	// arm stands after the checks above and before the assignment, so a profile
+	// whose account has no project-wide copy is still refused here rather than
+	// deployed onto a container the service could not read either.
+	//
+	// It is a no-op while the class list is empty, which is the state this
+	// function is in before the flip's second commit, and for an account the
+	// class does not cover (a profile's own mounts are projectJobMounts'
+	// half of the same rule).
+	if served && config.IsSharedJobServedModelEnv(v) {
+		return nil
 	}
 	secretEnv[v] = logical
 	return nil
