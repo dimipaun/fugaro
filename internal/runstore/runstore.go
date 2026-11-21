@@ -1652,14 +1652,16 @@ type Record struct {
 	StageAccounts map[string]string `json:"stage_accounts,omitempty"`
 	// CredentialOwner names the owner of the token this run's model calls
 	// were served with (F16 of docs/secrets-brokering/dynamic-delivery): the
-	// verified `sub` of the launcher the credentials service's grant was
-	// issued to, which is the credential's owner under the owner-only rule
-	// the slips enforce. It is a THIRD fact beside the two above and not a
-	// reading of either — OAuthAccount names the credential that answered and
-	// StageAccounts the Claude account each stage used, while this one answers
-	// whose token paid — so it carries a new name and neither of them moves
-	// (CLAUDE.md: a field never changes meaning). The runner writes it as each
-	// answer from the service reports it (recordCredentialOwner,
+	// account id of the person whose credential answered, which the service
+	// states only where that credential is the launcher's own per-user one — a
+	// bundle entry is nobody's and a pool's credential may be another person's
+	// — so an empty value is the ordinary answer and never a missing one. It
+	// is a THIRD fact beside the two above and not a reading of either —
+	// OAuthAccount names the credential that answered and StageAccounts the
+	// Claude account each stage used, while this one answers whose token paid
+	// — so it carries a new name and neither of them moves (CLAUDE.md: a
+	// field never changes meaning). The runner writes it as each answer from
+	// the service reports it (recordCredentialOwner,
 	// internal/runner/record_owner.go); a record written before the field
 	// decodes unchanged and the format's version does not move
 	// (schemas/result.schema.json declares the property). The value is an

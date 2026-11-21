@@ -104,10 +104,11 @@ const (
 	// its value.
 	HeaderCredential = "X-Fugaro-Credential"
 	// HeaderCredentialOwner is the owner of the credential that answered,
-	// never its value (credsvc.HeaderCredentialOwner, F16): the verified
-	// `sub` the grant was issued to, which the run records beside the
-	// credential's name. It is written only on an answer to a call the
-	// service admitted under a slip, so a run that holds none learns none.
+	// never its value (credsvc.HeaderCredentialOwner, F16): the account id of
+	// the person whose credential it is, which the run records beside the
+	// credential's name. It is written only where the credential served is
+	// the launcher's own per-user one, so an answer that carries none — a
+	// bundle entry's, a pool's, a slip-less call's — is the ordinary case.
 	HeaderCredentialOwner = "X-Fugaro-Credential-Owner"
 	// HeaderSwitch, when present, is the JSON of a switch: this call moved
 	// from one credential to another inside the service.
@@ -291,11 +292,12 @@ type ServiceAnswer struct {
 	// value.
 	Credential string
 	// CredentialOwner is the owner of the credential that answered, never its
-	// value (F16, credsvc.HeaderCredentialOwner): the verified `sub` the
-	// grant was issued to, which the run records beside the name. It is empty
-	// on an answer that carries none — a call the service admitted under no
-	// slip, or one a service that predates the field answered — and the run
-	// then records no owner.
+	// value (F16, credsvc.HeaderCredentialOwner): the account id of the
+	// person whose credential it is, which the run records beside the name.
+	// It is empty on an answer that carries none — a credential the launcher
+	// does not own, a call the service admitted under no slip, or one a
+	// service that predates the field answered — and the run then records no
+	// owner.
 	CredentialOwner string
 	// Switch is the contract's switch header as it arrived: the JSON of a
 	// Switch record, unread here. A switch is what the run's own log carries

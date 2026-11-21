@@ -993,8 +993,8 @@ func TestCredentialOwnerHeaderRoundTrip(t *testing.T) {
 	if err != nil || !present || owner != testLauncherSub {
 		t.Fatalf("CredentialOwnerHeader = (%q, %v, %v), want (%q, true, nil)", owner, present, err, testLauncherSub)
 	}
-	// An answer that carries none is not a refusal: most answers are not a
-	// slip-bound call's.
+	// An answer that carries none is not a refusal: most answers serve a
+	// credential the launcher does not own.
 	if owner, present, err := CredentialOwnerHeader(http.Header{}); present || err != nil || owner != "" {
 		t.Fatalf("an answer with no owner header = (%q, %v, %v), want none and no error", owner, present, err)
 	}

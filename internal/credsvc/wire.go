@@ -346,18 +346,20 @@ const (
 	// text from another writer.
 	HeaderCredential = "X-Fugaro-Credential"
 	// HeaderCredentialOwner is the owner of the credential that answered,
-	// never its value: the verified `sub` of the launcher the grant was
-	// issued to (DS1.1's Slip.Owner), which is the credential's owner under
-	// the owner-only rule the slips enforce. It is a THIRD answer field beside
-	// the tier and the name, and it is what the run records beside the name
-	// (F16, runstore.Record.CredentialOwner): the record names whose token
-	// paid, which neither the name nor a Claude account answers.
+	// never its value: the account id of the person whose credential it is.
+	// It is a THIRD answer field beside the tier and the name, and it is what
+	// the run records beside the name (F16, runstore.Record.CredentialOwner):
+	// the record names whose token paid, which neither the name nor a Claude
+	// account answers.
 	//
-	// It is written only on a call this service ADMITTED UNDER A SLIP
-	// (DS1.6's binding), because that is the one place an owner is a verified
-	// fact: a slip-less call — the path an installation that has not deployed
-	// the slip routes still takes — carries none, and the run's record then
-	// holds no owner, exactly as it holds none today.
+	// It is written only where the credential served IS the launcher's own
+	// per-user credential — the one case an owner is a verified fact
+	// (credentialOwnedBy, cascade.go): a bundle entry is nobody's, a pool's
+	// credential is its owner's and the launcher may merely be allowed by it
+	// (R11, G8), and a call the service admitted under no slip at all — the
+	// path an installation that has not deployed the slip routes still takes —
+	// has no launcher to name. Every one of those answers carries none, and
+	// the run's record then holds no owner.
 	HeaderCredentialOwner = "X-Fugaro-Credential-Owner"
 	// HeaderSwitch, when present, is the JSON of a Switch: this call moved
 	// from one credential to another inside the service, and the run's
@@ -1032,8 +1034,10 @@ func CredentialHeaders(h http.Header) (tier, name string, ok bool, err error) {
 }
 
 // SetCredentialOwnerHeader records the owner of the credential that answered
-// (HeaderCredentialOwner, F16). The owner is the verified `sub` the grant was
-// issued to, so it is held to the rule a launcher's account id is read by
+// (HeaderCredentialOwner, F16). The owner is the account id of the person the
+// credential belongs to, which this service knows from the grammar of the name
+// it served (credentialOwnedBy, cascade.go) and never from anything the call
+// said, so it is held to the rule a launcher's account id is read by
 // (validSlipOwner: digits only, at most maxLauncherSubDigits of them) — an
 // answer that could not carry one must not be sent as if it did, and the error
 // names the field and never its content (the no-echo rule: the value arrives
@@ -1041,10 +1045,9 @@ func CredentialHeaders(h http.Header) (tier, name string, ok bool, err error) {
 //
 // It is a separate writer from SetCredentialHeaders and not a fourth argument
 // of it, because the two facts have different writers: every served answer
-// carries the tier and the name, and only a call the service admitted under a
-// slip has an owner to carry (DS1.6's binding). A caller that has no owner
-// writes none, and the answer then says exactly what it said before this
-// field existed.
+// carries the tier and the name, and only a credential the launcher OWNS has
+// an owner to carry. A caller that has no owner writes none, and the answer
+// then says exactly what it said before this field existed.
 func SetCredentialOwnerHeader(h http.Header, owner string) error {
 	if !validSlipOwner(owner) {
 		return fmt.Errorf("credsvc: the credential's owner is not one launcher's account id (1 to %d digits)", maxLauncherSubDigits)
@@ -1055,10 +1058,10 @@ func SetCredentialOwnerHeader(h http.Header, owner string) error {
 
 // CredentialOwnerHeader reads the owner back, and holds it to the rule it was
 // written by. present is false for an answer that carries none, which is every
-// answer that is not a slip-bound call's. An owner that is not one launcher's
-// account id is an error rather than a value: the run records it (F16), so a
-// caller that guessed at one would be recording a fact the service did not
-// state. The error names the field and never the value.
+// answer whose credential the launcher does not own. An owner that is not one
+// launcher's account id is an error rather than a value: the run records it
+// (F16), so a caller that guessed at one would be recording a fact the service
+// did not state. The error names the field and never the value.
 func CredentialOwnerHeader(h http.Header) (owner string, present bool, err error) {
 	owner, present, err = responseHeader(h, HeaderCredentialOwner)
 	if err != nil || !present {
