@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: "Read a project's orchestrator state at the start of a session, and record what the session settles into it as typed patches, so the next session reads the document instead of a chat history. Use when a session starts in a checkout of a project whose orchestrator a daemon keeps, when the user asks what the orchestrator is doing, what it has left for them or which decisions wait on a person, or when this session learns a fact or closes a question that a later session must not have to rediscover."
+description: "Read a project's orchestrator state at the start of a session, and record what the session settles into it as typed patches, so the next session reads the document instead of a chat history. Use when a session starts in a checkout of a project whose orchestrator a daemon keeps, when the user asks what the orchestrator is doing, what it has left for them or which decisions wait on a person, when the user asks for a piece of work to be queued or filed rather than run now, or when this session learns a fact or closes a question that a later session must not have to rediscover."
 ---
 
 <!-- fugaro-skill name=orchestrator fugaro-version=0.26.1 -->

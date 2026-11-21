@@ -11,7 +11,7 @@ One document per project, in the project's Firebase Realtime Database, under `or
 |---|---|---|
 | `state` | the document this file describes: the work that belongs to no plan | the daemon, and sessions and people through `patch` |
 | `plans/<plan>` | one imported plan's own document, the same shape, where `<plan>` is the plan's folder under `docs/` | the daemon, and the import and `patch` |
-| `backlog` | the standing backlog: the work filed as one item at a time, the way `fugaro backlog add` files it, rather than as a plan | the daemon, the backlog command, and `patch` |
+| `backlog` | the standing backlog: the work filed one item at a time with `fugaro backlog add` rather than as a plan | the daemon, the backlog command, and `patch` |
 | `lease` | the daemon's claim, so two daemons cannot tick one project at once | the daemon |
 | `audit` | the append-only log `fugaro orchestrator events` reads | the daemon; a project whose daemon has never ticked has an empty log |
 
@@ -19,7 +19,7 @@ One document per project, in the project's Firebase Realtime Database, under `or
 
 - `schema_version` and `rev` — the version of the shape, and the revision a patch is built against.
 - `goal` — the standing aim the loop measures its work against. Only a person sets it.
-- `work_items` — the things to do, each with a title, the repository, the recipe, the rigor tier, the brief, its `spec`, its dependencies, its `phase`, and the bookkeeping of its attempts (run id, approval, attempts, intents). An item's `spec` is the plan folder under `docs/` the daemon labels its pull requests from, and an item that carries none gets no `spec:` label. An item an import wrote also carries its `plan_task` — `<plan>/<task>`, the join to the plan the item came from — and an item synced from a tracker carries the `external` ticket it came from outside Fugaro with.
+- `work_items` — the things to do, each with a title, the repository, the recipe, the rigor tier, the brief, its `spec`, its dependencies, its `phase`, and the bookkeeping of its attempts (run id, approval, attempts, intents). An item's `spec` is the plan folder under `docs/` the daemon labels its pull requests from, and an item that carries none gets no `spec:` label. An item an import wrote also carries its `plan_task` — `<plan>/<task>`, the join to the plan the item came from — and an item the daemon's issue sync ingested carries the tracker's `external` id, which is the key that sync dedupes on (D2720).
 - `decisions` — the questions in the air, each with the class it waits on and, once closed, the answer and who gave it.
 - `facts` — what the loop learned, as key and value, each with the class that wrote it.
 - `archived` — what finished, with how it ended. Aging history out is the loop's, not a reader's: the retention rule keeps the document bounded, so a reader sees the work and the recent past rather than the whole story.
@@ -40,7 +40,9 @@ One patch is `{"base_rev": N, "ops": [...]}`, at most 64 ops, and the ops apply 
 | `fact_delete` | `fact`: `key` | a person, a session, the daemon |
 | `goal_set` | `goal`: `goal` | a person only |
 
-A `work_item_upsert` from anyone but the daemon may not carry `phase`, `run_id`, `spent_approval_at`, `attempts`, `intent`, `escalation`, `external` or `adopted`: those are the loop's record of what it started, where the ladder has taken the item, and the ticket it ingested, and a session that could write them could requeue an approved item, mark work done that never ran, or claim a rung nobody climbed. Editing an item's declarative fields after a person approved it drops the approval, because the approval binds the spec the person read. `plan_approve` is the only op that names a node, and it travels on its own: an approval lands on the node whose items it approves, every other op of the vocabulary lands on the state node, and one document lands on one node — a session declaring work writes the state node, and a document naming two nodes is refused whole rather than guessed at (D2706). A plan's node and the backlog node are filled by the commands that own them, `fugaro orchestrator import --plan` and the backlog's own add, and both land as a session: they approve nothing they write.
+A `work_item_upsert` from anyone but the daemon may not carry `phase`, `run_id`, `spent_approval_at`, `attempts`, `intent`, `escalation`, `external` or `adopted`: those are the loop's record of what it started, where the ladder has taken the item, and the ticket it ingested, and a session that could write them could requeue an approved item, mark work done that never ran, or claim a rung nobody climbed. Editing an item's declarative fields after a person approved it drops the approval, because the approval binds the spec the person read.
+
+`plan_approve` is the only op that names a node, and it travels on its own: an approval lands on the node whose items it approves, every other op of the vocabulary lands on the state node, and one document lands on one node — a session declaring work writes the state node, and a document naming two nodes is refused whole rather than guessed at (D2706). A plan's node and the backlog node are filled by the commands that own them, `fugaro orchestrator import --plan` and the backlog's own add, and both land as a session: they approve nothing they write.
 
 ## Phases
 
