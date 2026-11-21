@@ -74,9 +74,17 @@ never resolved. It is a plain `FUGARO_`-prefixed variable, like the fact in (h),
 
 | A run's state | What it does |
 | --- | --- |
-| an entry is present and readable | it uses it: the grade's answer where its task names a grade and the document holds one, else its craft's; a grade or craft the document does not hold is a refusal, never a fallback |
+| an entry is present and readable | it uses it: its craft's answer, and the grade's where its task names a grade and the document holds one — a grade the document does not hold falls back to the craft's, and a craft the document does not hold is a refusal, never a fallback |
 | no entry (an older launcher, or a repository no update has migrated) | it applies the migration's rule of (c) to its own file, in memory, and runs as it did (R3) |
 | no entry **and** no retired key in its file | it is refused with the fix — `craft.LegacyNoAccessRefusal`, which names `fugaro update` and the craft's own `access` — and is **never sent to Vertex** (F49) |
+
+The two halves of the first row are deliberately not the same rule. A **craft** the record does not
+carry is the migration's "nothing here answers" and a refusal; a **grade** the document does not carry
+is not, because a document holds a grade only where the project wrote `model_grades.<grade>.access`
+(F38) — the grade is a rung that may simply not be raised, and refusing on its absence would refuse
+every graded task of a project that names no grade's access, while the craft's entry is the answer
+every call has. The run's side reads it that way today (`internal/runner/access_stub.go`), and CM8's
+accessor and CM14's launcher are written to the same reading.
 
 The refusal is the sentence an operator acts on; it names Vertex only as the thing the run is not
 sent to. `internal/runner/access_stub.go` is the run's half of that table until CM8 wires the real
@@ -177,7 +185,7 @@ it (R5, F44):
 | Header | The value, and its validation | What the service does with it |
 | --- | --- | --- |
 | `X-Fugaro-Access-Craft` | one of `config.CraftNames` (`credsvc.ValidAccessCraft`) | it is the key the record is read by (CM6) |
-| `X-Fugaro-Access-Grade` | one of `config.GradeNames` (`credsvc.ValidAccessGrade`) | a task that names a grade is served the grade's access rather than the craft's |
+| `X-Fugaro-Access-Grade` | one of `config.GradeNames` (`credsvc.ValidAccessGrade`) | a task that names a grade is served the grade's access where the record holds one, and its craft's otherwise (the row above) |
 | `X-Fugaro-Access-Chosen` | a credential's name as this wire spells one, or `config.DefaultClaudeAccount` (`credsvc.ValidAccessChosen`) | the one thing the record cannot answer from the craft alone: which of the names it allows is being spent, for `--token` and the walk |
 
 **Why new names and not the old one.** A call that carries `X-Fugaro-Auth-Mode` is an older image's
