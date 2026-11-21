@@ -13,12 +13,15 @@ It builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md
 - **D2215:** an explicit `--budget` rewrites a recorded amount, behind the fences.
 - **D2216:** the billing account defaults to the linked one.
 - **D2217:** every writing command refuses an unmanaged project.
+- **D2218** (not the recommendation): a managed read that fails warns and proceeds.
+- **D2219:** the in-run commands are exempt.
+- **D3160** (not the recommendation): `offboard` is exempt.
 - **TN1:** `update` never marks a project; it stops.
-- **R1–R5:** the reconciliation's resolutions.
+- **R1–R9:** the reconciliation's resolutions.
 
 ## Conventions every task follows
 
-- **`CLAUDE.md` throughout.** No prompt and no confirmation is added. The budget question is a value with a default, so with no terminal the default applies and nothing waits. Comments explain why. Tests are hermetic (`internal/gcpfake`, `t.TempDir()`), with no secret-shaped literal, and runs are targeted.
+- **`CLAUDE.md` throughout.** No confirmation is added. The one new question, the wizard's budget, is a value with a default. It is asked only at a person's terminal, through the same gate the rigor question uses. With no terminal the default applies, and nothing waits. Comments explain why. Tests are hermetic (`internal/gcpfake`, `t.TempDir()`), with no secret-shaped literal, and runs are targeted.
 - **The generated CLI reference.** Every task that changes a flag or its help regenerates `website/content/cli-reference.md` with `go run ./ee/clidoc` and runs `go test ./internal/cli/ -run 'Docs|CliRef' -count=1`. The file is never hand-edited. A merge conflict in it is resolved by regenerating it on the merged tree.
 - **Docs are tested.** A task that changes a pinned sentence changes the pin in the same commit.
 - **Each task drops `--managed` from the files it owns.** T2c sweeps only what no other task owns.
@@ -39,7 +42,11 @@ It builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md
 4. **Every marker write stands behind the agent-session and run-process refusals**: the rewrite on `update`, and `managed flag` with or without an ID. Pinned by T3's `TestUpdateRewriteRefusedInAgentSession` and `TestUpdateRewriteRefusedInsideAFugaroRun`, and by T4's `TestManagedFlagNoArgRefusedInAgentSession` and `TestManagedFlagNoArgRefusedInsideAFugaroRun`.
 5. **A stop writes nothing, and is safe with runs in flight.** Pinned by T3 extending `TestUpdateLeavesARunInFlightRunning` (an unmanaged installation with a run in flight is refused, and the run's records are untouched) and by T7's `TestFencedCommandWritesNothingOnUnmanaged`.
 6. **The fence's classification is complete.** Pinned by T7's `TestEveryWritingCommandIsClassified`.
-7. **The budget alert survives a plain update** (R5). Pinned by T0's `TestUpdateCarriesTheBudget`.
+7. **The budget alert survives a plain update on any machine** (R5, R7). Pinned by T0's `TestUpdateCarriesTheBudget` and `TestUpdateCarriesTheBudgetWithAnEmptyWorkdir`.
+8. **A rewrite never changes the currency unasked** (R6). Pinned by T3's and T4's `TestRewriteKeepsRecordedCurrency`.
+9. **A failed managed read warns and proceeds** (D2218); only a read that answers "unmanaged" stops. Pinned by T3's `TestUpdateManagedReadFailsWarns` and T7's `TestFenceReadFailsWarns`.
+10. **An exempt command writes nothing to an unmanaged project, unless its exemption says it does** (`offboard`, D3160; the in-run commands, D2219). Pinned by T7's `TestExemptCommandsWriteNothing`.
+11. **`RewriteBudget` has exactly two callers, both fenced** (R9). Pinned by T2c's `TestRewriteBudgetCallSites`.
 
 ## Slices and tasks
 
@@ -47,12 +54,13 @@ It builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md
 
 ### T0: carry the budget block between runs
 - Acceptance:
-  - A run given no budget flags carries the previous run's `budget` Terraform variable unchanged, so a plain `update` after a run that created the alert plans no change to `google_billing_budget`.
-  - An explicit `--budget`, `--budget-currency` and `--billing-account` replace it.
+  - A run given no budget flags carries the budget block, so a plain `update` after a run that created the alert plans no change to `google_billing_budget`.
+  - Per R7, the amount and currency come from the marker when it records them, and the billing account comes from the remote Terraform state's budget resource. Neither comes from the local work directory, so the carry works on a fresh machine.
+  - Explicit flags replace what is carried, and an explicit `--budget` with no `--billing-account` takes the carried account.
   - `flagHints`' sentence for the budget no longer says "nothing records".
-- Files: `internal/infra/tfvars.go`, `internal/infra/tfvars_test.go`, `internal/infra/installation.go`, `internal/cli/init.go` (the two call sites beside `CarriedManagedDeployerScoped`), `internal/cli/init_budget_test.go`.
-- Interfaces: produces `infra.CarriedBudget(vars, prev)`, consumed inside this task.
-- Tests: `TestCarriedBudgetKeepsPrevious`, `TestCarriedBudgetExplicitReplaces`, `TestUpdateCarriesTheBudget`.
+- Files: `internal/infra/tfvars.go`, `internal/infra/tfvars_test.go`, `internal/infra/installation.go`, `internal/cli/init.go` (the call sites beside `CarriedManagedDeployerScoped`), `internal/cli/init_budget_test.go`.
+- Interfaces: produces `infra.CarriedBudget`, consumed inside this task.
+- Tests: `TestCarriedBudgetKeepsPrevious`, `TestCarriedBudgetExplicitReplaces`, `TestCarriedBudgetAmountFromMarker`, `TestUpdateCarriesTheBudget`, `TestUpdateCarriesTheBudgetWithAnEmptyWorkdir`.
 - Command: `go test ./internal/infra/ -run TestCarriedBudget -count=1 && go test ./internal/cli/ -run 'TestUpdateCarriesTheBudget' -count=1`.
 - Red step: `TestUpdateCarriesTheBudget` fails: the plan deletes `module.installation.google_billing_budget.this[0]`.
 - Depends on: none.
@@ -61,7 +69,7 @@ It builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md
 
 ### T1: the budget defaults, and rewriting a recorded amount
 - Acceptance:
-  - `internal/infra/managed/defaults.go` exports `DefaultBudgetAmount = 100` and `DefaultBudgetCurrency = "USD"`, and nothing else in the tree spells either figure.
+  - `internal/infra/managed/defaults.go` exports `DefaultBudgetAmount = 100` and `DefaultBudgetCurrency = "USD"`, and no other budget default spells either figure. `"USD"` elsewhere, as in `internal/budget`'s price figures, is not a budget default and stays.
   - `managed.RewriteBudget(ctx, s, bucket, project, number, budget) (old Budget, err error)` writes this project's marker at version 4 with the new figures, conditioned on the generation it read. It accepts versions 2, 3 and 4 (F15), returns the old figures, and writes nothing when they are equal.
   - It refuses, with what is there: a version-1 creation fact (that object is `WriteFlag`'s), an unknown version, another project's object, a bucket that fails `proveRunsBucket`, and a budget that fails `Budget.Check`.
 - Files: `internal/infra/managed/defaults.go` (new), `internal/infra/managed/marker.go`, `internal/infra/managed/marker_test.go`.
@@ -111,17 +119,20 @@ It builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md
 
 ### T3: update stops on an unmanaged installation; an explicit budget rewrites
 - Acceptance:
-  - `fugaro update` on an installation whose marks do not answer managed refuses through `managedRequired`, before any write. The refusal names `fugaro managed flag`. `--plan-only` and `--check` still read.
-  - `selfFlagUnmanaged`'s marking is removed (TN1; D1553 amended).
-  - On a managed installation, an explicit `--budget` rewrites the recorded amount through `RewriteBudget` and prints the old and new amounts. No flag means no write (D2215).
+  - On an installation the managed read answers is unmanaged, `fugaro update`, and `fugaro setup` on an existing installation (R8), refuses through `managedRequired` and names `fugaro managed flag`.
+    - The stop sits at the head of the engine, before the first cloud write and before the local config is rewritten (F16). The test asserts that `gcpfake` recorded zero writes and that the local config is byte-identical.
+    - `--plan-only` and `--check` still read.
+  - A managed read that fails warns and proceeds (D2218).
+  - `selfFlagUnmanaged`'s marking is removed, and so is its post-converge hook in `init_stages.go` (TN1; D1553 amended).
+  - On a managed installation, an explicit `--budget` rewrites the recorded amount through `RewriteBudget` before the apply (R7), with the currency defaulting to the recorded one (R6), and prints the old and new amounts. No flag means no write (D2215).
   - The rewrite is refused in a coding agent's session and inside a Fugaro run, before it writes.
   - With runs in flight, the stop asks none to finish and touches nothing they hold.
   - An installation at the previous release that is unmanaged is refused with the command. After the fake's `managed flag`, it converges.
   - `budgetFlagHelp`'s update-door sentence and `docs/design/update-in-flight.md` say this.
   - The stale "refused by every managed apply" comment (F14) and the file's `--managed` mention go.
-- Files: `internal/cli/update_selfflag.go`, `internal/cli/update_selfflag_test.go`, `internal/cli/update_in_flight_test.go`, `internal/cli/update_converge_test.go`, `internal/cli/init.go` (`budgetFlagHelp` and the stop's call), `docs/design/update-in-flight.md`, `website/content/cli-reference.md` (generated), plus the update test fixture (U3).
+- Files: `internal/cli/update_selfflag.go`, `internal/cli/update_selfflag_test.go`, `internal/cli/update_in_flight_test.go`, `internal/cli/update_converge_test.go`, `internal/cli/init_stages.go` (the stop at the head; the old hook goes), `internal/cli/init.go` (`budgetFlagHelp`), `docs/design/update-in-flight.md`, `website/content/cli-reference.md` (generated), plus the update test fixture (U3). Over five files: the stop, its hook and its in-flight and converge proofs are one change.
 - Interfaces: consumes `RewriteBudget` (T1) and `managedRequired` (as it is today).
-- Tests: `TestUpdateRefusesUnmanaged`, `TestUpdateExplicitBudgetRewrites`, `TestUpdateKeepsARecordedAmountWithoutBudget`, `TestUpdateRewriteRefusedInAgentSession`, `TestUpdateRewriteRefusedInsideAFugaroRun`, `TestUpdateConvergesAfterFlag`, `TestUpdateLeavesARunInFlightRunning` (extended).
+- Tests: `TestUpdateRefusesUnmanaged`, `TestSetupExistingUnmanagedRefuses`, `TestUpdateManagedReadFailsWarns`, `TestRewriteKeepsRecordedCurrency`, `TestUpdateExplicitBudgetRewrites`, `TestUpdateKeepsARecordedAmountWithoutBudget`, `TestUpdateRewriteRefusedInAgentSession`, `TestUpdateRewriteRefusedInsideAFugaroRun`, `TestUpdateConvergesAfterFlag`, `TestUpdateLeavesARunInFlightRunning` (extended).
 - Command: `go test ./internal/cli/ -run 'TestUpdate(RefusesUnmanaged|ExplicitBudget|KeepsARecorded|Rewrite|ConvergesAfterFlag|LeavesARunInFlight)|CliRef|Docs' -count=1`.
 - Red step: `TestUpdateRefusesUnmanaged` fails: the update converges an unmanaged installation.
 - Depends on: T1 (behaviour: the rewrite); T2a (the same file `init.go`).
@@ -132,13 +143,13 @@ It builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md
 - Acceptance:
   - `fugaro managed flag [PROJECT_ID]`: omitted, the selected installation's project, named in `managedFlagStatement` before the write; given, it must match (D2213).
   - `--budget` and `--budget-currency` default to T1's constants.
-  - On a project already recording an amount, an explicit `--budget` rewrites through `RewriteBudget`; the default does not (D2215).
+  - On a project already recording an amount, an explicit `--budget` rewrites through `RewriteBudget`, with the currency defaulting to the recorded one (R6); the default does not rewrite (D2215). The alert follows on the next `update` through T0's carry (R7), and the output says so.
   - The agent and run-process refusals hold with and without the argument.
   - The help loses "takes no flag at all", the D64 sentence and the stale claim (F8, F14), and its `--managed` mentions.
   - The gate's warning in `internal/managed/budget.go` names plain `fugaro managed flag`.
 - Files: `internal/cli/managed_flag.go`, `internal/cli/managed_flag_test.go`, `internal/managed/budget.go`, `internal/managed/budget_test.go`, `website/content/cli-reference.md` (generated).
 - Interfaces: consumes T1.
-- Tests: `TestManagedFlagNoArgUsesInstallation`, `TestManagedFlagArgMustMatch`, `TestManagedFlagDefaultsBudget`, `TestManagedFlagExplicitRewrites`, `TestManagedFlagDefaultDoesNotRewrite`, `TestManagedFlagNoArgRefusedInAgentSession`, `TestManagedFlagNoArgRefusedInsideAFugaroRun`.
+- Tests: `TestManagedFlagNoArgUsesInstallation`, `TestManagedFlagArgMustMatch`, `TestRewriteKeepsRecordedCurrency`, `TestManagedFlagDefaultsBudget`, `TestManagedFlagExplicitRewrites`, `TestManagedFlagDefaultDoesNotRewrite`, `TestManagedFlagNoArgRefusedInAgentSession`, `TestManagedFlagNoArgRefusedInsideAFugaroRun`.
 - Command: `go test ./internal/cli/ -run 'TestManagedFlag|CliRef' -count=1 && go test ./internal/managed/ -count=1`.
 - Red step: `TestManagedFlagNoArgUsesInstallation` fails on `cobra.ExactArgs(1)`.
 - Depends on: T1 (the constants and the rewrite).
@@ -147,15 +158,23 @@ It builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md
 
 ### T7: every writing command refuses an unmanaged project
 - Acceptance:
-  - The fence moves from a one-row table to a classification of the whole tree. Every command that writes to a project is either *fenced*, refused through `managedRequired` before its first write once its installation is resolved, or *exempt* with a one-line reason.
-  - The exemptions are setup's creating run, `managed flag`, and read-only commands and modes (A5).
-  - `update` is classified as fenced in its own engine (T3).
-  - `TestEveryWritingCommandIsClassified` walks the cobra tree and fails on any command that registers cloud flags (`addCloudFlags`) and is in neither list.
-  - `managedFlagCommand` spells plain `fugaro managed flag`.
-- Files: `internal/cli/root.go`, `internal/cli/managed_require.go`, `internal/cli/cloud.go`, `internal/cli/managed_require_test.go`, plus the shared command fixture (U3).
+  - The fence moves from a one-row table to a classification of the whole tree. Every runnable command is either *fenced* or *exempt* with a one-line reason.
+  - A fenced command is refused through `managedRequired` before its first write. The check sits in `openCloud` and `openCloudFor` (`cloud.go`), keyed on the command's annotation. A fenced command that writes without going through them is wired directly (F17). If that is more than five command files, the run reports the count and the task is split per command family.
+  - The exemptions:
+    - setup's creating run
+    - `managed flag`
+    - `managed unflag` (R8)
+    - `offboard` (D3160)
+    - the in-run commands `tell`, `mailbox`, `followups` and `escalation` (D2219)
+    - read-only commands (A5)
+  - `update` and `setup` on an existing installation are classified as fenced in their own engine (T3).
+  - A managed read that fails warns and proceeds (D2218).
+  - `TestEveryWritingCommandIsClassified` walks every runnable command in the cobra tree (`root.Commands()` recursively, not only those with `addCloudFlags`) and fails on any command that is in neither list.
+  - `managedFlagCommand` spells plain `fugaro managed flag`. The rest of `managedRequired`'s sentence drops "the argument is the declaration itself" and keeps "run by its owner at their own terminal".
+- Files: `internal/cli/root.go`, `internal/cli/managed_require.go`, `internal/cli/cloud.go`, `internal/cli/managed_require_test.go`, plus the shared command fixture and any directly wired command (U3, F17).
 - Interfaces: consumes T4's behaviour (the sentence names a command that must work bare).
-- Tests: `TestEveryWritingCommandIsClassified`, `TestFencedCommandRefusesUnmanaged` (table-driven over the fenced list), `TestFencedCommandWritesNothingOnUnmanaged`, `TestExemptCommandsRunOnUnmanaged`.
-- Command: `go test ./internal/cli/ -run 'TestEveryWritingCommandIsClassified|TestFencedCommand|TestExemptCommands|TestRestore' -count=1`.
+- Tests: `TestEveryWritingCommandIsClassified`, `TestFencedCommandRefusesUnmanaged` (table-driven over the fenced list, `fugaro apply` included), `TestFencedCommandWritesNothingOnUnmanaged`, `TestExemptCommandsWriteNothing` (each exempt path against a write-recording `gcpfake`, expecting zero writes apart from what `offboard`'s and the in-run commands' exemptions name), `TestFenceReadFailsWarns`.
+- Command: `go test ./internal/cli/ -run 'TestEveryWritingCommandIsClassified|TestFencedCommand|TestExemptCommands|TestFenceReadFails|TestRestore' -count=1`.
 - Red step: `TestFencedCommandRefusesUnmanaged` fails for `fugaro image refresh` on an unmanaged fake.
 - Depends on: T4 (behaviour: the bare command the refusal names).
 - Commit: `cli: every command that writes to a project refuses an unmanaged one (D2217)`.
@@ -173,7 +192,7 @@ It builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md
   - The setup skill stops naming it (a minimal edit; T5 rewrites the prose).
 - Files: `internal/cli/init.go`, `internal/cli/init_project.go`, `internal/cli/restore.go`, `internal/cli/setup.go`, `internal/cli/update.go`, `internal/cli/managed_unflag.go`, `plugin/skills/setup/SKILL.md`, `plugin/skills/setup/reference/managed.md`, `website/content/cli-reference.md` (generated), and the remaining test files from `git grep -l -e '--managed\([^-a-z_]\|$\)' -- 'internal/**/*_test.go'` (argv only). **Over the five-file guideline on purpose:** a flag and its callers cannot be split across pull requests without a red tree in between.
 - Interfaces: consumes T2a's creation-fact behaviour.
-- Tests: `TestSetupManagedFlagIsGone`, `TestUpdateManagedFlagIsGone`, `TestRestoreCreateArgs`, the plugin tests, the Docs filter.
+- Tests (all new): `TestSetupManagedFlagIsGone`, `TestUpdateManagedFlagIsGone`, `TestRestoreCreateArgs`, and `TestRewriteBudgetCallSites` (R9: a `go/ast` scan of `internal/` finding exactly the two fenced callers). Plus the plugin tests and the Docs filter. The doc pins in `docs_security_test.go` and `docs_managed_deployer_test.go` are T5's, not T2c's.
 - Command: `go test ./internal/cli/ -run 'ManagedFlagIsGone|TestRestore|Docs|CliRef' -count=1 && go test ./internal/e2e/ ./internal/managed/ ./internal/infra/managed/ -count=1 && go test ./plugin/ -count=1`.
 - Red step: `TestSetupManagedFlagIsGone` fails: the flag is accepted.
 - Depends on: T2a (behaviour: dropping the flag first would stop creations recording an amount; and `init.go`); T3 (`init.go`); T2b (`setup.go` and `setup_wizard_test.go`); T4 and T7 (test files their stops and defaults touch).
@@ -183,8 +202,13 @@ It builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md
 ### T5: the skills, SECURITY.md and the website say what ships
 - Acceptance:
   - `plugin/skills/setup/reference/managed.md` describes the defaults, the optional ID, the rewrite, and the stop on an unmanaged project, with `fugaro managed flag` as the one way out.
-  - `SECURITY.md` and `website/content/security.md` say that a command which writes refuses an unmanaged project. They drop "a project that is not managed keeps the confirmations", "an installation that never asks for managed …" and `--create-project --managed` as the creating command. The pins move with them.
-- Files: `plugin/skills/setup/reference/managed.md`, `SECURITY.md`, `website/content/security.md`, `internal/cli/docs_security_test.go`, `internal/cli/docs_managed_deployer_test.go`.
+  - `plugin/skills/update/SKILL.md` and `reference/states.md` gain the refusal state. The agent cannot run `managed flag` (it is refused in an agent session), so it hands the owner that one command and stops.
+  - `SECURITY.md` and `website/content/security.md` say:
+    - a command that writes refuses an unmanaged project, with its exemptions;
+    - every refusal now names `fugaro managed flag` to whoever reads it, an agent included. That is the same capability F2 describes, now printed, and its only fence is the agent-session marker, which is a mitigation, not a barrier.
+
+    They drop "a project that is not managed keeps the confirmations", "an installation that never asks for managed …" and `--create-project --managed` as the creating command. The pins move with them.
+- Files: `plugin/skills/setup/reference/managed.md`, `plugin/skills/update/SKILL.md`, `plugin/skills/update/reference/states.md`, `SECURITY.md`, `website/content/security.md`, `internal/cli/docs_security_test.go`, `internal/cli/docs_managed_deployer_test.go`. Seven files, all words about one behaviour.
 - Interfaces: describes T2c, T3, T4 and T7.
 - Tests: the Docs filter, the plugin tests, the website's checks.
 - Command: `go test ./internal/cli/ -run Docs -count=1 && go test ./plugin/ -count=1 && (cd website && npm run check)`.
@@ -248,7 +272,8 @@ It builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md
 | `internal/cli/setup.go`, `setup_wizard_test.go` | T2b (1), T2c (3) |
 | `internal/cli/managed_flag.go`, `managed_flag_test.go` | T4 (1); T2c touches neither (T4 drops its own `--managed`) |
 | `internal/managed/budget.go`, `budget_test.go` | T4 (1) |
-| `internal/cli/update_selfflag.go`, `update_selfflag_test.go` | T3 (2) |
+| `internal/cli/update_selfflag.go`, `update_selfflag_test.go`, `init_stages.go` | T3 (2) |
+| `internal/cli/rewrite_callsites_test.go` (new) | T2c (3) |
 | `internal/cli/root.go`, `managed_require.go`, `cloud.go` | T7 (2) |
 | shared test fixtures (U3) | T3 (2, the update fixture) and T7 (2, the command fixture): separate fixtures. A run that finds them to be one file reports it, and T7 waits for T3 |
 | `plugin/skills/setup/reference/managed.md` | T2c (3), T5 (4) |

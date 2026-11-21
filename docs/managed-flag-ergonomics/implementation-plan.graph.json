@@ -88,6 +88,7 @@
           "internal/cli/update_selfflag_test.go",
           "internal/cli/update_in_flight_test.go",
           "internal/cli/update_converge_test.go",
+          "internal/cli/init_stages.go",
           "internal/cli/init.go",
           "docs/design/update-in-flight.md",
           "website/content/cli-reference.md"
@@ -148,7 +149,8 @@
           "internal/**/*_test.go",
           "plugin/skills/setup/SKILL.md",
           "plugin/skills/setup/reference/managed.md",
-          "website/content/cli-reference.md"
+          "website/content/cli-reference.md",
+          "internal/cli/rewrite_callsites_test.go"
         ]
       }
     },
@@ -163,6 +165,8 @@
         "prediction": true,
         "paths": [
           "plugin/skills/setup/reference/managed.md",
+          "plugin/skills/update/SKILL.md",
+          "plugin/skills/update/reference/states.md",
           "SECURITY.md",
           "website/content/security.md",
           "internal/cli/docs_security_test.go",

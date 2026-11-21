@@ -51,7 +51,7 @@ The spec was written on 2026-11-13, before the no-prompt policy's last tasks and
 - **Skills:** `plugin/skills/setup/SKILL.md` and `reference/managed.md`.
 - **Generated reference:** `website/content/cli-reference.md`.
 - **Prose:** `SECURITY.md` and `website/content/security.md`.
-- **Tests:** 17 test files pass it in argv (`git grep -l -e '--managed\([^-a-z_]\|$\)' -- 'internal/**/*_test.go'`). The looser `\b` grep also matches `--managed-settings`.
+- **Tests:** 17 test files mention it (`git grep -l -e '--managed\([^-a-z_]\|$\)' -- 'internal/**/*_test.go'`); the looser `\b` grep also matches `--managed-settings`. Not every mention is an argv: some are comments (`marker_test.go`, `read_test.go`), a help table (`managed_test.go`), or doc pins (`docs_security_test.go`, `docs_managed_deployer_test.go`, which belong to T5 with `SECURITY.md`).
 
 Historical release notes stay as written. The plugin tests check every flag a skill names, so the skill edit lands with the removal.
 
@@ -73,20 +73,31 @@ So once T2a creates an alert by default, every plain `update` plans its deletion
 
 **F15 — Gap (found in review): marker versions 2 and 3 exist in installations.** `ConvergeMarker` leaves a version-2 fact as it is (`marker.go`). D2215's rewrite therefore meets versions 2, 3 and 4, and the rewrite writes version 4 under the generation it read.
 
+**F16 — Wrong (found in round 2): `update`'s managed hook runs after the converge.** `selfFlagUnmanaged` is called from `internal/cli/init_stages.go`, "reached only by a run whose stages all succeeded". A stop that writes nothing has to sit at the head of the engine, before the first cloud write and before the local config is rewritten. T3 places it there.
+
+**F17 — Gap (found in round 2): `addCloudFlags` does not find every writing command.** `fugaro apply` registers its own `--config` and `--project` (`internal/cli/apply.go`), and other commands may open their clients some other way. A classification walk keyed on `addCloudFlags` would miss them. So T7 walks every runnable command in the tree. The fence itself sits in `openCloud` and `openCloudFor` (`internal/cli/cloud.go`), keyed on the command's annotation. Any command that writes without going through them is wired directly, and the run counts those (U3).
+
+**F18 — Gap (found in round 2): a rewrite could replace a recorded currency.** Under D2211, `--budget 200` with no currency would take USD over a recorded EUR. Resolved as R6.
+
+**F19 — Gap (found in round 2): the marker and the alert could drift, and the carry depended on a local file.** `wd.PrevVars` is the local work directory, which is empty on a new machine, after a clean, or for a console on another host. And a rewrite by `managed flag` changes only the marker. Resolved as R7.
+
 ## Decisions
 
-The spec reserved D2210–D2219. D2210 was answered in the spec; D2211–D2214 are its open questions; D2215–D2217 are added here; D2218–D2219 stay reserved and unused.
+The spec reserved D2210–D2219. D2210 was answered in the spec; D2211–D2214 are its open questions; D2215–D2219 are added here. The block is full, so D3160 is taken from a fresh block, D3160–D3169; D3161–D3169 stay reserved and unused.
 
 | # | Question | Recommendation | Answer |
 | --- | --- | --- | --- |
 | **D2210** | The wizard's budget suggestion | A prompt suggesting 100 USD, which Enter takes | **2026-11-13** (in the spec): as stated. Amended by F3: a new question row. |
-| **D2211** | Does `--budget-currency` default to USD? | Yes, on `setup`, `update` and `managed flag`; restore keeps its own rule (R1) | **2026-11-21: as recommended.** A non-USD billing account passes `--budget-currency` (U1). |
+| **D2211** | Does `--budget-currency` default to USD? | Yes, on `setup`, `update` and `managed flag`; restore keeps its own rule (R1) | **2026-11-21: as recommended.** A non-USD billing account passes `--budget-currency` (U1). **Amended after review** (F18, R6), with the intent unchanged: on a rewrite, the currency defaults to the one already recorded. USD is the default only where nothing is recorded. |
 | **D2212** | With nobody to ask, does the amount default to 100? | No: required there; only Enter at a prompt takes it | **2026-11-21: not the recommendation — default 100 everywhere.** D64's "required, with no default" is retired. A scripted first run and `fugaro managed flag` with no `--budget` record 100 USD. The constants live in `internal/infra/managed/defaults.go` (task T1). The comment in `checkCreateProject` that forbids a constant goes with the `--managed` case it sits in (T2c). |
 | **D2213** | Where does `managed flag` get the project? (amended by F1) | The ID becomes optional. Omitted, it is the selected installation's, named in the statement printed before the write. Given, it must match | **2026-11-21: as recommended.** This amends D1541's consent by argument for this command, on F2's premise. The two refusals stay; there is no `--yes`. Under TN1 this is the one way an existing project becomes managed. |
 | **D2214** | `fugaro setup --managed` | Drop it; every creating run records its budget; a passed `--managed` is refused as gone (`retiredCredentialsFlag` pattern) | **2026-11-21: as recommended.** |
 | **D2215** | Can a later explicit `--budget` change a recorded amount? (F7) | Yes, on `update` (managed installations) and `managed flag`, conditioned on the read generation, printing old and new amounts. A default never overwrites | **2026-11-21: as recommended.** Amended after review, which leaves the intent unchanged: the rewrite stands behind the same agent-session and run-process refusals as the marking (the fences in `update_selfflag.go` sit after the early return the rewrite would use), and it accepts marker versions 2–4 (F15). |
 | **D2216** | Where does `--billing-account` come from on a creating run? (F6) | It defaults to the linked account (`--link-billing` or the wizard's pick). With none, record the amount and print the one command that adds the alert | **2026-11-21: as recommended.** It relies on R5: without the carry, the next update would plan the alert's deletion. |
-| **D2217** | How far does "any project we touch must be managed, else stop" reach? | Every command that writes to a project refuses an unmanaged one, through `managedRequired`, naming `fugaro managed flag`. The exemptions are setup's creating run, `managed flag`, and read-only commands and modes (A5). A test that walks the command tree keeps the classification complete | **2026-11-21: as recommended.** |
+| **D2217** | How far does "any project we touch must be managed, else stop" reach? | Every command that writes to a project refuses an unmanaged one, through `managedRequired`, naming `fugaro managed flag`. The exemptions are setup's creating run, `managed flag`, and read-only commands and modes (A5). A test that walks the command tree keeps the classification complete | **2026-11-21: as recommended.** Later answers add exemptions: the in-run commands (D2219), `offboard` (D3160) and `managed unflag` (R8). |
+| **D2218** | When the managed read itself fails (a permission error, a network failure reading the marker or the label), what does a fenced command do? | Stop (fail closed), naming the read that failed | **2026-11-21: not the recommendation — warn and go on**, which is today's `update` behaviour. Followed through: T3 and T7 print the read's error as a warning and proceed, and a test pins it. A project the read *answers* is unmanaged still stops. |
+| **D2219** | Are the commands a Fugaro job runs on itself fenced (`tell`, `mailbox`, `followups`, `escalation`)? | Exempt: they write only the run's own records, under the job's account, and the run was launched by a fenced `fugaro run` | **2026-11-21: as recommended.** |
+| **D3160** | Is `fugaro offboard` fenced on an unmanaged project? | Fenced: mark it first, as with every write | **2026-11-21: not the recommendation — exempt.** Tearing a repository's pieces down never needs the project marked first. T7 classifies it exempt with that reason. |
 
 ### Resolutions (one defensible answer)
 
@@ -94,7 +105,11 @@ The spec reserved D2210–D2219. D2210 was answered in the spec; D2211–D2214 a
 - **R2 (D2216).** The trio check in `init.go` reads explicit flags only, so a default never trips it.
 - **R3 (D2214).** Both doors refuse `--managed` with one "gone" sentence, before anything is read.
 - **R4 (F3, F10).** The answers file gains optional `budget` (1 to 10,000,000) and `budget_currency` members. Adding members leaves the version at 1. A document without them gets the defaults.
-- **R5 (F13).** The budget block is carried from the previous run's Terraform variables when no budget flag is passed, the way `infra.CarriedManagedDeployerScoped` carries its key. An explicit trio replaces it. `flagHints`' "nothing records" sentence goes.
+- **R5 (F13).** When no budget flag is passed, the budget block is carried from the previous run rather than dropped. R7 refines where it is carried from. An explicit trio replaces it. `flagHints`' "nothing records" sentence goes.
+- **R6 (F18).** On a rewrite, the currency defaults to the one recorded, and the amount has no default: a rewrite happens only on an explicit `--budget` (D2215).
+- **R7 (F19).** The marker is the source of truth for the amount and the currency. The billing account comes from the remote Terraform state's budget resource, never from the local work directory. So the carry works on any machine, and a rewrite by `managed flag` reaches the alert on the next `update`. On `update` with an explicit `--budget`, the marker is rewritten first, behind the fences, and then the apply runs. An apply that fails is corrected by the next run's carry. An explicit `--budget` with no `--billing-account` takes the carried account, so R2's trio check accepts a carried account as given.
+- **R8 (round 2).** `fugaro setup` on an existing installation (not a creating run) shares `update`'s engine and its stop (T3). `fugaro managed unflag` on an unmanaged project has nothing to do, so it is exempt with that reason. `fugaro allow-delete` writes the owner's delete list for managed applies, so it is fenced.
+- **R9 (round 2).** `RewriteBudget` is a library function with no fence of its own. A test pins that it is called only from the two fenced call sites, `update`'s and `managed flag`'s (task T2c, the last to land of the tasks that touch those files).
 
 ## Tension
 
@@ -107,6 +122,8 @@ No tension is open.
 ## Open items
 
 None that block the plan. Checks 860 and 861 are the owner's.
+
+This pull request leaves a dated pointer at each decision it amends, in that decision's own home: D1541 and D1553 in `docs/no-prompt-policy/reconciliation.md`, and D64 in `docs/managed-projects/spec.md`.
 
 ## Checks
 
