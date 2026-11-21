@@ -1379,24 +1379,10 @@ func TestDoctorDoesNotPromiseAHaltTheSwitchNeverReaches(t *testing.T) {
 	if !strings.Contains(res.Problem, "whose gateway is on halts at it") {
 		t.Fatalf("an explicit switch's halt is not reported: %+v", res)
 	}
-	// And with the node's own mode off, no run of the repository reaches the
-	// switch at all: nothing halts here, which the line now says instead of
-	// asserting the halt the budget's own state rules out. The mode is the
-	// node's, not this machine's config's: a run's ceiling is the node's key by
-	// key (runner.policyCeiling), so a machine whose own budget block says off
-	// under a node that says enforce runs with its gateway on — the check reads
-	// the node, and this is the state that shows it.
-	_, db := doctorPolicyRig(t, doctorPolicy(switchTo(config.RouteAuto)), rows())
-	off := doctorPolicy(switchTo(config.RouteAuto))
-	off.Budget.Mode = "off"
-	db.Set(projectpolicy.PathShared(), off)
-	res = doctorChecksByID(t)["routing-resolution"]
-	if !strings.Contains(res.Problem, "no run of this repository reaches the switch") || !strings.Contains(res.Problem, "budget.mode is off") {
-		t.Fatalf("a switch the node's budget never reaches is reported as a halt: %+v", res)
-	}
-	if strings.Contains(res.Problem, "whose gateway is on halts") {
-		t.Errorf("nothing halts under a node that is off, and the line says one does: %+v", res)
-	}
+	// The third state this test carried — the node's own mode off, where no
+	// run reached the switch at all and nothing halted — is gone with the mode
+	// (AB1b, D3009): no mode takes a gateway away from an api-key run, so the
+	// line above is the same one in every mode the node can name.
 }
 
 // TestDoctorResolvesTheSwitchOverTheLayerARunMerges is the second review
@@ -1502,9 +1488,8 @@ func doctorSwitchTo(via string) func(*projectpolicy.Policy) {
 //
 // The mode the check answers the node's silence with is the job's own: this
 // machine's config, whose ceiling update --repo deploys into the environment, the
-// same reading the drift note compares the deployed job with. Both sides are
-// exercised here, so the check is pinned to that reading rather than to the
-// string "off" happening to be wrong.
+// same reading the drift note compares the deployed job with — and the check is
+// pinned to that reading rather than to the string "off" happening to be wrong.
 func TestDoctorReadsTheJobModeANodeWithoutABudgetKeeps(t *testing.T) {
 	// The node with no budget key at all: the block is deleted rather than
 	// emptied, because an empty one is a node projectpolicy refuses.
@@ -1539,23 +1524,12 @@ func TestDoctorReadsTheJobModeANodeWithoutABudgetKeeps(t *testing.T) {
 	if strings.Contains(res.Problem, "budget.mode is off") {
 		t.Errorf("a node that sets no budget key is read as mode off: %+v", res)
 	}
-	// The same node under a machine that is off: nothing reaches the switch
-	// now, which is the state the line has to say — the node's silence is
-	// answered by the environment, in both directions.
-	r, db2 := doctorPolicyRig(t, nil, rows)
-	cfg := strings.Replace(r.cfg, "budget: { mode: enforce", "budget: { mode: off", 1)
-	if cfg == r.cfg {
-		t.Fatal("the rig's ceiling moved: this test rewrites its mode")
-	}
-	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	r.cfg = cfg
-	db2.Set(projectpolicy.PathShared(), node(t))
-	res = doctorChecksByID(t)["routing-resolution"]
-	if !strings.Contains(res.Problem, "no run of this repository reaches the switch") || !strings.Contains(res.Problem, "budget.mode is off") {
-		t.Fatalf("a machine that is off is read as reaching the switch: %+v", res)
-	}
+	// The other direction — the same node under a machine whose mode is off,
+	// where nothing reached the switch — is gone with the mode (AB1b, D3009):
+	// the check asks its reach of an api-key credential (routingReachOf above),
+	// and an api-key run has a gateway whatever the mode says, so no mode of
+	// this machine leaves that line inert. The arm that words that state is the
+	// CLI's own reading of the mode, and it is dead here rather than false.
 }
 
 // TestDoctorDoesNotResolveASwitchNoRunTakes is the review finding on the

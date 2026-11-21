@@ -52,7 +52,14 @@ func TestTheGatewayNoLongerReadsTheMode(t *testing.T) {
 		}
 	}
 	for _, mode := range allModes {
-		g := newGW(t, gwConfig(t, ""), mode, "", anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 1}))
+		// An enforcing run without a cap halts at bootstrap (HaltNoCap), which
+		// is a different rule than this one: the cap is what keeps that from
+		// standing in for the gateway's own question.
+		capUSD := ""
+		if mode == policy.ModeEnforce {
+			capUSD = "5"
+		}
+		g := newGW(t, gwConfig(t, ""), mode, capUSD, anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 1}))
 		probed := false
 		inspect := func(inner step) step {
 			return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
