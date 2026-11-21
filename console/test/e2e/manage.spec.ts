@@ -633,8 +633,8 @@ function summary() {
 window.__manage = {
   summary: summary,
   /** open clicks one group's own heading, which is the operator's act and the
-   * only thing that starts that group's kinds (`manage/shell.ts`), and answers
-   * the tree once the queued `toggle` and the reads behind it have settled. */
+   * only thing that starts that group's kinds (manage/shell.ts), and answers
+   * the tree once the queued toggle event and the reads behind it have settled. */
   open: function (name) {
     var details = all('details.' + GROUP_CLASS).filter(function (each) {
       return each.getAttribute(GROUP_ATTRIBUTE) === name;
@@ -941,9 +941,13 @@ test('opens each group and draws every kind’s own table, one read per kind', a
   expect(drawn.reads).toEqual(READ_ORDER)
 
   // Opening a group a second time starts nothing: the section keeps the groups
-  // it has begun, so a fold and an unfold meets the rows already read.
-  drawn = await open(EXPECTED[0]?.group ?? '')
+  // it has begun, so a fold and an unfold meet the rows already read rather
+  // than a second round of children.
+  const first = EXPECTED[0]?.group ?? ''
+  drawn = await open(first)
+  drawn = await open(first)
   expect(drawn.reads).toEqual(READ_ORDER)
+  expect(kindIn(drawn, 'members').rows).toBe(3)
 })
 
 test('draws the kind whose document holds nothing as the console’s empty sentence', async () => {
