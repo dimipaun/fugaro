@@ -13,9 +13,12 @@
 #      widened condition rather than as the per-slug one;
 #   3. FUGARO_GITHUB_APP_ID in the job's environment, with its precondition
 #      (owner ruling of 2026-10-17, task 3.5 step 4);
-#   4. the credentials service's invoker grant for a profile it serves, and
-#      the mounts such a job KEEPS (B5.2, G17: the grant is the whole of what
-#      the switch adds here, and the drop is B5.7's flip).
+#   4. the credentials service's invoker grant for a profile it serves, the
+#      mounts such a job KEEPS (B5.2, G17: the grant is the whole of what the
+#      switch adds here) and the model mount its container gives up with the
+#      accessor beside it while the App key stays (B5.7, the S5 flip: the
+#      class list and the switch together, and config.ServiceHeldSecretNames
+#      still empty, so nothing here moves the App key).
 # Nothing here derives a name: the job name, the account id and the two
 # condition titles are what internal/infra wrote into the tfvars, and the
 # assertions read the module's own resources. The two names below are the
@@ -463,12 +466,20 @@ run "shared_job_mounting_the_app_key_keeps_the_accessor" {
 
 # The credentials service, for a profile it serves (B5.2, D505, D2078): the
 # job account's ONE grant on it — roles/run.invoker, on that one service, in
-# its own region, to this job's own account, with no condition — and every
-# mount the job has left exactly where it was (G17: the grant is the whole of
-# what the switch adds to a shared job, and the drop is B5.7's flip, behind the
-# owner's check). The App key's accessor and its mount are asserted here for
-# that second half, on the same job the run above pins with no
-# credentials_service at all: the two runs differ in that one attribute.
+# its own region, to this job's own account, with no condition — and the two
+# halves of the mount set B5.7's flip decides, on the same job the run above
+# pins with no credentials_service at all: the two runs differ in that one
+# attribute, and this one's secret_env carries a model credential beside the
+# App key so that the difference is visible where it matters.
+#
+# The job MOUNTS the App key and keeps the accessor that belongs to it (G17,
+# G22: the App key is config.ServiceHeldSecretNames' own name and that list is
+# still empty, so nothing here moves it), and it gives up the model credential
+# entirely — no secretAccessor on the container and no env in the container —
+# because its profile is one the service serves and the class list carries
+# "model" (B5.7). The two clauses are one local
+# (local.is_shared_job_served_model), so an accessor without its mount and a
+# mount without its accessor are both refusals at Cloud Run create time (C2.3).
 #
 # What the service then serves this account is the service's own decision and
 # not this grant's (B5.1, G21: a shared caller is admitted for the identity's
@@ -479,8 +490,11 @@ run "shared_job_mounting_the_app_key_keeps_the_accessor" {
 # Mutation (run, restore): give the resource a second member (the profile's
 # other job, an operator, a whole project) or drop the count's null check so
 # every job gets it — the member assertion fails, and the run above's
-# no-grant assertion fails with it.
-run "switched_job_gets_the_invoker_grant_and_keeps_its_mounts" {
+# no-grant assertion fails with it. Drop the switch (`var.job.credentials_service
+# != null`) or the class check from local.is_shared_job_served_model, or read
+# the accessor from the job's own mounts — the model credential comes back in
+# one of the three places and the assertions below fail.
+run "switched_job_gets_the_invoker_grant_and_drops_a_model_mount" {
   command = plan
 
   module {
@@ -489,7 +503,8 @@ run "switched_job_gets_the_invoker_grant_and_keeps_its_mounts" {
 
   variables {
     secrets = {
-      github-app-key = "fugaro-project-aurora-github-app-key-440b21d6e639db12"
+      github-app-key    = "fugaro-project-aurora-github-app-key-440b21d6e639db12"
+      anthropic-api-key = "fugaro-project-aurora-anthropic-api-key-c07a73f5c7ccc211"
     }
     job = {
       profile  = "standard"
@@ -510,8 +525,15 @@ run "switched_job_gets_the_invoker_grant_and_keeps_its_mounts" {
         FUGARO_GCP_PROJECT   = "proj-1234"
         FUGARO_REGION        = "us-east5"
       }
+      # Both mounts the flip has to tell apart: the model credential goes, the
+      # App key stays. internal/infra drops the model entry from the tfvars it
+      # writes (projectJobMounts), so a tfvars from a released deployer arrives
+      # without it — this run pins the module's own rule for the case where one
+      # does not, which is the same rule read twice (job_secret_names,
+      # job_mounts).
       secret_env = {
         FUGARO_GITHUB_APP_PRIVATE_KEY = "github-app-key"
+        ANTHROPIC_API_KEY             = "anthropic-api-key"
       }
       bucket_condition = {
         title      = "fugaro-fugaro-p-standard-git-0ca96e64"
@@ -560,22 +582,38 @@ run "switched_job_gets_the_invoker_grant_and_keeps_its_mounts" {
     error_message = "the invoker grant must carry no IAM condition: the service's own name is what it reaches, and a condition is a second thing to get wrong"
   }
 
-  # And the job keeps every mount it has: the App key's accessor on the
-  # installation's own project-wide copy, and the mount it belongs to. The
-  # drop is B5.7's flip (G17).
+  # The App key stays, whole: its accessor on the installation's own
+  # project-wide copy, and the mount it belongs to (G22 — config.
+  # ServiceHeldSecretNames is that name's own flip and it is still empty).
   assert {
     condition = toset([for m in google_secret_manager_secret_iam_member.job :
       "${m.role} ${m.secret_id} ${m.member}"]) == toset([
       "roles/secretmanager.secretAccessor fugaro-project-aurora-github-app-key-440b21d6e639db12 serviceAccount:fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com",
     ])
-    error_message = "a switched shared job's account must still hold secretAccessor on the App key: the switch adds the invoker grant and drops nothing (G17, B5.7's flip)"
+    error_message = "a switched shared job's account must still hold secretAccessor on the App key: B5.7's flip takes the model class away and leaves the App key to config.ServiceHeldSecretNames' own flip (G17, G22)"
   }
   assert {
     condition = length([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
       e if e.name == "FUGARO_GITHUB_APP_PRIVATE_KEY" &&
       e.value_source[0].secret_key_ref[0].secret == var.secrets["github-app-key"] &&
     e.value_source[0].secret_key_ref[0].version == "latest"]) == 1
-    error_message = "a switched shared job must still mount the App key: the switch adds the invoker grant and drops nothing (G17, B5.7's flip)"
+    error_message = "a switched shared job must still mount the App key: B5.7's flip takes the model class away and leaves the App key to config.ServiceHeldSecretNames' own flip (G17, G22)"
+  }
+
+  # And the model credential is gone from both sides at once: no accessor on
+  # the installation's own container for it, and no env in the job's container
+  # — not as a mount and not as a plain value. The class list carries "model"
+  # (config.SharedJobServedClasses) and this profile's switch is on, which are
+  # the two clauses local.is_shared_job_served_model reads.
+  assert {
+    condition = !anytrue([for m in google_secret_manager_secret_iam_member.job :
+    m.secret_id == var.secrets["anthropic-api-key"]])
+    error_message = "a switched shared job's account must hold no secretAccessor on a served model credential: the service serves its runs' model calls, so the container that mounts one would be a second copy of the credential the flip just took away (B5.7, D2078)"
+  }
+  assert {
+    condition = !anytrue([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
+    e.name == "ANTHROPIC_API_KEY"])
+    error_message = "a switched shared job's container must declare no served model credential, mounted or plain: its profile's repositories are served by the credentials service (B5.7, D2078)"
   }
 }
 

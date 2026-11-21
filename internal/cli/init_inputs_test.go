@@ -12,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -444,11 +445,13 @@ func TestFirstRunAsksWithSuggestions(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The ID's suggestion is the new project named after this one (D4); the
-	// project the credentials name exists, so setup does not offer it.
+	// project the credentials name exists, so setup does not offer it. The
+	// place question's suggestion is US — the region us-east5 is what the place
+	// settles rather than what the question offers (LP4, D3086).
 	if o := r.o; o.name != "acme" || o.cloud.gcpProject != "fugaro-acme" || o.cloud.region != "us-east5" {
 		t.Errorf("name %q, project %q, region %q\n%s", o.name, o.cloud.gcpProject, o.cloud.region, out.String())
 	}
-	for _, want := range []string{"[acme]", "[fugaro-acme]", "[us-east5]"} {
+	for _, want := range []string{"[acme]", "[fugaro-acme]", "[" + string(place.US) + "]"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("no suggestion %s:\n%s", want, out.String())
 		}
@@ -741,10 +744,11 @@ func TestReadInstallationName(t *testing.T) {
 // flag.Bool of the same name panics.
 var updateRegionGolden = flag.Bool("update-region", false, "rewrite testdata/region_prompts.golden")
 
-// TestRegionDefaultIsUsEast5: the region question keeps its own constant as
-// the default — us-east5 (D4, answered 2026-10-20 as recommended) — the wizard
-// asks it once, and Enter takes the suggestion. A region that is not one is
-// asked again rather than taken.
+// TestRegionDefaultIsUsEast5: the region keeps its own constant as the default
+// — us-east5 (D4, answered 2026-10-20 as recommended), which is also the US
+// place's own answer (D3086) — the wizard asks for the place once, and Enter
+// takes the suggestion. An answer that is neither a place nor a region is asked
+// again rather than taken.
 func TestRegionDefaultIsUsEast5(t *testing.T) {
 	if defaultRegion != "us-east5" {
 		t.Fatalf("defaultRegion = %q, want us-east5 (D4)", defaultRegion)
@@ -752,7 +756,7 @@ func TestRegionDefaultIsUsEast5(t *testing.T) {
 	if !regionRE.MatchString(defaultRegion) {
 		t.Errorf("defaultRegion = %q, which is not the shape a region has", defaultRegion)
 	}
-	// Everything else this first run needs came from a flag, so the region is
+	// Everything else this first run needs came from a flag, so the place is
 	// the only question of the wizard's this run has to answer for the rest of
 	// the test to read the region: the bake switch's Enter follows it (IS7).
 	first := func(stdin string) (*initRun, *strings.Builder) {
@@ -763,13 +767,13 @@ func TestRegionDefaultIsUsEast5(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := r.o.cloud.region; got != defaultRegion {
-		t.Errorf("Enter took %q, want the suggestion %s\n%s", got, defaultRegion, out)
+		t.Errorf("Enter took %q, want the US place's region %s\n%s", got, defaultRegion, out)
 	}
-	if !strings.Contains(out.String(), "["+defaultRegion+"]") {
-		t.Errorf("the question does not show %s as its suggestion:\n%s", defaultRegion, out)
+	if !strings.Contains(out.String(), "["+string(place.US)+"]") {
+		t.Errorf("the question does not show the US place as its suggestion:\n%s", out)
 	}
-	if n := strings.Count(out.String(), "Type "+questionFor("--region").what+": "); n != 1 {
-		t.Errorf("the wizard asked the region %d times, want once:\n%s", n, out)
+	if n := strings.Count(out.String(), "Type "+questionFor("--location").what+": "); n != 1 {
+		t.Errorf("the wizard asked the place %d times, want once:\n%s", n, out)
 	}
 	r, out = first("Not A Region\n" + defaultRegion + "\n\n")
 	if err := r.gatherInputs(t.Context()); err != nil {
@@ -782,10 +786,11 @@ func TestRegionDefaultIsUsEast5(t *testing.T) {
 
 // TestRegionQuestionIsNotTheFirestoreQuestion: where the installation's jobs
 // and the scheduler run and where the Firestore database is created are two
-// separate things (reconciliation C1). The first is a question `fugaro setup`
-// asks once, with its suggestion, and a value a later run may change; the
-// second is permanent, and a person at the terminal reads its note and is asked
-// nothing for it (T7, docs/no-prompt-policy). Both are pinned here in one
+// separate things (reconciliation C1). The first is the place question
+// `fugaro setup` asks once, with its suggestion, and the region it settles is
+// the installation's own — a later run may not move it (LP8, D3088); the
+// second is permanent too, and a person at the terminal reads its note and is
+// asked nothing for it (T7, docs/no-prompt-policy). Both are pinned here in one
 // golden, so the two cannot converge: an edit that made the wizard ask for the
 // database's location, or gave the database's own note the region question's
 // entry line, moves this file.
@@ -804,7 +809,7 @@ func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
 	if regionRun.o.cloud.region != defaultRegion {
 		t.Fatalf("Enter took the region %q, want the question's own default %q\n%s", regionRun.o.cloud.region, defaultRegion, out)
 	}
-	region := promptLine(t, out.String(), questionFor("--region").what)
+	region := promptLine(t, out.String(), questionFor("--location").what)
 
 	// The database's own note, as the Firebase step prints it: the harness
 	// init_confirm_test.go uses, at a terminal, with nothing typed for it.
@@ -815,7 +820,7 @@ func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
 	}
 
 	var b strings.Builder
-	b.WriteString("== the region question: fugaro setup's own, asked once\n" + region + "\n")
+	b.WriteString("== the place question: fugaro setup's own, asked once (the region question in a person's words, LP4)\n" + region + "\n")
 	b.WriteString("== the Firestore location: the database's own, permanent, and nothing is typed for it\n" + trimTrailingSpaces(locationOut.String()))
 
 	path := filepath.Join(wd, "testdata", "region_prompts.golden")
@@ -833,6 +838,457 @@ func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
 	}
 	if string(want) != b.String() {
 		t.Fatalf("a prompt moved, and the region question and the Firestore location's must stay apart (go test -update-region to accept):\n%s\nwant:\n%s", b.String(), want)
+	}
+}
+
+// TestSetupAsksThePlace is LP4's own test (docs/location-preference; D3080,
+// D3081, D3086): the first question a first run of `fugaro setup` asks is
+// where the installation lives, US is the suggestion Enter takes, and one
+// answer has three spellings — the place at the terminal, --location without
+// one, `location` in the answers file — with --region the precise form of the
+// same question (R2, F2).
+//
+// What the run carries afterwards is the region and never the place: the
+// region is the one setting an installation stores, and the place is read back
+// from it wherever it is needed (place.Of, D3080), so the two cannot drift.
+func TestSetupAsksThePlace(t *testing.T) {
+	// US is the suggestion and its region is a first run's own default: both
+	// are the one mapping's answer (LP1), and the EU place's region is the one
+	// D3086 names.
+	if got := place.DefaultRegion(place.US); got != defaultRegion {
+		t.Fatalf("the US place's region is %q and a first run's default is %q", got, defaultRegion)
+	}
+	if got := place.DefaultRegion(place.EU); got != "europe-west1" {
+		t.Fatalf("the EU place's region is %q, want europe-west1 (D3086)", got)
+	}
+
+	// first is a first run of `fugaro setup` whose other answers came from
+	// flags, so the place is the one question its terminal is asked and the
+	// bake question's own Enter is the one line after it (IS7).
+	first := func(t *testing.T, stdin string, o *initOptions) (*initRun, *strings.Builder) {
+		t.Helper()
+		if o == nil {
+			o = &initOptions{}
+		}
+		o.name, o.rigor = initProjectName, string(rigor.Pro)
+		if o.cloud.gcpProject == "" {
+			o.cloud.gcpProject = initProject
+		}
+		return wizardRun(t, stdin, o)
+	}
+	placeAsked := func(t *testing.T, out string) {
+		t.Helper()
+		if strings.Contains(out, questionFor("--location").what) {
+			t.Errorf("the place was answered, and the wizard asked it anyway:\n%s", out)
+		}
+	}
+
+	t.Run("the question is the place, its suggestion is US, and Enter takes it", func(t *testing.T) {
+		r, out := first(t, "\n\n", nil)
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if got := r.o.cloud.region; got != place.DefaultRegion(place.US) {
+			t.Errorf("Enter answered the place with the region %q, want the US place's %q\n%s", got, place.DefaultRegion(place.US), out)
+		}
+		if !strings.Contains(out.String(), "["+string(place.US)+"]") {
+			t.Errorf("the place question's suggestion is not US:\n%s", out)
+		}
+		if n := strings.Count(out.String(), "Type "+questionFor("--location").what+": "); n != 1 {
+			t.Errorf("the place was asked %d times, want once:\n%s", n, out)
+		}
+	})
+
+	// --location answers the question without a terminal, and what it settles
+	// is the place's region (place.DefaultRegion), which is the answer the
+	// installation keeps.
+	for _, tc := range []struct {
+		answer string
+		region string
+		pl     place.Place
+	}{
+		{"us", "us-east5", place.US},
+		{"eu", "europe-west1", place.EU},
+	} {
+		t.Run("--location "+tc.answer, func(t *testing.T) {
+			r, out := first(t, "\n", &initOptions{location: tc.answer})
+			if err := r.gatherInputs(t.Context()); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if r.o.cloud.region != tc.region {
+				t.Errorf("--location %s settled the region %q, want %q\n%s", tc.answer, r.o.cloud.region, tc.region, out)
+			}
+			if got := place.Of(r.o.cloud.region); got != tc.pl {
+				t.Errorf("the place read back from %q is %q, want %q", r.o.cloud.region, got, tc.pl)
+			}
+			placeAsked(t, out.String())
+		})
+	}
+
+	t.Run("location in the answers file answers it too", func(t *testing.T) {
+		// The file is the same door as the flag (setup_answers.go): the place
+		// question is one of the wizard's, so it has a member, and a document
+		// that answers it settles the region exactly as --location does.
+		doc := answersDoc(`"gcp_project":"`+initProject+`"`, `"location":"eu"`, `"name":"`+initProjectName+`"`, `"rigor":"pro"`)
+		r, out := answersRun(t, answersFile(t, doc), "\n", nil)
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if r.o.cloud.region != place.DefaultRegion(place.EU) {
+			t.Errorf("the file's place settled the region %q, want the EU place's %q\n%s", r.o.cloud.region, place.DefaultRegion(place.EU), out)
+		}
+		placeAsked(t, out.String())
+	})
+
+	t.Run("--region is the same question's precise form", func(t *testing.T) {
+		// A region typed in full answers the place question and keeps the
+		// region the person named — it is not the place's default (R2).
+		o := &initOptions{cloud: cloudOptions{region: "europe-west4"}}
+		r, out := first(t, "\n", o)
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if r.o.cloud.region != "europe-west4" {
+			t.Errorf("--region settled %q, want the region it named\n%s", r.o.cloud.region, out)
+		}
+		if got := place.Of(r.o.cloud.region); got != place.EU {
+			t.Errorf("the place read back from %q is %q, want EU", r.o.cloud.region, got)
+		}
+		placeAsked(t, out.String())
+	})
+}
+
+// TestALocationAndARegionThatDisagreeAreRefused is R2: the place and the
+// region are one answer, so two answers that name different places are refused
+// at once — before anything is read, planned or created — in one sentence
+// naming both flags, and a value that is no place at all is refused with the
+// region named as its fix.
+func TestALocationAndARegionThatDisagreeAreRefused(t *testing.T) {
+	firstRunEnv(t)
+	noInstallation(t)
+	noTerminal(t)
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		both [2]string
+	}{
+		{
+			name: "a US place and a European region",
+			args: []string{"--location", "us", "--region", "europe-west4"},
+			both: [2]string{"--location us", "--region europe-west4"},
+		},
+		{
+			name: "a European place and an American region",
+			args: []string{"--location", "eu", "--region", "us-east5"},
+			both: [2]string{"--location eu", "--region us-east5"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := executeStdin(t, "", append([]string{"setup"}, tc.args...)...)
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("exit %d, err %v", ExitCode(err), err)
+			}
+			if !strings.Contains(err.Error(), "disagree") || strings.Contains(err.Error(), "\n") {
+				t.Errorf("the refusal is not the one sentence about two answers disagreeing: %v", err)
+			}
+			for _, want := range tc.both {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name %q: %v", want, err)
+				}
+			}
+			// The fix is one of the two, not a retry of both: the sentence
+			// says so (settleLocation, init_inputs.go).
+			if !strings.Contains(err.Error(), "pass one of the two") {
+				t.Errorf("the refusal does not say how to answer: %v", err)
+			}
+		})
+	}
+
+	t.Run("a value that is no place is refused with the region as its fix", func(t *testing.T) {
+		_, _, err := executeStdin(t, "", "setup", "--location", "asia")
+		if err == nil || !strings.Contains(err.Error(), "--location asia") || !strings.Contains(err.Error(), "--region <region>") {
+			t.Errorf("--location that is not a place: %v", err)
+		}
+	})
+
+	t.Run("two answers that agree are the one answer", func(t *testing.T) {
+		// Agreement is not a refusal: the run goes past the place question and
+		// is refused for the project ID alone, which is what says the two
+		// spellings were read as one answer.
+		_, _, err := executeStdin(t, "", "setup", "--location", "eu", "--region", "europe-west4")
+		if err == nil || !strings.Contains(err.Error(), "--gcp-project <id>") {
+			t.Fatalf("an agreed place and region did not answer the question: %v", err)
+		}
+		if strings.Contains(err.Error(), "disagree") {
+			t.Errorf("two answers of one place were refused: %v", err)
+		}
+	})
+
+	t.Run("the wizard refuses it at the terminal too", func(t *testing.T) {
+		// The same sentence, from the same place: settleLocation runs in the
+		// questions' own path as well, so a run that has both answers does not
+		// ask them again and does not go on with two (wizard_stage.go).
+		r, out := wizardRun(t, "", &initOptions{
+			name:  initProjectName,
+			rigor: string(rigor.Pro),
+			cloud: cloudOptions{gcpProject: initProject, region: "europe-west4"},
+			// The place a person answered at an earlier question, or passed
+			// beside the region on the command line.
+			location: string(place.US),
+		})
+		err := r.gatherInputs(t.Context())
+		if err == nil || !strings.Contains(err.Error(), "disagree") {
+			t.Fatalf("a run whose place and region disagree: %v\n%s", err, out)
+		}
+	})
+}
+
+// TestSetupWithNoTerminalNamesTheLocationFlags is the place question's own
+// refusal: with no terminal to ask and neither flag passed, a first run is
+// refused at once with both — --location and its precise form --region — and
+// either one alone is the whole answer, so a run given either is not refused
+// for the other (LP4 of docs/location-preference).
+//
+// The place is the first run's own question: `fugaro update` on a machine with
+// no local config is looking for an installation that already has a region, so
+// its refusal names the region alone (setupCreates).
+func TestSetupWithNoTerminalNamesTheLocationFlags(t *testing.T) {
+	firstRunEnv(t)
+	noInstallation(t)
+	noTerminal(t)
+
+	_, _, err := executeStdin(t, "", "setup")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Errorf("more than one error: %v", err)
+	}
+	for _, f := range []string{"--location <us|eu>", "--region <region>"} {
+		if !strings.Contains(err.Error(), f) {
+			t.Errorf("the refusal does not name %q: %v", f, err)
+		}
+	}
+
+	// Either one alone is a whole answer: with the rest of the flags given,
+	// the run is refused for the project ID alone and names neither of them.
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"--location us", []string{"--location", "us"}},
+		{"--location eu", []string{"--location", "eu"}},
+		{"--region europe-west4", []string{"--region", "europe-west4"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"setup", "--name", "aurora", "--rigor", "pro"}, tc.args...)
+			_, _, err := executeStdin(t, "", args...)
+			if err == nil || !strings.Contains(err.Error(), "--gcp-project <id>") {
+				t.Fatalf("the run did not get past the place question: %v", err)
+			}
+			for _, f := range []string{"--location", "--region"} {
+				if strings.Contains(err.Error(), f) {
+					t.Errorf("the refusal names %s, which the run was given: %v", f, err)
+				}
+			}
+		})
+	}
+
+	t.Run("update is refused with the region alone", func(t *testing.T) {
+		// A run on a machine with no config is not a first run of `setup`: the
+		// installation it is looking for has a region already, and the place
+		// is not a question about it (R6, D3080).
+		_, _, err := executeStdin(t, "", "update")
+		if err == nil || !strings.Contains(err.Error(), "--region <region>") {
+			t.Fatalf("update with no terminal and no region: %v", err)
+		}
+		if strings.Contains(err.Error(), "--location") {
+			t.Errorf("update named the place question: %v", err)
+		}
+	})
+}
+
+// TestALocationThatCreatesNothingIsRefused: --location is the first run's own
+// flag, as --rigor beside it is (setupCreates), and a run that creates no
+// installation refuses it by name.
+//
+// Left on the run's options it is not inert. settleLocation turns the place into
+// the place's default region — a region the caller never typed — which the
+// region-move guard then refuses in the region's own words, printing a --region
+// the caller never passed as the fix for the --location they did, and that pair
+// is itself refused beside the place it came from; where the default region
+// happens to be the installation's own, the answer is accepted and dropped in
+// silence (LP4's review).
+func TestALocationThatCreatesNothingIsRefused(t *testing.T) {
+	refusal := func(t *testing.T, err error, out string) {
+		t.Helper()
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("a run that creates no installation took --location: %v\n%s", err, out)
+		}
+		for _, want := range []string{"--location", "is a first run's flag", "--region <region>", "nothing was written"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal lacks %q: %v", want, err)
+			}
+		}
+		// The flag's own refusal, not the region-move guard's: that one names a
+		// --region the caller never passed, and the fix it prints is refused
+		// beside the --location that produced it.
+		for _, unwanted := range []string{"is not the installation's region", "--region us-east5", "--region europe-west1"} {
+			if strings.Contains(err.Error(), unwanted) {
+				t.Errorf("the refusal is the region-move guard's (%q): %v", unwanted, err)
+			}
+		}
+	}
+
+	t.Run("an installation whose region is the place's default", func(t *testing.T) {
+		// The rig's installation is in us-east5, which is what --location us
+		// materializes to: this is the pair that was accepted and dropped in
+		// silence before the refusal.
+		newInitRig(t)
+		out, errOut, err := executeStdin(t, "", "setup", "--location", "us")
+		refusal(t, err, out+errOut)
+	})
+
+	t.Run("an installation in another place", func(t *testing.T) {
+		// europe-west1's place is the EU, so --location us here is the pair the
+		// region-move guard used to answer with a --region nobody passed.
+		r := newInitRig(t)
+		cfg, err := os.ReadFile(r.cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(r.cfg, []byte(strings.ReplaceAll(string(cfg), "us-east5", "europe-west1")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out, errOut, err := executeStdin(t, "", "setup", "--location", "us")
+		refusal(t, err, out+errOut)
+	})
+
+	t.Run("fugaro update with no project config", func(t *testing.T) {
+		// The door creates nothing whether or not an installation is found, and
+		// its own question is the region: the refusal is before anything is
+		// read, so nothing is asked on the way to it.
+		firstRunEnv(t)
+		fakeTerminal(t)
+		noInstallation(t)
+		out, errOut, err := executeStdin(t, "", "update", "--location", "eu")
+		refusal(t, err, out+errOut)
+		if asked := out + errOut; strings.Contains(asked, questionFor("--region").what) {
+			t.Errorf("the run asked its own question on the way to refusing the flag:\n%s", asked)
+		}
+	})
+
+	t.Run("the flags that stop before the creation", func(t *testing.T) {
+		for _, args := range [][]string{
+			{"setup", "--config-only", "--location", "us"},
+			{"setup", "--print-vars", "--location", "us"},
+			{"setup", "--publish-config", "--location", "us"},
+			// --forget is the update door's own flag — `fugaro setup --forget`
+			// is refused for the door it names — so the pair is met there.
+			{"update", "--forget", "--location", "us"},
+		} {
+			t.Run(strings.Join(args[:2], " "), func(t *testing.T) {
+				newInitRig(t)
+				out, errOut, err := executeStdin(t, "", args...)
+				refusal(t, err, out+errOut)
+			})
+		}
+	})
+
+	t.Run("the answers file's location member", func(t *testing.T) {
+		// The file is the same door as the flag (setup_answers.go), so the
+		// member is refused in the flag's own sentence — ahead of the rigor
+		// answer the document carries beside it, which is the question the place
+		// precedes.
+		newInitRig(t)
+		doc := answersDoc(`"gcp_project":"`+initProject+`"`, `"location":"eu"`, `"name":"aurora"`,
+			`"rigor":"pro"`, `"bake_repos":true`)
+		out, errOut, err := executeStdin(t, "", "setup", "--answers-file", answersFile(t, doc))
+		refusal(t, err, out+errOut)
+	})
+}
+
+// TestSetupPrintsWhereEachThingGoes is R7: before anything is created the run
+// says where each thing it creates will go — one line per row of the mapping,
+// in the mapping's own words (place.For), with every fallback's reason printed
+// under the line it belongs to — and there is nothing to answer in it.
+//
+// A region in neither place (D3081) is not refused and is not silent either:
+// everything it falls back to is on a line above, and the run says in one line
+// that the region carries no promise.
+func TestSetupPrintsWhereEachThingGoes(t *testing.T) {
+	// A first run whose answers all came from flags: the block is the only
+	// thing it says about the placement, and it is printed before the billing
+	// question, which is the only one left after it.
+	printed := func(t *testing.T, region string) string {
+		t.Helper()
+		r, out := wizardRun(t, "", &initOptions{
+			name:             initProjectName,
+			rigor:            string(rigor.Pro),
+			cloud:            cloudOptions{gcpProject: initProject, region: region},
+			bakeRepos:        true,
+			bakeReposChanged: true,
+		})
+		if err := r.gatherInputs(t.Context()); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), whereEachThingGoesIntro) {
+			t.Fatalf("a first run in %s printed nothing about where things go:\n%s", region, out)
+		}
+		return out.String()
+	}
+
+	for _, region := range []string{"us-east5", "europe-west1", "us-west8"} {
+		t.Run(region, func(t *testing.T) {
+			got := printed(t, region)
+			m := place.For(region)
+			if !strings.Contains(got, "the installation's own region: "+m.Region+" ") {
+				t.Errorf("the region itself is not the first line of the block:\n%s", got)
+			}
+			// The region line names only what follows the region itself, and
+			// the scheduler is not one of them: gcp.SchedulerRegion answers
+			// us-east4 for us-east5, the US default, so naming it there would
+			// be a fallback described as the region (F3).
+			line, _, _ := strings.Cut(strings.TrimPrefix(
+				got[strings.Index(got, whereEachThingGoesIntro)+len(whereEachThingGoesIntro):], "\n"), "\n")
+			if strings.Contains(line, "scheduler") {
+				t.Errorf("the region line claims the scheduler, whose region is not this one:\n%s", line)
+			}
+			// One line per row, and the reason — where there is one — under
+			// that line rather than in it: a reader has to be able to tell
+			// what is where from what is why.
+			for _, row := range []struct {
+				what string
+				loc  place.Location
+			}{
+				{"the run history (Firestore)", m.Firestore},
+				{"the budget's database (the Realtime Database)", m.RealtimeDatabase},
+				{"the secret containers", m.Secrets},
+				{"the run log bucket", m.LogBucket},
+			} {
+				line := "  " + row.what + ": " + row.loc.Where
+				if !strings.Contains(got, line) {
+					t.Errorf("%q is not a line of the block:\n%s", line, got)
+				}
+				if row.loc.Reason != "" {
+					if !strings.Contains(got, line+"\n    "+row.loc.Reason) {
+						t.Errorf("%s's fallback reason is not under its own line:\n%s", row.what, got)
+					}
+				} else if !strings.Contains(got, line+"\n") {
+					t.Errorf("%s falls nowhere and its line does not end there:\n%s", row.what, got)
+				}
+			}
+			carries := m.Place == place.None
+			if carries != strings.Contains(got, "carries no promise") {
+				t.Errorf("a region in %s does not say whether it carries a promise:\n%s", m.Place, got)
+			}
+			// Nothing is asked about it: the block is a reading, and the run
+			// writes no question in it.
+			if i := strings.Index(got, whereEachThingGoesIntro); i >= 0 && strings.Contains(got[i:], "Type ") {
+				t.Errorf("the run asked a question about the placement:\n%s", got[i:])
+			}
+		})
 	}
 }
 

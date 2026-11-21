@@ -48,7 +48,7 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- e.r.gatherInputs(t.Context()) }()
 	typeAt("Type the GCP project's ID", 1, "my-proj-42\n")
-	typeAt("Type the region the installation's jobs and the scheduler run in", 1, "\n")
+	typeAt("Type the place the installation lives in (US, EU, or a region typed in full)", 1, "\n")
 	typeAt("Type the Fugaro project's name", 1, "\n") // its default can come from an installation in that project
 	// The rigor mode is the one question here Enter is not an answer to (task
 	// W), so the mode is typed rather than taken.

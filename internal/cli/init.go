@@ -186,6 +186,15 @@ type initOptions struct {
 	// question phase applies nothing.
 	rigor string
 
+	// --location is the wizard's place question answered without a terminal
+	// (LP4 of docs/location-preference; R2, D3081): us or eu, and nothing
+	// else, because a region typed in full is --region's own answer to the
+	// same question (D3080). It is not stored anywhere: settleLocation
+	// (init_inputs.go) turns it into the region this run carries, which is the
+	// one setting an installation keeps, and refuses one that disagrees with
+	// --region.
+	location string
+
 	// answersFile is --answers-file: the wizard's five questions answered as
 	// one document, whose members fill the fields above and nothing else
 	// (setup_answers.go, D2904 of docs/console-improvements). "-" reads it from
@@ -564,6 +573,10 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// is the run's own state (a project config, or not) rather than the verb
 	// the reader typed. `fugaro run --mode hotfix` is named here because it is
 	// the one door hotfix has, and it is not a layer's to set (D834).
+	// The place question (LP4 of docs/location-preference; R2, D3080, D3081,
+	// D3086). It names no door: what says the question is a first run's is the
+	// run's own state (a project config, or not).
+	f.StringVar(&o.location, "location", "", "answer the wizard's place question without a terminal: where the installation lives, us or eu. US is the suggestion and its region is us-east5; EU's is europe-west1. The region is what the installation stores and the place is read back from it (D3080), so --region answers this same question precisely — a region typed in full, such as europe-west4 — and the two given together must agree: a run whose --location and --region name different places is refused at once, naming both. Like every question of the first run, a run that cannot ask and was given neither is refused with both flags. It is a first run's flag: a run that creates no installation — fugaro update, a run that selects a project config, --forget, --config-only, --print-vars and --publish-config — refuses it by name, and the region itself (--region <region>) is what such a run names")
 	f.StringVar(&o.rigor, "rigor", "", "answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set")
 	// --answers-file answers every question the wizard asks from one document
 	// (setup_answers.go, D2904 of docs/console-improvements): the surface that
@@ -571,7 +584,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// this is where its answers travel. The help names the members because the
 	// file is the reader's whole contract, and it says what the file is not: an
 	// answer is not a confirmation.
-	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the five questions a first run asks (--gcp-project, --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
+	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the five questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
 	// --events writes the same account --json prints as a stream of lines
 	// instead of one document (setup_events.go, D2904 of
 	// docs/console-improvements). The help names every kind of line, because
@@ -875,12 +888,30 @@ type initRun struct {
 	// same question about the named token family (D2350), which the proxy
 	// serves as readily (T15): S6's flip asks the two together
 	// (bundleHoldsBitbucketToken).
-	credsRead           bool
-	credsNames          map[string]bool
-	credsAppKey         bool
-	credsRecord         bool
-	credsBitbucket      bool
-	credsBitbucketTyped bool
+	//
+	// credsRepoCredentials is the reading's last answer, the members of C1's
+	// named-provider family the document holds, by their own document keys
+	// (withoutRepoCredentials): R12's first fact asks whether the entry this
+	// repository's own slug and a provider it names is among them, and it is a
+	// question about the document just read rather than a second read of the
+	// secret. It is nil wherever the family is absent and wherever no document
+	// was read at all, which are two states the fact's reader asks no
+	// difference of (neither holds an entry).
+	credsRead            bool
+	credsNames           map[string]bool
+	credsAppKey          bool
+	credsRecord          bool
+	credsBitbucket       bool
+	credsBitbucketTyped  bool
+	credsRepoCredentials map[string]bool
+	// credsProviderKey is the same reading's answer for the project's provider
+	// key (config.ProviderKeySecret), which is the one model credential that is
+	// not an account: credsNames cannot carry it, because a caller reaches it
+	// under the account name config.ProviderKeyAccount rather than under the
+	// credential's own name. The credential-route stage reads it, since a
+	// project whose model calls ride the provider key serves its own model kind
+	// (update_route.go's modelServes).
+	credsProviderKey bool
 
 	// credsUnreadMarker is the marker of a session whose own rule kept the
 	// bundle unopened — a coding agent's session or a Fugaro run's own process
@@ -1109,6 +1140,14 @@ func runInit(r *initRun) error {
 	// wizard's questions' flags, so a run that reads one is a run that was
 	// passed them (setup_answers.go).
 	if err := r.applySetupAnswers(); err != nil {
+		return err
+	}
+	// The place answer becomes the region before anything is checked or asked
+	// (R2, D3080): a --location and a --region that name different places are
+	// refused at once, here, and a place with no region beside it takes the
+	// place's default region — so every later reader, the questions included,
+	// sees the one answer the installation stores (settleLocation).
+	if err := o.settleLocation(); err != nil {
 		return err
 	}
 	if o.checkApp {
@@ -1918,6 +1957,19 @@ func (o *initOptions) check() error {
 	}
 	if o.githubAppID != "" && (o.forget || o.configOnly || o.printVars) {
 		return userErr("--github-app-id is for the repository stage of the converge (or --repo); it has no use with --forget, --config-only and --print-vars")
+	}
+	if o.location != "" && (o.forget || o.configOnly || o.printVars || o.publishConfig || o.door == updateDoor.name) {
+		// The place is the first run's own question (setupCreates): these four
+		// stop before the stages that write it and the update door creates
+		// nothing at all, so the flag has no reader here — and left on the run's
+		// options it is not inert, it becomes the place's default region
+		// (settleLocation) and then meets the region-move guard in the region's
+		// own words. Refused by name here, before anything is read, ahead of
+		// --rigor below because the place is the question the wizard reaches
+		// first (setupQuestions). A run that selects a project config is refused
+		// by the same sentence where that is known (wizard_stage.go), because
+		// whether it creates is not known until its config has been looked for.
+		return setupLocationRefusal(o.location)
 	}
 	if o.rigor != "" && (o.forget || o.configOnly || o.printVars || o.publishConfig) {
 		// These four stop before the converge's stages — forgetting, writing
@@ -3216,6 +3268,9 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	spec.ProjectSecrets = im.ProjectSecrets
 	// The catalog check's git credentials name a project container only when
 	// the plan holds it, which is known only now.
+	if spec.OwnGitSecrets, err = infra.LiveGitSecrets(ctx, c, lc); err != nil {
+		return outs, false, initErr(err)
+	}
 	if spec, err = spec.WithPlannedProjectSecrets(lc); err != nil {
 		return outs, false, err
 	}
@@ -4671,6 +4726,12 @@ func (o *initOptions) installationFlags() []string {
 		// both would drop the answer. Refused by name instead, in the sentence
 		// each of those two walks already has for a flag it cannot act on.
 		"--rigor": o.rigor != "",
+		// --location is the place a first run of `fugaro setup` chooses, and a
+		// --repo run creates no installation: it would drop the answer the
+		// same way (LP4 of docs/location-preference). A --region is not in
+		// this table: on these commands it is the per-invocation override it
+		// has always been, and it is the region itself rather than a place.
+		"--location": o.location != "",
 	}
 	var set []string
 	for _, f := range slices.Sorted(maps.Keys(installationOnly)) {
@@ -4691,6 +4752,13 @@ func runInitRepo(r *initRun, args []string) error {
 	// asks none of the wizard's questions, and the flags its answers fill are
 	// refused by name rather than dropped (installationFlags).
 	if err := r.applySetupAnswers(); err != nil {
+		return err
+	}
+	// The place answer is settled exactly as on the converge, so the two doors
+	// refuse a --location and a --region that disagree in one sentence
+	// (settleLocation). A --repo run refuses --location by name below either
+	// way: it creates no installation, so it has no place to choose.
+	if err := o.settleLocation(); err != nil {
 		return err
 	}
 	if o.checkApp {
@@ -4825,6 +4893,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateRigorSpelling(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// The members and the per-repo map LD4 adds to that block are the same
+	// kind of break on the newer rigorMembersSince, and the layer's alone: a
+	// repository's file refuses members: on a rule of its own and has no
+	// repos: key at all, so no repository half is judged here.
+	if err := r.gateRigorMembers(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	// The governance: block, in either file, is the same kind of break, on
 	// governanceSince.
 	if err := r.gateGovernance(o, repo, lc, cfg); err != nil {
@@ -4845,6 +4920,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// stopFractionSince, in either file: a launch from outside a checkout
 	// cannot judge the repository's own half, so the converge does.
 	if err := r.gateStopFraction(o, repo, lc, cfg); err != nil {
+		return err
+	}
+	// agent.workspace_beat is the same kind of break on workspaceBeatSince, in
+	// either file: the repository writes it in fugaro.yaml and the project in
+	// the layer file it publishes.
+	if err := r.gateWorkspaceBeat(o, repo, lc, cfg); err != nil {
 		return err
 	}
 	// agent.triage is the same kind of break on triageSince, in the
@@ -5065,7 +5146,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// and not the document's agent.oauth_token alone: they are the accounts its
 	// jobs go out on and the ones the record below names, so a launch on any of
 	// them (`--token`, D2070 (a)) is a run this bundle reading has to cover.
-	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, lc, repo), policyBudgetMode(in.Policy))
+	r.recordCredentialsServiceReady(ctx, lc, outs, cfg, in.Policy, repo, cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, lc, repo), policyBudgetMode(in.Policy))
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
@@ -5455,6 +5536,23 @@ func (r *initRun) gateGovernance(o *initOptions, repo string, lc *localcfg.Confi
 	return refuseGovernanceSkew(repo, cfg.RepoGovernanceSet, cfg.Layer.SetsGovernance(), lc.BaseImage(config.BaseKind), w)
 }
 
+// gateRigorMembers is fugaro update --repo's gate for rigorMembersSince:
+// refuseRigorMembersSkew, with gateRigor's escapes and for its reason. The keys
+// are the project layer's alone — a repository's fugaro.yaml refuses members: on
+// one of its own rigor.areas rules and knows no repos: key — so the repository
+// half the other gates carry is absent: what is judged is the layer this
+// repository's configuration resolves over, and the refusal names it.
+func (r *initRun) gateRigorMembers(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseRigorMembersSkew(repo, cfg.Layer.SetsRigorMembers(), lc.BaseImage(config.BaseKind), w)
+}
+
 // gateJobs is fugaro update --repo's gate for jobsSince: refuseJobsSkew, with
 // gateRigor's escapes and for its reason. The key is the project layer's alone
 // — a repository's fugaro.yaml has no jobs: key and refuses an unknown one — so
@@ -5514,6 +5612,28 @@ func (r *initRun) gateStopFraction(o *initOptions, repo string, lc *localcfg.Con
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseStopFractionSkew(repo, cfg.RepoStopFractionSet, cfg.Layer.SetsStopFraction(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateWorkspaceBeat is fugaro update --repo's gate for workspaceBeatSince:
+// refuseWorkspaceBeatSkew, with gateStopFraction's shape and for its reason.
+// Both files can write the key — the repository's agent.workspace_beat and the
+// project layer's defaults.agent.workspace_beat — and both are decoded with
+// KnownFields, so each is judged where it is set and the subject names it.
+//
+// Each half is the key being written rather than the value it holds
+// (gateSecurity's own reading): RepoWorkspaceBeatSet for the repository's file,
+// and the layer's own SetsWorkspaceBeat, which counts a key written as null —
+// SetsDefault would not, and the layer would then be converged onto an image
+// whose runner refuses it at bootstrap for every repository of the project.
+func (r *initRun) gateWorkspaceBeat(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseWorkspaceBeatSkew(repo, cfg.RepoWorkspaceBeatSet, cfg.Layer.SetsWorkspaceBeat(), lc.BaseImage(config.BaseKind), w)
 }
 
 // gateTriage is fugaro update --repo's gate for triageSince: refuseTriageSkew,
@@ -6313,10 +6433,20 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 	// runs would then be answered 503 no_candidate_credentials by the
 	// credentials service while the node this publish writes still carries the
 	// admission, which is the state this key exists to end.
-	var ready *bool
+	// The same care extends to R12's two facts, which the same door wrote on
+	// the same entry a moment ago (recordCredentialsServiceReady, KS19): this
+	// write is the one `fugaro update` publishes for the installation, so a
+	// fact it did not carry over would be erased from the record of the very
+	// run that judged it — which is every run, the repository door writing this
+	// entry each time it converges. They travel with the switch, nil included,
+	// and for the same reason: an entry no update has judged must stay
+	// unjudged, and only the reading that judged it writes one.
+	var ready, providerKeysServed, stageAccountServed *bool
 	var accounts []string
 	if entry, ok := lc.Repos[key]; ok {
 		ready = entry.CredentialsServiceReady
+		providerKeysServed = entry.ProviderKeysServed
+		stageAccountServed = entry.StageAccountServed
 		accounts = entry.ClaudeAccounts
 	}
 	next.Repos[key] = localcfg.Repo{
@@ -6326,6 +6456,8 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 		GitHubAppID:             spec.GitHubAppID,
 		Vertex:                  spec.UsesVertex(),
 		CredentialsServiceReady: ready,
+		ProviderKeysServed:      providerKeysServed,
+		StageAccountServed:      stageAccountServed,
 		ClaudeAccounts:          accounts,
 	}
 	if spec.UsesVertex() && !lc.UsesVertex() {

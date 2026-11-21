@@ -733,7 +733,20 @@ var dataReadSites = map[string]string{
 // FOUND, like a sanctioned site, so it cannot outlive the read it explains. A
 // prompt does not belong here: it belongs nowhere.
 var notADecisionSites = map[string]string{
-	"pair.go:pairReadCode": "the --json caller's own line: a console asks the operator for the code and hands the command the answer on stdin (§4.1, \"the typed code is read as one stdin line\"), so what arrives is data a caller delivered rather than a question the CLI put to a person; the interactive half reads the same value through readValue and is not this shape",
+	"pair.go:pairReadCode":                              "the --json caller's own line: a console asks the operator for the code and hands the command the answer on stdin (§4.1, \"the typed code is read as one stdin line\"), so what arrives is data a caller delivered rather than a question the CLI put to a person; the interactive half reads the same value through readValue and is not this shape",
+	"workspace_project_status.go:readRoster":            "the workspace's own roster node (`workspace.Store.Read`, which takes a context and no key and is this shape only because a one-argument Read is), read so `workspace project status` and `ls` can answer their rows: it is a document the workspace admin's own credentials fetch from the database, and a read that is refused fails at once rather than waiting for anyone (D2809: both commands write nothing on any path, so no confirmation stands here to be asked)",
+	"workspace_init.go:workspaceInitReadRoster":         "workspace init's roster node, read through C1's Store — `Read(ctx)` answers the document and the ETag a conditional write is made under, which is one argument on a receiver unlike the package's own `Read(ctx, key)` store reads, and it is what this shape catches. What it reads is a Realtime Database node and never a person: it answers or it fails, and there is no line behind it to wait for (docs/workspace-projects-users/contract.md, C1) — and it is read in a one-line helper of its own, so this exemption covers that line and not the command's hundred and fifty others, where a later prompt has no entry to hide behind",
+	"workspace_user.go:readRoster":                      "the workspace's own roster node, read through C1's Store.Read(ctx): one argument, which is the byte-level read's shape, and a database node over IAM rather than a stream a person typed into — the read answers the document and the ETag together, a node that is not there is Found=false rather than a wait, and nothing in the family reads a terminal (the writer's own refusal, A7, prints a sentence and asks nothing)",
+	"workspace_project_save.go:workspaceSaveRosterRead": "C1's roster node read through the workspace.Store seam (WU23): a cloud document, read with a context and answering the roster's bytes or an error, so the one argument the shape sees is a context and no person is behind it; the command asks nothing on any path",
+	// The one-argument Read the rule watches for is a byte-level read of a
+	// reader — `Read(p []byte)` — and every store read in this package took a
+	// context and a key until C1's Store did not: `Store.Read(ctx)` reads the
+	// workspace's own roster node over IAM and takes nothing else, so the shape
+	// and the count of arguments are the same as a line read from a terminal
+	// while the read is a document's. Nothing here waits: a read that fails is
+	// the caller's refusal, and the bytes are the node at the revision they were
+	// read at (docs/workspace-projects-users/contract.md, C1).
+	"workspace_project_rm.go:workspaceProjectRmReadRoster": "C1's Store.Read(ctx): the workspace's own roster node, read over IAM — a document and its revision, not a person's line; WU6's command reads no terminal at all, which TestProjectRmRefusesInACodingAgentsSession holds",
 }
 
 // pendingSites is every decision read the package still makes and the task of

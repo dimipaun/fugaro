@@ -263,7 +263,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
+	case MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
 		return true
 	// The five identity routes (C1, R2): a run's identity is issued here, with
 	// every one of them answered ahead of the shared parse below.
@@ -1215,7 +1215,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+" and "+identitywire.ProbePath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+" and "+identitywire.ProbePath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	// The scope this call is served under (R1, C1), asked once and before any
@@ -1646,6 +1646,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.bitbucketProxy(ctx, w, r, id, canonical)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, ProviderRoutePrefix) {
+		// The provider route (C1, R11, KS4). Everything above it is its
+		// admission and nothing below it is: the two identities have been
+		// verified, the pairing has fixed the repository this call is a run of,
+		// the operator's stop switches have been read, so a stopped service
+		// serves no provider call, and the slip rule has been applied — a named
+		// provider entry is a bundle key and not one of the grammar's names, so
+		// no slip fences it (slipRequiresSlip). What it reads is the provider's
+		// name off the call, the project's published policy and the bundle entry
+		// the run's own VERIFIED repository and that name derive, and what rules
+		// its call is judged by are the policy's — the block must name the
+		// provider, the provider must claim the model, and the gateway's own
+		// request check is applied over the policy's routes — rather than the
+		// cascade's. The handler reads the scope itself (scopeOfCall), so the
+		// caller is held to the state and the policy of the deployment that
+		// answered it, exactly as the cascade's own handlers are.
+		s.providerCall(ctx, w, r, id, purpose, req)
+		return
+	}
 	// The project's policy, and the request itself, are read before the bundle:
 	// the request's check needs the policy's allow-list, and neither is a
 	// credential. A request the gateway's own rules refuse is answered here —
@@ -1683,7 +1702,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.refuseCall(ctx, w, id, purpose, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+noAllowList)
 			return
 		}
-		refusal, err := s.requestRefusal(shared, cl.body)
+		// The pin is the project's allow-list and there are no routes: this
+		// path forwards to the Anthropic upstream, where an accepted call goes
+		// whatever its model is called, so the two rules that are about a
+		// provider route have no call to be about here (requestRefusal). The
+		// provider route's own path passes both, with the policy's providers as
+		// its routes (providerCall).
+		refusal, err := s.requestRefusal(shared, cl.body, requestPin(shared), nil)
 		if err != nil {
 			// The project's own prices could not be read: a state the caller
 			// cannot fix, and never a refusal of what it sent. The read is

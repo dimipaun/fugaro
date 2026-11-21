@@ -386,6 +386,18 @@ var consoleReadPaths = map[string]bool{
 	// command) is covered by it too: it is named in consoleLaunchPaths for
 	// that reason, and the two tables are read together.
 	"fugaro apply": true,
+	// The Code tab's two catalogue reads (the console improvements plan's AL,
+	// §5.1's rows): `image ls --json` prints the image catalog -- each entry
+	// with the environment it builds and the repositories pinned to it -- and
+	// `recipes ls --json` prints the recipes this installation can run. Both
+	// are offline reads of the installation's own records and write nothing,
+	// the remembered checkouts included, so a console that asks either
+	// remembers no checkout. Their writers are the never table's: `image
+	// add`, `image rm` and `image promote`, `recipes publish` and `recipes
+	// validate` -- each as a command and as a word of its group, so no other
+	// word of either group is reachable from the console.
+	"fugaro image ls":   true,
+	"fugaro recipes ls": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
 	// console task adds it); it resolves no checkout today.
 	"fugaro plan graph": true,

@@ -938,7 +938,13 @@ table's row from 151 to 152.) (Amended 2026-11-20:
 over the residual of the pull-request index in the bucket's threat model, the
 in-flight audit's own row for the backfill, the two skills' sentences about the
 fast queries and the release notes that carry the change — moved the table's row
-from 152 to 153.) They
+from 152 to 153.) (Amended 2026-11-21:
+`internal/cli/docs_check740_test.go`, the run-messages plan's RM8 — the pin over
+the owner-run Check 740 in the register, whose four readings are the plain
+message delivered at a coder stage, the `--now` stop's quiet point with the same
+session going on after it, the Policy Troubleshooter asked about the real job
+accounts, and the bucket's `.msg.json` lifecycle rule — moved the table's row
+from 153 to 154.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -980,21 +986,40 @@ gives each rigor level its own `roles` mapping (LD9) — added `levelRolesSince`
 `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 59 to 60. Same
 row, same reason for naming it.)
 
+(Amended 2026-11-20: the same plan's LV3.1 — a project area's `members` and the project's per-repo
+`defaults.rigor.repos` map — added the `rigor.repos` row to `internal/config/scope.go`, which moved
+the *Config scope rows* row from 117 to 118. The row is not an accident of the shape: the layer's
+scope walker asks that table about every `defaults.*` key and refuses the ones it does not carry, so
+a project layer stating a per-repo level needs the row whatever the key's reader is. The same task
+added `rigorMembersSince` to `internal/cli/recipes_skew.go` — the two keys are the layer's alone and
+are decoded with `KnownFields`, so a job image older than the release that knows them dies at
+bootstrap on every repository of the project — which moved the *Image-skew `Since` constants* row
+from 60 to 61. The two keys ship in one release and one constant, one judge and one gate serve both,
+which is why the row moved by one and not by two.)
+
+(Amended 2026-11-21: the secrets-brokering plan's KS2 — a provider key entering the
+credentials service's bundle under C1's name instead of a container of its own — added
+`repoCredentialSince` to `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since`
+constants* row from 61 to 62. The constant is the guard every writer of such a key holds against a
+service too old to read the entry, so the row moved with the release that starts writing it, as the
+entries above do. Nothing in this folder changed; the row is named here for the reason the ones
+above are: a reader who finds the figure stale should find who moved it.)
+
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 14 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 15 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 117 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 119 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 5 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 1 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 60 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 63 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 153 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 155 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 10 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |

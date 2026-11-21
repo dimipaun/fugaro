@@ -363,17 +363,24 @@ func TestClaudeCoderKeepsItsTools(t *testing.T) {
 // for — an ID newer than the shipped table, which is what a repository pins
 // before the table carries it, and one the gateway would serve and price at
 // the table's maximum (forward.go's modelFor) — so this is the case a rule
-// read off the price row alone would get wrong. The budget off builds no table
-// at all, and a provider-served coder is refused at bootstrap without the
-// gateway, so this is the shape the case really has.
+// read off the price row alone would get wrong. The run is one whose job
+// carries no database at all: from AB1a on every run that names one opens a
+// session (D3009, R3), and no mode turns that off any more, so a run with no
+// gateway to charge is a run with no database to read. Its price table is
+// built all the same, and a provider-served coder is refused at bootstrap
+// without the gateway, so this is the shape the case really has.
 //
 // Mutation (denyBinaryReads' price-row answer without its gatewayOn): the
 // implement stage's brief gains the rule and this test fails.
 func TestTextOnlyCoderWithNoGatewayKeepsItsImageReads(t *testing.T) {
 	const coder = "claude-opus-6"
 	g := newGW(t, strings.Replace(pinnedConfig(t), "coder: "+sonnet, "coder: "+coder, 1), "off", "")
-	if g.deps.Spend.Prices != nil {
-		t.Fatalf("the budget-off run built a price table: %+v", g.deps.Spend.Prices)
+	// The job names no database: from AB1a on a run that names one opens a
+	// session against it, and this is a run with no session, no cap and no
+	// gateway — the shape whose brief must carry no image rule.
+	g.harness.noBudget()
+	if g.deps.Spend.Prices == nil {
+		t.Fatal("the run built no price table: from AB1a on one is built whatever the mode is, and the price-row answer is what this test mutates")
 	}
 	if _, ok := pricing.Embedded().Lookup(coder); ok {
 		t.Fatalf("%s has a price row: this test is about a model the run's own table does not carry", coder)

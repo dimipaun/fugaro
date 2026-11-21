@@ -196,7 +196,8 @@ variable "catalog_check" {
         title      = string
         expression = string
       })
-      git_secret_id = optional(string)
+      git_secret_id     = optional(string)
+      own_git_secret_id = optional(string)
     }))
   })
   default = null

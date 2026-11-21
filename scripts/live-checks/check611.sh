@@ -55,8 +55,9 @@
 #     admits the repository, NO profile of the document admits it (a profile
 #     that did would give the repository a shared project job, and its review
 #     variant is what a review of it would run on — not the implicit job this
-#     check is about), the budget mode is not `off` (the gateway is what reaches
-#     the service, and it exists only in observe and enforce), and the node's
+#     check is about), the budget mode is one the gateway exists in (`observe` or
+#     `enforce` — off is not a mode any more, D3009: the gateway is what reaches
+#     the service), and the node's
 #     `bitbucket_token` block admits the repository with `proxy: true` — which is
 #     the launcher's own gate (nodeBrokersBitbucket) and the only way a job that
 #     mounts no token can reach bitbucket.org at all;
@@ -1062,13 +1063,8 @@ step_policy() {
     return 0
   fi
   case "$MODE" in
-  off)
-    fact policy FAIL "${REPO} is on no profile and the published budget mode is 'off': the gateway is what reaches the credentials service, and it exists only in observe and enforce (D2071, GatewayOn), so a review run would stop in bootstrap with no path to the service — every row below would be a row about nothing. Raise the mode ('fugaro project policy publish', observe or enforce) and run this check again"
-    POLICY_STOP=yes
-    return 0
-    ;;
   - | '')
-    unmeasured policy "${REPO} is on no profile and the policy document carries no budget mode (it reads '${MODE:-<none>}'), so a mode that is not off is NOT measured: a mode the document does not carry is not a mode that is not off — a mode that is not off is what makes the gateway exist, and the gateway is what reaches the credentials service. Publish the project policy so it carries one ('fugaro project policy publish', observe or enforce) and run this check again"
+    unmeasured policy "${REPO} is on no profile and the policy document carries no budget mode (it reads '${MODE:-<none>}'), so whether the gateway exists for a review of this repository is NOT measured: the gateway exists in observe and enforce (D2071, GatewayOn), and a mode the document does not carry is neither — the gateway is what reaches the credentials service. Publish the project policy so it carries one ('fugaro project policy publish', observe or enforce) and run this check again"
     POLICY_STOP=yes
     return 0
     ;;

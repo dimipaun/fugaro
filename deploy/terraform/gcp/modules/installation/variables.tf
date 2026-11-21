@@ -348,6 +348,11 @@ variable "catalog_check" {
       # identity's. Optional, and absent for a repository whose credential this
       # installation cannot name, where no build of its entries is submitted.
       git_secret_id = optional(string)
+      # The repository's own container, when it holds a live version and
+      # git_secret_id names the project's copy: a build resolves the own copy
+      # first, so the identity is granted it too, as a second grant beside the
+      # first rather than a change of it.
+      own_git_secret_id = optional(string)
     }))
   })
   default = null

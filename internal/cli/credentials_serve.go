@@ -96,8 +96,8 @@ import (
 //
 // A deployment whose environment is incomplete does not serve: the refusal is
 // by name, and no port is bound. That is the fail-closed direction this whole
-// work is held to (D143: an unreachable service halts a run, and no code path
-// falls back to a key in the job). A revision that fails to start is what
+// work is held to (D143: an unreachable service is waited for, and then halts
+// the run, and no code path falls back to a key in the job). A revision that fails to start is what
 // tells an owner the image they deployed cannot serve, while a service that
 // answered every call with a refusal would look healthy and halt every run
 // that reached it. Guessing a fact is what this command must not do either: a
@@ -994,20 +994,9 @@ func credentialsWorkspaceService(ctx context.Context, workspace string, env map[
 		Open: func(databaseURL string) (credsvc.Getter, error) {
 			return credentialsDatabase(ctx, databaseURL, ts)
 		},
-		// The workspace's OWN state and switch, over the one client this
-		// deployment opened at its own database's URL (FUGARO_RTDB_URL) — the
-		// same pair the installation's configuration wires over its own
-		// (credentialsServiceConfig). Neither is the calling member's: State is
-		// what the scope answers a call's State() with and is read from the
-		// workspace's database by R8's rule (a cooldown, a rotation position
-		// and a spend figure for a workspace credential are facts about the
-		// workspace), and Kills is the node `fugaro budget kill --workspace
-		// <name>` writes, which workspaceKills reads BESIDE the calling
-		// member's own pair — a member's operator holds no grant on this
-		// database and can neither read nor lift that switch (D1302, spec.md
-		// §9). NewWorkspace refuses a configuration carrying neither, so the
-		// pair is what this mode starts with rather than a service that would
-		// serve every call of a stopped workspace.
+		// The pool's state and the stop switch are the workspace's own
+		// database's, the one FUGARO_RTDB_URL names; no member's database is
+		// ever handed to either (R8, D1302).
 		State: &creds.RTDBStore{DB: db},
 		Kills: db,
 	})

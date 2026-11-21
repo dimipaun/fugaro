@@ -1032,8 +1032,9 @@ shared_of() { # shared_of PREFIX — the reader's reading of the jobs named by P
 # admitted to two of them is one whose selection this check cannot read, and it
 # says so rather than guessing), that profile serves the git provider whose
 # shared job this half reads, and the published budget mode is one the gateway
-# exists in (a mode of `off` is no gateway, and no gateway is no path to the
-# service: D2071, GatewayOn). The mode is not the credentials-service switch
+# exists in (`observe` or `enforce`; off is not a mode any more, D3009, and no
+# gateway is no path to the service: D2071, GatewayOn). The mode is not the
+# credentials-service switch
 # itself, and the row says so — the switch is the job's own environment, read
 # next — but a run whose gateway does not exist cannot be served at all.
 step_policy() {
@@ -1080,13 +1081,8 @@ step_policy() {
   local mode
   mode=$(field_of mode "$got")
   case "$mode" in
-  off)
-    fact policy FAIL "the profile '${PROFILE}' admits ${REPO} and the published budget mode is 'off': the gateway is what reaches the credentials service, and it exists only in observe and enforce (D2071, GatewayOn), so a run of this repository would stop in bootstrap with no path to the service — every row below would be a row about nothing. Raise the mode ('fugaro project policy publish', observe or enforce) and run this check again"
-    POLICY_STOP=yes
-    return 0
-    ;;
   None | - | '')
-    unmeasured policy "${REPO} is on the profile '${PROFILE}' and the policy 'fugaro project policy show --project fugaro --json' printed carries no budget mode (it reads '${mode:-<none>}'), so a mode that is not off is NOT measured: a mode the document does not carry is not a mode that is not off, and D2071's leg turns on it. Publish the project policy so it carries one ('fugaro project policy publish', observe or enforce) and run this check again"
+    unmeasured policy "${REPO} is on the profile '${PROFILE}' and the policy 'fugaro project policy show --project fugaro --json' printed carries no budget mode (it reads '${mode:-<none>}'), so whether the gateway exists for a run of this repository is NOT measured: the gateway exists in observe and enforce (D2071, GatewayOn), and a mode the document does not carry is neither. Publish the project policy so it carries one ('fugaro project policy publish', observe or enforce) and run this check again"
     POLICY_STOP=yes
     return 0
     ;;
@@ -1560,7 +1556,7 @@ run_197_flip() {
 # machine with no credentials at all.
 print_plan() {
   say "dry run: NOTHING below was run, and no tool was called at all — not gcloud, not fugaro. A real run would first check that this is the fugaro-dev installation (fugaro doctor --project fugaro --all, and that fugaro version is not a development build), then:"
-  say "  [network] fugaro project policy show --project fugaro --json  (the project's allow_repos and the one profile that admits ${REPO:-<the repository>}, and the budget mode, which must not be off: a mode of off is no gateway and no path to the service)"
+  say "  [network] fugaro project policy show --project fugaro --json  (the project's allow_repos and the one profile that admits ${REPO:-<the repository>}, and the budget mode, which must be one the gateway exists in, observe or enforce: no gateway is no path to the service)"
   say "  [network] gcloud run jobs list --project=${P} --region=${L} --format=json  (the job list: the jobs named 'fugaro-p-<profile>-github…' — one per account of the profile — and whether each carries FUGARO_CREDENTIALS_SERVICE_URL)"
   say "  [network, writes] fugaro run --repo ${REPO:-<the repository>} --project fugaro --run-id <today>-0197 --title 'Check 197: one' --task-file <task> --json  (one throwaway run: it writes one line to CHK197.md, commits and opens a pull request)"
   say "  [network] fugaro runs ls --repo <that repository> --no-cache --json  (its row, polled until terminal; the job is read out of the execution path its row names)"
