@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The orchestrator's class at the issuer: what a resident orchestrator's ask may
@@ -46,6 +48,18 @@ import (
 // outcome (R4, LM1), and a claimed ticket is exactly a run that started — its
 // claim is the run's first call. The two together are D3136's "recorded,
 // unstarted attempt"; this file is the record half of it.
+//
+// THE TWO SIDES ARE SPELLED DIFFERENTLY, AND ONE OF THEM IS DERIVED. An item
+// carries its repository canonically — `owner/name`, as
+// orchestrator-state.schema.json pins it — and an ask carries the storage slug
+// a launch and a run are keyed by (task.Slug: `acme-web-3130f6e03f9febba`,
+// which never holds a slash), because that slug is what the ticket record's
+// path and the run's own `fs` claim are built from. Neither spelling can be
+// turned into the other — the slug is a hash — so the record's own direction is
+// the one taken: the ask names the item's repository when the item's canonical
+// name derives the ask's slug under one of the kinds a repository may use
+// (askNamesTheItemsRepo). Reading the two as one string would refuse every
+// honest ask.
 //
 // WHAT THIS FILE DOES NOT DO. No committer is read and no scope is judged for
 // this class (D3136): the check never asks the roles-and-scopes resolver about an
@@ -162,12 +176,12 @@ func (c orchestratedScope) checkOrchestrated(ctx context.Context, ask identitywi
 	if !ok {
 		return fmt.Errorf("%w: %q names the attempt %q, and the orchestrator's record carries no work item for it", ErrOrchestratedAsk, safetext.OneLine(ask.Run), safetext.OneLine(attempt))
 	}
-	if item.Repo != ask.Slug {
+	if !askNamesTheItemsRepo(ask.Slug, item.Repo) {
 		// The attempt is a recorded one, and it is the record's for another
 		// repository: what the class may be issued is an attempt OF THE
 		// REPOSITORY the ask names (D3136), so an ask that points one item's
 		// attempt at another repository's run is refused.
-		return fmt.Errorf("%w: the attempt %q is the record's for %q, and the ask names %q", ErrOrchestratedAsk, safetext.OneLine(attempt), safetext.OneLine(item.Repo), safetext.OneLine(ask.Slug))
+		return fmt.Errorf("%w: the attempt %q is the record's for %q, and the ask's slug %q is not that repository's", ErrOrchestratedAsk, safetext.OneLine(attempt), safetext.OneLine(item.Repo), safetext.OneLine(ask.Slug))
 	}
 	for _, it := range state.Intents {
 		if it.ID != attempt {
@@ -187,4 +201,39 @@ func (c orchestratedScope) checkOrchestrated(ctx context.Context, ask identitywi
 		return nil
 	}
 	return fmt.Errorf("%w: the orchestrator's record carries no attempt %q for run %q", ErrOrchestratedAsk, safetext.OneLine(attempt), safetext.OneLine(ask.Run))
+}
+
+// askNamesTheItemsRepo reports whether askSlug is a storage slug of itemRepo:
+// the ask's own spelling of the repository, against the record's.
+//
+// The record is canonical (`owner/name`) and the ask is a slug
+// (task.Slug — "acme-web-3130f6e03f9febba"), and the slug is a hash of the
+// provider kind and the canonical path, so only the record's direction
+// resolves: the ask names the item's repository when one of the kinds a
+// repository may use (config.Providers) derives the ask's slug from the item's
+// canonical name. The kinds are that list rather than a second spelling of it
+// because internal/runner's own derivation — the run's, whose admission check
+// and this one must agree about which repository a slug is — is held to the
+// same list, and a kind this file added would be a repository the service
+// admits and no job serves.
+//
+// Both kinds answer for one canonical name, and that is the whole of what the
+// record can say: an item carries no provider kind (one installation may hold a
+// GitHub and a Bitbucket repository of one name, and the slug is what keeps
+// them apart), so which of the two jobs serves the run is not this check's
+// question — the account the ask names must be that slug's job's account (R4),
+// and that is where the two are told apart.
+//
+// "fake" is not among them and costs nothing: a fake provider is a local run,
+// which reaches no cloud service at all. A slug none of them derives is not the
+// item's repository's, and a slug two of them derive is a hash collision rather
+// than a second repository — the run's own derivation is what refuses that one,
+// as it refuses a job that no kind serves.
+func askNamesTheItemsRepo(askSlug, itemRepo string) bool {
+	for _, kind := range config.Providers {
+		if slug, err := task.Slug(kind, itemRepo); err == nil && slug == askSlug {
+			return true
+		}
+	}
+	return false
 }

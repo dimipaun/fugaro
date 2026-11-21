@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // These tests are LM24's: the orchestrator's class at the issuer is bound to the
@@ -16,6 +17,13 @@ import (
 // and an ask that names a context repository — plus the case that must go
 // through, which is a recorded attempt of the ask's repository that nothing has
 // reported on.
+//
+// The two sides of that binding are spelled differently and the tests carry
+// each in its own spelling, because reading them as one string is what the
+// class's first cut did: an item holds its repository canonically ("acme/web")
+// and an ask holds the storage slug a run is keyed by ("acme-web-3130f6e03f9febba",
+// task.Slug), which never holds a slash. A fixture that spelled both the same
+// would pass against a check that admits nothing.
 //
 // The red step is TestOrchestratedAskForAnotherRunIsRefused against C1's stub
 // check, which admits the orchestrator's class whole: it was written before this
@@ -61,6 +69,8 @@ func (r *recordFake) State(context.Context) (orchestrator.State, error) {
 
 // orchestratedItem is one work item of the orchestrator's record, in the phase a
 // committed attempt leaves it in (orchestrator's commitIntent writes running).
+// Its repository is the canonical one the node stores (orchestrator-state's
+// schema: task.CanonicalRepo's owner/name).
 func orchestratedItem(id, repo string) orchestrator.WorkItem {
 	return orchestrator.WorkItem{ID: id, Repo: repo, Phase: orchestrator.PhaseRunning}
 }
@@ -72,7 +82,20 @@ func orchestratedIntent(id, run string, outcome orchestrator.Outcome) orchestrat
 	return orchestrator.Intent{ID: id, RunID: run, Outcome: outcome}
 }
 
-// orchestratedAsk is an ask of the orchestrator's class for one attempt.
+// orchestratedSlug is the storage slug a launch and a run of repo are keyed by,
+// which is what an ask names (task.Slug) — the other spelling of the repository
+// an item carries canonically.
+func orchestratedSlug(t *testing.T, kind, repo string) string {
+	t.Helper()
+	slug, err := task.Slug(kind, repo)
+	if err != nil {
+		t.Fatalf("task.Slug(%s, %q): %v", kind, repo, err)
+	}
+	return slug
+}
+
+// orchestratedAsk is an ask of the orchestrator's class for one attempt, naming
+// the repository the way a launch does: by its storage slug.
 func orchestratedAsk(slug, run, attempt string) identitywire.TicketRequest {
 	return identitywire.TicketRequest{
 		Slug:              slug,
@@ -105,12 +128,13 @@ func orchestratedScopeFor(t *testing.T, rec OrchestratorRecord) (ScopeCheck, *ju
 // failure and never a verdict about the caller (R16's ScopeFault rule).
 func TestOrchestratedAskNeedsARecordedUnstartedAttempt(t *testing.T) {
 	const (
-		slug = "acme/web"
+		repo = "acme/web"
 		run  = "run-1"
 	)
+	slug := orchestratedSlug(t, "github", repo)
 	open := func() *recordFake {
 		return &recordFake{state: orchestrator.State{
-			WorkItems: []orchestrator.WorkItem{orchestratedItem("wi-1", slug)},
+			WorkItems: []orchestrator.WorkItem{orchestratedItem("wi-1", repo)},
 			Intents:   []orchestrator.Intent{orchestratedIntent("wi-1:1", run, "")},
 		}}
 	}
@@ -129,6 +153,18 @@ func TestOrchestratedAskNeedsARecordedUnstartedAttempt(t *testing.T) {
 		}
 	})
 
+	t.Run("the item's repository on the other provider kind is still it", func(t *testing.T) {
+		// The record carries no provider kind — an item's repository is the
+		// canonical owner/name and nothing else — so the slug of that name on
+		// either kind a repository may use is that repository's, and which job
+		// serves it is the account check's question and not this one (R4).
+		rec := open()
+		check, _ := orchestratedScopeFor(t, rec)
+		if err := check.Check(context.Background(), IdentityCaller{Address: "orch@example.invalid", Class: identitywire.ClassOrchestrator}, orchestratedAsk(orchestratedSlug(t, "bitbucket", repo), run, "wi-1:1")); err != nil {
+			t.Fatalf("the ask naming the item's repository on the other provider kind was refused: %v", err)
+		}
+	})
+
 	refusals := []struct {
 		name  string
 		ask   identitywire.TicketRequest
@@ -139,7 +175,7 @@ func TestOrchestratedAskNeedsARecordedUnstartedAttempt(t *testing.T) {
 			ask:  orchestratedAsk(slug, run, "wi-1:1"),
 			state: func() *recordFake {
 				return &recordFake{state: orchestrator.State{
-					WorkItems: []orchestrator.WorkItem{orchestratedItem("wi-1", slug)},
+					WorkItems: []orchestrator.WorkItem{orchestratedItem("wi-1", repo)},
 					Intents:   []orchestrator.Intent{orchestratedIntent("wi-1:1", run, orchestrator.OutcomeFailed)},
 				}}
 			},
@@ -199,13 +235,18 @@ func TestOrchestratedAskNeedsARecordedUnstartedAttempt(t *testing.T) {
 // own run id, and one attempt of another repository; every ask that points one
 // attempt at another run, or at an attempt no intent carries, is refused.
 func TestOrchestratedAskForAnotherRunIsRefused(t *testing.T) {
-	const slug = "acme/web"
+	const (
+		repo  = "acme/web"
+		other = "acme/other"
+	)
+	slug := orchestratedSlug(t, "github", repo)
+	otherSlug := orchestratedSlug(t, "github", other)
 	record := func() *recordFake {
 		return &recordFake{state: orchestrator.State{
 			WorkItems: []orchestrator.WorkItem{
-				orchestratedItem("wi-1", slug),
-				orchestratedItem("wi-2", slug),
-				orchestratedItem("wi-3", "acme/other"),
+				orchestratedItem("wi-1", repo),
+				orchestratedItem("wi-2", repo),
+				orchestratedItem("wi-3", other),
 			},
 			Intents: []orchestrator.Intent{
 				orchestratedIntent("wi-1:1", "run-1", ""),
@@ -254,6 +295,17 @@ func TestOrchestratedAskForAnotherRunIsRefused(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("an attempt of the record's other repository is issued when the ask names it", func(t *testing.T) {
+		// The class is not bound to one repository: what it may be issued is an
+		// attempt the record carries, under that attempt's own run id, and the
+		// record here carries one of another repository as well.
+		rec := record()
+		check, _ := orchestratedScopeFor(t, rec)
+		if err := check.Check(context.Background(), IdentityCaller{Address: "orch@example.invalid", Class: identitywire.ClassOrchestrator}, orchestratedAsk(otherSlug, "run-3", "wi-3:1")); err != nil {
+			t.Fatalf("the ask for a recorded attempt of the record's other repository was refused: %v", err)
+		}
+	})
 }
 
 // TestOrchestratedAskWithContextReposIsRefused holds the second half of D3136:
@@ -263,13 +315,14 @@ func TestOrchestratedAskForAnotherRunIsRefused(t *testing.T) {
 // because an ask that cannot be the record's does not reach it.
 func TestOrchestratedAskWithContextReposIsRefused(t *testing.T) {
 	const (
-		slug = "acme/web"
+		repo = "acme/web"
 		run  = "run-1"
 	)
+	slug := orchestratedSlug(t, "github", repo)
 	for _, repos := range [][]string{{"acme/other"}, {"acme/other", "acme/third"}} {
 		t.Run(repos[0], func(t *testing.T) {
 			rec := &recordFake{state: orchestrator.State{
-				WorkItems: []orchestrator.WorkItem{orchestratedItem("wi-1", slug)},
+				WorkItems: []orchestrator.WorkItem{orchestratedItem("wi-1", repo)},
 				Intents:   []orchestrator.Intent{orchestratedIntent("wi-1:1", run, "")},
 			}}
 			check, _ := orchestratedScopeFor(t, rec)
@@ -293,15 +346,16 @@ func TestOrchestratedAskWithContextReposIsRefused(t *testing.T) {
 // orchestrator's ask never reaches it.
 func TestOrchestratedAskLeavesOtherClassesToTheNext(t *testing.T) {
 	const (
-		slug = "acme/web"
+		repo = "acme/web"
 		run  = "run-1"
 	)
+	slug := orchestratedSlug(t, "github", repo)
 	ask := orchestratedAsk(slug, run, "wi-1:1")
 
 	for _, class := range []identitywire.CallerClass{identitywire.ClassPerson, identitywire.ClassServiceAccount} {
 		t.Run(string(class), func(t *testing.T) {
 			rec := &recordFake{state: orchestrator.State{
-				WorkItems: []orchestrator.WorkItem{orchestratedItem("wi-1", slug)},
+				WorkItems: []orchestrator.WorkItem{orchestratedItem("wi-1", repo)},
 				Intents:   []orchestrator.Intent{orchestratedIntent("wi-1:1", run, "")},
 			}}
 			check, next := orchestratedScopeFor(t, rec)
@@ -320,7 +374,7 @@ func TestOrchestratedAskLeavesOtherClassesToTheNext(t *testing.T) {
 
 	t.Run("the orchestrator's own ask does not reach it", func(t *testing.T) {
 		rec := &recordFake{state: orchestrator.State{
-			WorkItems: []orchestrator.WorkItem{orchestratedItem("wi-1", slug)},
+			WorkItems: []orchestrator.WorkItem{orchestratedItem("wi-1", repo)},
 			Intents:   []orchestrator.Intent{orchestratedIntent("wi-1:1", run, "")},
 		}}
 		check, next := orchestratedScopeFor(t, rec)
