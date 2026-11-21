@@ -1912,13 +1912,13 @@ var credentialsServiceEnv = []string{
 // intake.tf writes for the secrets intake's container, and nothing else is
 // admitted on it: the released image's `intake serve` subcommand (the image is
 // the credentials service's own, whose default command serves the other
-// service), and the five names the process's configuration is made of: the
-// project, the service's own URL (the audience a caller's ID token is minted
-// for), the runs bucket holding the derived admin list and the launcher class
-// the process admits — the four internal/cli/intake_serve.go reads — and the
-// region a container it creates is replicated in, which the intake is told from
-// its deployment because it runs in the cloud with no project config and no
-// installation record it may read (D3082; LP5c reads it).
+// service), and the five names the process's configuration is made of, which
+// internal/cli/intake_serve.go reads: the project, the service's own URL (the
+// audience a caller's ID token is minted for), the runs bucket holding the
+// derived admin list, the launcher class the process admits, and the region a
+// container it creates is replicated in, which the intake is told from its
+// deployment because it runs in the cloud with no project config and no
+// installation record it may read (D3082).
 var (
 	intakeServiceArgs = []string{"intake", "serve"}
 	intakeServiceEnv  = []string{"FUGARO_GCP_PROJECT", "FUGARO_REGION", "FUGARO_INTAKE_URL", "FUGARO_RUNS_BUCKET", "FUGARO_LAUNCHER_ACCOUNTS"}

@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -121,11 +122,19 @@ func TestMetaRegisterRefusesMalformed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := goodMeta()
 			tc.mut(&m)
+			// The cases above name the keys a family would give them, which is
+			// what makes each read as the mistake it is — and a family registers
+			// its own in its package init (SM1 to SM4 of
+			// docs/console-improvements/implementation-plan.md), so the entry is
+			// read before the call rather than assumed absent: what a refused
+			// registration owes is the table unchanged.
+			before, had := MetaOf(tc.key)
 			if err := Register(tc.key, m); err == nil {
 				t.Fatalf("Register(%q, %+v) accepted it", tc.key, m)
 			}
-			if _, ok := MetaOf(tc.key); ok {
-				t.Fatalf("a refused entry left %q in the table", tc.key)
+			after, ok := MetaOf(tc.key)
+			if ok != had || !reflect.DeepEqual(after, before) {
+				t.Fatalf("a refused entry left %q in the table: it held %+v and holds %+v", tc.key, before, after)
 			}
 		})
 	}

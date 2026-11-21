@@ -408,7 +408,7 @@ guard_project() {
   # doctor would die on the broken pipe (141) and pipefail would stop the run
   # just the same.
   local doctor_out
-  doctor_out=$(fugaro doctor --project fugaro || true)
+  doctor_out=$(fugaro doctor --project fugaro --all || true)
   if ! printf '%s\n' "$doctor_out" | grep '^project: .*(GCP fugaro-dev,' >/dev/null; then
     stop "this is not the fugaro-dev installation: fugaro doctor --project fugaro printed no 'project: ... (GCP fugaro-dev,' line. Either this is not the fugaro-dev installation, or --project fugaro disagrees with this checkout's project:, or doctor itself failed (doctor is not offline: it needs usable credentials). Run 'fugaro doctor --project fugaro' here yourself and read its output before going on — this check runs on the sandbox installation only, never belong"
   fi

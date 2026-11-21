@@ -584,6 +584,38 @@ const escalationSince = "0.23.0"
 // refuses its task) or too early (an image that can judge stays blocked).
 const evaluateSince = "0.24.0"
 
+// levelRolesSince is the first fugaro release whose recipe reader knows the
+// by_level: key (LD9): the recipe's one conditional, the roles mapping a
+// recipe resolves at a rigor level. A runner before it does not drop the key
+// — it refuses the whole recipe ("by_level is not a recipe key"), so a launch
+// carrying one dies at bootstrap with the launch already paid for. This gate
+// turns that into a refusal at the launcher's terminal, naming fugaro image
+// refresh, exactly as adversarialSince does for its own construct.
+//
+// What the gate protects is the parse and not a behaviour: no run applies the
+// block yet (recipe.RolesFor has no caller, and docs/recipes.md says so where
+// it describes the key), so the launch an older image would take and then
+// refuse at bootstrap is one it would refuse whatever its entries hold —
+// which is exactly why the judge below is the key's presence.
+//
+// The key's presence is the whole of what the gate judges: recipe.UsesLevelRoles
+// decides by the key and never by what its entries hold, because an older
+// parser refuses by_level: {} too, and the recipe that survives is still one
+// the run cannot read.
+//
+// It carries no shipped flag, like artifactsSince and escalationSince:
+// refusing every image that predates the key is exactly the direction this
+// gate wants, and an image with no release tag (a dev build, a hand-pushed
+// one) only warns, the same as for every other *Since constant here — safe
+// either way, since the runner fails closed on the unknown key anyway.
+//
+// It names 0.27.0, the release this work is slotted for
+// (docs/release-streams.yaml has 0.26.0 current and Xerus 0.27.0 next), which
+// is not tagged yet: docs/release.md's ("Before you tag") checklist verifies
+// the constant against the tag actually cut, the way rigorSpellingSince's
+// bullet records, and moves it if the key lands in another release.
+const levelRolesSince = "0.27.0"
+
 // mergeJudgeSince is the first fugaro release whose runner runs the merge
 // judge (E6, D2031): its recipe parser knows `merge_judge` as a kind, and
 // mode: evaluate's own step list carries it, so the judge's recipe — one step,
@@ -1563,8 +1595,9 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 // repoRecipeForGate is a repository-sourced task's recipe, read from this
 // checkout the way recipeForLaunch reads it — the working tree, the
 // launcher's own approximation of the ref the runner checks out. Only
-// recipeSinceFor's adversarial arm reads it: that step is the one construct
-// whose gate the task's own fields cannot carry (see recipeSinceFor). nil for
+// recipeSinceFor's adversarial and level-roles arms read it: those are the
+// constructs whose gates the task's own fields cannot carry (see
+// recipeSinceFor). nil for
 // every other launch, and for one whose file cannot be read here, which keeps
 // the plain recipesSince it always had; the runner's own parse refusal is the
 // backstop there, exactly as it is for a name this launcher cannot resolve at
@@ -1592,9 +1625,11 @@ func repoRecipeForGate(ctx context.Context, spec *task.Spec) *recipe.Recipe {
 // and start a job whose runner refuses the whole task at bootstrap, the
 // manifest being a field it does not know.
 //
-// The judge's step, the adversarial step and the escalation constructs are
-// judged from rp too, and they are the newest a recipe can carry
-// (mergeJudgeSince, then escalationSince, then adversarialSince), so their
+// The level's role mapping, the judge's step, the adversarial step and the
+// escalation constructs are judged from rp too, and — the level's role
+// mapping first (levelRolesSince, the newest), then the judge's step, the
+// escalation constructs and the adversarial step — they are the newest a
+// recipe can carry, so their
 // cases come first. Unlike the manifest and mode: artifact — a repository
 // recipe's digest run and its mode both reach the task as fields, which carry
 // their own gates above — none of those three has anything in the task behind
@@ -1614,6 +1649,8 @@ func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 	r := embeddedRecipeOf(spec)
 	if len(spec.DigestRuns) == 0 && r == nil && rp != nil {
 		switch {
+		case recipe.UsesLevelRoles(rp):
+			return levelRolesSince
 		case recipe.UsesMergeJudge(rp):
 			return mergeJudgeSince
 		case recipe.UsesRebase(rp) || recipe.UsesHandOver(rp):
@@ -1628,6 +1665,11 @@ func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 		since = digestSince
 	case r == nil:
 		since = recipesSince
+	case recipe.UsesLevelRoles(r):
+		// The key is 0.27.0's, newer than every construct below, so it is
+		// the binding gate whenever it is written: a launch from a 0.24.0
+		// image is refused here whatever else the recipe holds.
+		since = levelRolesSince
 	case recipe.UsesMergeJudge(r):
 		since = mergeJudgeSince
 	case recipe.UsesRebase(r) || recipe.UsesHandOver(r):

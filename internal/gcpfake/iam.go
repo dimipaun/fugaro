@@ -1,6 +1,7 @@
 package gcpfake
 
 import (
+	"encoding/json"
 	"maps"
 	"net/http"
 	"net/url"
@@ -64,8 +65,8 @@ func cloneBindings(bs []Binding) []Binding {
 }
 
 // IAM is a fake of the IAM v1 calls Fugaro makes: serviceAccounts get,
-// list and getIamPolicy, and a custom role's get (a project's or an
-// organization's).
+// list, getIamPolicy and setIamPolicy, and a custom role's get (a project's
+// or an organization's).
 type IAM struct {
 	*Server
 
@@ -86,6 +87,7 @@ var (
 	serviceAccountsRE = regexp.MustCompile(`^/v1/(projects/[^/]+)/serviceAccounts$`)
 	saKeysRE          = regexp.MustCompile(`^/v1/(projects/[^/]+/serviceAccounts/[^/:]+)/keys$`)
 	saPolicyRE        = regexp.MustCompile(`^/v1/(projects/[^/]+/serviceAccounts/[^/:]+):getIamPolicy$`)
+	saSetPolicyRE     = regexp.MustCompile(`^/v1/(projects/[^/]+/serviceAccounts/[^/:]+):setIamPolicy$`)
 	customRoleRE      = regexp.MustCompile(`^/v1/((?:(?:projects|organizations)/[^/]+/)?roles/[^/:]+)$`)
 )
 
@@ -197,7 +199,7 @@ func (f *IAM) listKeys(w http.ResponseWriter, r *http.Request, name string) {
 	writeJSON(w, http.StatusOK, map[string]any{"keys": keys})
 }
 
-func (f *IAM) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
+func (f *IAM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if m := customRoleRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {
@@ -219,6 +221,32 @@ func (f *IAM) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
 			return
 		}
 		servePolicy(w, r.URL.Query(), f.policies[m[1]])
+		return
+	}
+	if m := saSetPolicyRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodPost && m != nil {
+		if f.accounts[m[1]] == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Unknown service account")
+			return
+		}
+		if f.hidden[m[1]] {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "Permission 'iam.serviceAccounts.setIamPolicy' denied")
+			return
+		}
+		var in struct {
+			Policy struct {
+				Bindings []Binding `json:"bindings"`
+			} `json:"policy"`
+		}
+		if err := json.Unmarshal(body, &in); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a policy is required")
+			return
+		}
+		f.policies[m[1]] = cloneBindings(in.Policy.Bindings)
+		bs := f.policies[m[1]]
+		if bs == nil {
+			bs = []Binding{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"version": 3, "etag": "BwX1", "bindings": bs})
 		return
 	}
 	if m := saKeysRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {

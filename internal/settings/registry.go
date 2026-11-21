@@ -521,6 +521,10 @@ func scopeLayers(in config.Scope) []string {
 const (
 	docSetup = "docs/gcp-setup.md"
 	docLayer = "docs/project-layer.md"
+	// docLocations is the record's own document (LP0 of
+	// docs/location-preference/, D3087): what the block is, that it is one
+	// machine's own, and that nothing reads it as an input (R5).
+	docLocations = "docs/location-preference/record.md"
 	// docGovernance is docLayer plus the one fact about a governance key the
 	// table has no column for (F12): the guardrails are enforced by a build with
 	// the `ee` tag, so an untagged build reads the block and holds no run to it
@@ -939,6 +943,19 @@ var localRows = []Row{
 	loc("backend", "cloud-run", "setup", "docs/backends.md"),
 	loc("log_view", "the project's default logs", "setup", docSetup),
 	loc("scheduler_region", "the region the jobs run in", "setup", docSetup),
+	// The locations record (LP0 of docs/location-preference/, D3087): where
+	// this installation's located things already are, as the converge read
+	// them from the cloud. One row per member, and each is local-only — the
+	// record is never published, because the shared config decodes strictly
+	// and a teammate's older CLI would refuse the key — and written by the
+	// two converge doors from what the cloud holds rather than by any
+	// editor: no flag states a location, because nothing that exists is
+	// given a place by a rule — what already is somewhere is read from the
+	// cloud (R5) — and an absent member means no converge has read it yet.
+	locLocal("locations.firestore", "not known yet: no converge has read where the project's Firestore database is", "setup", docLocations),
+	locLocal("locations.log_bucket", "not known yet: no converge has read where the installation's run log bucket is", "setup", docLocations),
+	locLocal("locations.rtdb", "not known yet: no converge has read where the project's Realtime Database is", "setup", docLocations),
+	locLocal("locations.secrets", "not known yet: no converge has read what the installation's own secret containers do", "setup", docLocations),
 	loc("user", "none", "setup", docSetup),
 	// The keys of the installation a repository's own settings file also holds
 	// say `settings set` where the allowlist carries them (D1178): commit_name,
@@ -988,6 +1005,17 @@ var localRows = []Row{
 	loc("batch.secrets", "none", "secrets", "docs/backends.md"),
 	loc("batch.socket_gid", "the image's own docker group", "setup", "docs/backends.md"),
 	loc("batch.task_timeout", "Fugaro's own task timeout", "setup", "docs/backends.md"),
+	// The Batch installation's two identity facts (R2, R13, D3110, D3111). Their
+	// owner is `update` and not `setup` and not a settings family, and that is
+	// the rule rather than a column: R13 says `fugaro update` writes the key
+	// fact from the compute root's own output and no settings command writes it,
+	// because a key fact a settings command could write is a substituted public
+	// key — and a substituted one hands its holder every seal key wrapped to it.
+	// The opt-in fact is an OPERATOR's, written by opting in (R2) and by opting
+	// out (R16), and never by a machine that merely selects the backend again.
+	loc("batch.opt_in", "the installation has not opted in, so no compute root is applied", "update", "docs/backends.md"),
+	loc("batch.seal_key.public_key", "none: without the key fact a sealed launch is refused", "update", "docs/backends.md"),
+	loc("batch.seal_key.version", "none: without the key fact a sealed launch is refused", "update", "docs/backends.md"),
 
 	loc("build.service_account", "the project's default service account", "setup", docSetup),
 	{Key: "build.machine_type", Layers: []string{LayerLocal, LayerShared}, Merge: Replace, Owner: "setup", Doc: docSetup},
@@ -1494,6 +1522,16 @@ var localRows = []Row{
 	// the same reason: every key a config file can hold is one a settings
 	// read has to be able to name.
 	loc("repos.*.credentials_service_ready", "false: no update has applied this repository's root with the service on — its bundle holds no model credential, or its agent.auth is not the cascade", "project", docSetup),
+	// The two facts the same record carries beside the switch (R12, KS19):
+	// whether the bundle holds an entry for every provider credential this
+	// repository's config names — the fact a routed call is sent through the
+	// service for — and whether a stage account of this repository is one the
+	// service serves. Both are machine-written like the switch, both are read
+	// back by the plan a repository's root is built with (infra's
+	// providerKeysServed/stageAccountServed) and both are written off as
+	// well as on, so a row here for the same reason the switch has one.
+	loc("repos.*.provider_keys_served", "false: no update has found this repository's bundle holding an entry for every provider credential its config names, or the deployed service is not at the release that serves one, or the project publishes no allow-list", "project", docSetup),
+	loc("repos.*.stage_account_served", "false: no update has found a stage account this repository mixes with a provider key, or the deployed service is not at the release that serves one", "project", docSetup),
 
 	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all seventeen of
 	// them local-only: the pin is the member's own trust and the member table

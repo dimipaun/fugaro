@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/workspace-roster.schema.json",
+  "title": "Fugaro workspace roster",
+  "description": "A workspace's roster: the people in it, its admins, its allowed email domains, the grants it wrote into its members' rosters, and the mechanism it was created with. It is the document at `workspaceRosters/<name>` in the workspace's own database -- a sibling of the published record and never under it (R5), because the publish stage of `fugaro update` rewrites `workspaces/<name>` whole and refuses a node carrying a key it does not know -- and it is written only conditionally, under the ETag it was read at (D2817). The rules need no change for it (R7): the workspace rules deny every client at the root, so the node is reached by IAM alone, by the workspace's own service, its admins and the workspace project's owners, editors and budget admins. The Go types are internal/workspace/roster.go (DecodeRoster and EncodeRoster), and the tests in internal/workspace/roster_test.go hold the two to one document: the enums here are that file's lists, the address pattern is its fold, and the split between what this schema refuses and what only the reader can refuse is stated in docs/workspace-projects-users/contract.md. This schema is closed at every level, because DecodeRoster decodes strictly: a key an editor completed from this schema is a key the reader knows, and the other way round.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "mechanism",
+    "people",
+    "admins"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "workspace.RosterVersion (internal/workspace/roster.go).",
+      "description": "The version of this document. It is written in every roster, and a reader refuses any other value rather than reading the keys it recognizes out of a shape that moved: a node a newer Fugaro wrote is refused as a newer one (the rule every wire format here follows). Adding a field is what version 1 already allows -- the closed object is what makes an older reader refuse it -- and a field that has to change meaning gets a new name."
+    },
+    "mechanism": {
+      "type": "string",
+      "enum": [
+        "folder",
+        "sa"
+      ],
+      "$comment": "workspace.Mechanisms().",
+      "description": "How the workspace holds the projects in it: `folder` for the folder it created and owns, whose owners are its admins, and `sa` for the service-account model (D2803), where the workspace reaches a member through an account in that member's own project and an admin is whoever may mint a token for it. It is written once, by `workspace init`, and it is what tells a reader which live binding D2823 confirms an admin by."
+    },
+    "folder_id": {
+      "type": "string",
+      "pattern": "^folders/[0-9]{1,20}$",
+      "$comment": "The same grammar the recorded parent of a folder move is held to (folderParentRE, internal/workspace/authority_folder.go), cut to a folder: this program creates folders and never organizations.",
+      "description": "The folder the workspace created and owns, as the Resource Manager names it. It is written exactly when the mechanism is `folder` -- a folder id on a service-account workspace names a folder that is not that workspace's, and a folder workspace without one names no folder at all -- and that rule is the `allOf` below, because JSON Schema states a conditional and not a required-when. `workspace init` writes it together with the caller as the first admin (R6, WU24)."
+    },
+    "people": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/person"
+      },
+      "description": "The people of the workspace, sorted by address, each address once, and each in its canonical spelling (`$defs.address`). The list is a set written as a list because the node is compared against a member's own copy of it (D2813) and because the drift check compares two lists: two spellings of one set are two rosters that say the same thing and compare unequal. JSON Schema has no ordering keyword and its uniqueItems is not what the reader holds a node to, so the order and the uniqueness are the reader's rule and are stated here rather than enforced. A roster names at least one person: a workspace with nobody in it has no roster to write, and `workspace init` writes the caller as both the first person and the first admin."
+    },
+    "admins": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/address"
+      },
+      "description": "The workspace's admins: addresses of people of this roster, sorted and each once. An entry here is a CLAIM about a binding that lives in IAM and not a permission (D2823): only an entry whose live binding the mechanism's own check confirms is trusted, which is why `workspace project status` compares the two and a person who was made an admin here while the binding was never given is reported as drift. A machine is never an admin -- the binding is one a person holds -- and an admin who is not a person of the roster is refused by the reader, both of which JSON Schema cannot state."
+    },
+    "domains": {
+      "type": "array",
+      "description": "The workspace's allowed email domains (D2812), folded to lower case, sorted, each once, and absent for a workspace that has listed none. A person is admitted freely from one of them; a person from outside them is admitted with the explicit confirmation the CLI asks for by naming `--external`, and is marked with `external` in their entry. The reader that wants to know whether somebody is an outsider computes it from THIS list and not from the mark: the mark is a statement about how the person was admitted at the time, and this list is the workspace's live one.",
+      "items": {
+        "$ref": "#/$defs/domain"
+      }
+    },
+    "grants": {
+      "type": "array",
+      "description": "The grants the workspace wrote into its members' own rosters (D2818's mark), sorted by project and then by user, absent for a workspace that has written none. This is where the mark lives: the member roster's own format is unchanged, so nothing that reads a member roster can tell a grant Fugaro wrote from one its own admin added, and this node is the record of what the workspace wrote. The drift check compares the two -- a grant here that a member's roster no longer carries is a grant taken away by hand, and a grant there that this list does not carry is one the workspace never wrote (D2818 as corrected, WU12).",
+      "items": {
+        "$ref": "#/$defs/grant"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "mechanism"
+        ],
+        "properties": {
+          "mechanism": {
+            "const": "folder"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "folder_id"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "folder_id"
+          ]
+        }
+      },
+      "description": "The folder id is written exactly when the mechanism is `folder`: the two are one fact, and a node that carries the id under the other mechanism is a node in which somebody changed one and not the other."
+    }
+  ],
+  "$defs": {
+    "address": {
+      "type": "string",
+      "pattern": "^[\\x21-\\x3f\\x41-\\x7e]+@[\\x21-\\x3f\\x5b-\\x60a-z\\x7b-\\x7e]+$",
+      "description": "The canonical spelling of an address (workspace.CanonicalAddress): printable ASCII with no whitespace, one `@`, a non-empty local part and a non-empty domain, and the domain in lower case. The two character classes say exactly that -- the local part takes everything printable but `@`, and the domain everything printable but `@` and the upper-case letters this pattern folds away -- so the set of strings this pattern admits is the set CanonicalAddress leaves alone, and a node an editor wrote from this schema is one the reader reads back unchanged. TestRosterSchemaAgreesWithTheReaderOnAddresses holds the two together over a corpus. This is the member roster's own grammar (internal/access.Member) without the `user:` prefix that roster's keys carry: the workspace's roster holds people and machines in one list, and a machine's IAM spelling is the bare address."
+    },
+    "domain": {
+      "type": "string",
+      "maxLength": 253,
+      "$comment": "workspace.MaxDomainBytes is the DNS name limit.",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$",
+      "description": "One allowed domain in its folded spelling: labels of letters, digits and inner hyphens, joined by dots, in lower case, and no trailing dot. The grammar is deliberately not the whole of what DNS admits -- an address that reaches this program has been through Google's own validation -- and it is a shape and not a resolution: a domain here is the string compared against the domain of an address. A domain that is not folded is refused by the reader too: the comparison is a string comparison, and two spellings of one domain would let a person from outside the allowed list be admitted as one from inside it."
+    },
+    "project": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+      "$comment": "The same pattern as config.ProjectNameRE (internal/config/project.go).",
+      "description": "A Fugaro project name: a member of the workspace, or the project a machine's expected role is in. Nothing per-project is stored in this node (R14) -- a project's own record is elsewhere -- so this is a name a role or a grant points at, and not an entry."
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "viewer",
+        "operator",
+        "admin"
+      ],
+      "$comment": "workspace.Roles(), which is the member roster's own set restated (internal/access.Roles).",
+      "description": "A role a person may hold, and it is the member roster's own set: the roles a stored grant carries are the roles `fugaro user grant` writes in a member, and a second list would be a grant this side spells one way and a member reads as nothing. A grant outside the set is refused by the reader, and `operator` and `admin` are additions over `viewer` (`admin` here is a role inside ONE member and is not a workspace admin, which this document stores in `admins`)."
+    },
+    "person": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "address",
+        "kind",
+        "external"
+      ],
+      "description": "One person of the workspace. `roles` belongs to a machine and to no one else: a human's roles are grants in the members' own rosters and never a field here, and the reader refuses the key on a human rather than ignoring it (the `allOf` below), because a human's entry that carried roles would be a second place a grant could be read from.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/address",
+          "description": "The person's address: a human's email address, or a machine's service-account address, which is the one an IAM binding names."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "human",
+            "sa"
+          ],
+          "$comment": "workspace.Kinds().",
+          "description": "A human, or a machine (a service account, D2806). A machine is a member of the workspace node and of nothing else: it is recorded here so the workspace knows what it expects it to hold, and it gets no member roster, no grant and no audit node of its own -- its real IAM is the workspace owner's and never Fugaro's to write."
+        },
+        "external": {
+          "type": "boolean",
+          "description": "D2812's mark: this person was admitted while their domain was not one of the workspace's allowed domains (the confirmation the CLI asks for by naming `--external`). It is written on every person, FALSE INCLUDED, which is why it is required and not merely optional: it is a statement about how somebody was admitted and not a default a reader may assume. A reader that decided outsiderness from this mark alone would be trusting a field an admin can rewrite, which is why the drift check computes it from `domains` instead. A machine is never external: it comes from no domain, and the reader refuses the combination."
+        },
+        "roles": {
+          "type": "array",
+          "description": "The per-project roles the workspace expects a MACHINE to hold (D2806), sorted by project, each project once. It is an expectation and not a grant -- the workspace's own IAM gives a machine what it holds, and this is the plan the drift check compares that against -- and it is absent for a machine that no project expects yet. The reader refuses this key on a human.",
+          "items": {
+            "$ref": "#/$defs/projectRole"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "sa"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "external": {
+                "const": false
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "roles": {
+                "maxItems": 0
+              }
+            }
+          },
+          "description": "Two rules JSON Schema can state and the reader states too: a machine is never marked external, and a person who is not a machine carries no roles. The second is stated as an empty list rather than as an absent key (a `not` on `required`), because the reader holds a human's roles to their length: the database prunes an empty list on the way in, so `roles: []` on a human is the same nothing as no key at all, and a schema that refused it would refuse a document the reader takes."
+        }
+      ]
+    },
+    "projectRole": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project",
+        "role"
+      ],
+      "description": "One project a machine is expected to hold a role in (D2806).",
+      "properties": {
+        "project": {
+          "$ref": "#/$defs/project"
+        },
+        "role": {
+          "$ref": "#/$defs/role"
+        }
+      }
+    },
+    "grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project",
+        "user",
+        "role"
+      ],
+      "description": "One grant the workspace wrote into a member's own roster (D2818's mark). It is the workspace's record of what it wrote and never the grant itself: the member's roster holds the real one, and the two are compared by the drift check, which is how a grant a member's own admin removed by hand is seen. The user is a person of this roster and a human -- the workspace writes no grant for a machine (D2806) and none for somebody it does not hold -- and both of those are the reader's rules, because JSON Schema cannot reach across two lists of one document.",
+      "properties": {
+        "project": {
+          "$ref": "#/$defs/project"
+        },
+        "user": {
+          "$ref": "#/$defs/address",
+          "description": "The person's address, in the canonical spelling, exactly as the member's roster spells it (there with the `user:` prefix its own key grammar carries)."
+        },
+        "role": {
+          "$ref": "#/$defs/role"
+        }
+      }
+    }
+  }
+}

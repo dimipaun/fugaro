@@ -150,7 +150,13 @@ func dropMount(ws WorkflowSpec, logical string) {
 // installation used before it opted in: dropping it from the spec would plan
 // its destruction (which prevent_destroy refuses, failing the whole plan) and
 // make Retirements report a live container as retired. Only the mount goes;
-// the container is left exactly where it is.
+// the container is left exactly where it is — which is also what the guard
+// reads to admit the accessor this drop takes away: a name still declared and
+// no longer mounted is this drop's or dropVaultMounts', and retire.go's
+// ModelAccessorAllowDelete tells the two apart by VaultSecretNames (B2.7). So
+// a drop added later that keeps a container has to record its names the way
+// dropVaultMounts does, or the run owes the operator a flag for a delete
+// fugaro itself decided.
 func dropModelMounts(ws *WorkflowSpec, served string) {
 	// The arms that hold nothing return before the loop rather than leaving it
 	// empty: an arm that serves the job no credential must leave the job

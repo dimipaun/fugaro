@@ -46,32 +46,38 @@ import type { NewOperationName } from '../../shared/new-ops'
  * Every value is plain JSON so that `copy` below reads and never throws. */
 export const STUB_FIXTURES: Readonly<Record<NewOperationName, unknown>> = Object.freeze({
   // A window with one finished run in it. The row is a `runs ls --json` row --
-  // the same members, spelled the same way -- because the feed's rows are read
-  // by that document's own reader (`decodeRunsList`), and `end` says the stream
-  // finished: `version` is the runs list document's, `count` is the rows before
-  // it.
+  // the same members, spelled the same way -- under the feed's own `row` key,
+  // which is the line shape the CLI writes (`streamRowLine`,
+  // `internal/cli/runs_stream.go`): the feed's rows are read by that document's
+  // own reader (`decodeRunsList`, which reads the `row` member and not the
+  // line), and `end` says the stream finished: `version` is the runs list
+  // document's, `count` is the rows before it.
   'runs.stream': {
     document: {
       lines: [
         {
           type: 'row',
-          run: '20261118-101500-f2ff',
-          repo: 'acme/app',
-          status: 'succeeded',
-          terminal: true,
-          title: 'the retry banner loses its count on a narrow window',
-          plan_task: 'console-improvements EO4',
-          created: '2026-11-18T10:15:00Z',
+          row: {
+            run: '20261118-101500-f2ff',
+            repo: 'acme/app',
+            status: 'succeeded',
+            terminal: true,
+            title: 'the retry banner loses its count on a narrow window',
+            plan_task: 'console-improvements EO4',
+            created: '2026-11-18T10:15:00Z',
+          },
         },
         {
           type: 'row',
-          run: '20261118-091200-0a11',
-          repo: 'acme/website',
-          status: 'implement',
-          terminal: false,
-          title: 'the changelog link should open the release notes',
-          plan_task: 'website W7.2',
-          created: '2026-11-18T09:12:00Z',
+          row: {
+            run: '20261118-091200-0a11',
+            repo: 'acme/website',
+            status: 'implement',
+            terminal: false,
+            title: 'the changelog link should open the release notes',
+            plan_task: 'website W7.2',
+            created: '2026-11-18T09:12:00Z',
+          },
         },
         { type: 'end', version: 1, count: 2 },
       ],
@@ -79,32 +85,37 @@ export const STUB_FIXTURES: Readonly<Record<NewOperationName, unknown>> = Object
   },
 
   // Two days of spend and the report's totals, in the report document's own row
-  // shape (`key`, `*_micros`, `runs`): the screen that draws them is the Spend
-  // tab's, and its reader is the one that knows the rest of the row.
+  // shape (`key`, `*_micros`, `runs`), under the line's `row` key: the screen
+  // that draws them is the Spend tab's, and its reader is the one that knows the
+  // rest of the row.
   'spend.stream': {
     document: {
       lines: [
         {
           type: 'row',
-          key: '2026-11-18',
-          start: '2026-11-18',
-          end: '2026-11-18',
-          runs: 3,
-          run_hours: 1.25,
-          model_micros: 4125000,
-          notional_micros: 0,
-          compute_micros: 310000,
+          row: {
+            key: '2026-11-18',
+            start: '2026-11-18',
+            end: '2026-11-18',
+            runs: 3,
+            run_hours: 1.25,
+            model_micros: 4125000,
+            notional_micros: 0,
+            compute_micros: 310000,
+          },
         },
         {
           type: 'row',
-          key: '2026-11-17',
-          start: '2026-11-17',
-          end: '2026-11-17',
-          runs: 5,
-          run_hours: 2.5,
-          model_micros: 6875000,
-          notional_micros: 0,
-          compute_micros: null,
+          row: {
+            key: '2026-11-17',
+            start: '2026-11-17',
+            end: '2026-11-17',
+            runs: 5,
+            run_hours: 2.5,
+            model_micros: 6875000,
+            notional_micros: 0,
+            compute_micros: null,
+          },
         },
         {
           type: 'end',
@@ -124,52 +135,58 @@ export const STUB_FIXTURES: Readonly<Record<NewOperationName, unknown>> = Object
 
   // The caps, repository by repository and then the kill switch, which is a row
   // of its own (RS4: "`row` lines per repository and per kill switch as their
-  // reads complete"). This end line carries no `version`, because the
-  // `budget show --json` document carries none either: a console that read a
-  // missing version as a broken stream would call this finished read
-  // interrupted.
+  // reads complete"), each under the line's `row` key as the CLI writes them.
+  // This end line carries no `version`, because the `budget show --json`
+  // document carries none either: a console that read a missing version as a
+  // broken stream would call this finished read interrupted.
   'budget.stream': {
     document: {
       lines: [
         {
           type: 'row',
-          slug: 'acme/app',
-          repo: 'acme/app',
-          daily_cap_usd: 25,
-          daily_cap_source: 'repo',
-          per_run_cap_usd: 5,
-          per_run_cap_source: 'repo',
-          counted_usd: 3.5,
-          spent_usd: 1.25,
-          notional_usd: 0,
-          leased_usd: 2.25,
-          headroom_usd: 21.5,
-          runs: 2,
-          kill: null,
+          row: {
+            slug: 'acme/app',
+            repo: 'acme/app',
+            daily_cap_usd: 25,
+            daily_cap_source: 'repo',
+            per_run_cap_usd: 5,
+            per_run_cap_source: 'repo',
+            counted_usd: 3.5,
+            spent_usd: 1.25,
+            notional_usd: 0,
+            leased_usd: 2.25,
+            headroom_usd: 21.5,
+            runs: 2,
+            kill: null,
+          },
         },
         {
           type: 'row',
-          slug: 'acme/website',
-          repo: 'acme/website',
-          daily_cap_usd: 25,
-          daily_cap_source: 'default',
-          per_run_cap_usd: 5,
-          per_run_cap_source: 'default',
-          counted_usd: 0,
-          spent_usd: 0,
-          notional_usd: 0,
-          leased_usd: 0,
-          headroom_usd: 25,
-          runs: 0,
-          kill: null,
+          row: {
+            slug: 'acme/website',
+            repo: 'acme/website',
+            daily_cap_usd: 25,
+            daily_cap_source: 'default',
+            per_run_cap_usd: 5,
+            per_run_cap_source: 'default',
+            counted_usd: 0,
+            spent_usd: 0,
+            notional_usd: 0,
+            leased_usd: 0,
+            headroom_usd: 25,
+            runs: 0,
+            kill: null,
+          },
         },
         {
           type: 'row',
-          slug: 'kill',
-          kill: {
-            by: 'dana@example.com',
-            at: '2026-11-18T09:00:00Z',
-            reason: 'the day’s spend reached the cap while a run was looping',
+          row: {
+            slug: 'kill',
+            kill: {
+              by: 'dana@example.com',
+              at: '2026-11-18T09:00:00Z',
+              reason: 'the day’s spend reached the cap while a run was looping',
+            },
           },
         },
         { type: 'end', count: 3 },

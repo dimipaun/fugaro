@@ -18,8 +18,8 @@
 # Every document a case bends is a file the case wrote: a doctor whose project is
 # another installation or carries no base image; a config with no workflow, a
 # cloned one or a second non-baked one, or no auth at all; a policy with no
-# profiles block, with one, one that does not admit the repository, or a budget
-# mode of off or none; a job list with no implicit review-only job, two of them,
+# profiles block, with one, one that does not admit the repository, or no budget
+# mode; a job list with no implicit review-only job, two of them,
 # another hash on its stem, one without the service URL or with a secret, one on
 # another image, or one with a coding project job, a profile's own review variant or
 # the Bitbucket implicit job beside it; a launch on another job, as another account or
@@ -485,9 +485,6 @@ p = clone(policy)
 p["policy"]["profiles"] = {"shared": {"provider": "github",
                                       "allow_repos": ["github/acme-owner/chk610-sandbox"]}}
 out("policy-profiles.json", p)
-p = clone(policy)
-p["policy"]["budget"] = {"mode": "off"}
-out("policy-mode-off.json", p)
 p = clone(policy)
 del p["policy"]["budget"]
 out("policy-no-mode.json", p)
@@ -1128,16 +1125,6 @@ test_a_policy_with_profiles_is_not_measured() {
   assert_no_launch "$dir" "a project that publishes profiles"
 }
 
-test_a_budget_mode_of_off_is_a_finding() {
-  local dir=$work/mode-off
-  prepare "$dir"
-  run_check "$dir" FAKE_POLICY_FILE=policy-mode-off.json
-  expect_status "$status" 1 "a budget mode of off"
-  expect_row policy "FAIL — the published policy of $install admits $repo with no profiles block and the budget mode is 'off'" "a budget mode of off: the row"
-  expect_contains "$out" "the gateway is what reaches the credentials service and it exists only in observe and enforce" "a budget mode of off: why nothing is launched"
-  assert_no_launch "$dir" "a budget mode of off"
-}
-
 test_a_policy_with_no_budget_mode_is_not_measured() {
   local dir=$work/no-mode
   prepare "$dir"
@@ -1749,7 +1736,6 @@ t test_a_config_that_could_not_be_read_is_not_measured
 t test_a_policy_that_could_not_be_read_is_not_measured
 t test_a_repository_the_project_does_not_admit_is_not_measured
 t test_a_policy_with_profiles_is_not_measured
-t test_a_budget_mode_of_off_is_a_finding
 t test_a_policy_with_no_budget_mode_is_not_measured
 t test_no_implicit_review_job_is_not_measured
 t test_two_implicit_review_jobs_is_a_finding

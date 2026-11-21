@@ -459,6 +459,15 @@
         "batch.network": {
           "default": "unset = the project's default network"
         },
+        "batch.opt_in": {
+          "default": "unset = the installation has not opted in, so no compute root is applied"
+        },
+        "batch.seal_key.public_key": {
+          "default": "unset = none: without the key fact a sealed launch is refused"
+        },
+        "batch.seal_key.version": {
+          "default": "unset = none: without the key fact a sealed launch is refused"
+        },
         "batch.secrets": {
           "default": "unset = none"
         },
@@ -1358,6 +1367,18 @@
           "$comment": "localcfg.ConfigVersion",
           "default": "3"
         },
+        "locations.firestore": {
+          "default": "unset = not known yet: no converge has read where the project's Firestore database is"
+        },
+        "locations.log_bucket": {
+          "default": "unset = not known yet: no converge has read where the installation's run log bucket is"
+        },
+        "locations.rtdb": {
+          "default": "unset = not known yet: no converge has read where the project's Realtime Database is"
+        },
+        "locations.secrets": {
+          "default": "unset = not known yet: no converge has read what the installation's own secret containers do"
+        },
         "log_view": {
           "default": "unset = the project's default logs"
         },
@@ -1564,6 +1585,12 @@
         },
         "repos.*.provider": {
           "default": "unset = none"
+        },
+        "repos.*.provider_keys_served": {
+          "default": "unset = false: no update has found this repository's bundle holding an entry for every provider credential its config names, or the deployed service is not at the release that serves one, or the project publishes no allow-list"
+        },
+        "repos.*.stage_account_served": {
+          "default": "unset = false: no update has found a stage account this repository mixes with a provider key, or the deployed service is not at the release that serves one"
         },
         "repos.*.vertex": {
           "default": "unset = false"
