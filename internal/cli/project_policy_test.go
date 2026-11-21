@@ -4283,7 +4283,7 @@ func TestVerifierAccountsIsDroppedOnAnExplicitEmptyList(t *testing.T) {
 // exactly that gap. A config that is silent about the list names nothing — it
 // keeps the node's, which is the rule above.
 func TestVerifierAccountsDriftNamesTheMember(t *testing.T) {
-	node := &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}}
+	node := &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}, Mobile: projectpolicy.DefaultMobile()}
 	lc := &localcfg.Config{
 		Budget:           &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
 		VerifierAccounts: &[]string{"person-1@example.com"},
@@ -4312,7 +4312,7 @@ func TestVerifierAccountsDriftNamesTheMember(t *testing.T) {
 // same statement as the absent key, so an entry for it would report a
 // difference the publish does not close and the stage would ask again forever.
 func TestOrchestratorDriftNamesTheMember(t *testing.T) {
-	node := &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}}
+	node := &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}, Mobile: projectpolicy.DefaultMobile()}
 	lc := &localcfg.Config{
 		Budget:       &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
 		Orchestrator: &policy.Orchestrator{MaxRunning: 4},

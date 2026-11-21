@@ -1785,6 +1785,7 @@ func currentPolicyNode() map[string]any {
 	return map[string]any{
 		"version": projectpolicy.Version,
 		"budget":  map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"mobile":  defaultMobileNode(),
 	}
 }
 
