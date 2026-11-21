@@ -236,9 +236,12 @@ type Options struct {
 	// rather than run as an identity the project's policy did not choose.
 	JobAccounts map[string]string
 	// Secrets maps an environment variable name to a Secret Manager secret
-	// name -- never a value. They are sent as Environment.secretVariables,
-	// so the values never enter the job definition, which anyone with read
-	// access to the job can read (design §1.6, C10).
+	// name -- never a value. Nothing is mounted from it (BR11, D3104): a Batch
+	// job carries no secret, and a run's credentials come from the credentials
+	// service alone. The field stays because the block that carries it does
+	// (R10: a block mid-upgrade is read, not refused), and what it is read for
+	// is checkSecrets' shape check, which refuses a value that reached either
+	// slot of the map before anything is created (secrets.go, design §1.6, C10).
 	Secrets map[string]string
 	// SealKey is the installation's budget seal key as a sealed launch needs
 	// it (batch-run-identity R13, F3): the key version's name and that
