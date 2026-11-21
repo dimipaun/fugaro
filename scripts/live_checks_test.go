@@ -454,6 +454,13 @@ import (
 // calls that all went direct, a routed call nobody reported, an audit line
 // whose forward was denied, a run that never ends and a record that is another
 // run's, and says what the check charged the provider's reported cost against.
+// Check 760's fakes are a fake `fugaro` answering `doctor --json` and the four
+// `runs ls` reads it times, over a window that names two pull requests -- one of
+// them with no index entry, so its read falls back to the scan -- and a fake
+// `git` that fails every call: the fake can sleep a plan, so a case says the
+// figure a row prints is the MIDDLE of the three samples it also prints, and a
+// read that never answers is held to the check's own deadline and killed with its
+// process group.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -540,6 +547,7 @@ var liveCheckScripts = []struct {
 	{"check50.sh", "check50_test.sh"},
 	{"check780.sh", "check780_test.sh"},
 	{"check781.sh", "check781_test.sh"},
+	{"check-760-runs-ls-speed.sh", "check-760-runs-ls-speed_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
@@ -604,7 +612,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 243 items on one runner (81 scripts, three shards each) and under
+// The suite is 246 items on one runner (82 scripts, three shards each) and under
 // a minute each; a split that dropped one, ran one twice or fell back to
 // everything would show up as a green run that tested less, which is the failure
 // this pins.
