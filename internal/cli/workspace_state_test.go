@@ -436,6 +436,42 @@ func TestStateSaveRefusesAPublicRepo(t *testing.T) {
 	}
 }
 
+// TestStateSaveRefusesAVisibilityItCannotTrust: the fence is fail-closed. A
+// host that answers "unknown" and no error — nothing to stop the save, and no
+// private answer to let it through — must not be the answer that turns the fence
+// off. What the fence guards is a push of a snapshot carrying the addresses of
+// the people the project reaches (D2824), and a repository taken for private
+// when it is not is exactly the leak it is about, so only a repository the save
+// READ as private is saved into.
+func TestStateSaveRefusesAVisibilityItCannotTrust(t *testing.T) {
+	s := wu15New(t, "")
+	s.des.d = stateDesignation{Repo: "acme/state", Dir: "docs/state", Provider: gitprov.KindGitHub, Source: "the project layer"}
+	s.host.visibility = stateVisibilityUnknown
+
+	_, err := s.w.Save(context.Background(), wu15Member())
+	if err == nil {
+		t.Fatal("a save into a repository whose visibility was answered unknown went through, want the fence's refusal: nothing about that repository is known to be private")
+	}
+	if code := ExitCode(err); code != ExitUserError {
+		t.Errorf("the refusal exits %d, want %d: a fence, not a failure", code, ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "--repo") {
+		t.Errorf("the refusal does not name the --repo override, which is the one way through it: %v", err)
+	}
+	if strings.Contains(err.Error(), "the repository is public") {
+		t.Errorf("the refusal says the repository is public, which nobody said it was: %v", err)
+	}
+	if len(s.host.pushed) != 0 {
+		t.Errorf("the refused save pushed %d times, want none", len(s.host.pushed))
+	}
+	if len(s.body.asked) != 0 {
+		t.Errorf("the refused save read the body of %v, want nothing read: a snapshot that is refused must not be built", s.body.asked)
+	}
+	if files := wu15Files(t, s.dir); len(files) != 0 {
+		t.Errorf("the refused save left %v behind, want nothing: nothing about a refused save is half-done", files)
+	}
+}
+
 // TestStateSaveNamesTheTargetAndItsSource is D2824's other half: the operator
 // sees the repository, the folder and where the setting came from, and sees them
 // BEFORE the push — a line printed after it would leave them reading a snapshot
@@ -752,6 +788,15 @@ func TestStateSaveHostIsTheRepositorysOwn(t *testing.T) {
 	// variable has to be one the save adds.
 	if got := wu15GitEnv(t, gitCalls)["GIT_TERMINAL_PROMPT"]; got != "0" {
 		t.Errorf("the save ran git with GIT_TERMINAL_PROMPT=%q, want 0: a clone or a push git cannot authenticate must fail rather than open a terminal and wait for someone to type a username", got)
+	}
+	// And no hook of the repository's or the person's runs: every git a save
+	// spawns opens with internal/cli's hardening (gitHardening), which is what
+	// turns core.hooksPath off, and --no-verify would not have been enough —
+	// prepare-commit-msg, post-checkout and pre-push are not covered by it.
+	for _, line := range wu15GitLines(t, gitCalls) {
+		if !strings.HasPrefix(line, strings.Join(gitHardening, " ")) {
+			t.Errorf("the save ran `git %s` without the hardening every other git call in this tree carries, so a hook of the repository's or the person's would run as this user", line)
+		}
 	}
 	// The URL is read off gh's output, which is the one line `gh pr create`
 	// prints on success.
@@ -1107,6 +1152,14 @@ func TestStateSaveBitbucketHostPushesWithTheTokenInTheEnvironment(t *testing.T) 
 			t.Errorf("the save never ran %q. Everything it ran:\n%s", want, ran)
 		}
 	}
+	// Every one of those spawns carries the hardening, which matters most on
+	// this path: a hook the repository or the person configured would otherwise
+	// run with the project's token in its environment, right here.
+	for _, line := range wu15GitLines(t, gitCalls) {
+		if !strings.HasPrefix(line, strings.Join(gitHardening, " ")) {
+			t.Errorf("the save ran `git %s` without the hardening, so a hook of the repository's or the person's would run with the token in its environment", line)
+		}
+	}
 	if strings.Contains(ran, token) {
 		t.Errorf("the token is in what the save ran, where it lands in a shell history, a process listing and .git/config:\n%s", ran)
 	}
@@ -1142,6 +1195,18 @@ const wu15GitEnvFile = "env"
 func wu15GitEnv(t *testing.T, calls string) map[string]string {
 	t.Helper()
 	return wu15EnvNamed(t, calls, wu15GitEnvFile)
+}
+
+// wu15GitLines is every git invocation one save made, one argv per line — what
+// the fake recorded, which is one line per spawn because a save's git argv holds
+// no newline.
+func wu15GitLines(t *testing.T, calls string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatalf("the fake git recorded no calls: %v", err)
+	}
+	return strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
 }
 
 // wu15GHEnvPrefix is the stem of the file the fake gh dumps its environment
@@ -1189,6 +1254,9 @@ func wu15FakeGit(t *testing.T) string {
 	t.Helper()
 	return testutil.FakeCommand(t, stateGit, `
 env > "${0%/*}/`+wu15GitEnvFile+`"
+# every git a save spawns opens with internal/cli's hardening (-c k=v pairs),
+# so the subcommand is behind them
+while [ "$1" = "-c" ]; do shift 2; done
 case "$1" in
 clone) mkdir -p "$5" ;;
 rev-parse) echo main ;;

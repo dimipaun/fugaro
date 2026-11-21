@@ -43,6 +43,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -253,6 +254,20 @@ const (
 	stateVisibilityPublic  stateVisibility = "public"
 )
 
+// stateVisibilityWord says what the fence read, in the operator's words. The
+// refusal has to be true of every answer it refuses, and the answer a host that
+// reads nothing gives is not the word "public": a refusal that said so would be
+// telling the operator their repository is public when nobody said it was.
+func stateVisibilityWord(v stateVisibility) string {
+	switch v {
+	case stateVisibilityPublic:
+		return "the repository is public"
+	case stateVisibilityUnknown:
+		return "the repository's visibility was not answered as private"
+	}
+	return fmt.Sprintf("the repository's visibility was answered %q", pluginwire.Printable(string(v)))
+}
+
 // statePublish is one push and one pull request: clone the repository, commit
 // the snapshot's file at Dir/File on a new Branch, push it, and open the pull
 // request through the host's own tool (D2807).
@@ -422,8 +437,15 @@ func (w *stateWriter) Save(ctx context.Context, s workspace.Snapshot) (workspace
 		if err != nil {
 			return workspace.SnapshotWritten{}, err
 		}
-		if v == stateVisibilityPublic {
-			return workspace.SnapshotWritten{}, userErr("saving %s to %s is refused: the repository is public, and a snapshot carries the addresses of the people the project reaches (D2824, D2753). Designate a repository that is not public, or name one with --repo <owner/name>, which is the override this refusal leaves you", stateWhat(s), pluginwire.Printable(d.Repo))
+		// Fail-closed: only a repository this save READ as private is saved
+		// into. The check is "not private" and not "public", because a host that
+		// answers anything else — stateVisibilityUnknown with no error — would
+		// otherwise be the one answer that turns the fence off, and what it turns
+		// off is the push of a snapshot carrying the addresses of the people the
+		// project reaches (D2824, D2753). A repository taken for private when it
+		// is not is the leak this fence is about.
+		if v != stateVisibilityPrivate {
+			return workspace.SnapshotWritten{}, userErr("saving %s to %s is refused: %s, and a snapshot carries the addresses of the people the project reaches (D2824, D2753). Only a repository this save read as private is saved into. Designate a repository that is not public, or name one with --repo <owner/name>, which is the override this refusal leaves you", stateWhat(s), pluginwire.Printable(d.Repo), stateVisibilityWord(v))
 		}
 	}
 
@@ -821,10 +843,10 @@ func stateCloneAndCommit(ctx context.Context, env []string, p statePublish, remo
 		return "", fmt.Errorf("making a directory to clone %s into: %w", pluginwire.Printable(p.Repo), err)
 	}
 	defer os.RemoveAll(dir)
-	if err := stateRun(ctx, env, "", nil, stateGit, "clone", "--quiet", "--", remote, dir); err != nil {
+	if err := stateRun(ctx, env, "", nil, stateGit, stateGitArgs("clone", "--quiet", "--", remote, dir)...); err != nil {
 		return "", err
 	}
-	base, err = stateOutput(ctx, env, dir, stateGit, "rev-parse", "--abbrev-ref", "HEAD")
+	base, err = stateOutput(ctx, env, dir, stateGit, stateGitArgs("rev-parse", "--abbrev-ref", "HEAD")...)
 	if err != nil {
 		return "", err
 	}
@@ -846,11 +868,27 @@ func stateCloneAndCommit(ctx context.Context, env []string, p statePublish, remo
 		{"commit", "--quiet", "-m", p.Subject},
 		{"push", "--quiet", "origin", p.Branch},
 	} {
-		if err := stateRun(ctx, env, dir, nil, stateGit, args...); err != nil {
+		if err := stateRun(ctx, env, dir, nil, stateGit, stateGitArgs(args...)...); err != nil {
 			return "", err
 		}
 	}
 	return base, nil
+}
+
+// stateGitArgs is the argv of one git a save spawns: the hardening internal/cli
+// puts before every git call on a checkout that may be somebody else's
+// (gitHardening), then the subcommand.
+//
+// A hook must never run here. The clone is of a repository the project's own
+// setting named, and the operator may have a husky, a lint-staged or a pre-push
+// test suite configured in it or in their global git config: a save is plumbing
+// that carries one file to one branch, and a hook that fails would leave the
+// snapshot unpushed for a reason that is not about the snapshot — while a hook
+// that succeeds runs as this user, on the Bitbucket path with the project's
+// token in its environment (stateGitEnv). --no-verify is not the answer: it
+// skips pre-commit and commit-msg and nothing else.
+func stateGitArgs(args ...string) []string {
+	return append(slices.Clone(gitHardening), args...)
 }
 
 // stateGitEnv is the environment every git a save spawns runs with: env when the
