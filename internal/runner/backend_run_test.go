@@ -1108,16 +1108,27 @@ func TestWrongDatabaseIsAnInfraError(t *testing.T) {
 	}
 }
 
-// M2: a run whose budget is off ignores a malformed value in the backend's
-// environment when it describes no backend at all (a stray grace, an API key
-// with no URL): the value is not one the run would have used.
-func TestOffIgnoresMalformedBackendEnv(t *testing.T) {
+// A malformed value in the backend's environment that describes no backend at
+// all (a stray grace, an API key with no URL) used to be one a budget-off run
+// ignored, as it ignored the rest of the backend's environment. From AB1a on
+// every run is accounted for (D3009, R3), so there is no mode that reads a
+// value it cannot parse as one to skip: the run stops on the shipped error,
+// which is what an observe run has always done here. The L-b test below is the
+// other half — a value that *carries* the URL or the marker, whose loss is what
+// the old reading was dangerous for.
+func TestAMalformedBackendEnvThatDescribesNoBackendStopsTheRun(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "off", "")
 	b.deps.Backend = runner.Backend{}
 	b.deps.BackendErr = errors.New("FUGARO_BUDGET_GRACE: it must be a duration between 5s and 3m")
 	rec, err := b.run(t, implement("feature"), review("ship", 0))
-	if err != nil || rec.Status != runstore.StatusSucceeded {
+	if err == nil || rec.Status != runstore.StatusInfraError || rec.Halt != nil {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if !strings.Contains(rec.Reason, "FUGARO_BUDGET_GRACE") || !strings.Contains(rec.Reason, "budget backend in the job's environment") {
+		t.Errorf("the reason does not name the damage and where it is: %q", rec.Reason)
+	}
+	if len(b.agent.calls) != 0 || len(b.provider.State.PRs) != 0 {
+		t.Fatal("the run went on with a ceiling it could not read")
 	}
 }
 
