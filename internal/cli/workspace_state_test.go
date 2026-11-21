@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,7 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/workspace"
 )
@@ -533,6 +538,157 @@ func TestStateSaveHostIsTheRepositorysOwn(t *testing.T) {
 		if !strings.Contains(ran, want) {
 			t.Errorf("the save never ran %q. Everything it ran:\n%s", want, ran)
 		}
+	}
+}
+
+// TestStateContentReadsTheProjectsOwnState: the body a member's snapshot holds
+// is the project's published settings node and the day's spend counters, read
+// from the project's own two stores (its Realtime Database) — the "settings and
+// spend summary" of the acceptance, and nothing invented.
+//
+// The audit export is the other half: the workspace's own Firestore collection,
+// each entry decoded and re-encoded through C1's own codec, oldest first, so the
+// export restates no field of an event and a reader of the file reads what the
+// trail stores.
+func TestStateContentReadsTheProjectsOwnState(t *testing.T) {
+	ctx := context.Background()
+	fixed := time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)
+	day := budget.Day(fixed)
+
+	db, fs := gcpfake.NewRTDB(t), gcpfake.NewFirestore(t)
+	db.SetClock(func() time.Time { return fixed })
+	// Shallowest first: the fake's Set replaces the node it is given, so a
+	// later write of "config" would take the policy child with it.
+	db.Set("config", map[string]any{"mode": "observe"})
+	db.Set(projectpolicy.PathShared(), map[string]any{"burn_alert": 12.5})
+	db.Set(budget.PathSpendGlobal(day), map[string]any{"micros": 1234})
+	db.Set("spend/"+budget.DayKey(day)+"/repos", map[string]any{"acme/app": map[string]any{"micros": 99}})
+
+	lc := &localcfg.Config{
+		Name:       "acme-app",
+		GCPProject: "acme-app",
+		Budget:     &localcfg.Budget{RTDBURL: db.URL, FirebaseProject: "acme-app-firebase"},
+		Endpoints:  localcfg.Endpoints{NoAuth: true, Firestore: fs.URL},
+	}
+	client, err := newBudgetClient(ctx, db.URL, true)
+	if err != nil {
+		t.Fatalf("opening the fake database: %v", err)
+	}
+	fsc, err := newReportFirestore(ctx, lc)
+	if err != nil {
+		t.Fatalf("opening the fake Firestore: %v", err)
+	}
+
+	// The workspace's trail, two events whose ids are in time order, seeded the
+	// way C1 writes them.
+	older, err := workspace.NewAuditEventID(time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC), bytes.NewReader(make([]byte, 8)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := workspace.NewAuditEventID(time.Date(2026, 11, 21, 8, 0, 0, 0, time.UTC), bytes.NewReader(bytes.Repeat([]byte{1}, 8)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, at := range map[string]time.Time{newer: time.Date(2026, 11, 21, 8, 0, 0, 0, time.UTC), older: time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)} {
+		fs.Set(workspace.AuditCollection, id, map[string]any{
+			"version": workspace.AuditEventVersion,
+			"id":      id,
+			"time":    at.Format(time.RFC3339),
+			"actor":   "owner@example.com",
+			"action":  string(workspace.ActionProjectAdd),
+			"subject": "acme-app",
+		})
+	}
+
+	c := stateProjectContent{lc: lc, db: client, fs: fsc}
+
+	raw, err := c.Body(ctx, wu15Member())
+	if err != nil {
+		t.Fatalf("reading a member's body: %v", err)
+	}
+	var state struct {
+		Settings map[string]any `json:"settings"`
+		Spend    struct {
+			Day    string         `json:"day"`
+			Caps   map[string]any `json:"caps"`
+			Global map[string]any `json:"global"`
+			Repos  map[string]any `json:"repos"`
+		} `json:"spend"`
+	}
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatalf("the body a save would write is not JSON: %v\n%s", err, raw)
+	}
+	if state.Settings["burn_alert"] != 12.5 {
+		t.Errorf("the settings are %v, want the published policy node's own", state.Settings)
+	}
+	if state.Spend.Day != budget.DayDate(day) {
+		t.Errorf("the spend summary is about %q, want %q: the day the counters are read for", state.Spend.Day, budget.DayDate(day))
+	}
+	if state.Spend.Caps["mode"] != "observe" {
+		t.Errorf("the caps in force are %v, want the database's config node", state.Spend.Caps)
+	}
+	if state.Spend.Global["micros"] != float64(1234) {
+		t.Errorf("the global spend is %v, want the day's counters", state.Spend.Global)
+	}
+	if _, ok := state.Spend.Repos["acme/app"]; !ok {
+		t.Errorf("the per-repository spend is %v, want the day's repos node", state.Spend.Repos)
+	}
+
+	// A project with no published settings has none: the key is left out rather
+	// than written as an empty object, which a reader would take for a policy.
+	empty := &localcfg.Config{Name: "acme-app", GCPProject: "acme-app", Budget: lc.Budget, Endpoints: lc.Endpoints}
+	db2 := gcpfake.NewRTDB(t)
+	db2.SetClock(func() time.Time { return fixed })
+	client2, err := newBudgetClient(ctx, db2.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty.Budget = &localcfg.Budget{RTDBURL: db2.URL, FirebaseProject: "acme-app-firebase"}
+	raw2, err := stateProjectContent{lc: empty, db: client2, fs: fsc}.Body(ctx, wu15Member())
+	if err != nil {
+		t.Fatalf("reading the body of a project with no published settings: %v", err)
+	}
+	var bare map[string]json.RawMessage
+	if err := json.Unmarshal(raw2, &bare); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := bare["settings"]; ok {
+		t.Errorf("a project with no published policy wrote a settings key: %s", raw2)
+	}
+
+	// The workspace's export is the audit trail, oldest first, in C1's own shape.
+	// The workspace's own project is the one this reader was built for: its
+	// trail lives in its project's Firestore, so a machine saving it is
+	// configured for that project.
+	araw, err := c.Body(ctx, workspace.Snapshot{Workspace: lc.Name, Audit: true})
+	if err != nil {
+		t.Fatalf("reading the workspace's audit export: %v", err)
+	}
+	var export struct {
+		Events []json.RawMessage `json:"events"`
+	}
+	if err := json.Unmarshal(araw, &export); err != nil {
+		t.Fatalf("the audit export is not JSON: %v\n%s", err, araw)
+	}
+	if len(export.Events) != 2 {
+		t.Fatalf("the export holds %d events, want the two the trail does:\n%s", len(export.Events), araw)
+	}
+	var first workspace.AuditEvent
+	if err := json.Unmarshal(export.Events[0], &first); err != nil {
+		t.Fatalf("the export's first entry is not an event: %v", err)
+	}
+	if first.ID != older {
+		t.Errorf("the export leads with %q, want the older event %q: an entry's id opens with its instant, so the export is in time order", first.ID, older)
+	}
+	if first.Actor != "owner@example.com" || first.Action != workspace.ActionProjectAdd {
+		t.Errorf("the export restates an event's fields rather than carrying them: %+v", first)
+	}
+
+	// A reader built for one project refuses another's snapshot rather than
+	// answering with its own figures.
+	other := workspace.Snapshot{Workspace: "acme-workspace", Member: workspace.MemberTarget{Project: "someone-else"}}
+	if _, err := c.Body(ctx, other); err == nil || ExitCode(err) != ExitUserError {
+		t.Errorf("a reader built for acme-app answered %v for someone-else's snapshot, want a refusal", err)
 	}
 }
 

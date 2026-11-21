@@ -53,6 +53,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/procgroup"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/workspace"
 )
@@ -781,10 +782,9 @@ func stateHostsFor(token string) stateHostFor {
 // saving several members (WU23) builds one content reader per member, out of
 // that member's own config.
 type stateProjectContent struct {
-	lc  *localcfg.Config
-	db  *rtdb.Client
-	fs  *firestore.Client // the workspace's audit trail's database
-	now func() time.Time
+	lc *localcfg.Config
+	db *rtdb.Client
+	fs *firestore.Client // the workspace's audit trail's database
 }
 
 // stateMemberState is one member's body: its settings and its spend summary.
@@ -831,8 +831,8 @@ func (c stateProjectContent) owns(s workspace.Snapshot) error {
 		return errors.New("the state reader has no project config")
 	}
 	if project != c.lc.GCPProject && project != c.lc.Name {
-		return userErr("this machine's config is %s's and the snapshot is %s's, and a save reads the documents of the project whose state it is: run it where that project's own config is (its own `fugaro workspace project save`), or with %s's config selected",
-			pluginwire.Printable(c.lc.Name), pluginwire.Printable(project), pluginwire.Printable(project))
+		return userErr("this state reader is %s's and the snapshot is %s's, and a reader answers with the documents of the project it was built for: a save opens one reader per project, out of that project's own configuration",
+			pluginwire.Printable(c.lc.Name), pluginwire.Printable(project))
 	}
 	return nil
 }
@@ -849,7 +849,12 @@ func (c stateProjectContent) memberBody(ctx context.Context) (json.RawMessage, e
 	if found {
 		state.Settings = raw
 	}
-	now := c.now()
+	// The day is the database's, not this machine's, exactly as every other
+	// reader of the counters picks it (budgetNow plus the Date of the newest
+	// response): a snapshot written by a machine whose clock is a day out would
+	// otherwise file the spend under the wrong day and read as a project that
+	// spent nothing.
+	now := budgetNow()
 	if sn, ok := c.db.ServerNow(); ok {
 		now = sn
 	}
@@ -888,7 +893,7 @@ func (c stateProjectContent) auditBody(ctx context.Context) (json.RawMessage, er
 	}
 	docs, err := c.fs.Query(ctx, workspace.AuditCollection, "id", nil, nil)
 	if err != nil {
-		return nil, firestoreErr(c.lc, err)
+		return nil, stateAuditReadErr(c.lc, err)
 	}
 	export := stateAuditExport{Events: make([]json.RawMessage, 0, len(docs))}
 	for _, doc := range docs {
@@ -911,4 +916,17 @@ func (c stateProjectContent) auditBody(ctx context.Context) (json.RawMessage, er
 		return nil, fmt.Errorf("rendering the audit export of %s: %w", pluginwire.Printable(c.lc.Name), err)
 	}
 	return out, nil
+}
+
+// stateAuditReadErr classifies a failed read of the audit trail. It is
+// reportcore's firestoreErr for the same database and the same role (the audit
+// collection is in the project's own Firestore, closed to every client), and it
+// is a sentence of its own because that one says "the spend history", which is
+// not what a save of the trail was reading.
+func stateAuditReadErr(lc *localcfg.Config, err error) error {
+	if errors.Is(err, firestore.ErrPermission) {
+		return userErr("project %s's audit trail refused the read: you need the Cloud Datastore Viewer role (roles/datastore.viewer) on its Firebase project %s, plus the Service Usage Consumer role (roles/serviceusage.serviceUsageConsumer); GCP owners and editors have both; gcloud auth application-default login may be needed (%s)",
+			lc.Name, safetext.Strip(lc.Budget.FirebaseProject), safetext.Strip(err.Error()))
+	}
+	return remote(fmt.Errorf("reading the audit trail of %s: %s", lc.Name, safetext.Strip(err.Error())))
 }
