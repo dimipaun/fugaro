@@ -2,7 +2,7 @@
 
 **Re-planned 2026-11-21: T3.1, V1.3 and X1 are re-written against the orchestrator and the config-ownership registry, and X2 is closed — Check 273 was never measured and nothing is written for it. The re-plan is a document for the owner's review: nothing in it is approved and no task launches from it (see [implementation-plan.md](implementation-plan.md)).** **Ruling 2026-11-16: the orchestrator (`fugaro:orchestrator`) replaces `/jobmax`; J1.2, J1.3 and T1.1–T1.3 are closed as superseded (no `jobmax.auto_launch` is built); V1.2 is unchanged.** **Status as of 2026-11-10: in progress, about 24/40 merged; see [docs/status.md](../status.md) for the current table.** The owner answered D720–D737 on
 2026-10-30, every one as recommended except **D730** (fully automatic `/jobmax` launches, not the
-recommendation; ruled the same day with guardrails and a per-project opt-in, off by default). The answers approve no task. The open items O7, O9, O10 and O11 were ruled the same day (reconciliation §4). Still open: the crash-report processor's name (**O4**; the console tasks stay draft until then) and counsel's review of Terms §7.3 and the EU opt-out question (**O1**, **O2**).
+recommendation; ruled the same day with guardrails and a per-project opt-in, off by default). The answers approve no task. The open items O7, O9, O10 and O11 were ruled the same day (reconciliation §4). Still open: the crash-report processor's name (**O4**; the console tasks stay draft until then), counsel's review of Terms §7.3 and the EU opt-out question (**O1**, **O2**), and **O13** (raised by the re-plan's review, 2026-11-21: no command writes a `mobile` policy member, so the owner's `false` for T3.1's `mobile.crash_reports` is a hand edit until a door is chosen; it ships with T3.1's member-wise fill, which is what carries the member to an installation that has published since P6).
 
 **Spec owner:** Dimi Paun. **Spec received:** 2026-10-30. **Reconciled against** `origin/main` at
 `24fe1de60` and the 11 PRs open on 2026-10-30, re-checked at `8301c23c8` against the 12 then open.
@@ -10,7 +10,7 @@ recommendation; ruled the same day with guardrails and a per-project opt-in, off
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec "Fugaro: Review Levels, A/B Testing, Job Max", as received, with one redaction (below) |
-| [reconciliation.md](reconciliation.md) | Findings F1–F44 against the code, decisions D720–D737 (answered 2026-10-30), the D730 ruling (OT1, resolved), open items O1–O11, UNVERIFIED U1–U8. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Findings F1–F44 against the code, decisions D720–D737 (answered 2026-10-30), the D730 ruling (OT1, resolved), open items O1–O13, UNVERIFIED U1–U8. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices L, B, J, T, G, V and task X1; levels 0–6; the critical path; the shared-files table; Checks 270–272 written, 273–289 reserved. **Nothing in it is approved, and the 2026-11-21 re-plan of T3.1, V1.3 and X1 (with X2's close) is a document for the owner's review** |
 
 ## Changes to the spec as received
