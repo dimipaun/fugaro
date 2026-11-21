@@ -76,6 +76,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -260,9 +261,17 @@ func runWorkspaceProjectRm(cmd *cobra.Command, project string, deps workspacePro
 		return err
 	}
 
-	changed, err := workspaceProjectRmDropMarks(ctx, deps.Roster, rev, roster, project)
+	changed, taken, err := workspaceProjectRmDropMarks(ctx, deps.Roster, deps.Members, target, rev, roster, project, marks)
 	if err != nil {
 		return err
+	}
+	// A mark written while this command ran is acted on rather than dropped
+	// silently: the grant behind it is in the member's roster, and dropping the
+	// mark without taking the grant would leave access this workspace wrote in a
+	// member the owner's table no longer declares.
+	if len(taken) > 0 {
+		fmt.Fprintf(out, "the workspace's own roster moved under this command, so the %d grant(s) it recorded for %s in the meantime were taken back too: %s\n",
+			len(taken), safetext.Field(project), safetext.Field(strings.Join(taken, ", ")))
 	}
 	if changed {
 		fmt.Fprintf(out, "dropped the marks the workspace's own roster kept for %s\n", safetext.Field(project))
@@ -515,7 +524,8 @@ func workspaceProjectRmAuthority(ctx context.Context, out io.Writer, authority w
 }
 
 // workspaceProjectRmDropMarks drops the marks the workspace's own node keeps
-// for one member's project, and answers whether the node was written.
+// for one member's project, and answers whether the node was written and which
+// grants the re-reads made it take back.
 //
 // The marks go with the member: they record grants the workspace wrote into a
 // project it no longer holds, and the node is what the drift comparison reads
@@ -525,28 +535,50 @@ func workspaceProjectRmAuthority(ctx context.Context, out io.Writer, authority w
 // change this command never saw survives — up to a bound past which the node is
 // being written faster than this command can converge on it, which is reported
 // rather than looped on.
-func workspaceProjectRmDropMarks(ctx context.Context, store workspace.Store, rev workspace.Revision, roster *workspace.Roster, project string) (bool, error) {
+//
+// `acted` is what the caller took the member's grants back with, and the
+// re-read is where a mark written by somebody else while this command ran would
+// otherwise be thrown away: the grant that mark records is still in the member's
+// roster, and this command is the last thing that holds both halves — the
+// marks, which it is about to write away, and the member's roster, which
+// nothing reads against them afterwards. Dropping the mark and leaving the
+// grant would leave access the workspace wrote in a project the owner's table
+// no longer declares, with nothing left that could find it. So a re-read whose
+// marks differ from the ones acted on is acted on too, before the node is
+// written, and the addresses it took back are answered to the caller.
+func workspaceProjectRmDropMarks(ctx context.Context, store workspace.Store, members workspace.MemberOps, target workspace.MemberTarget, rev workspace.Revision, roster *workspace.Roster, project string, acted []workspace.StoredGrant) (bool, []string, error) {
+	var taken []string
 	for attempt := 0; ; attempt++ {
 		if !rev.Found || roster == nil || !workspaceRosterDropsProjectMarks(roster, project) {
-			return false, nil
+			return false, taken, nil
 		}
 		raw, err := workspace.EncodeRoster(roster)
 		if err != nil {
-			return false, userErr("the workspace's roster this command would write: %v", err)
+			return false, taken, userErr("the workspace's roster this command would write: %v", err)
 		}
 		err = store.Write(ctx, rev, raw)
 		if err == nil {
-			return true, nil
+			return true, taken, nil
 		}
 		if !errors.Is(err, rtdb.ErrPrecondition) {
-			return false, userErr("writing the workspace's roster at %s: %v", safetext.Field(store.Path()), err)
+			return false, taken, userErr("writing the workspace's roster at %s: %v", safetext.Field(store.Path()), err)
 		}
 		if attempt == 2 {
-			return false, userErr("writing the workspace's roster at %s: the node moved under this write three times, so nothing was written; run this again", safetext.Field(store.Path()))
+			return false, taken, userErr("writing the workspace's roster at %s: the node moved under this write three times, so nothing was written; run this again", safetext.Field(store.Path()))
 		}
 		rev, roster, err = workspaceProjectRmReadRoster(ctx, store)
 		if err != nil {
-			return false, err
+			return false, taken, err
+		}
+		// Both lists come from a node this package's own reader validated, so
+		// the order is the document's own: sorted by project and then by address.
+		if now := workspaceRosterMarksFor(roster, project); !slices.Equal(now, acted) {
+			took, err := workspaceProjectRmMemberGrants(ctx, members, target, now)
+			if err != nil {
+				return false, taken, err
+			}
+			taken = append(taken, took...)
+			acted = now
 		}
 	}
 }

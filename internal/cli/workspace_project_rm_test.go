@@ -422,6 +422,60 @@ func TestProjectRmReReadsAMovedRoster(t *testing.T) {
 	}
 }
 
+// TestProjectRmReReadsAMovedRosterActsOnANewMark is the other half of the
+// re-read, and the half a detach can least afford to get wrong: the node moved
+// because somebody wrote a mark for this project while the command ran, so
+// dropping the mark and leaving the grant behind would leave access the
+// workspace wrote into a project the owner's table no longer declares, with the
+// mark — the only record that could find it — gone. The new mark is acted on
+// with the ones this command set out with, the grant behind it comes out of the
+// member's roster, and the run says so.
+func TestProjectRmReReadsAMovedRosterActsOnANewMark(t *testing.T) {
+	r, _, _ := wu6NewRig(t)
+	r.members.grants = wu6Doc(t, "wu6-grants-etag", wu6GrantsDoc(t,
+		wu6Grant(t, wu6Admin, accesslib.RoleAdmin),
+		wu6Grant(t, wu6Stranger, accesslib.RoleViewer),
+		wu6Grant(t, "local-1@example.com", accesslib.RoleViewer),
+	))
+	r.store.movedDoc = wu6Roster(t, []string{wu6Admin}, []string{wu6Admin, wu6Stranger},
+		workspace.StoredGrant{Project: "aurora", User: wu6Admin, Role: workspace.RoleAdmin},
+		workspace.StoredGrant{Project: "aurora", User: wu6Stranger, Role: workspace.RoleViewer},
+		workspace.StoredGrant{Project: "beta", User: wu6Admin, Role: workspace.RoleAdmin},
+	)
+	r.store.moved = 1
+	r.store.movedETag = "wu6-etag-2"
+
+	out, err := wu6Run(t, r.deps(), "aurora", "--no-apply")
+	if err != nil {
+		t.Fatalf("workspace project rm against a node that moved and grew a mark: %v\n%s", err, out)
+	}
+	if len(r.store.writes) != 1 {
+		t.Fatalf("the node was written %d times, want once after the re-read", len(r.store.writes))
+	}
+	roster, err := workspace.DecodeRoster(r.store.writes[0].raw)
+	if err != nil {
+		t.Fatalf("the roster written after the re-read is not one its own reader accepts: %v", err)
+	}
+	if len(roster.Grants) != 1 || roster.Grants[0].Project != "beta" {
+		t.Errorf("the written roster holds %+v, want the other writer's mark for beta kept and every mark for this project taken out", roster.Grants)
+	}
+	kept, err := accesslib.Decode(r.members.grantsWritten)
+	if err != nil {
+		t.Fatalf("the roster this command wrote is not one the member's own CLI reads: %v", err)
+	}
+	for _, g := range kept {
+		if g.User == "user:"+wu6Stranger {
+			t.Errorf("the grant behind the mark written while the command ran is still in the member's roster, with its mark written away: %+v", kept)
+		}
+	}
+	if len(kept) != 1 || kept[0].User != "user:local-1@example.com" {
+		t.Errorf("the member's own grant did not survive the detach: %+v", kept)
+	}
+	if !strings.Contains(out, "moved under this command") || !strings.Contains(out, wu6Stranger) {
+		t.Errorf("the run does not say the node moved and that the grant it recorded meanwhile was taken back:\n%s", out)
+	}
+}
+
 // TestProjectRmNeedsTheMembersOwnConfig: the member's GCP project names every
 // call this command makes, the workspace's table does not carry it — it holds the
 // member's Fugaro project name and the endpoints the workspace reaches it by —
@@ -797,7 +851,9 @@ func (a *wu6Authority) AdminBindings(context.Context) ([]string, error) {
 
 // wu6Members is C2's MemberOps over the member's own documents: the grants node
 // and the mirror, each handed back with the ETag it was read at so a test can say
-// the write was made under it.
+// the write was made under it. A write lands in the document it was made on, so a
+// read after it answers what the member's roster holds now — which is what a
+// command that reads the same roster twice depends on.
 type wu6Members struct {
 	rig    *wu6Rig
 	grants workspace.MemberDoc
@@ -816,7 +872,9 @@ func (m *wu6Members) ReadGrants(context.Context, workspace.MemberTarget) (worksp
 
 func (m *wu6Members) WriteGrants(_ context.Context, _ workspace.MemberTarget, doc workspace.MemberDoc, raw []byte) error {
 	m.rig.log("members.write-grants")
+	doc.Raw = raw
 	m.grantsWritten, m.grantsWriteDoc = raw, doc
+	m.grants = doc
 	return nil
 }
 
