@@ -2257,6 +2257,14 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneStopFractionImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The keep-warm beat's switch, on the same configuration read and
+		// for the same reason: a runner older than workspaceBeatSince
+		// refuses agent.workspace_beat and the layer's
+		// defaults.agent.workspace_beat at bootstrap, whatever they say
+		// (checkCloneWorkspaceBeatImage).
+		if err := checkCloneWorkspaceBeatImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The triage stage's switch, on the same configuration read: a
 		// runner older than triageSince refuses agent.triage at
 		// bootstrap, whatever it says (checkCloneTriageImage).
@@ -2465,6 +2473,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The same gate as the clone branch's above, and for the same
 		// reason: see checkStopFractionImage.
 		if err := checkStopFractionImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see checkWorkspaceBeatImage.
+		if err := checkWorkspaceBeatImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The same gate as the clone branch's above, and for the same

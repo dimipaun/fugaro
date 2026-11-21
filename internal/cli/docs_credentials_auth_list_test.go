@@ -16,7 +16,10 @@ import (
 // Each is a place a reader meets the list, and each contradicted the validator
 // after this branch: a reader following them would not know the value exists at
 // all, or would read the document that wins over spec.md and believe a cascade
-// file is refused.
+// file is refused. The template has since stopped writing `agent.auth` at all —
+// it is a retired key (R3, CM3 of docs/credentials-belong-to-models), and the
+// fourth section below reads it for the fact CM3 owes instead, until CM25's own
+// rewrite of this test lands.
 //
 // The list is read from config.AgentAuths (internal/config/defaults.go) — the
 // one list the validator, the layer's own defaults.agent.auth key and the
@@ -29,9 +32,10 @@ import (
 // vertex" until the cascade joined it.
 //
 // Mutation (run, restored): drop "cascade" from README.md's auth comment, from
-// the setup skill's decision line, from the reference's §2 table, from
-// internal/config/example.yaml's comment, or restore §1.2's "has three values,
-// not four" heading — each fails, naming the document it reads. Drop it from
+// the setup skill's decision line, from the reference's §2 table, or restore
+// §1.2's "has three values, not four" heading — each fails, naming the document
+// it reads. Write `auth:` back into internal/config/example.yaml's agent block
+// and the fourth section fails on the retired key it offers. Drop it from
 // README.md's `with a provider model` comment or from docs/multi-model.md §5's
 // refusal bullet and the sixth section fails on the document it reads.
 func TestDocsCredentialsAuthListNamesCascade(t *testing.T) {
@@ -99,18 +103,15 @@ func TestDocsCredentialsAuthListNamesCascade(t *testing.T) {
 	// of the list a reader meets when they create a config at all: error
 	// messages send them here ("create it with /fugaro:setup or fugaro config
 	// example"), so it is the one document that has to be right the first time.
+	// `agent.auth` is retired (R3 and CM3 of docs/credentials-belong-to-models):
+	// the template writes it no longer, so what this reads is the fact that
+	// release owes — the template a person starts from may not offer a key no
+	// release honours, and the key it would otherwise pin is named where a file
+	// still writes it instead (config.RetiredKeyNotes).
 	example := readDoc(t, "internal/config/example.yaml")
-	var templateLine string
-	for _, line := range strings.Split(example, "\n") {
-		if strings.Contains(line, "auth: vertex") && strings.Contains(line, "#") {
-			templateLine = line
-			break
-		}
+	if notes := config.RetiredKeyNotes([]byte(example), config.InRepo); len(notes) > 0 {
+		t.Errorf("internal/config/example.yaml writes the retired key %s (%s): `fugaro config example` prints the template a repository starts from, and it may not offer a key no release honours", notes[0].Path, notes[0].Why)
 	}
-	if templateLine == "" {
-		t.Fatal("internal/config/example.yaml carries no `auth: vertex` comment line: the template moved and this scan no longer reads it")
-	}
-	namesEveryAuth(t, "internal/config/example.yaml's agent.auth comment", templateLine, auths)
 
 	// 5. The setup skill's reference on the decision — §2's own table, which is
 	// the one place the per-value facts (which secret exists, whether a gateway
