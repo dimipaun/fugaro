@@ -11540,10 +11540,13 @@ asked for, because a pattern is a promise about what the account may be a job of
 rather than the jobs it is.
 
 --database-region is where the member's Realtime Database lives, and it is
-optional: a database in the project's default region needs none. It is never
-whose database it is — that is derived from the Firebase project the verified
-iss names, so an owner cannot pair one member's accounts with another's
-database — and this says only where in that project it lives.
+optional: left out, it is read from the member's own budget.rtdb_url, which that
+installation's fugaro update writes, so a member in europe-west1 is linked at
+its own host with no flag — and it wins when it is given. It is never whose
+database it is — that is derived from the Firebase project the verified iss
+names, so an owner cannot pair one member's accounts with another's database —
+and this says only where in that project it lives. A database in the project's
+default region records no region either way.
 
 A member the table already declares is replaced whole: the entry ends up
 holding the four values given, the accounts with their repositories, the
@@ -11564,7 +11567,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--database-region` | string | "" | no | the region of the member's Realtime Database; omit it for a database in the project's default region |
+| `--database-region` | string | "" | no | the region of the member's Realtime Database; omit it to read it from the member's own budget.rtdb_url (a database in the project's default region has none) |
 | `--exchange-url` | string | "" | no | the member's exchange endpoint, where the workspace's signer mints a member-bound assertion for |
 | `--firebase-project` | string | "" | no | the member's Firebase project ID, which the caller's token is issued under |
 | `--fp` | string | "" | no | the member's Fugaro project name, which the token's fp claim must be |
