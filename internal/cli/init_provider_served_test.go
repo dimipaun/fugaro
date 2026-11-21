@@ -172,6 +172,15 @@ func theLoaderReadsProviderEntries(t *testing.T) {
 	t.Cleanup(func() { providerEntriesLoaderShipped = shipped })
 }
 
+// theLoaderDoesNotReadProviderEntries puts the tree in the state before the
+// arm landed, so the gate's refusal stays pinned now that the tree ships it.
+func theLoaderDoesNotReadProviderEntries(t *testing.T) {
+	t.Helper()
+	shipped := providerEntriesLoaderShipped
+	providerEntriesLoaderShipped = false
+	t.Cleanup(func() { providerEntriesLoaderShipped = shipped })
+}
+
 // providerEntry is C1's own name for this repository's key at that provider
 // (credsvc.RepoCredentialKey), built through the rule rather than spelled, so a
 // test cannot pass on a key the copy and the loader would disagree about.
@@ -212,6 +221,7 @@ func TestTheFactIsRecordedWhenEveryProviderEntryIsThere(t *testing.T) {
 	// (localcfg.Repo's pointers). A switch recorded from this bundle would be a
 	// plan that drops the job's model mounts while the service the same run
 	// deploys answers every call of the installation with the loader's refusal.
+	theLoaderDoesNotReadProviderEntries(t)
 	e, refused := providerServedRun(t, r.initRig, providerServedPolicy(), config.BudgetObserve)
 	if refused.CredentialsServiceReady != nil || refused.ProviderKeysServed != nil || refused.StageAccountServed != nil {
 		t.Errorf("a bundle this tree's loader refuses whole (%+v) wrote a record: nothing was read from it, and the switch it would carry decides whether every job of this repository keeps the model credential it mounts", refused)
