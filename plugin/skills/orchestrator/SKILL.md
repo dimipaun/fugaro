@@ -39,7 +39,7 @@ If the command refuses because there is no cached brief yet, say so in one sente
 
 A project whose orchestrator is on has a daemon of its own on somebody's machine, and that daemon is what launches its runs. Two reads tell a session where it stands, and a session makes them before it starts a run of its own:
 
-- `fugaro settings orchestrator_enabled --json` — the project's switch, one top-level key of its published policy, `true` unless a layer tightened it to `false`. Publishing it is a project write at the owner's terminal, so the session reads it and never sets it.
+- `fugaro settings orchestrator_enabled --json` — the project's switch, a top-level key of its published policy and `true` for a project that never states it. It is the project's own answer, kept in the node, so the session reads it and never sets it.
 - `fugaro orchestrator status` — whether this machine has the login unit that keeps a daemon running, and whether that file is what this release would write. A machine with no unit runs no daemon, whatever the switch says; and the brief's stamp, which the print at the start of the session already showed, says how recently the daemon on this project ticked.
 
 **With the switch on and a daemon live, the daemon is the launcher: hand the work over as items, and never launch, sweep or watch a run yourself — never `fugaro run`, never `fugaro watch`, and never `fugaro orchestrator run`, which is the login unit's job and no session's.** A run started beside the daemon is a second run of work the daemon is already doing, a poll for runs that have finished is the daemon's tick rather than a session's job, and a session that sits and waits on one holds a run the daemon tracks anyway. What goes over instead:
