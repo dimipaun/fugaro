@@ -34,10 +34,24 @@ type Route struct {
 	// Auth is how Credential is sent: "bearer" (Authorization) or
 	// "x-api-key".
 	Auth string
+	// Served, when set, is R12's fact about this route (KS5): the
+	// installation's credentials service holds this repository's key for the
+	// provider, so the call goes to that service's provider route with the
+	// provider's own name on it (HeaderProvider) and Credential is nil — the
+	// job mounts no key for this provider at all (R1, R12). A served route is
+	// admitted beside the service upstream alone (validateRoutes): the key it
+	// is reached with is the service's, and there is nowhere else to get one.
+	//
+	// What the route still carries is everything else: its name, its models,
+	// its fee and the address the service forwards to (BaseURL, the config's
+	// own — a served call sends no address of its own, F45).
+	Served bool
 	// Credential is the provider key, read per call. It comes from the
 	// runner (never from the agent's environment) and is attached to the
 	// upstream request only; an error means the call is not sent. It is
-	// called from concurrent calls, so it must be safe for that.
+	// called from concurrent calls, so it must be safe for that. It is nil
+	// exactly when Served is set: a served route's key is the credentials
+	// service's and never this job's.
 	Credential func() (string, error)
 	// FeePct is the route fee, in percent, that the budget adds to every
 	// call on this route: to the reservation (so the cap counts it) and to
@@ -100,7 +114,8 @@ const missingAnthropicKey = config.MissingAnthropicKey
 
 // validateRoutes: routes need the Anthropic upstream's kind, never its key
 // (a run whose models are all routed has no key, and that is exactly when
-// they matter) — or the one service upstream that does have a key of its own.
+// they matter) — or the service upstream, which is where a served route's key
+// is (KS5), or a switched api-key run, whose own provider keys stay mounted.
 func validateRoutes(u Upstream, routes []Route) error {
 	if len(routes) == 0 {
 		return nil
@@ -111,9 +126,25 @@ func validateRoutes(u Upstream, routes []Route) error {
 		// upstream takes no routes at all, whatever they name.
 		return fmt.Errorf("gateway: the OAuth upstream takes no routes: %w", errOAuthOnRoute)
 	}
+	if u.Kind != KindService {
+		// A served route's key is the credentials service's (Served, KS5), and
+		// the service's provider route is the only place it is reached: an
+		// upstream that is not the service cannot carry one, the Anthropic one
+		// included -- a served route there would be sent to a path Anthropic
+		// does not serve, with no credential of the job's that it could
+		// present to the service either.
+		for _, r := range routes {
+			if r.Served {
+				return fmt.Errorf("gateway: route %q takes its key from the credentials service, and this upstream is %q, which is not the service (R1, R12)", r.Name, u.Kind)
+			}
+		}
+	}
+	if u.Kind != "anthropic" && u.Kind != KindService {
+		return fmt.Errorf("gateway: routes need the anthropic upstream, not %q (a run does not mix credentials)", u.Kind)
+	}
 	if u.Kind == KindService {
-		// C1.15 (service.go): a route is reached with the job's own key for
-		// the provider, and a cascade run has no key of its own (D143). The
+		// C1.15 (service.go): a route the job holds the key for is reached
+		// with that key, and a cascade run has no key of its own (D143). The
 		// one service upstream that does have one is a switched api-key run
 		// (B2.2): its own repository's auth is what AuthMode declares, and
 		// R6/D1634 keep that repository's provider keys on the runner path
@@ -123,15 +154,21 @@ func validateRoutes(u Upstream, routes []Route) error {
 		// under oauth is refused before a gateway is built
 		// (config.CheckProviderAuth) — and an upstream that declares nothing
 		// is a cascade's.
+		//
+		// A served route (Served, KS5) is the other half of that, and it is
+		// R12's fact rather than the auth's: the service holds this
+		// repository's provider keys, so the route is reached on the
+		// service's provider route and the job mounts nothing. It is
+		// admitted whatever auth the run declares, because the fact is about
+		// the repository's keys and not about the auth its Anthropic calls
+		// go out on.
 		if u.AuthMode != "api-key" {
-			return fmt.Errorf("gateway: the service upstream takes no routes: %w", errServiceOnRoute)
+			for _, r := range routes {
+				if !r.Served {
+					return fmt.Errorf("gateway: the service upstream takes no routes: %w", errServiceOnRoute)
+				}
+			}
 		}
-	}
-	if u.Kind != "anthropic" && u.Kind != KindService {
-		// A KindService upstream reaching here declared api-key, and its
-		// routes are validated exactly as the anthropic upstream's are: the
-		// one service upstream whose calls are not all the service's.
-		return fmt.Errorf("gateway: routes need the anthropic upstream, not %q (a run does not mix credentials)", u.Kind)
 	}
 	for i, r := range routes {
 		at := fmt.Sprintf("gateway: route %q", r.Name)
@@ -143,7 +180,13 @@ func validateRoutes(u Upstream, routes []Route) error {
 			// carries an OAuth credential -- refused by name, here and in
 			// attachCredential, rather than by the generic auth message.
 			return fmt.Errorf("%s: %w", at, errOAuthOnRoute)
-		case r.Credential == nil:
+		case r.Served && r.Credential != nil:
+			// A served route's key is the credentials service's (Served,
+			// KS5): one that also carries a source of the job's own is a
+			// caller reaching for two keys at once, and which of them a call
+			// was made with would depend on the path taken.
+			return fmt.Errorf("%s is served by the credentials service and carries a credential source as well: a served route's key is the service's", at)
+		case r.Credential == nil && !r.Served:
 			return fmt.Errorf("%s has no credential source", at)
 		case r.Auth != "bearer" && r.Auth != "x-api-key":
 			return fmt.Errorf("%s: auth %q must be bearer or x-api-key", at, r.Auth)
@@ -227,11 +270,24 @@ func (r *Route) attachCredential(h http.Header) (key string, err error) {
 
 // withRoute points a call at the provider that claims model. It runs after
 // the pin check, so only a pinned model is ever sent to a provider.
+//
+// Where it points depends on where the route's key is (KS5, R1): a served
+// route's key is the credentials service's, so its call goes to that service's
+// provider route — the service's own base, the provider route's prefix, and
+// the endpoint's own path behind it, which is the path the service forwards
+// upstream (ProviderRoutePath, ProviderCountTokensPath) — while a route the
+// job holds a key for still goes straight to the provider's own address.
 func (s *Server) withRoute(rt route, model string) route {
-	if pr := routeFor(model, s.o.Routes); pr != nil && rt.path != "" {
-		rt.provider = pr
-		rt.upstream = trimSlash(pr.BaseURL) + rt.path + rt.query
+	pr := routeFor(model, s.o.Routes)
+	if pr == nil || rt.path == "" {
+		return rt
 	}
+	rt.provider = pr
+	if pr.Served {
+		rt.upstream = anthropicBase(s.o.Upstream) + ProviderRoutePrefix + rt.path + rt.query
+		return rt
+	}
+	rt.upstream = trimSlash(pr.BaseURL) + rt.path + rt.query
 	return rt
 }
 
