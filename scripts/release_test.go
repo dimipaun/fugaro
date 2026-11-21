@@ -2444,7 +2444,7 @@ func TestExistingRemoteBranchWithoutPR(t *testing.T) {
 	}
 	// The catalogue and the two doc lines that name the released version
 	// (releasedVersionDocs), sorted as git lists them.
-	want := "docs/project-named-oauth-tokens/spec.md\ndocs/project-claude-accounts.md\ndocs/release-streams.yaml"
+	want := "docs/project-claude-accounts.md\ndocs/project-named-oauth-tokens/spec.md\ndocs/release-streams.yaml"
 	if files := testutil.Git(t, r.bare, "diff-tree", "--no-commit-id", "--name-only", "-r", "refs/heads/release/v0.12.0"); files != want {
 		t.Errorf("the commit on top of the pushed bump should touch the catalogue and the released-version docs only, got:\n%s", files)
 	}
