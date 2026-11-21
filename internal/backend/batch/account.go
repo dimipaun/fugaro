@@ -29,12 +29,9 @@ import (
 //     name is written, never parsed, so no reader can recover the
 //     (profile, provider, account) triple it hashes (gcp.ProjectJobName,
 //     R2-5) -- so it is recorded, keyed by the job's own name
-//     (Options.JobAccounts): the launcher reads it from the project's
-//     published profiles, which is the one place the triple exists
-//     (config.ProjectJobAccounts, internal/infra's ProjectJobs). A project
-//     job this installation records no account for is refused, because
-//     running it under the block's account would be exactly the identity the
-//     policy did not choose.
+//     (Options.JobAccounts). A project job this installation records no
+//     account for is refused, because running it under the block's account
+//     would be exactly the identity the policy did not choose.
 //   - a per-repository job's account is a derivation of its own two facts: it
 //     is gcp.ServiceAccountID(slug, workflow), the account the repository
 //     root creates for that job and the Cloud Run job of the same workflow
@@ -42,6 +39,21 @@ import (
 //     installation's project. A recorded entry for that job wins, so an
 //     installation that knows better than the derivation is not fought
 //     (Options.JobAccounts' keys are both classes' job names).
+//
+// **Nothing fills Options.JobAccounts yet, so a project job is still refused
+// on a real installation**, and this is the one thing BR10 leaves open rather
+// than guesses at. The account exists -- the launcher resolves the job, and so
+// its (profile, provider, account) triple, from the project's published policy
+// at launch (internal/cli's launchProjectJobFor, runner.ProjectJobOfPolicy) --
+// but that resolution happens long after this backend was opened, and the
+// options it is opened with are the only place an account has ever been
+// carried in. A per-launch account on LaunchSpec is what closes it, which is
+// precisely the contract change the plan anticipates: BR10 raises
+// `R-C1-project-job-account` (§7), whose run writes the field into the
+// key-release contract. Until it lands, and until the launcher fills that
+// field, a launch on a shared project job on Batch is refused here -- F10's
+// refusal, now for want of a job's account rather than for want of project
+// jobs.
 //
 // Never the default Compute Engine account: New refuses the block's account
 // (checkServiceAccount) and this refuses the account a job is actually built

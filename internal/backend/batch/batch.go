@@ -227,16 +227,20 @@ type Options struct {
 	// JobAccounts is the account each deployed job runs as, keyed by that
 	// job's own name -- gcp.JobName(slug, workflow) for a per-repository job,
 	// gcp.ProjectJobName(profile, provider, account) for a shared project
-	// job. **BR10 reads it** (account.go), and the launcher fills it from the
-	// project's published profiles, which is the one place a shared project
-	// job's (profile, provider, account) triple exists -- its name is written,
-	// never parsed (R2-5), so its account is not derivable and has to be
-	// named. A per-repository job's account is not in here: it is
+	// job. **BR10 reads it** (account.go): a shared project job's name is
+	// written, never parsed (R2-5), so the (profile, provider, account) triple
+	// it hashes cannot be recovered and its account has to be named. A
+	// per-repository job's account is not in here: it is
 	// gcp.ServiceAccountID(slug, workflow) in this installation's project,
 	// which is what a launch derives when the job is not recorded (F11: the
-	// block's single account is not a job's to run under). Empty therefore
-	// costs a per-repository launch nothing and refuses a project job's,
-	// which is the state every launch is in until the launcher fills this in.
+	// block's single account is not a job's to run under). **No caller fills
+	// it yet**, so a project job's launch is refused rather than run under the
+	// wrong identity (account.go): the launcher resolves which job a run lands
+	// on from the project's published policy, per launch, after this backend
+	// was opened -- so the account has to reach the launch through a field the
+	// launch carries, which is the contract change BR10 raises
+	// (`R-C1-project-job-account`). Empty costs a per-repository launch
+	// nothing, and it is the state every launch is in today.
 	JobAccounts map[string]string
 	// Secrets maps an environment variable name to a Secret Manager secret
 	// name -- never a value. Nothing is mounted from it (BR11, D3104): a Batch

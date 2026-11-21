@@ -73,8 +73,12 @@ func TestAProjectJobWorkflowRunsUnderThatJobsAccount(t *testing.T) {
 // single one. That account is a derivation of the job's own two facts
 // (gcp.ServiceAccountID) -- the account the repository root creates for it, and
 // the one the Cloud Run job of the same workflow runs as -- so nothing has to
-// be recorded for it, and a per-repository installation is not kept from
-// launching by a block that records no account at all (F11).
+// be recorded for it.
+//
+// That is not a claim that an installation whose block records no account
+// launches: New still refuses an empty Options.ServiceAccount (batch.go's
+// checkServiceAccount), which is F11's other half and is reported rather than
+// fixed here. What this pins is only which account the job's VMs get.
 //
 // An installation that records an account for that job is believed over the
 // derivation: Options.JobAccounts' keys are both classes' job names, and what
