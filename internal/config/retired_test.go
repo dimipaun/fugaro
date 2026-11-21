@@ -1,7 +1,6 @@
 package config
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -61,8 +60,10 @@ func TestEveryRetiredKeyIsNamedWhereItIsWritten(t *testing.T) {
 		if strings.TrimSpace(row.RetiredWhy) == "" {
 			t.Errorf("the retired key %s carries no sentence for a person to read", want.Key)
 		}
-		if !slices.Contains(RetiredKeys, RetiredKey{Key: want.Key, In: want.In, Why: row.RetiredWhy}) {
+		if !namesRetired(RetiredKeys, want.Key, want.In) {
 			t.Errorf("RetiredKeys does not name %q in %v", want.Key, want.In)
+		} else if rk, _ := retiredIn(RetiredKeys, want.Key, want.In); rk.Why != row.RetiredWhy {
+			t.Errorf("RetiredKeys names %q in %v with %q, want its Scopes row's own sentence", want.Key, want.In, rk.Why)
 		}
 		// A project layer writes every fugaro.yaml key under defaults:; a
 		// repository's file writes it at the top level.
@@ -82,7 +83,7 @@ func TestEveryRetiredKeyIsNamedWhereItIsWritten(t *testing.T) {
 	// The other direction: a mark nothing reads, or a key RetiredKeys invents,
 	// would let a document be told about a key R3 never retired.
 	for _, rk := range RetiredKeys {
-		if !slices.Contains(wantRetired, RetiredKey{Key: rk.Key, In: rk.In}) {
+		if !namesRetired(wantRetired, rk.Key, rk.In) {
 			t.Errorf("RetiredKeys names %q retired in %v, which R3 does not", rk.Key, rk.In)
 		}
 	}
@@ -91,11 +92,28 @@ func TestEveryRetiredKeyIsNamedWhereItIsWritten(t *testing.T) {
 			if row.Retired&doc == 0 {
 				continue
 			}
-			if !slices.Contains(wantRetired, RetiredKey{Key: row.Key, In: doc}) {
+			if !namesRetired(wantRetired, row.Key, doc) {
 				t.Errorf("Scopes marks %q retired in %v, which R3 does not", row.Key, doc)
 			}
 		}
 	}
+}
+
+// namesRetired reports whether keys names key retired in doc, and retiredIn is
+// its entry — the pair compared on Key and In alone, so an empty Why in a
+// test's own expectation is not what decides the answer.
+func namesRetired(keys []RetiredKey, key string, doc Scope) bool {
+	_, ok := retiredIn(keys, key, doc)
+	return ok
+}
+
+func retiredIn(keys []RetiredKey, key string, doc Scope) (RetiredKey, bool) {
+	for _, rk := range keys {
+		if rk.Key == key && rk.In == doc {
+			return rk, true
+		}
+	}
+	return RetiredKey{}, false
 }
 
 // TestAFileWithNoRetiredKeySaysNothing: the note is about the keys a document
