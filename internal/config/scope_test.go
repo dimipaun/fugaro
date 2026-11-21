@@ -111,7 +111,7 @@ func TestScopesGoldenTableNamesTheVisionKey(t *testing.T) {
 
 // TestScopeRefusesTheVisionKeyInAProfile (V1, D2003): the vision slot is a
 // project and repository key and not a profile's. A profile is the launcher's
-// template for one run of one workflow (docs/design/layered-config.md §5), and
+// template for one run of one workflow (docs/layered-config/spec.md §5), and
 // which model stands in for a stage that cannot read an image is the
 // repository's decision about its own runs — so the project layer refuses the
 // key inside profiles:, at the profile that wrote it.
@@ -140,7 +140,7 @@ profiles:
 }
 
 // TestScopesMatchDesignDoc pins, row by row, the layer set of every key in
-// config.Scopes against the table of docs/design/layered-config.md §5 (the
+// config.Scopes against the table of docs/layered-config/spec.md §5 (the
 // plan's Task 1). A key whose scope changes, or a key added without a row
 // here, fails this test. (Renamed from TestScopeTableMatchesDocs, Task 18:
 // that name now belongs to docs_scope_test.go's test against
@@ -235,12 +235,12 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		// TestScopeTableMatchesDocs keeps equal to config.Scopes.
 		"agent.workspace_beat": InProject | InRepo,
 		"agent.recipe":         InProject | InRepo | InOverride,
-		// Named oauth tokens plan Task 6 (docs/design/named-oauth-tokens.md §3
+		// Named oauth tokens plan Task 6 (docs/named-oauth-tokens/spec.md §3
 		// T2): added after agent.recipe, in config.Scopes already; the design
 		// doc's own §5 table (which this golden map otherwise mirrors) gains
 		// its row in Task 9, once the shipped shape is documented.
 		"agent.oauth_token": InRepo | InOverride,
-		// Headroom compression plan Task 1 (docs/design/headroom-compression.md
+		// Headroom compression plan Task 1 (docs/headroom-compression/spec.md
 		// §4): repo-only for the same reason agent.oauth_token is, and the
 		// override is one-directional (--no-compression only), which the scope
 		// table does not express.
@@ -341,11 +341,11 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		seen[row.Key] = true
 		wantIn, ok := want[row.Key]
 		if !ok {
-			t.Errorf("config.Scopes has key %q with no row in this test's golden table; add one from docs/design/layered-config.md §5", row.Key)
+			t.Errorf("config.Scopes has key %q with no row in this test's golden table; add one from docs/layered-config/spec.md §5", row.Key)
 			continue
 		}
 		if row.In != wantIn {
-			t.Errorf("Scopes[%q].In = %v, want %v (docs/design/layered-config.md §5)", row.Key, row.In, wantIn)
+			t.Errorf("Scopes[%q].In = %v, want %v (docs/layered-config/spec.md §5)", row.Key, row.In, wantIn)
 		}
 	}
 	for key := range want {

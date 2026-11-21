@@ -19,7 +19,7 @@ package main
 // a sha384, a sha512 or an external-mu -- is what a digest-based key takes, and
 // it is left out so that the payload is signed raw, which is what a verifier
 // checks. Whether a managed store offers Ed25519 at all is UNVERIFIED here
-// (design docs/design/key-signing-service.md §3.3, U9) until S3.5 confirms it
+// (design docs/key-signing-service/spec.md §3.3, U9) until S3.5 confirms it
 // against the provider's documentation; a store that will not is a store the
 // owner cannot mint with, and a key minted by one is refused by the check in
 // Mint rather than printed.

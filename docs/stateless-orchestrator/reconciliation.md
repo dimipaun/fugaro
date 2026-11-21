@@ -504,7 +504,7 @@ sub-tasks** (D1246). One input is external to this repository: BF1 is not on `ma
   behaviour this list carries stays open.
 - **U9.** Which surface would deliver a push (Q3). Verified against `main`: the repository carries **no** push implementation. The phone's push is
   design-only (`docs/mobile/design/push-notifications.md`, Task P5.2, Phase 5 unscheduled; D121's "no push in v1", answered 2026-10-17), and the
-  app depends only on Firebase analytics and crash reporting. The console's notification is a design gap (`docs/design/desktop-console-v2.md` F27)
+  app depends only on Firebase analytics and crash reporting. The console's notification is a design gap (`docs/desktop-console-v2/spec.md` F27)
   whose D33 answer — derived from the watch feed by the console's own reader, off by default — is unbuilt (V2.7.3), and nothing under `console/src`
   uses Electron's `Notification` API. What does exist is the RTDB **mailbox** the phone polls (`mailbox/<mb>/{inbox,outbox,heartbeat}`, every write
   MAC-checked by the rules; pairing D165/D166): a foreground channel, not a push. So "the mobile push the owner already has" is not verifiable from

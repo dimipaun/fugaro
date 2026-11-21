@@ -21,7 +21,7 @@ description inline; the job list should be expandable, pageable, loadable on-dem
    arrives; independent reads run in parallel; nothing waits for all of them) and **the jobs rule**
    (jobs are never in the first paint; every job read is bounded by a `--since`; the read is
    asynchronous; what is shown is cached and stamped "as of HH:MM"). Both rules are being written
-   into `.claude/rules/console.md` and `docs/design/desktop-console.md` by a concurrent console run;
+   into `.claude/rules/console.md` and `docs/desktop-console/spec.md` by a concurrent console run;
    this design cites them by those names.
 2. **The terminal is design first, no build.** [reconciliation.md](reconciliation.md) §5 is the
    design: what "the agent" is, how a typed line would reach it, who may use it, what it may do, the

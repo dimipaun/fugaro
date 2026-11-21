@@ -12,7 +12,7 @@ import (
 // The opt-in `--provision-batch` shipped in 0.9.5 with the compute module,
 // the reaper's invocation, `fugaro doctor`'s Batch half and `fugaro validate`'s
 // offline checks behind it, and its live check was never written: the design
-// (`docs/design/compute-backend.md`) measures the backend in six hand-made
+// (`docs/compute-backend/spec.md`) measures the backend in six hand-made
 // scripts (57a) and writes the post-build acceptance run (57b) in a design
 // document, not in the register. Check 124 is the register's own, and it is
 // written in four parts — 124a the plan and the two read-backs, 124b one
@@ -24,8 +24,8 @@ import (
 //
 //   - **The guard.** Check 43's three hard stops and its project pinning are
 //     the register's requirement for every check from 48 onward
-//     (docs/plans/2026-10-14-project-centric.md; Check 59's sections say the
-//     same in docs/plans/2026-10-15-desktop-console.md Task 4.3). The backstop
+//     (docs/project-centric/implementation-plan.md; Check 59's sections say the
+//     same in docs/desktop-console/implementation-plan.md Task 4.3). The backstop
 //     that would assert it register-wide (`TestChecklistChecksAreGuarded`) is
 //     **not in this tree** — internal/cli/docs_compute_backend_test.go:995
 //     asserts its absence, because the compute-backend plan's Task 12 is
@@ -281,7 +281,7 @@ func TestDocsCheck124EverySectionCarriesTheGuard(t *testing.T) {
 // The standing, read off the tree rather than off the prose:
 //
 //   - `backend: cloud-batch` is ACCEPTED by internal/localcfg (the enable
-//     task's step 1, docs/plans/2026-10-19-compute-backend.md's Task 10), and
+//     task's step 1, docs/compute-backend/implementation-plan.md's Task 10), and
 //     what reports an installation that selects it is `fugaro doctor`, which
 //     fails until every Batch check passes (internal/cli/doctor_batch.go's THE
 //     GATE). **The prose has to say the second half of that**, which the code
@@ -324,7 +324,7 @@ func TestDocsCheck124SaysWhatTheEnableChanged(t *testing.T) {
 		// reports and `fugaro run` does not read it, so the part may not read
 		// as a fence that is not there.
 		"`fugaro run` reads none of these checks",
-		"docs/plans/2026-10-19-compute-backend.md",
+		"docs/compute-backend/implementation-plan.md",
 		"124b, 124c and 124d are runnable once it has run",
 		"the gate",
 		// The healthy reading, in the direction the tree gives it: the one

@@ -2038,7 +2038,7 @@ test('a sentence comes from the gate and from the licence, and every other refus
 });
 
 // ---------------------------------------------------------------------------
-// The lapse (S6.3; D436, T12; the design is docs/design/lapse-read-only.md §4)
+// The lapse (S6.3; D436, T12; the design is docs/lapse-read-only/spec.md §4)
 // ---------------------------------------------------------------------------
 //
 // The plan's test for this task is one sentence -- "after grace the mailbox

@@ -18,7 +18,7 @@ package cli
 //
 // Two halves, three test families. TestDocsDesktopConsoleDesignCarriesTheDecisions
 // is the design's own presence test (design section 9.5 item 1): the load-bearing
-// strings of docs/design/desktop-console.md. TestDocsDesktopConsoleContractNamesEveryWatchField
+// strings of docs/desktop-console/spec.md. TestDocsDesktopConsoleContractNamesEveryWatchField
 // is the stronger half this task adds: console/docs/json-contract.md must name
 // every json tag of internal/watch/json.go's shapes, derived from the structs
 // themselves rather than from a hand-kept list, so a rename in json.go fails a
@@ -70,7 +70,7 @@ import (
 // and the owner-run table. A presence test, not a fidelity test -- a reviewer
 // reads the diff for fidelity (design section 9.5).
 func TestDocsDesktopConsoleDesignCarriesTheDecisions(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 	for _, tc := range []struct {
 		what   string
@@ -122,7 +122,7 @@ func TestDocsDesktopConsoleDesignCarriesTheDecisions(t *testing.T) {
 // red step: the owner's answers of 2026-10-15 pinned where the design records
 // them -- section 10's last column -- and the lines that record what the
 // owner's answers of 2026-10-16 do to THIS design (nothing: D22, D34 and D21
-// belong to docs/design/desktop-console-v2.md's D21-D38, and no row of
+// belong to docs/desktop-console-v2/spec.md's D21-D38, and no row of
 // section 10 moves).
 //
 // The column is read as a TABLE, not as prose, for the reason
@@ -143,7 +143,7 @@ func TestDocsDesktopConsoleDesignCarriesTheDecisions(t *testing.T) {
 // ruling and it goes where the answer is, so a cell that lost one fails here
 // rather than in review.
 func TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 
 	for _, want := range []string{
@@ -887,7 +887,7 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 	keyTokenRE := regexp.MustCompile("^[a-z][a-z0-9_]*$")
 	backtickRE := regexp.MustCompile("`([^`]+)`")
 	// The rows whose first column is a command or a flag rather than a json
-	// key: docs/design/desktop-console.md's spawn table and the flag
+	// key: docs/desktop-console/spec.md's spawn table and the flag
 	// inventory, both of which name commands, not fields. `setup` is the flag
 	// inventory's own row for the first-run wizard, whose argv arrives partly on
 	// stdin -- a word of the table, not a key of any document.
@@ -1601,7 +1601,7 @@ func firstBacktick(cell string) string {
 // forbidding the one read the picker depends on -- and the "never" table still
 // names the two entries that make a name-based list a hole.
 func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 
 	want := []string{
@@ -1950,7 +1950,7 @@ func consoleRowCommand(t *testing.T, argv string) string {
 // spelled count without moving the list; and drop a row's own command from the
 // list (the same failure from the other side).
 func TestDocsDesktopConsoleProjectFlagCensus(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	// Whitespace is normalised, as the sibling docs tests do: the sentence is
 	// wrapped across lines and a re-wrap is the same sentence.
 	doc := readDoc(t, path)
@@ -2049,7 +2049,7 @@ func TestDocsDesktopConsoleProjectFlagCensus(t *testing.T) {
 // Mutation caught: a later edit that puts the old justification back, or a
 // document whose row drops one of the two words while the code keeps it.
 func TestDocsDesktopConsoleDesignCoordinatorCutNamesThePageTheRowAdmits(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 
 	// The command's half, read off newLsCmd rather than a list kept here: the
@@ -2096,7 +2096,7 @@ func TestDocsDesktopConsoleDesignCoordinatorCutNamesThePageTheRowAdmits(t *testi
 // allow (bar the reads the design names for the console and §5.1 has no
 // row for yet).
 func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 	allowed := map[string]bool{}
 	argvs := 0
@@ -2372,7 +2372,7 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 // design's sentence and the surface's size off the constant, so the task that
 // lands an operation moves the sentence alone and edits nothing here.
 func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 	ipc := readDoc(t, consoleIpcPath)
 	spawn := readDoc(t, consoleSpawnPath)
@@ -2802,12 +2802,12 @@ var consoleLaunchPaths = map[string]bool{
 // ships, so the header named here and the cell read are the table's own.
 func planPhaseRow(t *testing.T, plan, phase string) (whatShips, row string) {
 	t.Helper()
-	for _, cells := range docTableAfter(t, "docs/plans/2026-10-14-project-centric.md", plan, "| Phase | Release | What ships |") {
+	for _, cells := range docTableAfter(t, "docs/project-centric/implementation-plan.md", plan, "| Phase | Release | What ships |") {
 		if strings.Contains(cells[0], phase) {
 			return cells[2], strings.Join(cells, " | ")
 		}
 	}
-	t.Fatalf("docs/plans/2026-10-14-project-centric.md's phase table has no row naming %q", phase)
+	t.Fatalf("docs/project-centric/implementation-plan.md's phase table has no row naming %q", phase)
 	return "", ""
 }
 
@@ -2823,7 +2823,7 @@ func planPhaseRow(t *testing.T, plan, phase string) (whatShips, row string) {
 func TestDocsDesktopConsoleContractCreditsProjectCommandsToTheRightPhase(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
-	plan := readDoc(t, "docs/plans/2026-10-14-project-centric.md")
+	plan := readDoc(t, "docs/project-centric/implementation-plan.md")
 
 	phase1, _ := planPhaseRow(t, plan, "1. Policy as data")
 	phase4, _ := planPhaseRow(t, plan, "4. Enrollment and migration")
@@ -6069,7 +6069,7 @@ func consoleReadmeSection(t *testing.T, doc, heading string) string {
 // The plan must carry the task as SECURITY-SENSITIVE, depending on Task 3.2, and
 // name it in "What ships with the MVP" and in Task 4.6.
 func TestConsoleMVPRequiresTheStartupHandshake(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "plans", "2026-10-15-desktop-console.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "desktop-console", "implementation-plan.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -6132,7 +6132,7 @@ func TestConsoleMVPRequiresTheStartupHandshake(t *testing.T) {
 // plan that promises it and a design that does not carry it is the failure mode
 // this pair of documents has to be protected from.
 func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
-	plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
+	plan := readDoc(t, "docs/desktop-console/implementation-plan.md")
 	section := func(start, end string) string {
 		i := strings.Index(plan, start)
 		if i < 0 {
@@ -6200,7 +6200,7 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	// third write and the two updater-owned locations, added by the owner's
 	// D768/D770 answers of 2026-10-30 (auto-update U5): C8's wording stays, as
 	// the earlier amendment, and the newer one sits beside it.
-	design := readDoc(t, "docs/design/desktop-console.md")
+	design := readDoc(t, "docs/desktop-console/spec.md")
 	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, the installations file, `updates.json`, `crash.json` and the licence store, and nothing else.**") {
 		t.Error("design section 5.1 rule 10 was not amended to name the app's five writes (C8's second, D768's third, the crash switch's fourth, S2.7's licence store) -- and the headline is amended in place each time, so its earlier files stay in it")
 	}
@@ -7050,7 +7050,7 @@ func (h *gateHarness) run(t *testing.T, extra ...string) (bool, string) {
 // 2.4 into the console's rewritten rule by hand, and no test failed when it
 // was dropped; this one does, for 2.4 and for any later flagged task.
 func TestPlanRule9ListsEveryFlaggedHeading(t *testing.T) {
-	plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
+	plan := readDoc(t, "docs/desktop-console/implementation-plan.md")
 	rule := regexp.MustCompile(`(?m)^9\. \*\*Security-sensitive tasks.*$`).FindString(plan)
 	if rule == "" {
 		t.Fatal("the plan has no Global Constraints rule 9")
@@ -9022,7 +9022,7 @@ func TestConsoleReleaseLinuxStagedFileIsNotTheAppliedOne(t *testing.T) {
 
 // consoleFeedFileName is the update feed's own name: electron-updater's macOS
 // manifest, which the release job writes beside the .zip (design section 7.3,
-// and Task 4.4 of docs/plans/2026-10-15-desktop-console.md -- the packer cannot
+// and Task 4.4 of docs/desktop-console/implementation-plan.md -- the packer cannot
 // write it: `build.publish` is `null` in console/package.json, so
 // electron-builder publishes nothing).
 const consoleFeedFileName = "latest-mac.yml"
@@ -9128,7 +9128,7 @@ func consoleLinesDropped(base, text string) []string {
 
 // TestDocsConsoleReleaseFeedIsStagedAndPinned holds the staged update feed to
 // what the console's auto-update needs and to nothing else (the owner's go of
-// 2026-10-30; Task 4.4 of docs/plans/2026-10-15-desktop-console.md, design
+// 2026-10-30; Task 4.4 of docs/desktop-console/implementation-plan.md, design
 // section 7.3). The macOS `release` job writes `latest-mac.yml`
 // beside the .zip it has just verified, from the tag's version and the .zip's
 // own bytes, sums it into the job's console-sha256sums.txt and uploads it with
@@ -10040,7 +10040,7 @@ const consoleSpawnPath = "console/src/main/spawn.ts"
 // "exists on every packager" justification back over `AfterPackContext`. Each
 // fails one half of this test and nothing else.
 func TestDocsConsoleLinuxFusesGoThroughThePackerContext(t *testing.T) {
-	design := readDoc(t, "docs/design/desktop-console.md")
+	design := readDoc(t, "docs/desktop-console/spec.md")
 	section := consoleReadmeSection(t, design, "### 7.6 Linux, unsigned")
 	// Flattened, because the claims below are made in prose that the file wraps:
 	// a phrase this test refuses must not be able to hide behind a line break.
@@ -10050,11 +10050,11 @@ func TestDocsConsoleLinuxFusesGoThroughThePackerContext(t *testing.T) {
 	// which platform is being packed.
 	for _, want := range []string{"afterPack", "electronPlatformName"} {
 		if !strings.Contains(section, want) {
-			t.Errorf("docs/design/desktop-console.md's §7.6 does not name %q in its fuse sentence: what decides which executable is patched on each platform is the claim that keeps the two platforms' postures identical, and %s is what decides it", want, consoleFuseHookPath)
+			t.Errorf("docs/desktop-console/spec.md's §7.6 does not name %q in its fuse sentence: what decides which executable is patched on each platform is the claim that keeps the two platforms' postures identical, and %s is what decides it", want, consoleFuseHookPath)
 		}
 	}
 	if strings.Contains(section, "process.platform") {
-		t.Errorf("docs/design/desktop-console.md's §7.6 says `process.platform` decides which executable the fuse hook patches: the hook runs in the packer's process on the build host rather than in the app, so that value is the machine doing the packing, and the hook reads electron-builder's own `context.electronPlatformName` (fuseTarget in %s) instead", consoleFuseHookPath)
+		t.Errorf("docs/desktop-console/spec.md's §7.6 says `process.platform` decides which executable the fuse hook patches: the hook runs in the packer's process on the build host rather than in the app, so that value is the machine doing the packing, and the hook reads electron-builder's own `context.electronPlatformName` (fuseTarget in %s) instead", consoleFuseHookPath)
 	}
 
 	// And the hook does what the design says it does: one platform switch, on
@@ -10103,7 +10103,7 @@ func TestDocsConsoleLinuxFusesGoThroughThePackerContext(t *testing.T) {
 // rule 5); move one entry of spawn.ts's LINUX_LOCATIONS without moving it in the
 // design; and give either platform the other's Homebrew prefix.
 func TestDocsConsoleSpawnListsCarryBothPlatforms(t *testing.T) {
-	design := readDoc(t, "docs/design/desktop-console.md")
+	design := readDoc(t, "docs/desktop-console/spec.md")
 	spawn := readDoc(t, consoleSpawnPath)
 
 	// §3.4's own rules, each bounded by the next numbered rule so that a phrase
@@ -10125,7 +10125,7 @@ func TestDocsConsoleSpawnListsCarryBothPlatforms(t *testing.T) {
 		rule := consoleNumberedRule(t, recommendation, tc.rule)
 		if !consoleContainsRun(consoleBacktickedPaths(rule), want) {
 			t.Errorf(
-				"docs/design/desktop-console.md's §3.4 rule %d does not state %s's %s in the order %s gives it (%s): rule 4 is where the console looks for the CLI and rule 5 is the `PATH` the child gets, and §7.6 and the plan send a reader here for Linux's own lists",
+				"docs/desktop-console/spec.md's §3.4 rule %d does not state %s's %s in the order %s gives it (%s): rule 4 is where the console looks for the CLI and rule 5 is the `PATH` the child gets, and §7.6 and the plan send a reader here for Linux's own lists",
 				tc.rule, tc.platform, tc.field, consoleSpawnPath, strings.Join(want, ", "),
 			)
 		}
@@ -10138,7 +10138,7 @@ func TestDocsConsoleSpawnListsCarryBothPlatforms(t *testing.T) {
 	if !strings.Contains(linux, "§3.4 rule 4") {
 		t.Errorf("§7.6 no longer cites §3.4 rule 4 for the locations Linux's CLI is resolved from, and rule 4 is where Linux's own list is stated")
 	}
-	if plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md"); !strings.Contains(plan, "§3.4 rules 4 and 5") {
+	if plan := readDoc(t, "docs/desktop-console/implementation-plan.md"); !strings.Contains(plan, "§3.4 rules 4 and 5") {
 		t.Errorf("the plan's 2026-10-20 Linux note no longer cites §3.4 rules 4 and 5 for the per-platform resolution and child-`PATH` lists, which are the two rules those lists are stated in")
 	}
 }
@@ -10793,7 +10793,7 @@ func consoleProductName(t *testing.T) string {
 // table); and restoring a bare `run` to the never table, which would read as a
 // permission for the one argv this rule writes rather than for every other one.
 func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 
 	start := strings.Index(doc, "\n11. **The launch is the console's first write")
@@ -11093,7 +11093,7 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 // `settings`, a never table that still says "single write", a screen that draws
 // a write nothing describes.
 func TestDocsDesktopConsoleDesignCarriesTheSettingsEditSections(t *testing.T) {
-	const path = "docs/design/desktop-console.md"
+	const path = "docs/desktop-console/spec.md"
 	doc := readDoc(t, path)
 
 	// §3.4 rule 3: the commands the console passes the aiming flags on. The

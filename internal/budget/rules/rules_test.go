@@ -382,7 +382,7 @@ func formatFloat(f float64) string {
 	return string(b)
 }
 
-// ---- The policy nodes (docs/design/project-centric.md §5, phase 1 task 1.2).
+// ---- The policy nodes (docs/project-centric/spec.md §5, phase 1 task 1.2).
 // These assertions run without the emulator, on the generated JSON; the emulator
 // suite (TestAllowedPaths, TestDenialTable, build tag firebase) proves the same
 // shape against the real evaluator.

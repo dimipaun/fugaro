@@ -2,7 +2,7 @@
 // See console/LICENSE.md for the terms.
 // The setup wizard's main-process half (the console-improvements plan, task
 // SW3a: D2904, O6, F15, F27; the contract is `src/shared/new-ops.ts`, task
-// C-OPS, and the design is `docs/design/desktop-console.md` section 5.1 rules 11
+// C-OPS, and the design is `docs/desktop-console/spec.md` section 5.1 rules 11
 // and 12).
 //
 // **What this module is.** The whole of a first setup that is the main

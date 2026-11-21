@@ -2580,14 +2580,14 @@ func TestDeployerPermissionCountsAreTheDocumentedNumbers(t *testing.T) {
 		t.Fatalf("the unconditioned role holds %d permissions here and %d in the golden plan; the seven conditioned roles hold %d here and D75's scoped list holds %d: R3 is stated against one list and this test reads the other",
 			unconditioned, len(deployerRoleGolden[DeployerRole]), conditioned, len(d75ScopedPermissions))
 	}
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "managed-deployer-fence", "spec.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	doc := strings.Join(strings.Fields(string(b)), " ")
 	want := fmt.Sprintf("The %d + %d permissions are D75's", unconditioned, conditioned)
 	if !strings.Contains(doc, want) {
-		t.Errorf("docs/design/managed-deployer-fence.md's R3 does not state %q: the tree holds %d permissions in %s and %d across the seven conditioned roles, and R3's claim is that no permission was added, removed or moved between the halves", want, unconditioned, DeployerRole, conditioned)
+		t.Errorf("docs/managed-deployer-fence/spec.md's R3 does not state %q: the tree holds %d permissions in %s and %d across the seven conditioned roles, and R3's claim is that no permission was added, removed or moved between the halves", want, unconditioned, DeployerRole, conditioned)
 	}
 }
 
@@ -2629,7 +2629,7 @@ func TestDeployerOperatorCountMatchesTheRecordedDefect(t *testing.T) {
 // Storage, whose two clauses carry two && and the || between them.
 //
 // This is the number Check 68's C1 step expects and the number
-// docs/design/managed-projects.md states, and they are the same number or the
+// docs/managed-projects/spec.md states, and they are the same number or the
 // live check measures a different expression from the one the tree writes. A
 // reader who counts the operator only when it joins two clauses reads these
 // conditions as 0 and 1, which is not the count IAM refuses on and not the count
@@ -2690,7 +2690,7 @@ var deployerExtractAnchors = map[string]string{
 // resource.name.extract a template that carries ONE placeholder, written
 // {name}, with literal text around it, and returning the text that placeholder
 // matched — and it records that reading as UNVERIFIED, because no source in this
-// tree quotes the reference's text for it (docs/design/managed-deployer-fence.md,
+// tree quotes the reference's text for it (docs/managed-deployer-fence/spec.md,
 // "What this document does not claim"). The first cut of this fence used a
 // multi-placeholder template — extract("projects/{project}/secrets/{secret}") —
 // which is not that form, and the failure it invites is the 0.8.6 outage again:
@@ -2765,8 +2765,8 @@ func TestDeployerExtractTemplatesAreTheRecordedForm(t *testing.T) {
 // this test reads the three files that carry the claim and refuses the settled
 // wording in all of them.
 func TestDeployerExtractRuleIsRecordedAsUnverified(t *testing.T) {
-	const designPath = "docs/design/managed-deployer-fence.md"
-	docBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	const designPath = "docs/managed-deployer-fence/spec.md"
+	docBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "managed-deployer-fence", "spec.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2802,14 +2802,14 @@ func TestDeployerExtractRuleIsRecordedAsUnverified(t *testing.T) {
 	}
 	// Every file that states the rule: each may state the reading, and none may
 	// promote it to a citation. The phrases are the ones the settled label was
-	// written in. docs/design/managed-projects.md is here because the round-5
+	// written in. docs/managed-projects/spec.md is here because the round-5
 	// revert left its 0.10.0 note saying C7 was "settled by the documented
 	// semantics" — a security-relevant reading the design of record holds
 	// UNVERIFIED — and a scan that stopped at the module and this package could
 	// not see it.
 	for _, path := range []string{
 		filepath.Join("..", "..", "..", "deploy", "terraform", "gcp", "modules", "installation", "deployer.tf"),
-		filepath.Join("..", "..", "..", "docs", "design", "managed-projects.md"),
+		filepath.Join("..", "..", "..", "docs", "managed-projects", "spec.md"),
 		filepath.Join("..", "..", "..", "SECURITY.md"),
 		filepath.Join("..", "..", "..", "website", "content", "security.md"),
 		"cover.go",
@@ -2865,7 +2865,7 @@ func TestDeployerExtractRuleIsRecordedAsUnverified(t *testing.T) {
 // Mutation (verified, run and restored): put "title" back into the sentence —
 // this fails naming both lists.
 func TestDeployerDesignNamesTheModelFields(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "managed-deployer-fence", "spec.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2907,7 +2907,7 @@ func TestDeployerDesignNamesTheModelFields(t *testing.T) {
 // Mutation (verified, run and restored): put the old clause back into the
 // design — this fails naming it.
 func TestDeployerDesignSaysWhatTheCoverEnforces(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "managed-deployer-fence", "spec.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3668,7 +3668,7 @@ func TestDeployerRoleCreationRefusesComputedProjectRolesForEitherRole(t *testing
 // Mutation (verified, run and restored): "F5's table below" back to "above", and
 // "§9 below" in §0 to "§9 above" — each fails here naming the reference.
 func TestDeployerDesignDirectionalReferencesPointTheRightWay(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "managed-deployer-fence", "spec.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

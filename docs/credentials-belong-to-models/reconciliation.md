@@ -363,7 +363,7 @@ repository's own `fugaro.yaml` writes `auth: api-key`. Commands write the retire
 because it would turn the cascade off. Messages phrased by auth sit in
 `internal/infra/retire.go`, `internal/runner/halt.go`, `internal/budget/lease.go` and
 `session.go`. Documents: `console/docs/json-contract.md` defines `auth` and `notional` by the
-auth mode; `docs/design/project-secrets.md`, `docs/design/v1.md` and `docs/release.md` use the
+auth mode; `docs/project-secrets/spec.md`, `docs/design/v1.md` and `docs/release.md` use the
 phrasing. The counts of F1 and F18 are about: a second count gave 65 files and 76 occurrences in
 27. Consequence: each is given to a task (CM3, CM8, CM12, CM13, CM14, CM20, CM21, CM26, CM34).
 

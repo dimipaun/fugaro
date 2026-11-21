@@ -73,7 +73,7 @@ answered from the code.
 | **D951** | What can the offline check answer? | The table in spec §7: the plugin install, the pin, the base image and the local image config **yes**; the deployed rules generation, the published policy node and the CLI's own release **no, and said to be skipped** | Pretend to answer them: a guessed "ok" on a credential-only fact is the silent pass `doctor`'s `unread` state exists to prevent | |
 | **D952** | Does the session-start check reach the network? | **No.** Detecting a newer release stays opt-in (`doctor`'s own `cli-version` check in the full run, `internal/cli/doctor.go:172`) and the skills never trigger it | Check the network at session start: an agent that reaches out on the user's behalf, unasked, at the start of every session — and a check that fails offline, which is the state a nudge must survive | |
 | **D953** | What becomes of the `upgrade` skill? | **The `update` skill**: same job (check, explain, hand over the one command), `plugin/skills/upgrade/` renamed to `plugin/skills/update/`, its body rewritten for two commands, `plugin/plugin_test.go:134`'s list swapped one for one | Drop the skill: the one place a user's agent is told how to read the converge's verdict, and its `plugin/` coverage, go with it | |
-| **D954** | A teammate who is not the owner runs `fugaro update`: what makes it reach the plugin? | **A machine-local stage is not blocked by a cloud stage that stopped.** `initflow` gains the marker the tree keeps by hand three times (`LocalUnderAgent`, `newMachineGuard`'s name list, `NeedsBilling`'s case list), the plugin stage implements it, `converge` runs it even after `stopped != ""` and says so in the stage's line, and `newMachineGuard` reads the marker instead of `initflow.Plugin` (spec §11, U8) | Move the plugin stage to just after `installation` (`init_stages.go:169`): a smaller diff, at the cost of a plugin stage's needs-you ending the run **before** the images, secrets and repository work the owner's run does today — and of a stage order the plan view and `docs/design/upgrade.md` show every reader | **Answered 2026-11-04, as recommended.** A machine-local stage marker: the third marker the tree keeps by hand is the one `initflow` gains, `converge` runs the marked stage even after a cloud stage stopped, and `newMachineGuard` reads the marker instead of naming `Plugin` — because a teammate's run must not end before the images, secrets and repository work, and a stage order every reader can see is not worth redrawing |
+| **D954** | A teammate who is not the owner runs `fugaro update`: what makes it reach the plugin? | **A machine-local stage is not blocked by a cloud stage that stopped.** `initflow` gains the marker the tree keeps by hand three times (`LocalUnderAgent`, `newMachineGuard`'s name list, `NeedsBilling`'s case list), the plugin stage implements it, `converge` runs it even after `stopped != ""` and says so in the stage's line, and `newMachineGuard` reads the marker instead of `initflow.Plugin` (spec §11, U8) | Move the plugin stage to just after `installation` (`init_stages.go:169`): a smaller diff, at the cost of a plugin stage's needs-you ending the run **before** the images, secrets and repository work the owner's run does today — and of a stage order the plan view and `docs/upgrade/spec.md` show every reader | **Answered 2026-11-04, as recommended.** A machine-local stage marker: the third marker the tree keeps by hand is the one `initflow` gains, `converge` runs the marked stage even after a cloud stage stopped, and `newMachineGuard` reads the marker instead of naming `Plugin` — because a teammate's run must not end before the images, secrets and repository work, and a stage order every reader can see is not worth redrawing |
 | **D955** | Does the user-scope plugin install still need the checkout's repository authorised? | **No — the gate is the pin's.** The install half drops `authState`/`enrolling()` and the need for a checkout at all (outside one it prints the pin's snippet and skips today); the gate stays for the checkout write U5 adds, and for the pin's `--pin` path (spec §11, U8) | Keep the gate: every teammate is sent to `fugaro setup` — a second command — before their own machine's plugin is installed, for a write that is not the repository's, and a new machine's config lists no repositories anyway | |
 
 **Why these numbers.** The block was read by hand on 2026-11-01 and re-read by the launcher on
@@ -120,7 +120,7 @@ tree were busier than it is, which is how an earlier draft of this section repor
 | files naming `fugaro upgrade` | 120 | 119 | 115 | **119** |
 | occurrences | 507 | 531 | 488 | **544** |
 | of which this directory's documents | 0 (it did not exist) | 4 files, 41 occurrences | 0 | **4 files, 56 occurrences** |
-| `docs/plans/2026-10-08-upgrade.md` | 126 lines, 147 occurrences | 126 lines, 147 occurrences | 126 lines, 147 occurrences | **126 lines, 147 occurrences** |
+| `docs/upgrade/implementation-plan.md` | 126 lines, 147 occurrences | 126 lines, 147 occurrences | 126 lines, 147 occurrences | **126 lines, 147 occurrences** |
 | bare `upgrade`, `-w` (word boundary) | 259 files, 1377 occurrences | 260 files, 1471 occurrences | 280 files, 1449 occurrences | **284 files, 1585 occurrences** |
 
 Read the four columns with the method in the command block above, because an earlier draft of this table
@@ -171,10 +171,10 @@ plan's own file lists name these per task):
 - **The skills:** `plugin/skills/upgrade/SKILL.md` (10), `plugin/skills/upgrade/reference/states.md` (4),
   `plugin/skills/working/reference/followup.md`.
 - **The living docs:** `README.md`, `CLAUDE.md`, `docs/release.md` (forbidden to this PR; a later task
-  owns it), `.claude/skills/new-release/SKILL.md`, `docs/design/upgrade.md` (14),
+  owns it), `.claude/skills/new-release/SKILL.md`, `docs/upgrade/spec.md` (14),
   `docs/design/v1.md`, `docs/policy-migration.md`, `docs/base-image-migration.md`,
   `docs/multi-model.md`, `docs/project-layer.md`, `docs/project-claude-accounts.md`,
-  `docs/setup-wizard-w2.4-already-landed.md`, `docs/settings-commands/*`, and the design docs under
+  `docs/setup-wizard/w2.4-already-landed.md`, `docs/settings-commands/*`, and the design docs under
   `docs/design/` and `docs/credentials-service/`, `docs/setup-wizard/`, `docs/task-governance/`,
   `docs/website/`, `docs/windows-cli/` that name the command in passing.
 - **The website and the console:** `website/content/cli-reference.md`, `website/data/install.yaml`,
@@ -192,7 +192,7 @@ keeps its own spelling" and translates the old spelling instead (see §5). **The
 Release notes from 0.15.0 on do not name the command at all, which is the census telling the same story
 as D950.
 
-**Class 3 — historical plans that name the design being replaced.** `docs/design/upgrade.md` is *not* a
+**Class 3 — historical plans that name the design being replaced.** `docs/upgrade/spec.md` is *not* a
 dated record: it is the living design of the command being retired and it is pinned by a test. U6 owns
 it.
 
@@ -213,7 +213,7 @@ update-skills` where the plugin alone is (D948), the second becomes `fugaro upda
 
 | Test | What it holds | Task |
 | --- | --- | --- |
-| `internal/cli/docs_upgrade_test.go` (`TestDocsNameUpgrade`, `TestDocsDesignListsEveryUpgradeStep`) | `fugaro upgrade` and its real flags in `README.md`, `docs/release.md`, `.claude/skills/new-release/SKILL.md`, `docs/design/v1.md`; the `brew upgrade … && fugaro upgrade` sentence; `/fugaro:upgrade`'s README line; `docs/design/upgrade.md`'s five-step list | U6 |
+| `internal/cli/docs_upgrade_test.go` (`TestDocsNameUpgrade`, `TestDocsDesignListsEveryUpgradeStep`) | `fugaro upgrade` and its real flags in `README.md`, `docs/release.md`, `.claude/skills/new-release/SKILL.md`, `docs/design/v1.md`; the `brew upgrade … && fugaro upgrade` sentence; `/fugaro:upgrade`'s README line; `docs/upgrade/spec.md`'s five-step list | U6 |
 | `internal/cli/docs_upgrade_local_test.go` | `--local`'s own doc pin | U6 |
 | `internal/cli/upgrade_skill_doc_test.go` (`TestUpgradeSkillNamesEveryState`) | reads `plugin/skills/upgrade/reference/states.md` at that path and checks every `stepStates` and every `upgradeSteps` name, plus `--check`/`--local` on the command | U5, U6 |
 | `internal/cli/docs_release_notes_test.go` | **pins `{"upgrade","local"}` and `{"upgrade",""}` against `docs/releases/v0.9.0.md`, which must not be edited** — the resolution is the file's own precedent: `notesCommand` already translates a dated spelling (`init` → `setup`, `:441`) and `notesFlag` already translates `--firebase` → `--firebase-project` (`:453`), both under "these notes are a dated record that keeps its own spelling". U4 adds the same two translations (`upgrade` → `update`, and `--local` → the bare command) and re-points `notesCommand`'s paths | U4 |
@@ -237,12 +237,12 @@ settings.go}`, `plugin/skills/{upgrade/SKILL.md,upgrade/reference/states.md,setu
 `plugin/{plugin_test.go,skills_lint_test.go,readme_test.go,upgrade_skill_test.go,skillcli_test.go}`,
 `internal/cli/{docs_upgrade_test.go,docs_upgrade_local_test.go,upgrade_skill_doc_test.go,
 docs_release_notes_test.go,docs_project_centric_test.go,docs_project_named_oauth_tokens_test.go}`,
-`docs/design/upgrade.md`, `docs/backlog/README.md`, and the numbers blocks of `docs/rigor-command/`,
+`docs/upgrade/spec.md`, `docs/backlog/README.md`, and the numbers blocks of `docs/rigor-command/`,
 `docs/models-commands/` and the three open pull requests' design directories.
 
 **Counted, not read line by line:** the rest of §4's census. Each task re-runs the greps rather than
 trusting these counts, and a task that finds a cited symbol gone **stops and reports** rather than
-inventing a replacement — the rule `docs/plans/2026-10-08-upgrade.md` set for its own tasks.
+inventing a replacement — the rule `docs/upgrade/implementation-plan.md` set for its own tasks.
 
 ## 7. What the merged tree changed, and this round's answer (2026-11-01)
 

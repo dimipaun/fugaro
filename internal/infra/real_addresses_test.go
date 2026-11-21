@@ -16,7 +16,7 @@ import (
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
 )
 
-// This is the one step of docs/plans/2026-10-14-config-transitions.md that
+// This is the one step of docs/config-transitions/implementation-plan.md that
 // reaches outside the repository, and it is gated so that CI never does:
 // .github/workflows/ci.yml runs `go test -tags terraform ./internal/infra/...`,
 // which compiles and vets this file but must not download a provider. The

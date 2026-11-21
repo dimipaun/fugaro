@@ -440,7 +440,7 @@ func applyExtensions(root *cobra.Command) {
 		// registers it): the honest answer there is cobra's own "unknown
 		// command", which is what the design says the message is for anyway —
 		// it appears only in untagged/core builds (§6 of
-		// docs/design/ee-boundary-moves.md).
+		// docs/ee-reorg/boundary-moves.md).
 		if Edition() == EditionEE {
 			continue
 		}

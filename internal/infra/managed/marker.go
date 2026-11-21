@@ -2,7 +2,7 @@
 // object the run that created the project writes at the root of the runs
 // bucket, and (the task after this one) the read that fails closed over it.
 // The object is the authority for whether confirmations may be skipped
-// (docs/design/managed-projects.md, decisions D56 and D57), so no
+// (docs/managed-projects/spec.md, decisions D56 and D57), so no
 // credential a run holds may have a write path to it — the shape of that,
 // and the tests that assert it, are in this file's WriteMarker and its
 // test.
@@ -610,7 +610,7 @@ func writeManagedLabel(ctx context.Context, c *crm.Service, project, who string)
 }
 
 // WriteFlag records the owner's statement that an EXISTING project is
-// managed (docs/design/managed-projects.md, D58; the plan's Task 6.1) — the
+// managed (docs/managed-projects/spec.md, D58; the plan's Task 6.1) — the
 // second way a project becomes managed, and the only one that does not need
 // a creation.
 //

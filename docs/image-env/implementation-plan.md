@@ -69,7 +69,7 @@ the report and the rule (D1383) and is never worse than the tree it replaces.
 | `internal/runner/agentenv.go` | IE2 | `parentEnv()` and the env plumbing the subtraction belongs with |
 | `internal/runner/runner.go` | IE2 | **reserved: one writer across work streams.** IE2 takes it for exactly one call site (`:2294-2312`) and says so in its pull request; if the subtraction turns out to need a second site, IE2 takes the file alone and reports it rather than editing it silently |
 | `internal/cli/doctor.go`, `doctor_render.go`, `doctor_launcher.go` | IE3 | the report's command, its renderer and the job read it needs. No other task here touches `internal/cli` |
-| `docs/base-image.md`, `docs/design/base-image.md` | IE4 | the two sentences F2 found, in the same commit |
+| `docs/base-image.md`, `docs/base-image/spec.md` | IE4 | the two sentences F2 found, in the same commit |
 | `plugin/skills/working/SKILL.md` | IE4 | the catalog bullet's one clause |
 | `docs/gcp-live-checklist.md` | IE4 | **only** the check's own section and summary row, written by the task that implements it, under the register's own rule |
 
@@ -257,7 +257,7 @@ that describes behaviour; IE1 and IE3 alone for the half that states the rule. *
 standard, with `go test ./internal/cli/ -run 'Docs|Backlog'` and `go test ./plugin/` run in the same
 pull request.
 
-- **Files:** `docs/base-image.md`, `docs/design/base-image.md`, `plugin/skills/working/SKILL.md`,
+- **Files:** `docs/base-image.md`, `docs/base-image/spec.md`, `plugin/skills/working/SKILL.md`,
   `docs/gcp-live-checklist.md` (the check's section and its summary row), and — only if a docs test
   pins the sentence that moves — the `internal/cli/docs_*_test.go` file that pins it. **At most 6
   files, and at most one pin file.**
@@ -270,7 +270,7 @@ pull request.
   last), **what a reader does about it** (`fugaro doctor --all` names what a job drops, per job), and
   **what is not promised** (a per-repository image passes nothing; a value in an image is not a secret
   and is not redacted, so never bake a credential into one — the rule `docs/base-image.md:28` already
-  has). `docs/design/base-image.md` §6's allowlist sentence (`:167`) gains the pointer to it, so the two
+  has). `docs/base-image/spec.md` §6's allowlist sentence (`:167`) gains the pointer to it, so the two
   stop contradicting the code. `plugin/skills/working/SKILL.md`'s catalog bullet gains one clause: a
   catalog image's `ENV` reaches the run except the reserved names, and `fugaro doctor --all` names what
   a job drops. **The check's section in the register is written by whoever implements the check, under
@@ -287,7 +287,7 @@ pull request.
   the CLI does not have (`fugaro doctor --all` exists, so the clause is legal — the red step is taken
   by writing the clause first with the wrong flag and quoting the failure).
 - **Mutation to hold it:** write the sentence as *"an image's `ENV` reaches the agent"* with no
-  reservation clause, and `docs/design/base-image.md` §6's allowlist sentence (`:167`) then contradicts
+  reservation clause, and `docs/base-image/spec.md` §6's allowlist sentence (`:167`) then contradicts
   the file it points at — the docs pin over that section fails. Second: name `fugaro doctor --env` in
   the skill → the plugin's command population fails.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Docs|Backlog' -count=1 -timeout 40m` and
@@ -301,7 +301,7 @@ pull request.
   re-slot that moved that design to 0.20.0 is **#1709, which merged**, and the removal itself is
   **not built** on `main`). No task here reads or changes it, and none depends on it (F17).
 - **A plain `env:` map on a workflow or a project profile** (option 2, O1): it is the design
-  `docs/design/agent-env.md` already is, unbuilt, and its §2 rule is that the allow-list is Fugaro's own
+  `docs/agent-env/spec.md` already is, unbuilt, and its §2 rule is that the allow-list is Fugaro's own
   Go code and never a `fugaro.yaml` field. If the owner ever wants a value with no rebuild, that design
   is the place to rule it — this plan adds no config key and no wire field, and its one schema edit
   (O4's `BATCH_` in the `env` pattern) is a name added to a list that already exists.

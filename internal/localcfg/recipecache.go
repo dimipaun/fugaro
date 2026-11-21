@@ -13,7 +13,7 @@ import (
 )
 
 // recipeCachePath is $XDG_CACHE_HOME/fugaro/recipes/<project>/<name>.json,
-// else under ~/.cache (decision D9 of docs/plans/2026-10-07-recipes.md).
+// else under ~/.cache (decision D9 of docs/recipes/implementation-plan.md).
 func recipeCachePath(getenv func(string) string, project, name string) (string, error) {
 	if !recipe.NameRE.MatchString(name) {
 		return "", fmt.Errorf("%q is not a recipe name", name)

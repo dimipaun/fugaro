@@ -51,7 +51,7 @@ package workspace
 // A person is present or absent, and the ROLE is reported as the side that
 // stated it spells it. That is deliberate and it is not a shortcut: Fugaro's
 // three roles each map to several IAM roles and the member's own Terraform is
-// what applies them (`docs/design/roles.md` §1-§2, D2801), so a role-by-role
+// what applies them (`docs/roles/spec.md` §1-§2, D2801), so a role-by-role
 // comparison would report every healthy member as drifted. What a machine's
 // entry carries is the role the node RECORDS for it -- the plan D2806 says
 // `status` compares against the live IAM -- and the report keeps it there.
@@ -60,7 +60,7 @@ package workspace
 // RULE this comparison makes: a binding that comes with `roles/owner`,
 // `roles/editor` or the budget admin's role makes its holder an admin of the
 // member whatever else is true (D689, threat-model.md §3), and those are an
-// admin's roles -- `docs/design/roles.md` §2 gives an admin `roles/owner` and
+// admin's roles -- `docs/roles/spec.md` §2 gives an admin `roles/owner` and
 // `roles/editor` and the budget admin's write, and gives a viewer or an operator
 // none of them. So a principal the record states as viewer or operator that holds
 // one of them anyway is the member's admin with a row that does not say so, and
@@ -134,7 +134,7 @@ const (
 // driftImplicitAdminRoles are the roles that come with an account rather than
 // from a grant, on a member's projects: a project's owners and editors hold its
 // database write, and so does a budget admin (threat-model.md §3, D689,
-// `docs/design/roles.md` §1).
+// `docs/roles/spec.md` §1).
 var driftImplicitAdminRoles = []string{"roles/owner", "roles/editor", "roles/firebasedatabase.admin"}
 
 // MemberGrant is one grant of the MEMBER's own roster, as the caller read it

@@ -298,7 +298,7 @@ type dockerCommand struct {
 // dockerFlagsTheWorkerTakes is what every step this package generates may hand
 // the docker CLI, per subcommand. The worker's docker is the pinned base image's
 // — the CLI with BuildKit behind it and no buildx plugin
-// (docs/design/base-image.md) — and `--build-context` is deliberately not here:
+// (docs/base-image/spec.md) — and `--build-context` is deliberately not here:
 // it is a buildx flag, and the template's plain `docker build` answers it with
 // "unknown flag" and exit 125. The checkout reaches an entry's build as an image
 // instead (catalogCloneImage).

@@ -2519,7 +2519,7 @@ func equalJSON(a, b any) bool {
 }
 
 // TestLaunchRefusesASecretEnv is the Batch half of the seal's carrier
-// (docs/design/budget-token-channel.md, "The Batch backend refuses a sealed
+// (docs/budget-token-channel/spec.md, "The Batch backend refuses a sealed
 // launch"): a Batch job has no per-execution override, so the only place a
 // launch's variable can go is the job definition's plain variables, which
 // every launcher (batch.jobsEditor) and the reaper (batch.jobs.get) read back
@@ -2614,7 +2614,7 @@ func TestLaunchRefusesASecretEnv(t *testing.T) {
 	// holds this file and those documents to the same sentence.
 	for _, want := range []string{
 		"the job's definition",
-		"docs/design/budget-token-channel.md",
+		"docs/budget-token-channel/spec.md",
 		"cannot launch any run on Batch",
 		"a budget database with budget mode on, or a published policy",
 	} {

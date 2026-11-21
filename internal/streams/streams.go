@@ -12,7 +12,7 @@
 // release notes, and the graph and the release script are the two places a name
 // or a version is spent.
 //
-// The file is untrusted in the sense docs/design/desktop-console.md §5.1 gives
+// The file is untrusted in the sense docs/desktop-console/spec.md §5.1 gives
 // the word: a contributor's branch writes it, and what it carries is compared
 // against a release and put on a screen. So Read and Parse refuse rather than
 // repair — a symlink, a file over MaxBytes, YAML anchors and aliases, a key this

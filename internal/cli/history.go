@@ -185,7 +185,7 @@ func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string
 	// §2.3) -- so the sweep falls back to exactly the rule that already
 	// carries every live run, the heartbeat the runner writes on either
 	// backend. What that leaves is the window that staleness window bounds,
-	// stated in docs/design/compute-backend.md §9 rather than closed here: the
+	// stated in docs/compute-backend/spec.md §9 rather than closed here: the
 	// job's environment carries no backend name to key a refusal on
 	// (deploy/terraform/gcp/modules/installation/history.tf), and its account
 	// holds no Batch read to ask the platform with, so a refusal would have to

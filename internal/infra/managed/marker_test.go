@@ -2881,7 +2881,7 @@ var labelWriteRoles = map[string]bool{
 // same grants checkRunAccountGrant and checkBucketGrant read, and it is the
 // plan's Open item 2 answered by meeting it rather than by falling back to
 // it: the fixture could be written, so the label is not refused for want of
-// one (docs/plans/2026-10-18-managed-projects-task-3.0-decisions.md §6).
+// one (docs/managed-projects/task-3.0-decisions.md §6).
 //
 // Members that are a set of people are skipped, exactly as they are above:
 // the operators' own accounts hold resourcemanager.projects.update by

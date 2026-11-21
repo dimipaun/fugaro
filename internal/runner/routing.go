@@ -14,7 +14,7 @@ import (
 )
 
 // applyRouting rewrites the run's Claude pins through the project's routing
-// switch (design docs/design/project-centric.md §6.2, D1a/D1b; plan Task 1b.2).
+// switch (design docs/project-centric/spec.md §6.2, D1a/D1b; plan Task 1b.2).
 //
 // It is the one place a run applies the switch, and it applies it *once*, to
 // the configuration every consumer already reads: after it, a pin the switch

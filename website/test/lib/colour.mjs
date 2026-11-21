@@ -5,7 +5,7 @@
 // that sentence true and they have to compute a ratio the same way — `website/test/a11y.mjs`,
 // which holds every designed pair of every palette to WCAG 2.1 AA, and
 // `website/test/how-it-works.mjs`, which holds the run drawing's own labels to the surface
-// they are drawn on. `docs/design/console-styling.md` states the rule this file exists for,
+// they are drawn on. `docs/console-styling/spec.md` states the rule this file exists for,
 // of the console's token test: the arithmetic is one implementation, not two.
 //
 // A palette value has to be an opaque hex literal, and a value that is not is refused rather

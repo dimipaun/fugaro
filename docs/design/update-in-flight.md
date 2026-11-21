@@ -174,7 +174,7 @@ started with; a template update — Terraform's, or `fugaro image refresh`'s dir
 `jobs.patch` — reaches the next execution. The repository states this as a
 consequence (`docs/bitbucket-workspace-token/reconciliation.md`, F3: "Executions
 already running keep the old value until they end") and the direct patch as an
-unverified-until-live claim (`docs/design/image-refresh.md`, "The check job and
+unverified-until-live claim (`docs/image-refresh/spec.md`, "The check job and
 Terraform"; `docs/gcp-live-checklist.md`, Check 30, USER-RUN). Nothing in the
 update cancels, drains or deletes an execution: `fugaro cancel` is the only path
 that does (`internal/cli/cancel.go`, `backend.Cancel`, `internal/backend/gcp/run.go`).

@@ -1,5 +1,5 @@
 // Package recipe is the format of a Fugaro recipe: the named, selectable
-// task loop that follows the implement stage (docs/design/recipes.md). It is
+// task loop that follows the implement stage (docs/recipes/spec.md). It is
 // pure: no I/O, no config, no runner. A recipe is untrusted input wherever it
 // comes from, so Parse refuses, never repairs.
 package recipe

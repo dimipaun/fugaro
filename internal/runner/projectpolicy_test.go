@@ -467,7 +467,7 @@ func TestRunnerWithNoBackendAndAnUnreadableBucketStops(t *testing.T) {
 // noListBucket is the runs bucket as a job account sees it: its grant on
 // tokens/ is a conditioned objectViewer with no storage.objects.list, so GCS
 // answers its read of a missing token object with 403, not 404
-// (docs/design/bucket-iam.md §2.3, live check 7).
+// (docs/bucket-iam/spec.md §2.3, live check 7).
 func noListBucket(t *testing.T) (*gcpfake.GCS, *blobx.Bucket) {
 	t.Helper()
 	gcs := gcpfake.NewGCS(t)
@@ -534,7 +534,7 @@ func TestRunnerWithNoBackendAndAStrayTokenRefuses(t *testing.T) {
 // A present token object whose read is refused with a 403 — the job account
 // holds no grant on tokens/ — answers exactly what a missing object answers a
 // caller without list permission, so the bucket read cannot be the evidence
-// here (docs/design/budget-token-channel.md §4 principle 3: the marker is).
+// here (docs/budget-token-channel/spec.md §4 principle 3: the marker is).
 // Every launcher that writes under tokens/ seals the object and hands its key
 // to the execution as the marker (internal/cli's mintBudgetToken and
 // sealMarker), so the real form of this state carries the marker, and that run

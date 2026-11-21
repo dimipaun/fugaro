@@ -517,7 +517,7 @@ func TestPendingApplyNamesAnUnpublishedAdmin(t *testing.T) {
 
 	// A read that is refused is not an absent object. GCS answers 403 for a
 	// missing object to a caller that holds the get but not the list
-	// (AnswerMissingAs403, docs/design/bucket-iam.md), and a member reported
+	// (AnswerMissingAs403, docs/bucket-iam/spec.md), and a member reported
 	// clean because a read was denied is what the fail-closed rule forbids. The
 	// object really is absent here — a rig of its own, whose runs bucket never
 	// held a list — because a 403 beside an object that IS there would be the

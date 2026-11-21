@@ -1,7 +1,7 @@
 locals {
   # Every secret a workflow may mount, by logical name: the repository's own
   # containers, overlaid with the project-wide ones Readiness resolved for
-  # this repository (repo.project_secrets, design docs/design/project-secrets.md
+  # this repository (repo.project_secrets, design docs/project-secrets/spec.md
   # §5). Readiness only resolves a project copy for a name whose repo copy has
   # no enabled version, so a name in both maps is exactly the "the repo
   # override is gone" case and the project value is the right one; merge()

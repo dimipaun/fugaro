@@ -1,5 +1,5 @@
 // Package projectpolicy is the project policy object of the project-centric
-// model (docs/design/project-centric.md §5): one readable node,
+// model (docs/project-centric/spec.md §5): one readable node,
 // config/policy/shared, its per-repository children under
 // config/policy/repos/$slug, and the admin-only config/admin.
 //
@@ -227,7 +227,7 @@ type Policy struct {
 	// It is the same member as DefaultClaudeAccount from the other side, copied
 	// by the same publish and refused in the shared file for the same reason,
 	// and it is one of the two keys that give an api-key run the one Claude
-	// account the ruling admits (docs/design/mixed-credentials.md §11): this
+	// account the ruling admits (docs/mixed-credentials/spec.md §11): this
 	// one is the stage's own declaration, DefaultClaudeAccount the project's
 	// (owner ruling 2026-11-05, which takes rung 4 too where the stage's own
 	// model is an Anthropic one). Which stage may take an account either way is
@@ -388,7 +388,7 @@ type Policy struct {
 	// sharper one: the floor exists to stop a launcher turning review off,
 	// and the shared file is writable by any launcher, so a floor there could
 	// be dropped by the very launcher it is meant to bind
-	// (docs/design/bucket-iam.md §10 L1, L2). `fugaro project policy publish`
+	// (docs/bucket-iam/spec.md §10 L1, L2). `fugaro project policy publish`
 	// writes it from the owner's project config, and the runner reads the
 	// node at bootstrap and merges the floor as a union (internal/policy's
 	// Merge): a lower layer can add a level and never remove one.
@@ -408,7 +408,7 @@ type Policy struct {
 	// It belongs to this node for the reason ReviewFloor does: it decides how
 	// much review a run gets, so a launcher must not be able to move it, and
 	// the shared file and the task are both launcher-written
-	// (docs/design/bucket-iam.md §10 L1, L2). The repository's own
+	// (docs/bucket-iam/spec.md §10 L1, L2). The repository's own
 	// agent.triage is the other home, and it is the *only* one a repository
 	// has: a run merges the node's answer over the file's as the stricter of
 	// the two (internal/policy's Merge), so a repository may turn the stage off
@@ -430,7 +430,7 @@ type Policy struct {
 	//
 	// It belongs to this node for Triage's reason: it decides how much review a
 	// run gets, so a launcher must not be able to move it, and the shared file
-	// and the task are both launcher-written (docs/design/bucket-iam.md §10 L1,
+	// and the task are both launcher-written (docs/bucket-iam/spec.md §10 L1,
 	// L2). The repository's own agent.review_against_task is the other home, and
 	// the merge between the two takes ON as the stricter value
 	// (internal/policy's Merge, the inverse of triage): the node's true is not
@@ -763,7 +763,7 @@ type Budget struct {
 // drift no test can see, because each side would be self-consistent.
 //
 // RequireZDR and PricePolicy are the two price-catalogue switches
-// (docs/design/provider-price-catalog.md D3). They live on the carrier
+// (docs/provider-price-catalog/spec.md D3). They live on the carrier
 // (config.ModelProvider, beside RouteFeePct) and are NOT respelled here: a
 // second declaration of the same key would be shadowed rather than merged,
 // and — because Provider embeds a carrier that has its own UnmarshalYAML —
@@ -776,7 +776,7 @@ type Provider struct {
 	config.ModelProvider
 }
 
-// The values price_policy accepts (docs/design/provider-price-catalog.md D3),
+// The values price_policy accepts (docs/provider-price-catalog/spec.md D3),
 // spelled here as the policy spells them. They are config's own values, kept
 // as constants of this package too so a reader of a policy need not import
 // internal/config to name one.

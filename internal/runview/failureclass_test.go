@@ -3,7 +3,7 @@ package runview
 // A record written before failure_class shipped carries no class, and the
 // report the field exists for is about the last seven days — so the reader
 // classes an old record from its reason, with one fixed table, and never
-// writes the answer back (docs/design/failure-classes.md §5).
+// writes the answer back (docs/failure-classes/design.md §5).
 //
 // What these tests hold is the two halves of that sentence: the table reads
 // the reasons the runner already writes the way the design's §5 lists them,
