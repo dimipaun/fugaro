@@ -202,6 +202,12 @@ type workspaceProjectAdd struct {
 	// member the workspace holds (R14). An entry of it that is not a person of
 	// the workspace's own roster is another workspace's (R2).
 	mirror workspace.MemberDoc
+	// mirrorEntries are that document's entries, as they were read: what the
+	// list the member holds now is compared against before this add decides
+	// whether it has anything to write there. A member's list that does not
+	// name a person the workspace's roster holds is one this add rewrites, so
+	// the sentence it prints about the list is true of the list it leaves.
+	mirrorEntries []workspace.MirrorEntry
 	// adopt are the member's grantees that are not people of the workspace yet,
 	// each with the external mark D2812 gives it.
 	adopt []workspace.Person
@@ -354,6 +360,7 @@ func (a *workspaceProjectAdd) readLinked(ctx context.Context, auth workspace.Aut
 		return userErr("project %s's own member list at %s: %v. It is the member's own document and this add replaces it with the workspace's own list, so it reads one it can trust or writes nothing",
 			safetext.Field(a.member.Project), workspace.PathMemberMirror, err)
 	}
+	a.mirrorEntries = entries
 	if foreign := workspaceProjectAddForeignPeople(a.roster, entries); len(foreign) > 0 {
 		return userErr("project %s's own member list at %s names %s, none of which is a person of workspace %s: that list was written by another workspace (R2, R14), and a project belongs to one workspace (D1291), so the workspace it belongs to has to remove it there -- its own owner runs fugaro workspace project rm %s -- before this project is added to this one. Nothing was written",
 			safetext.Field(a.member.Project), workspace.PathMemberMirror, workspaceAddressesPhrase(foreign),
@@ -511,12 +518,18 @@ func (a *workspaceProjectAdd) adoptInto(ctx context.Context, cmd *cobra.Command,
 	if err != nil {
 		return a.partial(project, err)
 	}
-	mirrored := false
-	if wroteRoster || !a.mirror.Found {
+	// The member's own list is written when the roster moved (D2813's membership
+	// write), when there is none, and when the one there does not name the
+	// people the workspace's roster holds: the last is what makes the sentence
+	// below true, because a member's list left as it is must be one that already
+	// names them -- a list that names somebody else's people was refused above,
+	// and one that names fewer of this workspace's was written by an add that
+	// ran while the roster was smaller.
+	mirrored := wroteRoster || !a.mirror.Found || !workspaceMirrorNames(a.mirrorEntries, roster.People)
+	if mirrored {
 		if err := a.writeMirror(ctx, roster); err != nil {
 			return a.partial(project, err)
 		}
-		mirrored = true
 	}
 	wroteGrants, err := a.writeMemberGrants(ctx)
 	if err != nil {
@@ -612,11 +625,24 @@ func (a *workspaceProjectAdd) mergeRoster(r *workspace.Roster) (*workspace.Roste
 		changed = true
 	}
 	for _, admin := range a.admins {
-		if slices.ContainsFunc(next.Grants, func(g workspace.StoredGrant) bool { return g.Project == a.member.Project && g.User == admin }) {
+		at := slices.IndexFunc(next.Grants, func(g workspace.StoredGrant) bool { return g.Project == a.member.Project && g.User == admin })
+		if at < 0 {
+			next.Grants = append(next.Grants, workspace.StoredGrant{Project: a.member.Project, User: admin, Role: workspace.RoleAdmin})
+			changed = true
 			continue
 		}
-		next.Grants = append(next.Grants, workspace.StoredGrant{Project: a.member.Project, User: admin, Role: workspace.RoleAdmin})
-		changed = true
+		// The mark is the workspace's record of the grant it wrote, and the grant
+		// this add writes for an admin is an admin one (D2818): the member's own
+		// project-scope grant is replaced with `RoleAdmin` whole, added where the
+		// admin holds none. A mark that says another role -- a node written by an
+		// earlier release, or by hand -- would be this workspace's record of a
+		// grant it is not writing, so it is corrected here rather than skipped:
+		// the mark and the grant agree, or drift would report the grant the
+		// workspace itself just wrote as a member's own.
+		if next.Grants[at].Role != workspace.RoleAdmin {
+			next.Grants[at].Role = workspace.RoleAdmin
+			changed = true
+		}
 	}
 	if !changed {
 		return r, false
@@ -687,6 +713,30 @@ func workspaceMirrorDocument(people []workspace.Person) ([]byte, error) {
 		return nil, userErr("rendering the member list this add would mirror: %v", err)
 	}
 	return raw, nil
+}
+
+// workspaceMirrorNames reports whether a member's own list already names exactly
+// the people a roster holds: the same addresses, the same kinds and the same
+// external marks, in the order the document writes them -- which is the roster's
+// own, because C1 keeps `People` sorted by address and this reader's entries come
+// from a document written the same way.
+//
+// It is what lets this add leave a member's list alone and still say something
+// true about it. A list that names a person this workspace's roster does not is
+// refused before this is asked (R2); what is left is a list that names the same
+// people, or fewer of them, or fewer with a mark that has moved since -- and the
+// second and third are a list this add writes rather than one it calls already
+// right.
+func workspaceMirrorNames(entries []workspace.MirrorEntry, people []workspace.Person) bool {
+	if len(entries) != len(people) {
+		return false
+	}
+	for i, p := range people {
+		if entries[i].Address != p.Address || entries[i].Kind != p.Kind || entries[i].External != p.External {
+			return false
+		}
+	}
+	return true
 }
 
 // workspaceMirrorDoc is the mirror document workspaceMirrorDocument renders and
@@ -948,10 +998,28 @@ func workspaceProjectAddUnwired(what string) string {
 // bindings agree on, in the node's own order: D2823's rule, and the whole of what
 // makes an admin entry trusted -- the accounts that can rewrite the list cannot
 // set a binding, so an entry without one is a claim nothing confirms.
+//
+// The two lists spell one person two ways. The node's `Admins` holds canonical
+// addresses (C1), and a live binding is the `user:` member a grant names -- C2's
+// own spelling, which is `accesslib.Member`'s and what the folder mechanism's
+// owners and the account's token creators are read as. Compared as they arrive,
+// the two spellings agree on nobody: no admin is ever bound by its own entry. So
+// the prefix is taken off here, in the one place the two meet, and each side of
+// the comparison is a canonical address again. A binding that is not a `user:`
+// member is one this command cannot read as a person at all, and an admin it
+// does not name is one nothing confirms -- D2823's answer is to trust neither.
 func workspaceProjectAddBoundAdmins(admins, bindings []string) []string {
+	bound := make(map[string]struct{}, len(bindings))
+	for _, binding := range bindings {
+		address, ok := strings.CutPrefix(binding, "user:")
+		if !ok {
+			continue
+		}
+		bound[address] = struct{}{}
+	}
 	out := []string{}
 	for _, admin := range admins {
-		if slices.Contains(bindings, admin) {
+		if _, ok := bound[admin]; ok {
 			out = append(out, admin)
 		}
 	}

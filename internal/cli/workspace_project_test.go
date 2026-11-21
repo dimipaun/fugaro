@@ -175,7 +175,10 @@ func (a *wu5Audit) Create(ctx context.Context, id string, event []byte) error {
 // wu5Authority is the mechanism that holds a member (C2's Authority), with the
 // empty truth of the contract's own stub everywhere this command does not read
 // it: Holds answers what the test set, and AdminBindings answers the live
-// bindings D2823 trusts an admin entry by.
+// bindings D2823 trusts an admin entry by -- in the spelling the contract's own
+// two mechanisms answer in, the `user:` member a grant names (WU2's folder
+// owners, WU20's token creators), because a fixture that answers the node's bare
+// spelling is a fixture that hides a comparison of two spellings of nobody.
 type wu5Authority struct {
 	workspace.StubAuthority
 	holds    bool
@@ -341,7 +344,7 @@ func wu5Linked(t *testing.T, grants []accesslib.Grant) (*wu5Cloud, string) {
 		Domains: []string{"example.com"},
 	}))
 	cloud.auth.holds = true
-	cloud.auth.bindings = []string{"owner@example.com"}
+	cloud.auth.bindings = []string{"user:owner@example.com"}
 	cloud.member.grants = wu5GrantsDoc(t, grants)
 	return cloud, owner
 }
@@ -699,8 +702,10 @@ func TestProjectAddPropagatesOnlyBoundAdmins(t *testing.T) {
 		Domains: []string{"example.com"},
 	}))
 	cloud.auth.holds = true
-	// The node's Admins names three, and only two of them hold a binding.
-	cloud.auth.bindings = []string{"first@example.com", "third@example.com"}
+	// The node's Admins names three, and only two of them hold a binding -- each
+	// answered as the contract spells one, so this test compares the node's bare
+	// addresses against the `user:` members the mechanism answers with.
+	cloud.auth.bindings = []string{"user:first@example.com", "user:third@example.com"}
 	cloud.member.grants = wu5GrantsDoc(t, []accesslib.Grant{
 		wu5ProjectGrant("alice@example.com", accesslib.RoleViewer),
 	})
@@ -740,5 +745,163 @@ func TestProjectAddPropagatesOnlyBoundAdmins(t *testing.T) {
 	}
 	if entry := wu5MemberOf(t, owner, "aurora"); entry.FP != "aurora" {
 		t.Errorf("the table entry is %+v, want the flags' own values", entry)
+	}
+}
+
+// TestProjectAddComparesAdminsToTheLiveBindings is D2823's comparison itself. The
+// node's `Admins` holds canonical addresses (C1) and a live binding is the
+// `user:` member the mechanism answers with (C2: WU2's folder owners and WU20's
+// token creators both), so an admin that holds a binding is one the two
+// spellings agree on once the prefix is off -- and an admin whose binding this
+// command cannot read as a person is one nothing confirms, which is D2823's
+// answer to an entry it cannot check.
+func TestProjectAddComparesAdminsToTheLiveBindings(t *testing.T) {
+	admins := []string{"bound@example.com", "unbound@example.com"}
+	if got, want := workspaceProjectAddBoundAdmins(admins, []string{"user:bound@example.com"}), []string{"bound@example.com"}; !slices.Equal(got, want) {
+		t.Errorf("a node naming %v against the live binding %q bounds %v, want %v: the node's Admins is bare and a binding is a `user:` member, so comparing the two as they arrive bounds nobody (D2823)", admins, "user:bound@example.com", got, want)
+	}
+	if got := workspaceProjectAddBoundAdmins(admins, []string{"user:somebody-else@example.com"}); len(got) != 0 {
+		t.Errorf("an admin holding no binding is bounded by %v, want nobody", got)
+	}
+	if got := workspaceProjectAddBoundAdmins(admins, []string{"bound@example.com"}); len(got) != 0 {
+		t.Errorf("a binding that names no user bounded %v, want nobody: this command trusts an entry only against the binding the contract answers with (D2823)", got)
+	}
+	if got, want := workspaceProjectAddBoundAdmins([]string{"bound@example.com", "unbound@example.com"}, []string{"user:unbound@example.com"}), []string{"unbound@example.com"}; !slices.Equal(got, want) {
+		t.Errorf("the bound admins are %v, want %v: with one of the two bound, the node's own order is what the answer keeps", got, want)
+	}
+}
+
+// TestProjectAddCorrectsAMarkThatDisagreesWithTheGrant is D2818's mark held to
+// what this add writes: the member's own project-scope grant for a workspace
+// admin is an admin one -- replaced where the member already holds a grant for
+// them at that scope, added where it holds none -- so a mark in the workspace's
+// node that says another role is the workspace's record of a grant it is not
+// writing. Left standing, the record and the grant disagree and the drift check
+// reads the workspace's own grant as a member's. The add corrects the mark, and
+// the two agree.
+func TestProjectAddCorrectsAMarkThatDisagreesWithTheGrant(t *testing.T) {
+	workspaceOwnerHome(t)
+	cloud := wu5NewCloud()
+	cloud.store.node = wu5NodeDoc(t, wu5RosterDoc(t, workspace.Roster{
+		People: []workspace.Person{
+			{Address: "alice@example.com", Kind: workspace.KindHuman},
+			{Address: "owner@example.com", Kind: workspace.KindHuman},
+		},
+		Admins:  []string{"owner@example.com"},
+		Domains: []string{"example.com"},
+		// The mark an earlier writer left: the same project and user this add is
+		// about to write a grant for, under a role this add does not write.
+		Grants: []workspace.StoredGrant{{Project: "aurora", User: "owner@example.com", Role: workspace.RoleViewer}},
+	}))
+	cloud.auth.holds = true
+	cloud.auth.bindings = []string{"user:owner@example.com"}
+	// The member already holds a grant for the workspace's admin, at project
+	// scope and under another role: the pair is replaced, not added beside.
+	cloud.member.grants = wu5GrantsDoc(t, []accesslib.Grant{
+		wu5ProjectGrant("alice@example.com", accesslib.RoleViewer),
+		wu5ProjectGrant("owner@example.com", accesslib.RoleViewer),
+	})
+
+	out, err := wu5Run(t, cloud.seams(t), wu5AddArgs()...)
+	if err != nil {
+		t.Fatalf("workspace project add: %v\n%s", err, out)
+	}
+
+	roster := wu5Roster(t, cloud)
+	want := []workspace.StoredGrant{{Project: "aurora", User: "owner@example.com", Role: workspace.RoleAdmin}}
+	if !slices.Equal(roster.Grants, want) {
+		t.Errorf("the workspace's marks are %+v, want %+v: the grant this add writes into the member for an admin is an admin one (D2818), so the mark of it says the same", roster.Grants, want)
+	}
+	written, err := accesslib.Decode(cloud.member.grantsWrite)
+	if err != nil {
+		t.Fatalf("reading the member's roster back: %v", err)
+	}
+	for _, g := range written {
+		switch g.User {
+		case "user:owner@example.com":
+			if g.Role != accesslib.RoleAdmin || g.Scope.Kind != accesslib.ScopeProject {
+				t.Errorf("the member's grant for the workspace's admin is %+v, want admin at project scope (D2818, D2823)", g)
+			}
+		case "user:alice@example.com":
+			if g.Role != accesslib.RoleViewer {
+				t.Errorf("the member's own grant for alice@example.com is %q, want the viewer grant it held (D2805)", g.Role)
+			}
+		}
+	}
+	if len(written) != 2 {
+		t.Errorf("the member's roster holds %d grants, want its own two: nothing was added for an admin it already had a grant for", len(written))
+	}
+}
+
+// TestProjectAddRefreshesAMirrorThatDoesNotNameTheWorkspacesPeople is D2813's
+// mirror held to the sentence this add prints about it: the mirror is written on
+// a membership write, and a member's list that names fewer of the workspace's
+// people than the roster holds -- written while the roster was smaller, or
+// rewritten by hand, which D2813 makes advisory -- is one this add writes rather
+// than one it calls already right. The second run, over the documents the first
+// left, is the other half: a list that really does name them is left alone, and
+// then the sentence says so.
+func TestProjectAddRefreshesAMirrorThatDoesNotNameTheWorkspacesPeople(t *testing.T) {
+	workspaceOwnerHome(t)
+	cloud := wu5NewCloud()
+	cloud.store.node = wu5NodeDoc(t, wu5RosterDoc(t, workspace.Roster{
+		People: []workspace.Person{
+			{Address: "alice@example.com", Kind: workspace.KindHuman},
+			{Address: "ops@example.com", Kind: workspace.KindHuman},
+			{Address: "owner@example.com", Kind: workspace.KindHuman},
+		},
+		Admins:  []string{"owner@example.com"},
+		Domains: []string{"example.com"},
+		// The mark is already the one this add would write, so the node does not
+		// move and the mirror's own state is the whole of what it decides on.
+		Grants: []workspace.StoredGrant{{Project: "aurora", User: "owner@example.com", Role: workspace.RoleAdmin}},
+	}))
+	cloud.auth.holds = true
+	cloud.auth.bindings = []string{"user:owner@example.com"}
+	cloud.member.grants = wu5GrantsDoc(t, []accesslib.Grant{wu5ProjectGrant("alice@example.com", accesslib.RoleViewer)})
+	cloud.member.mirror = wu5NodeDoc(t, []byte(`{"version":1,"members":[{"address":"ops@example.com","kind":"human","external":false}]}`))
+
+	out, err := wu5Run(t, cloud.seams(t), wu5AddArgs()...)
+	if err != nil {
+		t.Fatalf("workspace project add: %v\n%s", err, out)
+	}
+	if cloud.member.mirrorWrite == nil {
+		t.Fatalf("the add left the member's own list naming one person of the workspace's three, and the roster moved for no part of it:\n%s", out)
+	}
+	mirror := wu5Mirror(t, cloud)
+	named := make([]string, 0, len(mirror))
+	for _, e := range mirror {
+		named = append(named, e.Address)
+	}
+	if want := []string{"alice@example.com", "ops@example.com", "owner@example.com"}; !slices.Equal(named, want) {
+		t.Errorf("the member's list names %v, want the workspace's people %v (D2813)", named, want)
+	}
+	if !strings.Contains(out, "now names 3 people") {
+		t.Errorf("the add does not say the member's list now names the workspace's people:\n%s", out)
+	}
+	// The node itself did not move: the mark it carries is the one this add
+	// would write, so the mirror is the only thing there was to repair.
+	if want := []string{"mirror", "grants", "audit"}; !slices.Equal(cloud.order, want) {
+		t.Errorf("the writes landed in the order %v, want %v: the workspace's own node is already the one this add would write", cloud.order, want)
+	}
+
+	// A second add over the documents the first left: the member's list names
+	// the workspace's people, so it is left alone -- and the sentence says that,
+	// rather than claiming a list was written.
+	again := wu5NewCloud()
+	again.store.node = cloud.store.node
+	again.auth.holds = true
+	again.auth.bindings = cloud.auth.bindings
+	again.member.grants = cloud.member.grants
+	again.member.mirror = cloud.member.mirror
+	out, err = wu5Run(t, again.seams(t), wu5AddArgs()...)
+	if err != nil {
+		t.Fatalf("a second add of the same member: %v\n%s", err, out)
+	}
+	if again.member.mirrorWrite != nil {
+		t.Error("the second add rewrote a member's list that already named the workspace's people")
+	}
+	if !strings.Contains(out, "already named 3 people") {
+		t.Errorf("the add does not say the member's list already named the workspace's people:\n%s", out)
 	}
 }
