@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/identitywire"
 )
 
@@ -317,15 +318,84 @@ func TestServiceAccountLauncherIsItsOwnClass(t *testing.T) {
 	if _, err := none.VerifyServiceAccountLauncher(ctx, serviceAccountToken); !errors.Is(err, ErrUnverifiedJob) {
 		t.Errorf("an empty roster service-account list admitted a caller: %v", err)
 	}
+}
 
-	// And the class is a class of its OWN in the configuration too: an address
-	// that is also a run's own account is one caller in two classes, and at the
-	// ticket route it is an account that must be refused there (R4), so the
-	// deployment is refused at the start rather than served as whichever class
-	// the route read first.
-	overlap := f.auth.cfg
-	overlap.LauncherServiceAccounts = []string{testJobSA}
-	if _, err := NewAuthenticator(overlap); err == nil || !strings.Contains(err.Error(), "two classes") {
-		t.Errorf("NewAuthenticator answered %v for a roster service account that is also a run's own account, want the configuration error the overlap rule writes", err)
+// TestRosterServiceAccountOverlapIsRefused is the other half of the class's
+// being a class of its own (LM3, D3123): an address the roster names as a
+// service account may not be one another class admits, because one caller would
+// then be two classes and the class it is served as would be decided by which
+// route read its token first.
+//
+// Two of these refusals are load-bearing beyond the class rule. A run's own
+// identity — its job account, a shared project job's, a review job's — may
+// never be a roster service account: the ticket route must refuse a job account
+// (R4, because the claim route is the one that answers it), and a deployment
+// that named one here would serve that run's own token a ticket at the route
+// that exists to refuse it. The other three are the same rule one step out: the
+// orchestrator's account and the two build identities are automations of their
+// own routes, and an address on two of these lists is a deployment that
+// disagrees with itself.
+//
+// Every row is a configuration that is valid except for its one overlap, so the
+// refusal each row reads is the overlap rule's and not another list's rule
+// firing first.
+func TestRosterServiceAccountOverlapIsRefused(t *testing.T) {
+	f := ticketCallerFixture(t)
+	for _, tc := range []struct {
+		name    string
+		overlap func(cfg *AuthConfig)
+	}{
+		{
+			name: "the run's own job account",
+			overlap: func(cfg *AuthConfig) {
+				cfg.LauncherServiceAccounts = []string{testJobSA}
+			},
+		},
+		{
+			name: "a shared project job's account",
+			overlap: func(cfg *AuthConfig) {
+				cfg.LauncherServiceAccounts = []string{testSharedSA}
+			},
+		},
+		{
+			name: "a review job's account",
+			overlap: func(cfg *AuthConfig) {
+				cfg.ReviewJobAccounts = []ReviewJobAccount{{Email: testReviewSA, Account: testReviewAccount}}
+				cfg.LauncherServiceAccounts = []string{testReviewSA}
+			},
+		},
+		{
+			name: "the resident orchestrator",
+			overlap: func(cfg *AuthConfig) {
+				cfg.LauncherServiceAccounts = []string{testOrchestratorSA}
+			},
+		},
+		{
+			name: "the installation's catalog-build identity",
+			overlap: func(cfg *AuthConfig) {
+				cfg.BuildAccounts = []string{testBuildSA}
+				cfg.LauncherServiceAccounts = []string{testBuildSA}
+			},
+		},
+		{
+			name: "a repository's build account",
+			overlap: func(cfg *AuthConfig) {
+				cfg.RepoBuildAccounts = []RepoBuildAccount{{
+					Email:    testBuildSA,
+					Slug:     testSlug(t, testRepoPath),
+					Repo:     testRepo,
+					Provider: gitprov.KindGitHub,
+				}}
+				cfg.LauncherServiceAccounts = []string{testBuildSA}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := f.auth.cfg
+			tc.overlap(&cfg)
+			if _, err := NewAuthenticator(cfg); err == nil || !strings.Contains(err.Error(), "two classes") {
+				t.Errorf("NewAuthenticator answered %v for a roster service account that is also %s, want the configuration error the overlap rule writes", err, tc.name)
+			}
+		})
 	}
 }
