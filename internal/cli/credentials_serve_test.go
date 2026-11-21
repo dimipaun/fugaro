@@ -1379,14 +1379,15 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 //
 // All eleven are rendered conditionally — the module sets each of them only on
 // an installation where it applies — and the reason they belong here rather than
-// in credentialsServiceEnvNames is pinned by the tests around this one. Four of
-// them are rendered by no module yet and are read from
+// in credentialsServiceEnvNames is pinned by the tests around this one. One of
+// them is rendered by no module yet and is read from
 // CredentialsServiceEnvAwaitingTheModule below: FUGARO_SHARED_JOB_ACCOUNTS
 // (B5.1), whose reader arrived ahead of the module that will render it — the
-// same cover-first order FUGARO_REVIEW_JOB_ACCOUNTS followed — and the identity
+// same cover-first order FUGARO_REVIEW_JOB_ACCOUNTS followed, and the identity
 // half's three (LM22: FUGARO_SIGNER_ACCOUNT, FUGARO_ROSTER_SERVICE_ACCOUNTS and
-// FUGARO_IMPLICIT_ADMINS), which the installation module renders next (LM12)
-// and which nothing serves a caller by yet.
+// FUGARO_IMPLICIT_ADMINS) followed before it: credentials.tf sets those three
+// since LM12, each only where the credentials_service block carries a value for
+// it, and nothing serves a caller by them yet.
 //
 // internal/infra/tf's credentialsServiceEnv is the third side of this, and it
 // is held to the module by that package's own test (the cover's allow-list

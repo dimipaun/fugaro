@@ -2576,6 +2576,16 @@ run "credentials_service_on" {
       ]
       verifier_accounts = ["person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"]
       url               = "https://fugaro-credentials-123456789012.us-east5.run.app"
+      # The identity half (LM12, D3121, D3123, F29/R16), named here so this
+      # run's exact map below carries all three entries and their values: the
+      # account a run's identity is signed as, the roster's serviceAccount:
+      # entries — a class of its own, never a person's — and the implicit
+      # admins the CLI's launch gate reads. The addresses are the shapes the
+      # installation really writes: a signer of the Firebase project, a
+      # pipeline's own account, and a person who is an implicit admin.
+      signer_account          = "fugaro-signer@aurora-fp.iam.gserviceaccount.com"
+      roster_service_accounts = ["pipeline@proj-1234.iam.gserviceaccount.com"]
+      implicit_admins         = ["owner@example.com"]
     }
   }
 
@@ -2731,7 +2741,7 @@ run "credentials_service_on" {
   # internal/infra/tf's credentialsServiceEnv allows, and it is held as an
   # exact map: an extra entry, a missing one, a name the process does not
   # read, or a value that is not the installation's own fails here. This run
-  # names a verifier, so the ninth name carries that list as it is; the run
+  # names a verifier, so the verifier entry carries that list as it is; the run
   # below, which names none, is where the entry carries the installation's own
   # verifier account alone (CSR14 — the entry is rendered in every state of the
   # list, and an absent member is the state the account is the default in).
@@ -2740,7 +2750,11 @@ run "credentials_service_on" {
   # people — the operators among the installation's user: members, as the bare
   # addresses a Google ID token's email claim carries, which is what the
   # service verifies them by — and, since this change, the review class's own
-  # set, which the paragraph below is about. What the service does with a value
+  # set, which the paragraph below is about. The identity half's three
+  # (LM12) are on this run too, and each is the value the block carries under
+  # the name the process reads: the signer as the bare address, and the two
+  # class lists as the JSON arrays credentials.tf encodes from the same
+  # variable. What the service does with a value
   # (a database URL that is not the Firebase project's, an audience that is not
   # a URL, a job table that binds nothing, a verifier list or a person list
   # that is not a list of addresses) is refused by the process itself, by name,
@@ -2753,13 +2767,13 @@ run "credentials_service_on" {
   # (B5, D2301 — the literal account ID, which is what lets the Go side name
   # that address before anything is planned).
   #
-  # This run also names two review job accounts, so the EIGHTH name is
-  # rendered: the review class's admitted set, which the class is dead without
-  # (a deployment carrying the coding table alone admits no review caller, and
-  # every review launch is refused with the fail-closed sentence). The runs
-  # below that name none are the other half: the entry is absent, the set is
-  # empty and the class admits nobody, which is the fail-closed state rather
-  # than a revision that refuses to bind a port.
+  # This run also names two review job accounts, so the review class's own
+  # entry is rendered: the class's admitted set, which the class is dead
+  # without (a deployment carrying the coding table alone admits no review
+  # caller, and every review launch is refused with the fail-closed sentence).
+  # The runs below that name none are the other half: the entry is absent, the
+  # set is empty and the class admits nobody, which is the fail-closed state
+  # rather than a revision that refuses to bind a port.
   assert {
     condition = tomap({
       for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
@@ -2775,6 +2789,9 @@ run "credentials_service_on" {
       FUGARO_VERIFIER_ACCOUNTS       = "[\"person-1@example.com\",\"fugaro-coordinator@proj-1234.iam.gserviceaccount.com\"]"
       FUGARO_PERSON_ACCOUNTS         = "[\"operator@example.com\"]"
       FUGARO_BUILD_ACCOUNTS          = "[\"fugaro-build-identity@proj-1234.iam.gserviceaccount.com\"]"
+      FUGARO_SIGNER_ACCOUNT          = "fugaro-signer@aurora-fp.iam.gserviceaccount.com"
+      FUGARO_ROSTER_SERVICE_ACCOUNTS = "[\"pipeline@proj-1234.iam.gserviceaccount.com\"]"
+      FUGARO_IMPLICIT_ADMINS         = "[\"owner@example.com\"]"
     })
     error_message = "the container's environment is the names the service reads and nothing else: no secret ID, no credential value, and no entry beyond the ones the module sets for this run"
   }
@@ -2786,6 +2803,23 @@ run "credentials_service_on" {
   assert {
     condition     = length([for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e if e.name == "FUGARO_COORDINATOR_ACCOUNT"]) == 0
     error_message = "an installation that runs no coordinator names none on its service: the entry arrives with the coordinator's own account (BB5)"
+  }
+  # The roster's own SERVICE ACCOUNTS hold the invoker grant this run names one
+  # of (LM12, D3123, F4): a pipeline's identity is not a person, so the
+  # roster's person row cannot admit it and the front end would refuse it
+  # before the container ran. The row is built from the same variable the
+  # service's class list is rendered from above, so the identity that may knock
+  # and the identity that is served cannot drift; the member spelling is Cloud
+  # Run's serviceAccount: form, because the bare address the variable carries
+  # is what the process matches an email claim against and never what IAM
+  # takes.
+  assert {
+    condition = (length(google_cloud_run_v2_service_iam_member.credentials_roster_service_account) == 1 &&
+      [for g in google_cloud_run_v2_service_iam_member.credentials_roster_service_account : g.member] == ["serviceAccount:pipeline@proj-1234.iam.gserviceaccount.com"] &&
+      alltrue([for g in google_cloud_run_v2_service_iam_member.credentials_roster_service_account :
+        g.role == "roles/run.invoker" && g.name == "fugaro-credentials" &&
+    length(g.condition) == 0]))
+    error_message = "each roster service account must hold roles/run.invoker on the credentials service and nothing else: the front end is the first door, the process's own class for those accounts is the second (unscoped, D3137), and a condition or a second role is a fence the design has no row for"
   }
   # The service's own URL is the audience its callers' ID tokens are minted
   # for, and it is the one entry the module cannot fill on the apply that
@@ -2967,6 +3001,21 @@ run "credentials_service_first_apply_has_no_audience_yet" {
       if e.name == "FUGARO_VERIFIER_ACCOUNTS"
     ])) == ["fugaro-verifier@proj-1234.iam.gserviceaccount.com"]
     error_message = "an installation whose block carries no verifier_accounts is the state the module's own verifier account is the default in, and it is the state every opted-in installation is in before the update that writes the list: the entry must carry that one address, alone (CSR14). The runs of the three states are roots/installation/tests/verifier.tftest.hcl"
+  }
+  # ... and the identity half's three are the other names this block's absence
+  # decides (LM12): a block that names no signer, no roster service account and
+  # no implicit admin renders none of them, which is the state every
+  # installation is in until the update that hands the grant over writes them.
+  # The service starts with an empty service-account class and no issuer, which
+  # is the fail-closed direction rather than a revision that refuses to bind a
+  # port (the count above already fails on an extra entry; this is the named
+  # half of the same fact, and the run above is where all three are set).
+  assert {
+    condition = length([
+      for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e
+      if contains(["FUGARO_SIGNER_ACCOUNT", "FUGARO_ROSTER_SERVICE_ACCOUNTS", "FUGARO_IMPLICIT_ADMINS"], e.name)
+    ]) == 0
+    error_message = "an installation whose block names no signer account, no roster service account and no implicit admin must render none of the three entries: each is rendered only where it has something to carry, and the absence is what the process reads as no issuer and an empty class (LM12, R7, D3137)"
   }
 }
 
