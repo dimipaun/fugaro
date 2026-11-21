@@ -749,6 +749,11 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 	// (C1.10) are what the cascade's nodes are keyed by, and taking them from
 	// anywhere else would be naming a run the service did not verify.
 	run := creds.Run{Slug: id.Slug, ID: id.Run}
+	// The workspace's cap, attached before the first attempt: every attempt of
+	// this call takes its own reservation in send and settles it in answer
+	// (WS8). It is nil for a call the meter does not bracket — an
+	// installation's scope, a token count — and nothing below then differs.
+	s.withMeter(ctx, cl, id)
 
 	pool := cands
 	for {
@@ -761,6 +766,16 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// broken mark, an unreadable state — is the run's answer and is
 			// refused below.
 			if s.probeDue(ctx, sel, id, cl, b, pool, probed, err) {
+				// A probe the workspace could not pay for is refused like any
+				// other call of this run's: the meter's refusal is on the call
+				// (probeOne's own answer, carried here), and the run is
+				// answered it rather than the wait the probe was owed on. The
+				// alternative — walking on as if the probe had happened — is a
+				// call that was never made being treated as one that was.
+				if cl.fail != nil {
+					s.refuseMeter(ctx, w, id, PurposeForward, cl.fail)
+					return
+				}
 				continue
 			}
 			s.refuseSelection(ctx, w, id, err, tried)
@@ -807,6 +822,14 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 		}
 		ans, err := s.send(ctx, cl, e)
 		if err != nil {
+			if errors.Is(err, errMeterRefused) {
+				// The workspace's own refusal, which carries a sentence, a
+				// marker and the credential the attempt was made on — none of
+				// which an error value holds — and which is answered and
+				// audited by the path that knows them.
+				s.refuseMeter(ctx, w, id, PurposeForward, cl.fail)
+				return
+			}
 			s.refuseCallCause(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
 				err.Error(), labelRead(readUpstream, err))
 			return
@@ -819,7 +842,18 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// it is about a credential the run does not hold, and a run shown
 			// an authentication error it cannot act on is a run that stops for
 			// the wrong reason.
+			//
+			// The attempt's reservation is settled first, at what the call was
+			// charged for it (no answer is relayed, so no usage is read): the
+			// attempt happened, and a settle that cannot be written is the
+			// refusal the run gets — the credential's mark is not written,
+			// because the call is over either way and an unrecorded cost is the
+			// thing an operator has to act on.
 			ans.resp.Body.Close()
+			if fail := s.settleCall(ctx, cl, nil); fail != nil {
+				s.refuseMeter(ctx, w, id, PurposeForward, fail)
+				return
+			}
 			if _, err := sel.Broken(ctx, c.Name); err != nil {
 				s.refuseCallCause(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
 					markRefusal, err)
@@ -834,7 +868,15 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// A usage limit. Nothing has been streamed, so the call may be
 			// retried — on another credential, never on this one.
 			reset := usageLimitReset(ans.resp.Header, s.now())
+			// The attempt's reservation is settled as the 401 arm's is, and for
+			// the same reason: the retry that may follow is a SECOND call with a
+			// reservation of its own, and the one this attempt took must not be
+			// left standing on the strength of a settle that was never made.
 			ans.resp.Body.Close()
+			if fail := s.settleCall(ctx, cl, nil); fail != nil {
+				s.refuseMeter(ctx, w, id, PurposeForward, fail)
+				return
+			}
 			if _, err := sel.Exhausted(ctx, c.Name, c.Tier, reset); err != nil {
 				s.refuseCallCause(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
 					markRefusal, err)
@@ -987,14 +1029,60 @@ func noCandidatesMessage(tried []Tried) string {
 // redacted too, and its Close writes that tail once the stream ends.
 func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity, cl *call, ans *answer, c creds.Credential, sw *Switch, scan *usageLimitScanner) {
 	defer ans.resp.Body.Close()
+	// The workspace's cap comes off the call here, and it does so whatever
+	// happens below: a metered answer is settled on the usage it reports, and
+	// every path that leaves this function without doing that — a refusal
+	// between here and the settle, a stream that never reported its usage —
+	// settles the reservation at what it holds instead. The guard is the last
+	// thing to run and does nothing when the call has already settled.
+	cm := cl.meter
+	stream := answerIsStream(ans.resp, cl.requested)
+	var use *callUsage
+	if cm != nil {
+		defer func() {
+			if cm.reserved {
+				if fail := s.settleCall(ctx, cl, nil); fail != nil {
+					s.log.Error("credsvc: a metered call's reservation could not be settled",
+						"credential", fail.credential, "tier", fail.tier)
+				}
+			}
+		}()
+		// A whole body is read before anything is written, because the settle
+		// is a write the workspace can refuse the call on: a call whose cost
+		// cannot be recorded is not served (D1301's fail-closed rule), and an
+		// answer whose bytes had already left could not be withheld. A body
+		// past the reader's bound, or one that fails mid-read, is settled at
+		// its reservation and put back in front of the rest so the answer still
+		// reaches the client as it came.
+		if !stream {
+			use = readMeteredBody(ans)
+		} else {
+			// A stream's usage arrives inside the answer, so the reader is fed
+			// as the bytes go to the client (the tee below) and the call
+			// settles after the stream ends.
+			use = newCallUsage(true)
+		}
+		if !stream {
+			if fail := s.settleCall(ctx, cl, use); fail != nil {
+				s.refuseMeter(ctx, w, id, PurposeForward, fail)
+				return
+			}
+		}
+	}
 	hdr := http.Header{}
 	copyAnswerHeaders(hdr, ans.resp.Header, ans.credential)
-	// The workspace's advisory headroom would be written here, on the answer to
-	// a call the workspace paid for (gateway.WorkspaceHeadroomHeader, through
+	// The workspace's advisory headroom, on the answer to every call of a
+	// metered scope (gateway.WorkspaceHeadroomHeader, through
 	// SetWorkspaceHeadroom): this is where the service's own headers are set,
-	// and copyAnswerHeaders drops any X-Fugaro- header an upstream sent. It is
-	// not written yet, because the call is not metered yet — workspace_cap.go's
-	// header states that deferral and the task it needs.
+	// and copyAnswerHeaders drops any X-Fugaro- header an upstream sent. A
+	// workspace that states no ceiling writes nothing here, which is what its
+	// members read as "no cap". The settle below has already run for a whole
+	// body, so the figure is the room the call left; a stream's is the room its
+	// reservation left, which is the lower bound of the two and the honest one
+	// to deliver before the call's own cost is known.
+	if room, ok := s.answerHeadroom(ctx, cl); ok {
+		SetWorkspaceHeadroom(hdr, room)
+	}
 	if err := SetCredentialHeaders(hdr, wireTier(c.Tier), c.Name); err != nil {
 		s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
 			"the answer could not carry the credential that served it")
@@ -1041,8 +1129,19 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 	}
 	w.WriteHeader(ans.resp.StatusCode)
 	tee := func([]byte) {}
-	if scan != nil && answerIsStream(ans.resp, cl.requested) {
+	if scan != nil && stream {
 		tee = scan.scan
+	}
+	if use != nil && stream {
+		// The meter's own reader is fed beside the usage-limit scan, from the
+		// same copy of the bytes that goes to the client: both are reading the
+		// answer the run is already getting, and neither may change it. The scan
+		// is fed first, because it is the one the forward path acts on.
+		inner := tee
+		tee = func(b []byte) {
+			inner(b)
+			use.feed(b)
+		}
 	}
 	// The credential is scrubbed out of the body on its way to the client, and
 	// so is every token the caller presented: the run identity this service
@@ -1081,6 +1180,21 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 	// then has the same chance to find a value in what it is handed.
 	for i := len(rw) - 1; i >= 0; i-- {
 		_ = rw[i].Close()
+	}
+	if cm != nil {
+		// The streamed call settles here, on whatever its events reported: a
+		// stream that reached its stop event with both counts settles at its
+		// usage, and one that was cut before that settles at the reservation it
+		// holds — the worst case this call's request could have cost, which is
+		// what a call whose cost cannot be read is charged. The answer has left
+		// by now, so a settle that cannot be written is the service's log line
+		// and nothing else: the run cannot be refused an answer it already has,
+		// and the reservation stands until it ages out (budget's own TTL), so
+		// the room is held rather than forgotten.
+		if fail := s.settleCall(ctx, cl, use); fail != nil {
+			s.log.Error("credsvc: a metered stream's cost could not be recorded",
+				"credential", fail.credential, "tier", fail.tier)
+		}
 	}
 	if ended {
 		return
