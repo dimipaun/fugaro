@@ -622,12 +622,13 @@ func (d *discovery) installationSingletons(spec InstallationSpec) error {
 		return nil // none of ours: the plan creates one where the mapping says
 	}
 	// The bucket's own location, read off the name the listing gave back
-	// (projects/<project>/locations/<location>/buckets/<id>): it is what every
-	// message below names and what the import adopts it at, and nothing here
-	// assumes one. A bucket carries no labels, so its description is the mark.
-	// One without it is someone else's: the plan would cut its retention, and
-	// a rollback would delete it. It is never undeleted on our behalf either.
+	// (projects/<project>/locations/<location>/buckets/<id>): every message
+	// below names it and the import adopts the bucket at it, and nothing here
+	// assumes one.
 	loc, _ := logBucketLocationID(b.Name)
+	// A bucket carries no labels, so its description is the mark. One without
+	// it is someone else's: the plan would cut its retention, and a rollback
+	// would delete it. It is never undeleted on our behalf either.
 	if b.Description != spec.LogBucketDescription {
 		d.refuse(fmt.Errorf("log bucket %s exists but is not this installation's: its description is %s, not %s. fugaro refuses to adopt it, since the plan would set its retention and a rollback would delete it. If it is Fugaro's, mark it (gcloud logging buckets update %s --location=%s --project %s --description=%s) and rerun fugaro update; if it isn't, a log bucket can't be renamed, so leave it and run fugaro update --no-log-isolation, which keeps Fugaro's job logs in _Default",
 			b.Name, strconv.Quote(b.Description), strconv.Quote(spec.LogBucketDescription), spec.Names.Log.Bucket, loc, d.project, shellQuote(spec.LogBucketDescription)))
