@@ -56,6 +56,7 @@ import type { ConfirmSubject, LaunchConfirmer } from '../../src/main/launch'
 import type { ValidatedArguments } from '../../src/main/ipc'
 import { FUGARO_SETUP_COMMAND } from '../../src/main/onboarding'
 import {
+  SETUP_BAKE_DEFAULT,
   SETUP_BAKE_NO,
   SETUP_BAKE_YES,
   SETUP_NOTES,
@@ -71,6 +72,7 @@ import {
   SETUP_BYTES_CHANGED_REFUSAL,
   SETUP_DIR_MODE,
   SETUP_DEADLINE_MS,
+  SETUP_FAILED_WITHOUT_A_REASON,
   SETUP_FLOOR_UNSET,
   SETUP_NAME_REFUSAL,
   SETUP_NO_PLAN_REFUSAL,
@@ -87,17 +89,18 @@ import {
   removeSetupDirectory,
   serialiseSetupAnswers,
   setupAnswersDigest,
+  setupFailureSentence,
+  setupFeedFailure,
   setupFloorSentence,
   validateSetupAnswers,
 } from '../../src/main/wizardrun'
-import type { SetupBounds, SetupPlanner } from '../../src/main/wizardrun'
+import type { SetupAnswersHeld, SetupBounds, SetupPlanner } from '../../src/main/wizardrun'
 import { NEW_READ_BOUNDS } from '../../src/source/new-reads'
 import {
   SETUP_ANSWER_KEYS,
   SETUP_ANSWERS_FILE_KEYS,
   SETUP_RIGOR_MODES,
 } from '../../src/shared/new-ops'
-import type { SetupAnswers } from '../../src/shared/new-ops'
 import { SourceRefusal } from '../../src/source/source'
 import { LITERAL_PLACEHOLDER, PATH_PLACEHOLDER, URL_PLACEHOLDER } from '../../src/shared/sanitize'
 import { UNREADABLE_VERSION } from '../../src/shared/version'
@@ -383,7 +386,7 @@ function aWizard(
     readonly floor?: string | null
     readonly cliVersion?: string
     readonly answers?: () => Record<string, unknown>
-    readonly plan?: (answers: SetupAnswers) => Uint8Array
+    readonly plan?: (answers: SetupAnswersHeld) => Uint8Array
     readonly digest?: (bytes: Uint8Array) => string
     readonly bounds?: SetupBounds
     readonly code?: number
@@ -407,7 +410,7 @@ function aWizard(
     directories: rows.directories,
     // The serialiser is counted on every wizard, so "serialised once" is a fact
     // this test can assert whether it supplies a buffer of its own or not.
-    serialise: (answers: SetupAnswers): Uint8Array => {
+    serialise: (answers: SetupAnswersHeld): Uint8Array => {
       serialised += 1
       return options.plan === undefined ? serialiseSetupAnswers(answers) : options.plan(answers)
     },
@@ -533,25 +536,32 @@ describe('the answers main accepts', () => {
     expect(validateSetupAnswers(anAnswers({ region: 'europe-west4' })).region).toBe('europe-west4')
   })
 
-  it('refuses an answer a question left out, except the two the CLI can fill', () => {
+  it('refuses an answer a question left out, except the two that may be absent', () => {
     for (const key of ['gcp_project', 'region', 'rigor']) {
       const answers = anAnswers()
       delete answers[key]
       expect(() => validateSetupAnswers(answers), key).toThrow(SETUP_ANSWERS_MISSING)
     }
     expect(() => validateSetupAnswers(anAnswers({ gcp_project: 7 }))).toThrow(SETUP_ANSWERS_MISSING)
-    // `name` and `bake_repos` may be left out: the CLI suggests a name from the
-    // working directory's own, and a switch nobody set is off.
+    // `name` and `bake_repos` may be left out, and the two absences are not the
+    // same statement: an unanswered `name` is the empty string (the CLI refuses
+    // it itself -- it cannot ask on this door -- and main invents none, because
+    // a suggestion would be the wizard's own `fugaro-setup-XXXXXX` directory
+    // name), and an unanswered `bake_repos` stays **undefined**, which is the
+    // CLI's default: bake, since only a written `false` turns it off.
     const bare = validateSetupAnswers({ gcp_project: PROJECT, region: REGION, rigor: RIGOR })
     expect(bare).toEqual({
       gcp_project: PROJECT,
       region: REGION,
       name: '',
       rigor: RIGOR,
-      bake_repos: false,
+      bake_repos: undefined,
     })
     expect(validateSetupAnswers(anAnswers({ name: null })).name).toBe('')
-    expect(validateSetupAnswers(anAnswers({ bake_repos: null })).bake_repos).toBe(false)
+    expect(validateSetupAnswers(anAnswers({ bake_repos: null })).bake_repos).toBeUndefined()
+    // The three states survive validation: absent is neither yes nor no.
+    expect(validateSetupAnswers(anAnswers({ bake_repos: true })).bake_repos).toBe(true)
+    expect(validateSetupAnswers(anAnswers({ bake_repos: false })).bake_repos).toBe(false)
   })
 
   it('refuses a rigor nothing may be written as, `hotfix` included', () => {
@@ -584,7 +594,7 @@ describe('the answers main accepts', () => {
 // ---------------------------------------------------------------------------
 
 describe('the bytes the child is given', () => {
-  const answers: SetupAnswers = Object.freeze({
+  const answers: SetupAnswersHeld = Object.freeze({
     gcp_project: PROJECT,
     region: REGION,
     name: NAME,
@@ -603,17 +613,37 @@ describe('the bytes the child is given', () => {
     expect(document['bake_repos']).toBe(true)
   })
 
-  it('leaves an unanswered name and an unset switch out rather than writing them empty', () => {
+  it('writes a no as `false` and leaves only an unanswered switch out', () => {
+    // The blocker this pins: an absent `bake_repos` means **yes** to every
+    // reader of the field (`internal/imagebake`'s plan, `localcfg`'s
+    // `BakeReposEffective`), so an operator who declined and had the key left
+    // out would get their repositories baked into the image their jobs run --
+    // while the window's own row said they would not be. A written `false` is
+    // the only no there is (`internal/cli/setup_answers.go` honours it,
+    // `init.go`'s `carryBakeAnswer` writes it for exactly this reason).
+    const declined = JSON.parse(
+      new TextDecoder().decode(serialiseSetupAnswers({ ...answers, name: '', bake_repos: false })),
+    ) as Record<string, unknown>
+    expect(Object.keys(declined)).toEqual([
+      'version',
+      'gcp_project',
+      'region',
+      'rigor',
+      'bake_repos',
+    ])
+    expect(declined['bake_repos']).toBe(false)
     // `name: ""` is a name that is not a name, which the CLI's own reader
-    // refuses: an unanswered name has to be *absent* for the CLI to suggest one.
-    const document = JSON.parse(
+    // refuses, so an unanswered name is left out rather than written empty.
+    expect(declined).not.toHaveProperty('name')
+    // A switch nobody answered is left out too, and that is a different
+    // statement: it is the CLI's own default, which is yes.
+    const unanswered = JSON.parse(
       new TextDecoder().decode(
-        serialiseSetupAnswers({ ...answers, name: '', bake_repos: false }),
+        serialiseSetupAnswers({ ...answers, name: '', bake_repos: undefined }),
       ),
     ) as Record<string, unknown>
-    expect(Object.keys(document)).toEqual(['version', 'gcp_project', 'region', 'rigor'])
-    expect(document).not.toHaveProperty('name')
-    expect(document).not.toHaveProperty('bake_repos')
+    expect(Object.keys(unanswered)).toEqual(['version', 'gcp_project', 'region', 'rigor'])
+    expect(unanswered).not.toHaveProperty('bake_repos')
   })
 
   it('is a function of the answers and nothing else: the same answers, the same SHA-256', () => {
@@ -819,11 +849,14 @@ describe('setup.plan', () => {
         project: PROJECT,
         region: REGION,
         // The renderer left the name out, so main parsed it as the empty string,
-        // which the window draws as `none` -- the CLI suggests one from its own
-        // working directory. The renderer's own object reaches no row.
+        // which the window draws as `none` -- the CLI refuses a setup that
+        // names no project, rather than suggesting one. The renderer's own
+        // object reaches no row.
         name: '',
         rigor: RIGOR,
-        bakeRepos: false,
+        // The switch was left out too, and the window says what that means
+        // (the CLI bakes) rather than drawing the absence as a `no`.
+        bakeRepos: undefined,
         digest: subject?.kind === 'setup' ? subject.digest : '',
         planArgv: PLAN_ARGV,
         applyArgv: APPLY_ARGV,
@@ -835,7 +868,9 @@ describe('setup.plan', () => {
     expect(subject.region).toBe(REGION)
     expect(subject.name).toBe('')
     expect(subject.rigor).toBe(RIGOR)
-    expect(subject.bake).toBe(SETUP_BAKE_NO)
+    // Not `no`: nobody answered the switch, and the CLI's rule for an absent
+    // `bake_repos` is that it bakes, so the row has to say what will happen.
+    expect(subject.bake).toBe(SETUP_BAKE_DEFAULT)
     expect(subject.digest).toMatch(/^[0-9a-f]{64}$/)
     // The window shows both command lines field by field, so what it shows is
     // what is spawned and not a summary of it.
@@ -854,7 +889,7 @@ describe('setup.plan', () => {
           region: REGION,
           name: '',
           rigor: RIGOR,
-          bake_repos: false,
+          bake_repos: undefined,
         }),
       ),
     )
@@ -868,6 +903,21 @@ describe('setup.plan', () => {
     if (subject?.kind !== 'setup') throw new Error('the window was not shown a setup')
     expect(subject.bake).toBe(SETUP_BAKE_YES)
     expect(subject.name).toBe(NAME)
+  })
+
+  it('says no as `no`, and hands the child a written `false` for it', async () => {
+    const { wizard, confirmer, calls } = aWizard({ floor: '0.120.0' })
+    await wizard['setup.plan'](planArgs(anAnswers({ bake_repos: false })))
+    const subject = confirmer.opened[0]?.subject
+    if (subject?.kind !== 'setup') throw new Error('the window was not shown a setup')
+    expect(subject.bake).toBe(SETUP_BAKE_NO)
+    // The row and the bytes have to agree, and it is the bytes the CLI reads: an
+    // absent `bake_repos` is *yes* to it, so a declined switch that was left out
+    // of the file would bake while the window said it would not.
+    const document = JSON.parse(
+      new TextDecoder().decode((calls[0] as SpawnCall).child.bytes[0] as Uint8Array),
+    ) as Record<string, unknown>
+    expect(document['bake_repos']).toBe(false)
   })
 
   it('serialises the answers once, and reuses that buffer', async () => {
@@ -894,6 +944,65 @@ describe('setup.plan', () => {
     // is a new wizard rather than a pending one.
     expect(said.removed).toEqual(said.made)
     expect(await refusalOf(() => said.wizard['setup.apply']({}))).toBe(SETUP_NO_PLAN_REFUSAL)
+  })
+
+  it('shows no window for a plan whose last line is `error`, and answers its sentence', async () => {
+    // `setup --json` refuses what it cannot ask about, and a missing `--name` is
+    // exactly that: with no terminal `init_inputs.go`'s `canAsk` is false, so the
+    // CLI prints one `error` line and exits 1. A window opened over that feed
+    // would ask the operator to confirm a run that has already failed, with a yes
+    // whose apply fails the same way.
+    const failed = aWizard({
+      floor: '0.120.0',
+      feeds: [
+        aFeed([
+          {
+            type: 'error',
+            stage: '',
+            error:
+              "there is no project config yet: pass --name <name> (the project's name), --gcp-project and --region to create one",
+            fix: '',
+            exit_code: 1,
+          },
+        ]),
+      ],
+      code: 1,
+    })
+    expect(
+      await refusalOf(() => failed.wizard['setup.plan'](planArgs(anAnswers({ name: undefined })))),
+    ).toBe(
+      "there is no project config yet: pass --name <name> (the project's name), --gcp-project and --region to create one",
+    )
+    expect(failed.confirmer.opened).toEqual([])
+    // The directory goes with the refusal and no record is held, so there is
+    // nothing a yes could apply.
+    expect(failed.removed).toEqual(failed.made)
+    expect(await refusalOf(() => failed.wizard['setup.apply']({}))).toBe(SETUP_NO_PLAN_REFUSAL)
+    expect(failed.calls).toHaveLength(1)
+  })
+
+  it('reads a plan feed\'s ending: `error` refuses, `done` does not', () => {
+    // The sentence reaches the renderer *as a sentence* and not as a feed, so the
+    // stage the run stopped at has nowhere else to travel.
+    expect(
+      setupFailureSentence({
+        type: 'error',
+        stage: 'project',
+        error: 'no billing account is linked',
+        fix: 'link one, then run setup again',
+        exit_code: 1,
+      }),
+    ).toBe('project: no billing account is linked (link one, then run setup again)')
+    expect(setupFailureSentence({ type: 'error', stage: '', error: '', exit_code: 1 })).toBe(
+      SETUP_FAILED_WITHOUT_A_REASON,
+    )
+    // The last line decides, exactly as it does for `done`: a run that left steps
+    // for the operator ends `done` at exit 1 and is not a refusal.
+    expect(setupFeedFailure([DONE])).toBeNull()
+    expect(setupFeedFailure([])).toBeNull()
+    // An `error` line in the middle does not make a finished run a refusal; a
+    // feed ends with one terminator (ST2).
+    expect(setupFeedFailure([{ type: 'error', stage: '', error: 'a stage failed' }, DONE])).toBeNull()
   })
 
   it('refuses a second plan while one is still waiting for its answer', async () => {
@@ -1156,23 +1265,47 @@ describe('the events the console answers with', () => {
       fileURLToPath(new URL('../../../internal/cli/testdata/setup_events.golden.ndjson', import.meta.url)),
       'utf8',
     )
-    const { wizard } = aWizard({ floor: '0.120.0', feeds: [golden] })
-    const answer = await wizard['setup.plan'](planArgs(anAnswers()))
-    const lines = answer.document.lines as readonly JSONObject[]
     const raw = golden.split('\n').filter((line) => line.trim() !== '')
-    expect(lines.length).toBe(raw.length)
-    // Every line is there, in order, with its own `type`: a class that refused a
-    // field would not lose the line, and this is the assertion that says the
-    // feed is answered whole. The fixture holds three runs, each ended by its own
-    // end-of-feed line (`done`, `done`, `error`) -- which is also why the exit
-    // code decides nothing here and the last line does.
-    expect(lines.map((line) => line['type'])).toEqual(
-      raw.map((line) => (JSON.parse(line) as JSONObject)['type']),
-    )
-    expect(lines.filter((line) => line['type'] === 'done')).toHaveLength(2)
-    expect(lines.at(-1)).toMatchObject({ type: 'error' })
-    // ...and the golden's own bucket name is not what reaches a screen.
-    expect(JSON.stringify(answer)).not.toContain('gs://fugaro-runs-proj-1234')
+    // The fixture holds three runs, each ended by its own end-of-feed line
+    // (`done`, `done`, `error`), and they are read one run at a time: a feed is
+    // one run, and the last line is what says how it ended.
+    const runs: JSONObject[][] = []
+    let run: JSONObject[] = []
+    for (const line of raw) {
+      const parsed = JSON.parse(line) as JSONObject
+      run.push(parsed)
+      if (parsed['type'] === 'done' || parsed['type'] === 'error') {
+        runs.push(run)
+        run = []
+      }
+    }
+    expect(run).toEqual([])
+    expect(runs).toHaveLength(3)
+
+    for (const done of [runs[0] as JSONObject[], runs[1] as JSONObject[]]) {
+      const finished = aWizard({ floor: '0.120.0', feeds: [aFeed(done)] })
+      const answer = await finished.wizard['setup.plan'](planArgs(anAnswers()))
+      const lines = answer.document.lines as readonly JSONObject[]
+      // Every line is there, in order, with its own `type`: a class that refused
+      // a field would not lose the line, and this is the assertion that says the
+      // feed is answered whole.
+      expect(lines.map((line) => line['type'])).toEqual(done.map((line) => line['type']))
+      expect(lines.at(-1)).toMatchObject({ type: 'done' })
+      expect(finished.confirmer.opened).toHaveLength(1)
+      // ...and the golden's own bucket name is not what reaches a screen.
+      expect(JSON.stringify(answer)).not.toContain('gs://fugaro-runs-proj-1234')
+    }
+
+    // The third run ends in `error`, and that is the plan's own refusal: the
+    // CLI's sentence, and no window to confirm it in.
+    const refused = aWizard({
+      floor: '0.120.0',
+      feeds: [aFeed(runs[2] as JSONObject[])],
+      code: 1,
+    })
+    const sentence = await refusalOf(() => refused.wizard['setup.plan'](planArgs(anAnswers())))
+    expect(sentence).toBe((runs[2] as JSONObject[]).at(-1)?.['error'])
+    expect(refused.confirmer.opened).toEqual([])
   })
 })
 

@@ -84,11 +84,19 @@ export const SETUP_NOTES: readonly string[] = Object.freeze([
   SETUP_NOTE_REPLAN,
 ])
 
-/** SETUP_BAKE_YES and SETUP_BAKE_NO are the two words the bake answer is drawn
- * as. The wire carries a boolean and the window draws a word: a row saying
- * `true` is a row an operator has to translate. */
+/** SETUP_BAKE_YES, SETUP_BAKE_NO and SETUP_BAKE_DEFAULT are the three words the
+ * bake answer is drawn as. The wire carries a boolean and the window draws a
+ * word: a row saying `true` is a row an operator has to translate.
+ *
+ * The third word is the one that matters. A switch nobody answered is not a
+ * "no": `bake_repos` absent means **yes** to every reader of the field (only a
+ * written `false` turns the bake off -- `internal/imagebake`'s plan,
+ * `internal/cli/init.go`'s `carryBakeAnswer`), so the window has to say what
+ * happens and not what was left unsaid. Drawing it as `no` would tell an
+ * operator their repositories stay out of the image while the run bakes them in. */
 export const SETUP_BAKE_YES = 'yes'
 export const SETUP_BAKE_NO = 'no'
+export const SETUP_BAKE_DEFAULT = 'not answered: the CLI bakes'
 
 /**
  * SetupView is the whole of what the setup window is shown, and it is a **copy**
@@ -138,7 +146,10 @@ export interface SetupViewFields {
   readonly region: string
   readonly name: string
   readonly rigor: SetupRigor
-  readonly bakeRepos: boolean
+  /** the bake switch in its **three** states: `true` and `false` are the
+   * operator's own answer, and `undefined` is a switch nobody answered, which
+   * the CLI reads as yes (`SETUP_BAKE_DEFAULT`). */
+  readonly bakeRepos: boolean | undefined
   readonly digest: string
   readonly planArgv: readonly string[]
   readonly applyArgv: readonly string[]
@@ -155,7 +166,12 @@ export function setupView(fields: SetupViewFields): SetupView {
     region: fields.region,
     name: fields.name,
     rigor: fields.rigor,
-    bake: fields.bakeRepos ? SETUP_BAKE_YES : SETUP_BAKE_NO,
+    bake:
+      fields.bakeRepos === undefined
+        ? SETUP_BAKE_DEFAULT
+        : fields.bakeRepos
+          ? SETUP_BAKE_YES
+          : SETUP_BAKE_NO,
     digest: fields.digest,
     planArgv: Object.freeze([...fields.planArgv]),
     applyArgv: Object.freeze([...fields.applyArgv]),

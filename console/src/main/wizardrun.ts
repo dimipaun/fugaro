@@ -77,7 +77,7 @@ import {
   SETUP_ANSWERS_FILE_KEYS,
   SETUP_RIGOR_MODES,
 } from '../shared/new-ops'
-import type { SetupAnswers, SetupRigor } from '../shared/new-ops'
+import type { SetupRigor } from '../shared/new-ops'
 import { NEW_READ_BOUNDS, throughClasses } from '../source/new-reads'
 import type { NewReadBounds } from '../source/new-reads'
 import { SourceRefusal } from '../source/source'
@@ -197,17 +197,47 @@ function refuseAnswers(sentence: string): never {
 }
 
 /**
+ * SetupAnswersHeld is the answers **as main holds them**: the five questions
+ * `SetupAnswers` names (the wire type the renderer sends, `../shared/new-ops`),
+ * with `bake_repos` in **three** states rather than the wire's two. `undefined` is a question nobody answered, and the CLI's rule for
+ * that field is that an absent key means **yes**: only a written `false` turns
+ * the bake off (`internal/imagebake`'s plan, `internal/cli/init.go`'s
+ * `carryBakeAnswer`, which exists precisely because a person who answered no
+ * would otherwise get baking on). `projectpolicy.Policy.BakesRepos` and
+ * `localcfg.BakeReposEffective` read it the same way.
+ *
+ * The three states therefore have to reach the bytes **and** the window, and a
+ * boolean cannot carry them: flattening "nobody answered" into `false` would
+ * both omit the key -- so the run bakes -- and draw "no" in the window, which is
+ * the operator being told the opposite of what will happen.
+ */
+export interface SetupAnswersHeld {
+  readonly gcp_project: string
+  readonly region: string
+  readonly name: string
+  readonly rigor: SetupRigor
+  readonly bake_repos: boolean | undefined
+}
+
+/**
  * validateSetupAnswers reads the object a renderer sent as the answers, and it
  * is **strict in both directions**: a member this console does not send is
  * refused by name (`SETUP_ANSWER_KEYS`, the five questions, and no `version`,
  * which main adds when it serialises), and a required question that is missing
  * or outside its grammar is refused with the CLI's own rule.
  *
- * `name` and `bake_repos` may be left out: the CLI suggests a name from the
- * working directory's own, and a switch nobody set is off. `rigor` may not:
- * it has no default (D900), which is the one answer the wizard requires.
+ * `name` and `bake_repos` may still be **absent**, and the two absences mean
+ * different things. A switch nobody answered is the CLI's own default, which for
+ * `bake_repos` is **yes** -- only a written `false` turns the bake off -- so it
+ * is held as unanswered and never flattened into `false`. A name nobody gave is
+ * a refusal the CLI makes itself: on this door (`--json`, and no terminal) it
+ * cannot ask (`init_inputs.go`'s `canAsk`), so it stops with "there is no project
+ * config yet: pass --name <name> (the project's name)", and main invents none --
+ * a suggestion would take the wizard's own `fugaro-setup-XXXXXX` working
+ * directory for a name the CLI calls permanent. `rigor` may not be absent at
+ * all: it has no default (D900), which is the one answer the wizard requires.
  */
-export function validateSetupAnswers(raw: unknown): SetupAnswers {
+export function validateSetupAnswers(raw: unknown): SetupAnswersHeld {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     refuseAnswers(SETUP_ANSWERS_NOT_AN_OBJECT)
   }
@@ -236,12 +266,12 @@ export function validateSetupAnswers(raw: unknown): SetupAnswers {
   if (bake !== undefined && bake !== null && typeof bake !== 'boolean') {
     refuseAnswers(SETUP_BAKE_REFUSAL)
   }
-  const answers: SetupAnswers = {
+  const answers: SetupAnswersHeld = {
     gcp_project: project,
     region,
     name: typeof name === 'string' ? name : '',
     rigor: rigor as SetupRigor,
-    bake_repos: bake === true,
+    bake_repos: typeof bake === 'boolean' ? bake : undefined,
   }
   return Object.freeze(answers)
 }
@@ -283,6 +313,51 @@ export const SETUP_BYTES_CHANGED_REFUSAL =
  * refused with, when its stderr said nothing either. */
 export const SETUP_NO_EVENTS_REFUSAL = 'setup printed no events'
 
+/** SETUP_FAILED_WITHOUT_A_REASON stands in for an `error` line whose own
+ * `error` member is missing or empty. The shape is the CLI's (`SetupFailure`),
+ * so such a line is a line no CLI wrote; the console says the run failed rather
+ * than answering an empty sentence. */
+export const SETUP_FAILED_WITHOUT_A_REASON = 'fugaro setup failed'
+
+/**
+ * setupFailureSentence is a plan's own refusal in the operator's words: the
+ * CLI's `error` (its `SetupFailure`), with the stage the run stopped at in front
+ * of it when the event names one -- a refusal at "project" reads as exactly
+ * that -- and the CLI's `fix` after it when the line carries one.
+ *
+ * It exists because a plan's refusal reaches the renderer as a **sentence**, not
+ * as a feed (`setupFeedFailure` below), so the stage has nowhere else to travel:
+ * a screen drawing the refusal cannot ask the event it never received.
+ */
+export function setupFailureSentence(line: JSONObject): string {
+  const stage = typeof line['stage'] === 'string' ? line['stage'] : ''
+  const said = line['error']
+  const reason =
+    typeof said === 'string' && said !== '' ? said : SETUP_FAILED_WITHOUT_A_REASON
+  const fix = typeof line['fix'] === 'string' ? line['fix'] : ''
+  const head = stage === '' ? reason : `${stage}: ${reason}`
+  return fix === '' ? head : `${head} (${fix})`
+}
+
+/**
+ * setupFeedFailure reads a **plan** feed's own ending: the sentence the run
+ * stopped at when its last line is an `error` event, and `null` when it reached
+ * its `done` line.
+ *
+ * It is what keeps a refused plan from being confirmed. `setup --json` refuses
+ * what it cannot ask about -- a missing `--name` is one line of `error` and exit
+ * 1 -- and a window opened over that feed would ask the operator to confirm a run
+ * that has already failed, whose yes would spawn an apply that fails the same
+ * way. The last line decides, exactly as it does for `done`: a run with steps
+ * left for the operator ends `done` at exit 1 and not `error` (ST2), so the exit
+ * code is not read here.
+ */
+export function setupFeedFailure(lines: readonly JSONObject[]): string | null {
+  const last = lines[lines.length - 1]
+  if (last === undefined || last['type'] !== 'error') return null
+  return setupFailureSentence(last)
+}
+
 // ---------------------------------------------------------------------------
 // The bytes, held once.
 // ---------------------------------------------------------------------------
@@ -291,9 +366,11 @@ export const SETUP_NO_EVENTS_REFUSAL = 'setup printed no events'
  * serialiseSetupAnswers writes the answers file the CLI decodes
  * (`schemas/setup-answers.schema.json`, ST1): the schema's `version` first, then
  * the five answers in the order `SETUP_ANSWERS_FILE_KEYS` names them. A member
- * with no answer is left out rather than written empty -- `name` absent is the
- * CLI suggesting one, and `name: ""` is a name that is not a name, which the
- * CLI's own reader refuses.
+ * with no answer is left out rather than written empty -- `name: ""` is a name
+ * that is not a name, which the CLI's own reader refuses -- with **one**
+ * exception: `bake_repos` is written whenever it was answered, `false`
+ * included, because an absent key is not "no" to any reader of that field but
+ * the CLI's default, which is **yes**. Only a written `false` turns baking off.
  *
  * The order is fixed and the document is small, so the bytes are a function of
  * the answers and nothing else: the digest the window shows is the digest of the
@@ -301,7 +378,7 @@ export const SETUP_NO_EVENTS_REFUSAL = 'setup printed no events'
  * exactly what this module does **not** rely on -- it serialises once and keeps
  * the buffer).
  */
-export function serialiseSetupAnswers(answers: SetupAnswers): Uint8Array {
+export function serialiseSetupAnswers(answers: SetupAnswersHeld): Uint8Array {
   const document: Record<string, unknown> = {
     version: 1,
     gcp_project: answers.gcp_project,
@@ -309,7 +386,13 @@ export function serialiseSetupAnswers(answers: SetupAnswers): Uint8Array {
   }
   if (answers.name !== '') document['name'] = answers.name
   document['rigor'] = answers.rigor
-  if (answers.bake_repos) document['bake_repos'] = true
+  // **A written no has to be written.** `bake_repos` omitted means *yes* to
+  // every reader of the field (`internal/imagebake`'s plan, `localcfg`'s
+  // `BakeReposEffective`, `projectpolicy`'s `BakesRepos`), so omitting it for an
+  // operator who declined would bake their repositories into the image their
+  // jobs run while the window says they will not be. The key is absent only for
+  // a switch nobody answered, which is the CLI's own default.
+  if (typeof answers.bake_repos === 'boolean') document['bake_repos'] = answers.bake_repos
   return new TextEncoder().encode(JSON.stringify(document))
 }
 
@@ -438,7 +521,7 @@ export interface SetupWizardDeps {
    * and the buffer it answers is the one both children are given: a test that
    * wants to change a byte under the window hands one back it keeps a reference
    * to. */
-  readonly serialise?: (answers: SetupAnswers) => Uint8Array
+  readonly serialise?: (answers: SetupAnswersHeld) => Uint8Array
   /** `digest` is the re-check apply runs, `setupAnswersDigest` unless a test
    * says otherwise. */
   readonly digest?: (bytes: Uint8Array) => string
@@ -484,8 +567,13 @@ interface HeldWizard {
  *   1. `setup.plan` refuses below the floor, validates the answers, serialises
  *      them once, makes the private directory, builds both command lines, holds
  *      the record, runs the plan child with the bytes on its stdin, and only
- *      then shows SU1's window the answers it parsed beside the digest -- a plan
- *      that refused shows no window, and answers its own sentence instead;
+ *      then shows SU1's window the answers it parsed beside the digest. **A plan
+ *      that refused shows no window and answers its own sentence instead**, and
+ *      a refusal has exactly two shapes: a child that printed no line at all
+ *      (its stderr is the sentence), and a feed whose **last line is `error`**
+ *      (`setupFeedFailure` -- the CLI's own refusal, with the stage it stopped
+ *      at), which is what `--json` answers when it cannot ask about something,
+ *      a missing `--name` among them;
  *   2. the window's plan frame answering no gives up the record and the
  *      directory, and nothing is applied;
  *   3. the window's **own top frame** answering yes arms the record and starts
@@ -646,6 +734,17 @@ export function createSetupWizard(deps: SetupWizardDeps): SetupWizard {
         held = null
         removeDirectory(directory)
         throw error
+      }
+      // **A refused plan is not confirmed.** The CLI's own refusal arrives as
+      // the feed's last line (`error`), and a window opened over it would ask
+      // the operator to agree to a run that has already failed -- with a yes
+      // whose apply fails the same way. Nothing is held and the directory goes
+      // with the record; the sentence is the CLI's.
+      const failed = setupFeedFailure(lines)
+      if (failed !== null) {
+        held = null
+        removeDirectory(directory)
+        throw new SourceRefusal(failed)
       }
       // The window is shown only for a plan that ran, and the feed is answered
       // after it: the operator reads the answers and the digest while the screen
