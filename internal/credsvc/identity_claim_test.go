@@ -19,6 +19,13 @@ package credsvc
 // (R8, F33); another job account, an expired ticket and an unknown ticket are
 // each refused with one line (R4, R5).
 //
+// Two of those refusals are the ticket's whole reason for existing and are
+// asserted on their own: a ticket whose PATH and account are right and whose
+// SECRET is not the record's is refused — the fence is the record's digest of
+// the ticket and not the path it names, which any job account of the
+// installation can spell — and a nonce that is no nonce at all is refused
+// before the ticket is even read.
+//
 // Everything here is hermetic (Convention 9): the signing goes through
 // internal/gcpfake's IAM Credentials fake, so token.MintAt's own checks, the
 // payload and the re-read of the signed token are exercised rather than faked.
@@ -688,6 +695,82 @@ func TestClaimRefusesAnotherJobAccount(t *testing.T) {
 	wantIdentityLine(t, lines[0], f.run, f.slug, ErrorUnverifiedRunIdentity)
 	f.wantNothingSigned(t)
 	f.wantUnclaimed(t)
+}
+
+// TestClaimRefusesAForgedTicket: R5's fence at its narrowest, and the one thing
+// the ticket's thirty-two random bytes are for. Everything a caller can know
+// about a run is on the record's path — the slug and the run id are not secret,
+// and the ticket's own spelling is reproducible from joinIdentityTicket — so the
+// only thing that ties a presented ticket to its record is the DIGEST the
+// launcher left on it. Here the path, the account and the claims are all right
+// and the secret is the caller's own: without that digest check any job account
+// of the installation that knows a slug and a run id could claim that run's
+// identity, which is the hole R5 states.
+//
+// The refusal names the run (the record was read, so the two names in the ticket
+// are no longer a caller's text), asks for no signature, and leaves the ticket
+// unclaimed — a refused claim that marked it would burn the ticket the real run
+// is waiting to exchange.
+func TestClaimRefusesAForgedTicket(t *testing.T) {
+	f := newClaimFixture(t)
+	ticket, _ := f.issued(t)
+
+	// The forgery is the issuer's own ticket with the secret swapped: the caller
+	// knows how a ticket is spelled and which run it wants, and draws a secret of
+	// its own rather than the one the launcher put on the execution.
+	parts := strings.Split(ticket, identityTicketSeparator)
+	if len(parts) != 3 {
+		t.Fatalf("the issuer's ticket is not the three parts this test forges: %q", ticket)
+	}
+	forged := strings.Join([]string{parts[0], parts[1], "a-ticket-secret-this-caller-made-up"}, identityTicketSeparator)
+	if forged == ticket {
+		t.Fatal("the forged ticket is the issuer's own, so this test proves nothing")
+	}
+
+	resp, body := f.claimCall(t, identityClaimBody(t, forged, testNonce))
+	wantRefusal(t, resp, body, StatusUnverified, identitywire.RefusalIdentityRefused)
+
+	lines := f.identityLines(t)
+	if len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly one", len(lines))
+	}
+	wantIdentityLine(t, lines[0], f.run, f.slug, ErrorUnverifiedRunIdentity)
+	f.wantNothingSigned(t)
+	f.wantUnclaimed(t)
+}
+
+// TestClaimRefusesANonceOutOfShape: R2's retry rule needs a nonce to recognise,
+// so a claim that carries none at all — and one too long to be a value a runner
+// drew (maxIdentityNonceBytes) — is refused as a request this service does not
+// read, with one line. The refusal is answered BEFORE the ticket is read, so the
+// line names no run: the two names in the ticket are still the caller's text.
+//
+// Both halves are the guard's own: without it an empty nonce is hashed like any
+// other, and the claim is served under a nonce no runner ever drew.
+func TestClaimRefusesANonceOutOfShape(t *testing.T) {
+	for _, call := range []struct {
+		name  string
+		nonce string
+	}{
+		{"no nonce at all", ""},
+		{"a nonce longer than a runner draws", strings.Repeat("n", maxIdentityNonceBytes+1)},
+	} {
+		t.Run(call.name, func(t *testing.T) {
+			f := newClaimFixture(t)
+			ticket, _ := f.issued(t)
+
+			resp, body := f.claimCall(t, identityClaimBody(t, ticket, call.nonce))
+			wantRefusal(t, resp, body, StatusRequestRefused, identitywire.RefusalIdentityRefused)
+
+			lines := f.identityLines(t)
+			if len(lines) != 1 {
+				t.Fatalf("the refusal wrote %d audit lines, want exactly one", len(lines))
+			}
+			wantIdentityLine(t, lines[0], "", "", ErrorRequestRefused)
+			f.wantNothingSigned(t)
+			f.wantUnclaimed(t)
+		})
+	}
 }
 
 // TestClaimRefusesExpiredTicket: R2's window, which is the ticket's own and
