@@ -28,6 +28,12 @@ import (
 // The tests ask the decision on values, the way the Cloud Run half does: jobName
 // and jobIdentity with the memoized policy read pre-filled (identityRun), plus
 // one read of the value the gateway hands the service.
+//
+// The last test stands the same decision the other way round, which is why it
+// is here rather than in the Cloud Run half: a Cloud Run execution whose
+// environment carries this file's two variables is placed by its own execution
+// name, because the platform's report is what tells the two backends apart and
+// FUGARO_BACKEND is read only where that report is not a Cloud Run execution.
 
 // batchExecution is the platform's own report of a run's execution on Cloud
 // Batch: the job's own resource name, which is the whole identity there — one
@@ -193,4 +199,72 @@ func TestABatchRunWithNoDeployedJobStops(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestACloudRunIsPlacedByItsOwnExecution is the reason jobName asks the
+// platform's own report before it reads any environment variable, and it is a
+// test of a refusal rather than of a fallback: a Cloud Run job whose
+// environment carries the Batch pair — FUGARO_BACKEND=cloud-batch beside a
+// deployed-job name of the launcher's choosing, which is a hand-edited job, an
+// environment copied from a Batch launch or exactly what a launcher reaching
+// for the identity of a run it did not launch would write — is still placed by
+// the job the platform reported, which no launcher can write (finding 4, 12a
+// item 1). Both halves of the placement are here for the same reason the Batch
+// test asks for both: the triple the run adopts (nothing, on the
+// per-repository path) and the name it reports to the credentials service.
+//
+// Mutation (run, restored): read FUGARO_BACKEND before the report's shape, as
+// the first cut of this branch did. The run is then placed by
+// FUGARO_DEPLOYED_JOB, adopts the shared project job's (profile, provider)
+// triple and reports that name to the service, while the container it was
+// handed is the per-repository job's: its provider, its admission list, its
+// clone URL and its account door all come from a name a launcher wrote.
+func TestACloudRunIsPlacedByItsOwnExecution(t *testing.T) {
+	slug := identitySlug(t, "github", "acme/app")
+	p := policyOf(map[string]config.JobProfile{projectpolicy.DefaultProfileName: profileOf("github")})
+	shared := gcp.ProjectJobName(projectpolicy.DefaultProfileName, "github", "")
+	perRepo := gcp.JobName(slug, gcp.WorkflowVariant(identityWorkflow, ""))
+	batchVars := []string{
+		backend.BackendEnv + "=" + backend.CloudBatch,
+		backend.DeployedJobEnv + "=" + shared,
+	}
+
+	t.Run("the run stays in the job the platform reported", func(t *testing.T) {
+		r := identityRun(t, perRepo, slug, nil, p, true)
+		r.d.Env = batchVars
+		profile, provider, account, err := r.jobIdentity(context.Background())
+		if err != nil {
+			t.Fatalf("jobIdentity: %v", err)
+		}
+		if got := (jobTriple{Profile: profile, Provider: provider, Account: account}); got != (jobTriple{}) {
+			t.Fatalf("jobIdentity = %+v, want nothing adopted: the platform reported the per-repository job %s, and %s names a job the run is not in", got, perRepo, backend.DeployedJobEnv)
+		}
+		if _, project := r.projectJob(); project {
+			t.Errorf("the run was placed in the shared project job %s its environment named, not in the job the platform reported", shared)
+		}
+		job, err := r.jobName()
+		if err != nil {
+			t.Fatalf("jobName: %v", err)
+		}
+		if job != perRepo {
+			t.Fatalf("jobName = %q, want the Cloud Run job %q the platform reported", job, perRepo)
+		}
+	})
+
+	t.Run("the name goes to the credentials service", func(t *testing.T) {
+		r := svcRun(t, config.AuthCascade, func(r *run) {
+			r.d.Env = append(append([]string{}, batchVars...), credentialsServiceURLEnv+"=https://creds.example")
+		})
+		r.sess = svcSession(t)
+		up, err := r.gatewayUpstream(context.Background())
+		if err != nil {
+			t.Fatalf("a Cloud Run run's upstream: %v", err)
+		}
+		if up.Service == nil || up.Service.Job != svcJob {
+			t.Fatalf("the upstream reports the job %+v, want the job the platform reported, %q", up.Service, svcJob)
+		}
+		if up.Service.Job == shared {
+			t.Error("the run reports the deployed-job variable rather than the job it is in")
+		}
+	})
 }
