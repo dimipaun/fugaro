@@ -646,6 +646,70 @@ func TestStateSaveNamesALocalFolderOfItsOwn(t *testing.T) {
 	}
 }
 
+// TestStateSaveRefusesANameThatIsNotOnePathSegment: the local file is
+// <folder>/<workspace>/<member>.json, so both names are path segments — and the
+// guard is the only thing between a name and a write outside the folder the
+// operator named. A workspace or member that is not one segment ("../escape",
+// "acme/other", a backslash, an empty name) must refuse the save outright: the
+// writer is a seam WU6, WU11 and WU23 call, and the names upstream come from
+// projects, whose names this build holds to [a-z0-9-] — so nothing else would
+// notice a name that is not.
+func TestStateSaveRefusesANameThatIsNotOnePathSegment(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		snap workspace.Snapshot
+		what string
+	}{
+		{
+			"a workspace that climbs out of the folder",
+			workspace.Snapshot{Workspace: "../escape", Member: workspace.MemberTarget{Project: "acme-app"}},
+			"the workspace",
+		},
+		{
+			"a workspace that is two segments",
+			workspace.Snapshot{Workspace: "acme/other", Member: workspace.MemberTarget{Project: "acme-app"}},
+			"the workspace",
+		},
+		{
+			"a workspace with no name",
+			workspace.Snapshot{Member: workspace.MemberTarget{Project: "acme-app"}},
+			"the workspace",
+		},
+		{
+			"a member that is two segments",
+			workspace.Snapshot{Workspace: "acme-workspace", Member: workspace.MemberTarget{Project: "acme/app"}},
+			"the member project",
+		},
+		{
+			"a member that climbs out of the folder",
+			workspace.Snapshot{Workspace: "acme-workspace", Member: workspace.MemberTarget{Project: ".."}},
+			"the member project",
+		},
+		{
+			"a member with a backslash",
+			workspace.Snapshot{Workspace: "acme-workspace", Member: workspace.MemberTarget{Project: `acme\app`}},
+			"the member project",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := wu15New(t, "")
+			_, err := s.w.Save(context.Background(), tc.snap)
+			if err == nil {
+				t.Fatal("a save whose workspace or member name is not one path segment succeeded, want a refusal: the file it names is written outside the folder the operator gave")
+			}
+			if code := ExitCode(err); code != ExitUserError {
+				t.Errorf("the refusal exits %d, want %d: a name the operator can fix, not a failure", code, ExitUserError)
+			}
+			if !strings.Contains(err.Error(), tc.what) || !strings.Contains(err.Error(), "not one path segment") {
+				t.Errorf("the refusal does not say which name is not one path segment, so the operator cannot tell what to fix: %v", err)
+			}
+			if files := wu15Files(t, s.dir); len(files) != 0 {
+				t.Errorf("the refused save left %v behind, want nothing: the name is refused before anything is written", files)
+			}
+		})
+	}
+}
+
 // TestStateSaveAMemberCalledAuditIsNotTheWorkspacesExport: "audit" is a legal
 // project name (config.ProjectNameRE), so a member project called audit and the
 // workspace's own audit export are two documents — and a folder that told them
@@ -746,7 +810,7 @@ func TestStateSaveFileRefusesWhatItCannotRead(t *testing.T) {
 // commands are the test's own, on PATH, and the assert is on what a save ran.
 func TestStateSaveHostIsTheRepositorysOwn(t *testing.T) {
 	gitCalls := wu15FakeGit(t)
-	ghCalls := wu15FakeGH(t)
+	ghCalls := wu15FakeGH(t, "PRIVATE")
 
 	s := wu15New(t, "")
 	s.des.d = stateDesignation{Repo: "acme/state", Dir: "docs/state", Provider: gitprov.KindGitHub, Source: "the project layer"}
@@ -827,7 +891,7 @@ func TestStateSaveGHHostCannotMoveTheRepository(t *testing.T) {
 	t.Setenv("GH_REPO", "someone/else")
 
 	gitCalls := wu15FakeGit(t)
-	ghCalls := wu15FakeGH(t)
+	ghCalls := wu15FakeGH(t, "PRIVATE")
 
 	s := wu15New(t, "")
 	s.des.d = stateDesignation{Repo: "acme/state", Dir: "docs/state", Provider: gitprov.KindGitHub, Source: "the project layer"}
@@ -872,6 +936,70 @@ func TestStateSaveGHHostCannotMoveTheRepository(t *testing.T) {
 		if got := env["GH_PROMPT_DISABLED"]; got != "1" {
 			t.Errorf("the save ran `gh %s` with GH_PROMPT_DISABLED=%q, want 1: a gh that could ask would wait on a terminal", sub, got)
 		}
+	}
+}
+
+// TestStateSaveGitHubVisibilityIsTheShippedFence: the fence is only as good as
+// the mapping a save really runs, and GitHub is the provider this build pushes
+// to. Every test above drives the fence through the writer's own host seam, which
+// says nothing about stateGitHubHost.Visibility — so mapping gh's PUBLIC answer
+// to private, the fence off for the provider a save actually reaches, passed the
+// whole suite.
+//
+// This drives the shipped mapping: a real `gh` on PATH answers the word, and the
+// answer decides. The words are gh's own (`gh repo view --json visibility`), and
+// the last case is the one the switch's default arm is for: a word this build
+// does not know must never be read as private.
+func TestStateSaveGitHubVisibilityIsTheShippedFence(t *testing.T) {
+	for _, tc := range []struct {
+		answer  string
+		refused bool
+		fence   bool // the refusal is D2824's own, which names the --repo override
+		why     string
+	}{
+		{"PUBLIC", true, true, "a public repository is exactly what D2824 refuses: a snapshot carries the addresses of the people the project reaches"},
+		{"PRIVATE", false, false, "gh's own private answer is the one answer a save may go through on"},
+		{"private", false, false, "gh's word in another case is still the private answer"},
+		{"INTERNAL", false, false, "an enterprise-internal repository is readable by the enterprise and not by the world, so it is not the public repository D2824 is about"},
+		{"SECRET", true, false, "a visibility this build does not know, read as private, is the public repository the fence exists to refuse"},
+	} {
+		t.Run(tc.answer, func(t *testing.T) {
+			gitCalls := wu15FakeGit(t)
+			ghCalls := wu15FakeGH(t, tc.answer)
+
+			s := wu15New(t, "")
+			s.des.d = stateDesignation{Repo: "acme/state", Dir: "docs/state", Provider: gitprov.KindGitHub, Source: "the project layer"}
+			s.w.hosts = stateHostsFor("")
+
+			got, err := s.w.Save(context.Background(), wu15Member())
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("a save into a repository gh answered %s failed: %v (%s)", tc.answer, err, tc.why)
+				}
+				if got.PullRequest == "" {
+					t.Errorf("the save of a repository gh answered %s opened no pull request, want one: %s", tc.answer, tc.why)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("a save into a repository gh answered %s went through, want the fence's refusal: %s", tc.answer, tc.why)
+			}
+			if tc.fence && !strings.Contains(err.Error(), "--repo") {
+				t.Errorf("the refusal does not name the --repo override, which is the one way through it: %v", err)
+			}
+			if files := wu15Files(t, s.dir); len(files) != 0 {
+				t.Errorf("the refused save left %v behind, want nothing: nothing about a refused save is half-done", files)
+			}
+			// The push is what the fence is about, so the refusal has to land
+			// before the clone that heads it: a snapshot gh was asked about and
+			// refused must not have been committed and pushed first.
+			if cloned := wu15Calls(t, gitCalls); strings.Contains(cloned, "clone") {
+				t.Errorf("the refused save still ran git:\n%s", cloned)
+			}
+			if ran := wu15Calls(t, ghCalls); strings.Contains(ran, "pr create") {
+				t.Errorf("the refused save still opened a pull request:\n%s", ran)
+			}
+		})
 	}
 }
 
@@ -1277,12 +1405,17 @@ exit 0
 // already been pushed. A fake that answered whatever it was asked would pass a
 // save that fails against the real gh, so this one refuses --json the same way —
 // which is a fake doing what the tool does, not a test asserting on argv alone.
-func wu15FakeGH(t *testing.T) string {
+//
+// visibility is the word `gh repo view --json visibility` answers with, because
+// the mapping from that word to the fence is the save's own code and not gh's:
+// a test that cannot choose the word cannot tell the mapping apart
+// (TestStateSaveGitHubVisibilityIsTheShippedFence).
+func wu15FakeGH(t *testing.T, visibility string) string {
 	t.Helper()
 	return testutil.FakeCommand(t, stateGH, `
 env > "${0%/*}/`+wu15GHEnvPrefix+`$1"
 case "$1 $2" in
-"repo view") echo '{"visibility":"PRIVATE"}' ;;
+"repo view") echo '{"visibility":"`+visibility+`"}' ;;
 "pr create")
   for a in "$@"; do
     if [ "$a" = "--json" ]; then
