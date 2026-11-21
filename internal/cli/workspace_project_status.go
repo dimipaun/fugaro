@@ -1904,7 +1904,7 @@ func (c *workspaceMemberCloud) caps(ctx context.Context, name string) (memberCap
 		out.Monthly = int64(monthly)
 	}
 	if c.db == nil {
-		out.Why = errNoWorkspaceSide("the workspace's own spend meter").Error()
+		out.Why = "this machine holds no database of the workspace's own project, which is where its spend meter is kept, so what the workspace's credentials have paid for here was not read"
 		return out, nil
 	}
 	now := c.now()
