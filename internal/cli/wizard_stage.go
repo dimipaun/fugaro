@@ -267,6 +267,16 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		// --rigor is refused here rather than ignored (task W): the mode of a
 		// project that already exists is the project's own, and the one command
 		// that changes it is `fugaro rigor set`.
+		// --location is refused first, and for the same reason (LP4's review):
+		// a run that selects a project config creates nothing either, and the
+		// answer would be materialized into the place's default region and then
+		// meet the region-move guard — which names a --region the caller never
+		// typed — or be dropped in silence where the two agree. It comes before
+		// --rigor below because the place is the question the wizard reaches
+		// first (setupQuestions).
+		if err := setupLocationRefusal(o.location); err != nil {
+			return err
+		}
 		if err := setupRigorRefusal(o.rigor); err != nil {
 			return err
 		}

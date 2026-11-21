@@ -1109,6 +1109,106 @@ func TestSetupWithNoTerminalNamesTheLocationFlags(t *testing.T) {
 	})
 }
 
+// TestALocationThatCreatesNothingIsRefused: --location is the first run's own
+// flag, as --rigor beside it is (setupCreates), and a run that creates no
+// installation refuses it by name.
+//
+// Left on the run's options it is not inert. settleLocation turns the place into
+// the place's default region — a region the caller never typed — which the
+// region-move guard then refuses in the region's own words, printing a --region
+// the caller never passed as the fix for the --location they did, and that pair
+// is itself refused beside the place it came from; where the default region
+// happens to be the installation's own, the answer is accepted and dropped in
+// silence (LP4's review).
+func TestALocationThatCreatesNothingIsRefused(t *testing.T) {
+	refusal := func(t *testing.T, err error, out string) {
+		t.Helper()
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("a run that creates no installation took --location: %v\n%s", err, out)
+		}
+		for _, want := range []string{"--location", "is a first run's flag", "--region <region>", "nothing was written"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal lacks %q: %v", want, err)
+			}
+		}
+		// The flag's own refusal, not the region-move guard's: that one names a
+		// --region the caller never passed, and the fix it prints is refused
+		// beside the --location that produced it.
+		for _, unwanted := range []string{"is not the installation's region", "--region us-east5", "--region europe-west1"} {
+			if strings.Contains(err.Error(), unwanted) {
+				t.Errorf("the refusal is the region-move guard's (%q): %v", unwanted, err)
+			}
+		}
+	}
+
+	t.Run("an installation whose region is the place's default", func(t *testing.T) {
+		// The rig's installation is in us-east5, which is what --location us
+		// materializes to: this is the pair that was accepted and dropped in
+		// silence before the refusal.
+		newInitRig(t)
+		out, errOut, err := executeStdin(t, "", "setup", "--location", "us")
+		refusal(t, err, out+errOut)
+	})
+
+	t.Run("an installation in another place", func(t *testing.T) {
+		// europe-west1's place is the EU, so --location us here is the pair the
+		// region-move guard used to answer with a --region nobody passed.
+		r := newInitRig(t)
+		cfg, err := os.ReadFile(r.cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(r.cfg, []byte(strings.ReplaceAll(string(cfg), "us-east5", "europe-west1")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out, errOut, err := executeStdin(t, "", "setup", "--location", "us")
+		refusal(t, err, out+errOut)
+	})
+
+	t.Run("fugaro update with no project config", func(t *testing.T) {
+		// The door creates nothing whether or not an installation is found, and
+		// its own question is the region: the refusal is before anything is
+		// read, so nothing is asked on the way to it.
+		firstRunEnv(t)
+		fakeTerminal(t)
+		noInstallation(t)
+		out, errOut, err := executeStdin(t, "", "update", "--location", "eu")
+		refusal(t, err, out+errOut)
+		if asked := out + errOut; strings.Contains(asked, questionFor("--region").what) {
+			t.Errorf("the run asked its own question on the way to refusing the flag:\n%s", asked)
+		}
+	})
+
+	t.Run("the flags that stop before the creation", func(t *testing.T) {
+		for _, args := range [][]string{
+			{"setup", "--config-only", "--location", "us"},
+			{"setup", "--print-vars", "--location", "us"},
+			{"setup", "--publish-config", "--location", "us"},
+			// --forget is the update door's own flag — `fugaro setup --forget`
+			// is refused for the door it names — so the pair is met there.
+			{"update", "--forget", "--location", "us"},
+		} {
+			t.Run(strings.Join(args[:2], " "), func(t *testing.T) {
+				newInitRig(t)
+				out, errOut, err := executeStdin(t, "", args...)
+				refusal(t, err, out+errOut)
+			})
+		}
+	})
+
+	t.Run("the answers file's location member", func(t *testing.T) {
+		// The file is the same door as the flag (setup_answers.go), so the
+		// member is refused in the flag's own sentence — ahead of the rigor
+		// answer the document carries beside it, which is the question the place
+		// precedes.
+		newInitRig(t)
+		doc := answersDoc(`"gcp_project":"`+initProject+`"`, `"location":"eu"`, `"name":"aurora"`,
+			`"rigor":"pro"`, `"bake_repos":true`)
+		out, errOut, err := executeStdin(t, "", "setup", "--answers-file", answersFile(t, doc))
+		refusal(t, err, out+errOut)
+	})
+}
+
 // TestSetupPrintsWhereEachThingGoes is R7: before anything is created the run
 // says where each thing it creates will go — one line per row of the mapping,
 // in the mapping's own words (place.For), with every fallback's reason printed

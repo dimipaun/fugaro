@@ -118,6 +118,25 @@ func (o *initOptions) settleLocation() error {
 	return nil
 }
 
+// setupLocationRefusal is --location on a run that creates no installation
+// (setupCreates): the place is the answer of the run that CREATES the
+// installation, and a run that creates none has none to give.
+//
+// Left alone, the place is materialized into the place's default region
+// (settleLocation) — a region the caller never typed — which the region-move
+// guard then refuses in the region's own words, printing a --region the caller
+// never passed as the fix for the --location they did; and where that default
+// happens to be the installation's own region, the answer is dropped in
+// silence. Refused by name instead, where --rigor is (LP4's review; setup.go's
+// rigor refusals are the same refusal for the neighbouring first-run flag),
+// with the region named as what such a run takes.
+func setupLocationRefusal(answer string) error {
+	if answer == "" {
+		return nil
+	}
+	return userErr("--location (or the location member of an answers file, which is the same answer) is a first run's flag: it chooses the place fugaro setup creates the installation in, and this run creates none, so there is no place to choose (an installation's region is where it was created and cannot move) — the region itself is what a run names, with --region <region>; nothing was asked and nothing was written")
+}
+
 var nameJunkRE = regexp.MustCompile(`[^a-z0-9]+`)
 
 // sanitiseName turns s into a project name (config.ProjectNameRE: 1 to 40 of

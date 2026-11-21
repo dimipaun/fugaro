@@ -549,7 +549,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// The place question (LP4 of docs/location-preference; R2, D3080, D3081,
 	// D3086). It names no door: what says the question is a first run's is the
 	// run's own state (a project config, or not).
-	f.StringVar(&o.location, "location", "", "answer the wizard's place question without a terminal: where the installation lives, us or eu. US is the suggestion and its region is us-east5; EU's is europe-west1. The region is what the installation stores and the place is read back from it (D3080), so --region answers this same question precisely — a region typed in full, such as europe-west4 — and the two given together must agree: a run whose --location and --region name different places is refused at once, naming both. Like every question of the first run, a run that cannot ask and was given neither is refused with both flags")
+	f.StringVar(&o.location, "location", "", "answer the wizard's place question without a terminal: where the installation lives, us or eu. US is the suggestion and its region is us-east5; EU's is europe-west1. The region is what the installation stores and the place is read back from it (D3080), so --region answers this same question precisely — a region typed in full, such as europe-west4 — and the two given together must agree: a run whose --location and --region name different places is refused at once, naming both. Like every question of the first run, a run that cannot ask and was given neither is refused with both flags. It is a first run's flag: a run that creates no installation — fugaro update, a run that selects a project config, --forget, --config-only, --print-vars and --publish-config — refuses it by name, and the region itself (--region <region>) is what such a run names")
 	f.StringVar(&o.rigor, "rigor", "", "answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set")
 	// --answers-file answers every question the wizard asks from one document
 	// (setup_answers.go, D2904 of docs/console-improvements): the surface that
@@ -1871,6 +1871,19 @@ func (o *initOptions) check() error {
 	}
 	if o.githubAppID != "" && (o.forget || o.configOnly || o.printVars) {
 		return userErr("--github-app-id is for the repository stage of the converge (or --repo); it has no use with --forget, --config-only and --print-vars")
+	}
+	if o.location != "" && (o.forget || o.configOnly || o.printVars || o.publishConfig || o.door == updateDoor.name) {
+		// The place is the first run's own question (setupCreates): these four
+		// stop before the stages that write it and the update door creates
+		// nothing at all, so the flag has no reader here — and left on the run's
+		// options it is not inert, it becomes the place's default region
+		// (settleLocation) and then meets the region-move guard in the region's
+		// own words. Refused by name here, before anything is read, ahead of
+		// --rigor below because the place is the question the wizard reaches
+		// first (setupQuestions). A run that selects a project config is refused
+		// by the same sentence where that is known (wizard_stage.go), because
+		// whether it creates is not known until its config has been looked for.
+		return setupLocationRefusal(o.location)
 	}
 	if o.rigor != "" && (o.forget || o.configOnly || o.printVars || o.publishConfig) {
 		// These four stop before the converge's stages — forgetting, writing
