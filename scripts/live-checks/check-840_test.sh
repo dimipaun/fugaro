@@ -153,6 +153,7 @@ printf 'curl %s\n' "$*" >>"$FAKE840_DIR/calls"
 conf=""
 out=""
 url=""
+url_arg=""
 data=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -182,11 +183,11 @@ while [ $# -gt 0 ]; do
   -*) shift ;;
   *)
     url=$1
+    url_arg=$1
     shift
     ;;
   esac
 done
-printf 'url %s\n' "$url" >>"$FAKE840_DIR/calls"
 if [ -n "$conf" ]; then
   # Appended rather than written: the last config file a run passes is the U3
   # exchange's, which carries no Authorization header, and a truncating write
@@ -196,6 +197,21 @@ if [ -n "$conf" ]; then
   # file is the one this ends up recording.
   if url_line=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$conf" 2>/dev/null) && [ -n "$url_line" ]; then
     printf '%s\n' "$url_line" >"$FAKE840_DIR/conf.url"
+    # curl's own URL resolution: a `url` line in a config file IS the URL when
+    # nothing is given on the command line. This fake has to resolve it the same
+    # way, or a call that keeps its URL in the config file alone -- which is how
+    # this check's exchange is addressed, with the web API key in it -- would
+    # look to this fake like a call with no URL at all.
+    [ -n "$url" ] || url=$url_line
+    # And two URLs in one call are TWO transfers, which this fake does not make
+    # and must not pretend to: it says so instead of modelling the second one.
+    # A check that passes its URL twice -- once in the config file and once as an
+    # argument -- gets here, and `-w` would then print a status per transfer, so
+    # the answer it reads is not one HTTP status at all.
+    if [ -n "$url_line" ] && [ -n "${url_arg:-}" ]; then
+      printf 'fake curl: two transfers in one call (a `url` line and a URL argument)\n' >&2
+      exit 64
+    fi
   fi
   # The file's mode, so a case can say it is 0600 and not merely present. Read
   # with python3 rather than stat, whose -c is GNU's: the owner runs this check
@@ -203,6 +219,13 @@ if [ -n "$conf" ]; then
   python3 -c 'import os, sys; print("%o" % (os.stat(sys.argv[1]).st_mode & 0o777))' "$conf" \
     >"$FAKE840_DIR/conf.mode" 2>/dev/null || printf 'unknown\n' >"$FAKE840_DIR/conf.mode"
 fi
+# The URL as it was GIVEN ON THE COMMAND LINE, which is what this record is: a
+# case reads it to say which call was made, and reads the same file to say no
+# credential ever reached a command line. A URL this fake resolved out of a
+# config file is not on a command line and is not recorded here -- and the one
+# this check resolves is the U3 exchange's, whose URL carries the web API key.
+# The resolved URL is recorded on its own, in conf.url.
+printf 'url %s\n' "$url_arg" >>"$FAKE840_DIR/calls"
 
 if [ -s "$FAKE840_DIR/curl.status" ]; then
   printf 'fake curl: the request did not answer\n' >&2
@@ -526,6 +549,8 @@ test_the_three_readings_hold() {
   expect_contains "$out" "email=$SA" "the claims row names the account the execution ran as"
   expect_contains "$(cat "$dir/state/calls")" "url https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/jobs/$PROBE:run" "the override went through the API's jobs.run, which is the one call gcloud has no flag for"
   expect_contains "$(cat "$dir/state/calls")" "url https://run.googleapis.com/v2/$EXEC_FULL" "the read-back is the API's run.executions.get"
+  expect_contains "$(cat "$dir/state/calls")" "logging read" "the probe's own lines are read out of Cloud Logging"
+  expect_contains "$(cat "$dir/state/calls")" "--order=asc" "ascending, so an execution's block arrives in the order the probe printed it: descending reverses the lines within the block and the claims would read as none"
   expect_contains "$(cat "$dir/state/calls")" "gcloud run jobs create $PROBE" "the probe job is the check's own, created by name"
   expect_contains "$(cat "$dir/state/calls")" "--service-account $SA" "the probe runs as the installation job's own account, whose name the identity token then carries"
   expect_contains "$(probe_source "$dir")" "metadata.google.internal" "the probe reads the execution's own metadata identity endpoint"
@@ -643,6 +668,29 @@ test_a_log_read_that_never_carries_the_execution_stops() {
   expect_contains "$out" "FACT claims: FAIL" "a log read that never answered with this execution's lines"
   expect_contains "$out" "FACT u1: FAIL — not reached" "nothing is concluded about the identity token"
   expect_contains "$out" "FACT restore: PASS" "an unread log still leaves nothing behind"
+}
+
+# The execution's own block is there and it carries NO claims — the token the
+# execution minted was not a JWT, which the probe prints as its own line. A check
+# that counted an empty claim set and then judged "nothing in it is the
+# execution's" would report the design's assumption holding from a read that
+# never happened, and the verdict row would say all three answers came back the
+# way the design assumes.
+test_a_token_with_no_claims_stops() {
+  setup_case no-claims
+  : >"$dir/state/log.txt"
+  cat >"$dir/state/log.txt" <<EOF
+CHK840 exec=$EXEC_SHORT
+CHK840 marker=$MARKER_VALUE
+CHK840 token_len=0
+CHK840 error=not-a-jwt
+EOF
+  run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
+  expect_status "$status" 2 "an execution whose identity token carried no claims"
+  expect_contains "$out" "FACT claims: FAIL" "a token with no claims is not a claim set"
+  expect_contains "$out" "FACT u1: FAIL — not reached" "nothing is judged about what the token carries"
+  expect_absent "$out" "the identity token carries 0 claim(s)" "no row reports an empty claim set as a reading"
+  expect_contains "$out" "FACT restore: PASS" "a run that measured nothing still leaves nothing behind"
 }
 
 # A run of this check inside the freshness window leaves its own lines in the
@@ -834,6 +882,7 @@ t test_a_first_exchange_that_is_refused_stops
 t test_a_job_without_the_web_key_stops
 t test_a_launch_that_is_refused_stops_and_removes_the_job
 t test_a_log_read_that_never_carries_the_execution_stops
+t test_a_token_with_no_claims_stops
 t test_a_log_carrying_an_earlier_execution_reads_only_this_one
 t test_a_job_that_already_exists_is_refused
 t test_a_missing_token_stops

@@ -726,13 +726,20 @@ judge_u2() {
 # execution; a read that never carries it is a stop, not a set of zeroes. Both
 # payload shapes a step's line can have are read (a textPayload, and a build or
 # a job that logged JSON puts it in jsonPayload.message).
+#
+# `--order=asc`, and never gcloud's default: every line the probe prints is its
+# own log entry, so descending order reverses the lines WITHIN an execution's
+# block as well as the blocks themselves, while the reader below takes a block as
+# the lines after its `exec=` line. Descending, this execution's claims arrive
+# before the `exec=` line that opens the block and are read as none. The
+# register's own checks pass it for the same reason (check-580.sh, check610.sh).
 PROBE_LOG=""
 read_probe_log() {
   local filter i=0
   filter="resource.type=\"cloud_run_job\" resource.labels.job_name=\"$PROBE_JOB\""
   while [ "$i" -lt "$LOG_TRIES" ]; do
     gcloud logging read "$filter" --project "$P" --freshness=1h --limit=200 \
-      --format='value(textPayload,jsonPayload.message)' \
+      --order=asc --format='value(textPayload,jsonPayload.message)' \
       >"$SCRATCH/log.txt" 2>"$SCRATCH/log.err" || true
     if grep -q "CHK840 exec=$EXEC_SHORT" "$SCRATCH/log.txt" 2>/dev/null; then
       PROBE_LOG="$SCRATCH/log.txt"
@@ -807,7 +814,12 @@ judge_u1() {
   local marker len count
   marker=$(printf '%s\n' "$out" | sed -n 's/^marker=//p' | head -1)
   len=$(printf '%s\n' "$out" | sed -n 's/^token_len=//p' | head -1)
-  count=$(grep -c '^' "$SCRATCH/claims" 2>/dev/null || printf '0')
+  # `grep -c` prints its 0 AND fails when nothing matched, so `|| printf '0'`
+  # would append a second 0 and the count would read `0\n0`: the test below would
+  # then fail on a non-integer and a token with no claims at all would pass as
+  # "nothing in it is the execution's".
+  count=$(grep -c '^' "$SCRATCH/claims" 2>/dev/null) || count=0
+  count=${count:-0}
   if [ "$count" -lt 3 ]; then
     fact claims FAIL "the execution's identity token answered with $count claim(s) — too few to be a Google ID token — so nothing is judged about what it carries (the probe's own lines are in this run's log read)"
     stop "the identity token the execution minted carried $count claims (the row above), which cannot be the token this check is about. Nothing is concluded"
@@ -983,10 +995,16 @@ exchange() { # exchange N
   EXCHANGE_CODE=""
   EXCHANGE_UID=""
   EXCHANGE_DETAIL=""
+  # The URL is in u3.conf and NOWHERE else. Passing it as an argument as well
+  # would make curl fetch TWICE — the config file's URL and the argument's — and
+  # `-w` prints a status for each transfer, so the code this reads would be
+  # `200{…the keyless transfer's error…}403` rather than one answer. The keyless
+  # second transfer is also the one thing this check must not make: the exchange
+  # is addressed with the web API key or it is not measured.
   if ! code=$(curl -sS --max-time "$CURL_SECONDS" -X POST \
     -H 'Content-Type: application/json' --config "$SCRATCH/u3.conf" \
     -d "@$SCRATCH/signin-body.json" -o "$SCRATCH/signin.$n.json" -w '%{http_code}' \
-    "$IDENTITY_URL" 2>"$SCRATCH/signin.$n.err"); then
+    2>"$SCRATCH/signin.$n.err"); then
     EXCHANGE_CODE="no answer"
     EXCHANGE_DETAIL="curl failed before any HTTP response ($(first_line "$SCRATCH/signin.$n.err"))"
     return 0
