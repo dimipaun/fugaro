@@ -136,8 +136,8 @@ This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconcilia
 - Reviewer tier: opus with an independent review: Terraform.
 
 ### RM7: the documents
-- Acceptance: `SECURITY.md` says a launcher can message a running run (the role check is the CLI's and advisory, F22), that messages live where no job account can write, that on a shared project job every repository's agent can read them, that the resident orchestrator's account writes them and viewers read them, that a hostile agent can suppress delivery but not forge a message (F20), and that text stays readable about 14 days through versioning (F11); `website/content/security.md` is regenerated from it with `go run ./internal/clidoc`, never edited; `docs/design/v1.md` gains the delivery rules (reconciliation rules 1–6) and the `fugaro tell` row in the commands table, saying its `--now` waits for a quiet point unlike `cancel --now`; `docs/design/bucket-iam.md`'s writers table and its `tokens/` sentence, and `docs/design/budget-token-channel.md` §7.2 and §7.4, say plaintext messages live under `tokens/` too (F2); the docs tests and the website checks pass.
-- Files: `SECURITY.md`, `website/content/security.md` (generated), `docs/design/v1.md`, `docs/design/bucket-iam.md`, `docs/design/budget-token-channel.md`.
+- Acceptance: `SECURITY.md` says a launcher can message a running run (the role check is the CLI's and advisory, F22), that messages live where no job account can write, that on a shared project job every repository's agent can read them, that the resident orchestrator's account writes them and viewers read them, that a hostile agent can suppress delivery but not forge a message (F20), and that text stays readable about 14 days through versioning (F11); `website/content/security.md` is regenerated from it with `go run ./internal/clidoc`, never edited; `docs/design/v1.md` gains the delivery rules (reconciliation rules 1–6) and the `fugaro tell` row in the commands table, saying its `--now` waits for a quiet point unlike `cancel --now`; `docs/bucket-iam/spec.md`'s writers table and its `tokens/` sentence, and `docs/budget-token-channel/spec.md` §7.2 and §7.4, say plaintext messages live under `tokens/` too (F2); the docs tests and the website checks pass.
+- Files: `SECURITY.md`, `website/content/security.md` (generated), `docs/design/v1.md`, `docs/bucket-iam/spec.md`, `docs/budget-token-channel/spec.md`.
 - Tests: `go run ./internal/clidoc` (regenerates `website/content/security.md`), then `go test ./internal/cli/ -run 'Docs|TestWebsiteSecurityPageIsByteIdenticalToSecurityMd' -count=1`; `(cd website && npm run check)`.
 - Command: as above.
 - Red step: none (documents); the tests are run before and after.
@@ -195,7 +195,7 @@ This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconcilia
 | `plugin/skills/working/SKILL.md` | RM9 (3) |
 | `internal/agent/*` | RM3 (0) |
 | `deploy/terraform/gcp/modules/installation/bucket.tf`, `deploy/terraform/gcp/modules/project/sa.tf`, `internal/infra/tf/testdata/golden/*` | RM6 (1) |
-| `SECURITY.md`, `website/content/security.md`, `docs/design/v1.md`, `docs/design/bucket-iam.md`, `docs/design/budget-token-channel.md` | RM7 (3) |
+| `SECURITY.md`, `website/content/security.md`, `docs/design/v1.md`, `docs/bucket-iam/spec.md`, `docs/budget-token-channel/spec.md` | RM7 (3) |
 | `docs/gcp-live-checklist.md`, `scripts/live_checks_test.go` | RM8 (3) |
 | `deploy/terraform/gcp/modules/installation/variables.tf`, the release notes file | RM6 (1) |
 

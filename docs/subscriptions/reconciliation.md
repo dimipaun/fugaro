@@ -20,7 +20,7 @@ figure, the cell below records its structure and says "price: private" or "figur
 go-to-market work's D400–D429 and Checks 160–169 (`docs/go-to-market/README.md`) and the Bitbucket
 credentials work's D360–D389 and Checks 145–154, on `main` and in the docs of every open PR.
 **D430–D448** are written and answered; **D449–D459** are written and unanswered, by the key
-service's design (S3.1, `docs/design/key-signing-service.md` §12). **Checks 170–179**
+service's design (S3.1, `docs/key-signing-service/spec.md` §12). **Checks 170–179**
 are named by the plan, owner-run and not run. Findings are
 **F1–F47**, resolutions **R1–R6**, tensions **T1–T26** (T1–T9 from the first reading, T10–T26 from
 the answers; **all ruled 2026-10-27**, see "Rulings"; **T27**, a consequence of the rulings, **ruled
@@ -89,7 +89,7 @@ uses no licensed Software. *Consequence:* D433 makes the seat a pricing rule of 
 
 **F6 — Wrong: viewer/operator/admin roles exist.** None does:
 - **The console** has no sign-in: it spawns the installed `fugaro` with the operator's ambient
-  cloud identity (`docs/design/desktop-console.md` §1, §3.1) and treats every identity as a
+  cloud identity (`docs/desktop-console/spec.md` §1, §3.1) and treats every identity as a
   possible admin (§3, rule 6 of §3.4, D14).
 - **The CLI** reads `terraform.launchers` and `terraform.operators` (`operatorMember`,
   `launcherMember` in `internal/cli/roles.go`) only to choose what a table shows; they grant
@@ -171,7 +171,7 @@ feature defines a read-only mode. The console spawns fifteen operations
 `runs.stats`, `plan.status`, `run.diagnose`, `run.logs`, `run.logLink`, `secrets.inventory`,
 `accounts.inventory`, `cli.version`, `environment.report`, `installation.list`,
 `coordinator.status`), all reads: it has no launch, cancel or kill-switch action
-(`docs/design/desktop-console.md` D2, D14). The app's cancel is a mailbox action addressed to
+(`docs/desktop-console/spec.md` D2, D14). The app's cancel is a mailbox action addressed to
 the `orchestrator` agent (`shared/mailbox-schema/vectors.json`). *Consequence:* for the console as
 built, "read-only after lapse" can only hide or keep paid views (Spend, the coordinator's project
 view, seats); console v2's planned launch would be the first action a lapse could gate. T12; S6.1.

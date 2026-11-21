@@ -29,4 +29,4 @@ Day to day: `fugaro budget show`, `fugaro budget preview --recipe <name> --runs 
 
 **Off again:** `fugaro update --firebase-project <gcp-project-id> --budget-mode off`, then `fugaro update --repo` in each repository. The jobs stop opening a budget session; the backend's address and key stay in every job, so a run can still read a published project policy, and the data stays.
 
-Detail, and what the guard does and does not protect against: [project-layer.md](../project-layer.md) §5, [design/m9-budget-and-dashboard.md](../design/m9-budget-and-dashboard.md).
+Detail, and what the guard does and does not protect against: [project-layer.md](../project-layer.md) §5, [m9-budget-and-dashboard/spec.md](../m9-budget-and-dashboard/spec.md).

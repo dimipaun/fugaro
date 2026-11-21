@@ -87,7 +87,7 @@ database's.
 
 **F9 — Rule: Cloud Batch.** `internal/backend/batch/run.go` refuses any launch that carries a
 sealed token, because Batch has no per-execution place for the key
-(`docs/design/budget-token-channel.md`). The backend is wired (`doctor_batch.go`,
+(`docs/budget-token-channel/spec.md`). The backend is wired (`doctor_batch.go`,
 `validate_batch.go`, `docs/backends.md`) and its live Check 124 has never been run. Once every
 launch mints, Batch can launch nothing. Consequence: D3021, AB9.
 
@@ -134,7 +134,7 @@ config is rewritten in place (`migrateCraftKeys`). `raiseBudgetMode`
 AB8b follow them.
 
 **F17 — Rule: documents that present off as a feature.** `README.md` ("off by default"),
-`docs/how-to/budgets.md`, `docs/design/m9-budget-and-dashboard.md` (its rollback is
+`docs/how-to/budgets.md`, `docs/m9-budget-and-dashboard/spec.md` (its rollback is
 `--budget-mode off`), `docs/design/v1.md`, `docs/multi-model.md`, Check 47's row in
 `docs/gcp-live-checklist.md`, `plugin/skills/setup/reference/decisions.md` and
 `website/content/security.md`. *(Corrected by review round 2.)*

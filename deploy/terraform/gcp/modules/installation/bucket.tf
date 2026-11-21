@@ -61,7 +61,7 @@ resource "google_storage_bucket" "runs" {
   # read, never deleted, by the job (its grant on tokens/ is read-only), and
   # the token in it is dead after an hour; the object goes after a day.
   # runs/ stays in the rule for the plaintext objects launchers before the
-  # seal left there (docs/design/budget-token-channel.md section 7.2).
+  # seal left there (docs/budget-token-channel/spec.md section 7.2).
   dynamic "lifecycle_rule" {
     for_each = var.enable_budget ? [1] : []
     content {

@@ -5,7 +5,7 @@ Date: 2026-11-07. Checked against `origin/main` at `91ae90aa3`. **Rounds 1 and 2
 
 The spec gives Fugaro three roles (viewer, operator, admin), each granted with a scope (the project, all
 repos, or specific repos, with `*` patterns), resolved by "the highest role wins". It extends
-[the existing roles design](../design/roles.md), which maps the roles onto the installation's
+[the existing roles design](../roles/spec.md), which maps the roles onto the installation's
 project-wide IAM lists.
 
 | File | What it is |

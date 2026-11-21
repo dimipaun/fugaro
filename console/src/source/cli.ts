@@ -560,7 +560,7 @@ export class CliSource implements FugaroSource {
    * launch failed (`reposStatusPrint`, `internal/cli/project_status.go`), so the
    * failing rows and the fix each one names are exactly what the read is for,
    * and a console that refused them would refuse the one case it exists to draw
-   * (`docs/design/desktop-console.md` §5.1: "this operation's answer is the
+   * (`docs/desktop-console/spec.md` §5.1: "this operation's answer is the
    * document rather than the status").
    *
    * stdout is read first and the code is only a refusal when there is no

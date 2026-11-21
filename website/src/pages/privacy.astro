@@ -43,7 +43,7 @@
  * that turn it off), the phone app's two credentials and its secure storage from
  * `mobile/src/accounts/`, and the app's reporting from the other direction — the page names
  * Firebase Crashlytics and Firebase Analytics, so the same gate refuses that naming unless
- * the repository carries the plan for it (`docs/plans/2026-10-19-mobile-telemetry.md`) or the
+ * the repository carries the plan for it (`docs/mobile/telemetry-plan.md`) or the
  * app's own dependency list already carries the two packages, and it refuses the app's
  * carrying them without the page naming them. The app's "no advertising identifier" is read
  * off the tree, not asserted: the scan refuses the platform's advertising-identifier APIs
@@ -79,7 +79,7 @@
  * a key needs (the email address of the person signing up, counsel's Subscription Terms' own
  * list), and a Team purchase is sold by the merchant of record, who receives a buyer's data.
  * None of it is written here for the first time — counsel's Subscription Terms §7.5(b) states
- * what the Key Service collects, and the design's §7.3 (`docs/design/key-signing-service.md`)
+ * what the Key Service collects, and the design's §7.3 (`docs/key-signing-service/spec.md`)
  * obliges the notice to name the merchant of record as a recipient — and `website/test/privacy.mjs`
  * rule 9 holds each sentence to the source that makes it true. The owner approved the whole of it
  * with the plan's tasks on 2026-11-16.

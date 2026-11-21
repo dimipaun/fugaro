@@ -185,6 +185,15 @@ type Config struct {
 	// says (internal/cli). Like the fields above it is never part of the file
 	// or of SHA256.
 	RepoStopFractionSet bool `yaml:"-" json:"-"`
+	// RepoWorkspaceBeatSet is whether the repository's own file wrote the
+	// agent.workspace_beat key at all, at any value: the question
+	// RepoRigorSet answers for rigor:, and Agent.WorkspaceBeat cannot answer
+	// it — the key written true (the default) decodes to the same answer as
+	// the key being absent once WorkspaceBeatOn is read, and a runner older
+	// than workspaceBeatSince refuses the key itself, whatever it says
+	// (internal/cli). Like the fields above it is never part of the file or
+	// of SHA256.
+	RepoWorkspaceBeatSet bool `yaml:"-" json:"-"`
 	// RepoTriageSet is whether the repository's own file wrote the
 	// agent.triage key at all, at any value: the question RepoRigorSet answers
 	// for rigor:, and Agent.Triage cannot answer it — the key written true
@@ -361,8 +370,9 @@ func (c *Config) RigorConfig() rigor.Config {
 	return out
 }
 
-// ProjectRigor is the project layer's half alone: defaults.rigor.default and
-// its areas, with the repository's rigor: block left out. It is what a run
+// ProjectRigor is the project layer's half alone: defaults.rigor.default,
+// its areas and its per-repository map, with the repository's rigor: block
+// left out. It is what a run
 // falls back to when the base branch's own fugaro.yaml cannot be read
 // (internal/runner, D25): the layer came with the task and is no branch's, so
 // it is the one part of the configuration that is still true when no branch
@@ -372,6 +382,7 @@ func (c *Config) ProjectRigor() rigor.Config {
 	var out rigor.Config
 	if c.Layer != nil {
 		out.Project, out.ProjectAreas = c.Layer.Defaults.Rigor.Default, c.Layer.Defaults.Rigor.Areas
+		out.ProjectRepos = c.Layer.Defaults.Rigor.Repos
 	}
 	return out
 }
@@ -729,15 +740,32 @@ type Agent struct {
 	// whatever it says, which is what the launch's own gate judges the job
 	// image on (internal/cli's reviewSpecSince).
 	ReviewAgainstTask *bool `yaml:"review_against_task,omitempty" json:"ReviewAgainstTask,omitempty"`
+	// WorkspaceBeat is whether a run that routed a kind of credential to its
+	// workspace's credentials service keeps that service warm (R10, D2985):
+	// true, false, or nil for the default, which is on. It is a pointer for
+	// Triage's reason: the key's absence and `workspace_beat: false` are two
+	// answers, and the field cannot tell them apart otherwise.
+	//
+	// The beat is the run's own (creds.WorkspaceBeatSetting, C2 carries the
+	// key's spelling): the run posts a keep-warm request to the workspace's
+	// service at the slip beat's cadence, so a service scaled to zero between
+	// the calls the run pays for is warm when the next one arrives. Turning it
+	// off is the owner's own doubt of D2985 rather than a safety setting — a
+	// run that sends no beat is slower at a call, not less correct — so the
+	// project layer and the repository both carry it, as they carry the run's
+	// other behaviour keys. Binaries before 0.27.0 refuse the key (strict
+	// decoder), whatever it says, which is what the launch's own gate judges
+	// the job image on (internal/cli's workspaceBeatSince).
+	WorkspaceBeat *bool `yaml:"workspace_beat,omitempty" json:"WorkspaceBeat,omitempty"`
 	// Recipe names the task loop that follows implement
-	// (docs/design/recipes.md): a recipe in .fugaro/recipes/, the project's,
+	// (docs/recipes/spec.md): a recipe in .fugaro/recipes/, the project's,
 	// or the catalog's. "" is default. fugaro run --recipe wins over it.
 	// Binaries before 0.5.0 refuse the key.
 	Recipe string `yaml:"recipe"`
 	// OAuthToken names the Claude account (claude_accounts in the local
 	// config, ClaudeAccountNameRE) this workflow's agent.auth: oauth uses;
 	// "" is the repository's default account, the existing claude-oauth-token
-	// secret (docs/design/named-oauth-tokens.md). fugaro run --token wins
+	// secret (docs/named-oauth-tokens/spec.md). fugaro run --token wins
 	// over it. A name must still be allowed for this repository
 	// (AllowedClaudeAccounts), checked at launch, not here: Validate checks
 	// the name's shape, and refuses the reserved name. Repo and override scope
@@ -746,7 +774,7 @@ type Agent struct {
 	OAuthToken string `yaml:"oauth_token,omitempty" json:"OAuthToken,omitempty"`
 	// Compression names the context-compression proxy this workflow's model
 	// calls route through: "" (off, the default) or "headroom"
-	// (docs/design/headroom-compression.md). Reserved and refused (the plan's
+	// (docs/headroom-compression/spec.md). Reserved and refused (the plan's
 	// P11): Validate knows the key and refuses every value with "not yet
 	// implemented" rather than leaving a repository that tries it with a
 	// strict-parse unknown-field error, so no run ever has the key set and
@@ -782,6 +810,13 @@ func (a Agent) TriageOn(mode rigor.Rigor) bool {
 	}
 	return a.Triage == nil || *a.Triage
 }
+
+// WorkspaceBeatOn reports whether this run keeps its workspace's credentials
+// service warm (R10, D2985): true unless agent.workspace_beat is false. The
+// key is the run's own switch and nothing else decides it — no policy node and
+// no ceiling carries it — because the beat's absence costs a cold start at a
+// call and never a credential.
+func (a Agent) WorkspaceBeatOn() bool { return a.WorkspaceBeat == nil || *a.WorkspaceBeat }
 
 // ReviewAgainstTaskOn reports whether the repository's own configuration has
 // every review stage checked against the task the pull request was written for
@@ -1230,7 +1265,7 @@ type Secret struct {
 // AnthropicSecret is the logical secret that holds the Anthropic API key. It
 // is the one secret a job may go without: it is mounted whenever the secret
 // has a version, and a run whose models all route through providers needs
-// none (design docs/design/project-centric.md §6.1).
+// none (design docs/project-centric/spec.md §6.1).
 const AnthropicSecret = "anthropic-api-key"
 
 // MissingAnthropicKey is what a call that needs Anthropic gets when no key is
@@ -1241,7 +1276,16 @@ const AnthropicSecret = "anthropic-api-key"
 // the two cannot say different things, and both name the fix that actually
 // works: store a key and rerun `fugaro update` (the mount is planned at
 // deploy), or route the model through a provider.
-const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro update, or route the model through a provider"
+//
+// The third sentence is the SHARED PROJECT JOB's, whose mount is not this
+// remedy's to restore: a profile whose switch is on mounts no Anthropic key at
+// all (config.SharedJobServedClasses, B5.7), so a run of one cannot be fixed
+// from a checkout's secrets and a re-apply of its root — the credential it is
+// served with is the installation's credentials service's to hand it, and what
+// the service holds for the project is the key `fugaro creds set` stores.
+// Saying so is the difference between a reader who fixes the run and one who
+// reruns the same update twice.
+const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro update, or route the model through a provider. A run on a shared project job mounts no key of its own where its profile is served by the credentials service: there the key the service hands back is the project's own (`fugaro creds set anthropic-api-key`), and a job of a profile the service does not serve yet is put on it from one of the profile's repositories (`fugaro update --repo` in its checkout, with agent.auth: cascade)"
 
 // BitbucketSecret is the logical secret that holds a Bitbucket credential:
 // normally a repository access token, issued for one repository and unusable
@@ -1606,7 +1650,7 @@ func Parse(data []byte) (*Config, []Problem) {
 // whether the file could be read at all.
 //
 // It is the repository's own block: both keys it carries are repository-scope
-// (docs/design/named-oauth-tokens.md T2 for agent.oauth_token, which no project
+// (docs/named-oauth-tokens/spec.md T2 for agent.oauth_token, which no project
 // layer may name, and layered-config.md for agent.auth, whose layer a caller
 // merges itself), so the file's bytes are the whole answer here and a file that
 // needs a layer for something else still says what it says — which is why this

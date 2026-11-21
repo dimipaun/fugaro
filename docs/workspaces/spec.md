@@ -935,7 +935,7 @@ ceiling is decided.
    ([reconciliation.md](reconciliation.md) §9, O3).
    **The second way this risk is reachable is the account's class, and it is stated here for the
    same reason.** The workspace builds each member's verifier from the owner's own table —
-   `JobAccounts` alone, `internal/credsvc/workspace.go`:459 — so the two account classes the
+   `JobAccounts` alone, `internal/credsvc/workspace.go`:514 — so the two account classes the
    member's own installation decides from its own published policy are not asked: the shared-job
    gate that refuses a shared project job whole under Global Constraint 6
    (`verifyJob`, `internal/credsvc/auth.go`:682) and the review class, which the installation admits

@@ -31,7 +31,7 @@ func strip(repo *gitops.Repo) *gitops.Repo {
 // registerModelCredentials registers the model credentials the runner's own
 // environment holds with the redactor, before anything runs. A run whose own
 // credential is a provider key holds the gateway's key, and a mixed run
-// (docs/design/mixed-credentials.md §11) holds the stage-scoped account's
+// (docs/mixed-credentials/spec.md §11) holds the stage-scoped account's
 // token besides: the job mounts it, or a local run is started with it, and one
 // of the run's stages is served from it. Every one of them is a value a print
 // of the runner's environment — a transcript, a stage's error reason — must
@@ -121,7 +121,7 @@ func (r *run) imageEnv(declared, held []string) map[string]string {
 
 // resolveMixedStages answers the run's stage accounts: the stages of the one
 // mix the owner's B0 ruling admits, and the account each of them runs on
-// (docs/design/mixed-credentials.md §11). A run whose own credential is a
+// (docs/mixed-credentials/spec.md §11). A run whose own credential is a
 // provider key — agent.auth is api-key — may hold exactly one stage-scoped
 // Claude OAuth account, declared by that stage's own key in the project's
 // published policy, and it serves the senior review and the adversarial review
@@ -293,7 +293,7 @@ func (r *run) admitStageAccount(p *projectpolicy.Policy, stage, own, node string
 
 // mixedDefaultAccount is rung 4's account for a stage: the project's
 // default_claude_account where the owner's ruling of 2026-11-05 admits it for
-// that stage, "" otherwise (docs/design/mixed-credentials.md §11). The launch
+// that stage, "" otherwise (docs/mixed-credentials/spec.md §11). The launch
 // resolves the same rung for the same stage (mixedStageAccount,
 // internal/cli/run.go) and this is the run making the judgement again on the
 // node it reads — with the recipe's roles applied, which a launch that reads no
@@ -336,7 +336,7 @@ func (r *run) mixedDefaultAccount(p *projectpolicy.Policy, stage string) string 
 // stageDirect reports whether the stage runs on the run's stage-scoped Claude
 // OAuth account rather than on the run's own credential, which for a stage
 // means its calls do not go through the gateway at all
-// (docs/design/mixed-credentials.md §11).
+// (docs/mixed-credentials/spec.md §11).
 //
 // It is the stage-scoped question every reader that used to ask it about the
 // run has to ask instead: for a mixed run both r.gw != nil and r.gatewayOn()

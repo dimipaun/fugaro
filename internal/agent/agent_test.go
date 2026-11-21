@@ -418,7 +418,7 @@ func TestBuildEnvOAuthNeverFallsBackToTheAPIKey(t *testing.T) {
 // own with the gateway's routing dropped — the address its calls would go to
 // and the per-run token they would present there, both of which the managed
 // settings file writes too — and the account's token set in their place
-// (docs/design/mixed-credentials.md §11, the owner's B0 ruling). Everything
+// (docs/mixed-credentials/spec.md §11, the owner's B0 ruling). Everything
 // else about the run's environment is the stage's: the base variables, the
 // declared secrets and the directory variables, which are what the stage's
 // own tools need and none of which is a credential.

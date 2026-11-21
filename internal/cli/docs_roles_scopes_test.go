@@ -232,7 +232,7 @@ func TestDocsRolesScopesChecksStayInTheReservedBlock(t *testing.T) {
 // because the lint can only hold a skill's commands and flags to the CLI: it
 // reads no prose, and this is the sentence a user's agent repeats.
 func TestDocsRolesScopesStatedLimits(t *testing.T) {
-	roles := flattenDoc(readDoc(t, "docs/design/roles.md"))
+	roles := flattenDoc(readDoc(t, "docs/roles/spec.md"))
 	for _, want := range []struct{ sentence, why string }{
 		{
 			"A scoped role is a policy check, not a cloud barrier",
@@ -248,13 +248,13 @@ func TestDocsRolesScopesStatedLimits(t *testing.T) {
 		},
 	} {
 		if !strings.Contains(roles, want.sentence) {
-			t.Errorf("docs/design/roles.md no longer states %q: %s", want.sentence, want.why)
+			t.Errorf("docs/roles/spec.md no longer states %q: %s", want.sentence, want.why)
 		}
 	}
 
 	skill := flattenDoc(readDoc(t, "plugin/skills/working/SKILL.md"))
 	if !strings.Contains(skill, "A scoped role is judged by the commands a person runs, not by the cloud") {
-		t.Errorf("plugin/skills/working/SKILL.md no longer tells the agent that a scoped role is judged by the commands a person runs, not by the cloud: the skill is what a user's agent repeats about a grant, and a scope read as a cloud barrier is the false claim docs/design/roles.md states the limit against (D1580)")
+		t.Errorf("plugin/skills/working/SKILL.md no longer tells the agent that a scoped role is judged by the commands a person runs, not by the cloud: the skill is what a user's agent repeats about a grant, and a scope read as a cloud barrier is the false claim docs/roles/spec.md states the limit against (D1580)")
 	}
 
 	plan := flattenDoc(readDoc(t, rolesScopesDir+"implementation-plan.md"))

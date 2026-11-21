@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// The pin for docs/plans/2026-10-18-mobile-mailbox-consumer.md, the CLI plan
+// The pin for docs/mobile/mailbox-consumer-plan.md, the CLI plan
 // console D19 requires before mobile task P4.1 (`fugaro mailbox`) may be
 // written. T1 has landed — `internal/mailbox`'s message binding and its replay
 // of the merged vectors — and every other task of the plan has not, so what
@@ -44,7 +44,7 @@ import (
 // (at least one message read, no action, every message read refused, at least
 // one of those refusals an action refusal), and both places must carry all of
 // them.
-const mailboxPlan = "docs/plans/2026-10-18-mobile-mailbox-consumer.md"
+const mailboxPlan = "docs/mobile/mailbox-consumer-plan.md"
 
 // planCited says whether the plan cites path, in its own prose or as the
 // relative link the document uses for its neighbours (docs/plans/'s
@@ -112,7 +112,7 @@ var planLinkRE = regexp.MustCompile(`\]\(([^)]+)\)`)
 // read out of the document at test time so that a path the plan adds is checked
 // the moment it is written down. A trailing slash (a directory written as
 // `shared/`) is stripped, so the two spellings of one directory are one entry;
-// a link is resolved against docs/plans/, which is where the document lives.
+// a link is resolved against docs/mobile/, which is where the document lives.
 func planPaths(doc string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -128,7 +128,7 @@ func planPaths(doc string) []string {
 		add(m[1])
 	}
 	for _, m := range planLinkRE.FindAllStringSubmatch(doc, -1) {
-		add(path.Join("docs/plans", m[1]))
+		add(path.Join("docs/mobile", m[1]))
 	}
 	sort.Strings(out)
 	return out
@@ -409,7 +409,7 @@ func TestMailboxPlanCitationsExist(t *testing.T) {
 		"internal/budget/token/device.go",
 		// The plan's authorities.
 		"docs/design/v1.md",
-		"docs/design/voice.md",
+		"docs/voice/spec.md",
 		"docs/mobile/implementation-plan.md",
 		"docs/mobile/functional-spec-reconciliation.md",
 	} {

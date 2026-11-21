@@ -118,7 +118,8 @@ func (r *orchestratorIdentityRig) asDesigned(t *testing.T) {
 // The absent case is the one that must NOT be a finding: an installation that
 // never opted in has no resident orchestrator, and a check that called that a
 // warning would send every owner who has not asked for one looking for a
-// problem. The module's switch is off by default and no CLI writer sets it yet.
+// problem. The module's switch is off by default, and only an installation whose
+// owner ran `fugaro update --firebase-project <id> --orchestrator` has it on.
 func TestDoctorOrchestratorIdentityTable(t *testing.T) {
 	dropBucketRead := func(t *testing.T, r *orchestratorIdentityRig) {
 		t.Helper()

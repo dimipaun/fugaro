@@ -373,7 +373,7 @@ func TestConventionNeverReservesAPlatformName(t *testing.T) {
 // configured provider's key is refused, with the same wording family the
 // sibling reservations in Validate use and at the same path. Both of
 // infra.SecretMounts's collisions are here, in its own order, because they are
-// two different failures (docs/design/project-secrets.md §3):
+// two different failures (docs/project-secrets/spec.md §3):
 //
 //   - the provider's own .secret, which the workflow would mount as a variable
 //     of its own — the owner's provider credential leaving the one place it is

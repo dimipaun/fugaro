@@ -19,7 +19,7 @@ import (
 )
 
 // The compute stage: the Batch backend's installation-level provisioning
-// (design docs/design/compute-backend.md §3.2, §3.7, §8.1 task 6). It is the
+// (design docs/compute-backend/spec.md §3.2, §3.7, §8.1 task 6). It is the
 // owner's step, and it is behind --provision-batch: what it creates is money
 // and infrastructure `fugaro update` does not apply, and a run that never asks
 // for it never reaches this root.
@@ -696,7 +696,11 @@ func batchBlockAccount(members []string) (email, why string) {
 // by field -- a hand-set machine type, a network they placed the VMs in, an
 // image they built themselves, a socket gid they measured -- and the fields
 // they left empty take this stage's answer. The block has no field this stage
-// CLEARS: an owner value is never replaced with an empty one.
+// CLEARS: an owner value is never replaced with an empty one. The block's two
+// identity facts are carried the same way and are the reason the rule matters
+// most: this stage forms its block out of the root's outputs and has no answer
+// for either fact, so a block written without them would delete what `fugaro
+// update` and an operator wrote (R2, R13, R16).
 func mergeBatch(owner, want *localcfg.Batch) *localcfg.Batch {
 	if owner == nil {
 		return want
@@ -729,6 +733,12 @@ func mergeBatch(owner, want *localcfg.Batch) *localcfg.Batch {
 	if owner.TaskTimeout.Set {
 		out.TaskTimeout = owner.TaskTimeout
 	}
+	if owner.OptIn != "" {
+		out.OptIn = owner.OptIn
+	}
+	if owner.SealKey != nil {
+		out.SealKey = owner.SealKey
+	}
 	return &out
 }
 
@@ -739,7 +749,18 @@ func sameBatch(a, b *localcfg.Batch) bool {
 	}
 	return a.Image == b.Image && a.MachineType == b.MachineType && a.BootImage == b.BootImage &&
 		a.Network == b.Network && a.Subnetwork == b.Subnetwork && a.ServiceAccount == b.ServiceAccount &&
-		maps.Equal(a.Secrets, b.Secrets) && a.SocketGID == b.SocketGID && a.TaskTimeout == b.TaskTimeout
+		maps.Equal(a.Secrets, b.Secrets) && a.SocketGID == b.SocketGID && a.TaskTimeout == b.TaskTimeout &&
+		a.OptIn == b.OptIn && sameSealKey(a.SealKey, b.SealKey)
+}
+
+// sameSealKey compares the key fact by value, nil included: a block carries it
+// as a pointer, and two blocks naming the same version and the same public key
+// are the same fact however they were built.
+func sameSealKey(a, b *localcfg.BatchSealKey) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // announceBackend is the one line the stage ends with while the installation

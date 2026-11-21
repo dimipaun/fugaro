@@ -39,6 +39,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // This file is C1.25: `fugaro creds set NAME` and `fugaro creds ls`, the
@@ -153,7 +154,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   ` + config.ClaudeOAuthToken + `                    the default Claude account's OAuth token (tier A)
   ` + config.ClaudeOAuthTokenPrefix + `<account>       a named Claude account's OAuth token (tier A)
   ` + config.AnthropicSecret + `                the project's Anthropic API key (tier B)
-  ` + config.CredentialSecretPrefix + `<name>` + config.CredentialKeySuffix + `        one declared credential's own key (tier B): the service-served half of a credential the credentials block declares ` + config.CredentialTypeAnthropic + `, and the ONE NAME this command REFUSES for a type the runner path serves (` + config.CredentialTypeOpenRouter + `), whose key is mounted in the job that spends it rather than read from here. It is read by a credentials service from ` + keyCredentialSince + ` on: where the service that serves the bundle is older, this write is refused and ` + "`fugaro update`" + ` is the one command that moves it
+  ` + config.CredentialSecretPrefix + `<name>` + config.CredentialKeySuffix + `        one declared credential's own key: the service-served credential (` + config.CredentialTypeAnthropic + `) at tier B, and the runner-path one (` + config.CredentialTypeOpenRouter + `) written into the repository-credential entries the service serves a routed call from, one per repository ` + "`claude_accounts.<name>.allow_data_to`" + ` names — the entry's own name carries the repository, so the names it writes are not this one. Either half is read by a credentials service from ` + keyCredentialSince + ` (` + repoCredentialSince + ` for the runner path) on: where the service that serves the bundle is older, this write is refused and ` + "`fugaro update`" + ` is the one command that moves it
   ` + config.GitHubAppKeySecret + `                  the GitHub App's private key (no tier: the mint signs with it)
   ` + config.BitbucketSecret + `                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, whose jobs mount no copy of their own, and every other Bitbucket repository's job keeps its own mounted copy)
   ` + credsvc.BitbucketReadConsumerSecret + `             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
@@ -698,9 +699,29 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool, bt
 	// container is opened, before the document is fetched and before the value
 	// is read — so a name whose half is not this one is refused with nothing
 	// touched and nothing typed at a terminal.
+	//
+	// A RUNNER-path key credential's value IS this document's since KS2 (D1670
+	// reversed by D2975): its key goes into C1's repo-credential family rather
+	// than the tier-B credential-<name>-key entry a service-served key keeps,
+	// so the write below is providerKeyBundleWrite's and the name resolves to
+	// the provider's. It is answered here because the two facts the command
+	// needs from it — that this is a provider's key, and which provider — are
+	// the config's, and every refusal before the value is read is a refusal
+	// with nothing typed at a terminal.
+	providerKey, providerKeyWrite := "", false
 	if credName, ok := config.CredentialBySecret(name); ok {
-		if err := credsKeyCredentialHalfRefusal(lc, name, credName); err != nil {
+		if err := keyCredentialDeclarationRefusal(lc, name, credName); err != nil {
 			return err
+		}
+		// Which HALF serves the credential's type decides which entry this write
+		// sets, and no longer whether it is admitted (KS2, D1670 reversed by
+		// D2975): a service-served credential (anthropic) keeps the tier-B entry
+		// under the credential's own name, and a runner-path one (openrouter) is
+		// written into C1's repository-credential entries — one per repository
+		// claude_accounts.<name>.allow_data_to names — which is where the
+		// credentials service reads a provider key from now.
+		if cred, declared := config.CredentialNamed(lc.Credentials, credName); declared && config.CredentialServingPath(cred.Type) == config.CredentialPathRunner {
+			providerKey, providerKeyWrite = credName, true
 		}
 	}
 	// The record and the identity are this command's to write and nobody
@@ -721,6 +742,17 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool, bt
 	}
 	if err := store.check(ctx); err != nil {
 		return remoteErr(err, nil)
+	}
+	// A provider key is the whole project's, so the person who writes one is a
+	// project owner (D3006) — the ONE probe of that question (F36). It stands
+	// here, with the container read and before the document is fetched, before
+	// the run opens and before the value is read: a caller who is not an owner
+	// is refused with nothing typed at a terminal. `fugaro creds` has already
+	// refused the three ways credsOwnerOnly refuses, at the command's door.
+	if providerKeyWrite {
+		if err := bundleOwnerProbe(ctx, store, lc, "written"); err != nil {
+			return err
+		}
 	}
 	// What the document holds now, and what this write replaces. A container
 	// with no version is the first write's starting point; a document the
@@ -764,13 +796,22 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool, bt
 	// credential's container.
 	keyEntry := config.CredentialSecretPrefix + "<name>" + config.CredentialKeySuffix
 	keyCredential := false
-	if cred, ok := config.CredentialBySecret(name); ok {
-		keyEntry, keyCredential = config.CredentialSecret(cred), true
+	// A RUNNER-path key credential's write is the fourth family and no longer
+	// this document's tier-B entry (KS2, D1670 reversed, D2975): its key goes
+	// into C1's repo-credential--<slug>--<credential> family, one entry per
+	// repository the credential is bound to, and providerKeyBundleWrite below
+	// is the write — and the guard — of that family. So the family's reader is
+	// judged here only for a document that already HOLDS one (a write of
+	// another credential into a bundle the copy has filled), and the entry this
+	// write itself sets carries its own since-constant inside that writer.
+	if credName, ok := config.CredentialBySecret(name); ok {
+		keyEntry, keyCredential = config.CredentialSecret(credName), true
 	}
 	if req := bundleReaderRequirement(
 		bundleEntryReader{entry: config.ProviderKeySecret, since: providerEntrySince, held: kind == credsvc.KindProvider || bundleHoldsProviderEntry(before.raw)},
 		bundleEntryReader{entry: familyEntry, since: bitbucketTokenSince, held: family || bundleHoldsFamilyEntry(before.raw)},
-		bundleEntryReader{entry: keyEntry, since: keyCredentialSince, held: keyCredential || bundleHoldsKeyCredentialEntry(before.raw)},
+		bundleEntryReader{entry: keyEntry, since: keyCredentialSince, held: keyCredential && !providerKeyWrite || bundleHoldsKeyCredentialEntry(before.raw)},
+		bundleEntryReader{entry: repoCredentialFamily, since: repoCredentialSince, held: !providerKeyWrite && bundleHoldsRepoCredentialEntry(before.raw)},
 	); req != nil {
 		if err := refuseAnEntryTheServiceCannotRead(ctx, lc, req.entry, req.since); err != nil {
 			return err
@@ -847,77 +888,60 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool, bt
 	// exists in the version that retires the old key rather than a version
 	// later (spec §6.3).
 	doc, window := before.raw, ""
-	switch {
-	case generate:
-		doc, window, err = setReviewSigningRotation(doc, name, config.ReviewSigningKeyPreviousSecret(account), string(value))
-	case kind == credsvc.KindBitbucketReadConsumer || kind == credsvc.KindProvider:
-		// The two entries whose value is not a string: the operator's value is
-		// the entry's whole mapping, and it is put in as it was read, not as
-		// text. This is the one place the bytes are parsed for them:
-		// validateBundleValue leaves the shape to this call, so the node that is
-		// validated here is the node the document gets.
-		var valueNode *yaml.Node
-		if kind == credsvc.KindProvider {
-			valueNode, err = readProviderNode(value)
-		} else {
-			valueNode, err = readConsumerNode(value)
+	var res bundleAddResult
+	if providerKeyWrite {
+		// The runner-path key credential's write, whole: one entry of C1's
+		// family per repository the credential is bound to (O8 — a shared key
+		// is entered once for each, and the several entries travel in ONE
+		// version because a version holding a shared key for some of its
+		// repositories is a key that serves a run on some of them), through the
+		// same guard, the same parse, the same add-and-verify and the same
+		// retirement every other write of this document goes through. It is one
+		// call and not four steps here because it is the same four steps the
+		// other two writers of a provider key make (F27), and a second copy of
+		// them is the one place the three could drift.
+		repos := providerKeyCredentialRepos(lc, providerKey)
+		if len(repos) == 0 {
+			return providerKeyNoReposRefusal(lc, providerKey)
+		}
+		res, err = providerKeyBundleWrite(ctx, cmd, st, store, before, lc, providerKey, repos, value)
+	} else {
+		switch {
+		case generate:
+			doc, window, err = setReviewSigningRotation(doc, name, config.ReviewSigningKeyPreviousSecret(account), string(value))
+		case kind == credsvc.KindBitbucketReadConsumer || kind == credsvc.KindProvider:
+			// The two entries whose value is not a string: the operator's value is
+			// the entry's whole mapping, and it is put in as it was read, not as
+			// text. This is the one place the bytes are parsed for them:
+			// validateBundleValue leaves the shape to this call, so the node that is
+			// validated here is the node the document gets.
+			var valueNode *yaml.Node
+			if kind == credsvc.KindProvider {
+				valueNode, err = readProviderNode(value)
+			} else {
+				valueNode, err = readConsumerNode(value)
+			}
+			if err == nil {
+				doc, err = setBundleEntryValue(doc, name, valueNode)
+			}
+		default:
+			doc, err = setBundleEntry(doc, name, string(value))
 		}
 		if err == nil {
-			doc, err = setBundleEntryValue(doc, name, valueNode)
+			// The document this command is about to write, held to the service's
+			// own loader: a document that parses here is one the service reads,
+			// and one it refuses (a value over the loader's per-credential bound,
+			// a document over its byte bound) is refused before the write.
+			if _, perr := credsvc.ParseBundle(doc); perr != nil {
+				return credsDocRefusal(store.id, perr)
+			}
+			res, err = bundleAddVerified(ctx, cmd, st, store, before, doc, value)
 		}
-	default:
-		doc, err = setBundleEntry(doc, name, string(value))
 	}
 	if err != nil {
 		return err
 	}
-	// The document this command is about to write, held to the service's own
-	// loader: a document that parses here is one the service reads, and one it
-	// refuses (a value over the loader's per-credential bound, a document over
-	// its byte bound) is refused before the write.
-	if _, err := credsvc.ParseBundle(doc); err != nil {
-		return credsDocRefusal(store.id, err)
-	}
-	version, err := store.add(ctx, doc)
-	if err != nil {
-		// An add that failed may still have added a version: Secret Manager
-		// answers what it did, and a timeout says nothing about it. The step is
-		// ended as failed, so the run is not accounted done over a credential
-		// that may exist (G3, G8).
-		return credsStepFailed(st, remoteErr(err, writeForms(doc, value)))
-	}
-	// The version this write landed as has to be the one after the version this
-	// command read. Secret Manager numbers versions in order and never reuses a
-	// number, so any other number means another writer added a version between
-	// this command's read and this write — the long window, the one the hidden
-	// prompt sits in — and the document this command wrote is built on a
-	// document that is no longer the newest: the entry that writer set is not in
-	// it. It is the same lost update as one that lands after the write, caught
-	// before anything is retired, and it has to be caught here rather than by
-	// the re-read: this command's document is the newest version, so the re-read
-	// agrees with it and calls the write verified.
-	if want := nextVersion(before.version); want != "" && version != want {
-		return credsStepFailed(st, credsLostUpdateBefore(store.id, before.version, version, want))
-	}
-	back, err := credsWriteBack(ctx, store)
-	if err != nil {
-		return credsStepFailed(st, remoteErr(err, writeForms(doc, value)))
-	}
-	if back.version != version || !bytes.Equal(back.raw, doc) {
-		return credsStepFailed(st, credsLostUpdate(store.id, version, back.version))
-	}
-	// The version this write replaced is retired, and only after the write is
-	// verified: the new credential is live either way, and a refusal above
-	// leaves every version as it was.
-	replaced, retired := before.version, false
-	if replaced != "" && replaced != version {
-		if err := store.disable(ctx, replaced); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s. Version %s of %s is still ENABLED, so the credential it holds is still readable by anyone who can read the container: disable it yourself with gcloud secrets versions disable %s --secret=%s\n",
-				remoteErr(err, writeForms(doc, value)), safetext.Field(replaced), safetext.Field(store.id), safetext.Field(replaced), safetext.Field(store.id))
-		} else {
-			retired = true
-		}
-	}
+	version, replaced, retired := res.version, res.replaced, res.retired
 	w := cmd.OutOrStdout()
 	// The two other records of a typed token (R12, T2) are written only here,
 	// once the bundle entry is live and read back: the record that tells the
@@ -976,6 +1000,16 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool, bt
 		// republish the coverage needs (T11).
 		bitbucketWriteLines(w, name, btRec, btRes)
 	}
+	// The bundle is this command's to write and the credential ROUTE is not:
+	// where each repository's credentials are served from is derived from the
+	// document just written, per repository and per kind, by the next `fugaro
+	// update` (update_route.go, WS9/D2982) — a member's own publish and never
+	// this one's. So a write that changes what the bundle holds is a write the
+	// published route no longer agrees with, and nothing else republishes it: a
+	// coding agent's session may not write the cloud, and a run reads the route
+	// rather than making one. The line is last because it names the one thing
+	// of this write the person still owes.
+	fmt.Fprintf(w, "the credential route of this project's repositories — which of them take a credential from a workspace's service and which from this project's own copy — is published by %s: run it to republish the route this write changes\n", selfCommand()+" update")
 	return err
 }
 
@@ -1045,6 +1079,67 @@ var credsWriteBack = func(ctx context.Context, s *bundleStore) (bundleDoc, error
 	return s.access(ctx, "latest")
 }
 
+// bundleAddResult is what one verified write of the bundle answered: the
+// version it landed as, the version it replaced, and whether that one was
+// disabled (which is every replacement, unless the disable itself failed and
+// the warning below was printed instead).
+type bundleAddResult struct {
+	version  string
+	replaced string
+	retired  bool
+}
+
+// bundleAddVerified is the write tail every writer of the bundle shares, from
+// the add to the disabled predecessor (KS2 moved it out of credsSet, whose
+// tail it was, because a provider key has three writers and the tail is the
+// part that must not have three versions).
+//
+// The order it keeps is credsSet's own and each step has its reason there:
+// the add, the check that the version this write landed as is the one after
+// the version that was read (a lost update that the re-read below cannot see,
+// because this document IS the newest version by then), the re-read that the
+// write is verified with, and only then the retirement of the version it
+// replaced — after the new credential is live, so a refusal above leaves every
+// version as it was.
+//
+// A failed disable is not a failed write: the warning names the version that
+// is still ENABLED and the one gcloud call that retires it, and the write
+// answers retired == false. forms is writeForms' answer, computed here from
+// the document and the value rather than passed in: a server that echoes what
+// it received hands back every credential the document holds, in the document
+// every writer sent.
+func bundleAddVerified(ctx context.Context, cmd *cobra.Command, st *report.Step, store *bundleStore, before bundleDoc, doc, value []byte) (bundleAddResult, error) {
+	var out bundleAddResult
+	version, err := store.add(ctx, doc)
+	if err != nil {
+		// An add that failed may still have added a version: Secret Manager
+		// answers what it did, and a timeout says nothing about it. The step is
+		// ended as failed, so the run is not accounted done over a credential
+		// that may exist (G3, G8).
+		return out, credsStepFailed(st, remoteErr(err, writeForms(doc, value)))
+	}
+	if want := nextVersion(before.version); want != "" && version != want {
+		return out, credsStepFailed(st, credsLostUpdateBefore(store.id, before.version, version, want))
+	}
+	back, err := credsWriteBack(ctx, store)
+	if err != nil {
+		return out, credsStepFailed(st, remoteErr(err, writeForms(doc, value)))
+	}
+	if back.version != version || !bytes.Equal(back.raw, doc) {
+		return out, credsStepFailed(st, credsLostUpdate(store.id, version, back.version))
+	}
+	out = bundleAddResult{version: version, replaced: before.version}
+	if out.replaced != "" && out.replaced != version {
+		if err := store.disable(ctx, out.replaced); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s. Version %s of %s is still ENABLED, so the credential it holds is still readable by anyone who can read the container: disable it yourself with gcloud secrets versions disable %s --secret=%s\n",
+				remoteErr(err, writeForms(doc, value)), safetext.Field(out.replaced), safetext.Field(store.id), safetext.Field(out.replaced), safetext.Field(store.id))
+		} else {
+			out.retired = true
+		}
+	}
+	return out, nil
+}
+
 // credsLostUpdate is the lost concurrent update, said plainly: the write
 // landed, the bundle read back is another version, and the entry this command
 // set may not be the one the service will read. Nothing was retried and
@@ -1104,41 +1199,6 @@ func credsNameRefusal() error {
 		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix, readConsumerShape, providerShape)
 }
 
-// credsKeyCredentialHalfRefusal refuses `fugaro creds set` on a key
-// credential's own derived name when the half that serves the credential's type
-// is not the bundle (D1670, MC23). The bundle is one of the two halves a run is
-// served by, and the type is what puts a credential on one of them
-// (config.CredentialServingPath), so the entry this command would write is
-// either the one the credentials service offers a craft's calls or a copy no
-// call of that type ever reads.
-//
-// The three states, in the order the config answers them:
-//
-//   - a key type the service serves (anthropic): this document is where its
-//     value goes, and the write is admitted — it is the tier-B entry the
-//     service offers under the credential's name, exactly as it offers the
-//     project's own Anthropic key;
-//   - a key type the runner serves (openrouter): refused, because what carries
-//     that key to a call is the job's own mount (internal/infra's SecretMounts,
-//     built from this very config) — and the refusal says so rather than
-//     leaving the operator to wonder where the key went, since the container
-//     `fugaro accounts add` stored it in is what the mount reads;
-//   - a name no credentials entry declares, or one declared `claude-oauth`:
-//     refused, because the bundle holds no credential of that name
-//     (keyCredentialDeclarationRefusal, which `fugaro secrets set` answers the same
-//     two states with).
-func credsKeyCredentialHalfRefusal(lc *localcfg.Config, secret, name string) error {
-	if err := keyCredentialDeclarationRefusal(lc, secret, name); err != nil {
-		return err
-	}
-	cred, _ := config.CredentialNamed(lc.Credentials, name)
-	if config.CredentialServingPath(cred.Type) == config.CredentialPathCredsvc {
-		return nil
-	}
-	return userErr("%s is the key of %s, which is declared %s, and the runner path serves that type: its key is mounted in the job that spends it — internal/infra builds that mount from this installation's config, out of this very container — so the bundle is not where its value goes, and no caller of the credentials service ever reads an entry for it. A run whose craft's access names %s is served from the job's own mount, which is the container this command would have written; fugaro accounts add --type %s says where that mount reads it",
-		pluginwire.Printable(secret), pluginwire.Printable(name), pluginwire.Printable(cred.Type), pluginwire.Printable(name), pluginwire.Printable(cred.Type))
-}
-
 // keyCredentialDeclarationRefusal is the refusal a name of the key credential
 // namespace takes when the config declares no such key credential (MC22, MC23):
 // the two states it can be in, each answered with what the owner would have to
@@ -1147,7 +1207,7 @@ func credsKeyCredentialHalfRefusal(lc *localcfg.Config, secret, name string) err
 // It is one function because it is one rule at two write paths — `fugaro
 // secrets set credential-<name>-key` refuses the container as a project-wide
 // secret (projectWideRefusal), and `fugaro creds set` refuses the entry
-// (credsKeyCredentialHalfRefusal) — and an operator who meets both commands must
+// (credsSet's own check on the name) — and an operator who meets both commands must
 // not read two stories about the same name. The name the first state asks for is
 // the credential's, which is what `accounts add` takes, and never the secret's.
 // nil is the config's answer that the name IS a declared key credential's.
@@ -2260,4 +2320,411 @@ func presentCell(present bool) string {
 		return "yes"
 	}
 	return "no"
+}
+
+// repoCredentialFamily is how the guard spells C1's family when the entry it
+// judges is the family itself rather than one member of it: the same way
+// bitbucket-token--<name> and credential-<name>-key are spelled for their own
+// families, because the guard is about the reader a DOCUMENT needs and not
+// about the entry a write sets (bundleHoldsRepoCredentialEntry).
+const repoCredentialFamily = credsvc.RepoCredentialPrefix + "<slug>--<credential>"
+
+// The two auth shapes one of C1's entries may hold, spelled here as the
+// loader spells them (credsvc's providerAuthBearer and providerAuthXAPIKey,
+// which are not exported) and as the config writes them in providers.<p>.auth.
+// They are the vocabulary the three readers share — the config's own
+// validation, this writer, and the loader/gateway pair — and a third shape is
+// refused rather than written: the gateway has no way to send it.
+const (
+	providerAuthBearer  = "bearer"
+	providerAuthXAPIKey = "x-api-key"
+)
+
+// bundleHoldsRepoCredentialEntry reports whether a bundle document holds any
+// entry of C1's named-provider family (R2, D3008), the fourth family the guard
+// judges: a document carrying repo-credential--acme-web-0123456789abcdef--or is
+// a document only a credentials service that reads the family can load,
+// whichever credential this write is setting.
+//
+// The family and not one member, for bundleHoldsFamilyEntry's reason: what a
+// service needs is the reader of the family, and a document holding a member
+// the deployed service cannot read halts every caller of it.
+func bundleHoldsRepoCredentialEntry(raw []byte) bool {
+	return bundleHoldsKey(raw, func(key string) bool {
+		_, _, ok := credsvc.RepoCredentialByKey(key)
+		return ok
+	})
+}
+
+// providerKeyCredentialRepos is the repositories a runner-path key
+// credential's key may be sent to and so the repositories its entries are
+// written for: claude_accounts.<credential>.allow_data_to, the one field that
+// bounds the key (internal/infra's runnerKeyCredential reads the same field for
+// the mount it builds, so the entry and the mount cannot disagree about which
+// repository the key reaches).
+//
+// A list that names no repository is not "every repository" and is not an empty
+// write: it is a credential nothing may spend, answered by
+// providerKeyNoReposRefusal. There is no --repo narrowing this list — the field
+// is the reach, and a key written for a repository the field does not name is a
+// key handed to a repository the owner's own config excludes.
+func providerKeyCredentialRepos(lc *localcfg.Config, credential string) []string {
+	return slices.Clone(lc.ClaudeAccounts[credential].AllowDataTo)
+}
+
+// providerKeyName reports whether name is a provider key's own spelling in
+// this project: the provider's own secret (providers.<p>.secret, whatever it is
+// called) or a runner-path key credential's derived name
+// (credential-<name>-key). Those two are the names whose store writes C1's
+// family and no container (KS2), which is what a caller needs to know before it
+// describes the store in the words of the project-copy/repository-copy
+// precedence — a precedence a provider key does not have.
+//
+// The provider's CONVENTIONAL name (config.ReservedProviderSecret) is not one:
+// it is no provider's .secret, it has no entry to be written under, and every
+// door that could write it refuses it.
+func providerKeyName(lc *localcfg.Config, name string) bool {
+	if _, isProvider := config.ProviderBySecret(lc.Providers, name); isProvider {
+		return true
+	}
+	_, isCredential := providerKeySecretCredential(lc, name)
+	return isCredential
+}
+
+// providerKeySecretCredential is the credential a name is a RUNNER-path key
+// credential's own derived secret for (`credential-<name>-key`), which is the
+// second spelling a provider key reaches `fugaro secrets set` under. The
+// credential of that name is a provider key, and its name IS the provider's
+// (infra's runnerKeyCredential reads the same pair for the mount it used to
+// build), so the entry's name and the provider's facts are both decided by it.
+//
+// A service-served credential is not one: its container is the copy the
+// credentials service's bundle entry is completed by, written by the same
+// command, and KS2 left that path alone.
+func providerKeySecretCredential(lc *localcfg.Config, secret string) (string, bool) {
+	name, ok := keyCredentialBySecret(lc, secret)
+	if !ok {
+		return "", false
+	}
+	cred, declared := config.CredentialNamed(lc.Credentials, name)
+	if !declared || config.CredentialServingPath(cred.Type) != config.CredentialPathRunner {
+		return "", false
+	}
+	return name, true
+}
+
+// providerKeyProviderRepos is the same for a provider's own secret
+// (providers.<p>.secret) stored project-wide: the repositories
+// providers.<p>.allow_data_to names literally.
+//
+// An absent list, or one that is only "*", is "every repository" (design
+// docs/project-secrets/spec.md §3a) and answers nil: the entries are named
+// after each repository's slug, and a wildcard names none, so there is nothing
+// to write. The refusal says which field to write, because the value IS
+// storable the moment the field names its repositories.
+func providerKeyProviderRepos(lc *localcfg.Config, provider string) []string {
+	p := lc.Providers[provider]
+	if p.OpenToEveryRepo() {
+		return nil
+	}
+	return slices.Clone(p.AllowDataTo)
+}
+
+// providerKeyNoReposRefusal is the state a provider-key write cannot serve: the
+// list that bounds the key names no repository, so there is no entry to write
+// and no repository to write one for.
+//
+// It is the one refusal of this family that is about the config and not about
+// the value or the service, and it names the field, never a value: an absent
+// providers.<p>.allow_data_to means every repository, which is the one shape a
+// per-repository entry cannot be built from.
+func providerKeyNoReposRefusal(lc *localcfg.Config, provider string) error {
+	if p, ok := lc.Providers[provider]; ok && p.OpenToEveryRepo() {
+		return userErr("providers.%s.allow_data_to is absent or [\"*\"], which means EVERY repository, and a provider key is entered in the credentials service's bundle once per repository (D3008): the entry's name carries the repository, so a key open to every repository has no entry to write. Name the repositories the key is for — providers.%s.allow_data_to = [owner/name, ...] — and store it again; nothing was read from you and nothing was written",
+			pluginwire.Printable(provider), pluginwire.Printable(provider))
+	}
+	return userErr("claude_accounts.%s.allow_data_to names no repository, so %s's key may be sent to no repository and there is no entry to write: it is the one field that bounds the key, and the bundle's entry is written for each repository it names. Add the repositories the key is for — claude_accounts.%s.allow_data_to = [owner/name, ...] — and store it again; nothing was read from you and nothing was written",
+		pluginwire.Printable(provider), pluginwire.Printable(provider), pluginwire.Printable(provider))
+}
+
+// providerKeyInitRefusal is the fourth writer's refusal (initsecrets.go): the
+// secrets stage of `fugaro setup` and `fugaro update` prompts at a terminal and
+// writes a container of the name it was handed, which is neither of the two
+// things a provider key's write is now — a bundle entry, read from stdin. It
+// names the command that writes this repository's own entry, because the bare
+// form Left() hands the same name stores the project's copy instead.
+func providerKeyInitRefusal(provider, name, repo string) error {
+	return userErr("%s is %s's key, and a provider key is entered in the credentials service's bundle since KS2 (D1670 reversed), one entry per repository, rather than stored in a container of its own: this step stores a value in Secret Manager and cannot write that entry. Nothing was read from you and nothing was written. Run `%s secrets set %s --repo %s` in your own terminal to enter the key for this repository, and run it once more for each further repository the key is for",
+		pluginwire.Printable(name), pluginwire.Printable(provider), selfCommand(), pluginwire.Printable(name), pluginwire.Printable(repo))
+}
+
+// providerKeyRepoSlug is one repository's slug, the half of C1's entry name
+// that carries the repository: task.Slug over the repository's GIT provider, as
+// every other slug this tree derives is (internal/cli/secrets.go's own
+// repoCopiesWithVersions reads the same pair off the same config).
+//
+// The git provider comes from the local config's repositories entry and from
+// nothing else: a checkout is not read here, because the repositories a key is
+// written for are the ones the config names and matter from wherever the
+// command runs.
+func providerKeyRepoSlug(lc *localcfg.Config, repo string) (string, error) {
+	r, listed := lc.Repos[repo]
+	if !listed {
+		return "", userErr("%s is not a repository this project's config lists, so C1's entry name cannot carry its slug: the repositories a provider key is written for are repositories.<owner/name> entries of the local config (an allow_data_to that names a repository the config does not list is a repository this command cannot name an entry for)",
+			pluginwire.Printable(repo))
+	}
+	slug, err := task.Slug(r.Provider, repo)
+	if err != nil {
+		return "", userErr("%s: %v; nothing was written", pluginwire.Printable(repo), err)
+	}
+	return slug, nil
+}
+
+// providerKeyEntry is one repository's entry name in C1's family, built by
+// C1's own rule (credsvc.RepoCredentialKey) so the writer and the loader the
+// service reads with cannot disagree about which key is which entry.
+func providerKeyEntry(lc *localcfg.Config, provider, repo string) (string, error) {
+	slug, err := providerKeyRepoSlug(lc, repo)
+	if err != nil {
+		return "", err
+	}
+	key, err := credsvc.RepoCredentialKey(slug, provider)
+	if err != nil {
+		return "", userErr("%s: %v; nothing was written", pluginwire.Printable(repo), err)
+	}
+	return key, nil
+}
+
+// providerKeyValueNode is the value one entry of the family holds: the mapping
+// of key, base_url and auth the loader reads (credsvc's providerFactsFrom), as
+// YAML nodes.
+//
+// Two of the three fields are NOT the operator's: where the call goes and how
+// the key is sent are the provider's own routing facts, read from
+// providers.<provider> in the project's config, and the entry exists so that a
+// run is never told either (F45, D1418 — the destination is the entry's and
+// never a caller's). The key is the value that was read.
+//
+// The two facts are held to the loader's own rules before they are written —
+// config.CheckProviderBaseURL and the closed set of two auth shapes — so a
+// config whose provider entry this document cannot carry is refused here, in a
+// sentence about the config, rather than by the loader as a document the
+// service refuses.
+func providerKeyValueNode(lc *localcfg.Config, provider string, value []byte) (*yaml.Node, error) {
+	baseURL, auth, err := providerKeyFacts(lc, provider)
+	if err != nil {
+		return nil, err
+	}
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{"key", string(value)},
+		{"base_url", baseURL},
+		{"auth", auth},
+	}
+	root := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	for _, f := range fields {
+		root.Content = append(root.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: f.name},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: f.value, Style: yaml.DoubleQuotedStyle})
+	}
+	return root, nil
+}
+
+// providerKeyFacts is the provider's own two routing facts — the address a
+// routed call goes to and the shape of the header the key rides in — held to
+// the rules the service's loader holds them to before they are written.
+//
+// It is a step of its own and not the node builder's body because the writers
+// ask for it before they read a value: a config the entry cannot be built from
+// is refused with nothing typed at a terminal, which is the rule every refusal
+// of this family keeps.
+func providerKeyFacts(lc *localcfg.Config, provider string) (string, string, error) {
+	p, declared := lc.Providers[provider]
+	if !declared {
+		return "", "", userErr("providers.%s is not declared in this project's config, and C1's entry carries the provider's OWN address and auth — the destination of a routed call is the entry's and never the caller's (F45, D1418) — so there is nothing to build the entry from. Declare the provider first (fugaro models add %s, or the providers block of the project config) with its kind, base_url, auth and models, then store the key; nothing was read from you and nothing was written",
+			pluginwire.Printable(provider), pluginwire.Printable(provider))
+	}
+	if err := config.CheckProviderBaseURL(p.BaseURL); err != nil {
+		return "", "", userErr("providers.%s.base_url is not one of C1's entries may hold (%v): the entry's base_url is the destination of every routed call spent on this key, and the loader and the gateway's routes hold it to the same rule. Fix providers.%s in the project config and store the key again; nothing was read from you and nothing was written",
+			pluginwire.Printable(provider), err, pluginwire.Printable(provider))
+	}
+	if p.Auth != providerAuthBearer && p.Auth != providerAuthXAPIKey {
+		return "", "", userErr("providers.%s.auth is %s, and one of C1's entries may hold only the two shapes the gateway can send: %s or %s. Fix providers.%s in the project config and store the key again; nothing was read from you and nothing was written",
+			pluginwire.Printable(provider), pluginwire.Printable(p.Auth), providerAuthBearer, providerAuthXAPIKey, pluginwire.Printable(provider))
+	}
+	return p.BaseURL, p.Auth, nil
+}
+
+// providerKeyBundleDoc is the document a provider-key write leaves in place:
+// the document as it is with one entry of C1's family set for each repository
+// named, all of them in ONE version.
+//
+// One version and not one write per repository: a key several repositories
+// share is entered once for each (D3008), and a version holding it for some of
+// them is a state in which the key serves a run on some repositories and not on
+// others, which is a rotation half-applied. The read-modify-write is credsSet's
+// own and edits YAML nodes rather than rebuilding the document from a map, so
+// every entry this write was not asked about keeps its bytes.
+//
+// The value's nodes are built once and reused for every entry: the fields are
+// the same three values, and a copy per entry would be a second place the
+// provider's own address could be read from.
+func providerKeyBundleDoc(raw []byte, lc *localcfg.Config, provider string, repos []string, value []byte) ([]byte, error) {
+	doc, root, err := bundleNodes(raw)
+	if err != nil {
+		return nil, err
+	}
+	valueNode, err := providerKeyValueNode(lc, provider, value)
+	if err != nil {
+		return nil, err
+	}
+	for _, repo := range repos {
+		entry, err := providerKeyEntry(lc, provider, repo)
+		if err != nil {
+			return nil, err
+		}
+		setBundleNodeValue(root, entry, valueNode)
+	}
+	return marshalBundle(doc)
+}
+
+// providerKeyBundleBefore is the read half of a provider-key write: the
+// document as it is, with credsSet's own three answers — a container with no
+// version is the first write's starting point, a DISABLED newest version is
+// refused as such, a document the service's loader rejects is refused before
+// anything is written — so a provider key can never replace a document the
+// service could have read.
+func providerKeyBundleBefore(ctx context.Context, store *bundleStore) (bundleDoc, error) {
+	before, err := store.access(ctx, "latest")
+	switch {
+	case errors.Is(err, errNoBundleVersion):
+		return bundleDoc{}, nil
+	case errors.Is(err, errBundleDisabled):
+		return bundleDoc{}, credsDisabledRefusal(store.id, "written")
+	case err != nil:
+		return bundleDoc{}, err
+	}
+	if _, err := credsvc.ParseBundle(before.raw); err != nil {
+		return bundleDoc{}, credsDocRefusal(store.id, err)
+	}
+	return before, nil
+}
+
+// providerKeyBundleWrite is the ONE write of a provider's key into the bundle
+// (F27, R2, KS2): the guard for a deployed service that cannot read the
+// family, the document, the service's own loader over it, and the add-verify-
+// retire tail every write of this document shares. It is called by all three
+// writers — `fugaro creds set credential-<name>-key`, `fugaro accounts add
+// --type openrouter` and `fugaro secrets set` of a provider's secret — so that
+// the four steps have one version and not three.
+//
+// The guard comes first, before the document is built: it reads the release of
+// the credentials service that will read this bundle, and a write refused there
+// is refused with nothing read from a person and nothing written. It is the
+// same guard every other named entry goes through (F22) and it is about the
+// FAMILY, because the loader refuses a document holding a key it does not know
+// rather than that entry.
+func providerKeyBundleWrite(ctx context.Context, cmd *cobra.Command, st *report.Step, store *bundleStore, before bundleDoc, lc *localcfg.Config, provider string, repos []string, value []byte) (bundleAddResult, error) {
+	if err := refuseAnEntryTheServiceCannotRead(ctx, lc, repoCredentialFamily, repoCredentialSince); err != nil {
+		return bundleAddResult{}, err
+	}
+	doc, err := providerKeyBundleDoc(before.raw, lc, provider, repos, value)
+	if err != nil {
+		return bundleAddResult{}, err
+	}
+	if _, err := credsvc.ParseBundle(doc); err != nil {
+		return bundleAddResult{}, credsDocRefusal(store.id, err)
+	}
+	return bundleAddVerified(ctx, cmd, st, store, before, doc, value)
+}
+
+// providerKeyBundleStore is the whole of one provider-key store as a command
+// reaches it: who may make it, the container, the document, the value read from
+// stdin and the version written. It is `fugaro secrets set`'s and `fugaro
+// accounts add`'s path to providerKeyBundleWrite — `fugaro creds set` has all of
+// these already and calls the write directly.
+//
+// The order is the one every write of this document keeps: the person, before
+// anything is read; the container, so a project with no bundle is answered with
+// the apply that creates it; the project-owner probe (D3006, F36) — the ONE
+// probe of that question — before the document is fetched and before the value
+// is read; the provider's own two facts, so a config the entry cannot be built
+// from is refused with nothing typed; then the read, the write and the version.
+//
+// prompt is the name the person is answering for — the secret they typed, which
+// is not always the credential's own derived name (`secrets set <provider>-api-key`
+// is a provider key's other spelling) and is the name a hidden prompt would
+// show. credential is the credential the entry is named after, which is the
+// provider's name (a runner-path key credential is named after the provider it
+// serves).
+//
+// asJSON is the caller's --json: the document printed is `secrets set --json`'s
+// shape with the BUNDLE's container in it, because the bundle is the container
+// this write added a version to — no version of a repository's or a provider's
+// own container is written for a provider key any more.
+func providerKeyBundleStore(run *stepRun, cmd *cobra.Command, st *report.Step, lc *localcfg.Config, credential, prompt string, repos []string, asJSON bool) (string, string, error) {
+	ctx := cmd.Context()
+	if err := providerKeyOwnerOnly(os.Getenv, "stored"); err != nil {
+		return "", "", err
+	}
+	if len(repos) == 0 {
+		return "", "", providerKeyNoReposRefusal(lc, credential)
+	}
+	if _, _, err := providerKeyFacts(lc, credential); err != nil {
+		return "", "", err
+	}
+	store, err := openBundleStore(ctx, lc)
+	if err != nil {
+		return "", "", err
+	}
+	if err := store.check(ctx); err != nil {
+		return "", "", remoteErr(err, nil)
+	}
+	if err := bundleOwnerProbe(ctx, store, lc, "stored"); err != nil {
+		return "", "", err
+	}
+	before, err := providerKeyBundleBefore(ctx, store)
+	if err != nil {
+		return "", "", remoteErr(err, nil)
+	}
+	value, err := readStoreValue(run, cmd, prompt)
+	if err != nil {
+		return "", "", err
+	}
+	defer clear(value)
+	res, err := providerKeyBundleWrite(ctx, cmd, st, store, before, lc, credential, repos, value)
+	if err != nil {
+		return "", "", err
+	}
+	if asJSON {
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(map[string]string{"project": lc.Name, "secret": store.id, "version": res.version}); err != nil {
+			return "", "", err
+		}
+	}
+	return store.id, res.version, nil
+}
+
+// providerKeyWrittenLine is what a provider-key write says about the entries it
+// left, for the stores whose output a person reads: the repositories the key is
+// now entered for, one entry each, in the version just written.
+//
+// It is a line of its own and not decoration: a provider key's write is the one
+// store whose reach is a LIST (R2, D3008), and the person who stored one value
+// has to be able to read which repositories it now serves without opening the
+// bundle — the entries are named after slugs they did not type.
+func providerKeyWrittenLine(lc *localcfg.Config, provider string, repos []string, version string) string {
+	entries := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		key, err := providerKeyEntry(lc, provider, repo)
+		if err != nil {
+			continue
+		}
+		entries = append(entries, key)
+	}
+	return fmt.Sprintf("note: %s's key is entered in the credentials service's bundle at version %s, one entry per repository: %s\n",
+		pluginwire.Printable(provider), safetext.Field(version), safetext.Field(strings.Join(entries, ", ")))
 }

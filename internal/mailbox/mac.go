@@ -14,7 +14,7 @@ import (
 // The MAC (§8): the tag every inbox message is verified with, and — T2a's half
 // of the same function — the tag every outbound write is signed with.
 //
-// This is task T2 of docs/plans/2026-10-18-mobile-mailbox-consumer.md, and it
+// This is task T2 of docs/mobile/mailbox-consumer-plan.md, and it
 // lands §8.1's inbound gate: the check that stands between a message that
 // arrived and anything acting on it. **T2a extends this file with §8.2's other
 // half** — the `Signer` below, and the write paths that call it — so that

@@ -3,7 +3,7 @@ package cli
 // The console v2 design's decisions, pinned (desktop-console-v2 plan, V2.0.1
 // and V2.0.2).
 //
-// The v2 design (docs/design/desktop-console-v2.md) carries eighteen decisions,
+// The v2 design (docs/desktop-console-v2/spec.md) carries eighteen decisions,
 // D21 to D38, and the owner answered every one of them on 2026-10-15/16. An
 // answer that lives only in a table cell is an answer a later edit can drop:
 // these three tests are what makes "answered" a fact about the document rather
@@ -39,8 +39,8 @@ import (
 )
 
 const (
-	consoleV2Design = "docs/design/desktop-console-v2.md"
-	consoleV2Plan   = "docs/plans/2026-10-15-desktop-console-v2.md"
+	consoleV2Design = "docs/desktop-console-v2/spec.md"
+	consoleV2Plan   = "docs/desktop-console-v2/implementation-plan.md"
 )
 
 // consoleV2Decisions is the whole set, in order, and it is the pin: eighteen

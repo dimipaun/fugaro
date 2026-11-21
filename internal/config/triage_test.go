@@ -43,7 +43,7 @@ func TestTriageIsARunStage(t *testing.T) {
 // TestTriageIsAMixedAccountStage: the stage runs on the senior reviewer's
 // model and account (D1848), so under api-key it is one of the stages the
 // run's single Claude account serves, beside the senior review and the
-// adversarial review (docs/design/mixed-credentials.md §11, "An allow-list,
+// adversarial review (docs/mixed-credentials/spec.md §11, "An allow-list,
 // not a denylist"). A coder's stage is still refused, so the list did not
 // widen into "any stage".
 func TestTriageIsAMixedAccountStage(t *testing.T) {

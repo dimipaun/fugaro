@@ -324,7 +324,7 @@ RUN-ID` (§3), and the launcher says so when `--pr` finds nothing.
 
 **Flags** (§2) on `fugaro run`. The console's spawn contract is one exact argv with a closed never-table
 that already refuses `--total-timeout`, `--pr`, `--retry`, `--no-budget-check` and `--attempts`
-(`docs/design/desktop-console.md:211,220`), so **the console passes none of the new flags** and no console
+(`docs/desktop-console/spec.md:211,220`), so **the console passes none of the new flags** and no console
 task is in this plan (D1055). The coordinator, when it launches, is a CLI caller and may pass them.
 
 **`fugaro runs show RUN [--json]` is new.** `fugaro runs` has `ls`, `stats` and `digest` and no `show`

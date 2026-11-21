@@ -17,7 +17,7 @@ The owner's voice module spec of 2026-10-18, committed verbatim, and its reconci
 
 ## Status of the spec
 
-The spec was written **without seeing this repository**, and it overlaps heavily with work that already exists or is in flight. It is not a new workstream: it is a **revision of [voice-spec.md](../design/voice-spec.md)** — the owner's own voice spec of 2026-10-15 — which this repository committed verbatim the same way and reconciled in [voice.md](../design/voice.md) as **F1–F38** and **decisions D39–D54b, all answered by the owner on 2026-10-16**.
+The spec was written **without seeing this repository**, and it overlaps heavily with work that already exists or is in flight. It is not a new workstream: it is a **revision of [voice-spec.md](../voice/spec-source.md)** — the owner's own voice spec of 2026-10-15 — which this repository committed verbatim the same way and reconciled in [voice.md](../voice/spec.md) as **F1–F38** and **decisions D39–D54b, all answered by the owner on 2026-10-16**.
 
 Two newer documents decide most of what the new spec reopens, and both are cited rather than repeated here:
 
@@ -41,7 +41,7 @@ The checks this module touches are allocated in the [live check register](../gcp
 
 **None.** The spec as received contains no typographical error that needed fixing, so [spec.md](spec.md) is byte-for-byte the owner's.
 
-The delimiter lines that framed the text in the request that carried it are that request's quoting convention, not part of the document, and are not reproduced in [spec.md](spec.md) — the file is the spec itself, with no wrapper. (Same for the earlier [voice-spec.md](../design/voice-spec.md), which was committed verbatim the same way.)
+The delimiter lines that framed the text in the request that carried it are that request's quoting convention, not part of the document, and are not reproduced in [spec.md](spec.md) — the file is the spec itself, with no wrapper. (Same for the earlier [voice-spec.md](../voice/spec-source.md), which was committed verbatim the same way.)
 
 ## Read in this order
 

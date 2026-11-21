@@ -36,7 +36,7 @@ the first two being Part A's `console/test/unit/wslstub.ts` and `console/test/un
    before the tag is the only dry run there is.
 
 **No production file changes** — no Go outside these two test files, no TypeScript, no
-`package.json`, no workflow under `.github/workflows/` — **and `docs/design/desktop-console.md` and
+`package.json`, no workflow under `.github/workflows/` — **and `docs/desktop-console/spec.md` and
 `console/README.md` are not touched by it**: their dated notes were Part H's (O7, below), and Part H
 landed them on 2026-11-10.
 
@@ -104,7 +104,7 @@ because they are about *these* documents rather than about the code:
   (Q1–Q17). Four conventions now exist in the tree. **Recommendation: keep the local namespace** —
   every citation names the folder, and moving to D193 onward is a rename with no benefit beyond the
   one this paragraph already gives.
-- **O7 — the three documents that still said Windows is out.** [docs/design/desktop-console.md](../design/desktop-console.md)
+- **O7 — the three documents that still said Windows is out.** [docs/desktop-console/spec.md](../desktop-console/spec.md)
   §4.2 and its D10 row, [docs/release.md](../release.md)'s console paragraphs and
   [console/README.md](../../console/README.md)'s Linux section all end with a sentence that Windows
   stays out of 0.10.0. The owner's ruling of 2026-10-20 changes the console's Windows *build*, not
@@ -113,7 +113,7 @@ because they are about *these* documents rather than about the code:
   paragraph and its "Before you tag" checklist carry the release-time note and the by-hand dry run,
   which the owner asked for here, and the paragraph says the build is *planned and staged* rather
   than shipped, so it does not claim a Windows build 0.10.0 does not have. **The other two —
-  [docs/design/desktop-console.md](../design/desktop-console.md) §4.2, §7.6's rule 3, the owner-run
+  [docs/desktop-console/spec.md](../desktop-console/spec.md) §4.2, §7.6's rule 3, the owner-run
   table's signing row and D10's row, and [console/README.md](../../console/README.md)'s Linux
   section — carry their notes as of 2026-11-10**, which is what Part H (T-H3) landed: a dated note
   in each place that read the sentence — the design's four, named above, and the console's own
@@ -130,16 +130,16 @@ because they are about *these* documents rather than about the code:
   traps, and the F40 line this work **supersedes for the console**). Its `reconciliation.md` does
   **not** hand the console's own Windows question to this folder: **U13, in that document's §7
   (UNVERIFIED) and not its §4, puts "anything about the desktop console on Windows" out of the CLI
-  track's scope and says `docs/design/desktop-console.md` D10 owns it.** What this folder is
+  track's scope and says `docs/desktop-console/spec.md` D10 owns it.** What this folder is
   written against is the owner's ruling of 2026-10-20 and that ruling's brief, not a hand-off from
   the CLI track — and the console's Windows *build* is the part of D10 the ruling moved, which is
   why D10 and this folder's §4 meet in Part H (O7, T-H3).
-- [docs/design/desktop-console.md](../design/desktop-console.md) — the console's design: §3.4's
+- [docs/desktop-console/spec.md](../desktop-console/spec.md) — the console's design: §3.4's
   rules 4, 5 and 7 (binary resolution, the fixed environment and working directory, the
   `~/.config/fugaro` refusal), §4.2 (what is out, including Windows as a *packaged* deliverable),
   §6.3's degradation table (the no-binary page this work's three new pages extend), §7.6 and
   **D10**.
-- [docs/design/console-styling.md](../design/console-styling.md) — the theme and the layout the
+- [docs/console-styling/spec.md](../console-styling/spec.md) — the theme and the layout the
   three new pages are drawn in: §2.7–§2.9 (the degraded, unavailable and refusal screens and the
   one table of every state variant), §3.5 (never colour alone) and §4 (the window's structure).
 - [docs/pending-workflows/README.md](../pending-workflows/README.md) — the staging convention the

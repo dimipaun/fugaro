@@ -2368,7 +2368,20 @@ func TestAccountsRmDoesNotWriteAJobForAHeldDefaultProfile(t *testing.T) {
 
 // accountsRmKeyPoolLocal is a key credential a pool lists: the state an entry's
 // own removal may not proceed from, by this config's own rule (ValidatePools).
-const accountsRmKeyPoolLocal = addRigLocal + `credentials:
+//
+// The provider block is KS2's: a runner-path key credential's entry carries the
+// provider's OWN address and auth (F45, D1418), and `accounts add --type
+// openrouter` writes the entry for the provider of the credential's name — the
+// name internal/infra pairs a job's mount with (runnerKeyCredential).
+const accountsRmKeyPoolLocal = addRigLocal + `providers:
+  team-a:
+    kind: anthropic-compat
+    base_url: https://openrouter.example/api/v1
+    auth: bearer
+    secret: team-a-api-key
+    models: ["deepseek/*"]
+    allow_data_to: [owner/repo-a]
+credentials:
   - { name: team-a, type: openrouter }
 claude_accounts:
   team-a:
@@ -2403,10 +2416,11 @@ crafts:
 // which is the half of the refusal a session could otherwise take for a
 // removal.
 func TestAccountsRmRefusesAPoolMember(t *testing.T) {
-	r := newAddRigWith(t, accountsRmKeyPoolLocal)
+	r := providerKeyRig(t, accountsRmKeyPoolLocal)
+	bundleID := bundleFixtureFor(t, r.sm, "aurora", nil)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
-	if v := r.sm.Latest(credentialSecretID("team-a")); v == nil {
-		t.Fatalf("the fixture's %s holds no value, so the refused delete would prove nothing", credentialSecretID("team-a"))
+	if v := bundleEntry(t, r.sm, bundleID, mustSlug("github", "owner/repo-a"), "team-a").Value(); v == "" {
+		t.Fatalf("the fixture's bundle holds no entry for owner/repo-a, so the refused delete would prove nothing")
 	}
 	before := readFileString(t, r.cfg)
 

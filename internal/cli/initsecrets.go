@@ -47,8 +47,12 @@ import (
 //   - the secrets asked for are the ones the repository's jobs mount
 //     (infra.SecretMounts, the function that mounts them), read from the
 //     checkout's fugaro.yaml: the git credential, the Claude credential the
-//     agent.auth names (none for vertex), the allowed providers' keys and the
-//     workflows' own.
+//     agent.auth names (none for vertex) and the workflows' own. A model
+//     provider's key is not one of them: since 0.27.0 it is entered in the
+//     credentials service's bundle, one entry per repository (KS2, D1670
+//     reversed), and what the stage says about it is where it is entered
+//     (providerKeyNotTakenNotice), never a prompt for a value it would refuse
+//     to store.
 //   - a secret that already has a version is skipped, and is never read,
 //     overwritten or rotated here (that is fugaro secrets set).
 //   - a value lives in memory only from the prompt to the store call, is
@@ -207,6 +211,15 @@ type secretsStage struct {
 	// notice), and the ruling's one sentence about them is what Check and Plan
 	// say instead of a step.
 	repoLevel []string
+	// providerKeys are the names the stage does not take because they are a
+	// configured model provider's own key (config.ProviderBySecret): since KS2
+	// the key is entered in the credentials service's bundle, one entry per
+	// repository, and this stage writes Secret Manager values. They are dropped
+	// from what the stage wants -- take() refuses one before reading anything,
+	// so a want left in would be one no run could ever satisfy -- and the
+	// command that enters this repository's own entry is what Check and Plan
+	// name for them (providerKeyNotTakenNotice).
+	providerKeys []string
 
 	// node is the project's published policy, read once when the stage
 	// resolves through the run's own memoized read (initRun.policy) and nil
@@ -288,11 +301,15 @@ func allowedHarnessOAuthMounts(lc *localcfg.Config, repo string, mounts []infra.
 			continue
 		}
 		if p, reserved := config.ReservedProviderSecret(lc.Providers, m.Logical); reserved && lc.Providers[p].Secret != m.Logical {
-			// A provider's *own* key mount (SecretMounts built it from
-			// p.Secret, with the runner's variable) is kept: it is exactly the
-			// value this stage exists to take. What is dropped is the name
-			// reserved for that provider's key while the provider's key is
-			// stored under another one.
+			// What is dropped here is the name reserved for that provider's
+			// key while the provider's key is stored under another one. A
+			// provider's *own* key mount (SecretMounts built it from p.Secret,
+			// with the runner's variable) survives this filter -- it is a
+			// provider's own key and not a name reserved for one, which is not
+			// what the filter is about -- and resolve() drops it later, where
+			// the KS2 answer for a provider key is said
+			// (providerKeyNotTakenNotice): the store is the credentials
+			// service's bundle's entry, not a container of its own.
 			continue
 		}
 		out = append(out, m)
@@ -372,7 +389,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		// The Anthropic key is asked for only when a run actually needs it:
 		// with the gateway on and every pin served by a provider the run never
 		// calls Anthropic, so init does not prompt for a value and does not
-		// store one (design docs/design/project-centric.md §6.1). The rule is
+		// store one (design docs/project-centric/spec.md §6.1). The rule is
 		// needsAnthropicKey (config.AnthropicKeyNeeded over the effective
 		// mode), the one validate and update --repo ask too.
 		needsKey := needsAnthropicKey(lc, cfg, repo)
@@ -389,7 +406,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 				if m.Logical == config.AnthropicSecret && !needsKey {
 					// No call of this run goes to Anthropic, so there is
 					// nothing to ask for: the run never calls it (design
-					// docs/design/project-centric.md §6.1). The container is
+					// docs/project-centric/spec.md §6.1). The container is
 					// still planned, so the owner can store a key later with
 					// `fugaro secrets set`, and a run that needs one without
 					// it is refused with that command.
@@ -407,7 +424,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		// already knows about per workflow; the line it leaves for one of
 		// them is that account's own `fugaro accounts add` command (Left),
 		// not the default's mint-then-store pair (design
-		// docs/design/named-oauth-tokens.md §3 T3, §4). A name the credentials
+		// docs/named-oauth-tokens/spec.md §3 T3, §4). A name the credentials
 		// block declares a key credential is no such account
 		// (config.ClaudeAccountTokenNames): it has no
 		// claude-oauth-token-<name>, and the command the entry would leave the
@@ -464,6 +481,21 @@ func (s *secretsStage) resolve(ctx context.Context) {
 	// the mounts it filters: projectScope reads the node.
 	kept := make([]string, 0, len(s.tg.wanted))
 	for _, name := range s.tg.wanted {
+		// A configured model provider's own key is one of the names an
+		// api-key job carries (infra.SecretMounts), and since KS2 (D1670
+		// reversed by D2975) it is entered in the credentials service's
+		// bundle, one entry per repository (D3008), rather than stored in a
+		// container: take() refuses the name before reading anything. A want
+		// left in here is one no run could ever satisfy -- find() counts
+		// containers, so the entry that command writes never cleared it, and
+		// every `fugaro setup` and `fugaro update` at a terminal ended on the
+		// refusal. It is dropped here, once, before anything asks, and what a
+		// person is told about it is where the key is entered
+		// (providerKeyNotTakenNotice).
+		if _, provider := config.ProviderBySecret(lc.Providers, name); provider {
+			s.providerKeys = append(s.providerKeys, name)
+			continue
+		}
 		if repoSecretsDisabledName(lc, name) && !s.projectScope(name) {
 			s.repoLevel = append(s.repoLevel, name)
 			continue
@@ -616,6 +648,27 @@ func describeNeeds(names []string) string {
 	return "no value stored for " + strings.Join(names, ", ")
 }
 
+// providerKeyNotTakenNotice is what the stage says about the names resolve
+// dropped because they are a configured model provider's own key
+// (config.ProviderBySecret). A provider key has been the credentials service's
+// bundle's since KS2 (D1670 reversed by D2975), one entry per repository
+// (D3008), and this stage writes Secret Manager values, so the names are not
+// its to take. The command it names per name is the one take()'s backstop
+// refusal names -- `fugaro secrets set <name> --repo <repo>`, which writes THIS
+// repository's entry -- because the bare form stores the project's copy of a
+// name this repository's own key is not.
+func providerKeyNotTakenNotice(names []string, repo string) string {
+	printable := make([]string, 0, len(names))
+	cmds := make([]string, 0, len(names))
+	for _, name := range names {
+		printable = append(printable, pluginwire.Printable(name))
+		cmds = append(cmds, "`"+selfCommand()+" secrets set "+pluginwire.Printable(name)+" --repo "+pluginwire.Printable(repo)+"`")
+	}
+	return fmt.Sprintf(
+		"a model provider's key (%s) is entered in the credentials service's bundle, one entry per repository, and not stored by this step, which writes Secret Manager values: enter this repository's own entry with %s in your own terminal, and run it once more for each further repository the key is for (KS2, D1670 reversed, D3008)",
+		strings.Join(printable, ", "), strings.Join(cmds, ", "))
+}
+
 // Check lists which secrets have no version, by Secret Manager metadata. A
 // listing that fails (before the installation exists, for one) is not an
 // error here: Apply lists again and says what it needs.
@@ -661,6 +714,12 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 		// of what a person learns about it here, and the only place the remedy
 		// (a project-wide entry for the name) is named.
 		note += "; " + config.RepoSecretsIgnoredNotice(s.repoLevel)
+	}
+	if len(s.providerKeys) > 0 {
+		// The same shape of fact for another store: the names resolve dropped
+		// because they are a configured provider's own key, said with the
+		// command that enters this repository's entry (KS2).
+		note += "; " + providerKeyNotTakenNotice(s.providerKeys, s.tg.repo)
 	}
 	if len(s.missing) == 0 {
 		return initflow.Status{State: initflow.Done, Detail: "the secrets the jobs mount are stored" + note}, nil
@@ -882,6 +941,23 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 		// (config.ReservedProviderSecret): the value would become that
 		// provider's credential the day the key is renamed to the convention.
 		return providerConventionRefusal(p, name)
+	}
+	if p, provider := config.ProviderBySecret(s.e.lc.Providers, name); provider {
+		// A configured provider's key has been the credentials service's
+		// bundle's since KS2 (R2, D1670 reversed by D2975), and this stage
+		// writes a container of whatever name it is handed. Taking one here
+		// would make a per-repository copy the service never reads — the one
+		// writer left that still makes a container for a provider key — and it
+		// would read the value at this prompt where every writer of the bundle's
+		// entry reads it from stdin. So it is refused, before a value is read,
+		// with the command that writes this repository's own entry named
+		// (Left() would hand the bare one, which stores the project's copy of a
+		// name this repository's own key is not). resolve() drops every such
+		// name before anything asks, and says the same command for it
+		// (providerKeyNotTakenNotice); this is the independent backstop that
+		// never stores one even if that drop were ever wrong or skipped, and it
+		// is why the two must name the same remedy.
+		return providerKeyInitRefusal(p, name, s.tg.repo)
 	}
 	defer noCoreDumps()()
 	var (

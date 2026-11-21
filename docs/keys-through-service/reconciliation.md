@@ -250,7 +250,7 @@ OAuth token still held in a container. Consequence: D3008.
 variable, so removing one needs no change to a `.tf` file. Terraform's state also holds two
 operator grants per operator on each container, and a grant left in state fails the next apply
 once its container is gone. `internal/infra/discover.go` unions every labelled live container back
-into the variable, and `docs/design/config-transitions.md` describes the retirement under test.
+into the variable, and `docs/config-transitions/spec.md` describes the retirement under test.
 Consequence: R7's order, and KS15's files.
 
 **F36 — Gap (review round 2).** "A project owner" had no test in the plan. The repository has one

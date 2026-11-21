@@ -195,7 +195,7 @@ func requireOwnBudgetDB(ctx context.Context, lc *localcfg.Config, db *rtdb.Clien
 // RequireOwnBudgetDB is requireOwnBudgetDB for the writers the core does not
 // hold: the EE tree's coordinator writes into the same database the budget
 // commands open, and it asks the same question with the same wording and the
-// same exit codes (docs/design/upgrade.md, "Every writer into that database").
+// same exit codes (docs/upgrade/spec.md, "Every writer into that database").
 // It is this call and not a second check worded alike — a second copy of the
 // question's two halves is how a command and a stage come to answer "is this
 // database ours" differently.
@@ -1677,7 +1677,7 @@ func budgetKillLogName(kill bool) string {
 }
 
 // budgetKillDoing is what a refused kill or resume was doing, for the gate's
-// sentence: the switch is the budget admins' (docs/design/roles.md, §1.1), and
+// sentence: the switch is the budget admins' (docs/roles/spec.md, §1.1), and
 // the scope it is set at is the scope the change needs, so halting a project and
 // halting one repository are two different grants. A resume is said as what it
 // does — runs start spending again — because that is the half a role has to

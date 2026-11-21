@@ -23,7 +23,7 @@ import (
 // case and the one that is about the stage rather than about the run (P11):
 // the gateway is on for the run and saw none of this stage's calls, so its
 // figure is Claude Code's own result event and all of it is notional, with no
-// call count and the credential that says so (docs/design/mixed-credentials.md
+// call count and the credential that says so (docs/mixed-credentials/spec.md
 // §5). Asking the run instead — `r.gw != nil`, true for every mixed run — would
 // give the stage r.lastStage's figure, which is the PREVIOUS stage's.
 //

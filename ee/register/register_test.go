@@ -39,7 +39,7 @@ func TestTaggedBuildReportsEE(t *testing.T) {
 // (D522): the sentence the stub answers with -- "X is part of Fugaro
 // Subscription Edition; this build does not include it" -- is a statement about
 // a build that is not the Subscription Edition, and the design says so (§6 of
-// docs/design/ee-boundary-moves.md: it appears only in untagged/core builds).
+// docs/ee-reorg/boundary-moves.md: it appears only in untagged/core builds).
 // This package's init is what makes a build the Subscription Edition
 // (TestTaggedBuildReportsEE), so no name the CLI lists as paid may answer it
 // here: a paid command the tagged binary holds is registered by this package,
@@ -134,6 +134,7 @@ var seamSetters = []string{
 	"SetHandoff",
 	"SetBatch",
 	"SetSubscriptionLimit",
+	"SetSeatLimit",
 }
 
 // governancePair is the pair E2.3 moves together. Registering one half alone is

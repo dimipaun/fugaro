@@ -88,7 +88,7 @@ func TestDocsNameUpgrade(t *testing.T) {
 // machine-local stage runs although a cloud stage stopped, and the run still
 // leaves the checkout for the user and exits 1.
 func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
-	data, err := os.ReadFile("../../docs/design/upgrade.md")
+	data, err := os.ReadFile("../../docs/upgrade/spec.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,11 +122,11 @@ func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
 		"[--repo [PATH]] [--image-source S] [--expect-digest KIND=sha256:H]...",
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("docs/design/upgrade.md does not say %q", want)
+			t.Errorf("docs/upgrade/spec.md does not say %q", want)
 		}
 	}
 	if strings.Contains(doc, "OPEN OWNER DECISION") {
-		t.Error("docs/design/upgrade.md still carries the open decision the owner ruled on 2026-10-31")
+		t.Error("docs/upgrade/spec.md still carries the open decision the owner ruled on 2026-10-31")
 	}
 	// The pin step's deletion (D949, U2) is the edit that renumbered this list,
 	// and the doc is where an older reader looks for the command's shape: the
@@ -134,7 +134,7 @@ func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
 	// gone together.
 	for _, gone := range []string{"--allow-fork", "five steps", "runs pin and plugin", "fugaro upgrade [PATH", "[--repo R]", "[--workflow W]"} {
 		if strings.Contains(doc, gone) {
-			t.Errorf("docs/design/upgrade.md still says %q", gone)
+			t.Errorf("docs/upgrade/spec.md still says %q", gone)
 		}
 	}
 }

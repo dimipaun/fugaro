@@ -222,6 +222,11 @@ var notFields = []string{
 	// working skill names the config keys to say what `user add` writes.
 	"terraform.operators", "terraform.admins",
 	"base_rev", // a key of the patch document a session sends, not a field of any --json output
+	// The two ops the orchestrator skill names on the lines that send a reader
+	// to `--json`: the patch document's own vocabulary, not fields of the
+	// output. `plan_approve` is the person's approval of a plan's items (R5),
+	// and `work_item_upsert` is the op a session declares work with.
+	"plan_approve", "work_item_upsert",
 }
 
 var fieldTokenRE = regexp.MustCompile("`([a-z][a-z0-9]*(?:(?:_[a-z0-9]+)+|(?:\\.[a-z][a-z0-9_]*(?:\\[\\])?)+)(?:\\.[a-z][a-z0-9_]*)*)`")

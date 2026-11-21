@@ -1,7 +1,7 @@
 // The outbox write (mobile P4.1, Task T2a): the one value this command puts in
 // front of the phone, built, signed and written in that order.
 //
-// §8.2 of docs/plans/2026-10-18-mobile-mailbox-consumer.md is the rule this file
+// §8.2 of docs/mobile/mailbox-consumer-plan.md is the rule this file
 // implements, and §6 is where the node lives:
 // `mailbox/<mailbox>/outbox/<id>` = `{id, sender, text, at, mac}` plus whatever
 // the message's kind carries (`kind`, `reply_to`, `agent`). The merged rules give
