@@ -1,0 +1,582 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/workspace"
+)
+
+// WU15's tests. Every fake and helper here carries the task's id (wu15…), so the
+// tasks that land in this package later merge without a name clash (plan §1).
+//
+// Nothing here reaches a cloud, a network or a home directory: the three things
+// a save touches outside itself — where the snapshot goes (stateDesignationReader),
+// what it holds (stateContentReader) and how it is published (stateHost) — are
+// the writer's seams, and every test drives them. The one test that runs a real
+// save's GitHub path puts its own `git` and `gh` on PATH (testutil.FakeCommand),
+// which is the seam the production host itself uses: no test asserts that a
+// forge was reached, only that the commands a save would run are the ones it ran.
+
+// wu15Designation answers one snapshot's E6 designation.
+type wu15Designation struct {
+	d   stateDesignation
+	err error
+
+	asked []workspace.Snapshot
+}
+
+func (f *wu15Designation) Designate(_ context.Context, s workspace.Snapshot) (stateDesignation, error) {
+	f.asked = append(f.asked, s)
+	if f.err != nil {
+		return stateDesignation{}, f.err
+	}
+	return f.d, nil
+}
+
+// wu15Content answers the body of one snapshot, and records that it was asked
+// and what it was asked about: a save that read nothing wrote nothing.
+type wu15Content struct {
+	body json.RawMessage
+	err  error
+
+	asked []workspace.Snapshot
+}
+
+func (f *wu15Content) Body(_ context.Context, s workspace.Snapshot) (json.RawMessage, error) {
+	f.asked = append(f.asked, s)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.body, nil
+}
+
+// wu15Host is the host one repository is on, as a save reaches it: it answers
+// the visibility the test set and records every push, so a test sees the branch,
+// the folder, the file and the bytes that went out — with nothing pushed.
+//
+// mark is called as the push begins and answers everything written so far: it is
+// how a test holds "before it pushes it prints the target" to an order and not
+// just to a substring, which a line printed after the push would also satisfy.
+type wu15Host struct {
+	visibility stateVisibility
+	visErr     error
+	url        string
+	pubErr     error
+
+	mark func() string
+
+	asked  []string
+	pushed []statePublish
+	atPush string
+}
+
+func (h *wu15Host) Visibility(_ context.Context, repo string) (stateVisibility, error) {
+	h.asked = append(h.asked, repo)
+	if h.visErr != nil {
+		return stateVisibilityUnknown, h.visErr
+	}
+	return h.visibility, nil
+}
+
+func (h *wu15Host) Publish(_ context.Context, p statePublish) (string, error) {
+	if h.mark != nil {
+		h.atPush = h.mark()
+	}
+	h.pushed = append(h.pushed, p)
+	if h.pubErr != nil {
+		return "", h.pubErr
+	}
+	return h.url, nil
+}
+
+// wu15Save is one writer under test, with its seams in hand.
+type wu15Save struct {
+	dir  string
+	now  time.Time
+	env  map[string]string
+	out  *strings.Builder
+	des  *wu15Designation
+	body *wu15Content
+	host *wu15Host
+
+	kinds []string
+	w     *stateWriter
+}
+
+// wu15New builds the writer over a temp folder. repo is the command's --repo,
+// "" for a save that takes the project's own designation.
+func wu15New(t *testing.T, repo string) *wu15Save {
+	t.Helper()
+	s := &wu15Save{
+		dir:  t.TempDir(),
+		now:  time.Date(2026, 11, 21, 9, 30, 0, 0, time.UTC),
+		env:  map[string]string{},
+		out:  &strings.Builder{},
+		des:  &wu15Designation{},
+		body: &wu15Content{body: json.RawMessage(`{"settings":{"burn_alert":1},"spend":{"day":"2026-11-21"}}`)},
+		host: &wu15Host{visibility: stateVisibilityPrivate, url: "https://example.invalid/acme/state/pull/7"},
+	}
+	s.host.mark = func() string { return s.out.String() }
+	s.w = newStateWriter(stateWriterOptions{
+		Dir:         s.dir,
+		Out:         s.out,
+		Getenv:      func(k string) string { return s.env[k] },
+		Now:         func() time.Time { return s.now },
+		Designation: s.des,
+		Content:     s.body,
+		Hosts: func(kind string) (stateHost, error) {
+			s.kinds = append(s.kinds, kind)
+			return s.host, nil
+		},
+		Repo: repo,
+	})
+	return s
+}
+
+// wu15Member is the snapshot of the usual member project.
+func wu15Member() workspace.Snapshot {
+	return workspace.Snapshot{
+		Workspace: "acme-workspace",
+		Member:    workspace.MemberTarget{Project: "acme-app", Firebase: "acme-app-firebase"},
+	}
+}
+
+// wu15Audit is the workspace's own audit export, which is not any member's.
+func wu15Audit() workspace.Snapshot {
+	return workspace.Snapshot{Workspace: "acme-workspace", Audit: true}
+}
+
+// wu15Read reads a local snapshot file back.
+func wu15Read(t *testing.T, path string) stateSnapshotDoc {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the snapshot a save named (%s): %v", path, err)
+	}
+	doc, err := stateDecodeSnapshot(raw)
+	if err != nil {
+		t.Fatalf("the file the save wrote at %s is not one its own reader reads: %v", path, err)
+	}
+	return doc
+}
+
+// wu15Files lists the files under dir, relative and sorted, so a test can say
+// what a save left behind — including nothing.
+func wu15Files(t *testing.T, dir string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		out = append(out, rel)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", dir, err)
+	}
+	return out
+}
+
+// TestStateSaveAlwaysWritesLocal is the "always" of the acceptance: with no
+// designated repository at all the local file is the whole save, it is named
+// back to the caller and printed, it holds the body the reader answered under
+// the instant the save was taken, and nothing anywhere was read or pushed.
+//
+// The audit export is the second half: it is the workspace's own file and not a
+// member's, and it is the same save in every other respect.
+func TestStateSaveAlwaysWritesLocal(t *testing.T) {
+	ctx := context.Background()
+
+	s := wu15New(t, "")
+	got, err := s.w.Save(ctx, wu15Member())
+	if err != nil {
+		t.Fatalf("a save with no designated repository failed: %v", err)
+	}
+
+	want := filepath.Join(s.dir, "acme-workspace", "acme-app.json")
+	if got.File != want {
+		t.Errorf("Save answered File %q, want %q: the local file is the one thing every save leaves", got.File, want)
+	}
+	if got.PullRequest != "" {
+		t.Errorf("Save answered PullRequest %q with no repository designated, want empty", got.PullRequest)
+	}
+	if len(s.host.asked) != 0 || len(s.host.pushed) != 0 || len(s.kinds) != 0 {
+		t.Errorf("a save with no designated repository reached a host: visibility asked %v, pushed %d, hosts opened %v",
+			s.host.asked, len(s.host.pushed), s.kinds)
+	}
+	if len(s.body.asked) != 1 {
+		t.Fatalf("the save read the body %d times, want once", len(s.body.asked))
+	}
+
+	doc := wu15Read(t, want)
+	if doc.Workspace != "acme-workspace" || doc.Member != "acme-app" || doc.Audit {
+		t.Errorf("the file names workspace %q, member %q, audit %v; want acme-workspace, acme-app, false", doc.Workspace, doc.Member, doc.Audit)
+	}
+	if !doc.Taken.Equal(s.now) {
+		t.Errorf("the file records %s, want %s: the snapshot's time is the one it was taken at", doc.Taken, s.now)
+	}
+	var held, wantBody map[string]any
+	if err := json.Unmarshal(doc.State, &held); err != nil {
+		t.Fatalf("the file's state is not JSON: %v", err)
+	}
+	if err := json.Unmarshal(s.body.body, &wantBody); err != nil {
+		t.Fatalf("the test's own body is not JSON: %v", err)
+	}
+	if !wu15SameJSON(held, wantBody) {
+		t.Errorf("the file holds %v, want the reader's body %v: a save writes what the reader answered and invents nothing", held, wantBody)
+	}
+	if !strings.Contains(s.out.String(), want) {
+		t.Errorf("the save did not print the file it wrote:\n%s", s.out.String())
+	}
+	if !strings.Contains(s.out.String(), "no state repository is designated") {
+		t.Errorf("the save did not say why there is no pull request:\n%s", s.out.String())
+	}
+
+	// The workspace's own export is the workspace's file, beside the members'.
+	a := wu15New(t, "")
+	agot, err := a.w.Save(ctx, wu15Audit())
+	if err != nil {
+		t.Fatalf("saving the audit export failed: %v", err)
+	}
+	wantAudit := filepath.Join(a.dir, "acme-workspace", stateAuditFileName)
+	if agot.File != wantAudit {
+		t.Errorf("the audit export went to %q, want %q", agot.File, wantAudit)
+	}
+	adoc := wu15Read(t, wantAudit)
+	if !adoc.Audit || adoc.Member != "" {
+		t.Errorf("the audit file says audit %v, member %q; want true and no member: the export is not any member's", adoc.Audit, adoc.Member)
+	}
+}
+
+// wu15SameJSON compares two decoded JSON values structurally, so a test does not
+// depend on key order or on how a number was spelled.
+func wu15SameJSON(a, b any) bool {
+	ab, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bb, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	var an, bn any
+	if json.Unmarshal(ab, &an) != nil || json.Unmarshal(bb, &bn) != nil {
+		return false
+	}
+	return string(ab) == string(bb)
+}
+
+// TestStateSaveOpensPR is a save with E6's designated repository set: the local
+// file and then a pull request — the repository asked about first, then the
+// snapshot committed to a new branch inside the designated folder, and the
+// pull request's own branch as what it targets.
+func TestStateSaveOpensPR(t *testing.T) {
+	s := wu15New(t, "")
+	s.des.d = stateDesignation{
+		Repo:     "acme/state",
+		Dir:      "docs/state",
+		Provider: gitprov.KindGitHub,
+		Source:   "the local project layer's reports_commit",
+	}
+
+	got, err := s.w.Save(context.Background(), wu15Member())
+	if err != nil {
+		t.Fatalf("saving to a designated repository failed: %v", err)
+	}
+	if got.PullRequest != s.host.url {
+		t.Errorf("Save answered PullRequest %q, want the host's own %q", got.PullRequest, s.host.url)
+	}
+	if len(s.host.asked) != 1 || s.host.asked[0] != "acme/state" {
+		t.Errorf("the save read the visibility of %v, want one read of acme/state: the repository it is about to push into", s.host.asked)
+	}
+	if len(s.kinds) != 1 || s.kinds[0] != gitprov.KindGitHub {
+		t.Errorf("the save opened hosts %v, want one GitHub host", s.kinds)
+	}
+	if len(s.host.pushed) != 1 {
+		t.Fatalf("the save pushed %d times, want once", len(s.host.pushed))
+	}
+	p := s.host.pushed[0]
+	if p.Repo != "acme/state" || p.Dir != "docs/state" {
+		t.Errorf("the snapshot went to %s folder %q, want acme/state folder docs/state", p.Repo, p.Dir)
+	}
+	if p.File != "acme-app.json" || p.Path() != "docs/state/acme-app.json" {
+		t.Errorf("the snapshot's file is %q at %q, want acme-app.json at docs/state/acme-app.json", p.File, p.Path())
+	}
+	if !strings.HasPrefix(p.Branch, "fugaro/state-") {
+		t.Errorf("the save pushed branch %q, want one under fugaro/state- so it cannot touch a person's own branch", p.Branch)
+	}
+
+	local, err := os.ReadFile(got.File)
+	if err != nil {
+		t.Fatalf("reading the local file the save named: %v", err)
+	}
+	if string(local) != string(p.Bytes) {
+		t.Errorf("the pushed bytes are not the local file's:\nlocal: %s\npushed: %s", local, p.Bytes)
+	}
+	if p.Subject == "" || p.Body == "" {
+		t.Errorf("the commit subject %q and pull request body %q: both are the pull request a reader sees", p.Subject, p.Body)
+	}
+	if !strings.Contains(s.out.String(), s.host.url) {
+		t.Errorf("the save did not print the pull request it opened:\n%s", s.out.String())
+	}
+}
+
+// TestStateSaveRefusesAPublicRepo is D2824's fence, and the red step: a snapshot
+// carries the addresses of the people the project reaches, so a public
+// designated repository is refused — naming the --repo override — and refused
+// before anything is read or written, because a save that may not be pushed must
+// not leave a snapshot behind either.
+func TestStateSaveRefusesAPublicRepo(t *testing.T) {
+	s := wu15New(t, "")
+	s.des.d = stateDesignation{Repo: "acme/state", Dir: "docs/state", Provider: gitprov.KindGitHub, Source: "the project layer"}
+	s.host.visibility = stateVisibilityPublic
+
+	_, err := s.w.Save(context.Background(), wu15Member())
+	if err == nil {
+		t.Fatal("a save into a public designated repository succeeded, want a refusal: the snapshot carries addresses (D2824)")
+	}
+	if code := ExitCode(err); code != ExitUserError {
+		t.Errorf("the refusal exits %d, want %d: a fence, not a failure", code, ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "--repo") {
+		t.Errorf("the refusal does not name the --repo override, which is the one way through it: %v", err)
+	}
+	if len(s.host.pushed) != 0 {
+		t.Errorf("the refused save pushed %d times, want none", len(s.host.pushed))
+	}
+	if len(s.body.asked) != 0 {
+		t.Errorf("the refused save read the body of %v, want nothing read: a snapshot that is refused must not be built", s.body.asked)
+	}
+	if files := wu15Files(t, s.dir); len(files) != 0 {
+		t.Errorf("the refused save left %v behind, want nothing: nothing about a refused save is half-done", files)
+	}
+}
+
+// TestStateSaveNamesTheTargetAndItsSource is D2824's other half: the operator
+// sees the repository, the folder and where the setting came from, and sees them
+// BEFORE the push — a line printed after it would leave them reading a snapshot
+// they could not have headed off.
+func TestStateSaveNamesTheTargetAndItsSource(t *testing.T) {
+	const source = "the owner's local project config, reports_commit.repo"
+	s := wu15New(t, "")
+	s.des.d = stateDesignation{Repo: "acme/state", Dir: "docs/state", Provider: gitprov.KindGitHub, Source: source}
+
+	if _, err := s.w.Save(context.Background(), wu15Member()); err != nil {
+		t.Fatalf("saving to a designated repository failed: %v", err)
+	}
+	if s.host.atPush == "" {
+		t.Fatal("the test's host was never asked to push")
+	}
+	for _, want := range []string{"acme/state", source} {
+		if !strings.Contains(s.host.atPush, want) {
+			t.Errorf("what the save had printed when it pushed does not name %q:\n%s", want, s.host.atPush)
+		}
+	}
+}
+
+// TestStateSaveRefusedInAgentSession is A7: the snapshot leaves this machine
+// under the owner's own credentials, so a coding agent's session is refused and
+// nothing is read, written or pushed first.
+func TestStateSaveRefusedInAgentSession(t *testing.T) {
+	s := wu15New(t, "")
+	s.env["CLAUDECODE"] = "1"
+	s.des.d = stateDesignation{Repo: "acme/state", Dir: "docs/state", Provider: gitprov.KindGitHub, Source: "the project layer"}
+
+	_, err := s.w.Save(context.Background(), wu15Member())
+	if err == nil {
+		t.Fatal("a save in a coding agent's session succeeded, want a refusal (A7)")
+	}
+	if code := ExitCode(err); code != ExitUserError {
+		t.Errorf("the refusal exits %d, want %d", code, ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "CLAUDECODE") {
+		t.Errorf("the refusal does not name the marker that made this an agent's session: %v", err)
+	}
+	if len(s.des.asked) != 0 || len(s.body.asked) != 0 || len(s.host.asked) != 0 || len(s.host.pushed) != 0 {
+		t.Errorf("the refused save did work anyway: designation %d, body %d, visibility %v, pushes %d",
+			len(s.des.asked), len(s.body.asked), s.host.asked, len(s.host.pushed))
+	}
+	if files := wu15Files(t, s.dir); len(files) != 0 {
+		t.Errorf("the refused save left %v behind, want nothing", files)
+	}
+}
+
+// TestLastSaved is the read half: no snapshot is found==false and not the zero
+// time, a save is found at the instant it recorded, and a later save moves it on
+// — which is what `status`'s "state repo in sync" row reads.
+func TestLastSaved(t *testing.T) {
+	ctx := context.Background()
+	s := wu15New(t, "")
+	snap := wu15Member()
+
+	if at, found, err := s.w.LastSaved(ctx, snap); err != nil || found || !at.IsZero() {
+		t.Fatalf("LastSaved answered (%s, %v, %v) before any save, want (zero, false, nil)", at, found, err)
+	}
+
+	if _, err := s.w.Save(ctx, snap); err != nil {
+		t.Fatalf("saving failed: %v", err)
+	}
+	at, found, err := s.w.LastSaved(ctx, snap)
+	if err != nil || !found {
+		t.Fatalf("LastSaved answered (%s, %v, %v) after a save, want the save's time and found", at, found, err)
+	}
+	if !at.Equal(s.now) {
+		t.Errorf("LastSaved answered %s, want the instant the snapshot records (%s)", at, s.now)
+	}
+
+	// Another member's snapshot is a different file: a project that was never
+	// saved is not the one that was.
+	other := workspace.Snapshot{Workspace: "acme-workspace", Member: workspace.MemberTarget{Project: "acme-other"}}
+	if at, found, err := s.w.LastSaved(ctx, other); err != nil || found || !at.IsZero() {
+		t.Errorf("LastSaved answered (%s, %v, %v) for a member never saved, want (zero, false, nil)", at, found, err)
+	}
+
+	s.now = s.now.Add(26 * time.Hour)
+	if _, err := s.w.Save(ctx, snap); err != nil {
+		t.Fatalf("the second save failed: %v", err)
+	}
+	if at, _, err := s.w.LastSaved(ctx, snap); err != nil || !at.Equal(s.now) {
+		t.Errorf("LastSaved answered (%s, %v), want the later save's instant %s", at, err, s.now)
+	}
+}
+
+// TestStateSaveNamesALocalFolderOfItsOwn: a save that names no folder keeps its
+// files in the state directory the rest of the CLI keeps its own in (F5), under
+// the workspace's and the member's names — so the folder `status` reads on a
+// machine whose command never named one is where a person already looks, and a
+// save and a later read cannot disagree about it.
+func TestStateSaveNamesALocalFolderOfItsOwn(t *testing.T) {
+	state := t.TempDir()
+	ctx := context.Background()
+	s := wu15New(t, "")
+	s.w.dir = ""
+	s.env["XDG_STATE_HOME"] = state
+
+	got, err := s.w.Save(ctx, wu15Member())
+	if err != nil {
+		t.Fatalf("a save with no folder named failed: %v", err)
+	}
+	want := filepath.Join(state, "fugaro", "state", "acme-workspace", "acme-app.json")
+	if got.File != want {
+		t.Errorf("the save wrote %q, want %q: the state directory, so the file is where a person expects it", got.File, want)
+	}
+	if _, found, err := s.w.LastSaved(ctx, wu15Member()); err != nil || !found {
+		t.Errorf("LastSaved answered found=%v err=%v for the file the same writer just wrote", found, err)
+	}
+}
+
+// TestStateSnapshotFileRefusesWhatItCannotRead: the local file is one a person
+// may edit and a newer Fugaro may write, so a version this build does not read,
+// an unknown key and a file with no time are refusals and never half a snapshot.
+func TestStateSnapshotFileRefusesWhatItCannotRead(t *testing.T) {
+	base := `{"version":1,"taken":"2026-11-21T09:30:00Z","workspace":"acme-workspace","member":"acme-app","state":{}}`
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{"a version this build does not write", `{"version":2,"taken":"2026-11-21T09:30:00Z","workspace":"w","state":{}}`},
+		{"a key this build does not know", `{"version":1,"taken":"2026-11-21T09:30:00Z","workspace":"w","state":{},"extra":true}`},
+		{"no time", `{"version":1,"workspace":"w","state":{}}`},
+		{"not an object at all", `[]`},
+	} {
+		if _, err := stateDecodeSnapshot([]byte(tc.raw)); err == nil {
+			t.Errorf("%s: stateDecodeSnapshot accepted it, want a refusal", tc.name)
+		}
+	}
+	if _, err := stateDecodeSnapshot([]byte(base)); err != nil {
+		t.Errorf("stateDecodeSnapshot refused the file a save writes: %v", err)
+	}
+}
+
+// TestStateSaveHostIsTheRepositorysOwn: the GitHub host runs `gh` for the
+// visibility read and for the pull request, and the owner's own git for the
+// clone, the commit and the push (D2807) — no token of Fugaro's anywhere. The
+// commands are the test's own, on PATH, and the assert is on what a save ran.
+func TestStateSaveHostIsTheRepositorysOwn(t *testing.T) {
+	gitCalls := wu15FakeGit(t)
+	ghCalls := wu15FakeGH(t)
+
+	s := wu15New(t, "")
+	s.des.d = stateDesignation{Repo: "acme/state", Dir: "docs/state", Provider: gitprov.KindGitHub, Source: "the project layer"}
+	s.w.hosts = stateHostsFor("")
+
+	got, err := s.w.Save(context.Background(), wu15Member())
+	if err != nil {
+		t.Fatalf("a save through the GitHub host failed: %v", err)
+	}
+	if got.PullRequest != "https://example.invalid/acme/state/pull/7" {
+		t.Errorf("the save answered PullRequest %q, want the URL the fake gh printed", got.PullRequest)
+	}
+	ran := wu15Calls(t, gitCalls, ghCalls)
+	for _, want := range []string{
+		"repo view acme/state --json visibility",
+		"clone --quiet -- https://github.com/acme/state.git",
+		"checkout --quiet -b fugaro/state-20261121-093000",
+		"add -- docs/state/acme-app.json",
+		"push --quiet origin fugaro/state-20261121-093000",
+		"pr create --repo acme/state --head fugaro/state-20261121-093000 --base main",
+	} {
+		if !strings.Contains(ran, want) {
+			t.Errorf("the save never ran %q. Everything it ran:\n%s", want, ran)
+		}
+	}
+}
+
+// wu15FakeGit puts a `git` on PATH that answers the subcommands a save runs —
+// the clone makes the directory git would make, and the clone's HEAD is a
+// branch — and answers the path of the file every argv is appended to.
+func wu15FakeGit(t *testing.T) string {
+	t.Helper()
+	return testutil.FakeCommand(t, stateGit, `
+case "$1" in
+clone) mkdir -p "$5" ;;
+rev-parse) echo main ;;
+esac
+exit 0
+`)
+}
+
+// wu15FakeGH puts a `gh` on PATH that answers the two calls a save makes: the
+// repository's visibility, and the pull request it opens.
+func wu15FakeGH(t *testing.T) string {
+	t.Helper()
+	return testutil.FakeCommand(t, stateGH, `
+case "$1 $2" in
+"repo view") echo '{"visibility":"PRIVATE"}' ;;
+"pr create") echo '{"url":"https://example.invalid/acme/state/pull/7"}' ;;
+*) echo '{}' ;;
+esac
+exit 0
+`)
+}
+
+// wu15Calls is everything the fakes of one test ran, one line per argv.
+func wu15Calls(t *testing.T, calls ...string) string {
+	t.Helper()
+	var b strings.Builder
+	for _, path := range calls {
+		raw, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("reading the calls a fake recorded: %v", err)
+		}
+		b.Write(raw)
+	}
+	return b.String()
+}
