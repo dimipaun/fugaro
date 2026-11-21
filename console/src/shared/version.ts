@@ -584,22 +584,21 @@ export const BUDGET_STREAM_CLI_FLOOR: string | null = null
 export const SETUP_CLI_FLOOR: string | null = null
 
 /**
- * IMAGE_CATALOG_CLI_FLOOR and RECIPES_CLI_FLOOR are the two reads of the
- * console improvements plan that need **no release of their own** (AL settles
- * the plan's U7): `image ls --json` and `recipes ls --json` are commands as old
- * as the console's own hard floor, so the value that says "no floor" is the
- * floor the console already refuses below.
+ * IMAGE_CATALOG_CLI_FLOOR and RECIPES_CLI_FLOOR are the oldest CLIs that carry
+ * `image ls --json` and `recipes ls --json`: the Code tab's two reads (the
+ * console improvements plan's AL).
  *
- * **Written as the constant and not as `null`**, and the difference matters:
- * every reader of a floor treats `null` as *refuse* -- `src/source/new-reads.ts`
- * throws the console's own "needs a fugaro release no CLI has yet" for it -- so
- * a `null` here would withhold two reads every supported CLI answers. They are
- * constants of their own rather than an inline use of `CLI_HARD_FLOOR_VERSION`
- * at the call site, because each is one operation's floor and the release that
- * one day raises it names one name.
+ * **Both are `null` for the same reason the three feeds above are**: the two
+ * commands are on this tree (`internal/cli/image_catalog.go`,
+ * `internal/cli/recipes.go`) and **no release carries them yet**, so a floor
+ * naming a version would hand a flag to a CLI that answers `unknown flag:
+ * --json` and fails the whole read. The plan states the rule for exactly this
+ * shape of row -- a floor constant set before the CLI release carries the flag
+ * is a `null` until it does -- and a release sets each to its own version in a
+ * one-line pull request, which is a release step and not a task of the plan.
  */
-export const IMAGE_CATALOG_CLI_FLOOR: string | null = CLI_HARD_FLOOR_VERSION
-export const RECIPES_CLI_FLOOR: string | null = CLI_HARD_FLOOR_VERSION
+export const IMAGE_CATALOG_CLI_FLOOR: string | null = null
+export const RECIPES_CLI_FLOOR: string | null = null
 
 /**
  * CONSOLE_CLI_UPGRADE_COMMAND is the fix line an *old* CLI's banner offers. It

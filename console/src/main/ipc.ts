@@ -2040,7 +2040,7 @@ export const CONSOLE_OPERATIONS = [
     // so the stream is the window's own list and never a filtered one.
     name: 'runs.stream',
     method: 'streamRuns',
-    command: 'runs ls',
+    command: 'runs ls --stream',
     flags: ['--json'],
     summary: 'the run list as it changes: one row per line, and a final line that ends the feed',
     args: [
@@ -2059,7 +2059,7 @@ export const CONSOLE_OPERATIONS = [
     // cannot narrow the same figure two ways.
     name: 'spend.stream',
     method: 'streamSpend',
-    command: 'report',
+    command: 'report --stream',
     flags: ['--json'],
     summary: 'the spend report as it changes: one line per line of the report, and a final line that ends the feed',
     args: [
@@ -2096,7 +2096,7 @@ export const CONSOLE_OPERATIONS = [
     // -- so the stream carries exactly what the read carries.
     name: 'budget.stream',
     method: 'streamBudget',
-    command: 'budget show',
+    command: 'budget show --stream',
     flags: ['--json'],
     summary: 'caps, counters and the effective per-run cap as they change, one line at a time',
     args: [
@@ -2130,7 +2130,7 @@ export const CONSOLE_OPERATIONS = [
     // role, resolved by the same gates that answer the writes.
     name: 'whoami',
     method: 'whoAmI',
-    command: 'user ls',
+    command: 'user ls --me',
     flags: ['--json'],
     summary: 'the caller’s own role, the scope it is held at, and the repositories it reaches',
     args: [],
@@ -2181,7 +2181,7 @@ export const CONSOLE_OPERATIONS = [
     // (`SETUP_DEADLINE_MS`, `spawn.ts`).
     name: 'setup.plan',
     method: 'planSetup',
-    command: 'setup',
+    command: 'setup --plan-only --answers-file - --events',
     flags: ['--json'],
     summary: 'what a first run would do, as a feed of events and with nothing created',
     args: [
@@ -2210,7 +2210,7 @@ export const CONSOLE_OPERATIONS = [
     // is not this row and keeps answering.
     name: 'setup.apply',
     method: 'applySetup',
-    command: 'setup',
+    command: 'setup --answers-file - --events',
     flags: ['--json'],
     summary: 'the write: converge the installation from the answers main held at plan time, as a feed of events',
     refusedAfterLapse: true,
@@ -2346,10 +2346,10 @@ export interface NeverReachable {
    * bare word, and a second argv on `graph` would be a second surface row rather
    * than a second member of this list. The check that an exception is *used* is
    * `src/main/spawn.ts`'s: a row whose argv carries the word, or whose command
-   * is the command, is refused there unless the operation is on this list, and
-   * this list admits nothing the spawn table does not build -- and a name that
-   * is not an operation at all is refused by `assertReachableSurface` at
-   * startup.
+   * path is the command or a longer path under it, is refused there unless the
+   * operation is on this list, and this list admits nothing the spawn table does
+   * not build -- and a name that is not an operation at all is refused by
+   * `assertReachableSurface` at startup.
    */
   readonly except?: readonly string[]
 }
@@ -2929,9 +2929,10 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
  * or the command, is refused for every other operation and for a caller that
  * names none, so an exception is a fact about one argv on the surface rather
  * than a permission for a word (`graph.watch`'s and `setup`'s rows above). A
- * `command` row's exception is otherwise the strictest thing here -- the
- * command path matches exactly, so the exception cannot widen to a command the
- * row does not name.
+ * `command` row's exception is otherwise the strictest thing here: the command
+ * row matches the row's own words or a longer path under them, and never a
+ * command the row does not name -- so an exception cannot widen into a
+ * permission for a sibling command.
  */
 export function isNeverReachable(operation: {
   /** `name` is the operation asking, and it is **optional on purpose**: the
@@ -2951,7 +2952,20 @@ export function isNeverReachable(operation: {
   const excepted = (entry: NeverReachable): boolean =>
     asking !== null && entry.except !== undefined && entry.except.includes(asking)
   for (const entry of NEVER_REACHABLE) {
-    if (entry.shape === 'command' && entry.value === operation.command) {
+    // A `command` row is about one command, and it matches an operation whose
+    // command path is that command **or a longer path under it** -- the same
+    // reading the `argv` rows below take, and for the same reason. The launch's
+    // command carries two fixed words of its argv (`run --task-file -`), and so
+    // do the first-run wizard's two (`setup --plan-only --answers-file -
+    // --events`, `setup --answers-file - --events`): the mode word that decides
+    // what the child does belongs in the command path, which is what keeps it
+    // out of a payload, and a ban that only matched the bare word would leave
+    // every argv carrying one beneath it ungranted-and-unrefused.
+    if (
+      entry.shape === 'command' &&
+      operation.command !== null &&
+      (entry.value === operation.command || operation.command.startsWith(`${entry.value} `))
+    ) {
       if (!excepted(entry)) return entry
       continue
     }
@@ -3105,8 +3119,11 @@ export const SETUP_RIGOR_WORDS: readonly string[] = Object.freeze(['poc', 'start
 
 /** MAX_SETUP_ANSWER_LENGTH bounds one answer before its grammar runs. Every
  * question's answer is a word: a GCP project id, a region, a project name, a
- * rigor mode, or a boolean. */
-const MAX_SETUP_ANSWER_LENGTH = 256
+ * rigor mode, or a boolean. It is exported because it is a bound of the
+ * operation rather than an implementation detail: `ipc.test.ts` holds the
+ * refusal to the number itself, so a later widening of it is a test's failure
+ * and not a silent one. */
+export const MAX_SETUP_ANSWER_LENGTH = 256
 
 /** SETUP_ANSWERS_MAX_LENGTH bounds the serialised answers file. Each member is
  * bounded above, so this is the whole document's own ceiling rather than a
@@ -3133,9 +3150,16 @@ const PROTOTYPE_KEYS: readonly string[] = Object.freeze(['__proto__', 'construct
  * `runs ls --pr` *without* `--repo` is deliberately not here: whether that is
  * refused depends on how many repositories the local config lists, and the
  * console does not read the operator's config (rule 7).
+ *
+ * **`budget.stream` carries `budget.show`'s pair and for the same reason** (the
+ * console improvements plan, AL): the stream's argv is the read's own plus
+ * `--stream`, so `--repo` with `--all` is the same argv the CLI refuses at
+ * `internal/cli/budget.go:387` -- and it would be refused after a long-lived
+ * child had already started rather than before one existed.
  */
 const REFUSED_PAIRS: Readonly<Record<string, readonly (readonly [string, string, string])[]>> = Object.freeze({
   'budget.show': [['repo', 'all', "--repo and --all don't go together"]],
+  'budget.stream': [['repo', 'all', "--repo and --all don't go together"]],
   'runs.list': [
     ['repo', 'all', "--repo and --all don't go together"],
     ['pr', 'all', 'runs ls --pr needs --repo: a pull request number means something only in one repository'],
@@ -4492,6 +4516,11 @@ export function assertReachableSurface(operations: readonly ConsoleOperation[]):
   // that keeps a name in that table from being a permission for a row that does
   // not exist -- the one thing a name-keyed exception must not become, since a
   // typo would otherwise turn a total ban into a ban that refuses nothing.
+  //
+  // The command is read the way `isNeverReachable` reads it: the row's own
+  // words, or a longer command path under them. `setup`'s exception names two
+  // operations whose command path carries the wizard's mode words, and a check
+  // that demanded the bare word would refuse the only exception the table has.
   for (const entry of NEVER_REACHABLE) {
     for (const name of entry.except ?? []) {
       const named = operations.find((candidate) => candidate.name === name)
@@ -4500,9 +4529,12 @@ export function assertReachableSurface(operations: readonly ConsoleOperation[]):
           `the never table's ${entry.value} row excepts ${name}, which is not an operation of the surface: an exception names a row of this table and nothing else`,
         )
       }
-      if (entry.shape === 'command' && named.command !== entry.value) {
+      const under =
+        named.command !== null &&
+        (named.command === entry.value || named.command.startsWith(`${entry.value} `))
+      if (entry.shape === 'command' && !under) {
         throw new Error(
-          `the never table's ${entry.value} row excepts ${name}, which drives ${String(named.command)}: a command row's exception names an operation of that command's own argv (the match is exact)`,
+          `the never table's ${entry.value} row excepts ${name}, which drives ${String(named.command)}: a command row's exception names an operation of that command's own argv (the match is the row's words or a longer path under them)`,
         )
       }
     }
