@@ -527,6 +527,13 @@ func (s *Server) probeOne(ctx context.Context, sel *creds.Selector, id Identity,
 	if !ok {
 		return false
 	}
+	// A probe is a call the workspace's own credential pays for (C1.16), so it
+	// takes a reservation like any other call of the run's and settles it here
+	// (WS8, F10): the bracket is the probe's own, because the probe's body is
+	// this service's one-token call and not the run's request, and pricing the
+	// probe by the run's own request would charge the workspace a whole context
+	// for a question about a credential.
+	s.withMeter(ctx, probe, id)
 	claimed, cerr := s.claimProbe(ctx, e.Name, run)
 	if cerr != nil {
 		// The lease could not be read. No probe is made: whether one is in
@@ -573,6 +580,16 @@ func (s *Server) probeOne(ctx context.Context, sel *creds.Selector, id Identity,
 	callCtx, callDone := probeCallContext(ctx)
 	ans, err := s.send(callCtx, probe, e)
 	callDone()
+	if probe.fail != nil {
+		// The workspace refused the probe before it went out — no room at the
+		// ceiling, no price for the model, a month that could not be written —
+		// so no call was made, nothing came back to classify and no mark is
+		// owed. The refusal is carried to the call the run is waiting for,
+		// which answers it and audits it: one refusal is one line, and this
+		// path writes none of its own.
+		cl.fail = probe.fail
+		return false
+	}
 	if ans != nil {
 		// The call was made, so it is the run's to account for (C1.16): the tier
 		// it was made on is recorded on the call the run is waiting for, and the
@@ -596,6 +613,21 @@ func (s *Server) probeOne(ctx context.Context, sel *creds.Selector, id Identity,
 		outcome, reset = classifyProbe(ans.resp, nil, s.now())
 	} else {
 		outcome, reset = classifyProbe(nil, err, s.now())
+	}
+	// The probe's own reservation settles here, at what it was charged for. A
+	// probe's answer is never read for usage — it is a probe's answer and not
+	// the run's — so the one-token call settles at the worst case it reserved,
+	// which is what the run's own gateway settles its probes at too (C1.16).
+	//
+	// A settle this service cannot write is the run's refusal and not the
+	// credential's business: the run is answered the workspace's own refusal
+	// (cl.fail, forwarded by the call that owed the probe), no mark is written
+	// and no line of this path's is — the credential stays where it was, backed
+	// off, which is the fail-closed direction when the probe's result could not
+	// be recorded at all.
+	if fail := s.settleCall(ctx, probe, nil); fail != nil {
+		cl.fail = fail
+		return false
 	}
 	status := probeStatus(outcome)
 	if aerr := s.audit.Write(recordCtx, id.Audit(AuditEvent{

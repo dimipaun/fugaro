@@ -788,6 +788,21 @@ P3.6 ──► P5.2.8          (shared directory: mobile/src/mailbox/)
 
 
 
+**Status as of 2026-11-21: the owner answered the design's questions, and the list above is kept as it was asked.** The thirteen items above are kept every word as they stood on 2026-11-14; what follows is the answer to each, given by the owner on 2026-11-21, and a task that names a question in its row now reads the answer here.
+
+- **Q1: (B).** The history sweep derives its own events and sends. This is the shape P5.2.6 is built to (draft #3456).
+- **Q3: as the design recommends.** Where the operator does not hold `roles/firebasedatabase.admin`, registering a phone for push is an admin act like pairing: the same role, the same person.
+- **Q4: as the design proposes.** The categories are D160's three (kill switch, cap reached, consumer offline) plus the prompt category, with cap-near off by default; the cap is 6 per paired account per hour and one per category per run per hour.
+- **Q5: server-side quiet hours, default off, storing the IANA zone name.**
+- **Q6: category only, and a visible generic alert on iOS.** The payload carries the category and no identifier. On iOS the push is a visible alert whose text is one fixed sentence per category; there is **no Notification Service Extension and no keychain access group, and D111 is not amended**. The cost is stated in the design's §4 rule 11, which now carries its iOS exception: on iOS the alert is shown before any MAC is verified. Android stays data-only, with the app composing its alert after the verified mailbox read. Whether the sentence travels in the payload or is resolved on the phone from a localization key in the app's bundle is left to P5.2.9, and depends on what the relay passes through (not verified).
+- **Q7 and item 10: a relay held by the publisher.** Not direct FCM. One relay sends for every installation with the publisher's own credentials, so the registration token is the app's default Firebase app's (D259) and the per-installation project stops being a problem; the publisher is a party in the message path, and P5.2.10's disclosure says so. **Two consequences this answer does not settle, and neither is planned here:** whether the relay is Expo's push service used with the publisher's credentials or a service the publisher runs (the second is a new always-on component with no task and no home in this plan), and P5.2.7's row, which was written for direct FCM (the FCM permission and the API on the installation's project) and has to be restated for a sender that calls a relay.
+- **Q8: as the design recommends.** A new section in `SECURITY.md` and the website's "The software" part, with the store listings at ship time.
+- **Q9** was already answered by the approval of 2026-11-14.
+- **Q10: as the design recommends.** Push data is kept for the pairing's lifetime and deleted with the node on revoke, plus a window on the dedupe ledger; the provider's own retention is written into the disclosure.
+- **Items 11, 12 and 13 are not answered here** and stand as written: where Check 88's text is written, who deploys, and the APNs account work.
+
+**What the answers change for the tasks.** P5.2.6 (#3456) took Q1, Q4, Q5 and Q10 as recommended before they were answered, and the answers agree with it. P5.2.8 (#3457) was built before Q7 and item 10 were answered and its follow-up carries the relay. P5.2.9 no longer waits on a decision and waits on P5.2.8; P5.2.10 has every answer it names and waits on the three tasks before it. P5.2.7 waits on P5.2.6 and on its row being restated for the relay.
+
 ### Task P5.2.1: The registration kind in the message schema — SECURITY-SENSITIVE
 
 **Files.** `shared/mailbox-schema/index.js` (the `registration` kind in `KINDS`, and in the (kind, field) table: a **required `token`** and §3.8's switches — the per-category flags and the quiet-hours window with its IANA zone name; **their spellings are this task's**, chosen in the change that adds them and stated in its pull request, because the design fixes the requirement and not the name, and the field set **is** the version), `shared/mailbox-schema/vectors.json` and `vectors.generate.mjs` (a valid registration message and its refusals), `shared/mailbox-schema/index.test.js`, `bounds.test.js` and `mutation-proof.sh`.
