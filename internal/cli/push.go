@@ -890,26 +890,27 @@ func (f fcmSender) send(ctx context.Context, req pushRequest) (pushOutcome, erro
 	}
 	defer resp.Body.Close()
 	answer, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	code := fcmErrorCode(answer)
 	switch {
 	case resp.StatusCode == http.StatusOK:
 		return pushSent, nil
-	case resp.StatusCode == http.StatusNotFound:
+	case code == "UNREGISTERED":
+		// Reaping DELETES, so it takes the provider's own word and nothing
+		// weaker: FCM v1 answers a dead token with 404 and `UNREGISTERED` in the
+		// error details, and a bare 404 (a wrong project path, a proxy, a
+		// gateway) is a failure the sender queues and warns about instead of a
+		// registration deleted on a guess. SENDER_ID_MISMATCH is not read as
+		// unregistered either: a token minted for another Firebase project is
+		// Q10's shape (which project mints the token), and the token may be one
+		// the app is about to make right.
 		return pushUnregistered, nil
-	case resp.StatusCode >= 400 && resp.StatusCode < 500:
-		if code := fcmErrorCode(answer); code == "UNREGISTERED" {
-			return pushUnregistered, nil
-		}
-		return pushFailed, fmt.Errorf("FCM answered %d: %s", resp.StatusCode, oneLine(string(answer)))
 	default:
-		return pushFailed, fmt.Errorf("FCM answered %d: %s", resp.StatusCode, oneLine(string(answer)))
+		return pushFailed, fmt.Errorf("FCM answered %d (%s): %s", resp.StatusCode, code, oneLine(string(answer)))
 	}
 }
 
-// fcmErrorCode reads the errorCode out of FCM's error body. SENDER_ID_MISMATCH
-// is deliberately not read as unregistered: a token minted for another Firebase
-// project is question 10's shape (which project mints the token), and the sender
-// queues and warns rather than deleting a token the app may be about to make
-// right.
+// fcmErrorCode reads the errorCode out of FCM's error body, or the status when
+// the body carries no code — which is what the sender's warning then names.
 func fcmErrorCode(body []byte) string {
 	var e struct {
 		Error struct {

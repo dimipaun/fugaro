@@ -19,8 +19,11 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -603,6 +606,62 @@ func TestPushSkipsAnAccountWithNoToken(t *testing.T) {
 	}
 	if !strings.Contains(out, "0 sent") {
 		t.Errorf("output = %q", out)
+	}
+}
+
+// TestFCMSenderReadsTheProvidersOwnWordAndSendsTheCategory is the shipped
+// provider against a server that answers like FCM: what it posts is the
+// category and nothing else (§3.1 — no title, no body, no run, nothing the
+// lock screen could leak), and reaping takes the provider's own word.
+//
+// The middle cases are the ones that matter: a 404 that does not say
+// `UNREGISTERED` (a wrong project path, a proxy) and a token minted for another
+// project are FAILURES the sender queues and warns about, not registrations it
+// deletes on a guess. Deleting a token the app could have made right is the one
+// mistake here that the account cannot see.
+func TestFCMSenderReadsTheProvidersOwnWordAndSendsTheCategory(t *testing.T) {
+	for _, c := range []struct {
+		what   string
+		status int
+		body   string
+		want   pushOutcome
+	}{
+		{"the provider took it", http.StatusOK, `{"name":"projects/aurora-fp/messages/1"}`, pushSent},
+		{"a token the provider reports unregistered", http.StatusNotFound,
+			`{"error":{"status":"NOT_FOUND","details":[{"errorCode":"UNREGISTERED"}]}}`, pushUnregistered},
+		{"a 404 that does not say which token", http.StatusNotFound, `{"error":{"status":"NOT_FOUND"}}`, pushFailed},
+		{"a token minted for another project", http.StatusBadRequest,
+			`{"error":{"status":"INVALID_ARGUMENT","details":[{"errorCode":"SENDER_ID_MISMATCH"}]}}`, pushFailed},
+		{"the provider is down", http.StatusServiceUnavailable, `{"error":{"status":"UNAVAILABLE"}}`, pushFailed},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := r.URL.Path; got != "/v1/projects/aurora-fp/messages:send" {
+				t.Errorf("%s: posted to %s, want the Firebase project's messages:send path", c.what, got)
+			}
+			var body struct {
+				Message struct {
+					Token string            `json:"token"`
+					Data  map[string]string `json:"data"`
+				} `json:"message"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("%s: the body is not JSON: %v", c.what, err)
+			}
+			if body.Message.Token != mailboxRegistrationToken {
+				t.Errorf("%s: token = %q, want the registered one", c.what, body.Message.Token)
+			}
+			if len(body.Message.Data) != 1 || body.Message.Data["category"] != pushKillSwitch {
+				t.Errorf("%s: the payload carries %v, want the category and nothing else", c.what, body.Message.Data)
+			}
+			w.WriteHeader(c.status)
+			fmt.Fprint(w, c.body)
+		}))
+		defer srv.Close()
+		got, _ := fcmSender{project: "aurora-fp", url: srv.URL, http: srv.Client()}.
+			send(context.Background(), pushRequest{Token: mailboxRegistrationToken, Platform: "ios", Category: pushKillSwitch})
+		if got != c.want {
+			t.Errorf("%s: outcome = %v, want %v", c.what, got, c.want)
+		}
 	}
 }
 
