@@ -232,6 +232,7 @@ func (s *ServiceReadTokens) mint(ctx context.Context, minValid time.Duration) (s
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+id)
+	req.Header.Set("X-Fugaro-Person-Identity", id)
 	resp, err := serviceMintClient(s.HTTP).Do(req)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("%w: the credentials service could not be reached", ErrServiceRead)
