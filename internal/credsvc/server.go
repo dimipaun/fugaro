@@ -660,7 +660,9 @@ type Config struct {
 	AuditLog slog.Handler
 	// JobAccounts binds a job service account to the repository whose runs
 	// are launched as it. It is the table the run-to-job binding is checked
-	// against (N1), so an empty one refuses every call.
+	// against (N1), so an empty one leaves the deployment's own scope with
+	// nothing to bind — which NewServer refuses unless the deployment handed in
+	// a resolver of its own (Resolver), whose binding is its own.
 	JobAccounts []JobAccount
 	// ReviewAccounts are the installation's review jobs (C3.9a): the same rows
 	// AuthConfig.ReviewJobAccounts holds, and the reason they are here as well
@@ -1010,7 +1012,24 @@ func NewServer(cfg Config) (*Server, error) {
 		// service whose every issuance and every mint would refuse.
 		return nil, errors.New("credsvc: the service has no audit handler, so it cannot record a probe and a backed-off credential could never come back")
 	}
-	if len(cfg.JobAccounts) == 0 {
+	if len(cfg.JobAccounts) == 0 && cfg.Resolver == nil {
+		// The table is the INSTALLATION's binding (N1): it is what
+		// installationResolver pairs a caller's verified account with, so an
+		// empty one leaves the deployment's own scope with nothing to bind — and
+		// a deployment that admits nobody is one an operator would read as
+		// healthy while every run halted (D143). A deployment that hands in a
+		// resolver of its own binds its runs through that resolver instead: a
+		// workspace's scope takes the calling account's member and repositories
+		// from the published node (scope_workspace.go, C3), which is also the
+		// only place they can come from, because the workspace's container
+		// carries no job document and sets no FUGARO_JOB_ACCOUNTS
+		// (internal/infra/tf's WorkspaceServiceEnv, WS6). THIS TABLE is not what
+		// admits a caller there and its emptiness is not an admission: the
+		// resolver's own front door is the workspace's verifier, and a caller it
+		// does not admit is refused before any handler runs, while the handlers
+		// that verify their caller themselves read cfg.Auth above, whose table is
+		// the node's member accounts. Neither is this table, and a deployment
+		// that handed none in admits nobody here.
 		return nil, errors.New("credsvc: the service has no job accounts, so it can bind no run to a repository")
 	}
 	if len(cfg.ReviewAccounts) > 0 && len(cfg.Repos) == 0 {
