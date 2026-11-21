@@ -506,8 +506,12 @@ export function whoamiSupported(
 }
 
 /**
- * meetsCliFloor is the one patch-level comparison all nine floors above are
- * asked by, so a rule learned on one of them cannot be missing from the others.
+ * meetsCliFloor is the one patch-level comparison every floor above is asked
+ * by, so a rule learned on one of them cannot be missing from the others. It is
+ * exported for the readers of the desktop-console improvements plan's six new
+ * operations (`src/source/new-reads.ts`), whose one floor constant per read
+ * arrives with the rows themselves: the table asks this comparison directly
+ * until then, rather than carrying a second copy of it.
  *
  * The order of the tests is the rule, and each refusal is on the safe side of a
  * spend. An unreadable line, a `dev` build and a prerelease are all `false`: the
@@ -517,7 +521,7 @@ export function whoamiSupported(
  * floor -- including a build-metadata tail, which is the same release -- answers
  * `true`, and a line below it answers `false` however close.
  */
-function meetsCliFloor(version: string, floorLine: string): boolean {
+export function meetsCliFloor(version: string, floorLine: string): boolean {
   const parsed = parseCliVersion(version)
   const floor = parseCliVersion(floorLine)
   if (!parsed.ok || parsed.version.kind !== 'release') return false
