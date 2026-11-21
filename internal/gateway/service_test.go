@@ -141,7 +141,8 @@ func TestServiceUpstreamSendsIDTokenAndRunIdentity(t *testing.T) {
 		"x-fugaro-credential", "a-credential-the-agent-invented",
 		"x-fugaro-switch", `{"from":"x","to":"y","reason":"exhausted"}`,
 		"x-fugaro-slip", "a-slip-the-agent-invented",
-		"x-fugaro-slip-claim", "a-claim-the-agent-invented")
+		"x-fugaro-slip-claim", "a-claim-the-agent-invented",
+		"x-fugaro-provider", "a-provider-the-agent-invented")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("the call: %d %s", resp.StatusCode, body)
 	}
@@ -165,7 +166,12 @@ func TestServiceUpstreamSendsIDTokenAndRunIdentity(t *testing.T) {
 	if got := up.Header.Get("x-api-key"); got != "" {
 		t.Errorf("the gateway token travelled to the service in x-api-key")
 	}
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderSlip, HeaderSlipClaim} {
+	// The provider's name is one of them (KS5, R2): on a Messages call the
+	// route the gateway routed to is the only writer of it, and this call has
+	// none -- so the only name that could travel is the agent's, and on the
+	// service's side that name is what decides which of the repository's
+	// provider keys a call is served with.
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderSlip, HeaderSlipClaim, HeaderProvider} {
 		if got := up.Header.Values(k); len(got) > 0 {
 			t.Errorf("the agent's %s reached the service as %q", k, got)
 		}

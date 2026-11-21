@@ -857,14 +857,18 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		// the provider's own answer, which carries none, and this call
 		// settles from the provider's reported usage exactly as a routed call
 		// always has (fromUsage) -- so needTier is false for it and the
-		// answer is read for its refusals alone.
+		// answer is read for the contract's typed refusals alone. Everything
+		// else it carries is the provider's, and is relayed below as the
+		// path where the job holds the key relays a provider's error
+		// (providerError): a provider's own 401, 403 or rate limit reaches
+		// the agent and never stops the run.
 		//
 		// A route the job holds the key for is never one of these, even
 		// beside a service upstream: it went to the provider's own endpoint
 		// (withRoute, upstreamRequest), so its answer is the provider's --
 		// read as the service's it would halt the run for an answer that is
 		// exactly what R6/D1634 keep on the runner path.
-		st, done, served, probes := s.serviceAnswer(w, resp, rt.provider == nil)
+		st, done, served, probes := s.serviceAnswer(w, resp, rt.provider == nil, rt.provider != nil && rt.provider.Served)
 		*tier = served // "" when the answer carried none, which is a halt or a relayed error
 		*probed = probes
 		if done {
@@ -1954,7 +1958,7 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 		// answer is not asked for a tier -- but a refusal is the service's
 		// own answer here too, and is acted on rather than copied to the
 		// agent (D143). A model answer passed through.
-		if _, done, _, _ := s.serviceAnswer(w, resp, false); done {
+		if _, done, _, _ := s.serviceAnswer(w, resp, false, false); done {
 			return
 		}
 	}

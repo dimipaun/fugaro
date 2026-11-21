@@ -70,10 +70,16 @@ func providerOK(model string, u pricing.Usage) anthropicfake.Reply {
 // that a service call must not carry.
 //
 // Hand mutations this fails on: pointing a served route at the provider's own
-// address (withRoute, upstreamRequest); sending it without the provider's name
-// (the service would derive an entry from nothing and refuse every routed
-// call); attaching the route's credential anyway; letting the agent's own
-// HeaderProvider through (a call would name a provider the agent chose).
+// address (withRoute, upstreamRequest); sending it without the provider's name,
+// or with a name the agent wrote (the service would derive an entry from
+// nothing, or serve the wrong one); attaching the route's credential anyway.
+//
+// What it does NOT pin is serviceUpstream's dropping of an agent-written name:
+// on this path the route's own name is set over it (upstreamRequest) and the
+// header the agent sent never leaves the allow-list before that, so removing
+// the drop leaves this test green. That guard is pinned on the Messages path,
+// where the agent's headers are cloned forward and there is no route to
+// overwrite them: TestServiceUpstreamSendsIDTokenAndRunIdentity.
 func TestARoutedCallGoesThroughTheService(t *testing.T) {
 	u := pricing.Usage{Input: 10, Output: 20}
 	s := newServedRouted(t, func(*http.Request, []byte) anthropicfake.Reply {
@@ -231,6 +237,82 @@ func TestARoutedCallThroughTheServiceCostsWhatItCostBefore(t *testing.T) {
 	}
 	if rb.Used != want || rb.ByRoute["openrouter"] != want {
 		t.Errorf("the stage settled %d (route %d), want %d", rb.Used, rb.ByRoute["openrouter"], want)
+	}
+}
+
+// TestAProviderErrorOnAServedRouteIsRelayedNotHalted: the error path's half of
+// R1's parity. A served route's answer is the provider's, relayed by the
+// service, so a provider's own moderation 403, its 401 or its rate limit
+// reaches the agent with exactly the answer the same body gets where the job
+// holds the key: the status, the error type the agent acts on, and a sentence
+// this gateway writes in place of the provider's. It never halts the run, and
+// it is not retried by this gateway -- a service call's retry is the service's
+// (sendRetryingOnce).
+//
+// Hand mutations this fails on: reading a served answer as a Messages answer,
+// where the platform's front door on a 401 or 403 halts the run
+// (stateDetailUnadmitted) and a body this contract cannot read halts it as
+// unreadable (serviceAnswer's two early branches); relaying the provider's own
+// sentence; answering a served call's provider error with another status or
+// type than the mount path's; retrying a service call in the gateway.
+func TestAProviderErrorOnAServedRouteIsRelayedNotHalted(t *testing.T) {
+	fastRetry(t)
+	for _, tc := range []struct {
+		name   string
+		status int
+		said   string
+		body   string
+		typ    string
+	}{
+		{"a moderation 403", http.StatusForbidden,
+			"this input was flagged by the provider's moderation",
+			`{"error":{"code":403,"message":"this input was flagged by the provider's moderation"}}`,
+			"permission_error"},
+		{"a 401", http.StatusUnauthorized,
+			"No auth credentials found",
+			`{"error":{"code":401,"message":"No auth credentials found"}}`,
+			"authentication_error"},
+		{"a string error", http.StatusTooManyRequests,
+			"rate limited, come back shortly",
+			`{"error":"rate limited, come back shortly"}`,
+			"rate_limit_error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := anthropicfake.Reply{Status: tc.status, Body: tc.body}
+			body := msg(dsModel, 1000)
+			// The mount path retries a 429 once by itself, so its fake holds
+			// the answer twice; a served call is the service's to retry.
+			script := []anthropicfake.Reply{rep}
+			if tc.status == http.StatusTooManyRequests {
+				script = append(script, rep)
+			}
+			mount := newRouted(t, "bearer", routedStage, script...)
+			mresp, mbody := mount.post(body)
+			served := newServedRouted(t, func(*http.Request, []byte) anthropicfake.Reply { return rep }, 10)
+			sresp, sbody := served.post(body)
+
+			if mresp.StatusCode != tc.status || sresp.StatusCode != tc.status {
+				t.Fatalf("the same provider answer is %d where the job holds the key and %d through the service, want %d:\n%s\n%s",
+					mresp.StatusCode, sresp.StatusCode, tc.status, mbody, sbody)
+			}
+			if sbody != mbody {
+				t.Errorf("a served route answered a provider's %d differently:\nwhere the job holds the key: %s\nthrough the service:      %s",
+					tc.status, mbody, sbody)
+			}
+			if typ, _ := apiError(t, sbody); typ != tc.typ {
+				t.Errorf("the agent was told %q, want %q: %s", typ, tc.typ, sbody)
+			}
+			if strings.Contains(sbody, tc.said) {
+				t.Errorf("the provider's own sentence reached the agent: %s", sbody)
+			}
+			noHalt(t, served.harness)
+			if n := served.prov.Count(); n != 0 {
+				t.Errorf("the provider's own endpoint saw %d calls: a served route's key is the service's", n)
+			}
+			if n := len(served.svc.Seen()); n != 1 {
+				t.Errorf("the service saw %d calls: a service call is not retried by this gateway", n)
+			}
+		})
 	}
 }
 

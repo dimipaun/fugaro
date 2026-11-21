@@ -896,6 +896,20 @@ func exhaustedAnswer(e serviceRefusal) (Exhausted, error) {
 // write) halts the run rather than settling by a guess. A token count is free
 // and settles nothing, and asks for nothing.
 //
+// servedRoute is an answer the service's provider route relayed from a
+// provider (KS5, R1/R12): this run's route is served, so the call went to the
+// service with the provider's name on it and what came back is the provider's
+// own answer — not the service's text about this job. Nothing in it is acted
+// on here except the contract's own typed refusals, which are the closed set
+// the switch below decides by; any other non-2xx answer is done false, so the
+// caller relays it exactly as it relays a provider's error on the path where
+// the job holds the key (providerError: the error type, and a sentence this
+// gateway writes — never a byte of the body, and an allow-list of headers).
+// The readings that are a Messages call's alone are skipped for it: the
+// platform's front-door 401/403 (stateDetailUnadmitted) would otherwise halt
+// the run for the provider's own moderation refusal or exhausted key, which
+// the mount path relays and another model or another call continues after.
+//
 // The probes the answer reports (HeaderProbe, C1.12) come back with the tier:
 // each one is a call the run paid for and settles the same way the call does,
 // by the tier it was made on (C1.16).
@@ -905,7 +919,7 @@ func exhaustedAnswer(e serviceRefusal) (Exhausted, error) {
 // today, and its body is put back on the response for the relay to stream. A
 // refusal is never relayed: it is fugaro's own answer, it names the project's
 // credentials, and the agent has no business seeing the set of them (D143).
-func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needTier bool) (status int, done bool, tier string, probed []string) {
+func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needTier, servedRoute bool) (status int, done bool, tier string, probed []string) {
 	if resp.StatusCode/100 == 2 {
 		// The room the workspace's service has left arrives on the answer
 		// itself, so it is read here, before any of it reaches the agent
@@ -963,10 +977,28 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 	haltOn := func(detail string) int { return s.haltServiceMarked(w, detail, wsRefusal) }
 	if rerr != nil {
 		// A body that broke mid-read, before any of it reached the agent:
-		// not a refusal this code can read, and not one to relay.
+		// not a refusal this code can read, and not one to relay. A served
+		// call's answer is the provider's whatever state it arrived in, and
+		// the relay below writes a sentence of this gateway's and the type
+		// the status implies, so nothing of it is lost by handing it on.
+		if servedRoute {
+			return resp.StatusCode, false, "", nil
+		}
 		return haltOn(stateDetailUnreadable), true, "", nil
 	}
 	e, ok, err := readServiceRefusal(resp.StatusCode, head)
+	if servedRoute && (!ok || err != nil) {
+		// Not this contract's refusal, on a call whose answer is the
+		// provider's: it is relayed rather than read. The two readings that
+		// follow this branch — the platform's front door on a 401 or 403,
+		// and a body that claims to be a refusal and is not one this release
+		// can read — belong to a Messages call, where the body really is the
+		// service's own about this job. A provider writes both shapes: a 403
+		// whose error is OpenRouter's own object is its moderation refusal,
+		// and a string error is its own text as well, and the mount path
+		// relays both without stopping the run.
+		return resp.StatusCode, false, "", nil
+	}
 	if !ok {
 		// Not this contract's refusal. A 401 or 403 that is not the model
 		// API's own envelope either is the platform's layer answering: Cloud
@@ -1044,6 +1076,15 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// installation and not a state a run papers over with a mounted key
 		// -- and there is none mounted for a served route in any case.
 		return haltOn(refusalDetail(e.Error)), true, "", nil
+	}
+	if servedRoute {
+		// A body that says it is a refusal and carries a type outside the
+		// closed set the switch above decides by: on a served call that is
+		// the provider's own answer — its error member is a string, or a
+		// shape of its own — and it is relayed as the mount path relays one,
+		// which keeps the type it reads and writes a sentence of this
+		// gateway's in place of the body.
+		return resp.StatusCode, false, "", nil
 	}
 	// A refusal whose type this release does not know. It is the service's
 	// own answer and is not relayed, and the call cannot be accounted for
