@@ -134,6 +134,7 @@ var seamSetters = []string{
 	"SetHandoff",
 	"SetBatch",
 	"SetSubscriptionLimit",
+	"SetSeatLimit",
 }
 
 // governancePair is the pair E2.3 moves together. Registering one half alone is
