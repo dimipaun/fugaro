@@ -26,6 +26,9 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/workspace"
 )
@@ -1004,5 +1007,65 @@ func TestProjectLsJSONSchema(t *testing.T) {
 	whole, _ := h.screen("", false)
 	if len(strings.Split(strings.TrimSuffix(whole, "\n"), "\n")) <= len(lines) {
 		t.Fatalf("status printed no more than ls did:\n%s", whole)
+	}
+}
+
+// TestStatusCredentialsFollowDoctorNaming is the concrete credentials read
+// against the rule doctor's own claude-accounts-stored check follows: a named
+// account the member's config declares as a KEY credential has no token
+// container and never will, so it is stored under credential-<name>-key and
+// must not be reported as a missing token; an account whose container is really
+// absent is reported, with the member's own machine named as where it is stored.
+func TestStatusCredentialsFollowDoctorNaming(t *testing.T) {
+	list := []gcp.SecretInfo{
+		{ID: config.CredentialSecret("team"), Labels: map[string]string{gcp.LabelSecret: config.CredentialSecret("team")}, Latest: "3", Created: wu11Now.Add(-2 * time.Hour)},
+		{ID: config.AnthropicSecret, Labels: map[string]string{gcp.LabelSecret: config.AnthropicSecret}, Latest: "1", Created: wu11Now.Add(-time.Hour)},
+	}
+	member := &localcfg.Config{
+		Repos:       map[string]localcfg.Repo{"acme/one": {}},
+		Credentials: []config.Credential{{Name: "team", Type: config.CredentialTypeAnthropic}},
+		ClaudeAccounts: map[string]config.ClaudeAccount{
+			"team": {AllowDataTo: []string{"acme/one"}},
+			"gone": {AllowDataTo: []string{"acme/one"}},
+		},
+	}
+	c := &workspaceMemberCloud{
+		lc:      &localcfg.Config{},
+		now:     func() time.Time { return wu11Now },
+		lists:   map[string][]gcp.SecretInfo{},
+		secrets: func(context.Context, gcp.Options) ([]gcp.SecretInfo, error) { return list, nil },
+		marks:   func(context.Context) (map[string]creds.Mark, error) { return map[string]creds.Mark{}, nil },
+		serving: workspaceMemberServing,
+		jobs:    workspaceMemberJobs,
+		keys:    func(context.Context, string) (accountAccess, error) { return accountAccess{}, nil },
+	}
+	got, err := c.credentials(context.Background(), workspace.MemberTarget{Project: "alpha-gcp"}, member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Missing, []string{"gone"}) {
+		t.Fatalf("the missing accounts are %v, want the one whose container is absent: a key credential is not a missing token", got.Missing)
+	}
+	if len(got.Stored) != 1 || got.Stored[0].Name != config.AnthropicSecret {
+		t.Fatalf("the stored model credentials are %+v, want the project's model key alone: a key credential's container is not one of them", got.Stored)
+	}
+	if !got.ReadMarks {
+		t.Fatal("the marks were read and the row still says they were not")
+	}
+
+	// A member's marks that could not be read is "not measured", never "none is
+	// broken": the row warns with the reason instead of passing.
+	c.marks = func(context.Context) (map[string]creds.Mark, error) {
+		return nil, errors.New("the credential state was not read")
+	}
+	got, err = c.credentials(context.Background(), workspace.MemberTarget{Project: "alpha-gcp"}, member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReadMarks {
+		t.Fatal("a marks read that refused is reported as read")
+	}
+	if got.MarksWhy == "" {
+		t.Fatal("the reason the marks were not read is not carried")
 	}
 }

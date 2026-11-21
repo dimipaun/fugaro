@@ -1771,14 +1771,20 @@ func (c *workspaceMemberCloud) credentials(ctx context.Context, m workspace.Memb
 	if err != nil {
 		return out, err
 	}
+	// have is keyed the way doctor's own claude-accounts-stored check keys it --
+	// by the container's logical name, which is the `fugaro_secret` label -- so
+	// that "is this account stored" is the same question with the same answer
+	// here as there.
 	have := map[string]bool{}
 	for _, s := range list {
 		name := probeLogicalName(s)
+		stored := s.Latest != ""
+		if label := s.Labels[gcp.LabelSecret]; label != "" {
+			have[label] = stored
+		}
 		if _, ok := probeKindOf(name); !ok {
 			continue
 		}
-		stored := s.Latest != ""
-		have[name] = stored
 		out.Stored = append(out.Stored, memberCredential{Name: name, Stored: stored, Created: s.Created})
 		if stored && s.Created.After(out.Newest) {
 			out.Newest = s.Created
@@ -1787,7 +1793,16 @@ func (c *workspaceMemberCloud) credentials(ctx context.Context, m workspace.Memb
 	if member != nil {
 		for _, repo := range slices.Sorted(maps.Keys(member.Repos)) {
 			for _, name := range config.AllowedClaudeAccounts(member.ClaudeAccounts, repo) {
-				if name == config.DefaultClaudeAccount || have[name] {
+				if name == config.DefaultClaudeAccount {
+					continue
+				}
+				// The container this name's value lives in, by the member's own
+				// declaration of it (config.CredentialValueSecret, which is what
+				// doctor's own check asks for): a named account the member
+				// declares as a KEY credential has no token container and never
+				// will, so asking for the token's name would report a stored
+				// value as missing forever.
+				if have[config.CredentialValueSecret(member.Credentials, name)] {
 					continue
 				}
 				if !slices.Contains(out.Missing, name) {
