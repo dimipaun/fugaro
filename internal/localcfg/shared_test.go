@@ -106,6 +106,19 @@ batch:
     GITHUB_TOKEN: projects/my-project/secrets/github-token
   socket_gid: 412
   task_timeout: 6h
+  opt_in: in
+  seal_key:
+    version: projects/my-project/locations/us-central1/keyRings/fugaro-batch/cryptoKeys/seal-key/cryptoKeyVersions/1
+    public_key: |
+      -----BEGIN PUBLIC KEY-----
+      MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4HUq0vDPYGjr7BfAyKNA
+      XRXxE0+5elG1+QraI8s+0Bx2uUGppkdd8dP3+ECdhfHtVbV8DNo/2iORKRk7DUcB
+      uCny+sSxOpypEzLxx72Sc8I2Uw1KOVUJ2V35hPgXYrmQuJsGPjJNsNGNvWLS+F0l
+      qLRdw3kuDPmwMU7RgSdGscp3DBonCv+S6Brge+p0nEPWk8NJajRgdrgqsHxdz64O
+      Kdnr98DZILIXM+FZd82Bu+O6e0WkaD71IghXJ423z33tHW7H8A/db2MGylzNisqR
+      QkuUGQEbInUQXAka5n/89eHKLVAI7DqOIs/cdx/zPlf8VjaB6g2MSCpCu80iXSD6
+      mQIDAQAB
+      -----END PUBLIC KEY-----
 max_parallel: 7
 endpoints: { run: "http://127.0.0.1:1/", no_auth: true }
 update_check: false
@@ -484,7 +497,7 @@ func TestMergeSharedNeverCarriesProviders(t *testing.T) {
 
 // TestMergeSharedNeverCarriesClaudeAccounts: claude_accounts is the
 // operator-only allow-list of decision T1 (design
-// docs/design/named-oauth-tokens.md §3) — never published, so neither the
+// docs/named-oauth-tokens/spec.md §3) — never published, so neither the
 // local nor a published config's claude_accounts reaches the output. This
 // is the regression test for the leak a bucket writer could otherwise use
 // to inject or widen the allow-list (MergeShared(nil, lc).Marshal() used to
@@ -779,7 +792,7 @@ func TestMergeSharedKeepsTheOwnerInStep(t *testing.T) {
 }
 
 // TestMergeSharedNeverCarriesProjectSecrets: project_secrets is
-// operator-only local config (design docs/design/project-secrets.md §7),
+// operator-only local config (design docs/project-secrets/spec.md §7),
 // never published -- neither the local nor a published config's block
 // reaches the output.
 func TestMergeSharedNeverCarriesProjectSecrets(t *testing.T) {

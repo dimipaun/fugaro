@@ -313,7 +313,7 @@ type runOptions struct {
 	// its own, takes the title of the pull request it continues
 	// (newFollowUpSpec, followUpPRTitle).
 	title string
-	// token is the named Claude account (docs/design/named-oauth-tokens.md)
+	// token is the named Claude account (docs/named-oauth-tokens/spec.md)
 	// this run uses: fugaro run --token. A follow-up (--pr) inherits its
 	// previous run's account when this is empty; an explicit value overrides
 	// it instead (owner ruling, 2026-10-12, task 9b review), through the
@@ -1953,6 +1953,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := contextReposRefusal(ctx, env, slug, spec); err != nil {
 		return config.Inputs{}, err
 	}
+	// The Batch backend's own gate, beside the two above and for the same
+	// reason: a Batch job mounts nothing, so a launch there whose repository
+	// the credentials service does not serve is a run with no model credential
+	// at all, refused here rather than started (batchLaunchRefusal, BR11).
+	if err := batchLaunchRefusal(ctx, env, spec); err != nil {
+		return config.Inputs{}, err
+	}
 	co, kind, clone, shared, mode, err := launchWorkflowShape(ctx, env, spec)
 	if err != nil {
 		return config.Inputs{}, err
@@ -2118,6 +2125,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneRigorSpellingImage(ctx, env, spec, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The members and the per-repo map of that same block, on the newer
+		// rigorMembersSince and in the layer alone: a repository's file
+		// refuses members: and has no repos: key. See
+		// checkRigorMembersImage.
+		if err := checkCloneRigorMembersImage(ctx, env, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The governance: gate, judged the same way and for the same
 		// reason: see checkGovernanceImage.
 		if err := checkCloneGovernanceImage(ctx, env, spec, warn); err != nil {
@@ -2243,6 +2257,14 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneStopFractionImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The keep-warm beat's switch, on the same configuration read and
+		// for the same reason: a runner older than workspaceBeatSince
+		// refuses agent.workspace_beat and the layer's
+		// defaults.agent.workspace_beat at bootstrap, whatever they say
+		// (checkCloneWorkspaceBeatImage).
+		if err := checkCloneWorkspaceBeatImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The triage stage's switch, on the same configuration read: a
 		// runner older than triageSince refuses agent.triage at
 		// bootstrap, whatever it says (checkCloneTriageImage).
@@ -2360,6 +2382,12 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkRigorSpellingImage(ctx, env, slug, spec, kind, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The members and the per-repo map of that same block, on the newer
+		// rigorMembersSince and in the layer alone: see
+		// checkRigorMembersImage.
+		if err := checkRigorMembersImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The governance: gate, the same shape as the clone branch's
 		// above and for the same reason.
 		if err := checkGovernanceImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -2445,6 +2473,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The same gate as the clone branch's above, and for the same
 		// reason: see checkStopFractionImage.
 		if err := checkStopFractionImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see checkWorkspaceBeatImage.
+		if err := checkWorkspaceBeatImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The same gate as the clone branch's above, and for the same
@@ -3713,7 +3746,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // and not a stage's. A non-default name is refused (claudeAccountAllowed)
 // unless config.AllowedClaudeAccounts (the local config's claude_accounts)
 // lists it for repo, before any launch (design
-// docs/design/named-oauth-tokens.md §3 T7) — checked whether or not a checkout
+// docs/named-oauth-tokens/spec.md §3 T7) — checked whether or not a checkout
 // is available here, so --repo X --token N outside any checkout is held to the
 // same rule a checkout's own resolution would be.
 //
@@ -3732,7 +3765,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // The mix rule is judged first, for every call and whatever stage was asked
 // for (config.CheckStageAccountMix): an api-key run may name one Claude
 // account, for the senior review and the adversarial review and no other stage
-// (docs/design/mixed-credentials.md §11, the owner's B0 ruling), and a run
+// (docs/mixed-credentials/spec.md §11, the owner's B0 ruling), and a run
 // under vertex or cascade may name none at all. That refusal belongs to the
 // launch rather than to the stage it was asked about: a config that declares a
 // mix the ruling does not admit is refused before anything is read or started,
@@ -3769,14 +3802,14 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // Both halves are the run's, and neither is the working tree's. The account is
 // read at the ref the run checks out, out of this checkout's git objects
 // (agentAtRef/checkoutFugaroYAMLAtRef), because the committed fugaro.yaml is
-// the only place that may name an account (docs/design/named-oauth-tokens.md
+// the only place that may name an account (docs/named-oauth-tokens/spec.md
 // T2) — a working tree left on another branch, or carrying an uncommitted
 // edit, would otherwise select the account the launch runs as: the job it
 // lands on holds that account's token, and that account's allow_repos is what
 // decides whether this repository may use it. The auth is the *run's* too, and
 // that means the ref's bytes resolved over the project layer (agentAtRef's
 // second answer), not the ref's bytes alone: agent.auth is a project-scope,
-// layerable key (docs/design/layered-config.md's scopes table), so the run
+// layerable key (docs/layered-config/spec.md's scopes table), so the run
 // resolves it layer-applied (projectJobAgentAuth) — a launcher that read the
 // raw file would answer Fugaro's own default (applyDefaults' vertex) for the
 // shape projects adopt accounts with, a layer whose defaults say
@@ -4054,7 +4087,7 @@ func claudeAccountChoice(ctx context.Context, env *cloudEnv, repo, flag, stage, 
 
 // mixedRunAccount is the account a mixed run's launch lands on: the one Claude
 // OAuth account this run's review stages are served by, and "" when the run is
-// no mix at all (docs/design/mixed-credentials.md §11).
+// no mix at all (docs/mixed-credentials/spec.md §11).
 //
 // It is the launch's own account for a mixed run and not the stages' alone,
 // because the account is what picks the job: spec.OAuthToken names the job
@@ -4191,7 +4224,7 @@ func mixMode(ctx context.Context, env *cloudEnv, repo string, co *config.Config)
 
 // mixedStageAccount is the account rung 4 puts on one of the mix's two stages
 // of an api-key run, its whole rule, and "" when the mix is not admitted for
-// that stage (docs/design/mixed-credentials.md §11, the owner's ruling of
+// that stage (docs/mixed-credentials/spec.md §11, the owner's ruling of
 // 2026-11-05: "IF default_claude_account is set AND we have an Anthropic model
 // for senior review and/or security review, then we get mixed runs"). rung 2 is
 // read before this call and wins, so the stage's own key is not consulted here.
@@ -4267,7 +4300,7 @@ func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth str
 	if mixMode(ctx, env, repo, co) != policy.ModeEnforce {
 		return "", "", nil
 	}
-	// The run holds one Claude account (docs/design/mixed-credentials.md §11,
+	// The run holds one Claude account (docs/mixed-credentials/spec.md §11,
 	// "never a second provider's key"): the other mixed stage's own key names
 	// the mix's account when it names one, and a project default that names a
 	// *different* one would be a second credential this run may not hold. It is
@@ -4323,9 +4356,9 @@ func mixedStageModel(a config.Agent, stage string) string {
 // never the working tree), and the two facts are read differently because the
 // two keys have different scopes. agent.oauth_token is repository-scope — the
 // committed fugaro.yaml is the only place that may name an account
-// (docs/design/named-oauth-tokens.md T2) and no project layer may name one —
+// (docs/named-oauth-tokens/spec.md T2) and no project layer may name one —
 // so the file's own value is the run's, via the strict config.AgentOf. And
-// agent.auth is project-scope and layerable (docs/design/layered-config.md's
+// agent.auth is project-scope and layerable (docs/layered-config/spec.md's
 // scopes table): the run composes it from the ref's bytes and the project
 // layer its task carries, through runner.ResolveConfig, exactly as
 // projectJobAgentAuth does, and a launcher that answered from the raw file
@@ -4539,7 +4572,7 @@ func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 // claudeAccountMembership is the allow-list half of claudeAccountAllowed, and
 // the whole check for a *stage* account: every name is held to the account's own
 // allow_data_to for the repository, whatever permitted rung it came from
-// (docs/design/mixed-credentials.md §11, "every name is still held to
+// (docs/mixed-credentials/spec.md §11, "every name is still held to
 // claude_accounts's allow-list"). It is one function rather than two copies so
 // that the run's own rungs and the stage's cannot drift: a name one admits for
 // this repository is a name the other admits, and a name one refuses the other
@@ -4707,10 +4740,11 @@ func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *
 	}
 	// The job this launch runs on, decided by the function the launch itself
 	// decides it with (project_job.go's launchProjectJobFor): a shared project
-	// job is never handed the service's address, so the question below is about
-	// this launch's job and not about the repository alone. A gate that asked
-	// it of the repository's own job for a launch that lands on a shared one
-	// would pass a launch whose run is handed no address at all.
+	// job is handed the service's address on its PROFILE's switch and not on
+	// this repository's, so the question below is about this launch's job and
+	// not about the repository alone. A gate that asked it of the repository's
+	// own job for a launch that lands on a shared one would pass a launch whose
+	// run is handed no address at all.
 	//
 	// A review launch is not one of those: its execution runs on the
 	// review-only variant, which its own deployment tells the address
@@ -4722,20 +4756,22 @@ func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *
 	if err != nil {
 		return err
 	}
-	jobName := ""
+	jobName, jobProfile := "", ""
 	if job != nil && spec.Mode != recipe.ModeReview {
-		jobName = job.Name
+		jobName, jobProfile = job.Name, job.Profile
 	}
 	auth, deployed := env.repoServiceAuth(ctx, spec, io.Discard)
-	if len(credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, auth, env.policyMode(ctx), deployed, false)) == 0 {
+	if len(credentialsServiceLaunchEnv(env.lc, jobProfile, spec.Repo, auth, env.policyMode(ctx), deployed, false)) == 0 {
 		if jobName != "" {
-			// A shared project job is told the address on the same switch a
-			// repository's own job is (B5.2), so the sentence below would
+			// A shared project job is told the address on its profile's
+			// switch (B5.2, and B5.7 for the drop), so the sentence below would
 			// answer for the repository's own job and name a remedy that is the
-			// repository's: the profile's switch is its own record and its
-			// document's auth, and `fugaro update --repo` is what writes it.
-			return userErr("--context needs the credentials service's address on the job this launch runs on, and this launch runs on %s, a shared project job that is not switched onto the service: the address is written on a shared project job only where the installation carries the service, this repository's record says its runs use it, and agent.auth is one the service serves (today agent.auth: cascade alone), and a run of one without it could read no context repository, so this launch stops before any execution exists. Run '%s update --repo %s' in your own terminal after setting agent.auth: cascade in the repository's fugaro.yaml, or run the task in the repository whose files it needs, with no --context",
-				pluginwire.Printable(jobName), selfCommand(), spec.Repo)
+			// repository's: what puts such a job on the service is one of the
+			// profile's repositories carrying the record — `fugaro update
+			// --repo` in THAT checkout — and this launch's own repository
+			// cannot answer it.
+			return userErr("--context needs the credentials service's address on the job this launch runs on, and this launch runs on %s, the shared project job of profile %s, which is not switched onto the service: the address is written on a shared project job where the installation carries the service, the profile is one this config declares, and one of the repositories the profile admits is on the switch — agent.auth one the service serves (today agent.auth: cascade alone) with a record saying its root was applied with the service on, which is what '%s update --repo <that repository>' writes — and a run of one without it could read no context repository, so this launch stops before any execution exists. Put one of profile %s's repositories on the switch, or run the task in the repository whose files it needs, with no --context",
+				pluginwire.Printable(jobName), pluginwire.Printable(jobProfile), selfCommand(), pluginwire.Printable(jobProfile))
 		}
 		return userErr("--context needs a credentials service that serves %s, and this installation's does not: the service is what would read a context repository for a run, and the address it is reached at is written on the job only where the installation carries the service and this repository's runs use an auth it serves (today agent.auth: cascade alone). Run '%s update' in your own terminal to deploy the service where the installation can carry it, then set agent.auth: cascade in %s's fugaro.yaml and run '%s update --repo %s' to apply that repository's root with the switch on — or drop --context",
 			spec.Repo, selfCommand(), spec.Repo, selfCommand(), spec.Repo)
@@ -6321,18 +6357,19 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	}
 	// The credentials service, when its switch is on for this repository: a
 	// repository's own job and, since B5.2, the shared project job a switched
-	// profile's launch runs on (see the helper). A review launch is told
+	// profile's launch runs on — judged on the PROFILE, which is the switch
+	// B5.7's drop is taken on (see the helper). A review launch is told
 	// nothing: its variant carries the address from its own deployment. The
 	// pair the switch is judged with is repoServiceAuth's, read the same way
 	// by the proxy gate that has to know whether this launch is a proxied one
 	// (proxiedRepo) — one reader, because a gate reading the published node
 	// alone would refuse a launch whose run holds the repository's own token.
-	jobName := ""
+	jobProfile := ""
 	if job != nil {
-		jobName = job.Name
+		jobProfile = job.Profile
 	}
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
-	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, env.policyMode(ctx), deployed, reviewJob)
+	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobProfile, spec.Repo, svcAuth, env.policyMode(ctx), deployed, reviewJob)
 	// The run's slip, asked for exactly where the service's address was just
 	// written: the grant the credentials service keeps for this run, whose id
 	// the job claims at its first call and presents on every call after it
@@ -6511,10 +6548,10 @@ func servicesLaunchEnv(entry config.Entry) string {
 // credentialsServiceLaunchEnv is what this launch puts on the execution's
 // environment for the credentials service (plan task C1.24, D146/D147): the
 // service's URL, under the one name the runner and the keyless GitHub path
-// both read, or nothing at all. job is the shared project job this launch
-// resolved, or "" for a repository's own job, repo is the repository the run
-// works on and auth its agent.auth as the run will read it (the ref's
-// fugaro.yaml, else the checkout's).
+// both read, or nothing at all. sharedProfile is the PROFILE of the shared
+// project job this launch resolved, or "" for a repository's own job, repo is
+// the repository the run works on and auth its agent.auth as the run will read
+// it (the ref's fugaro.yaml, else the checkout's).
 //
 // THE SWITCH DECIDES, and it is the same function the plan decides with
 // (infra.CredentialsServiceServes): the installation has the block, the record
@@ -6530,6 +6567,10 @@ func servicesLaunchEnv(entry config.Entry) string {
 // proxied one (proxiedRepo). A job that still mounts its own model credential
 // and is handed the address of a service that cannot serve it would lose the
 // credential it has and get nothing in its place.
+//
+// That is the answer for a repository's OWN job. A launch on a shared project
+// job is judged on its PROFILE (below), because that is the switch its mounts
+// were taken on.
 //
 // mode is the budget mode the published node carries, read by the launcher
 // (policyMode) and handed in: it is the switch's fourth condition for an
@@ -6549,31 +6590,55 @@ func servicesLaunchEnv(entry config.Entry) string {
 // PR #903). So a teammate's `fugaro run`, on a machine that never ran the
 // opt-in, still hands the job the installation's service.
 //
-// A SHARED PROJECT JOB IS TOLD, on the same switch a repository's own job is
-// (B5.2, D505, D2078): its profile's repositories are served by the service, so
-// the execution is handed the address exactly as a repository job's is. What
-// made this function refuse every `job != ""` was the service's own admission,
-// which refused a shared project job's account whole before any route
-// (internal/credsvc/auth.go's verifyJob, Global Constraint 6, C3.9) — and B5.1
-// is the change that replaced that rule with the profile's: the account is
-// admitted for the repositories its profile admits (F40, G21), and the module
-// grants it roles/run.invoker on the service
-// (deploy/terraform/gcp/modules/project/sa.tf). The job keeps every mount it
-// has (G17): the address arrives first and the model credential is dropped only
-// by B5.7's flip, so a run here reaches its git provider and its model through
-// the service while the container still holds what it held.
+// A SHARED PROJECT JOB IS TOLD ON ITS PROFILE'S SWITCH (B5.2, D505, D2078;
+// B5.7): the repositories a profile serves reach the service through its job's
+// account, so the execution is handed the address as a repository job's is —
+// and the answer is infra.CredentialsServiceServesProfile, the very one the
+// drop was taken on, because the drop is the profile's: one repository of the
+// profile on takes the model mounts off every job of it
+// (projectJobServesTheCredentialsService, config.SharedJobServedClasses). A
+// launch judged per repository here would leave a repository of a switched
+// profile whose own record is off — and every launch whose document could not
+// be read — with neither the mount nor the address: the run dies at its first
+// model call with config.MissingAnthropicKey, whose printed remedy cannot put
+// back a mount the profile's switch took away. The pair belongs to one answer
+// because the drop does.
 //
-// The address is withheld from a shared job whose document could not be read,
-// which is the one place the two paths differ. A repository's own job is handed
-// it on its record (or on this machine's tfvars) alone, because its mounts are
-// already gone where its record says on and withholding would halt the run at
-// the service's door (D143). A shared job still holds its mounts, so a launch
-// that cannot read the document the run will use starts the run it started
-// before this task — and one that handed the address to a repository whose file
-// says `vertex` (the default of a documentless repository,
-// config.DefaultAgentAuth) would open its git provider keyless
-// (internal/gitprov/providers/providers.go) for a mint the service refuses,
-// breaking every GitHub run of that job.
+// What made this function refuse every shared job was the service's own
+// admission, which refused a shared project job's account whole before any
+// route (internal/credsvc/auth.go's verifyJob, Global Constraint 6, C3.9) —
+// and B5.1 is the change that replaced that rule with the profile's: the
+// account is admitted for the repositories its profile admits (F40, G21), and
+// the module grants it roles/run.invoker on the service
+// (deploy/terraform/gcp/modules/project/sa.tf). The address arrived one release
+// before the drop, which is G17's order: a run this function hands the address
+// to makes every model call at the service — the container holds nothing to
+// make one with — and its git traffic is the service's keyless mint for the
+// reason above. What the container still holds is the GitHub App key, which no
+// path of such a run reads: its own flip is config.ServiceHeldSecretNames'
+// (#907, G22).
+//
+// ONE THING A SHARED JOB KEEPS OUT OF ITS PROFILE'S ANSWER, and it is the auth
+// the service does not serve: a `vertex` run reads no credential of the
+// service's (its model calls go through the gateway on the job's own Google
+// credentials) and its git traffic is served by the App key the drop leaves
+// mounted, so the address would move a path that works onto a mint that
+// repository has no use for. Its model mounts are gone all the same — the drop
+// is the profile's and reads no auth — and neither of the two it takes is one a
+// `vertex` run reads (internal/runner's providers), so the state that leaves is
+// a job whose own auth needs neither. A repository whose auth IS one the
+// service serves, and the documentless launch whose auth this read does not
+// know, are told: withholding there is the mountless, addressless run above.
+//
+// The DOCUMENTLESS launch is where the two arms differ most, and it is why this
+// one reads neither a record nor a tfvars: an empty auth is a launcher that
+// could not read the repository's fugaro.yaml (the desktop console spawns
+// `fugaro run --repo` from a private empty directory, so it is every console
+// launch), so nothing here can say whether the run about to start reads a
+// credential the service serves — while the profile's own answer can say that
+// its job has none to read. A served profile's shared job is therefore handed
+// the address on its profile alone, and the run reads its real auth from the
+// ref, which is the first place either side sees it.
 //
 // A REVIEW LAUNCH IS NOT TOLD, and it is the variant's own deployment that
 // carries the address (internal/infra's reviewVariant): a review runs on the
@@ -6627,7 +6692,7 @@ func servicesLaunchEnv(entry config.Entry) string {
 // review says this launch runs on a shared job's review-only variant
 // (spec.Mode's review mode), which the caller resolves before it calls this:
 // such a launch is told nothing, whatever the job and the config say.
-func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth, mode string, deployed, review bool) []string {
+func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth, mode string, deployed, review bool) []string {
 	if lc == nil || review {
 		return nil
 	}
@@ -6636,9 +6701,32 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth, mode stri
 	// module's unassigned placeholder as its audience, and there is no address
 	// to put on a job's environment either.
 	installed := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
+	if sharedProfile != "" {
+		// The profile's own answer, and it is the deployer's: this job's model
+		// mounts were dropped on infra.CredentialsServiceServesProfile, so a
+		// launch that judged the repository instead would withhold the address
+		// from a job the drop has already emptied (above). An undeclared
+		// profile is the same held-off answer the deployer reads (declared,
+		// internal/infra's RefreshProjectJobCredentialsService): no job of a
+		// profile this config does not define was composed from it either.
+		pr, declared := lc.Profiles[sharedProfile]
+		if !installed || !declared || !infra.CredentialsServiceServesProfile(lc, pr) {
+			return nil
+		}
+		if auth != "" && auth != config.AuthCascade && !runner.ServiceSwitchedAuth(auth) {
+			// An auth the service does not serve: the address would open this
+			// job's git provider keyless for a credential a run of that auth
+			// reads from the App key the drop leaves mounted, and its model
+			// calls need none of the service's. An empty auth is a document
+			// this launcher could not read and is told, because the profile's
+			// own answer already says the mount is gone.
+			return nil
+		}
+		return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
+	}
 	local, _ := lc.RepoFor(repo)
 	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth, mode)
-	if auth == "" && job == "" {
+	if auth == "" {
 		// No document this launcher could read, so the switch's third
 		// condition is judged on the two answers that do not need one: the
 		// repository's own record, and this machine's tfvars of the root it

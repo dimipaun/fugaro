@@ -889,7 +889,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Status:    runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
 		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", BaseBranch: "main", HeadSHA: "abcdef1234567",
 		// The closed cause beside the free text, which is the pair the record
-		// carries from the failure classes on (docs/design/failure-classes.md
+		// carries from the failure classes on (docs/failure-classes/design.md
 		// §3): the reason stays the sentence a person reads and the class is
 		// what the report counts.
 		FailureClass: failure.TestsFailed,
@@ -1869,7 +1869,7 @@ func TestResultSchemaAcceptsARecordWithoutArtifacts(t *testing.T) {
 }
 
 // TestResultSchemaOAuthAccount: a record naming a Claude OAuth account
-// (docs/design/named-oauth-tokens.md) validates; a non-string value (what a
+// (docs/named-oauth-tokens/spec.md) validates; a non-string value (what a
 // hand-edited or corrupt result.json could carry) does not. config.
 // ClaudeAccount's name regex (plan Task 1) has not landed on this branch, so
 // the schema only bounds the length, not the charset; this test (and the
@@ -1969,7 +1969,7 @@ func TestResultSchemaStageCallsAndAgents(t *testing.T) {
 }
 
 // TestResultSchemaStageCredential pins the schema half of the record's one
-// per-stage credential (docs/design/mixed-credentials.md §5, P12): the value
+// per-stage credential (docs/mixed-credentials/spec.md §5, P12): the value
 // is the closed set the design's contract names — "oauth" for a stage a
 // stage-scoped Claude OAuth account served — and the field is optional, so a
 // record whose stages all ran on the run's own credential carries none.
@@ -3433,6 +3433,67 @@ func TestProjectLayerSchemaCorpus(t *testing.T) {
 	}
 }
 
+// TestProjectLayerSchemaRigorMembers keeps the project layer's LD4 shapes in
+// step with the Go reader, the way TestProjectLayerSchemaArtifactKeys keeps a
+// profile's: an area made of members and a per-repo map are keys the schema an
+// editor validates against must accept, and a member's path that climbs out of
+// its own repository must be refused by both. A corpus fixture can show the
+// refusal and not the reason, so the last part of this test names it: the
+// schema's complaint is about the member's path — its instance location is the
+// one the Go reader's message names — and never an unknown key, which is what
+// a `members` the schema did not know would produce.
+func TestProjectLayerSchemaRigorMembers(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	const head = "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  rigor:\n"
+	anchor := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, c := range []struct {
+		name string
+		body string
+		ok   bool
+	}{
+		{"a whole-repo member", "    areas:\n      - name: console\n        members: [{ repo: acme/console-web }]\n        level: pro\n", true},
+		{"a member with paths", "    areas:\n      - name: console\n        members:\n          - { repo: acme/app, paths: [\"ui/**\"] }\n        level: pro\n", true},
+		{"one repository in two areas", "    areas:\n      - name: console\n        members: [{ repo: acme/app, paths: [\"ui/**\"] }]\n        level: pro\n      - name: mobile\n        members: [{ repo: acme/app, paths: [\"mobile/**\"] }]\n        level: startup\n", true},
+		{"the pre-LD4 match shape, still read", "    areas:\n      - { name: payments, match: \"internal/payments/**\", level: critical }\n", true},
+		{"a per-repo map", "    repos:\n      acme/payments-core: critical\n      acme/legacy-api: pro\n", true},
+		{"a member whose path leaves its repo", "    areas:\n      - name: console\n        members:\n          - { repo: acme/app, paths: [\"../secrets/**\"] }\n        level: pro\n", false},
+		{"a member's absolute path", "    areas:\n      - name: console\n        members:\n          - { repo: acme/app, paths: [\"/etc/passwd\"] }\n        level: pro\n", false},
+		{"an area with neither members nor a match", "    areas:\n      - { name: console, level: pro }\n", false},
+		{"a member with no repo", "    areas:\n      - name: console\n        members: [{ paths: [\"ui/**\"] }]\n        level: pro\n", false},
+		{"a member whose repo is a bare name", "    areas:\n      - name: console\n        members: [{ repo: console-web }]\n        level: pro\n", false},
+		{"a repos key that is a bare name", "    repos:\n      console-web: pro\n", false},
+		{"a repos value outside the vocabulary", "    repos:\n      acme/payments-core: paranoid\n", false},
+	} {
+		text := head + c.body
+		schemaOK := sch.Validate(yamlInstance(t, []byte(text))) == nil
+		_, ps := config.ParseProjectLayer([]byte(text), anchor)
+		if schemaOK != (len(ps) == 0) {
+			t.Errorf("%s: the schema says ok=%v and config.ParseProjectLayer gives %v", c.name, schemaOK, ps)
+		}
+		if schemaOK != c.ok {
+			t.Errorf("%s: the schema says ok=%v; want %v", c.name, schemaOK, c.ok)
+		}
+	}
+	// The reason, on the fixture the corpus carries and the Go test pins.
+	data, err := os.ReadFile("../testdata/project-layer/invalid/rigor-area-outside-repo.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = sch.Validate(yamlInstance(t, data))
+	if err == nil {
+		t.Fatal("the schema accepts a member path that leaves its repository")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "/defaults/rigor/areas/0/members/0/paths/0") {
+		t.Errorf("the schema's refusal does not name the member path it is about: %s", msg)
+	}
+	for _, wrong := range []string{"additional propert", "unknown"} {
+		if strings.Contains(msg, wrong) {
+			t.Errorf("the schema refuses the fixture as %q rather than as a member path leaving its repository: %s", wrong, msg)
+		}
+	}
+}
+
 // TestProjectLayerSchemaCommandsLintFix checks the profile schema's
 // commands.lint and commands.fix the same way TestSchemaBudgetBlock checks
 // budget: inline snippets, not the shared testdata/project-layer corpus.
@@ -3442,7 +3503,7 @@ func TestProjectLayerSchemaCorpus(t *testing.T) {
 // Validate (validateProfile's own comment: "what [a profile] leaves out the
 // repository may set, and Validate checks the merged workflow") — a profile
 // may ship commands.fix alone and let a repository supply commands.lint by
-// its own key, which the key-by-key merge (docs/design/layered-config.md
+// its own key, which the key-by-key merge (docs/layered-config/spec.md
 // §4) allows. The schema is intentionally stricter here, to catch the
 // likely mistake at authoring time; that's a false positive in an editor at
 // worst, never a false negative, so it doesn't need Go to agree.

@@ -29,7 +29,7 @@ import (
 
 // fugaro mailbox (mobile P4.1, Task T5): the consumer side of an account's
 // mailbox, as one long-lived local process the operator runs beside the
-// orchestrator host. docs/plans/2026-10-18-mobile-mailbox-consumer.md is the
+// orchestrator host. docs/mobile/mailbox-consumer-plan.md is the
 // rule this file implements: §4 its surface, §6 where its state lives, §7 its
 // loop, §8 the two directions of the MAC it runs, §9 and M12 its refusals and
 // the exit codes they carry.

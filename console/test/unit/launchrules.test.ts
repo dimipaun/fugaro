@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
-// The launch's value rules and its reply decoder (docs/design/desktop-console.md
+// The launch's value rules and its reply decoder (docs/desktop-console/spec.md
 // §5.1 rule 11): what may become a word of the child's argv, what may be drawn,
 // and what the CLI's reply may say.
 //

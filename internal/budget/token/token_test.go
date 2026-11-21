@@ -483,7 +483,7 @@ func TestDeleteObject(t *testing.T) {
 // A refused delete (gocloud maps the GCS 403 to NotFound) must not read as
 // "the object was already gone": a replayable token left behind by a
 // refused cleanup is a security-relevant miss, not a benign no-op
-// (docs/design/bucket-iam.md §2.3).
+// (docs/bucket-iam/spec.md §2.3).
 func TestDeleteObjectForbiddenIsNotSilentSuccess(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

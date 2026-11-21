@@ -79,7 +79,7 @@ import (
 // expectedAgentMarkers is the oracle for which environment variables mean a
 // coding agent's session: written here by hand, so a marker dropped from
 // agentMarkers is a failure rather than a smaller test
-// (docs/design/managed-projects.md §3 finding 2 names these six).
+// (docs/managed-projects/spec.md §3 finding 2 names these six).
 var expectedAgentMarkers = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"}
 
 // agentEnvState is one state of the environment a run can be in: no marker
@@ -822,6 +822,10 @@ var inlineAgentSites = []inlineAgentSite{
 		r.o.coordinator = true
 		return r.refuseCoordinatorUnattended() == nil
 	}},
+	{"init.go refuseOrchestratorUnattended", "init.go refuseOrchestratorUnattended (the --orchestrator opt-in)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
+		r.o.orchestrator = true
+		return r.refuseOrchestratorUnattended() == nil
+	}},
 }
 
 // propertyAgentSites are the agent-marker sites the other ManagedXxx tests
@@ -1007,9 +1011,11 @@ var initFlagCases = map[string]string{
 	"allow-job-delete": "OUTSIDE the property: changes what a --repo plan holds, not whether it is confirmed",
 	"check":            "OUTSIDE the property: the read-only mode, which runs no step of any stage, so nothing is confirmed and --yes is refused beside it (refuseConvergeFlags, update_check.go). It is `fugaro update`'s alone (D948, U4 of docs/plugin-user-scope/implementation-plan.md) and `fugaro setup` declares it hidden and refuses it by name (setupDoor.foreign), the shape --forget has on that door",
 	"print-vars":       "no cloud call and no confirmation (canAsk is false under it)",
+	"events":           "OUTSIDE the property: it chooses the shape of the run's output (setup_events.go, ST2/D2904 of docs/console-improvements) and changes no step. It is only ever a --json run's flag — without --json it is refused by name before any stage — and a --json run confirms nothing in the first place (unconfirmedWhy), so every step that needs a person still arrives as left_for_you: the flag adds no confirmation and takes none away",
 	"no-build":         "only drops the first image build's offer (a step only the person's own answer gives); takes nothing away from a confirmation",
 	"provision-batch":  "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the person's own (no answer a run carries reaches it), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
 	"coordinator":      "the coordinator's opt-in (P5): it is an apply of the installation's own roots whose steps confirm through ask (covered), but --yes is refused beside it (checkCoordinator), and a coding agent's session and a run with no terminal are refused before anything is read (refuseCoordinatorUnattended, an inline site, covered)",
+	"orchestrator":     "the resident orchestrator's opt-in (P5.1b, P5.1c): it writes the installation root's orchestrator variable and re-applies that root, whose confirmation is the one --firebase-project's own row names (covered); beside it --firebase-project is required (the block's token-minter row is bound on the Firebase root's signer, so only the stage with the Firebase outputs may write it), --yes is refused, and the read-only flags are excluded (checkOrchestrator); a coding agent's session and a run with no terminal are refused before anything is read (refuseOrchestratorUnattended, an inline site, covered)",
 	// Values a confirmed step carries: they change what is confirmed, never whether.
 	// bake-repos (IS7) is one of them: it answers the wizard's own question and
 	// writes the switch, and it is asked — and taken — on a first run of setup
@@ -1026,10 +1032,17 @@ var initFlagCases = map[string]string{
 	// person's — the project's creation, the billing link, the Firestore
 	// location, every secret value — have no member in the document, which is
 	// what a member for one is refused by name for.
+	// location (LP4 of docs/location-preference) is the fourth, and it is
+	// --region's own question in a person's words: the place a first run of
+	// setup chooses (us or eu), turned into the region before anything is
+	// checked or asked (settleLocation), so what reaches a confirmation is the
+	// region --region reaches and nothing new. It is a first run's answer: a
+	// --repo run creates no installation and refuses it by name
+	// (installationFlags).
 	"admin": "value", "alert-email": "value", "answers-file": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",
 	"display-name": "value", "expect-digest": "value", "gcp-project": "value", "github-app-id": "value",
-	"image-source": "value", "name": "value", "no-log-isolation": "value",
+	"image-source": "value", "location": "value", "name": "value", "no-log-isolation": "value",
 	"operator": "value", "parent": "value", "project": "value", "region": "value", "rigor": "value",
 	"registry-cleanup": "value", "runs-bucket": "value", "scheduler-region": "value",
 	"state-bucket": "value; under --managed the value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",

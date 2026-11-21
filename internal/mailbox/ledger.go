@@ -18,7 +18,7 @@ import (
 // The ledger: the dedupe rule of `shared/mailbox` (P1.1), persisted (ruling
 // M7).
 //
-// This is task T4 of docs/plans/2026-10-18-mobile-mailbox-consumer.md, and it
+// This is task T4 of docs/mobile/mailbox-consumer-plan.md, and it
 // is the half of the consumer that makes **at-most-once acting** true across a
 // restart: the same `(sender, id)` is never a second delivery, and the record
 // of a delivery is on disk **before** the action it asked for runs, so a

@@ -55,7 +55,7 @@ func TestRunNoCompressionSetsSpecField(t *testing.T) {
 }
 
 // TestNoCompressionFlagExistsButNoForceOnFlagDoes is the structural half of
-// the design's scope ruling (docs/design/headroom-compression.md §4): a
+// the design's scope ruling (docs/headroom-compression/spec.md §4): a
 // launcher may turn a repository's reviewed choice off for one run and never
 // on, so the flag set carries --no-compression and no --compression. A future
 // edit that added a force-on flag fails here rather than only in review.
@@ -65,7 +65,7 @@ func TestNoCompressionFlagExistsButNoForceOnFlagDoes(t *testing.T) {
 		t.Error("fugaro run has no --no-compression flag")
 	}
 	if flags.Lookup("compression") != nil {
-		t.Error("fugaro run has a --compression flag: turning compression on is a reviewed fugaro.yaml change, never a flag (docs/design/headroom-compression.md §4)")
+		t.Error("fugaro run has a --compression flag: turning compression on is a reviewed fugaro.yaml change, never a flag (docs/headroom-compression/spec.md §4)")
 	}
 }
 

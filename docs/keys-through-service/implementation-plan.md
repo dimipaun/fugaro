@@ -385,7 +385,7 @@ CM9**, and **KS13 waits on its I1 in their place** (F49).
   `internal/cli/init_retire.go`, `internal/cli/init_retire_test.go`,
   `internal/cli/update_delete_keys_test.go` (new), `internal/cli/update_converge_test.go`,
   `internal/cli/update_in_flight.go` with `docs/design/update-in-flight.md`,
-  `docs/design/config-transitions.md`, and the operator line of the release notes that carry it.
+  `docs/config-transitions/spec.md`, and the operator line of the release notes that carry it.
   It is past five files because a deletion is state, API and discovery together.
 - Interfaces: none.
 - Tests: `TestOnlyACopiedUnmountedModelContainerIsDeleted`, `TestAnOperatorsUpdateDeletesNothing`,

@@ -132,7 +132,7 @@ func TestKeepCountAppliesToFailures(t *testing.T) {
 }
 
 // FailedKeep's edge is the same strict "younger than" boundary as the
-// success rule's Keep (docs/design/generic-tool.md §10.3, docs/plans/...
+// success rule's Keep (docs/generic-tool/spec.md §10.3, docs/plans/...
 // Task 6): a failure exactly 24h old, or older, is hidden; one younger is
 // kept. TestFailedRunsStayUntilAcked only exercises 10h, well inside the
 // window either way, so it cannot tell a strict `<` from a `<=`.

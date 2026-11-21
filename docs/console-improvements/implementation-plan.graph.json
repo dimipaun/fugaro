@@ -49,7 +49,7 @@
           "console/src/renderer/graph/layout.ts",
           "console/test/unit/graph.test.ts",
           "console/test/unit/graph-model.test.ts",
-          "docs/design/console-styling.md"
+          "docs/console-styling/spec.md"
         ]
       }
     },
@@ -492,7 +492,7 @@
           "console/test/unit/spawn.test.ts",
           "console/test/unit/ipc.test.ts",
           "console/test/unit/version.test.ts",
-          "docs/design/desktop-console.md",
+          "docs/desktop-console/spec.md",
           "console/docs/json-contract.md",
           "internal/cli/docs_desktop_console_test.go"
         ]
@@ -806,7 +806,7 @@
           "console/src/renderer/confirm.ts",
           "console/src/renderer/manage/kinds/models.ts",
           "console/src/renderer/manage/kinds/images.ts",
-          "docs/design/desktop-console.md",
+          "docs/desktop-console/spec.md",
           "console/docs/json-contract.md",
           "internal/cli/docs_desktop_console_test.go",
           "console/test/unit/manage-writes.test.ts"

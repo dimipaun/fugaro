@@ -4,9 +4,9 @@
 
 This directory holds the Fugaro desktop console — the Electron application the
 owner's spec asks for in its section 6, designed in
-[docs/design/desktop-console.md](../docs/design/desktop-console.md) (which placed
+[docs/desktop-console/spec.md](../docs/desktop-console/spec.md) (which placed
 it here under `console/`, D3) and built by
-[docs/plans/2026-10-15-desktop-console.md](../docs/plans/2026-10-15-desktop-console.md).
+[docs/desktop-console/implementation-plan.md](../docs/desktop-console/implementation-plan.md).
 
 It is not a Go package and it never becomes one. `go build ./...`,
 `go vet ./...` and `gofmt -l .` take no notice of it, `go.mod` and `go.sum` gain
@@ -487,7 +487,7 @@ edit it, and this plan deliberately does not: it belongs with Task 1.0's pins,
 and the owner may prefer to keep Dependabot's scope where it is rather than have
 a weekly PR stream behind an approval gate. **Listed so that the omission is a
 decision, not an oversight.**"
-(`docs/plans/2026-10-15-desktop-console.md`, "Open items, listed rather than
+(`docs/desktop-console/implementation-plan.md`, "Open items, listed rather than
 fixed", item 5.)
 
 The owner ruled on 2026-10-22 to extend the scope, and on 2026-10-23 the staged
@@ -1617,7 +1617,7 @@ catch:
   sign now comes from the rounded text a person actually reads, so a negative
   that rounds away is drawn as zero and one that survives keeps its sign.
 
-### Eleven classes, deny-by-default
+### Fourteen classes, deny-by-default
 
 `src/shared/sanitize.ts` is the display layer's **copy** of the recorder's rules
 (design §5.1 rule 7: the sanitization is re-applied here rather than trusted to
@@ -1656,6 +1656,7 @@ truncated.
 | `label` | a short rendered field (`stage`, `round`, `verify`, `models`, `recipe`, `workflow`) | refused past 200 characters, or if it is not a single line |
 | `repository` | `owner/name`, at most 200 characters, no `..` | refused |
 | `repoPattern` | a policy allow-list entry: `*`, or three segments or more — `provider/owner/name`, a path that nests included — each matching the CLI's own segment grammar (`[a-z0-9*._-]`, a star matched inside a segment and never across a `/`, no `.` or `..` segment and no `.git` ending), at most 255 characters (`projectpolicy.MaxPatternLen`) | refused |
+| `scope` | a stored grant's scope: `project`, `all-repos`, or a comma-separated list of canonical repository patterns, each provider-qualified and at most 255 characters (`projectpolicy.MaxPatternLen`), with the two rules `internal/access`'s `ParseScope` adds to the allow-list's grammar — the provider segment is never `*` (a grant names the repositories it covers) and a `*` is matched inside one path segment, so no segment carries `**` | refused |
 | `imageRef` | a container image reference, the CLI's own `catalogImageRE` (`registry[:port]/path[:tag][@sha256:…]`, lower-case, at most 255 characters) | refused |
 | `slug` | the console's own slug grammar | refused |
 | `branch` | a git ref, no leading/trailing slash, no `.lock` | refused |
@@ -1682,7 +1683,7 @@ characters stripped, a credential shape masked. The **whole** recorded value is
 drawn in the Run screen's header, through `person` as the map says, so an
 address is the console's marker there and **no address is drawn anywhere**.
 `src/shared/launcher.ts` is the module and the reasoning;
-`docs/design/desktop-console.md` §6.2 records the decision. This is not a
+`docs/desktop-console/spec.md` §6.2 records the decision. This is not a
 narrowing of **D15**: that decision is about `report --by person`'s cost
 breakdown on the Spend screen, and the console already names people on Live and
 Project without a switch — a killed repository's row reads `KILLED by <who>`.
@@ -3474,7 +3475,7 @@ structural addition, which the owner approved on 2026-10-19.
 | `tools/bundle-renderer/index.ts` | `THEME_STYLESHEETS` gains `'base.css'`, in the commit that creates the file |
 | `test/unit/theme-selectors.test.ts` | **new**: the §2-inventory selector scan over `base.css` |
 | `test/e2e/entry.spec.ts` | the forced-colors smoke's chrome half, the rail's rows, and the body-children assertion the rail moves |
-| `docs/design/console-styling.md` | §2.1's tables gain `data-collapsed` and `data-state`, and the banner row's order — hooks this task's rules select, added in the PR that wanted them |
+| `docs/console-styling/spec.md` | §2.1's tables gain `data-collapsed` and `data-state`, and the banner row's order — hooks this task's rules select, added in the PR that wanted them |
 | this file | the section you are reading |
 
 ### The document is a two-column grid, and the banner's row can be empty
@@ -3598,7 +3599,7 @@ added, no `style` attribute is written anywhere, and `screen-literals.test.ts` r
 
 - `test/unit/theme-selectors.test.ts` is the **§2-inventory selector scan**, and it reads the
   inventory **out of the design document** rather than keeping a second copy of §2's tables
-  here: every backticked token of every table row in `docs/design/console-styling.md`'s §2 is
+  here: every backticked token of every table row in `docs/console-styling/spec.md`'s §2 is
   a hook, every `.name` and `[name` in `base.css` (comments stripped, so the file's own long
   header is not read as a selector) is checked against it, and two further cases pin the rail
   at **twelve hooks and no thirteenth** and pin `SCANNED` against `THEME_STYLESHEETS` so a
@@ -4105,7 +4106,7 @@ moment a row offers one (rule 7's pairing).
 | `test/unit/installlist.test.ts`, `test/unit/onboarding.test.ts`, `test/unit/cli-stub.test.ts` | **new**, and the pins described below |
 | `test/unit/installations-ipc.test.ts`, `installations-store.test.ts`, `installations-view.test.ts`, `spawn.test.ts`, `stub.test.ts`, `stub.ts`, `configread.test.ts`, `window.test.ts` | rewritten or amended to the surface that exists |
 | `test/e2e/installations.spec.ts`, `test/e2e/degraded.spec.ts` | the picker spec drives the list, the warning row, the refused 0.5.0 and the unlisted directory; the degraded spec's `resolveBinary` gained its `appEnv` |
-| `docs/design/desktop-console.md` | §3.4 rules 4 and 7, D13 and §12 item 8, each amended where the form was named |
+| `docs/desktop-console/spec.md` | §3.4 rules 4 and 7, D13 and §12 item 8, each amended where the form was named |
 | this file | the section you are reading |
 
 ### The list is the CLI's, and the console's own records sit beside it
@@ -4638,7 +4639,7 @@ this file's say unsigned rather than leaving it to be deduced.
 | | |
 |---|---|
 | Targets | `AppImage` and `deb`, **x64**, pinned in `build.linux.target` rather than passed on a command line |
-| Artifact names | `Fugaro.Console-<version>-linux-x86_64.AppImage` and `Fugaro.Console-<version>-linux-amd64.deb` — `build.linux.artifactName` is `Fugaro.Console-${version}-linux-${arch}.${ext}`, so the name comes from the tag's X.Y.Z and never from a file name typed into a workflow. **The packer writes the target's own word for the architecture and not the build's `x64`**: the AppImage is `x86_64` and the `.deb` is `amd64`, and those two spellings are what the release serves and what its `console-sha256sums.txt` lists — a page or a command that looks for `linux-x64` matches neither (this file, `docs/release.md`'s "Verifying the console's release" and `docs/design/desktop-console.md` §7.6's artifact sentence said `linux-x64` until 2026-10-24, which is what a published release corrected; **the workflow comments still say it**, in three places — `console-release.yml`'s staged and applied copies and `console-linux.yml` — and are not corrected here, because no agent run may edit `.github/workflows/`: `docs/pending-workflows/README.md` is where the owner reads what to correct, and when) |
+| Artifact names | `Fugaro.Console-<version>-linux-x86_64.AppImage` and `Fugaro.Console-<version>-linux-amd64.deb` — `build.linux.artifactName` is `Fugaro.Console-${version}-linux-${arch}.${ext}`, so the name comes from the tag's X.Y.Z and never from a file name typed into a workflow. **The packer writes the target's own word for the architecture and not the build's `x64`**: the AppImage is `x86_64` and the `.deb` is `amd64`, and those two spellings are what the release serves and what its `console-sha256sums.txt` lists — a page or a command that looks for `linux-x64` matches neither (this file, `docs/release.md`'s "Verifying the console's release" and `docs/desktop-console/spec.md` §7.6's artifact sentence said `linux-x64` until 2026-10-24, which is what a published release corrected; **the workflow comments still say it**, in three places — `console-release.yml`'s staged and applied copies and `console-linux.yml` — and are not corrected here, because no agent run may edit `.github/workflows/`: `docs/pending-workflows/README.md` is where the owner reads what to correct, and when) |
 | Icon | `console/build/icon.png` — **the same file `build.mac.icon` names**, so the two platforms cannot show different marks |
 | Desktop entry | `executableName: fugaro-console`, `category: "Development;Monitor"`, a `synopsis` and a `description`; the deb's `maintainer` is required rather than decorative — this `package.json` has no `author` with an email, so without it the deb leg fails at pack time |
 | Command | `npm run package:linux` — `electron-builder --linux --publish never`, the pinned local packer, never `npx`, and never publishing |

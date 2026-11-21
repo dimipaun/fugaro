@@ -671,7 +671,7 @@ type Cover struct {
 }
 
 // CloudAssetRole is the installation's whole-project inventory read role
-// (Task 4.1a of docs/plans/2026-10-16-managed-projects.md, the owner's ruling
+// (Task 4.1a of docs/managed-projects/implementation-plan.md, the owner's ruling
 // of 2026-10-17): a custom role of the installation holding exactly
 // cloudasset.assets.searchAllResources, the one permission the whole-project
 // read's SearchAllResources call needs. The predefined roles/cloudasset.viewer
@@ -1076,7 +1076,7 @@ var (
 
 // The deployer account of D75, and the condition that fences the half of it
 // that may touch an existing resource (Task 1.5 of
-// docs/plans/2026-10-16-managed-projects.md).
+// docs/managed-projects/implementation-plan.md).
 //
 // A managed apply does not run as the operator: it assumes the deployer
 // account the installation module creates, which holds eight custom roles,
@@ -1114,7 +1114,7 @@ const (
 	// could not be applied (17 logical operators where IAM allows 12, a
 	// resource.name.contains() which is not a supported function, and
 	// resource.name unsupported for five of the nine types it named), so the
-	// fence was gated off and redesigned — docs/design/managed-deployer-fence.md.
+	// fence was gated off and redesigned — docs/managed-deployer-fence/spec.md.
 	// The module creates them, and their bindings, only with
 	// managed_deployer_scoped, which fugaro writes for an installation that
 	// uses managed projects (0.10.0). A plan without them has
@@ -1196,7 +1196,7 @@ const (
 // empty string), and the empty string does not start with the prefix, so a
 // non-match denies under that same reading — C7, which the design records as
 // UNVERIFIED and models with extractSegment rather than by a live probe
-// (docs/design/managed-deployer-fence.md). What remains UNVERIFIED,
+// (docs/managed-deployer-fence/spec.md). What remains UNVERIFIED,
 // and what Check 68 measures, is whether these services honour resource.name at
 // all (C3).
 type DeployerClause struct {
@@ -1218,7 +1218,7 @@ func (c DeployerClause) String() string {
 // the one condition its one binding carries.
 //
 // The split is what makes the fence expressible at all (F1 of
-// docs/design/managed-deployer-fence.md): one condition covering all nine
+// docs/managed-deployer-fence/spec.md): one condition covering all nine
 // types needs nine clauses and 17 logical operators where IAM allows 12, a
 // resource.name.contains() that is not a supported function, and resource.name
 // forms five of those services do not have. One condition per service needs
@@ -1880,7 +1880,13 @@ var knownCommands = [][2][]string{
 // D2301), which is the class the build route admits and the only list that
 // class is on, and — only on one that runs a resident orchestrator — the
 // daemon's own account (F19, O2), which is the class the label route and the
-// gated merge mint are served to. No secret ID and no secret value,
+// gated merge mint are served to, and — once the module renders them (LM12) —
+// the identity half's three (LM22): the account the runs' identities are
+// signed as (D3121), the roster's service accounts (D3123) and the implicit
+// admins the CLI's own gate reads (F29, R16). The identity three are on this
+// list AHEAD of the module, which is the order F28 states, and
+// CredentialsServiceEnvAwaitingTheModule names them until it renders them. No
+// secret ID and no secret value,
 // because the loader
 // derives the container from the project name and reads it as the service's own
 // account, and both job sets are derived from their triples rather than
@@ -1906,6 +1912,18 @@ var credentialsServiceEnv = []string{
 	// the run path at all, and it reaches no model credential: what the
 	// process does with it is match a caller's email claim.
 	"FUGARO_ORCHESTRATOR_ACCOUNTS",
+	// ... and the three names of the identity half (LM22): the account a run's
+	// identity is signed as (D3121), the roster's serviceAccount: entries
+	// (D3123) and the implicit admins the CLI's own gate reads out of the
+	// machine's configuration (F29, R16). None of them is a credential — the
+	// signer is an address, the other two are lists of addresses, and the
+	// service holds the minter row on the signer rather than a key of it — and
+	// all three are read by `credentials serve` into values nothing uses yet
+	// (internal/cli's credentialsServiceConfig), which is what makes them the
+	// cover's before they are the module's.
+	"FUGARO_SIGNER_ACCOUNT",
+	"FUGARO_ROSTER_SERVICE_ACCOUNTS",
+	"FUGARO_IMPLICIT_ADMINS",
 }
 
 // intakeServiceArgs and intakeServiceEnv are the argv and the environment
@@ -2047,13 +2065,28 @@ var (
 // list in the change that made installation/credentials.tf render it (DS2.2),
 // and FUGARO_REVIEW_JOB_ACCOUNTS left it the same way before that.
 //
+// The identity half's three are on it now with it (LM22, D3121, D3123, R16):
+// FUGARO_SIGNER_ACCOUNT, FUGARO_ROSTER_SERVICE_ACCOUNTS and
+// FUGARO_IMPLICIT_ADMINS, which `credentials serve` reads into values nothing
+// uses yet and the installation module renders next (LM12, which drops them
+// from this list in the same change that makes credentials.tf set them). They
+// are not classes the service admits a caller by — nothing is served from them
+// until the issuer is wired in (I1) — and the service must keep starting
+// wherever they are absent, which is why each is read as an OPTIONAL value on
+// internal/cli's side and the two ends move in that order.
+//
 // The function is the tripwire and not a carve-out: two tests hold it —
 // the golden test below fails on a name that is both here and on the plan, and
 // internal/cli's TestCredentialsServiceEnvIsTheDeploymentsOwn fails on one that
 // is here and in the module's own source — so a name added ahead of its module
 // cannot be left behind once the module renders it.
 func CredentialsServiceEnvAwaitingTheModule() []string {
-	return []string{"FUGARO_SHARED_JOB_ACCOUNTS"}
+	return []string{
+		"FUGARO_SHARED_JOB_ACCOUNTS",
+		"FUGARO_SIGNER_ACCOUNT",
+		"FUGARO_ROSTER_SERVICE_ACCOUNTS",
+		"FUGARO_IMPLICIT_ADMINS",
+	}
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;
@@ -3483,7 +3516,7 @@ func IntakeAdminListCondition(bucket string) string {
 }
 
 // bucketCondition says why a bucket grant's condition is not the modules'
-// (docs/design/bucket-iam.md H6), "" when it is: objectAdmin carries none; an
+// (docs/bucket-iam/spec.md H6), "" when it is: objectAdmin carries none; an
 // objectViewer carries none, except an account's, which may carry exactly
 // one tokens/<slug>/ clause on one of this run's buckets (the job's read of
 // its own budget token objects, budget-token-channel.md §7.2) — and then only

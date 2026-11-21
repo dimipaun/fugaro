@@ -1210,7 +1210,7 @@ func TestLicenceSetRefusesASecretThatIsNotTheKeys(t *testing.T) {
 
 // TestLicenceSetOfTheSameTermIsTheKeyTheInstallationUses holds the reissue the
 // licence server mints with the term of the key it replaces: a seat change
-// reissues with the term's own end (design/key-signing-service.md section 5.3),
+// reissues with the term's own end (docs/key-signing-service/spec.md section 5.3),
 // so the pasted key and the installed one are paid through the same day — and
 // the object holds the latest valid key (T26), decided for two of the same term
 // by the write that came last. A store that kept the older one would report a

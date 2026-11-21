@@ -31,7 +31,7 @@ import (
 // anthropicKeyNeeded is the offline note an enforcing run with a pin that goes
 // direct to Anthropic gets: it needs a stored key, and only the cloud knows
 // whether the secret has a version yet, so this is a note for the owner and
-// never a refusal (design docs/design/project-centric.md §6.1; the gateway
+// never a refusal (design docs/project-centric/spec.md §6.1; the gateway
 // refuses such a call, by name, when no key is stored).
 const anthropicKeyNeeded = "needs a stored Anthropic API key: a pinned model goes direct to Anthropic, and the job mounts the key whenever the anthropic-api-key secret has a version (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro update --repo` if none does), or route the model through a provider"
 
@@ -445,7 +445,7 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	// has a version is a fact only the cloud knows, and whether one is
 	// stored is another, so this is a note, never a warning or a refusal:
 	// the gateway refuses such a call by name when no key is stored (design
-	// docs/design/project-centric.md §6.1).
+	// docs/project-centric/spec.md §6.1).
 	if config.AnthropicKeyNeeded(cfg.Agent, claimed, repo, mode) {
 		msg := anthropicKeyNeeded
 		if mode != policy.ModeEnforce {
@@ -1001,7 +1001,7 @@ func reviewPreconditionNote(lc *localcfg.Config) string {
 }
 
 // stageAccountProblems is the B0 ruling judged over the file in hand
-// (docs/design/mixed-credentials.md §11, decision 1: "the rule is the rule at
+// (docs/mixed-credentials/spec.md §11, decision 1: "the rule is the rule at
 // every layer that judges it, and fugaro validate says the same as the run").
 // The rule needs both halves — the auth, which is the file's, and the stage
 // accounts, which are the machine's local config — so this is the one place
@@ -1177,7 +1177,7 @@ func shortPath(path string) string {
 //
 // The note beside a pin that goes direct is design §6.2's safeguard read from
 // the offline side. A project that routes Claude through a provider is a
-// project with no Anthropic key to fall back on (docs/design/mixed-credentials.md
+// project with no Anthropic key to fall back on (docs/mixed-credentials/spec.md
 // §1: an OpenRouter key and subscription OAuth tokens, no Anthropic one), and a
 // Claude pin the switch leaves on the direct route is a call that needs the key
 // whenever the job holds none — the gateway refuses it by name when none is
@@ -2253,12 +2253,14 @@ func newValidateCmd() *cobra.Command {
 				warnings = append(warnings, config.CheckWarnings(cfg, filepath.Dir(path))...)
 				warnings = append(warnings, cloneWorkflowWarnings(cfg)...)
 				warnings = append(warnings, rigorImageWarnings(cfg)...)
+				warnings = append(warnings, rigorMembersImageWarnings(cfg)...)
 				warnings = append(warnings, gitAuthorImageWarnings(cfg)...)
 				warnings = append(warnings, securityImageWarnings(cfg)...)
 				warnings = append(warnings, jobsImageWarnings(cfg)...)
 				warnings = append(warnings, planningImageWarnings(cfg)...)
 				warnings = append(warnings, modelGradesImageWarnings(cfg)...)
 				warnings = append(warnings, stopFractionImageWarnings(cfg)...)
+				warnings = append(warnings, workspaceBeatImageWarnings(cfg)...)
 				warnings = append(warnings, triageImageWarnings(cfg)...)
 				warnings = append(warnings, reviewAgainstTaskImageWarnings(cfg)...)
 				warnings = append(warnings, workflowABImageWarnings(cfg)...)

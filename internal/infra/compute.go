@@ -26,7 +26,7 @@ import (
 )
 
 // The Batch backend's installation-level provisioning (design
-// docs/design/compute-backend.md §3.2, §3.7, §8.1 task 6). It is a root of
+// docs/compute-backend/spec.md §3.2, §3.7, §8.1 task 6). It is a root of
 // its own, in a workdir and a state of its own, because what it changes is
 // not what the installation root changes: the installation's tfvars, imports
 // and saved plan must not be rewritten by a root that only the compute

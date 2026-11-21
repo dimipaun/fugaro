@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -193,7 +194,7 @@ func Validate(c *Config) []Problem {
 	// that tries the key gets this message and not a strict-parse unknown-field
 	// error. Nothing reads the field, so no value may reach a run. The lift
 	// replaces this branch with the closed-set shape check and leaves the auth
-	// rule below standing (docs/design/headroom-compression.md §4).
+	// rule below standing (docs/headroom-compression/spec.md §4).
 	if c.Agent.Compression != "" {
 		add("agent.compression", "is not yet implemented: this Fugaro accepts only the empty value (off), and the context-compression proxy the key will name is refused until it ships")
 	}
@@ -201,7 +202,7 @@ func Validate(c *Config) []Problem {
 	// route their own way and are refused outright rather than run without the
 	// compression the repository asked for (design §4).
 	if c.Agent.Compression != "" && (c.Agent.Auth == "oauth" || c.Agent.Auth == "vertex") {
-		add("agent.compression", "cannot be combined with agent.auth: %s: the proxy is refused for that auth (docs/design/headroom-compression.md §4)", c.Agent.Auth)
+		add("agent.compression", "cannot be combined with agent.auth: %s: the proxy is refused for that auth (docs/headroom-compression/spec.md §4)", c.Agent.Auth)
 	}
 	ps = append(ps, validateAgentModels(c.Agent)...)
 	if c.ModelGrades != nil {
@@ -211,9 +212,28 @@ func Validate(c *Config) []Problem {
 	ps = append(ps, validateBudget(c.Budget)...)
 	ps = append(ps, validateFollowup(c.Git.Provider, c.Followup)...)
 	if c.Rigor != nil {
-		// The repository's own block, by the same rules the project layer's
-		// is judged by: one function, two prefixes.
-		ps = append(ps, validateRigor("rigor", c.Rigor.Default, c.Rigor.Areas)...)
+		// Whose rules the list here is decides which of the two rules judges
+		// it, because the two differ on one key: a project layer's rule may
+		// name the members it is made of, and a repository's own rule may not
+		// (LD4, Area.Validate). The block on a resolved Config is the merged
+		// one — the project layer's defaults.rigor with the file's own keys
+		// over it (resolve.go) — and a list is replaced whole rather than
+		// merged, so the rules of one layer are never mixed into the other's:
+		// RepoRigor carries the file's own block whenever the file wrote one,
+		// and where it wrote none the list that reached here is the project
+		// layer's, which validateLayer already judged by the project's rules
+		// where the layer is read (layer.go). A Config that is no resolution —
+		// a hand-built one, or the file read on its own by Parse — has no
+		// RepoRigor and no Layer, and is judged as it always was: the
+		// repository's own rules, by the repository's rules.
+		def, areas, project := c.Rigor.Default, c.Rigor.Areas, false
+		switch {
+		case c.RepoRigor != nil:
+			def, areas = c.RepoRigor.Default, c.RepoRigor.Areas
+		case c.Layer != nil:
+			project = true
+		}
+		ps = append(ps, validateRigor("rigor", def, areas, nil, project)...)
 	}
 	if c.Security != nil {
 		// The repository's own list, by the rules the project layer's is
@@ -291,7 +311,7 @@ func Validate(c *Config) []Problem {
 			} else if strings.HasPrefix(s.Name, ClaudeOAuthTokenPrefix) {
 				// The whole claude-oauth-token-<name> namespace is a named
 				// Claude account's derived secret ID (ClaudeAccountSecret,
-				// design docs/design/named-oauth-tokens.md §5), never a
+				// design docs/named-oauth-tokens/spec.md §5), never a
 				// workflow's own: a name that merely looks like one would
 				// let fugaro.yaml steer where the owner's pasted token
 				// value goes (claude setup-token's prompt in init matches
@@ -451,6 +471,13 @@ func validateRebuild(p string, r Rebuild) []Problem {
 // "defaults.rigor" for the project layer's, so one function states the rules
 // for both layers (docs/project-layer.md §5 gives either layer both keys).
 //
+// project says which of the two blocks it is, and it is the one thing that
+// differs between them: a repository's rule names a path glob of its own tree
+// (Area.Validate), while a project rule names what the area is made of — a
+// match in effect for every repository, members, or both (Area.ValidateProject).
+// The project layer's per-repository map (repos) is validated here too, and it
+// is the project layer's alone.
+//
 // It reads rigor.Area.Validate and rigor.Known, which is the whole point of
 // the vocabulary living in internal/rigor: the value a configuration may
 // write is the value the resolver can use, so a mode outside the vocabulary
@@ -464,8 +491,9 @@ func validateRebuild(p string, r Rebuild) []Problem {
 // writer cannot see. The rule is per layer: the two area lists are a union
 // rather than a replacement (D20c), and a repository's rule for the project
 // layer's glob is a rule of its own, which this function never sees because
-// each layer is validated on its own.
-func validateRigor(p string, mode rigor.Rigor, areas []rigor.Area) []Problem {
+// each layer is validated on its own. A rule that names no glob at all — a
+// project rule made of members — is not compared: there is no glob to repeat.
+func validateRigor(p string, mode rigor.Rigor, areas []rigor.Area, repos map[string]rigor.Rigor, project bool) []Problem {
 	var ps []Problem
 	if mode != "" && !rigor.Known(mode) {
 		ps = append(ps, Problem{Path: p + ".default", Message: "must be one of " + rigor.RigorList()})
@@ -478,8 +506,15 @@ func validateRigor(p string, mode rigor.Rigor, areas []rigor.Area) []Problem {
 	// reason is the one its writer has to fix.
 	seen := make(map[string]int, len(areas))
 	for i, a := range areas {
-		if msg := a.Validate(); msg != "" {
+		msg := a.Validate()
+		if project {
+			msg = a.ValidateProject()
+		}
+		if msg != "" {
 			ps = append(ps, Problem{Path: fmt.Sprintf("%s.areas[%d]", p, i), Message: msg})
+			continue
+		}
+		if a.Match == "" {
 			continue
 		}
 		if j, dup := seen[a.Match]; dup {
@@ -487,6 +522,38 @@ func validateRigor(p string, mode rigor.Rigor, areas []rigor.Area) []Problem {
 			continue
 		}
 		seen[a.Match] = i
+	}
+	if project {
+		ps = append(ps, validateRigorRepos(p+".repos", repos)...)
+	}
+	return ps
+}
+
+// validateRigorRepos reports defaults.rigor.repos' problems, each at
+// p.<repo>: the repository name, and the level it is given.
+//
+// The name is checked for its shape only (rigor.Member.Validate's rule,
+// reused so one rule states what a repository name looks like): the project
+// layer cannot see the published allow_repos, so whether the policy admits
+// the repository is a question only `fugaro doctor` can ask, and it warns
+// about a name the policy does not admit. A layer file is held to what a
+// layer file can be held to.
+//
+// The keys are sorted so the problems read in one order whatever order the
+// document wrote them in — the map has no order of its own, and a refusal
+// that moved between two runs would read as two different mistakes.
+func validateRigorRepos(p string, repos map[string]rigor.Rigor) []Problem {
+	if len(repos) > rigor.MaxRepoLevels {
+		return []Problem{{Path: p, Message: fmt.Sprintf("must hold at most %d repositories", rigor.MaxRepoLevels)}}
+	}
+	var ps []Problem
+	for _, name := range slices.Sorted(maps.Keys(repos)) {
+		switch lvl := repos[name]; {
+		case rigor.Member{Repo: name}.Validate() != "":
+			ps = append(ps, Problem{Path: p + "." + name, Message: "must be a repository name, owner/name: letters, digits, dot, dash and underscore in each of two segments, and no . or .. segment"})
+		case !rigor.Known(lvl):
+			ps = append(ps, Problem{Path: p + "." + name, Message: "must be one of " + rigor.RigorList()})
+		}
 	}
 	return ps
 }

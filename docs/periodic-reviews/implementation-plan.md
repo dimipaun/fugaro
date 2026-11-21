@@ -418,7 +418,7 @@ commit.
   a per-slug listing.
 
   **Neither half alone is enough, and that is the finding the round before this one fixed.** A
-  condition on `resource.name` **grants no listing** (`docs/design/bucket-iam.md` §2.3; live check 7
+  condition on `resource.name` **grants no listing** (`docs/bucket-iam/spec.md` §2.3; live check 7
   recorded a 403 on listing `runs/` for a job account), and a condition carrying only
   `objectListPrefix` **cannot read an object** — so a grant with one half and not the other is a job
   that fails on its first run, and an implementer who hits that 403 is one step from the bucket-wide
@@ -434,7 +434,7 @@ commit.
   nothing else. **The launcher side is a read, not a second writer:** a launcher's unconditioned
   bucket-wide `objectViewer` already covers the new prefix, so a person can read a stored report and
   **nothing new is granted to a person** — the launcher's own write condition
-  (`gcp.LauncherBucketCondition`, `docs/design/bucket-iam.md` §4, H5) covers `runs/` and `tokens/`
+  (`gcp.LauncherBucketCondition`, `docs/bucket-iam/spec.md` §4, H5) covers `runs/` and `tokens/`
   and stays as it is: `reports/` is **not** added to it, because the job is the one writer (ruling 3).
   Operators keep the `objectAdmin` they hold bucket-wide. **The guard's own kind comes with it**:
   `internal/infra/tf/cover.go` gives each project account a principal kind of its own
@@ -786,7 +786,7 @@ R14 and R15 are the designation it reads and R16 is the half that hands the byte
 - **SEC:** the store's read is the launcher's (R16) and **the run's own account reaches `runs/` and
   nothing else** — the step writes into the checkout the run already has and pushes on the branch it
   already pushes, so **no new credential and no new grant**, and R12's IAM is unchanged by this task
-  (D2754; `docs/design/bucket-iam.md` §3). What it publishes is the store's own document, and how far
+  (D2754; `docs/bucket-iam/spec.md` §3). What it publishes is the store's own document, and how far
   that may go is D2753's answer.
 - **Depends on:** **R11** (what it stored — there is nothing to commit before the writer exists) and
   **R14** (the designation it reads). **Reviewer:** opus + mandatory independent review (the only path
@@ -916,7 +916,7 @@ this one.
 The half of the transfer that is the launcher's: `fugaro run --commit-reports` reads `reports/`
 **with the starting person's own launcher account** and passes the objects in with the task, so **no
 job account ever reads `reports/`** and the reports job stays its one writer (ruling 3,
-`docs/design/bucket-iam.md` §3). R9 is the step that receives them.
+`docs/bucket-iam/spec.md` §3). R9 is the step that receives them.
 
 - **The flag.** `--commit-reports` on `fugaro run` (`internal/cli/run.go`, beside `--attach` and in
   `taskFlags`), accepted only when the recipe is `commit-reports` and **refused the other way too**:
@@ -1015,7 +1015,7 @@ writing locally for a person who wants the files in a checkout.
 - **SEC, corrected this round.** The earlier line said this command's bucket access was "the same read
   and write `runs ls` and `runs digest` already do" — **it is not, in either direction.** `runs
   digest` writes only into the checkout today, and a launcher's write grant is `runs/` and `tokens/`
-  (`gcp.LauncherBucketCondition`, `docs/design/bucket-iam.md` §4, H5): a launcher writing `reports/`
+  (`gcp.LauncherBucketCondition`, `docs/bucket-iam/spec.md` §4, H5): a launcher writing `reports/`
   gets a 403, and **granting it would make every developer a second writer of `reports/`, which is
   exactly what ruling 3 refuses**. So the stored **read** is the launcher's (and needs nothing new —
   their viewer already covers the prefix), and the **write** into `reports/` is **Open items**: the
@@ -1156,7 +1156,7 @@ symbol it names was read against `main` at `56c91f66` on 2026-11-07.
 | Work | Its cut, which stands | Where it is written |
 | --- | --- | --- |
 | **the reports job** (the rulings E1–E8) | **R12, R13, R7, R11, R8, R10, R9, R14, R15, R16** — **R9 unblocked on 2026-11-17** (E6 answered, [reconciliation.md](reconciliation.md) §7) — and **R4** (the fifth rule) and the shipped loop (**R0–R3, R6**) as its prerequisites | this file, Part I |
-| **the failures report** (`docs/design/failure-classes.md` §6) | **FC1–FC8**, with that design's own D1–D9, O1–O6, levels L0–L5, critical path and shared-files table | `docs/design/failure-classes.md` §10 |
+| **the failures report** (`docs/failure-classes/design.md` §6) | **FC1–FC8**, with that design's own D1–D9, O1–O6, levels L0–L5, critical path and shared-files table | `docs/failure-classes/design.md` §10 |
 
 **What this part adds is the three things neither document can state alone**, one section each:
 
@@ -1410,7 +1410,7 @@ from being a formality:
 **FC2 — one writer for the terminal status and class (slice F).** The design, `### FC2`.
 - **Files (11, under the plan's twelve-file cap), the design's list:** `internal/runner/runner.go`,
   `gate.go`, `refused.go`, `followup.go`, `reviewmode.go`, `artifact.go`, `reviewartifact.go`,
-  `shadow.go`, `failure_class_internal_test.go`, **`docs/design/failure-classes.md`** (§1's census
+  `shadow.go`, `failure_class_internal_test.go`, **`docs/failure-classes/design.md`** (§1's census
   sentence is rewritten) and `internal/cli/docs_pr_state_test.go`.
 - **Interfaces:** `func (r *run) recordEnd(status runstore.Status, outcome runstore.Outcome, class
   failure.Class, reason string)` — the one writer the thirty-six statements become. **By D1433's
@@ -1856,7 +1856,7 @@ design.
 job's read grant lists the FOUR prefixes the reports job lists — `runs/<slug>/`, `reports/<slug>/`,
 `reports/<slug>/<YYYY>/` and `reports/<YYYY>/` — reads one `runs/` object, and is refused the
 root listing and a `tokens/` read and a `tokens/` or `cache/` listing — which is what settles
-`storage.googleapis.com/objectListPrefix`'s own value form, the attribute `docs/design/bucket-iam.md`
+`storage.googleapis.com/objectListPrefix`'s own value form, the attribute `docs/bucket-iam/spec.md`
 records as unverified (V7). **The third run (2026-11-13, exit `1`) settled the value: the attribute
 carries the request's own RELATIVE prefix (`runs/`, `reports/`) — under the full-path form EVERY
 listing was refused — and the bare `reports/` prefix it was refused (with the binding read back as
@@ -1924,7 +1924,7 @@ task that touches a pinned document. Four additions, and they are the union's:
 - **`GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1` after FC1, FC2, R13, R14, FC8 and the
   release
   entry** — `-run Docs` reaches every `TestDocs…` in `internal/cli`, and those read
-  `docs/design/failure-classes.md` (`TestDocsFailureClassDesignPinsTheVocabulary`,
+  `docs/failure-classes/design.md` (`TestDocsFailureClassDesignPinsTheVocabulary`,
   `TestDocsFailureClassCensusMatchesTheRunner`, `TestDocsFailureClassDesignCitationsResolve`),
   `docs/design/v1.md`, `console/docs/json-contract.md`, `docs/project-layer.md` and
   `docs/config-management/**`. **FC1 and FC2

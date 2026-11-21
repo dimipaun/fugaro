@@ -42,3 +42,7 @@ Edition) and the credentials service is part of the Core. The owner ruled this o
 
 Owner ruling of 2026-10-29: the licensing key-minting service belongs under `ee/` (task note E4.1),
 its deploy is owner-run, and it is deferred with the key work.
+
+**Also in this folder** (moved here on 2026-11-21 from `docs/design/ee-boundary-moves.md`):
+
+- [boundary-moves.md](boundary-moves.md)

@@ -21,7 +21,7 @@ locals {
   # installation never meant to route. A test pins it.
   fugaro_cloud_run_logs = "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\""
 
-  # The Batch arm (design docs/design/compute-backend.md §1.5, §8.1 task 4):
+  # The Batch arm (design docs/compute-backend/spec.md §1.5, §8.1 task 4):
   # a Batch job's lines carry resource.type="batch.googleapis.com/Job", and
   # its Job.labels reach the entry it generates, so the installation's
   # fugaro=managed marker selects them the same way. ADDITIVE and inert for a

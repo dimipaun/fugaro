@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -23,7 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
-// The project layer (docs/design/layered-config.md): one object per project
+// The project layer (docs/layered-config/spec.md): one object per project
 // in the runs bucket, published by fugaro config publish, holding the
 // defaults and the workflow profiles of every repository of the project.
 const (
@@ -128,7 +129,7 @@ type ProjectLayer struct {
 // are the same two a LayerAnchor is built from. Nothing but a file that
 // names both of the layer's own applies: a file that writes neither, or
 // one of them, keeps the layer's rows out of what a run resolves
-// (docs/design/layered-config.md §8).
+// (docs/layered-config/spec.md §8).
 //
 // It is the one spelling of the rule, so that no reader can report a
 // layer's rows in force on a file a run would resolve without them: the
@@ -320,6 +321,32 @@ func (l *ProjectLayer) SetsRigorLevel() bool {
 	return rigorAreaLevelWritten(d["rigor"])
 }
 
+// SetsRigorMembers reports whether the layer's text writes what LD4 adds to
+// its rigor block: a `members:` key of one of its defaults.rigor.areas rules,
+// or a key of the per-repository `defaults.rigor.repos` map beside them, at any
+// value. It is SetsRigorLevel's question asked of the two keys that ship with
+// the same release, and it is read from the tree for that method's reason:
+// rigor.Area.UnmarshalYAML folds `members` into the parsed rule, so the parsed
+// areas cannot say whether the key was written, while a runner older than
+// rigorMembersSince (internal/cli, the constant its gates judge the job image
+// against) refuses it as a field it does not know, in a layer it decodes with
+// KnownFields — and both keys reach every repository of the project at once,
+// because the layer is.
+//
+// The map's empty spelling counts, as it does for SetsJobs: `repos: {}` is a
+// line an older runner's decoder refuses exactly as a populated one, and the
+// parsed map cannot tell the two apart. An area's empty members list does not
+// reach this question: an area that names no member is refused at load
+// (Area.ValidateProject), so a layer a gate ever sees writes members with a
+// repository in it or writes no members at all.
+func (l *ProjectLayer) SetsRigorMembers() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	return rigorMembersWritten(d["rigor"])
+}
+
 // SetsLevelsNoneModel reports whether the layer's text names a review level's
 // model with the literal none (NoneModel), the level's own switch written the
 // other way. It reads the tree and not the parsed defaults.agent.levels, which
@@ -436,6 +463,25 @@ func (l *ProjectLayer) SetsStopFraction() bool {
 	return ok
 }
 
+// SetsWorkspaceBeat reports whether the layer's text writes
+// defaults.agent.workspace_beat, at any value: the layer's half of the
+// keep-warm beat's switch, judged as the key being written for
+// SetsStopFraction's reason — a runner before workspaceBeatSince
+// (internal/cli) decodes the layer with KnownFields and refuses the key
+// whatever it says, and a layer writing it `true`, the default, is the same
+// line to that decoder as one writing `false`. It is what the gates judge the
+// job images against, beside the repository's half (setsWorkspaceBeat), and it
+// is the layer's because that refusal reaches every repository of the project.
+func (l *ProjectLayer) SetsWorkspaceBeat() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	a, _ := d["agent"].(map[string]any)
+	_, ok := a["workspace_beat"]
+	return ok
+}
+
 // SetsDefault reports whether the layer's text writes a fugaro.yaml key under
 // defaults:, at any value — its own, or the nearest ancestor the text writes,
 // because a list is one key (Resolution.Sources' own rule: rigor.areas is set
@@ -485,12 +531,43 @@ func listUnderLeaf(v any) bool {
 	return ok && n.Kind != yaml.ScalarNode
 }
 
-// LayerRigor is defaults.rigor: the same two keys the repository's own
-// rigor: block carries, because either layer may set either of them
-// (docs/project-layer.md §5).
+// LayerRigor is defaults.rigor: default and areas are the two keys the
+// repository's own rigor: block carries, because either layer may set either
+// of them (docs/project-layer.md §5), and repos is the project layer's alone:
+// the level one repository of the project runs at, which only a layer that
+// speaks for more than one repository can state.
 type LayerRigor struct {
-	Default rigor.Rigor  `yaml:"default"`
-	Areas   []rigor.Area `yaml:"areas"`
+	Default rigor.Rigor            `yaml:"default"`
+	Areas   []rigor.Area           `yaml:"areas"`
+	Repos   map[string]rigor.Rigor `yaml:"repos"`
+}
+
+// RigorRepoNamesOf are the repository names l's rigor block states, sorted and
+// without repeats: every member of every area and every key of the per-repo
+// map (LD4). It is what a reader that judges those names against something
+// outside the layer needs — `fugaro doctor` asks the published allow_repos
+// whether it admits them — and nothing about the names' shape is checked here:
+// the layer's own validation refuses a name that is not owner/name, and
+// whether the name is a repository of the project is the policy's answer, not
+// a file's.
+func RigorRepoNamesOf(l *ProjectLayer) []string {
+	if l == nil {
+		return nil
+	}
+	r := l.Defaults.Rigor
+	seen := make(map[string]bool, len(r.Repos))
+	for name := range r.Repos {
+		seen[name] = true
+	}
+	for _, a := range r.Areas {
+		for _, m := range a.Members {
+			seen[m.Repo] = true
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // LayerGit is defaults.git.
@@ -515,6 +592,13 @@ type LayerAgent struct {
 	MaxBudgetUSD    float64    `yaml:"max_budget_usd"`
 	FirstLineReview string     `yaml:"first_line_review"`
 	FirstLineRounds int        `yaml:"first_line_rounds"`
+	// WorkspaceBeat is the project's answer to whether a run keeps its
+	// workspace's credentials service warm (R10, D2985); a repository's own
+	// value replaces it. Unset means on (config.Agent.WorkspaceBeatOn).
+	// Fugaro before 0.27.0 refuses the key (strict decoder), in every
+	// repository of the project, which is what the launch's own gate judges
+	// the job image on (internal/cli's workspaceBeatSince).
+	WorkspaceBeat *bool `yaml:"workspace_beat"`
 	// Levels is the project-wide per-level review block (L1.3, D722): the
 	// same config.ReviewLevels a repository's agent.levels and a task's
 	// review_levels carry. The merge is per key (resolve.go's overlay), so
@@ -589,7 +673,7 @@ var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "pr
 // layerReserved are keys a later release defines; this one refuses them
 // with a message saying so.
 var layerReserved = map[string]string{
-	"environments": "the image catalog (named environments) arrives with the single base image (docs/design/layered-config.md, Phase 2); this release refuses it",
+	"environments": "the image catalog (named environments) arrives with the single base image (docs/layered-config/spec.md, Phase 2); this release refuses it",
 	"extends":      "profiles do not extend each other in this release",
 }
 
@@ -1014,7 +1098,7 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	if badUSD(ag.MaxBudgetUSD) {
 		add("defaults.agent.max_budget_usd", "must be a finite number, not negative")
 	}
-	ps = append(ps, validateRigor("defaults.rigor", d.Rigor.Default, d.Rigor.Areas)...)
+	ps = append(ps, validateRigor("defaults.rigor", d.Rigor.Default, d.Rigor.Areas, d.Rigor.Repos, true)...)
 	ps = append(ps, validateGovernance("governance", l.Governance)...)
 	ps = append(ps, validateAB("ab", l.AB)...)
 	if l.Security != nil {

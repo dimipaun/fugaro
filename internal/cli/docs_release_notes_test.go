@@ -604,7 +604,7 @@ const releaseFilesDir = "../../docs/releases"
 // the file has to exist and the link has to still be in it — so an exemption
 // that outlives its link fails instead of quietly widening.
 var publishedReleaseLinks = map[string][]string{
-	"v0.8.6.md": {"[design](../design/managed-projects.md)"},
+	"v0.8.6.md": {"[design](../managed-projects/spec.md)"},
 }
 
 // TestReleaseFilesCarryNoMarkdownLinks holds every release file to the

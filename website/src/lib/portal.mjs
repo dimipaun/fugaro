@@ -1,7 +1,7 @@
 // website/src/lib/portal.mjs: the one host this site sends a reader to for a licence key.
 //
 // A Fugaro licence key is issued by the signed-in portal (the portal plan's P9.3; the design
-// `docs/design/key-signing-service.md`), and the portal is Fugaro's own web app on the site's own
+// `docs/key-signing-service/spec.md`), and the portal is Fugaro's own web app on the site's own
 // domain with `app.` in front of it — the same pairing the licence service's
 // own code derives when it sends an invite, where the intake host is `keys.` and the portal is
 // `app.` (`ee/keyservice/invites.go`). The site no longer carries a form of its own: the key

@@ -75,6 +75,7 @@
             },
             "adversarial_rounds": { "type": "integer", "minimum": 1, "maximum": 10, "description": "Review level 3's round count for every repository of the project (L1.3, D726): 1 to 10, and absent leaves the resolved rigor mode's own senior row (rigor.AdversarialDefault). A repository's own agent.adversarial_rounds replaces it. Needs fugaro 0.16.0." },
             "review_stop_fraction": { "type": "number", "minimum": 0, "maximum": 1, "description": "The share of a run's total time budget (workflows.<name>.timeouts.total) after which the review loop starts no further round, for every repository of the project; the owner's ruling of 2026-11-08. 0 or a share greater than 0 and at most 1: 0 asks for the default, 0.8 (config.DefaultReviewStopFraction), which is the state a layer writing no key leaves, since the key is judged as written rather than by the value it holds. A repository's own agent.review_stop_fraction replaces it. Needs fugaro 0.22.0: Fugaro before that release refuses the key, in every repository of the project." },
+            "workspace_beat": { "type": "boolean", "description": "Whether every repository's runs keep their workspace's credentials service warm (R10, D2985): the run beats the workspace's keep-warm route (credsvc.WorkspaceKeepWarmPath) at the slip beat's cadence once it has routed a kind of credential there, so a service scaled to zero between the calls the run pays for is warm when the next one arrives. The beat carries the job's own identity and no slip id and no claim secret (F33). Absent is on, and a written false turns the beat off for every repository of the project. A repository's own agent.workspace_beat replaces it, and neither is a widening: a run that sends no beat is slower at a call and never less correct (config.Agent.WorkspaceBeatOn). Needs fugaro 0.27.0: Fugaro before that release refuses the key, in every repository of the project (internal/cli's workspaceBeatSince, ProjectLayer.SetsWorkspaceBeat)." },
             "recipe": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" }
           }
         },
@@ -90,14 +91,20 @@
         "rigor": {
           "type": "object",
           "additionalProperties": false,
-          "description": "The rigor level every repository of this project runs at, and the area rules in effect for all of them (docs/rigor-modes/spec.md D20). Both keys may also be set in a repository's own rigor: block, and the two areas lists are a union, not a replacement: a repository's own rules never switch the project's off. Fugaro before 0.11.0 refuses the key, in every repository of the project.",
+          "description": "The rigor level every repository of this project runs at, the levels of the repositories it names one by one, and the areas in effect for them (docs/rigor-modes/spec.md D20 as amended). An area of the project layer names the repositories it is made of (LD4), and the repositories own paths inside them; a repository's own rigor: block may set its own level and its own path rules beside the project's, and where it does the repository's value wins, so a project that wants a level no repository may lower declares a floor instead (D20 as amended, D8). Fugaro before 0.11.0 refuses the key, in every repository of the project.",
           "properties": {
             "default": { "$ref": "#/$defs/rigorLevel", "description": "The level a run of any repository of this project resolves to when the repository sets none. Needs fugaro 0.11.0." },
             "areas": {
               "type": ["array", "null"],
               "maxItems": 100,
-              "description": "The project's named path rules, in effect beside each repository's own. Needs fugaro 0.11.0.",
+              "description": "The project's named areas, in effect beside each repository's own path rules. An area of this layer names what it is made of with members, or, in the shape that shipped before LD4, a doublestar glob in effect for every repository of the project; a member is a whole repository or a repository with the paths of it that are in the area. A repository's own path rules are a different list, in effect at the same time. Needs fugaro 0.11.0.",
               "items": { "$ref": "#/$defs/rigorArea" }
+            },
+            "repos": {
+              "type": ["object", "null"],
+              "propertyNames": { "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", "maxLength": 200 },
+              "additionalProperties": { "$ref": "#/$defs/rigorLevel" },
+              "description": "The level one repository of the project runs at, keyed by owner/name, for repositories this layer names one by one instead of an area. A repository's own rigor.default still wins over it (D20 as amended). The name is only checked for shape here, like the layer's own decoder: the published allow_repos decides whether a name is a repository of this project, and fugaro doctor warns about a name the published policy does not admit. Needs fugaro 0.27.0."
             }
           }
         },
@@ -119,7 +126,7 @@
     "default_profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" },
     "claude_models": {
       "type": "object",
-      "description": "Explicit Claude model IDs a route the installation config defines also serves (design/mixed-credentials.md §4, docs/project-layer.md §6): provider name -> one explicit \"anthropic/<id>\" per entry, never a pattern and never a class. A name the installation config does not define, an empty list, or an entry overlapping another route's pattern is refused by `fugaro validate` and `fugaro config publish`, the surfaces that hold the installation's whole route table. A run does not refuse it: a claim naming a route the job's own table does not carry (a repository the provider's allow_data_to does not list has no such route in its job) is dropped, so the claim enables nothing and a pin on that ID is refused as a model no provider serves, before any call. Each entry is a route's own model entry once merged, so it is judged by the route-entry rule too: at most 100 characters (config.CheckModelPattern), the same bound the gateway's routes apply.",
+      "description": "Explicit Claude model IDs a route the installation config defines also serves (docs/mixed-credentials/spec.md §4, docs/project-layer.md §6): provider name -> one explicit \"anthropic/<id>\" per entry, never a pattern and never a class. A name the installation config does not define, an empty list, or an entry overlapping another route's pattern is refused by `fugaro validate` and `fugaro config publish`, the surfaces that hold the installation's whole route table. A run does not refuse it: a claim naming a route the job's own table does not carry (a repository the provider's allow_data_to does not list has no such route in its job) is dropped, so the claim enables nothing and a pin on that ID is refused as a model no provider serves, before any call. Each entry is a route's own model entry once merged, so it is judged by the route-entry rule too: at most 100 characters (config.CheckModelPattern), the same bound the gateway's routes apply.",
       "propertyNames": { "pattern": "^[a-z][a-z0-9-]{0,19}$" },
       "additionalProperties": {
         "type": "array",
@@ -303,14 +310,38 @@
     "rigorArea": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "match"],
-      "anyOf": [{ "required": ["level"] }, { "required": ["mode"] }],
-      "description": "One rigor.areas rule: a name to print, a doublestar path glob relative to the repository root, and the level it sets. The same shape as fugaro.schema.json's. The level's key was `mode:` until LD2 renamed the axis, and that spelling is still read: v0.11.0 shipped rigor.areas with it, and the `fugaro rigor set --area` of that release wrote it into this file, so a layer nobody has rewritten loads, with the decoder preferring `level:` where a rule carries both. Write `level:`.",
+      "required": ["name"],
+      "allOf": [
+        { "anyOf": [{ "required": ["level"] }, { "required": ["mode"] }] },
+        { "anyOf": [{ "required": ["match"] }, { "required": ["members"] }] }
+      ],
+      "description": "One rule of the project layer's defaults.rigor.areas: a name to print, what the area is made of, and the level it sets. An area of this layer is a named part of the project (LD4, D20 as amended), made of members — each a repository of the project, or a repository with the paths of it that are in the area — and one repository may be a member of two areas on disjoint paths, which is what semantic areas are for. A rule that writes `match:` instead is the shape that shipped before LD4: a doublestar glob inside one repository, which a published layer still carries and this one still loads. A repository's own rigor.areas rules are the same shape as this one minus `members` (fugaro.schema.json), because a repository's own rule is already about that repository's paths. The level's key was `mode:` until LD2 renamed the axis, and that spelling is still read: v0.11.0 shipped rigor.areas with it, and the `fugaro rigor set --area` of that release wrote it into this file, so a layer nobody has rewritten loads, with the decoder preferring `level:` where a rule carries both. Write `level:`.",
       "properties": {
         "name": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$", "description": "The rule's name, which the run record, the pull request body and fugaro watch print when they say which rule decided. 1 to 40 characters of letters, digits, space, dash, underscore and dot, starting with a letter or a digit." },
-        "match": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^/\\s]", "not": { "pattern": "(^|/)\\.\\.(/|$)" }, "description": "A doublestar path glob relative to the repository root. Not empty, not absolute, no \"..\" component, and a pattern doublestar validates." },
+        "match": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^/\\s]", "not": { "pattern": "(^|/)\\.\\.(/|$)" }, "description": "A doublestar path glob relative to the repository root, the shape a project area had before LD4: the area is then in effect for that glob in every repository of the project. Not empty, not absolute, no \"..\" component, and a pattern doublestar validates." },
+        "members": {
+          "type": ["array", "null"],
+          "maxItems": 100,
+          "description": "What the area of a project layer is made of, each member a repository or a repository with paths (LD4). At least one member, and a rule with neither members nor a match says nothing about which paths it is for. Needs fugaro 0.27.0.",
+          "items": { "$ref": "#/$defs/rigorMember" }
+        },
         "level": { "$ref": "#/$defs/rigorLevel", "description": "The level this rule sets for the paths it matches. A rule that writes it and the old `mode:` is read as this one says." },
         "mode": { "$ref": "#/$defs/rigorLevel", "description": "The key the level was written under before LD2 renamed the axis, read as the rule's level when the rule writes no `level:`. Write `level:`." }
+      }
+    },
+    "rigorMember": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo"],
+      "description": "One member of a project area: a repository of the project, named owner/name (LD4). A member with paths is only in the area for those paths of that repository; a member without them is in it whole. Every path must stay inside its own repository: a member is a part of it, so \"..\" and an absolute path are both refused. The repository is checked for shape here, as the layer's own decoder checks it: whether the name is an admitted repository of the project is the published allow_repos' answer, which fugaro doctor warns about. Needs fugaro 0.27.0.",
+      "properties": {
+        "repo": { "type": "string", "minLength": 3, "maxLength": 200, "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", "description": "The repository this member is of, as owner/name — letters, digits, dot, dash and underscore in each of two segments." },
+        "paths": {
+          "type": ["array", "null"],
+          "maxItems": 100,
+          "description": "The paths of that repository which are in the area, each a doublestar glob relative to the repository root. Without them the whole repository is in the area.",
+          "items": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^/\\s]", "not": { "pattern": "(^|/)\\.\\.(/|$)" }, "description": "A doublestar path glob relative to the member's own repository root. Not empty, not absolute, no \"..\" component — a member is a part of its repository, so its paths stay inside it — and a pattern doublestar validates." }
+        }
       }
     },
     "duration": { "type": "string", "minLength": 2, "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$" },

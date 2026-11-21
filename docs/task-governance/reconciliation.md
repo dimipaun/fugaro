@@ -333,7 +333,7 @@ forces (F35–F38):
   Project jobs are the **default** for new deployments, so this is the normal case, not the
   exception; see O7 for forged figures. No
   new grant. **Listing** the prefix is most likely refused (a list is a bucket-level call; the
-  condition matches object names; `docs/design/bucket-iam.md` V7 leaves a prefix-limited list
+  condition matches object names; `docs/bucket-iam/spec.md` V7 leaves a prefix-limited list
   unverified): U8. The plan never lists in the job: the launcher, which already lists runs for
   `fugaro runs ls` with the person's credentials, writes the run IDs into the task, and the step
   reads each record by name (plan T3.6, T3.2). The job has no Firestore access (F38), so the
@@ -392,7 +392,7 @@ data every later governance step (G§7.3–7.9) and self-calibration read. G§7.
   (plan T7.1). D332's "stop on fan-out" is applied to untiered runs too, with a default of 5
   sub-agents per stage (3 on trivial and small tiers), so the spec's own incident stops.
 - **O7 — Forged figures on project jobs.** Project jobs are the default for new deployments
-  (`docs/plans/2026-10-14-project-centric.md`: the per-repository path is "unreachable for new
+  (`docs/project-centric/implementation-plan.md`: the per-repository path is "unreachable for new
   deployments"; `docs/git-providers.md` for Bitbucket), and on a project job any run can write a
   record under another repository's prefix (`SECURITY.md`; the reach the owner accepted on
   2026-10-17). The digest renders no text from a record (plan G1), but a planted record's **numbers**
@@ -432,7 +432,7 @@ data every later governance step (G§7.3–7.9) and self-calibration read. G§7.
 - **U6** — Whether a required checkbox on an issue form is a sufficient licence grant (D328): the
   owner's, and counsel's, to confirm.
 - **U8** — Whether the conditional `objectUser` grant lets a job **list** `runs/<slug>/` (a list is
-  a bucket-level call, the runner lists nothing today, and `docs/design/bucket-iam.md` V7 leaves a
+  a bucket-level call, the runner lists nothing today, and `docs/bucket-iam/spec.md` V7 leaves a
   prefix-limited list unverified). Likely refused; the plan does not need it (the launcher's
   manifest), and Check 135 records the answer.
 - **U7** — The owner's private cost-lessons log was not readable; findings rely on `docs/`, the

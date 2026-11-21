@@ -915,7 +915,7 @@ func TestDoctorBatchRefusesAMintingInstallation(t *testing.T) {
 			if c.Severity != "" {
 				t.Errorf("the pair has severity %q, want doctor's own hard failure: an installation that selects the backend is refused for it", c.Severity)
 			}
-			for _, want := range []string{"mints budget tokens", "docs/design/budget-token-channel.md", "§1.6"} {
+			for _, want := range []string{"mints budget tokens", "docs/budget-token-channel/spec.md", "§1.6"} {
 				if !strings.Contains(c.Problem, want) {
 					t.Errorf("the finding does not name %q: %s", want, c.Problem)
 				}
@@ -1204,7 +1204,7 @@ func failingChecks(o doctorOutput) []doctorCheck {
 // than `fugaro-ghcr` -- the one `internal/cli`'s ParseShared refuses by name
 // and by that name alone, because the reader has no repository list to tell the
 // project's remote repositories from the ones this installation's builds push
-// to (docs/design/shared-config.md §5, TestParseSharedLeavesAnotherPullThroughRepository).
+// to (docs/shared-config/spec.md §5, TestParseSharedLeavesAnotherPullThroughRepository).
 //
 // The shape this task took is the second of the two the plan's vocabulary
 // allows: the project's remote repositories are refused AS A CLASS, and the
@@ -1343,7 +1343,7 @@ func TestDoctorBatchRefusesASecretTheInstallationDidNotCreate(t *testing.T) {
 // TestDoctorBatchNamesTheArtifactBoundary: Global Constraint 13 asks doctor to
 // name the boundary an artifact-producing run meets on this backend, and this
 // is the check that does it. Informational, never a warning: it describes the
-// plan's own decision (docs/design/artifact-runs.md §8.5 and D11), not a fault
+// plan's own decision (docs/artifact-runs/spec.md §8.5 and D11), not a fault
 // an installation can fix, and a warning no run of fugaro update could clear
 // would make Task 10's gate unsatisfiable -- which is why the severity matters
 // here and not only the text.
@@ -1362,7 +1362,7 @@ func TestDoctorBatchNamesTheArtifactBoundary(t *testing.T) {
 	if c.Severity != "info" {
 		t.Errorf("the boundary's check has severity %q, want info: it is a decision and not a fault, and a warning would fail doctor --strict for every Batch installation", c.Severity)
 	}
-	for _, want := range []string{"artifact-runs.md", "§8.5", "D11", "cloud-run"} {
+	for _, want := range []string{"artifact-runs/spec.md", "§8.5", "D11", "cloud-run"} {
 		if !strings.Contains(c.Problem+c.Fix, want) {
 			t.Errorf("the boundary's text does not name %q: %s / %s", want, c.Problem, c.Fix)
 		}

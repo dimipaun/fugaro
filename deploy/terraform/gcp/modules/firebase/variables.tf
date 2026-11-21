@@ -12,6 +12,26 @@ variable "project" {
   }
 }
 
+# Where a NEW Realtime Database instance is created: the installation's region
+# mapped to the nearest of the three locations Google offers (internal/place,
+# D3089), computed by fugaro update and written into the tfvars. It is an
+# input rather than a constant because the mapping's answer differs by
+# installation; the three values are the whole of what Google offers, so
+# anything else is a mistyped tfvars and is refused here rather than by the
+# provider. An instance that already exists ignores this: the resource's
+# region is a creation-time field and the module's ignore_changes keeps the one
+# it has (F8, R4), which is what makes an installation whose mapping has since
+# changed plan no change at all.
+variable "database_region" {
+  description = "The Realtime Database location for a NEW default instance: us-central1, europe-west1 or asia-southeast1, the mapping's answer for the installation's region. An instance that already exists keeps its own location."
+  type        = string
+
+  validation {
+    condition     = contains(["us-central1", "europe-west1", "asia-southeast1"], var.database_region)
+    error_message = "database_region must be one of the three Realtime Database locations: us-central1, europe-west1 or asia-southeast1."
+  }
+}
+
 variable "fugaro_project" {
   description = "The Fugaro project's name. It is in the signer's description; the RTDB's /fugaro/project holds it too, written by fugaro update."
   type        = string

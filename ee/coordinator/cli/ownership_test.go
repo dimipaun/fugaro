@@ -20,7 +20,7 @@ import (
 )
 
 // ownership_test.go is slice 2 of the owner's ruling of 2026-10-31
-// (docs/design/upgrade.md, "Every writer into that database"): the
+// (docs/upgrade/spec.md, "Every writer into that database"): the
 // coordinator's two writers — `fugaro coordinator report` and the launch
 // declarer — write into the same database the budget commands write into, and
 // they ask the ONE ownership question every writer there asks

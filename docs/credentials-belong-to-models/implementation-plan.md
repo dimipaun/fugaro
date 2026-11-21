@@ -751,13 +751,13 @@ documents:** CM24 to CM27.
 - Reviewer tier: standard.
 
 ### CM26: the accounts documents, the README and the release notes
-- Acceptance: `docs/project-claude-accounts.md`, `docs/design/mixed-credentials.md`,
-  `docs/design/agent-env.md`, `docs/project-layer.md` and `README.md` say the same; the release's
+- Acceptance: `docs/project-claude-accounts.md`, `docs/mixed-credentials/spec.md`,
+  `docs/agent-env/spec.md`, `docs/project-layer.md` and `README.md` say the same; the release's
   notes have `### For operators`: run `fugaro update`, and what it will say (the access each
   craft resolves to, the retired keys offered as a diff, the repositories whose subscription is
   not yet served); the website's summary line is added.
-- Files: `docs/project-claude-accounts.md`, `docs/design/mixed-credentials.md`,
-  `docs/design/agent-env.md`, `docs/design/project-secrets.md`, `docs/design/v1.md`,
+- Files: `docs/project-claude-accounts.md`, `docs/mixed-credentials/spec.md`,
+  `docs/agent-env/spec.md`, `docs/project-secrets/spec.md`, `docs/design/v1.md`,
   `docs/release.md`, `docs/project-layer.md`, `README.md`, the release's notes under
   `docs/releases/`, `website/data/release-summaries.yaml`, and the tests
   `docs_mixed_credentials_test.go`, `docs_usage_limit_switch_test.go`,

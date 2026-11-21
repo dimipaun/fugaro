@@ -439,7 +439,7 @@ now decided:
 
 - **The listing half, the full condition it needs, and the check that proves it.** Reading the run
   records is not one grant: a condition on `resource.name` **grants no listing**
-  (`docs/design/bucket-iam.md` §2.3, live check 7's 403 on listing `runs/`;
+  (`docs/bucket-iam/spec.md` §2.3, live check 7's 403 on listing `runs/`;
   `docs/task-governance/reconciliation.md` already flags the same doubt), so the account needs
   `objectViewer` on `runs/` **through the prefix-limited listing mechanism**
   (`storage.googleapis.com/objectListPrefix`, unverified — bucket-iam §4, V7). **And the reverse
@@ -479,7 +479,7 @@ now decided:
   `roles/storage.objectUser` on `reports/`; a person holds **read only** — which their existing
   unconditioned bucket-wide `objectViewer` already gives, so nothing new is granted to a person and
   **no launcher write grant on `reports/` is added** — the launcher's write condition
-  (`gcp.LauncherBucketCondition`) covers `runs/` and `tokens/` as it is (`docs/design/bucket-iam.md`
+  (`gcp.LauncherBucketCondition`) covers `runs/` and `tokens/` as it is (`docs/bucket-iam/spec.md`
   §4, H5), and `reports/` does not join it (a second writer is what this ruling refuses).
   **No other job account gets `reports/` either**: job accounts reach `runs/`, `cache/` and `locks/`,
   so the opt-in commit run (E5) reads the stored reports **under the starting person's launcher
@@ -644,7 +644,7 @@ left it as the recorded request, and this round does the same.
 ### 6.2 Findings F25–F34
 
 **F25. Exists: the failures report is designed and cut, in a document of its own.**
-`docs/design/failure-classes.md` carries the nineteen-value vocabulary (§3), the one writer (§4.1),
+`docs/failure-classes/design.md` carries the nineteen-value vocabulary (§3), the one writer (§4.1),
 the phrase table (§4.3), the legacy reader (§5), the report (§6), its decisions D1–D9 (§8), its open
 items O1–O6 (§9) and its tasks FC1–FC8 with levels, critical path and shared-files table (§10), and
 `internal/cli/docs_pr_state_test.go` pins the vocabulary, the census and the citations
@@ -818,7 +818,7 @@ can fire in the week the block first ships, and a class a build does not know co
 `unclassified`, the closed-cell rule a report's other tables keep. **D326**
 (`docs/task-governance/reconciliation.md`) is their idea, as it is every rule's: a fixed, documented
 rule over the periods' committed blocks, not a search — here read over a closed vocabulary of causes
-instead of over free text (`docs/design/failure-classes.md` §6.2, built by FC7 of
+instead of over free text (`docs/failure-classes/design.md` §6.2, built by FC7 of
 `docs/failure-classes/implementation-plan.md`).
 
 ## 7. The 2026-11-17 reconciliation: the designated repository, and R9 unblocked
@@ -848,7 +848,7 @@ recommendation, the alternative with its cost, and **the owner's dated answer**.
 | **D2751** | Who sets it, and where does the key live? | **The owner, in the published project layer only.** The key is `reports_commit`, a top-level member of the published policy node (`config/policy/shared`, `internal/projectpolicy.Policy`), with `repo` (required) and `dir` (optional, default `docs/fugaro-reviews-mirror`). The owner states it in the owner's local project config (the `binaries` carrier, version 8); `fugaro.yaml` has no such key, the launcher-writable project layer file refuses it by name, and **a repository cannot name it or widen it — the merge stays tighten-only** | A repository's own `fugaro.yaml` key, or a launcher-writable layer key: the run's own agent writes `fugaro.yaml`, so the subject of the rule would write the rule, and a launcher-writable target would let any launcher redirect every report of the project | Recommended -- owner 2026-11-17 (AskUserQuestion: all recommended) |
 | **D2752** | Which version does the node take? | **Version 10**, one shape-free step, `fugaro update` migrating the node in place (the `binaries` and `model_grades` lockstep, P8; §7.3 for the census and §7.2 for what the bump does and does not buy) | No bump: the member is a top-level key a version-9 reader lists in `UnknownKeys` and decodes past, so nothing refuses it and `fugaro update`'s own convergence is untested for it | Recommended -- owner 2026-11-17 (AskUserQuestion: all recommended) |
 | **D2753** | May the designated repository be public? | **Yes, and Fugaro refuses nothing on that ground.** The reports' docs say what a report contains — the period's figures, run costs, failing-test names and finding text, the run ids a flagged row is actionable by, stages and recipes — and what it never carries: no person, no address, no task text, no log line, no secret. A person choosing a public repository weighs a document this design names rather than a guess | A refusal below the owner's own layer (a private-only rule): it would refuse a repository the owner chose for reasons of his own, and the report's content is already a closed list | Recommended -- owner 2026-11-17 (AskUserQuestion: all recommended) |
-| **D2754** | How do the stored reports reach the run? | **The launcher hands the bytes in.** `fugaro run --commit-reports` reads `reports/` **with the starting person's own launcher account** and passes the objects in with the task; **no job account reads `reports/`** — the reports job is its one writer (ruling 3, `docs/design/bucket-iam.md` §3) | A read grant for the run's job account on `reports/`: it is the second writer ruling 3 refuses, and a job account holding it is a job account that could also write the store | Recommended -- owner 2026-11-17 (AskUserQuestion: all recommended) |
+| **D2754** | How do the stored reports reach the run? | **The launcher hands the bytes in.** `fugaro run --commit-reports` reads `reports/` **with the starting person's own launcher account** and passes the objects in with the task; **no job account reads `reports/`** — the reports job is its one writer (ruling 3, `docs/bucket-iam/spec.md` §3) | A read grant for the run's job account on `reports/`: it is the second writer ruling 3 refuses, and a job account holding it is a job account that could also write the store | Recommended -- owner 2026-11-17 (AskUserQuestion: all recommended) |
 
 ### 7.2 What the answers fix, in the tree's own terms
 
@@ -951,7 +951,7 @@ own ruling with the mechanism E6 asked for (D2754):
    `reports/<slug>/<YYYY>/<key>.md` for each repository the run's own project serves and
    `reports/<YYYY>/<key>.md` for the aggregate, through the launcher's bucket-wide `objectViewer`.
    **`reports/` gains no grant of any kind** — no job account reads it, and the reports job stays its
-   one writer (ruling 3; `docs/design/bucket-iam.md` §3 and R12's IAM section are where the grants
+   one writer (ruling 3; `docs/bucket-iam/spec.md` §3 and R12's IAM section are where the grants
    are, and this design adds no row to them).
 2. **It hands in what the folder does not already hold.** The launch stands in the designated
    repository's checkout, so the launcher compares each stored report against the folder its own

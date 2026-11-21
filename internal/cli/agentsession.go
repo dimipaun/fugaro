@@ -3,7 +3,7 @@ package cli
 import "github.com/dimipaun/fugaro/internal/initflow"
 
 // The agent-session refusal, as the commands outside the core reach it
-// (design docs/design/ee-boundary-moves.md §10). `agentMarker` is unexported
+// (design docs/ee-reorg/boundary-moves.md §10). `agentMarker` is unexported
 // and `ee/` cannot import an unexported name, so a moved command that must
 // refuse inside a coding agent's session calls this rather than reading the
 // markers itself: the one list of markers and the one classification every

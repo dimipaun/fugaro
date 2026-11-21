@@ -322,7 +322,7 @@ const imageContextShipped = true
 // take it as: the fence has not been measured. The deployer's scoped half is
 // seven per-service custom roles, each bound exactly once under its own
 // condition (deploy/terraform/gcp/modules/installation/deployer.tf,
-// docs/design/managed-deployer-fence.md), and no test can ask Google whether
+// docs/managed-deployer-fence/spec.md), and no test can ask Google whether
 // IAM accepts those seven bindings or honours resource.name per type — that is
 // what Check 68 (docs/gcp-live-checklist.md) measures, and it is owner-run
 // AFTER this release, by the same ruling. So 0.10.0 ships a fence it cannot
@@ -902,10 +902,11 @@ const bitbucketTokenSince = "0.24.0"
 // `fugaro creds set` is the bundle's only writer, so the guard is at that write
 // too (creds.go's refuseAnEntryTheServiceCannotRead, which judges the release
 // that SERVES the document rather than the installation's pin). It is the
-// guard's third entry and not a second writer: the runner-path key types are
-// refused at the same write and never reach the document
-// (credsKeyCredentialHalfRefusal), so no document of this release holds an
-// entry of this family that a second write path could create.
+// guard's third entry and not a second writer: a RUNNER-path key type has been
+// refused at that write since KS2 (D1670 reversed by D2975) and its key is
+// written into repoCredentialSince's family instead, so the entries of THIS
+// family are the service-served credentials' alone and no write of a provider
+// key adds one.
 //
 // It names 0.26.0, the release this work ships in, and it is the first constant
 // of this file whose reader has never been in a released image: MC22's
@@ -931,6 +932,35 @@ const bitbucketTokenSince = "0.24.0"
 // docs/release.md's ("Before you tag") list carries that reading.
 const keyCredentialSince = "0.26.0"
 
+// repoCredentialSince is the first fugaro release whose credentials service
+// reads the bundle's repository-credential family (credsvc.RepoCredentialPrefix,
+// credsvc.RepoCredentialKey, C1 of docs/keys-through-service): the entries
+// repo-credential--<slug>--<credential>, one per (repository, provider
+// credential) pair, each holding the provider key and the two routing facts the
+// service attaches when it forwards a call (credsvc's providerFacts). It is a
+// fourth entry of the same kind as providerEntrySince above and a constant of
+// its own for the reason that entry's comment gives: the loader refuses the
+// WHOLE document for a key it does not know, so the release a document is
+// readable by is decided by the newest entry it holds.
+//
+// The guard is no longer one write's: the family has THREE writers (F27) — the
+// key credential's own `fugaro creds set credential-<name>-key`, `fugaro
+// accounts add --type openrouter`, and `fugaro secrets set` of a model
+// provider's own secret, at repository scope and project-wide — and all three
+// go through refuseAnEntryTheServiceCannotRead before the value is read
+// (creds.go's providerKeyBundleWrite).
+//
+// It names 0.27.0, the release this work ships in, and it is the second
+// constant of this file whose reader has never been in a released image: C1's
+// wire and KS1's loader are newer than the `v0.26.1` tag, so the release before
+// this one serves a bundle without the family and cannot read a document that
+// holds it. The direction the siblings' tests protect holds from 0.27.0 on: a
+// value ABOVE the tag that shipped the family refuses every provider-key write
+// on installations whose deployed service already reads it, with `fugaro
+// update` no remedy for them. docs/release.md's ("Before you tag") list carries
+// that reading, and TestRepoCredentialSinceHasAReleaseBullet holds its bullet.
+const repoCredentialSince = "0.27.0"
+
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
 // check job's own rebuild names the secret ID Readiness resolved, so a
@@ -938,7 +968,7 @@ const keyCredentialSince = "0.26.0"
 // does for the job's clone. A runner before it ignores the field (plain
 // json.Unmarshal) and falls back to the repository's own ID, which mounts a
 // secret with no version once that name has moved to project scope (design
-// docs/design/project-secrets.md §5, §6 step 4a).
+// docs/project-secrets/spec.md §5, §6 step 4a).
 //
 // It is a genuine, narrow exception to P6's "no *Since constant per feature":
 // unlike every other gate here, it is not judged against a build record
@@ -949,7 +979,7 @@ const keyCredentialSince = "0.26.0"
 const gitSecretIDSince = "0.7.5"
 
 // namedTokensSince is the first fugaro release whose runner reads a task's
-// oauth_token field (docs/design/named-oauth-tokens.md); an older runner
+// oauth_token field (docs/named-oauth-tokens/spec.md); an older runner
 // refuses it, since task.Spec's decoder disallows unknown fields. It must
 // equal the release that ships task.Spec.OAuthToken: docs/release.md
 // ("Before you tag") has the release checklist verify it. internal/cli/run.go
@@ -959,7 +989,7 @@ const gitSecretIDSince = "0.7.5"
 const namedTokensSince = "0.6.5"
 
 // sealSince is the first fugaro release whose runner reads a sealed budget
-// token (docs/design/budget-token-channel.md §7.1): the marker's value is the
+// token (docs/budget-token-channel/spec.md §7.1): the marker's value is the
 // launch's seal key, parsed strictly and never echoed, the key is registered
 // with the run's redactor before anything can print it, and the token object
 // is read from tokens/, never from runs/ and never as plaintext. A runner
@@ -1060,7 +1090,7 @@ const externalSince = "0.26.0"
 // task.Spec.CompressionOff, and docs/release.md ("Before you tag") is where
 // that is verified: its bullet for this constant does not exist yet, because
 // it is written with the release that cuts the feature -- Task 9 of
-// docs/plans/2026-10-12-headroom-compression.md, whose Task 6 added this
+// docs/headroom-compression/implementation-plan.md, whose Task 6 added this
 // constant and this gate, the same way planTaskSince's bullet arrived with the
 // release that shipped the plan task. internal/cli/run.go gates a launch
 // against an older build record, exactly as it does for a plan task
@@ -1101,7 +1131,7 @@ var compressionForTest string
 // cannot be read. A file the launcher cannot read at all is never gated on the
 // key: the run's own bootstrap, which reads the file this launcher could not,
 // is what refuses the key then. agent.compression is repository-scope and no
-// project layer or profile may set it (docs/design/layered-config.md §5), so
+// project layer or profile may set it (docs/layered-config/spec.md §5), so
 // the resolved value is this file's own.
 func compressionRequested(ctx context.Context, env *cloudEnv, spec *task.Spec) (on, known bool) {
 	if compressionForTest != "" {
@@ -3461,6 +3491,168 @@ func checkCloneReviewAgainstTaskImage(lc *localcfg.Config, spec *task.Spec, cfg 
 	return checkCloneImageSince(lc, spec, reviewSpecSince, subject, reviewAgainstTaskKnows, "; or "+alt, warn)
 }
 
+// workspaceBeatSince is the first fugaro release whose config reader knows
+// fugaro.yaml's agent.workspace_beat and the project layer's
+// defaults.agent.workspace_beat (WS13 of docs/workspace-service/, R10, D2985):
+// the run's own switch for the keep-warm beat, on unless the file says
+// otherwise, so a workspace's credentials service is not cold when the next
+// call the run pays for arrives. Both files are decoded with KnownFields, so a
+// runner built from an older image refuses either key at bootstrap, before the
+// agent starts and after the launch was paid for — and it is the key that is
+// refused, whatever it says: a file writing `true` asks for the default and is
+// refused all the same, which is why the gate reads the text
+// (Config.RepoWorkspaceBeatSet, ProjectLayer.SetsWorkspaceBeat) and not the
+// resolved Agent.WorkspaceBeat.
+//
+// Like stopFractionSince it carries no shipped flag: refusing every image that
+// predates the release is exactly the direction this gate wants, and an image
+// with no release tag (a dev build, a hand-pushed one) only warns, the same as
+// for every other *Since constant here. It names 0.27.0, the release this work
+// is slotted for, which is not tagged yet: docs/release.md's Before-you-tag
+// list verifies the number against the tag actually cut, the way
+// stopFractionSince's bullet records.
+const workspaceBeatSince = "0.27.0"
+
+// workspaceBeatKnows names, for the image gates' messages, what the job
+// image's runner has to know: the key, in whichever of the two files that may
+// write it did. The message reads "needs a job image whose runner knows
+// <this>".
+func workspaceBeatKnows(fromRepo, fromLayer bool) string {
+	switch {
+	case fromRepo && fromLayer:
+		return "the keep-warm beat's switch (agent.workspace_beat and the project layer's defaults.agent.workspace_beat)"
+	case fromLayer:
+		return "the keep-warm beat's switch (the project layer's defaults.agent.workspace_beat)"
+	}
+	return "the keep-warm beat's switch (agent.workspace_beat)"
+}
+
+// workspaceBeatSubject names, for the gates' messages, which file wrote the
+// key, and the way out that file's author has: the beat is an optimisation and
+// not a behaviour the run depends on — a runner that does not read the key
+// sends no keep-warm request at all, which is what every release before this
+// one does, and the calls the run pays for are served either way, at a cold
+// start this run's own file was written to avoid — so removing it is a way out
+// with no image to move. The distinction between the two files is
+// stopFractionSubject's: the layer's key reaches every repository of the
+// project and only its operator can remove it.
+func workspaceBeatSubject(repo string, fromRepo, fromLayer bool) (subject, alt string) {
+	const (
+		repoAlt  = "remove agent.workspace_beat from fugaro.yaml: a runner that does not read it sends no keep-warm beat, which is what every release before this one does"
+		layerAlt = "remove defaults.agent.workspace_beat from the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way, and a runner that does not read the key sends no keep-warm beat"
+	)
+	switch {
+	case fromRepo && fromLayer:
+		return "fugaro.yaml's agent.workspace_beat and the project layer's defaults.agent.workspace_beat of " + repo,
+			"remove the key from fugaro.yaml and " + layerAlt
+	case fromLayer:
+		return "the project layer's defaults.agent.workspace_beat (read for " + repo + ")", layerAlt
+	}
+	return "fugaro.yaml's agent.workspace_beat of " + repo, repoAlt
+}
+
+// workspaceBeatSources reports, for the launch's workspaceBeatSince gate,
+// whether the configuration the run will read writes the key: the
+// repository's fugaro.yaml (fromRepo) or the project layer it resolves over
+// (fromLayer, which the task's own layer stands in for when the launcher can
+// read no file: launchLevelsConfig).
+//
+// The layer's half is SetsWorkspaceBeat and not SetsDefault, which answers
+// false for a key written as null: an older runner's KnownFields decoder
+// refuses the key whatever it holds, so a layer writing it null is a layer
+// every repository of the project dies at bootstrap on, and a gate reading the
+// resolved value would deploy it.
+func workspaceBeatSources(cfg *config.Config) (fromRepo, fromLayer bool) {
+	if cfg == nil {
+		return false, false
+	}
+	return cfg.RepoWorkspaceBeatSet, cfg.Layer.SetsWorkspaceBeat()
+}
+
+// workspaceBeatImageWarnings warns, once, that a configuration which writes
+// the key — the repository's file (RepoWorkspaceBeatSet) or the project layer
+// it resolved over (SetsWorkspaceBeat) — needs every job image on
+// workspaceBeatSince. It is validate's half of checkWorkspaceBeatImage, and a
+// warning rather than a Problem for stopFractionImageWarnings' reason: the
+// file is valid, and what has to move is the installation (the base image, or
+// a workflow's derived one), which is why both ways to move an image are
+// named. It says which of the two files wrote the key, the same distinction
+// workspaceBeatSubject draws for the gates, because the layer's key reaches
+// every repository of the project and only its operator can remove it.
+func workspaceBeatImageWarnings(c *config.Config) []config.Problem {
+	fromRepo, fromLayer := workspaceBeatSources(c)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject := "this file's agent.workspace_beat"
+	switch {
+	case fromRepo && fromLayer:
+		subject = "this file's agent.workspace_beat and the project layer's defaults.agent.workspace_beat"
+	case fromLayer:
+		subject = "the project layer's defaults.agent.workspace_beat"
+	}
+	return []config.Problem{{Path: "agent.workspace_beat", Message: subject + " needs fugaro " + workspaceBeatSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
+// refuseWorkspaceBeatSkew refuses fugaro update --repo, before any cloud
+// effect, when the configuration the checkout resolves writes
+// agent.workspace_beat and the installation's base image predates
+// workspaceBeatSince — a runner built from it decodes both files with
+// KnownFields and refuses the run at bootstrap on a key it does not know. It
+// is the half checkWorkspaceBeatImage cannot be: a launch from outside a
+// checkout reads no fugaro.yaml at all, so the key the run will find once it
+// has one is judged here, by the operator's own converge
+// (refuseStopFractionSkew's shape and its reason). The states of ref are read
+// as refuseStopFractionSkew reads them: no base image passes, one that is not
+// a release only warns.
+//
+// fromRepo and fromLayer are the key being written (RepoWorkspaceBeatSet, the
+// layer's SetsWorkspaceBeat) and not the value it holds: a file writing
+// `true`, which is the default and asks for nothing, is the same line to an
+// older runner's decoder as one writing `false`.
+func refuseWorkspaceBeatSkew(repo string, fromRepo, fromLayer bool, ref string, warn io.Writer) error {
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := workspaceBeatSubject(repo, fromRepo, fromLayer)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, workspaceBeatSince):
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the file strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, workspaceBeatSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// checkWorkspaceBeatImage refuses a launch whose job image runs a fugaro older
+// than workspaceBeatSince while the configuration the run reads writes
+// agent.workspace_beat: that runner decodes fugaro.yaml and the project layer
+// with KnownFields, so the key alone kills the run at bootstrap. The judge is
+// the build record's base_ref, as every checkImageSince gate's is.
+func checkWorkspaceBeatImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := workspaceBeatSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := workspaceBeatSubject(spec.Repo, fromRepo, fromLayer)
+	return checkImageSince(ctx, env, slug, spec, kind, workspaceBeatSince, subject, workspaceBeatKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// checkCloneWorkspaceBeatImage is checkWorkspaceBeatImage for a checkout:
+// clone workflow: see checkCloneImageSince.
+func checkCloneWorkspaceBeatImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := workspaceBeatSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := workspaceBeatSubject(spec.Repo, fromRepo, fromLayer)
+	return checkCloneImageSince(lc, spec, workspaceBeatSince, subject, workspaceBeatKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
 // followUpSince names the release that carries the two fields `fugaro followups
 // --launch` writes into a task: the parent run and the finding keys it settles
 // (task.Spec.FollowUpOf) and the debt mark (task.Spec.Debt). A runner built
@@ -4034,6 +4226,134 @@ func rigorSpellingLaunchSources(ctx context.Context, env *cloudEnv, spec *task.S
 		return false, false, false
 	}
 	return cfg.RepoRigorLevelSet, cfg.RepoRigorScalarSet, cfg.Layer.SetsRigorLevel()
+}
+
+// rigorMembersSince is the first fugaro release whose config reader knows what
+// LD4 adds to the project layer's rigor block: a `members:` key of one of its
+// defaults.rigor.areas rules, and the per-repository defaults.rigor.repos map
+// beside them. Both keys are the layer's alone — a repository's own file knows
+// no repos: and refuses members: on a rule of its own (rigor.Area.Validate) —
+// and the layer is decoded with KnownFields, so a layer that carries either
+// makes every repository of the project whose job image is older than this
+// release fail at bootstrap on a key its runner does not know, before the agent
+// starts and after the launch was paid for.
+//
+// It is not rigorSpellingSince, which names the release whose reader knows the
+// two spellings of that block: that constant's judge booleans are an area
+// rule's `level:` key and the scalar shorthand, and a layer writing members or
+// repos need write neither (an area rule still reads `mode:`, and the layer
+// never carried the shorthand), so the gate it drives passes a layer this one
+// refuses. Like rigorSpellingSince the judge is the image that runs the run:
+// the installation's base image for a checkout: clone workflow, the base a
+// workflow's build record was built FROM for a derived one. fugaro update
+// --repo gates it before any cloud effect (gateRigorMembers, beside
+// gateRigorSpelling), a launch gates it the way checkJobsImage does
+// (checkRigorMembersImage, checkCloneRigorMembersImage) from a checkout of the
+// repository, where the layer the run will read can be read here at all, and
+// fugaro validate warns (rigorMembersImageWarnings). Outside a checkout only
+// fugaro update --repo checks.
+//
+// It names 0.27.0, the release this work is slotted for (docs/release.md's
+// Before-you-tag bullet verifies it against the tag actually cut), which is not
+// tagged yet: a wrong value refuses too late (a run on an image whose runner
+// cannot read the keys dies at bootstrap) or too early (an image that knows
+// them stays blocked).
+const rigorMembersSince = "0.27.0"
+
+// rigorMembersLayerSet reports whether the project layer the configuration
+// resolves over writes either key, at any value: SetsRigorMembers' question,
+// and its reason — `members:` with nothing under it and `repos: {}` are lines
+// an older runner's decoder refuses just as a populated one is, and the parsed
+// rule cannot tell the two apart. The configuration is launchFileConfig's, so
+// the launch gates fire where the sibling gates' do: from a checkout of the
+// repository, where the layer the run will read can be read here at all
+// (checkoutConfig, or the ref's file resolved over the layer the task carries,
+// cascadeRefConfig). Outside one it is nil and nothing is gated, which is the
+// shape rigorSpellingSince and jobsSince have: there only fugaro update --repo
+// checks.
+func rigorMembersLayerSet(cfg *config.Config) bool {
+	return cfg != nil && cfg.Layer.SetsRigorMembers()
+}
+
+// rigorMembersSubject names, for the gates' messages, what the layer wrote and
+// the way out its author has: the layer is the operator's file, and the
+// repositories the key breaks each have the same fix — removing it and
+// publishing the layer again. One subject names both keys, because one release
+// reads both and the operator finds whichever they wrote in the same block.
+func rigorMembersSubject(repo string) (subject, alt string) {
+	// The subject takes the gates' singular verb ("needs a job image whose
+	// runner knows …"), so the two keys are joined by "or" rather than by a
+	// comma: the verb then agrees with the nearer one, and the sentence reads
+	// for either key an operator wrote.
+	return "the project layer's `members:` key or its `defaults.rigor.repos` map (read for " + repo + ")",
+		"remove the members: key or the repos: map from the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way"
+}
+
+// rigorMembersKnows names, for the image gates' messages, the keys the job
+// image's runner has to know: the refusal reads "needs a job image whose runner
+// knows <this>", and the two keys are the layer's whole half of LD4.
+const rigorMembersKnows = "the project layer's rigor members, an area rule's `members:` key and the `defaults.rigor.repos` map"
+
+// rigorMembersImageWarnings warns, once, that the project layer a configuration
+// resolves over writes members: or repos:, which needs every job image on
+// rigorMembersSince. It is validate's half of checkRigorMembersImage and a
+// warning rather than a Problem for rigorImageWarnings' reason: the layer is
+// valid, and what has to move is the installation (the base image, or a
+// workflow's derived one), which is why both ways to move an image are named.
+func rigorMembersImageWarnings(c *config.Config) []config.Problem {
+	if !rigorMembersLayerSet(c) {
+		return nil
+	}
+	return []config.Problem{{Path: "defaults.rigor", Message: rigorMembersKnows + " need fugaro " + rigorMembersSince + " or later in the job image that runs it, and in the CLI of everyone who reads this layer: an older runner decodes the layer strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
+// refuseRigorMembersSkew refuses fugaro update --repo, before any cloud effect,
+// when the project layer the checkout resolves writes members: or repos: and
+// the installation's base image predates rigorMembersSince — a runner built
+// from it decodes the layer with KnownFields and refuses it at bootstrap. The
+// states of ref are read as refuseRigorSkew reads them: no base image passes,
+// one that is not a release only warns.
+func refuseRigorMembersSkew(repo string, fromLayer bool, ref string, warn io.Writer) error {
+	if !fromLayer {
+		return nil
+	}
+	subject, alt := rigorMembersSubject(repo)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, rigorMembersSince):
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the layer strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, rigorMembersSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// checkRigorMembersImage and checkCloneRigorMembersImage are the launch's own
+// rigorMembersSince gate, for a workflow whose job image is a derived one and
+// for a checkout: clone workflow respectively: the pair every other
+// per-workflow image gate has (checkImageSince/checkCloneImageSince), with
+// checkJobsImage's judge and its one source — the project layer, which is the
+// only file that can write either key. A launch whose configuration writes
+// neither is never gated.
+func checkRigorMembersImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	if !rigorMembersLayerSet(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := rigorMembersSubject(spec.Repo)
+	return checkImageSince(ctx, env, slug, spec, kind, rigorMembersSince, subject, rigorMembersKnows, "; or "+alt, warn)
+}
+
+// checkCloneRigorMembersImage is checkRigorMembersImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneRigorMembersImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
+	if !rigorMembersLayerSet(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := rigorMembersSubject(spec.Repo)
+	return checkCloneImageSince(env.lc, spec, rigorMembersSince, subject, rigorMembersKnows, "; or "+alt, warn)
 }
 
 // refuseGovernanceSkew refuses fugaro update --repo, before any cloud effect,

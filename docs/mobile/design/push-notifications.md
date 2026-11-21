@@ -6,7 +6,7 @@ This is **Task P5.2** of [the mobile plan](../implementation-plan.md), **Phase 5
 ("later, unscheduled")**, whose four tasks are recorded so that a later reader finds the
 reasoning rather than rediscovering the question. It writes nothing but this file and the
 one documentation test beside it (`internal/cli/docs_mobile_push_test.go`, by the same rule
-[budget-token-channel.md](../../design/budget-token-channel.md) states for its own test: the
+[budget-token-channel.md](../../budget-token-channel/spec.md) states for its own test: the
 test is red until this document exists). **No decision number is allocated here**: the
 questions at the end are **Q1, Q2 …** for the owner, and a later pass assigns the numbers.
 
@@ -53,12 +53,12 @@ relocation is recorded where it was made rather than left to age silently.
 **Related.** [reconciliation.md](../reconciliation.md) (D112, D113, D117, D118, D121,
 D126), [functional-spec-reconciliation.md](../functional-spec-reconciliation.md) (D165,
 D166, D169 — the pairing, the device node and the MAC), [implementation-plan.md](../implementation-plan.md)
-(P4.1 the consumer, P5.1 the orchestrator, phase 6), [voice.md](../../design/voice.md) (D49,
-D50 and the F38 residual), [desktop-console-v2.md](../../design/desktop-console-v2.md) (D33 —
-the same question asked of the desktop console, which rejected "a push service (FCM)"), [m9-budget-and-dashboard.md](../../design/m9-budget-and-dashboard.md)
-§6.2 and §6.4 (the mailbox tree and its rules), [budget-token-channel.md](../../design/budget-token-channel.md)
-(a token the phone also holds, and the audience rule it states), [project-centric.md](../../design/project-centric.md),
-[managed-projects.md](../../design/managed-projects.md) (D55–D78, the gate an always-on
+(P4.1 the consumer, P5.1 the orchestrator, phase 6), [voice/spec.md](../../voice/spec.md) (D49,
+D50 and the F38 residual), [desktop-console-v2.md](../../desktop-console-v2/spec.md) (D33 —
+the same question asked of the desktop console, which rejected "a push service (FCM)"), [m9-budget-and-dashboard.md](../../m9-budget-and-dashboard/spec.md)
+§6.2 and §6.4 (the mailbox tree and its rules), [budget-token-channel.md](../../budget-token-channel/spec.md)
+(a token the phone also holds, and the audience rule it states), [project-centric/spec.md](../../project-centric/spec.md),
+[managed-projects.md](../../managed-projects/spec.md) (D55–D78, the gate an always-on
 server would sit behind), [SECURITY.md](../../../SECURITY.md), [docs/gcp-live-checklist.md](../../gcp-live-checklist.md).
 
 ## 1. The problem
@@ -165,7 +165,7 @@ answered.
   finds nothing: this repository deploys **Cloud Run jobs**, never Cloud Run services. The one
   per-run network process, `internal/gateway`'s `Server` (started by `internal/runner/gateway.go`'s
   `gateway.Start`), is a **loopback** proxy inside the run's own container and dies with the
-  run. `voice.md` D49's words — "push notifications need a server component this project does
+  run. `voice/spec.md` D49's words — "push notifications need a server component this project does
   not have" — are still literally true.
 - **No FCM in Terraform.** `deploy/terraform/gcp/modules/firebase/` configures **Realtime
   Database** (`firebase.tf`'s `google_firebase_database_instance.this`), **Firebase
@@ -319,7 +319,7 @@ Two consequences fall out of this and both are deliberate:
 Android, and FCM's APNs relay for iOS. The reasons are the project's own:
 
 - **The app is already on Firebase.** An installation *is* a Firebase project
-  (`project-centric.md`; `mobile/src/accounts/account.js` carries `firebaseProjectId`,
+  (`project-centric/spec.md`; `mobile/src/accounts/account.js` carries `firebaseProjectId`,
   `authUid` and `fugaroProject` per account), the app signs in with Firebase Auth custom
   tokens (D165), and it reads the Realtime Database directly (D112). FCM needs **no new third
   party**: Google is already the party holding the project's data.

@@ -3,8 +3,8 @@
 What each leaf under a repository's day counter holds, and what a day that has none of them means. It is the
 companion of the spec's R5 and R6 and of the decisions D2648 and D2650; the fields a run *records* per model are
 `cost-fields.md`'s business (task SA1.0, not written yet), the dollars these leaves divide are the ones
-`docs/design/m10-multi-model.md` §"Real vs notional dollars" describes, and the node they join is
-`docs/design/m9-budget-and-dashboard.md` §6.2 and the schema at the end of that document.
+`docs/m10-multi-model/spec.md` §"Real vs notional dollars" describes, and the node they join is
+`docs/m9-budget-and-dashboard/spec.md` §6.2 and the schema at the end of that document.
 
 These leaves are granted by **rules generation 7**, the next free one. The reconciliation (RS8) and the plan (SA5.0)
 say 6, both written before generation 6 was taken: 6 is the mailbox registration kind, `projectpolicy.RulesVersion = 6`

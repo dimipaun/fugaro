@@ -40,6 +40,12 @@ const identityWorkflow = "app"
 // would leave it (policyRead), so these tests need no database: the read itself
 // is task 1.3's own test, and the identity decision needs nothing but the
 // decoded node.
+//
+// The environment is empty rather than the process's own: the identity decision
+// reads the backend the job is on from it (jobName, which places a Batch run by
+// the deployed job its launch named), and a test that fell back to os.Getenv
+// would answer differently on a machine that happened to export FUGARO_BACKEND.
+// A test that needs an environment sets it on the run it gets back.
 func identityRun(t *testing.T, job, slug string, spec *task.Spec, p *projectpolicy.Policy, found bool) *run {
 	t.Helper()
 	b := memblob.OpenBucket(nil)
@@ -49,7 +55,7 @@ func identityRun(t *testing.T, job, slug string, spec *task.Spec, p *projectpoli
 			Workflow: identityWorkflow, Task: "Add a feature"}
 	}
 	r := &run{
-		d:    Deps{Store: runstore.Open(b, slug, spec.RunID), Log: slog.New(slog.DiscardHandler)},
+		d:    Deps{Store: runstore.Open(b, slug, spec.RunID), Env: []string{}, Log: slog.New(slog.DiscardHandler)},
 		spec: spec,
 	}
 	if job != "" {

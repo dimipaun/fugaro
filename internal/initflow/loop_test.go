@@ -209,14 +209,16 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 	// the account and the one grant a workspace's own service reaches its
 	// database with (workspace_create.go, W3) — the workspace record the
 	// owner's `fugaro update` publishes (update_workspace.go / D1292), the
+	// credential route a MEMBER's own update publishes per repository
+	// (update_route.go, WS9/D2973), the
 	// project layer and its one local file (init_layer_stage.go), the
 	// checkout's own steps inside fugaro update (init_checkout_upgrade.go), the credentials service's image moving onto this release's after the policy migration (init_stages.go's newCredentialsStage), the
 	// owner's own cache-price keys renamed in place (update_model_prices.go, SA4.2),
 	// the login unit that runs the orchestrator daemon (init_orchestrator_stage.go,
 	// O9) and the compute backend's provisioning, which the design puts last
 	// (compute-backend §8.1 task 6).
-	if len(names) != 20 {
-		t.Fatalf("the design has twenty stages, got %v", names)
+	if len(names) != 21 {
+		t.Fatalf("the design has twenty-one stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -231,7 +233,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, ModelPrices, Policy, CredentialsService, WorkspaceProject, Workspace, Layer, Checkout, Unit, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, ModelPrices, Policy, CredentialsService, WorkspaceProject, Workspace, CredentialsRoute, Layer, Checkout, Unit, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}
@@ -1658,6 +1660,86 @@ func TestOnPreviewSeesTheStagesOfAnApplyingRunOnly(t *testing.T) {
 		if got := len(seen) == 1 && seen[0].Name == Installation && seen[0].State == Todo; got == planOnly {
 			t.Errorf("plan-only %v: preview seen %+v", planOnly, seen)
 		}
+	}
+}
+
+// A caller rendering the run is handed the run and not the review screen: an
+// applying run's preview records the stage a failed check stopped at, and the
+// execution pass behind it resets the result and records that stage again, so
+// OnStage must fire once per stage — and a stage's line must not arrive before
+// the step line for it, which is what a line drawn from the throwaway preview
+// does (it is recorded before converge has reached its first step).
+//
+// The failure is a check's, because that is the one a preview reaches: a stage
+// whose Apply fails is never applied twice.
+func TestOnStageFiresOncePerStageWhenAPreviewCheckFails(t *testing.T) {
+	for _, planOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("plan-only=%v", planOnly), func(t *testing.T) {
+			var log []string
+			var lines []string   // the two hooks in one order, as a caller sees them
+			var stepped []string // every step line, so a stage line's step can be placed
+			stages := []Stage{
+				&checkErr{fake: &fake{name: Preflight, log: &log}},
+				&fake{name: Installation, log: &log},
+			}
+			res, err := Run(context.Background(), stages, Options{
+				Yes: true, PlanOnly: planOnly, Terminal: true, Out: &bytes.Buffer{},
+				OnStep: func(stage string) { lines = append(lines, "step "+stage); stepped = append(stepped, stage) },
+				OnStage: func(r StageResult) {
+					lines = append(lines, "stage "+r.Name+" "+string(r.State))
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Failed == nil || res.Failed.Stage != Preflight {
+				t.Fatalf("the run did not stop at the failing check: %+v", res.Failed)
+			}
+			// What the hooks were handed is the run's own account: the same
+			// stages, in the same order, with the same states, once each.
+			var got []string
+			for _, ln := range lines {
+				if strings.HasPrefix(ln, "stage ") {
+					got = append(got, strings.TrimPrefix(ln, "stage "))
+				}
+			}
+			var want []string
+			for _, s := range res.Stages {
+				want = append(want, s.Name+" "+string(s.State))
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("OnStage was handed %v, the run's own stages are %v (the lines were %v)", got, want, lines)
+			}
+			twice := map[string]int{}
+			for _, ln := range got {
+				twice[strings.Fields(ln)[0]]++
+			}
+			for name, n := range twice {
+				if n != 1 {
+					t.Errorf("OnStage was handed %s %d times, want once: a preview that stops at a check is not the run's account", name, n)
+				}
+			}
+			// And a stage's line comes after the step line for it, never before:
+			// in an applying run the throwaway preview's row would be the first
+			// line of them all, ahead of any step.
+			if !planOnly && len(lines) > 0 && strings.HasPrefix(lines[0], "stage ") {
+				t.Errorf("the first line is a stage's, before the run reached any step: %v", lines)
+			}
+			for i, ln := range lines {
+				if !strings.HasPrefix(ln, "stage ") {
+					continue
+				}
+				name := strings.Fields(ln)[1]
+				if !slices.Contains(stepped, name) {
+					continue // a plan-only run has no step lines, and says so
+				}
+				// The step for this stage is somewhere ahead of its line.
+				first := slices.Index(lines, "step "+name)
+				if first > i {
+					t.Errorf("the line for %s comes before its step: %v", name, lines)
+				}
+			}
+		})
 	}
 }
 

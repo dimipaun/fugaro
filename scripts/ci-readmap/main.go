@@ -2,6 +2,10 @@
 // files each test package reads, which the import graph CI builds cannot see
 // (D3043). It is run from the repository root, by hand or by the nightly, and
 // the map it writes is committed like any other file.
+//
+// The same command reduces a shard's runtime trace into the artifact a full run
+// uploads, and merges a run's artifacts back into the map (--trace,
+// --from-artifact; trace.go).
 package main
 
 import (
@@ -17,7 +21,16 @@ func main() {
 	root := flag.String("root", ".", "the repository root to scan")
 	out := flag.String("out", filepath.Join("docs", "ci-affected-tests", "read-map.json"), "the file to write the map to")
 	flag.Parse()
-	if err := run(*root, *out); err != nil {
+	var err error
+	switch {
+	case *fromArtifact != "":
+		err = mergeTraces(*out)
+	case *traceLog != "":
+		err = reduceTrace(*root)
+	default:
+		err = run(*root, *out)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "ci-readmap:", err)
 		os.Exit(1)
 	}

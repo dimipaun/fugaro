@@ -536,12 +536,12 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
     - §2: `highest` is the default; how to price `model_prices` cache fields in $/M; the effect on caps (larger
       reservations, so "cannot hold" halts and 429 waits come sooner).
     - §6: a call settles on the provider's cost, floored at the tier's cheapest end, and the drift alarm.
-  - `docs/design/provider-price-catalog.md` D6 and §0 item 3: D2644 supersedes ruling 3.
-  - `docs/design/m10-multi-model.md`: the "Real vs notional dollars" paragraph and its Phase 3 line point here.
+  - `docs/provider-price-catalog/spec.md` D6 and §0 item 3: D2644 supersedes ruling 3.
+  - `docs/m10-multi-model/spec.md`: the "Real vs notional dollars" paragraph and its Phase 3 line point here.
   - `docs/design/v1.md`: the gateway paragraph and the later sentence that a reported cost is "not something Fugaro
     adopts by itself" say what a report settles.
   - A docs test pins these sentences.
-- Files: `docs/multi-model.md`, `docs/design/provider-price-catalog.md`, `docs/design/m10-multi-model.md`,
+- Files: `docs/multi-model.md`, `docs/provider-price-catalog/spec.md`, `docs/m10-multi-model/spec.md`,
   `docs/design/v1.md`, `internal/cli/docs_spend_accuracy_test.go` (new).
 - Interfaces: describes what merged.
 - Tests: `TestDocsSpendAccuracy`, and every docs test.

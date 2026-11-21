@@ -175,8 +175,8 @@ they live elsewhere:
   run's own `ship` never replaces it", are `docs/dogfooding.md` as well.
 - SECURITY-SENSITIVE → opus plus a mandatory independent review is
   `docs/credentials-service/implementation-plan.md`, Global Constraint 10.
-- The deferred-items pattern is `docs/plans/2026-10-13-project-secrets.md` and
-  `docs/plans/2026-10-17-managed-projects-review-follow-ups.md`.
+- The deferred-items pattern is `docs/project-secrets/implementation-plan.md` and
+  `docs/managed-projects/review-follow-ups.md`.
 
 `docs/coordinator/` documents the coordinator surface, not the merge practice.
 This matters for the design because the modes are a *formalisation of practice
@@ -539,8 +539,8 @@ a repository gets: a credential path, an IAM path or `.github/workflows/` runs a
 Critical whatever a repository's default says.
 
 **F32 — Unfixed work already has a recording pattern.** Class: **Exists**.
-`docs/plans/2026-10-13-project-secrets.md` and
-`docs/plans/2026-10-17-managed-projects-review-follow-ups.md` are the
+`docs/project-secrets/implementation-plan.md` and
+`docs/managed-projects/review-follow-ups.md` are the
 "deferred review items" pattern. Consequence: the backlog's second carrier — a
 `docs/`-style ledger — has a precedent to copy, which is what makes deferring it
 to a later slice a defensible ordering rather than a hole in the first cut (D9).
@@ -698,7 +698,7 @@ read to answer it).
 
 **F45 — The generated-document pattern exists, and its one trap is already written down.** Class: **Exists**. `internal/clidoc` renders `website/content/cli-reference.md` from the command tree and is invoked by `go run ./internal/clidoc`: exactly the "a small tool regenerates it" shape the ruling asks for, with the header line that tells a reader not to edit it. `internal/pricing/catalog/gencatalog` (through `scripts/gen-price-catalog.sh`) shows the other half of the discipline — a required date, sorted rows and a determinism re-run — so the generator reads no wall clock. Two guards of different kinds hold the CLI reference: `internal/clidoc/cliref_test.go`'s `TestCliReferenceIsCurrent` regenerates and compares, and `internal/cli/docs_website_cliref_test.go` derives the same claim from the command tree instead of from the generator. The trap is named in `internal/cli/docs_website_security_test.go`'s own comment: a test written against the generator agrees with whatever the generator does, which is the one thing a drift test must not do. Consequence: the backlog's index needs both kinds of guard (D28), and its generator must take every date from the item rather than from the clock.
 
-**F46 — Deferrals are written in three places today, and none of them is a backlog.** Class: **Gap**. The `docs/plans` sections — §4's census counts **three** of them at this commit, by their headings: `docs/plans/2026-10-13-project-secrets.md`'s `## Known follow-ups before implementation …` and its `## Deferred review items (2026-10-14 fix round)`, and `docs/plans/2026-10-18-project-named-oauth-tokens.md`'s `## Known follow-ups, deliberately not in this plan` (a fourth list states the practice under a heading the pattern does not match — `docs/plans/2026-10-14-project-centric.md`'s `## Accepted as deferred`, whose lower-case `d` is why it is outside the figure, and the reason this finding names the sections rather than only citing the count); the pull request's own body, whose status section names what a run tolerated and no addressable item (F28); and the run record, where `runstore.ReviewSummary.Findings` is a **count** — the finding text survives only in the stored transcript, which `internal/cli/diagnose.go` reads back (F18). None of the three is a list a later reader can close one line of, and two of them die with the artifact that carries them: the pull request body is history the moment the pull request merges, and a review round's table is a snapshot of that round. Consequence: "one backlog and not two" is a change of practice as much as a format (D32), and the item file is the first carrier that outlives both the ephemeral job and the merged pull request.
+**F46 — Deferrals are written in three places today, and none of them is a backlog.** Class: **Gap**. The `docs/plans` sections — §4's census counts **three** of them at this commit, by their headings: `docs/project-secrets/implementation-plan.md`'s `## Known follow-ups before implementation …` and its `## Deferred review items (2026-10-14 fix round)`, and `docs/project-named-oauth-tokens/implementation-plan.md`'s `## Known follow-ups, deliberately not in this plan` (a fourth list states the practice under a heading the pattern does not match — `docs/project-centric/implementation-plan.md`'s `## Accepted as deferred`, whose lower-case `d` is why it is outside the figure, and the reason this finding names the sections rather than only citing the count); the pull request's own body, whose status section names what a run tolerated and no addressable item (F28); and the run record, where `runstore.ReviewSummary.Findings` is a **count** — the finding text survives only in the stored transcript, which `internal/cli/diagnose.go` reads back (F18). None of the three is a list a later reader can close one line of, and two of them die with the artifact that carries them: the pull request body is history the moment the pull request merges, and a review round's table is a snapshot of that round. Consequence: "one backlog and not two" is a change of practice as much as a format (D32), and the item file is the first carrier that outlives both the ephemeral job and the merged pull request.
 
 **F47 — Every front-matter field the ruling names has a source in the record except the area.** Class: **Exists**. `runstore.Record.RunID`, `Record.PR` (`PRRef{Number, URL}`), `Record.FinishedAt`, `Record.Repo` and the launch's `LaunchedBy` (read back as `runview.Row.LaunchedBy`) give `filed-in`, `date`, `filed-by` and the repository with no new field at all; the resolved mode and the layer that won are D24's recorded value, from T1.2; and `id`, `title` and `status` are the filer's own words. The area is the one field a mixed run has no single answer for: D22's resolution names the areas that matched and D23's answer records them all, strictest first, so `area:` carries the list rather than one name. Consequence: the front matter is cheap everywhere including `area:`, which is a list rather than a choice.
 
@@ -756,7 +756,7 @@ table's row from 97 to 98. Amended 2026-11-04:
 `internal/cli/docs_stateless_orchestrator_test.go`, the stateless orchestrator folder's
 pin, moved the table's row from 98 to 99. Amended 2026-11-05:
 `internal/cli/docs_mixed_credentials_test.go`, the B0 ruling's pin over
-[design/mixed-credentials.md](../design/mixed-credentials.md), `docs/multi-model.md` and
+[mixed-credentials/spec.md](../mixed-credentials/spec.md), `docs/multi-model.md` and
 SECURITY.md, moved the table's row from 99 to 100: it is a ruling's pin rather than
 a folder's, and the figure is the tree's either way. Amended 2026-11-07:
 `internal/cli/docs_cli_output_console_graph_test.go`, the CLI output and console
@@ -871,7 +871,7 @@ subject is gone and the sentence that is left belongs to that folder's own task
 — and moved the table's row from 132 to 131.
 Amended 2026-11-13: `internal/cli/docs_licence_key_v2_test.go`, the licence-key-v2
 folder's pin over the amendment the portal's P9.1 makes to that folder's plan and
-reconciliation and to `docs/design/key-signing-service.md` — the sign-in, the admin page
+reconciliation and to `docs/key-signing-service/spec.md` — the sign-in, the admin page
 and the account pages become the portal's surfaces, the service moves into one project
 with the website, and three questions the design left open are recorded as decided —
 moved the table's row from 133 to 134.
@@ -938,7 +938,13 @@ table's row from 151 to 152.) (Amended 2026-11-20:
 over the residual of the pull-request index in the bucket's threat model, the
 in-flight audit's own row for the backfill, the two skills' sentences about the
 fast queries and the release notes that carry the change — moved the table's row
-from 152 to 153.) They
+from 152 to 153.) (Amended 2026-11-21:
+`internal/cli/docs_check740_test.go`, the run-messages plan's RM8 — the pin over
+the owner-run Check 740 in the register, whose four readings are the plain
+message delivered at a coder stage, the `--now` stop's quiet point with the same
+session going on after it, the Policy Troubleshooter asked about the real job
+accounts, and the bucket's `.msg.json` lifecycle rule — moved the table's row
+from 153 to 154.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -980,27 +986,46 @@ gives each rigor level its own `roles` mapping (LD9) — added `levelRolesSince`
 `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 59 to 60. Same
 row, same reason for naming it.)
 
+(Amended 2026-11-20: the same plan's LV3.1 — a project area's `members` and the project's per-repo
+`defaults.rigor.repos` map — added the `rigor.repos` row to `internal/config/scope.go`, which moved
+the *Config scope rows* row from 117 to 118. The row is not an accident of the shape: the layer's
+scope walker asks that table about every `defaults.*` key and refuses the ones it does not carry, so
+a project layer stating a per-repo level needs the row whatever the key's reader is. The same task
+added `rigorMembersSince` to `internal/cli/recipes_skew.go` — the two keys are the layer's alone and
+are decoded with `KnownFields`, so a job image older than the release that knows them dies at
+bootstrap on every repository of the project — which moved the *Image-skew `Since` constants* row
+from 60 to 61. The two keys ship in one release and one constant, one judge and one gate serve both,
+which is why the row moved by one and not by two.)
+
+(Amended 2026-11-21: the secrets-brokering plan's KS2 — a provider key entering the
+credentials service's bundle under C1's name instead of a container of its own — added
+`repoCredentialSince` to `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since`
+constants* row from 61 to 62. The constant is the guard every writer of such a key holds against a
+service too old to read the entry, so the row moved with the release that starts writing it, as the
+entries above do. Nothing in this folder changed; the row is named here for the reason the ones
+above are: a reader who finds the figure stale should find who moved it.)
+
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 14 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 15 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 117 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 119 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 5 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 1 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 60 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 63 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 153 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 155 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 10 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |
 | Fields of `gitprov.PRSpec` whose name is a repository | 0 | `sed -n '/^type PRSpec struct {/,/^}/p' internal/gitprov/gitprov.go \| grep -ci repo` |
 | Sites that narrow an installation token to one repository | 1 | `git grep -hc 'scope = \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |
-| `docs/plans` sections whose heading the deferral pattern matches | 3 | `git grep -hE '^## .*(Deferred\|[Ff]ollow-ups)' -- docs/plans \| wc -l` |
+| the dated plans' sections whose heading the deferral pattern matches (once `docs/plans`, now in the project-secrets and project-named-oauth-tokens folders) | 3 | `git grep -hE '^## .*(Deferred\|[Ff]ollow-ups)' -- docs/project-secrets/implementation-plan.md docs/project-named-oauth-tokens/implementation-plan.md \| wc -l` |
 | Item files under `docs/backlog/` | 2 | `ls docs/backlog/[0-9]*.md 2>/dev/null \| wc -l` |
 
 Every one of those commands prints the number in the Count column and nothing

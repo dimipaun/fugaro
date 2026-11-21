@@ -14,7 +14,7 @@ readers remove the file too.
 It **supersedes** licensing task L3.1 and subscriptions **S2.1/S2.3** (the format) and **amends**
 S2.4, S2.5, S2.7–S2.10, S3.1–S3.4 and S6.1 where they name the old claims (K7.2 writes the notes for
 the plans and the key-signing-service design; S6.1's own note,
-[the read-only state after a lapse](../design/lapse-read-only.md), carries this note's key states and
+[the read-only state after a lapse](../lapse-read-only/spec.md), carries this note's key states and
 claim names from 2026-11-11). The rules of the old note that the amended decisions keep are carried
 here: the signature over the raw bytes before the claims, the offline check at the registration point,
 the read-only lapse, the overlap, the tier's maximum lifetime, the staging key's refusal, and where each

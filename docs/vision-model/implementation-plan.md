@@ -116,10 +116,10 @@ names every one.
 - **A craft, a credential or a pool of its own for vision calls** (D2003, D2008): the vision model uses
   the coder craft's access. `docs/model-crafts` owns crafts, and a fifth one re-decides that folder's
   vocabulary here.
-- **Pricing an image in the built-in provider catalogue.** `docs/design/provider-price-catalog.md` D8
+- **Pricing an image in the built-in provider catalogue.** `docs/provider-price-catalog/spec.md` D8
   refuses a catalog-priced model that prices an image, and V2 changes nothing there: the catalog's rows
   stay rate-only, so a catalog model still refuses an image (F4).
-- **`docs/design/v1.md`, `docs/design/m9-budget-and-dashboard.md` and `docs/multi-model.md`'s design
+- **`docs/design/v1.md`, `docs/m9-budget-and-dashboard/spec.md` and `docs/multi-model.md`'s design
   sections**: they describe a gateway that never rewrites a body, which the recommendation keeps. V8
   adds the operational paragraph, not a design change.
 - **Anything that reads an image**: no screenshot rendering, no OCR, no console screenshot work. The

@@ -18,7 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// fugaro allow-delete (design docs/design/managed-projects.md, decisions D72
+// fugaro allow-delete (design docs/managed-projects/spec.md, decisions D72
 // and D74, and the entries rule of its §6 item 5) is the owner's answer to
 // "may this project ever delete or replace this object?": a list at the root
 // of the runs bucket whose entries each hold a Terraform address and the

@@ -2140,7 +2140,7 @@ var runAccountGrants = setOf(
 	// var.catalog_check that name one.
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? { for r in var.catalog_check.repositories : r.slug => r } : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=each.value.git_secret_id | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? { for r in var.catalog_check.repositories : r.slug => r if try(r.git_secret_id, "") != "" } : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=each.value | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? merge( { for r in var.catalog_check.repositories : r.slug => r.git_secret_id if try(r.git_secret_id, "") != "" }, { for r in var.catalog_check.repositories : "${r.slug}/own" => r.own_git_secret_id if r.own_git_secret_id != null && r.own_git_secret_id != "" }, ) : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
 	// Reviewed for B6's other half: the project's catalog check job may act as
 	// that identity, which is what makes every build it submits run as the
 	// project's one build account rather than a repository's. actAs on ONE
@@ -2281,9 +2281,14 @@ var runAccountGrants = setOf(
 	// shared job reads is sealed ciphertext (budget-token-channel.md §7.2).
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
 	// A project job account's (phase 3, modules/project/sa.tf): the same
-	// shape, its secrets keyed by the profile's mounts; its bucket grant is
-	// the workflow job's key above, under the widened condition.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset(values(var.job.secret_env)) | perms=`,
+	// shape, its secrets keyed by the profile's mounts — less the model
+	// credentials a profile the credentials service serves gives up, which is
+	// the comprehension local.job_secret_names holds since B5.7's flip (the
+	// class list and the two clauses that read it are pinned by
+	// deploy/terraform's TestSharedJobServedClassesMatchTheModule) — and its
+	// bucket grant is the workflow job's key above, under the widened
+	// condition.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.job.secret_env : logical if !local.is_shared_job_served_model[env] ])] | perms=`,
 
 	// The build account's (a build's credential): its secrets, its own
 	// registry, the shared ones read-only, builds/ under its condition, actAs
@@ -2876,7 +2881,7 @@ var labelWriteRoles = map[string]bool{
 // same grants checkRunAccountGrant and checkBucketGrant read, and it is the
 // plan's Open item 2 answered by meeting it rather than by falling back to
 // it: the fixture could be written, so the label is not refused for want of
-// one (docs/plans/2026-10-18-managed-projects-task-3.0-decisions.md §6).
+// one (docs/managed-projects/task-3.0-decisions.md §6).
 //
 // Members that are a set of people are skipped, exactly as they are above:
 // the operators' own accounts hold resourcemanager.projects.update by
