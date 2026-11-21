@@ -1506,10 +1506,14 @@ func TestWorkspaceServesThePaidKeyAMemberNamesByItsSentinel(t *testing.T) {
 //
 // The API is the test: no method of the service or of the caller it answers
 // with mentions a value-carrying type (bundle.Entry), and the values the pool
-// is spoken of in — creds.Credential — carry a name and a tier and nothing
-// else. A route that wanted a value would have to reach the bundle's own
-// accessor for the kind of credential it means, which is where the kinds are
-// kept apart (Q6).
+// is spoken of in — creds.Credential — carry names and a tier and nothing else:
+// the credential's own name, and, for a tier-C credential, the name of the
+// provider whose key it is (a project's named key is one provider's key and one
+// provider's alone, and the selection is what holds the two together — D3000,
+// R2). A NAME of a provider is no more a value than the name of an account is:
+// nothing here is a token, and a route that wanted a value would have to reach
+// the bundle's own accessor for the kind of credential it means, which is where
+// the kinds are kept apart (Q6).
 func TestWorkspaceServiceNeverReturnsACredentialValue(t *testing.T) {
 	entry := reflect.TypeOf(Entry{})
 	credential := reflect.TypeOf(creds.Credential{})
@@ -1527,9 +1531,9 @@ func TestWorkspaceServiceNeverReturnsACredentialValue(t *testing.T) {
 	}
 	for i := 0; i < credential.NumField(); i++ {
 		switch name := credential.Field(i).Name; name {
-		case "Name", "Tier":
+		case "Name", "Tier", "Provider":
 		default:
-			t.Errorf("creds.Credential carries a field %s: the pool is spoken of in names and tiers", name)
+			t.Errorf("creds.Credential carries a field %s: the pool is spoken of in names and tiers, and of the provider a tier-C key belongs to", name)
 		}
 	}
 	if mentions(reflect.TypeOf(WorkspaceCaller{}), entry) || mentions(reflect.TypeOf(WorkspaceMember{}), entry) {
