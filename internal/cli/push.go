@@ -15,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/mailbox"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -103,8 +104,17 @@ const (
 	pushMaxRows = 200
 )
 
-// pushHaltReasons are the halt reasons that are a cap being reached: the four
-// budget.Reason values that can halt a run on a cap (evaluate.go's own list).
+// pushHaltReasons are the halt reasons this category is about: a run the budget
+// stopped over a cap. evaluate.go's halt reasons are these four plus
+// `kill_switch`, which is not here because a kill switch is derived from the
+// switch node itself and not from a run — a switch that halts a run and a switch
+// that halts nothing are the same news, and the run-side spelling would buzz
+// once per run for one switch.
+//
+// `no_cap` belongs with the three cap reasons rather than apart from them: it is
+// the refusal that every side of the comparison is unset, and it halts a run
+// exactly as a reached cap does — the person's run stopped for the budget, which
+// is what the category tells them.
 var pushHaltReasons = map[string]bool{
 	string(budget.ReasonRunCap):         true,
 	string(budget.ReasonRepoDailyCap):   true,
@@ -112,14 +122,14 @@ var pushHaltReasons = map[string]bool{
 	string(budget.ReasonNoCap):          true,
 }
 
-// pushEvent is one thing a sweep derived: the category, the state-change key
+// pushEvent is one thing a sweep derived: the category, and the state-change key
 // that makes it ONE event rather than one per sweep (§3.7 — the key is the
-// transition, not the event), and the run it names when it names one, which is
-// what "one per category per run per hour" is keyed on.
+// transition, not the event). A budget event's key names the run it is about, so
+// "one per category per run per hour" is the key's own doing and not a second
+// rule the sender has to keep.
 type pushEvent struct {
 	category string
 	key      string
-	run      string
 }
 
 // pushRow is one row of the sender's ledger, as `config/admin/push/$uid/ledger`
@@ -299,7 +309,7 @@ func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent
 	}
 	// A pending intent is retried before new events are derived, so a retry is
 	// not crowded out by the events of the same sweep.
-	if err := p.retry(ctx, uid, node, rep); err != nil {
+	if err := p.retry(ctx, uid, &node, rep); err != nil {
 		return err
 	}
 	events, err := p.accountEvents(ctx, uid)
@@ -314,7 +324,7 @@ func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent
 		return events[i].key < events[j].key
 	})
 	for _, e := range events {
-		stop, err := p.consider(ctx, uid, node, e, rep)
+		stop, err := p.consider(ctx, uid, &node, e, rep)
 		if err != nil {
 			return err
 		}
@@ -349,7 +359,7 @@ func (p *pushSender) readNode(ctx context.Context, uid string) (pushNode, bool, 
 //
 // It answers whether this account's turn is over: a token the provider reports
 // unregistered ends it, because the token is gone.
-func (p *pushSender) consider(ctx context.Context, uid string, node pushNode, e pushEvent, rep *pushReport) (bool, error) {
+func (p *pushSender) consider(ctx context.Context, uid string, node *pushNode, e pushEvent, rep *pushReport) (bool, error) {
 	if !pushEnabled(node, e.category) {
 		rep.Suppressed++
 		return false, nil
@@ -380,7 +390,7 @@ func (p *pushSender) consider(ctx context.Context, uid string, node pushNode, e 
 
 // retry sends again what a previous sweep left pending, inside the retry
 // window. An intent past it is dropped by pushPrune, never escalated (§6).
-func (p *pushSender) retry(ctx context.Context, uid string, node pushNode, rep *pushReport) error {
+func (p *pushSender) retry(ctx context.Context, uid string, node *pushNode, rep *pushReport) error {
 	now := p.now().UnixMilli()
 	keys := make([]string, 0, len(node.Ledger))
 	for key := range node.Ledger {
@@ -420,7 +430,7 @@ func (p *pushSender) retry(ctx context.Context, uid string, node pushNode, rep *
 // and it is left pending, with its attempt counted, when the send fails.
 //
 // row is the row being retried, or nil for a new event.
-func (p *pushSender) deliver(ctx context.Context, uid string, node pushNode, e pushEvent, row *pushRow, rep *pushReport) (bool, error) {
+func (p *pushSender) deliver(ctx context.Context, uid string, node *pushNode, e pushEvent, row *pushRow, rep *pushReport) (bool, error) {
 	now := p.now().UnixMilli()
 	next := pushRow{Category: e.category, Key: e.key, At: now, State: pushStatePending}
 	if row != nil {
@@ -430,6 +440,11 @@ func (p *pushSender) deliver(ctx context.Context, uid string, node pushNode, e p
 	if err := p.writeRow(ctx, uid, key, next); err != nil {
 		return false, err
 	}
+	// The row is held in memory too, so the rest of THIS sweep's decisions —
+	// the cap above all — count what it has just decided to send. A sender that
+	// only counted the rows it read at the start of the sweep would send one
+	// notification per event and never reach its cap.
+	node.Ledger[key] = next
 	outcome, err := p.send(ctx, pushRequest{Token: node.Token, Platform: node.Platform, Category: e.category})
 	if err != nil {
 		p.warnf(fmt.Sprintf("the %s notification for %s was not sent and is queued: %v", e.category, uid, oneLine(err.Error())))
@@ -439,6 +454,7 @@ func (p *pushSender) deliver(ctx context.Context, uid string, node pushNode, e p
 	switch outcome {
 	case pushSent:
 		next.State = pushStateSent
+		node.Ledger[key] = next
 		if err := p.writeRow(ctx, uid, key, next); err != nil {
 			return false, err
 		}
@@ -451,6 +467,9 @@ func (p *pushSender) deliver(ctx context.Context, uid string, node pushNode, e p
 		// for it to dedupe, and the account's next registration starts a fresh
 		// ledger.
 		delete(node.Ledger, key)
+		if err := p.deleteRow(ctx, uid, key); err != nil {
+			return false, err
+		}
 		if err := p.deleteToken(ctx, uid, node); err != nil {
 			return false, err
 		}
@@ -459,6 +478,7 @@ func (p *pushSender) deliver(ctx context.Context, uid string, node pushNode, e p
 		return true, nil
 	default:
 		next.Attempts++
+		node.Ledger[key] = next
 		if err := p.writeRow(ctx, uid, key, next); err != nil {
 			return false, err
 		}
@@ -583,11 +603,11 @@ func (p *pushSender) capEvents(ctx context.Context) ([]pushEvent, error) {
 			}
 			name := slug + "/" + run
 			if pushHaltReasons[e.Halted] {
-				events = append(events, pushEvent{category: pushCapReached, key: "cap:" + name + ":" + e.Halted, run: name})
+				events = append(events, pushEvent{category: pushCapReached, key: "cap:" + name + ":" + e.Halted})
 				continue
 			}
 			if hasCap && perRun > 0 && e.Spent >= perRun*budget.Micros(pushCapNearPercent)/100 {
-				events = append(events, pushEvent{category: pushCapNear, key: "cap-near:" + name, run: name})
+				events = append(events, pushEvent{category: pushCapNear, key: "cap-near:" + name})
 			}
 		}
 	}
@@ -619,13 +639,15 @@ func (p *pushSender) accountEvents(ctx context.Context, uid string) ([]pushEvent
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		var record struct {
-			Kind string `json:"kind"`
-		}
-		if json.Unmarshal(outbox[id], &record) != nil {
+		// The consumer's own strict decoder, not a lenient read of the one
+		// field this needs: a node the schema refuses is not a stored prompt,
+		// and a buzz for it would be a notification for something the app
+		// cannot resolve against its mailbox (§3.2).
+		record, err := mailbox.Decode(outbox[id])
+		if err != nil {
 			continue
 		}
-		if record.Kind != mailboxKindPrompt {
+		if kind, _ := record["kind"].(string); kind != mailboxKindPrompt {
 			continue
 		}
 		// The message's own id is the state-change key: one question, one buzz,
@@ -660,7 +682,7 @@ func (p *pushSender) accountEvents(ctx context.Context, uid string) ([]pushEvent
 // interrupting, off for cap-near, the one it keeps off by default. The
 // registration message always carries all five (internal/mailbox's
 // PrefsRequired), so the absent case is a node written by hand.
-func pushEnabled(node pushNode, category string) bool {
+func pushEnabled(node *pushNode, category string) bool {
 	var v *bool
 	switch category {
 	case pushKillSwitch:
@@ -696,10 +718,17 @@ func pushEnabled(node pushNode, category string) bool {
 // dropping every notification for an account whose zone name is unknown is a
 // worse failure than a buzz at the wrong hour — the mailbox carries everything
 // either way.
-func pushQuiet(node pushNode, now time.Time) (bool, string) {
+func pushQuiet(node *pushNode, now time.Time) (bool, string) {
 	window := node.Prefs.QuietHours
 	if window == nil || window.Zone == "" {
 		return false, ""
+	}
+	// The bounds the registration message enforces (mailbox.ZoneMax,
+	// mailbox.MinuteMax): a window outside them is one no app wrote, and a
+	// minute the sender cannot place in a local day suppresses nothing.
+	if len(window.Zone) > mailbox.ZoneMax || window.Start < 0 || window.Start > mailbox.MinuteMax ||
+		window.End < 0 || window.End > mailbox.MinuteMax {
+		return false, fmt.Sprintf("the quiet-hours window of this account is not one a registration writes (zone %q, %d–%d): nothing was suppressed", oneLine(window.Zone), window.Start, window.End)
 	}
 	if window.Start == window.End {
 		return false, ""
@@ -783,7 +812,7 @@ func (p *pushSender) deleteRow(ctx context.Context, uid, key string) error {
 //
 // node is the node as read, with the row this sweep deleted already taken out
 // of its ledger, so an emptied node is recognised as one.
-func (p *pushSender) deleteToken(ctx context.Context, uid string, node pushNode) error {
+func (p *pushSender) deleteToken(ctx context.Context, uid string, node *pushNode) error {
 	if node.contentless() {
 		return p.delete(ctx, uid)
 	}
