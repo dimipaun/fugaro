@@ -162,7 +162,8 @@
           "internal/projectpolicy/policy_test.go",
           "internal/settings/registry.go",
           "schemas/settings.schema.json",
-          "internal/cli/init_policy_publish.go"
+          "internal/cli/init_policy_publish.go",
+          "internal/localcfg/localcfg.go"
         ]
       }
     },
@@ -195,7 +196,8 @@
         "prediction": true,
         "paths": [
           "internal/gateway/service.go",
-          "internal/gateway/service_test.go",
+          "internal/gateway/gateway.go",
+          "internal/gateway/workspace_route_test.go",
           "internal/runner/gateway.go",
           "internal/runner/budget_session.go",
           "SECURITY.md"
@@ -212,11 +214,10 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/localcfg/localcfg.go",
-          "internal/cli/workspace.go",
           "internal/cli/secrets_intake.go",
           "internal/cli/secrets_intake_test.go",
-          "website/content/cli-reference.md"
+          "website/content/cli-reference.md",
+          "internal/cli/noprompt_harness_test.go"
         ]
       }
     },
@@ -232,7 +233,8 @@
         "paths": [
           "internal/cli/workspace_offboard.go",
           "internal/cli/workspace_offboard_test.go",
-          "internal/cli/workspace_user*.go"
+          "internal/cli/workspace_user.go",
+          "internal/cli/workspace_user_test.go"
         ]
       }
     },
@@ -248,7 +250,8 @@
         "paths": [
           "internal/cli/doctor_workspace.go",
           "internal/cli/doctor_workspace_test.go",
-          "internal/cli/update_workspace.go"
+          "internal/cli/update_in_flight.go",
+          "docs/design/update-in-flight.md"
         ]
       }
     },
@@ -536,7 +539,6 @@
         "WC5",
         "WC7",
         "WC8",
-        "WC9",
         "WC11"
       ]
     },

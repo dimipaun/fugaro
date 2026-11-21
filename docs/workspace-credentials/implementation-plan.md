@@ -10,7 +10,8 @@ launcher class (D2970); roster people may store a token (D2971); one switch in t
 (D2972); a missing token refuses (D2974); the person's prefix comes after the threat model
 (D2969). From 2026-11-21: both halves are planned, the personal one behind the threat model
 (D3140); a personal token follows the route (D3141); it is used automatically, with a flag to skip
-it (D3142); it lives in the workspace project's existing intake (D3143); an exhausted token moves
+it (D3142); it lives in the workspace project's existing intake (D3143), reached at the workspace's own
+address and never one a member holds (R13); an exhausted token moves
 on to the shared entries (D3144); the roster's grant list is not asked (D3145).
 
 **What this plan does not build**, because another plan owns it (reconciliation F3): the
@@ -38,7 +39,8 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
   step; an edit under `.github/workflows/`; a second implementation of a route; a write by the
   workspace's service to a member's database; a credential's value, a claim secret or a person's
   token name in a log, an error, a header or a test name; a member's slip sent to the workspace's
-  service (R4); a change to what an installation's service does for a project in no workspace (A3).
+  service (R4); the intake's address read from anything a member holds or publishes (R13); a
+  change to what an installation's service does for a project in no workspace (A3).
 
 ## 2. Global constraints and review focus
 
@@ -48,7 +50,9 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 | A grant is given only to a `human` of the roster, by the verified address, and never to a service account | WC4 `TestTheGrantAdmitsOnlyARosterPerson`, `TestAServiceAccountIsRefusedAGrant` |
 | A grant names only the caller's own personal names: no other person's, no pool, no `fugaro_p_` name (D2962, D2976) | WC4 `TestAGrantNamesOnlyTheCallersOwnToken` |
 | The grant's job account is a member's and its repository is one of that account's (R3) | WC4 `TestAGrantIsHeldToTheNode` |
-| A person removed from the roster is refused within a minute, and an unreadable roster refuses (R3) | WC4 `TestARemovedPersonIsRefusedAfterTheReread`, `TestAnUnreadableRosterRefuses` |
+| A person removed from the roster is refused a grant and every call under a slip they own within a minute, and an unreadable roster refuses (R3) | WC4 `TestARemovedPersonIsRefusedAfterTheReread`, `TestARemovedPersonsSlipIsRefused`, `TestAnUnreadableRosterRefuses` |
+| A refused grant names no account, repository or person, and every grant and refusal is one audit line (R3) | WC4 `TestAGrantRefusalNamesNothing`, `TestEveryGrantIsAudited` |
+| The intake's address comes from the workspace's own project config and from nothing of a member's (R13) | WC9 `TestTheIntakeAddressIsNeverAMembers` |
 | The workspace's slip is kept in the workspace's database and nothing is written to a member (R3) | WC4 `TestTheSlipIsWrittenToTheWorkspaceOnly` |
 | A member's slip never reaches the workspace's service, and the workspace's never reaches the project's (R4) | WC8 `TestEachSlipGoesToItsOwnService`; WC4 `TestWorkspaceScopeRefusesAMembersSlip` |
 | A personal token is served only to a call whose slip its owner was granted (D2962) | WC5 `TestAnotherPersonsRunIsNeverServedTheToken` |
@@ -58,7 +62,7 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 | The workspace's account reads `fugaro_u_` containers and no `fugaro_p_` one (R6) | WC2 `TestTheWorkspaceAccessorIsThePersonPrefixOnly` |
 | Roster people are admitted at the intake and at nothing else of the workspace project's installation (R5, F10) | WC3 `TestRosterPeopleAreNotLaunchersOfTheWorkspaceProject` |
 | Removing a person needs no operator repair (F15) | WC2 `TestWorkspacePlanAdmitsRemovingAPersonsInvokeGrant` |
-| `fugaro run` asks for a grant only on a workspace route, with the switch on and a token held (R8, D3141) | WC7 `TestNoGrantIsAskedOnAProjectRoute`, `TestNoGrantIsAskedWithoutAToken` |
+| `fugaro run` asks for a grant only on a workspace route with the switch on, and an answer of "no token held" starts the run as before (R8, D3141) | WC7 `TestNoGrantIsAskedOnAProjectRoute`, `TestNoTokenHeldStartsTheRunAsBefore` |
 | `--no-personal-token` asks for no grant, and no command waits for input (D3142) | WC7 `TestTheFlagSkipsTheGrant`; the closed-stdin harness |
 | A failed grant never stops a launch: the run starts on the shared entries and says so | WC7 `TestAFailedGrantStartsTheRunWithoutIt` |
 | Offboarding removes the person's containers at the workspace (F21) | WC10 `TestUserRmSweepsTheWorkspacesIntake` |
@@ -72,17 +76,17 @@ strictest rigor and gets an independent review (`fugaro review --pr N`) before a
 against it.
 
 ### C1: the person wire contract
-- Acceptance: one place names the key of the member's switch and its home (R9, U8); the field of
-  the member's pin that holds the workspace intake's address (F23); the environment name a job
-  reads the workspace's slip from; the request and the answer of a workspace grant (the job
-  account, the repository, the run, the one personal name; the slip's id and claim secret); the
+- Acceptance: one place names the key of the member's switch and its home (R9, U8); the
+  environment name a job reads the workspace's slip from; the request and the answer of a
+  workspace grant (the job account, the repository, the run, the one personal name; the slip's id
+  and claim secret, or "no token held", R8); the one class a refused grant is answered with; the
   two header names a workspace slip travels in; and the one personal name this plan serves
   (`claude-oauth-token`, A1). The grant's shapes decode strictly. A stub reader answers "the
   switch is off".
 - Files: `internal/creds/person.go` (new), `internal/creds/person_stub.go` (new, stub),
   `docs/workspace-credentials/contract-person.md` (new).
 - Interfaces: produces the names, `creds.PersonGrant`, `creds.PersonSwitchReader`; consumed by
-  WC5, WC7, WC8, WC11. WC4, WC6 and WC9 build its other side.
+  WC5, WC7, WC8, WC11. WC4 and WC6 build its other side.
 - Tests: `TestPersonGrantDecodesStrictly`, `TestStubSwitchIsOff`.
 - Command: `go test ./internal/creds/ -run 'PersonGrant|StubSwitch' -count=1`.
 - Red step: an unknown key in a grant is accepted until the strict decode lands.
@@ -122,13 +126,14 @@ WC5.
 ### WC0: the threat model for the personal half
 - Acceptance: `threat-model.md` states, for personal tokens at the workspace: who can read a
   token (every workspace admin, F20; the workspace's service account), who can replace or delete
-  one (the intake's account, D3143), who can spend one and for how long (F14, in the words of O2),
+  one (the intake's account, D3143), who can spend one and for how long (F14 and F24, in the words of O2, and that with D3142 the
+  switch is the member admins' own),
   what a stolen workspace-admin credential and a hostile member admin can each do, what
   offboarding does and does not end, and the three settled rules it amends (the workspaces spec
   §4, workspace-service R18, D2825). Every residual risk is numbered. An independent review reads
   it, and each of its findings is answered by the owner in the document before the task is done.
 - Files: `docs/workspace-credentials/threat-model.md` (new).
-- Interfaces: consumes reconciliation F12 to F16, F19, F20; produces the numbered risks WC13 cites.
+- Interfaces: consumes reconciliation F12 to F16, F19, F20, F23 to F25; produces the numbered risks WC13 cites.
 - Tests: `go test ./internal/cli/ -run Docs -count=1` (no test pins the new file; the run proves
   nothing else moved).
 - Command: `go test ./internal/cli/ -run Docs -count=1`.
@@ -153,8 +158,7 @@ WC5.
 - Command: `go test ./internal/cli/ -run 'ShareAccepts|ShareStillRefuses' -count=1 && go test ./internal/credsvc/ -run 'SharedProviderKey' -count=1`.
 - Red step: `TestShareAcceptsAProviderKey` fails on `workspaceSharedKind`'s refusal (U7 is settled
   here).
-- Depends on: none in this plan. Outside it: workspace-service WS19 (the same two files) and
-  keys-through-service KS4 (the provider route takes a provider's name).
+- Depends on: none in this plan. Outside it: workspace-service WS19 (the same two files).
 - Commit: `workspace: a provider key is shared like any model entry (WC1, D2978, F7)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -165,14 +169,14 @@ WC5.
   the deletion of a person's invoke grant, and refuses an accessor that is wider.
 - Files: `deploy/terraform/gcp/roots/workspace/main.tf`,
   `deploy/terraform/gcp/roots/workspace/variables.tf`, `internal/infra/tf/workspace.go`,
-  `internal/infra/tf/workspace_test.go`, `internal/cli/workspace_create.go`.
+  `internal/infra/tf/workspace_test.go`, `internal/cli/workspace_create.go`; and the pinned
+  sentence of `SECURITY.md` with its test and `website/content/security.md` (§5's exception).
 - Interfaces: consumes `workspace.Roster`; produces the `people` variable.
 - Tests: `TestTheWorkspaceAccessorIsThePersonPrefixOnly`,
   `TestWorkspacePlanAdmitsRemovingAPersonsInvokeGrant`, `TestWorkspaceVarsNameTheRostersPeople`.
 - Command: `go test ./internal/infra/tf/ -run Workspace -count=1 && go test ./internal/cli/ -run WorkspaceVars -count=1 && terraform fmt -check -recursive deploy/terraform`.
 - Red step: the cover refuses a plan that binds a person's invoke grant.
-- Depends on: WC0 (the owner's answers). Outside this plan: workspace-projects-users WU7, which
-  gives the roster its people.
+- Depends on: WC0 (the owner's answers).
 - Commit: `infra: the workspace root admits the roster's people (WC2, D2971, R6)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -191,7 +195,7 @@ WC5.
   `TestARosterPersonIsRefusedTheProjectPrefix`.
 - Command: `go test ./internal/intake/ -run 'RosterPerson|IntakeAdmits' -count=1 && go test ./internal/infra/ -run 'RosterPeople' -count=1 && terraform fmt -check -recursive deploy/terraform`.
 - Red step: a roster person who is not a launcher is refused by `VerifyLauncher`.
-- Depends on: WC0. Outside this plan: WU7.
+- Depends on: WC0.
 - Commit: `intake: a workspace project's intake admits the roster's people (WC3, D3143, R5)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -200,16 +204,18 @@ WC5.
   by the verified address, re-reading the roster as the node is re-read; it holds the job account
   and the repository to the node and the names to the caller's own token; the slip is written to
   the workspace's database; a call that presents a workspace slip is verified against it and one
-  that presents any other slip is refused. `PersonScope` is implemented by the workspace's scope
-  and by no other.
+  that presents any other slip is refused, as is one whose slip's owner has left the roster; a
+  refused grant is one class that names nothing, and each grant and refusal is one audit line.
+  `PersonScope` is implemented by the workspace's scope and by no other.
 - Files: `internal/credsvc/scope_workspace.go`, `internal/credsvc/workspace.go`,
   `internal/credsvc/slip.go`, `internal/credsvc/server.go`,
-  `internal/credsvc/scope_workspace_test.go`.
+  `internal/credsvc/scope_workspace_test.go`; and the pinned sentences of `SECURITY.md` with
+  their tests and `website/content/security.md` (§5's exception).
 - Interfaces: consumes C1 (the grant's shapes) and C2 (`PersonScope`); produces the routes WC7 and
   WC8 call.
-- Tests: the seven WC4 tests of §2, and `TestWorkspaceModeServesTheGrantAndTheClaim`. It rewrites
+- Tests: the ten WC4 tests of §2, and `TestWorkspaceModeServesTheGrantAndTheClaim`. It rewrites
   `TestWorkspaceScopeRefusesACallThatPresentsASlip` as `TestWorkspaceScopeRefusesAMembersSlip`.
-- Command: `go test ./internal/credsvc/ -run 'Grant|WorkspaceScope|RemovedPerson|UnreadableRoster|TheSlipIsWritten' -count=1 && go test ./internal/cli/ -run 'DocsWorkspaces|SecurityMd' -count=1`.
+- Command: `go test ./internal/credsvc/ -run 'Grant|WorkspaceScope|RemovedPerson|UnreadableRoster|TheSlipIsWritten|ServiceAccountIsRefused' -count=1 && go test ./internal/cli/ -run 'DocsWorkspaces|SecurityMd' -count=1`.
 - Red step: `TestWorkspaceModeServesTheGrantAndTheClaim` fails on `servesWorkspaceRoute`.
 - Depends on: C1 and C2 (it builds their other side), WC0.
 - Commit: `credsvc: the workspace's own grant and launcher class (WC4, D2970, D2962, R3)`.
@@ -242,7 +248,8 @@ WC5.
   it from a member's published policy.
 - Files: `internal/projectpolicy/policy.go`, `internal/projectpolicy/policy_test.go`,
   `internal/settings/registry.go`, `schemas/settings.schema.json`,
-  `internal/cli/init_policy_publish.go`.
+  `internal/cli/init_policy_publish.go`; and `internal/localcfg/localcfg.go` if C1 places the
+  switch there (U8).
 - Interfaces: consumes C1 (the key and its home); produces the published key WC7 and WC11 read.
 - Tests: `TestTheSwitchIsOffWhenAbsent`, `TestTheSwitchIsPublishedByUpdate`,
   `TestAnOlderReaderDecodesPastTheSwitch`.
@@ -253,18 +260,20 @@ WC5.
 - Reviewer tier: opus, mandatory independent review.
 
 ### WC7: `fugaro run` asks the workspace for a grant
-- Acceptance: at launch, when the repository's model route is the workspace, the switch is on and
-  the person holds a token at the workspace, `fugaro run` asks the workspace's service for a
-  grant and hands the job the slip by C1's environment name; it prints one line naming the
-  workspace; `--no-personal-token` skips it; a refusal or an unreachable service starts the run
+- Acceptance: at launch, when the repository's model route is the workspace and the switch is
+  on, `fugaro run` asks the workspace's service for a grant; on a slip it hands the job the slip
+  by C1's environment name and prints one line naming the workspace and the flag; on "no token
+  held" it starts the run as before and prints nothing; `--no-personal-token` asks for none; a refusal or an unreachable service starts the run
   without it and says why; a service-account launch asks for none. It never waits for input.
 - Files: `internal/cli/run_personal.go` (new), `internal/cli/run_personal_test.go` (new),
   `internal/cli/run.go` (the flag and one call), `website/content/cli-reference.md`,
   `internal/cli/noprompt_harness_test.go`.
 - Interfaces: consumes C1 and the key WC6 publishes; produces the job's environment entry WC8
   reads.
-- Tests: the four WC7 tests of §2, and `TestTheLaunchSaysWhichTokenItDrawsOn`.
-- Command: `go test ./internal/cli/ -run 'NoGrantIsAsked|TheFlagSkips|AFailedGrant|TheLaunchSays|CliReference|NoPrompt' -count=1`.
+- Tests: the four WC7 tests of §2 (`TestNoGrantIsAskedOnAProjectRoute`,
+  `TestNoTokenHeldStartsTheRunAsBefore`, `TestTheFlagSkipsTheGrant`,
+  `TestAFailedGrantStartsTheRunWithoutIt`), and `TestTheLaunchSaysWhichTokenItDrawsOn`.
+- Command: `go test ./internal/cli/ -run 'NoGrantIsAsked|NoTokenHeld|TheFlagSkips|AFailedGrant|TheLaunchSays|CliReference|ClosedStdin' -count=1`.
 - Red step: `TestNoGrantIsAskedOnAProjectRoute` fails while the grant is asked unconditionally.
 - Depends on: C1; WC6 (it reads the field WC6 adds to the published policy); WC0.
 - Commit: `run: a person's runs draw on their own workspace token (WC7, D3142, R8)`.
@@ -275,8 +284,10 @@ WC5.
   bootstrap and sends it on every call to that service and on none to the project's; the
   project's slip goes on unchanged to the project's service only; a run handed no workspace slip
   behaves exactly as today.
-- Files: `internal/gateway/service.go`, `internal/gateway/service_test.go`,
-  `internal/runner/gateway.go`, `internal/runner/budget_session.go`.
+- Files: `internal/gateway/service.go`, `internal/gateway/gateway.go`,
+  `internal/gateway/workspace_route_test.go`, `internal/runner/gateway.go`,
+  `internal/runner/budget_session.go`; and the pinned sentence of `SECURITY.md` with its test and
+  `website/content/security.md` (§5's exception).
 - Interfaces: consumes C1 (the environment name and the headers); produces nothing new.
 - Tests: `TestEachSlipGoesToItsOwnService`, `TestARunWithNoWorkspaceSlipIsUnchanged`,
   `TestTheWorkspaceSlipIsClaimedAtBootstrap`. It rewrites
@@ -288,35 +299,36 @@ WC5.
 - Reviewer tier: opus, mandatory independent review.
 
 ### WC9: storing a token at the workspace
-- Acceptance: `fugaro workspace add` takes the workspace intake's address into the member's pin
-  (optional, `https`, no query; a pin without it converges untouched);
-  `fugaro secrets user set|ls|rm --workspace <name>` call that intake with the person's own
-  identity; without the address the command refuses and names `fugaro workspace add`; the value
-  comes from stdin only; the command refuses in an agent's session as today.
-- Files: `internal/localcfg/localcfg.go`, `internal/cli/workspace.go`,
-  `internal/cli/secrets_intake.go`, `internal/cli/secrets_intake_test.go`,
-  `website/content/cli-reference.md`.
-- Interfaces: consumes C1 (the pin's field name); produces the commands Check 850 runs.
-- Tests: `TestAPinWithoutAnIntakeAddressIsValid`, `TestSecretsUserSetReachesTheWorkspacesIntake`,
-  `TestSecretsUserRefusesWithoutThePinnedAddress`.
-- Command: `go test ./internal/cli/ -run 'IntakeAddress|SecretsUser|CliReference|NoPrompt|DocsWorkspaces' -count=1 && go test ./internal/localcfg/ -run Pin -count=1`.
+- Acceptance: a roster person who is no launcher of the workspace's project runs
+  `fugaro secrets user set|ls|rm` with that project selected and reaches its intake at the
+  address read from that project's own local config (`intakeURLOf`); `--workspace <name>` selects
+  that project and, when the person's machine holds no config for it, refuses and names how to
+  get one (U10); no address is read from a member's pin, route or policy; the value comes from
+  stdin only; the command refuses in an agent's session as today.
+- Files: `internal/cli/secrets_intake.go`, `internal/cli/secrets_intake_test.go`,
+  `website/content/cli-reference.md`, `internal/cli/noprompt_harness_test.go`.
+- Interfaces: consumes WC3's admission at run time only; produces the commands Check 850 runs.
+- Tests: `TestSecretsUserSetReachesTheWorkspacesIntake`, `TestTheIntakeAddressIsNeverAMembers`,
+  `TestSecretsUserRefusesWithoutTheWorkspacesConfig`.
+- Command: `go test ./internal/cli/ -run 'IntakeAddress|SecretsUser|CliReference|ClosedStdin' -count=1`.
 - Red step: `--workspace` is an unknown flag.
-- Depends on: C1, WC0.
+- Depends on: WC0.
 - Commit: `secrets: a person stores their token once, at the workspace (WC9, D2960, D2971)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### WC10: offboarding sweeps the workspace
 - Acceptance: `fugaro workspace user rm` also asks the workspace's intake to delete every
   container the person owns, after the members' sweeps and whatever they answered; its output
-  says that an open slip ends within 24 hours and a run in flight is not stopped.
-- Files: `internal/cli/workspace_offboard.go`, `internal/cli/workspace_offboard_test.go`, and the
-  file WU7 adds for `workspace user rm`.
+  says that a run in flight on that person's token halts within a minute (R3), whatever the sweep
+  answered.
+- Files: `internal/cli/workspace_offboard.go`, `internal/cli/workspace_offboard_test.go`,
+  `internal/cli/workspace_user.go`, `internal/cli/workspace_user_test.go`.
 - Interfaces: consumes the intake's delete route and `memberSweeper`'s pattern; produces nothing
   new.
 - Tests: `TestUserRmSweepsTheWorkspacesIntake`, `TestTheSweepRunsWhenAMemberRefused`.
 - Command: `go test ./internal/cli/ -run 'UserRmSweeps|TheSweepRuns' -count=1`.
 - Red step: the workspace's containers are still there after `user rm`.
-- Depends on: WC0. Outside this plan: WU7 (the command it extends).
+- Depends on: WC0.
 - Commit: `workspace: offboarding removes a person's tokens at the workspace (WC10, F21)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -324,12 +336,13 @@ WC5.
 - Acceptance: `fugaro doctor` says, for a member, whether the switch is on and whether the
   caller holds a token at the workspace (a name and a date, never a value), and flags a switch
   that is on where the model route is the project's (D3141's shadow); `fugaro update` names, when
-  runs are running, the three steps of R11 that can reach one.
+  runs are running, the two new steps of R11 that can reach one, and the step-by-step audit in
+  `docs/design/update-in-flight.md` gains them.
 - Files: `internal/cli/doctor_workspace.go`, `internal/cli/doctor_workspace_test.go`,
-  `internal/cli/update_workspace.go`.
+  `internal/cli/update_in_flight.go`, `docs/design/update-in-flight.md`.
 - Interfaces: consumes C1 and the key WC6 publishes.
 - Tests: `TestDoctorFlagsASwitchTheRouteShadows`, `TestUpdateNamesTheStepsThatReachAPersonalRun`.
-- Command: `go test ./internal/cli/ -run 'DoctorFlagsASwitch|UpdateNamesTheSteps' -count=1`.
+- Command: `go test ./internal/cli/ -run 'DoctorFlagsASwitch|UpdateNamesTheSteps|Docs' -count=1`.
 - Red step: doctor is silent about a shadowed switch.
 - Depends on: C1; WC6 (the field it reads).
 - Commit: `doctor: the personal half's state, and update's lines for runs in flight (WC11, R11)`.
@@ -403,8 +416,7 @@ here and a launcher checks them by hand:
 
 | Task | Waits on | Why |
 | --- | --- | --- |
-| WC1 | workspace-service WS19; keys-through-service KS4 | the same two files; the provider route |
-| WC2, WC3, WC10 | workspace-projects-users WU7 | the roster's people, and the command WC10 extends |
+| WC1 | workspace-service WS19 | the same two files |
 | WC5 | workspace-service WS8 | the meter, and `cascade.go` |
 | I1 | workspace-service I1 | its end-to-end test runs over that plan's wired sides |
 
@@ -415,8 +427,10 @@ The path is as long as before the pass and lighter: what the contracts buy is th
 WC8 no longer queue behind WC4, the largest task.
 
 **Where the graph and this table differ.** As in workspace-service (its O5), the graph records a
-contract's consumers only. WC4, WC6 and WC9 build C1's other side and WC4 builds C2's; they carry
-no edge to their contract in the graph and each still starts after it has merged.
+contract's consumers only. WC4 and WC6 build C1's other side and WC4 builds C2's; they carry
+no edge to their contract in the graph and each still starts after it has merged. WC11 reads C1's
+names too; the graph refuses that edge for the same reason, and WC11 already waits on WC6, which
+waits on C1.
 
 **Edges broken, each by a contract and rejoined in I1.**
 - WC7 after WC4: the launcher needs the grant's request and answer, not the route's code (C1).
@@ -435,17 +449,17 @@ the environment name; that name is in C1, so the edge is gone without a break of
 | --- | --- |
 | `internal/cli/workspace_share.go`, `internal/credsvc/bundle_workspace.go` | WC1 (0) |
 | `website/content/cli-reference.md` | WC1 (0), WC9 (1), WC7 (2) |
-| `internal/cli/noprompt_harness_test.go` | WC7 (2) |
+| `internal/cli/noprompt_harness_test.go` | WC9 (1), WC7 (2) |
 | `deploy/terraform/gcp/roots/workspace/*`, `internal/infra/tf/workspace.go`, `internal/cli/workspace_create.go` | WC2 (1) |
 | `deploy/terraform/gcp/modules/installation/*`, `internal/infra/launchers.go`, `internal/cli/intake_serve.go`, `internal/intake/server.go` | WC3 (1) |
 | `internal/credsvc/scope_workspace.go`, `workspace.go`, `slip.go`, `server.go` | WC4 (1) |
 | `internal/credsvc/personal_workspace.go`, `cascade.go`, `dynamicsecrets.go` | WC5 (1) |
-| `internal/projectpolicy/policy.go`, `internal/settings/registry.go`, `schemas/settings.schema.json`, `internal/cli/init_policy_publish.go` | WC6 (1) |
-| `internal/gateway/service.go`, `internal/runner/gateway.go`, `internal/runner/budget_session.go` | WC8 (1) |
-| `internal/localcfg/localcfg.go`, `internal/cli/workspace.go`, `internal/cli/secrets_intake.go` | WC9 (1) |
-| `internal/cli/workspace_offboard.go` | WC10 (1) |
+| `internal/projectpolicy/policy.go`, `internal/settings/registry.go`, `schemas/settings.schema.json`, `internal/cli/init_policy_publish.go`, `internal/localcfg/localcfg.go` | WC6 (1) |
+| `internal/gateway/service.go`, `internal/gateway/gateway.go`, `internal/runner/gateway.go`, `internal/runner/budget_session.go` | WC8 (1) |
+| `internal/cli/secrets_intake.go` | WC9 (1) |
+| `internal/cli/workspace_offboard.go`, `internal/cli/workspace_user.go` | WC10 (1) |
 | `internal/cli/run.go`, `internal/cli/run_personal.go` | WC7 (2) |
-| `internal/cli/doctor_workspace.go`, `internal/cli/update_workspace.go` | WC11 (2) |
+| `internal/cli/doctor_workspace.go`, `internal/cli/update_in_flight.go`, `docs/design/update-in-flight.md` | WC11 (2) |
 | `docs/gcp-live-checklist.md`, `scripts/live-checks/check85*` | WC12 (3) |
 | `docs/workspaces/README.md`, `plugin/skills/working/SKILL.md`, the release notes | WC13 (3) |
 | the two stub files | C1, C2 (0), I1 (3) |
@@ -472,7 +486,7 @@ predict, and it moves as runs finish.
 ## 7. Contract changes anticipated
 
 - **R-person-wire** (C1, raised by WC6): if U8 shows the switch's home must be elsewhere, or an
-  answer to WC0's review changes a name or a shape. Reaches WC4, WC5, WC7, WC8, WC9, WC11.
+  answer to WC0's review changes a name or a shape. Reaches WC4, WC5, WC7, WC8, WC11.
 - **R-person-scope** (C2, raised by WC4 or WC5): if the candidate needs something of the call the
   interface does not carry (U9). Reaches WC4, WC5.
 
@@ -485,7 +499,7 @@ From the reserved block 850–859. Both are owner-run, as scripts (WC12), after 
 
 | Check | What it measures |
 | --- | --- |
-| **850** | A roster person stores a token at the workspace with nothing but the two invoke grants (U6); launches in two members with the switch on and is served it in both; a second person's run is not; the workspace's account reads the container through the prefix-conditioned accessor (U5); the switch off and a deleted token each refuse as written; a person removed from the roster is refused within a minute |
+| **850** | A roster person stores a token at the workspace with nothing but the two invoke grants (U6); launches in two members with the switch on and is served it in both; a second person's run is not; a roster person with no role on the workspace's project gets its config and reaches its intake (U10); the workspace's account reads the container through the prefix-conditioned accessor (U5); the switch off and a deleted token each refuse as written; a person removed from the roster is refused within a minute, a run of theirs in flight included |
 | **851** | `fugaro update` on a workspace and on a member at the previous release, with a run in flight on each: both converge with no other step, the run finishes, and a member that never turns the switch on sees no change |
 
 ## 9. After-deploy steps
@@ -499,9 +513,9 @@ workspace-service's O7 settled for the shared half:
 
 - the workspace owner runs `fugaro update`, which binds the grants for the people on the roster; a
   person added later needs the next one (D2971);
-- each member's admin pins the intake's address (`fugaro workspace add`), sets the switch, and
-  runs `fugaro update`;
-- each person stores their token once (`fugaro secrets user set --workspace <name>`).
+- each member's admin sets the switch and runs `fugaro update`;
+- each person stores their token once, with the workspace's own project selected
+  (`fugaro secrets user set --workspace <name>`, R13).
 
 A project that still holds a model credential of its own keeps using it (D3141); `fugaro doctor`
 says so (WC11).
@@ -522,6 +536,8 @@ says so (WC11).
   candidate is its own small spec.
 - **A command that moves a project's token to the workspace** (R10): a stored value cannot be
   read back.
+- **The intake's address in the member's pin** (the first draft of F23, dropped after review
+  round 1): a member admin could aim a person's raw token at an address of their own.
 - **Trusting the member's launcher claim or its identity ticket** (F12): both live where a
   member's admins can write.
 - **A person's forge token served per person** (A1): nothing in the spec asks for it.
