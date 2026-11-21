@@ -38,10 +38,22 @@ import (
 // is the coverage a forge route holds a run's repository to before the member's
 // own policy is asked as well (R5). The two arms of the lookup below are what
 // tells the kinds apart, and neither can answer for the other: a model entry is
-// read from the bundle's model index (Bundle.Lookup) and a forge entry from the
-// accessor of its own kind (AppKey, BitbucketToken, BitbucketTokens), so a
+// read from the bundle's model index and the two provider keys beside it
+// (modelEntryOf) and a forge entry from the accessor of its own kind (AppKey,
+// BitbucketToken, BitbucketTokens), so a
 // Bitbucket token is never offered as a model credential and a model account is
 // never offered as a forge one.
+//
+// **A provider key is a model entry too** (WC1, D2978, F7): what a call through
+// one is spent on is a model, so the two shapes the bundle holds a provider's key
+// in — the project's own (KindProvider, config.ProviderKeySecret) and one
+// repository's named entry for a provider (KindRepoCredential) — are offered from
+// the model arm, and the arm asks each kind's own accessor for them
+// (modelEntryOf) rather than the model index, which holds neither. What they
+// carry is the reserved tier C, which is what has the selection refuse a Claude
+// model through one until Check 50 has passed (creds.checkCandidates, D3000) —
+// the pool offers the credential and the selection decides the call, as it does
+// for every other entry.
 
 // WorkspaceBundleSecretID is the Secret Manager ID of the workspace's bundle
 // container: the workspace's one secret, and the container the workspace's
@@ -103,10 +115,12 @@ func WorkspaceShared(b *Bundle, node *projectpolicy.WorkspaceCredentials) []cred
 	out := make([]creds.Shared, 0, len(node.Shared))
 	for _, s := range node.Shared {
 		if s.Kind == "" || s.Kind == projectpolicy.SharedKindModel {
-			// The model arm, unchanged: the pool's own kind, and what a
-			// version-1 node's entry is (C3's rule 8 — the pool held model
-			// credentials and nothing else before version 2, F15).
-			e, held := b.Lookup(s.Name)
+			// The model arm: the pool's own kind, and what a version-1 node's
+			// entry is (C3's rule 8 — the pool held model credentials and
+			// nothing else before version 2, F15). A provider key is offered
+			// from here too, and modelEntryOf is the whole of how the two
+			// shapes it is held in are reached.
+			e, held := modelEntryOf(b, s.Name)
 			if !held {
 				continue
 			}
@@ -128,6 +142,48 @@ func WorkspaceShared(b *Bundle, node *projectpolicy.WorkspaceCredentials) []cred
 		})
 	}
 	return out
+}
+
+// modelEntryOf answers the bundle's entry for a model arm's name, which is the
+// name the node carries and the bundle's own spelling of the credential.
+//
+// The model index first (Bundle.Lookup) is every credential a coding caller's
+// candidate list holds — the accounts, the project's own Anthropic key and the
+// service-served key credentials — and it is what every entry of a version-1
+// node, and every entry that names a Claude credential, is read through. The two
+// provider keys WC1 makes shareable are deliberately NOT in that index, so each
+// is asked for by the accessor that owns its kind, and by its KIND rather than by
+// the name the bundle would answer to a lookup (AK6b's reason, and R2's):
+//
+//   - the project's provider key (KindProvider), which ProviderKey selects by
+//     kind because an account may legally be named "provider-key", so this arm is
+//     the one place the node's name and the entry's meet;
+//   - one repository's named entry for a provider (KindRepoCredential), which is
+//     keyed by its DOCUMENT KEY because two repositories' entries for one
+//     provider answer the same credential's name, and whose key is therefore what
+//     the node carries (R5, D3008).
+//
+// The family's other half — a named entry whose credential half is the
+// repository's OWN Anthropic key — is skipped, and skipped here as well as at the
+// write (`fugaro workspace share` refuses that name): its tier is a paid key's
+// and not the reserved third-party one, and it is one repository's by
+// construction, so another member's runs are not the runs it is held for. The
+// two halves are told apart by the TIER and by nothing else, which is the one
+// fact of the kind that is not the entry's own text (KindRepoCredential, and
+// CredentialKey's own arm).
+func modelEntryOf(b *Bundle, name string) (Entry, bool) {
+	if e, ok := b.Lookup(name); ok {
+		return e, true
+	}
+	if e, ok := b.ProviderKey(); ok && e.Name == name {
+		return e, true
+	}
+	if i, ok := b.repoCredentials[name]; ok {
+		if e := b.entries[i]; e.Tier == creds.TierC {
+			return e, true
+		}
+	}
+	return Entry{}, false
 }
 
 // forgeEntryOf answers the bundle's credential of a forge entry's kind and
