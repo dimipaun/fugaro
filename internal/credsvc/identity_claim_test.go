@@ -90,6 +90,13 @@ const (
 type claimIssuance struct {
 	mu      sync.Mutex
 	records map[string]identitywire.Record
+	// moved is what a writer that replaced the record between the claim's read
+	// and its fence leaves behind: the interface promises the record AS IT STANDS
+	// after the call, and the fence is one atomic step on the node rather than a
+	// lock over the handler's two calls, so the record the fence answers is not
+	// necessarily the one Get answered. LM1's Put is that writer (R6). nil is a
+	// store nothing moved under, which is every other test here.
+	moved func(*identitywire.Record)
 }
 
 func newClaimIssuance() *claimIssuance {
@@ -152,6 +159,10 @@ func (f *claimIssuance) Claim(_ context.Context, slug, run string, claim identit
 	rec, ok := f.records[issuanceNode(slug, run)]
 	if !ok {
 		return identitywire.Record{}, identitywire.ErrNoRecord
+	}
+	if f.moved != nil {
+		f.moved(&rec)
+		f.records[issuanceNode(slug, run)] = rec
 	}
 	switch {
 	case rec.Claimed == (identitywire.Claim{}):
@@ -635,6 +646,38 @@ func TestClaimRevalidatesTheRecord(t *testing.T) {
 			t.Errorf("the record's claim is %+v, want the fence taken with the nonce's digest before the signing", held.Claimed)
 		}
 	})
+}
+
+// TestClaimChecksTheRecordTheStoreReturns: the record the FENCE answers is the
+// record this service signs. The fence is one atomic step on the node and not a
+// lock over the handler's two calls, and the store answers the record as it
+// stands after the call — so a record that moved between the read and the fence
+// (LM1's Put, R6) is the one a signing off the returned record would use. What
+// is signed has to be what was checked: the claims are held to the path again
+// against the record the fence returned, and a record whose claims name another
+// run is refused with one line, before the signer is even built.
+func TestClaimChecksTheRecordTheStoreReturns(t *testing.T) {
+	f := newClaimFixture(t)
+	ticket, _ := f.issued(t)
+	// The record as the fence sees it: replaced under this run's path by claims
+	// that name another run, which is the shape a database admin's own write has.
+	f.issuance.moved = func(rec *identitywire.Record) { rec.Claims.Run = otherRun() }
+
+	resp, body := f.claimCall(t, identityClaimBody(t, ticket, testNonce))
+	wantRefusal(t, resp, body, StatusUnverified, identitywire.RefusalIdentityRefused)
+
+	lines := f.identityLines(t)
+	if len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly one", len(lines))
+	}
+	wantIdentityLine(t, lines[0], f.run, f.slug, ErrorUnverifiedRunIdentity)
+	f.wantNothingSigned(t)
+	// The fence WAS taken before the record was signed, as it is for the claims
+	// that fail R4: the run is refused and the ticket is spent, which is the
+	// state the run halts on.
+	if held := f.issuance.record(t, f.slug, f.run); held.Claimed.NonceHash != identitywire.Digest(testNonce) {
+		t.Errorf("the record's claim is %+v, want the fence taken before the record was signed", held.Claimed)
+	}
 }
 
 // TestClaimNeverLogsTheNonce: R2's confinement. The nonce is kept as its digest

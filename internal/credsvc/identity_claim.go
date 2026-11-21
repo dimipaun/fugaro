@@ -359,6 +359,21 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 			return
 		}
 	}
+	// The store answers the record AS IT STANDS after the fence, and that is the
+	// record this service signs: the fence is one atomic step on the node and not
+	// a lock over this handler's two calls, so what it returned is not necessarily
+	// the record the read above answered — LM1's Put replaces a record at the same
+	// path (R6). So the claims are held to the path again here, against the record
+	// the fence returned and not the one that was read, because the uid this
+	// service signs is derived from the record's path (R3) and a record that moved
+	// under the claim must not be signed into a token whose claims name another
+	// run. It is refused the way the store's own two decisions above are: the
+	// record is not the one this claim read, so the run has to be launched again.
+	if claimed.Claims.Slug != slug || claimed.Claims.Run != run {
+		s.refuseIdentityCall(ctx, w, run, slug, StatusUnverified, identitywire.RefusalIdentityRefused,
+			"the record's claims are not this run's: the record was replaced under the claim, and the uid this service signs is derived from the record's path, so the run must be launched again")
+		return
+	}
 	signer, err := identitySignerFor(ctx, s.cfg.Identity.Signer)
 	if err != nil {
 		s.log.Error("credsvc: the runs' signer could not be built", "signer", s.cfg.Identity.Signer, "error", err)
@@ -368,8 +383,9 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 	// The signing is token.MintAt's and not this file's: the uid is derived from
 	// the claims (token.Claims.UID) — which the check above has held to the
-	// record's path — and every other claim is validated there (R4), so the
-	// record cannot be signed into a token the identity provider would refuse.
+	// record's path, on the record the fence itself returned — and every other
+	// claim is validated there (R4), so the record cannot be signed into a token
+	// the identity provider would refuse.
 	witness := &signerWitness{Signer: signer}
 	custom, err := token.MintAt(ctx, witness, claimed.Claims, now)
 	if err != nil {
