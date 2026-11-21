@@ -23,6 +23,10 @@
 //     values are not the plan's own", which sends another model ID over the
 //     channel and asserts no second child;
 //   - a **second plan replacing a pending one** fails "one write at a time";
+//   - a console that reads a child's **stdout without its exit status** fails
+//     the two cases whose child printed bytes and exited non-zero -- which is
+//     what `models add` does when it refuses *after* printing the path and the
+//     diff, so the screen would say the model was added when nothing was;
 //   - a console that spawns **below the floor**, or with the floor still unset,
 //     fails the floor cases, which assert the sentence names the command to run
 //     by hand and that no child was started;
@@ -435,7 +439,10 @@ describe('the models write behind the modal', () => {
     expect(confirmer.opened).toHaveLength(1)
     expect(shown.kind).toBe('models-add')
     // The view is the CLI's document as main parsed it, and the two facts main
-    // holds: the digest of the document as it arrived, and the exact argv.
+    // holds: the digest of the document as it arrived, and the exact argv the
+    // window's yes will spawn -- the write's own line, not the dry run's, so
+    // the operator is not shown a command marked `--dry-run` and told the write
+    // is what it does.
     expect(shown.model).toBe(ID)
     expect(shown.route).toBe(ROUTE)
     expect(shown.priceIn).toBe(0.14)
@@ -446,7 +453,7 @@ describe('the models write behind the modal', () => {
     ])
     expect(shown.project).toBe(PROJECT)
     expect(shown.digest).toBe(createHash('sha256').update(aDocumentText().trim(), 'utf8').digest('hex'))
-    expect(shown.argv).toStrictEqual([...PLAN_ARGV])
+    expect(shown.argv).toStrictEqual([...WRITE_ARGV])
     // A widening's window: cancel is the default button and the tick gates the
     // yes (`confirm.ts`).
     expect(shown.widening).toBe(true)
@@ -564,6 +571,50 @@ describe('the models write behind the modal', () => {
     expect(await first).toStrictEqual({ ok: true, data: { ok: true, sentence: 'wrote the claim' } })
     expect(await second).toStrictEqual({ ok: true, data: { ok: true, sentence: 'wrote the claim' } })
     expect(calls).toHaveLength(2)
+  })
+
+  it('reads a write that exited non-zero as a refusal, whatever its stdout holds', async () => {
+    // `models add` prints the path and the diff to stdout **before** it can
+    // still refuse -- the config changed since it was read, a coding-agent
+    // session that may not write, a backup that failed -- so every one of those
+    // exits non-zero with stdout that is not empty. A console reading stdout
+    // alone answers `ok: true` and the screen says the model was added when
+    // nothing was written.
+    const { writer, confirmer, calls } = aWriter({
+      feeds: [
+        { stdout: aDocumentText() },
+        {
+          stdout: `${WORKDIR}/fugaro.yaml\n+ deepseek/deepseek-v4.1-flash\n`,
+          stderr: 'fugaro: the config changed since it was read: nothing was written\n',
+          code: 1,
+        },
+      ],
+    })
+    await ask(writer, 'models.add.plan', aValues())
+    confirmer.opened[0]?.decide(true)
+    await flush()
+    expect(calls).toHaveLength(2)
+    expect(await ask(writer, 'models.add', aValues())).toStrictEqual({
+      ok: true,
+      data: { ok: false, sentence: 'the config changed since it was read: nothing was written' },
+    })
+  })
+
+  it('reads a dry run that exited non-zero as a refusal, even with a document on stdout', async () => {
+    // The plan child's status is the first fact as well: a document beside a
+    // non-zero exit is not a plan to agree to, and the CLI's own sentence is
+    // what a screen draws.
+    const { writer, confirmer, calls } = aWriter({
+      feeds: [
+        { stdout: aDocumentText(), stderr: 'fugaro: nothing was written\n', code: 1 },
+      ],
+    })
+    expect(await ask(writer, 'models.add.plan', aValues())).toStrictEqual({
+      ok: false,
+      reason: 'nothing was written',
+    })
+    expect(confirmer.opened).toHaveLength(0)
+    expect(calls).toHaveLength(1)
   })
 
   it('refuses the write when the held document no longer hashes to what the window showed', async () => {

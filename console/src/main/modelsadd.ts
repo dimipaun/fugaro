@@ -39,7 +39,7 @@
 import { createHash } from 'node:crypto'
 
 import { cliSentence, runToCompletion, READ_TIMEOUT_MS } from './spawn'
-import type { ChildSpawner, SpawnPlan, Timers } from './spawn'
+import type { ChildSpawner, RunResult, SpawnPlan, Timers } from './spawn'
 import type { SpawnLogWriter } from './spawnlog'
 import type { LaunchConfirmer } from './launch'
 import type { ValidatedArguments } from './ipc'
@@ -128,11 +128,12 @@ export const MODELS_ADD_NO_YES_REFUSAL =
 export const MODELS_ADD_DOCUMENT_CHANGED_REFUSAL =
   'the models plan changed after the window showed it: nothing is written'
 
-/** MODELS_ADD_UNREADABLE_DOCUMENT is what a plan child is refused with when it
- * printed no document this console can read, and its stderr said nothing
- * either. A refusal the CLI prints is a sentence with a non-zero exit and no
- * document at all, so this is the other shape: a child that died before it could
- * say anything -- a bad flag, a config refusal, a missing binary. */
+/** MODELS_ADD_UNREADABLE_DOCUMENT is the fallback for either child when it has
+ * no sentence of its own: a plan that printed no document this console can read
+ * and said nothing on stderr, or a write that exited non-zero without one. A
+ * refusal the CLI prints is a sentence on stderr, so this is the other shape: a
+ * child that died before it could say anything -- a bad flag, a config refusal,
+ * a missing binary. */
 export const MODELS_ADD_UNREADABLE_DOCUMENT = 'models add printed no plan this console can read'
 
 /** ModelsAddValues is the four values one write is about, as main read them out
@@ -325,16 +326,17 @@ export function createModelsAdd(deps: ModelsAddDeps): ModelsAddWriter {
 
   let held: HeldModelsAdd | null = null
 
-  /** runChild runs one child under the deadline and answers both streams. */
-  const runChild = async (plan: SpawnPlan): Promise<{ stdout: string; stderr: string }> => {
-    const result = await runToCompletion(plan, {
+  /** runChild runs one child under the deadline and answers its whole result:
+   * its status beside both streams. The status is not decoration -- a write
+   * prints the path and the diff to stdout before it can still refuse, so stdout
+   * alone cannot say whether the write happened. */
+  const runChild = async (plan: SpawnPlan): Promise<RunResult> =>
+    runToCompletion(plan, {
       timeoutMs: deadlineMs,
       ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
       ...(deps.log === undefined ? {} : { log: deps.log }),
       ...(deps.timers === undefined ? {} : { timers: deps.timers }),
     })
-    return { stdout: result.stdout, stderr: result.stderr }
-  }
 
   /** sentenceOf is a child's own account of itself: its stderr through
    * `cliSentence`, or the console's sentence when it said nothing. */
@@ -358,6 +360,20 @@ export function createModelsAdd(deps: ModelsAddDeps): ModelsAddWriter {
     }
     try {
       const result = await runChild(writer.applyPlan)
+      // **A write that exited non-zero wrote nothing.** `models add` prints the
+      // path and the diff to stdout *before* it can still refuse -- the config
+      // changed since it was read, a coding-agent session that may not write, a
+      // backup that failed -- so a non-empty stdout is not the report of a write
+      // that happened, and a screen told `ran` would say the model was added
+      // when nothing was written. The status is the first fact and the sentence
+      // is the child's stderr, as `src/source/cli.ts` reads every other child.
+      if (result.code !== 0 || result.signal !== null) {
+        writer.outcome = {
+          kind: 'refused',
+          sentence: sentenceOf(result.stderr, MODELS_ADD_UNREADABLE_DOCUMENT),
+        }
+        return
+      }
       // The write's own report is what it printed; a child that printed nothing
       // at all is a run the console cannot claim succeeded, and its stderr is
       // the sentence, or the console's own when it said nothing either.
@@ -418,13 +434,21 @@ export function createModelsAdd(deps: ModelsAddDeps): ModelsAddWriter {
       const planPlan = deps.plan('models.add.plan', values, deps.project)
       const applyPlan = deps.plan('models.add', values, deps.project)
       const result = await runChild(planPlan)
+      // The dry run's status is the first fact here too: a plan that exited
+      // non-zero printed no plan to agree to, whatever its stdout holds.
+      if (result.code !== 0 || result.signal !== null) {
+        throw new SourceRefusal(sentenceOf(result.stderr, MODELS_ADD_UNREADABLE_DOCUMENT))
+      }
       const document = result.stdout.trim()
       const shownDigest = digest(document)
+      // The argv the window shows is the **write's**, not the dry run's: what
+      // the operator is agreeing to is the command line the yes spawns, and a
+      // line marked `--dry-run` would say nothing is written.
       const read = modelsAddView({
         dryRun: parseDocument(document),
         project: deps.project,
         digest: shownDigest,
-        argv: planPlan.argv,
+        argv: applyPlan.argv,
       })
       // **A dry run that refused is not confirmed.** The CLI's own refusal is a
       // sentence with a non-zero exit and no document at all, so there is
