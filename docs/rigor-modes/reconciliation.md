@@ -991,6 +991,11 @@ bootstrap on every repository of the project — which moved the *Image-skew `Si
 from 60 to 61. The two keys ship in one release and one constant, one judge and one gate serve both,
 which is why the row moved by one and not by two.)
 
+(Amended 2026-11-21: the keys-through-service plan's KS2 — a provider key entered in the credentials
+service's bundle rather than in a container of its own — added `repoCredentialSince` to
+`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 61 to 62.
+Same row, same reason for naming it.)
+
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 14 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
@@ -1003,7 +1008,7 @@ which is why the row moved by one and not by two.)
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 1 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 61 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 62 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 153 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
