@@ -11,11 +11,11 @@ package cli
 // provider reports unregistered deleted, and an orphaned push node deleted
 // rather than marked.
 //
-// The design of record is docs/mobile/design/push-notifications.md: §3.6 (B)
-// (the sweep derives its own events), §3.7 (the dedupe key and the cap), §3.8
-// (the switches and quiet hours) and §6 (the failure modes). The provider is a
-// fake, because what a test can pin is what the sender asks it to send — the
-// FCM call itself is P5.2.7's grant and Check 88's owner run.
+// The design of record is the push design P5.2 wrote, which push.go's own header
+// names: §3.6 (B) (the sweep derives its own events), §3.7 (the dedupe key and
+// the cap), §3.8 (the switches and quiet hours) and §6 (the failure modes). The
+// provider is a fake, because what a test can pin is what the sender asks it to
+// send — the FCM call itself is P5.2.7's grant and Check 88's owner run.
 
 import (
 	"context"
