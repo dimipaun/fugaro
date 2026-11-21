@@ -580,6 +580,62 @@ func TestARetriedAttemptSettlesAtZero(t *testing.T) {
 	}
 }
 
+// A retried attempt whose settle cannot be written refuses the CALL, exactly as
+// a whole-body answer's settle does: the attempt was made and the workspace
+// cannot record what it cost, so the run is answered the workspace's own
+// refusal rather than the retry the answer asked for. The credential keeps no
+// mark — the call is over either way, and an unrecorded cost is the thing an
+// operator has to act on.
+//
+// The answer is one a retry follows (a 401, a usage limit), whose body is
+// closed unread and which settles at the zero the provider billed for it: what
+// fails here is that settle, the attempt's second write, and the retry the
+// answer asked for is never made.
+func TestARetriedAttemptsFailedSettleRefusesTheCall(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		status int
+		header http.Header
+		body   string
+	}{
+		{
+			name:   "a 401",
+			status: http.StatusUnauthorized,
+			body:   `{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`,
+		},
+		{
+			name:   "a 429",
+			status: http.StatusTooManyRequests,
+			header: http.Header{"Retry-After": []string{"3600"}},
+			body:   `{"type":"error","error":{"type":"` + rateLimitEventType + `","message":"usage limit reached"}}`,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// The attempt's reservation is the first write of a metered call and
+			// its settle the second, so this fails the settle alone.
+			f := newWSMeterSvc(t, wsCapUSD, func(db budget.WorkspaceSpendDB) budget.WorkspaceSpendDB {
+				return &wsDenyNthDB{WorkspaceSpendDB: db, n: 2}
+			}, wsPaidOnly)
+			f.up.Script = []anthropicfake.Reply{{Status: c.status, Header: c.header, Body: c.body}}
+
+			resp, body := f.call(t, callBody("ws8-retry-settle"))
+			if resp.StatusCode != StatusUnavailable {
+				t.Fatalf("the call answered %d %s, want the workspace's refusal %d", resp.StatusCode, body, StatusUnavailable)
+			}
+			if got, ok := gateway.WorkspaceRefusal(resp.Header); !ok || got != gateway.WorkspaceRefusalSettle {
+				t.Errorf("%s = %q (read: %v), want %q: the refusal names the settle it could not write",
+					gateway.WorkspaceRefusalHeader, resp.Header.Get(gateway.WorkspaceRefusalHeader), ok, gateway.WorkspaceRefusalSettle)
+			}
+			if n := f.up.Count(); n != 1 {
+				t.Errorf("the upstream saw %d requests, want 1: an attempt whose cost could not be recorded is not retried", n)
+			}
+			if room := f.wsRoom(t); room.Reserved == 0 {
+				t.Error("the month released the room of an attempt that was made and could not be recorded")
+			}
+		})
+	}
+}
+
 // A probe the workspace cannot pay for is the RUN's refusal and not the
 // credential's: the service owes a backed-off credential a probe (C1.12), the
 // meter refuses that probe before it is made, and the run waiting on the call
@@ -621,6 +677,46 @@ func TestAProbeTheMeterRefusesIsTheRunsRefusal(t *testing.T) {
 	}
 	if room := f.wsRoom(t); room.Settled != 0 || room.Reserved != 0 {
 		t.Errorf("the refused probe left the month at %v settled and %v reserved, want nothing of either", room.Settled.USD(), room.Reserved.USD())
+	}
+}
+
+// A probe whose own settle cannot be written is the RUN's refusal, and the call
+// the probe was owed on is not made: the probe is a call the workspace paid for
+// (C1.16), and a workspace that cannot record what it cost must not go on to
+// serve the call on a credential whose probe went unrecorded (D1301's
+// fail-closed rule, F18). The credential keeps no mark — it stays where it was,
+// backed off — which is the direction a probe whose result could not be
+// recorded has to fail in.
+//
+// The reservation the probe took stands: a settle that cannot be written is not
+// a settle at zero, so the room is held until a hold that old cannot still be in
+// flight.
+func TestAProbeWhoseSettleCannotBeWrittenIsTheRunsRefusal(t *testing.T) {
+	// The probe's reservation is the call's first write and its settle the
+	// second, so this fails the settle alone: a probe that never got its room
+	// would be TestAProbeTheMeterRefusesIsTheRunsRefusal.
+	f := newWSMeterSvc(t, wsCapUSD, func(db budget.WorkspaceSpendDB) budget.WorkspaceSpendDB {
+		return &wsDenyNthDB{WorkspaceSpendDB: db, n: 2}
+	}, wsPaidOnly)
+	paid := f.tierBName(t)
+	f.backedOff(paid, f.now.Add(-time.Hour), creds.DefaultBackoffInitial)
+	// The probe's own answer, and only it: the run's call is refused before it
+	// is made, so a second reply would go unread.
+	f.up.Script = []anthropicfake.Reply{anthropicfake.MessageOK(testModel, testUsage)}
+
+	resp, body := f.call(t, callBody("ws8-probe-settle"))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the call answered %d %s, want the workspace's refusal %d: a probe the workspace cannot record is not one the run may be served on", resp.StatusCode, body, StatusUnavailable)
+	}
+	if got, ok := gateway.WorkspaceRefusal(resp.Header); !ok || got != gateway.WorkspaceRefusalSettle {
+		t.Errorf("%s = %q (read: %v), want %q: the refusal names the settle it could not write",
+			gateway.WorkspaceRefusalHeader, resp.Header.Get(gateway.WorkspaceRefusalHeader), ok, gateway.WorkspaceRefusalSettle)
+	}
+	if n := f.up.Count(); n != 1 {
+		t.Errorf("the upstream saw %d requests, want the probe alone: the call the probe was owed on is refused and not made", n)
+	}
+	if room := f.wsRoom(t); room.Reserved == 0 {
+		t.Error("the month released the room of a probe that was made and could not be recorded")
 	}
 }
 
