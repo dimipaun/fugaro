@@ -94,8 +94,10 @@ reviewed at the strictest tier before any side starts, whatever the default says
 - Acceptance: the shapes below compile; the two fields the claim's wire gains and the two the
   issuance record gains are the only wire change, a body naming a field the service does not know
   is still refused by name, the service refuses a claim whose record names a job and carries no
-  attestation, and `contract-batch-claim.md` says what each side may rely on. The merged
-  key-release code is untouched by this task: BR23 retires it, and nothing here reads it.
+  attestation, the registration route answers the service's `not_served` in the stub file the
+  identity routes already answer from, and `contract-batch-claim.md` says what each side may rely
+  on. The merged key-release code is untouched by this task: BR23 retires it, and nothing here
+  reads it.
 - Holds: the ticket's job field (the full name of the Batch job the launcher is about to create,
   empty for a Cloud Run launch) and the claim's attestation field (the VM's identity token in full
   format, empty for a Cloud Run launch); the `Job` and `JobID` fields of the issuance record, the
@@ -110,14 +112,20 @@ reviewed at the strictest tier before any side starts, whatever the default says
   permission, stated as "named by Check 830" and not guessed (O1).
 - Files: `docs/batch-run-identity/contract-batch-claim.md` (new),
   `internal/identitywire/batchclaim.go` (new: the attestation's shape, the registration route and
-  its bodies), `internal/identitywire/wire.go` (two fields on two bodies, two on the record),
-  `internal/credsvc/identity_config.go` (one interface and the field it fills), and the contract's
-  own tests. Four files; two of the last three are one field each.
+  its bodies, and the job-name shape the release wire held,
+  `validBatchJobNameRE` and `checkRunRef`, which move here rather than being retyped in BR23),
+  `internal/identitywire/wire.go` (two fields on two bodies, two on the record),
+  `internal/credsvc/identity_config.go` (one interface and the field it fills),
+  `internal/credsvc/identity_stub.go` (the registration route's `not_served` answer, where the
+  identity routes' stub already answers it: **this is C1's one stub**, and I1 deletes the file when
+  the real link is wired), and the contract's own tests. Five files; three of the last four are one
+  field or one answer each.
 - Tests: `TestTheTicketNamesAJobAndTheClaimCarriesAnAttestation`,
   `TestABodyNamingAFieldTheServiceDoesNotKnowIsRefusedByName`,
   `TestAJobRecordClaimedWithoutAnAttestationIsRefused`,
   `TestARecordWithoutAJobIsACloudRunClaim`,
-  `TestTheRegistrationRouteNamesTheJobAndItsId`.
+  `TestTheRegistrationRouteNamesTheJobAndItsId`,
+  `TestTheRegistrationRouteAnswersNotServedUntilItIsWired`.
 - Command: `go test ./internal/identitywire/ -run 'TicketNamesAJob|RefusedByName|RegistrationRouteNames' -count=1 && go test ./internal/credsvc/ -run 'JobRecordClaimedWithoutAnAttestation|RecordWithoutAJob|Identity' -count=1`.
 - Red step: a claim whose record names a job and carries no attestation is signed, and the ticket
   carries no job.
@@ -129,9 +137,9 @@ reviewed at the strictest tier before any side starts, whatever the default says
 - Commit: `batch: the claim's attestation, the ticket's job and the registration (C1, D3108, D3114)`.
 - Reviewer tier: opus, mandatory independent review before any side is written against it.
 
-No other task's Files names a file of C1, except I1 for the files the contract leaves as stubs
-(it leaves none) and the change requests against it. A task that finds the contract wrong raises a
-contract change (section 7).
+No other task's Files names a file of C1, except I1 for the one file the contract leaves as a stub
+(`internal/credsvc/identity_stub.go`, which it deletes) and the change requests against it. A task
+that finds the contract wrong raises a contract change (section 7).
 
 ## 4. Slices and tasks
 
@@ -350,15 +358,17 @@ a claim rather than one guard on a key release.
 **Rewritten by LM19**: the key fact leaves the block; the opt-in fact and the accounts stay.
 - Acceptance: after `fugaro update` the block carries the opt-in fact and no key fact — a key fact
   written by the release behind is removed from the machine's file in place, and R10's rule holds
-  for it; `batch.secrets` and the single `service_account` are gone from the file, in place; the
-  root is fed the project job accounts beside the per-repository ones, which is what gives
-  launchers `actAs` on them (D3105); the block is published; the release notes' `### For
-  operators` says "run `fugaro update`", and the feature notes say how Batch is chosen; where the
-  root has no output yet (BR5 not applied) the launch refusal stays and the opt-in fact is still
-  written (R13 dropped: no settings command writes a fact the installation's root owns).
+  for it; the retired key is dropped **by name as text**, and the writer names no field of it, so
+  the deletion in BR23 does not reach this file; `batch.secrets` and the single `service_account`
+  are gone from the file, in place; the root is fed the project job accounts beside the
+  per-repository ones, which is what gives launchers `actAs` on them (D3105); the block is
+  published; the release notes' `### For operators` says "run `fugaro update`", and the feature
+  notes say how Batch is chosen; where the root has no output yet (BR5 not applied) the launch
+  refusal stays and the opt-in fact is still written (R13 dropped: no settings command writes a
+  fact the installation's root owns).
 - Files: `internal/cli/init_compute.go`, `internal/cli/init_compute_block_test.go`,
-  `internal/infra/compute.go`, `internal/infra/compute_test.go`, `internal/localcfg/localcfg.go`,
-  the next release's notes under `docs/releases/`.
+  `internal/infra/compute.go`, `internal/infra/compute_test.go`, the next release's notes under
+  `docs/releases/`.
 - Interfaces: consumes C1 (the block's opt-in fact, the root's names).
 - Tests: `TestUpdateRemovesTheKeyFactInPlace`, `TestUpdateRemovesBatchSecretsInPlace`,
   `TestTheRootIsFedTheProjectJobAccounts`, `TestALaunchReadsTheOptInFromThePublishedBlock`,
@@ -701,30 +711,40 @@ it (R21).
 - Acceptance: the wrapped envelope and its size bound, the release wire with `JobLink`, `KeyOpener`,
   `Registry` and its two registration paths, the stub that answers the release route, the key fact
   with `ParseSealKeyPublicKey` and its block type, the settings registry's entry for it, the schema
-  entry and the golden's line, and `contract-key-release.md` are all gone; the names that stay move
-  with the work that keeps them: the opt-in fact and its three states, the deploy input, the
-  job-name shape and the block's validation entry points live in the files the amended plan names
-  (C1's and BR17's), and `git grep` finds no user of a deleted name outside them; the deletion is
-  refused for a name still referenced, so the task lands only after BR1, BR2, BR4 and BR17;
-  `docs/` carries no sentence describing a Batch run's key.
+  entry and the golden's line, and `contract-key-release.md` are all gone; the names that stay go
+  with the work that keeps them: the job-name shape and `checkRunRef` were moved into the
+  contract's file by C1, and the opt-in fact with its three states, the deploy input and the
+  block's validation entry points stay in the files this plan names (C1's, BR17's and
+  `internal/localcfg/batch.go`, which this task renames from `batch_sealkey.go` rather than
+  deleting); `git grep` finds no user of a deleted name outside the contract's files, the
+  registration's file and the two places that name the retired key as text without a field of it —
+  the block writer (BR16's) and this task's own reader, which skips the one retired key so that a
+  block an un-updated machine still holds loads; the deletion is refused for a name still
+  referenced, so the task lands only after BR1, BR2, BR4 and BR17; `docs/` carries no sentence
+  describing a Batch run's key.
 - Files: `internal/budget/token/wrap_contract.go` (deleted), `internal/budget/token/wrap_contract_test.go`
   (deleted), `internal/credsvc/sealkey_wire.go` (deleted), `internal/credsvc/sealkey_wire_test.go`
   (deleted), `internal/credsvc/sealkey_stub.go` (deleted), `internal/credsvc/sealkey_stub_test.go`
-  (deleted), `internal/localcfg/batch_sealkey.go` → `internal/localcfg/batch.go` (the key fact's
-  half deleted, the opt-in fact kept), `internal/localcfg/batch_sealkey_test.go` →
-  `internal/localcfg/batch_test.go`, `internal/settings/registry.go`,
-  `schemas/settings.schema.json`, `internal/localcfg/testdata/shared.golden.yaml`,
-  `internal/credsvc/batchclaim_register.go` (the moved names),
-  `docs/batch-run-identity/contract-key-release.md` (deleted). Past five; five are lines of a
-  deletion.
-- Interfaces: consumes C1 and BR17's file, which keep the names that stay.
+  (deleted), `docs/batch-run-identity/contract-key-release.md` (deleted),
+  `internal/localcfg/batch_sealkey.go` → `internal/localcfg/batch.go` (the key fact's half deleted,
+  the opt-in fact and the job-name shape kept), `internal/localcfg/batch_sealkey_test.go` →
+  `internal/localcfg/batch_test.go`, `internal/localcfg/localcfg.go` (the block's key field and its
+  validation), `internal/localcfg/shared_test.go`,
+  `internal/localcfg/testdata/shared.golden.yaml`, `internal/settings/registry.go`,
+  `schemas/settings.schema.json`, `internal/cli/sharedcfg.go`,
+  `internal/cli/sharedcfg_validate_test.go`, `internal/cli/writers_labels.go` (the two
+  `batch.seal_key.*` rows). Past five; eight are a deletion, a rename or a line.
+- Interfaces: consumes C1 (the shapes that survive the deletion, and the file the job-name shape
+  moved to) and the block's own file, which it renames.
 - Tests: `TestNoConstructorNamesTheSealKey`, `TestTheSettingsRegistryHasNoBatchKeyFact`,
   `TestAnOldBlockWithAKeyFactStillLoads`, `TestTheOptInFactStaysWhereItMoved`.
 - Command: `go build ./... && ! git grep -n 'sealkey\|seal_key\|SealKey\|FUGARO_BUDGET_TOKEN_WRAPPED' -- '*.go' ':!*_test.go' && go test ./internal/localcfg/ -run 'OldBlockWithAKeyFact|OptInFactStays' -count=1 && go test ./internal/settings/ -run RegistryCoversEveryConfigField -count=1 && go test ./internal/backend/batch/ ./internal/credsvc/ -count=1`.
 - Red step: the build fails on a deleted file's last user.
 - Depends on: C1; BR1, BR2, BR4 and BR17 (kept: each stops using the code this deletes, one file
-  at a time). It starts after the owner has run Check 830, so that the link's read is the one the
-  surviving code names (R4).
+  at a time). It does not wait on BR16, and the pass records that wait as broken by the contract:
+  the block's writer names the retired key as text and no field of it, so there is nothing in it to
+  stop compiling. It starts after the owner has run Check 830, so that the link's read is the one
+  the surviving code names (R4).
 - Commit: `batch: the key-release code retires (BR23, R21, D3101 as amended)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -732,18 +752,20 @@ it (R21).
 **Rewritten by LM19**: the real link and the registration are wired, the stub's answer for the
 registration route is replaced, and the merged code's retirement is BR23's rather than this task's.
 - Acceptance: the real `VMIdentity` and the registration are wired into the service where
-  `credentials serve` builds its options, and the route that answered `not_served` answers the
-  registration; `batchOptions` fills the backend from the block and the configuration; end to end
+  `credentials serve` builds its options, the stub answers the registration instead of `not_served`
+  and `internal/credsvc/identity_stub.go` — C1's one stub — is deleted; `batchOptions` fills the
+  backend from the block and the configuration; end to end
   and hermetically, a Batch launch on an opted-in installation reaches an open session, an
   installation at the previous version converges under `fugaro update`, a Batch run in flight
   across that update keeps running, no resource was created per run, and a second job carrying the
   first run's ticket claims nothing. **The claim itself is the launcher plan's issuer (its C1, its
   I1): this plan's I1 cannot pass before that plan's I1 has merged, and the graph cannot draw that
   edge (§7).**
-- Files: `internal/credsvc/server.go`, `internal/cli/credentials_serve.go`, `internal/cli/cloud.go`,
+- Files: `internal/credsvc/identity_stub.go` (deleted), `internal/credsvc/server.go`,
+  `internal/cli/credentials_serve.go`, `internal/cli/cloud.go`,
   `internal/cli/batch_claim_end_to_end_test.go` (new),
-  `internal/cli/update_in_flight_batch_test.go` (new). The second is the launcher plan's I1 file
-  and the third its LM6's environment: I1 starts after both merge (§7).
+  `internal/cli/update_in_flight_batch_test.go` (new). `credentials_serve.go` is the launcher
+  plan's I1 file and `cloud.go` its LM6's environment: I1 starts after both merge (§7).
 - Tests: `TestABatchRunClaimsItsIdentityEndToEnd`, `TestASecondJobCannotClaimTheFirstRunsIdentity`,
   `TestARecreatedJobCannotClaimTheFirstRunsIdentity`,
   `TestUpdateConvergesABatchInstallationAtThePreviousVersion`,
@@ -761,14 +783,18 @@ registration route is replaced, and the merged code's retirement is BR23's rathe
 | Level | Tasks |
 | --- | --- |
 | 0 | C1, BRS, BR0 |
-| 1 | BR1, BR2, BR4, BR6, BR7, BR8, BR9, BR11, BR13, BR14, BR17, BR19; and `R-C1-link-permission` once the owner has run Check 830 and answered O1 |
-| 2 | BR10, BR16, BR23; and BR3, BR5, BR12 after `R-C1-link-permission` |
-| 3 | BR15, BR18, BR21, BR22 |
+| 1 | BR1, BR2, BR4, BR6, BR7, BR8, BR9, BR11, BR13, BR14, BR19; and `R-C1-link-permission` and `R-C1-project-job-account` once the owner has run Check 830 and answered O1 |
+| 2 | BR3, BR5, BR10, BR12, BR16, BR17 |
+| 3 | BR15, BR18, BR21, BR22, BR23 |
 | 4 | BR20 |
 | 5 | I1 |
 
 `R-C1-project-job-account` runs only if BR10 raises it, against the same document as
 `R-C1-link-permission`, and starts only after that one has merged.
+
+The levels are the ones `fugaro plan graph --plan docs/batch-run-identity/implementation-plan.md`
+prints from the artifact beside this file, `implementation-plan.graph.json`: six levels, its
+critical path BR0 → `R-C1-link-permission` → BR12 → BR18 → BR20 → I1, and its bottleneck BR0.
 
 **Edges broken by C1**, each because the dependent needs a shape and not a behaviour:
 
@@ -786,7 +812,7 @@ registration route is replaced, and the merged code's retirement is BR23's rathe
 | BR17 after BR1 | the registration needs the route's bodies, not the launcher that calls it |
 | BR6 after BR5 | the update's stage needs the opt-in fact and the root's input names, not its resources |
 | BR19 after BR16 | the merge needs the fact's shape, not the update that writes it |
-| BR22 after BR17 | the switch is read at the ticket and the registration, whose shapes C1 names |
+| BR23 after BR16 | the deletion needs the shapes the contract declares, and the block writer names the retired key as text and no field of it |
 
 **Edges kept:**
 
@@ -807,8 +833,8 @@ registration route is replaced, and the merged code's retirement is BR23's rathe
 | BR23 after BR1, BR2, BR4 and BR17 | behaviour: each stops using the code it deletes, and a deletion that lands first leaves the build broken |
 | I1 after all | it wires the real sides and proves them together |
 
-**The gain**, as `fugaro plan graph` reports it: 13 edges broken, 19 kept, 4 added; the critical
-path was 8 tasks of weight 17 and is 7 tasks of weight 10. **The critical path** is BR0,
+**The gain**, as `fugaro plan graph` reports it: 13 edges broken, 23 kept, 4 added; the critical
+path was 8 tasks of weight 16 and is 6 tasks of weight 11. **The critical path** is BR0,
 `R-C1-link-permission`, BR12, BR18, BR20, I1 — and BR0 is the bottleneck: between it and the
 contract change stand the owner's run of Check 830 and his answer on the second read, and the whole
 of the claim now stands on what it measures. Everything that does not need that answer runs
@@ -824,7 +850,7 @@ meanwhile.
 | `internal/backend/batch/env.go` | BRS (0), BR8 (1) |
 | `internal/backend/batch/account.go` | BRS (0), BR10 (2) |
 | `internal/backend/batch/secrets.go` | BRS (0), BR11 (1) |
-| `internal/credsvc/server.go` | BR17 (1), I1 (5) |
+| `internal/credsvc/server.go` | BR17 (2), I1 (5) |
 | `internal/credsvc/audit.go` | BR2 (1) |
 | `internal/credsvc/identity_claim.go` | BR2 (1) |
 | `internal/gcpfake/batch.go`, `internal/gcpfake/compute.go` | BR3 (2) |
@@ -836,7 +862,7 @@ meanwhile.
 | `deploy/terraform/terraform_test.go` | BR5 (2) |
 | `docs/design/budget-token-channel.md`, `docs/design/compute-backend.md` | BR1 (1) |
 | `.claude/rules/credentials-service.md` | BR5 (2), BR22 (3) |
-| `internal/credsvc/batchclaim_register.go` | BR17 (1), BR22 (3), BR23 (2, the moved names) |
+| `internal/credsvc/batchclaim_register.go` | BR17 (2), BR22 (3) |
 | `internal/cli/credentials_serve.go` | BR22 (3), I1 (5) |
 | `internal/cli/init_credentials.go`, `internal/infra/tfvars.go`, the installation module's `credentials.tf` | BR22 (3) |
 | `internal/infra/spec.go`, `internal/backend/launchenv.go` | BR8 (1) |
@@ -853,16 +879,20 @@ meanwhile.
 | `internal/cli/init_compute.go` | BR6 (1), BR16 (2), BR21 (3) |
 | `internal/apply/steps.go` | BR6 (1), BR21 (3) |
 | `internal/cli/init_stages.go`, `internal/cli/update.go` | BR6 (1) |
-| `internal/localcfg/localcfg.go` | BR16 (2), BR23 (2, the key fact's field) |
+| `internal/localcfg/localcfg.go` | BR23 (3, the block's key field and its validation) |
 | `internal/infra/compute.go`, the release notes | BR16 (2) |
-| `internal/localcfg/shared.go`, `internal/localcfg/shared_test.go`, `internal/cli/sharedcfg.go` | BR19 (1) |
+| `internal/localcfg/shared.go` | BR19 (1) |
+| `internal/localcfg/shared_test.go`, `internal/cli/sharedcfg.go`, `internal/cli/sharedcfg_validate_test.go` | BR19 (1), BR23 (3) |
 | `internal/cli/launch_batch.go` | BR11 (1), BR20 (4) |
 | `docs/design/update-in-flight.md` | BR21 (3) |
 | `internal/infra/tf/cover.go`, the compute module and root | BR5 (2) |
-| `internal/settings/registry.go`, `schemas/settings.schema.json`, `internal/localcfg/testdata/shared.golden.yaml` | BR23 (2) |
+| `internal/settings/registry.go`, `schemas/settings.schema.json`, `internal/localcfg/testdata/shared.golden.yaml`, `internal/cli/writers_labels.go` | BR23 (3) |
 | `internal/identitywire/wire.go` | C1 (0) |
 | `internal/identitywire/batchclaim.go`, the contract document | C1 (0), `R-C1-link-permission` (1); `R-C1-project-job-account`, if BR10 raises it, after `R-C1-link-permission` has merged |
-| `internal/credsvc/identity_config.go` | C1 (0), I1 (5, wiring the link) |
+| `internal/credsvc/identity_config.go` | C1 (0, the interface the link fills) |
+| `internal/credsvc/identity_stub.go` | C1 (0, its one stub), I1 (5, deleted) |
+| `internal/budget/token/wrap_contract.go`, `internal/credsvc/sealkey_wire.go`, `internal/credsvc/sealkey_stub.go`, `docs/batch-run-identity/contract-key-release.md` | BR23 (3, all deleted) |
+| `internal/localcfg/batch.go` (renamed from `internal/localcfg/batch_sealkey.go`) | BR23 (3) |
 | `docs/gcp-live-checklist.md` | BR13 (1) |
 | `docs/backends.md` | BR12 (2), BR18 (3), BR20 (4) |
 | `SECURITY.md`, `website/content/security.md` | BR12 (2), BR15 (3) |
