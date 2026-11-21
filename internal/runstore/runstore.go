@@ -1650,11 +1650,26 @@ type Record struct {
 	// version does not move (schemas/result.schema.json declares the
 	// property).
 	StageAccounts map[string]string `json:"stage_accounts,omitempty"`
-	Execution     string            `json:"execution,omitempty"` // canonical full name, never the short CLOUD_RUN_EXECUTION; compare only via backend.SameExecution
-	Status        Status            `json:"status"`
-	Stage         string            `json:"stage"`
-	Outcome       Outcome           `json:"outcome"`
-	Reason        string            `json:"reason,omitempty"`
+	// CredentialOwner names the owner of the token this run's model calls
+	// were served with (F16 of docs/secrets-brokering/dynamic-delivery): the
+	// verified `sub` of the launcher the credentials service's grant was
+	// issued to, which is the credential's owner under the owner-only rule
+	// the slips enforce. It is a THIRD fact beside the two above and not a
+	// reading of either — OAuthAccount names the credential that answered and
+	// StageAccounts the Claude account each stage used, while this one answers
+	// whose token paid — so it carries a new name and neither of them moves
+	// (CLAUDE.md: a field never changes meaning). The runner writes it as each
+	// answer from the service reports it (recordCredentialOwner,
+	// internal/runner/record_owner.go); a record written before the field
+	// decodes unchanged and the format's version does not move
+	// (schemas/result.schema.json declares the property). The value is an
+	// account id and never a credential: no value ever leaves the service.
+	CredentialOwner string  `json:"credential_owner,omitempty"`
+	Execution       string  `json:"execution,omitempty"` // canonical full name, never the short CLOUD_RUN_EXECUTION; compare only via backend.SameExecution
+	Status          Status  `json:"status"`
+	Stage           string  `json:"stage"`
+	Outcome         Outcome `json:"outcome"`
+	Reason          string  `json:"reason,omitempty"`
 	// FailureClass is why the run did not end succeeded, in the closed
 	// vocabulary of internal/failure (docs/failure-classes/design.md §3). It
 	// is additive beside Reason, which keeps its text and its meaning: the

@@ -977,6 +977,12 @@ func (r *run) serviceAnswer(a gateway.ServiceAnswer) {
 	if a.Credential != "" {
 		r.recordCredential(a.Credential)
 	}
+	if a.CredentialOwner != "" {
+		// The owner of the token the call was served with (F16): a second
+		// fact beside the credential's name, written by its own writer so
+		// neither field can be asked to hold the other's.
+		r.recordCredentialOwner(a.CredentialOwner)
+	}
 	if a.Switch != "" {
 		// The switch the answer carries (C1.16, D140): the run's log of what
 		// the cascade moved and why, with the cache-miss estimate the gateway

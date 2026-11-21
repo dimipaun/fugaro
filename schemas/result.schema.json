@@ -18,6 +18,7 @@
       "propertyNames": { "enum": ["bootstrap", "plan", "implement", "review_first", "review", "fix", "render", "finalize", "writeback"] },
       "additionalProperties": { "type": "string", "maxLength": 64 }
     },
+    "credential_owner": { "type": "string", "pattern": "^[0-9]{1,21}$", "description": "The owner of the token the run's model calls were served with (F16, docs/secrets-brokering/dynamic-delivery): the verified `sub` of the launcher the credentials service's grant was issued to, digits only and at most 21 of them (maxLauncherSubDigits, DS1.2). It is a third fact beside oauth_account and stage_accounts, which keep their meanings, and it is written by the runner's recordCredentialOwner as each answer from the service reports it." },
     "execution": { "type": "string", "description": "The canonical full execution name; empty or absent for local runs." },
     "status": { "enum": ["running", "succeeded", "failed", "unreviewed", "infra_error", "cancelled", "halted"] },
     "stage": { "enum": ["bootstrap", "plan", "implement", "review_first", "review", "fix", "render", "finalize", "writeback"], "description": "The step the run is in. plan and render are a mode: artifact run's optional plan stage and its render step (design artifact-runs.md §3)." },

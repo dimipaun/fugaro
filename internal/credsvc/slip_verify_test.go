@@ -644,6 +644,34 @@ func TestTheSlipSecretIsNeverForwarded(t *testing.T) {
 	}
 }
 
+// TestAServedSlipCallNamesTheOwnerOfTheToken: F16. A call the service admitted
+// under a slip is answered with the owner of the token that served it — the
+// verified `sub` the grant was issued to — so the run can record whose token
+// paid beside the credential's name (runstore.Record.CredentialOwner). The
+// slip-less call is the same call without the two headers, and it is answered
+// no owner: no grant, no owner, and the run's record then holds none, exactly
+// as it held none before this field existed.
+func TestAServedSlipCallNamesTheOwnerOfTheToken(t *testing.T) {
+	s := newSlips(t, testLauncherAccount)
+	sl := s.claimedSlip(t, 3600, testSlipCredential)
+	resp, body := s.slipCall(t, sl, "owned")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the slip's own call is answered %d, want 200: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredentialOwner); got != testLauncherSub {
+		t.Errorf("%s = %q, want the launcher's own sub %q: the answer names whose token served the call", HeaderCredentialOwner, got, testLauncherSub)
+	}
+
+	plain := newSlips(t, testLauncherAccount)
+	resp, body = plain.call(t, callBody("slip-less"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the slip-less call is answered %d, want 200: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Values(HeaderCredentialOwner); len(got) != 0 {
+		t.Errorf("a slip-less call's answer carries %s = %q, want none", HeaderCredentialOwner, got)
+	}
+}
+
 // TestTheSlipCacheHoldsOnlyVerifiedBodies: the cache is keyed by an id the
 // CALLER chose, so what may be written into it is the narrowest set there is: a
 // record this service read back and admitted THIS call by. A cache that held

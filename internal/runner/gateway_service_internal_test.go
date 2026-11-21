@@ -813,6 +813,58 @@ func TestCascadeRecordsOAuthAccount(t *testing.T) {
 	}
 }
 
+// TestCascadeRecordsCredentialOwner: the run records the owner of the token its
+// calls were served with (F16, docs/secrets-brokering/dynamic-delivery). The
+// service names it on the answer beside the credential's name, the run's own
+// gateway hands the answer over, and the record the run ends with --
+// runstore.Record.CredentialOwner -- carries it. oauth_account keeps the
+// meaning it had: the credential's name, not the owner, which is the second
+// fact this test is about.
+func TestCascadeRecordsCredentialOwner(t *testing.T) {
+	const owner = "104329501182774832335"
+	r := svcServedRunWith(t, func() (http.Header, pricing.Usage) {
+		return http.Header{
+			gateway.HeaderTier:            []string{gateway.TierB},
+			gateway.HeaderCredential:      []string{"repo-shared-b"},
+			gateway.HeaderCredentialOwner: []string{owner},
+		}, pricing.Usage{Input: 1, Output: 3}
+	}, func(r *run) {
+		r.rec = &runstore.Record{}
+	})
+	r.sess = svcSession(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := r.startGateway(ctx); err != nil {
+		t.Fatalf("the run's own gateway: %v", err)
+	}
+	defer func() {
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		_ = r.gw.Close(c)
+	}()
+	if code, body := svcPost(t, r); code != http.StatusOK {
+		t.Fatalf("the agent's call was answered %d: %s", code, body)
+	}
+	if got := r.rec.CredentialOwner; got != owner {
+		t.Errorf("the record names the owner %q, want the one the service answered with", got)
+	}
+	if got := r.rec.OAuthAccount; got != "repo-shared-b" {
+		t.Errorf("oauth_account = %q, want the credential's name: the owner is a second field and not this one", got)
+	}
+
+	// The owner is written as one word, the way every untrusted value the run
+	// records is, and an answer that names no owner -- a call the service
+	// admitted under no slip -- leaves the record as it stands.
+	r.serviceAnswer(gateway.ServiceAnswer{CredentialOwner: "1043295\u0007011‮827"})
+	if got := r.rec.CredentialOwner; got != "1043295011827" {
+		t.Errorf("the record names the owner %q, want the value with what a terminal must not be handed stripped", got)
+	}
+	r.serviceAnswer(gateway.ServiceAnswer{Credential: "sharedce"})
+	if got := r.rec.CredentialOwner; got != "1043295011827" {
+		t.Errorf("the record names the owner %q after an answer with none, want it unchanged", got)
+	}
+}
+
 // TestCascadeWritesCurrentCredentialName: the same name reaches the registry
 // entry the dashboard reads while the run is running (C1.3, D141), and it is
 // the credential the run is using now -- a run that moved from one to another

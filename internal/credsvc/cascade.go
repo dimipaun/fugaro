@@ -1189,6 +1189,22 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 			"the answer could not carry the credential that served it")
 		return
 	}
+	if b, ok := callSlipOf(ctx); ok {
+		// The owner of the credential that answered (F16): the verified `sub`
+		// the slip was issued to, which is what the run records beside the
+		// credential's name (runstore.Record.CredentialOwner). It is written
+		// only for a call the service admitted under a slip, because that is
+		// the one place an owner is a verified fact: a slip-less call — the
+		// path an installation that has not deployed the slip routes still
+		// takes — carries none, and the run's record then holds no owner. The
+		// binding is the same one the audit line reads (Auditor.Write), so the
+		// answer and the line cannot name two different owners.
+		if err := SetCredentialOwnerHeader(hdr, b.owner); err != nil {
+			s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+				"the answer could not carry the owner of the credential that served it")
+			return
+		}
+	}
 	if sw != nil {
 		if err := SetSwitchHeader(hdr, *sw); err != nil {
 			s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
