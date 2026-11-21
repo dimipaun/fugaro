@@ -273,6 +273,15 @@ type wu13Plan struct {
 // is a row to take back only when the roster really holds one -- a binding
 // nothing in the roster derives cannot be reached by a roster write, and it is
 // named rather than counted as done.
+//
+// The row a binding comes from is a PROJECT-SCOPE one and no other, because
+// that is the only scope the member's own update derives its IAM lists from
+// (update_access.go's deriveAccess). A row of the same member and role at
+// another scope is therefore not that row in either direction: it does not
+// close a missing binding, and taking it back would change a grant that
+// derives no binding at all -- so both directions read the scope as part of the
+// pair they judge, and only a project-scope row is ever dropped from the
+// document a write stores.
 func wu13Judge(report workspace.DriftReport, member workspace.MemberTarget, doc workspace.MemberDoc) (wu13Plan, error) {
 	var p wu13Plan
 	var rows []accesslib.Grant
@@ -284,13 +293,21 @@ func wu13Judge(report workspace.DriftReport, member workspace.MemberTarget, doc 
 		rows = decoded
 	}
 	onRoster := func(form, role string) bool {
-		return slices.ContainsFunc(rows, func(g accesslib.Grant) bool { return g.User == form && string(g.Role) == role })
+		return slices.ContainsFunc(rows, func(g accesslib.Grant) bool {
+			return g.User == form && string(g.Role) == role && g.Scope.Kind == accesslib.ScopeProject
+		})
+	}
+	// A row and a judged pair are compared as the whole value they are: the
+	// member form, the role AND the scope, so a row at another scope is not read
+	// as the row the difference is about.
+	rowKey := func(user string, role accesslib.Role, scope accesslib.Scope) string {
+		return user + " " + string(role) + " " + scope.String()
 	}
 	// seen is a pair already judged, so a report that names one twice is one row;
-	// removed is a pair whose row the document the write stores drops. They are
-	// two maps and not one because an addition's pair is never on the roster --
-	// the two questions happen to have the same answer there, and a later change
-	// that made them differ would be a row silently deleted.
+	// removed is a project-scope row the document the write stores drops. They
+	// are two maps and not one because an addition's pair is never the row it is
+	// judged against -- the two questions happen to have the same answer there,
+	// and a later change that made them differ would be a row silently deleted.
 	seen := map[string]bool{}
 	removed := map[string]bool{}
 	for _, b := range report.Missing {
@@ -310,7 +327,7 @@ func wu13Judge(report workspace.DriftReport, member workspace.MemberTarget, doc 
 		}
 		seen[key] = true
 		if onRoster(form, role) {
-			p.named = append(p.named, wu13Named{what, "the member's roster already grants this pair: the member's own fugaro update is what applies it"})
+			p.named = append(p.named, wu13Named{what, "the member's roster already grants this pair at the project scope: the member's own fugaro update is what applies it"})
 			continue
 		}
 		p.changes = append(p.changes, wu13Change{add: true, form: form, address: address, role: role})
@@ -336,18 +353,19 @@ func wu13Judge(report workspace.DriftReport, member workspace.MemberTarget, doc 
 		}
 		seen[key] = true
 		if !onRoster(form, role) {
-			// The difference is a binding on the member's own policy and not a row
-			// of its roster, so no write of this command can reach it: the member's
-			// own update is what applies the lists its roster derives (D2801), and
-			// this is the difference it has not been run against yet.
-			why := "the member's roster holds no grant of this pair, and this command writes no member's IAM: it is a binding on the member's own policy, and the member's own fugaro update is what applies the lists its roster derives (D2801)"
+			// The difference is a binding on the member's own policy and no
+			// project-scope row of the roster derives it, so no write of this
+			// command can reach it: the member's own update is what applies the
+			// lists its roster derives (D2801), and this is the difference it has
+			// not run against yet.
+			why := "the member's roster holds no grant of this pair at the project scope, and this command writes no member's IAM: it is a binding on the member's own policy, and the member's own fugaro update is what applies the lists its roster derives (D2801)"
 			if !doc.Found {
 				why = "the member's roster is not there yet: its own fugaro update migrates its lists into " + accesslib.PathNode
 			}
 			p.named = append(p.named, wu13Named{what, why})
 			continue
 		}
-		removed[key] = true
+		removed[rowKey(form, accesslib.Role(role), accesslib.Scope{Kind: accesslib.ScopeProject})] = true
 		p.changes = append(p.changes, wu13Change{add: false, form: form, address: address, role: role})
 	}
 	if len(p.changes) == 0 {
@@ -364,12 +382,14 @@ func wu13Judge(report workspace.DriftReport, member workspace.MemberTarget, doc 
 		// the member's own words: the migration is the member's update.
 		return wu13Plan{}, userErr("nothing was written: project %s has no roster at %s yet, which is the state an installation whose roles are still its own IAM lists is in. The member's own fugaro update migrates those lists into the node, and a node written before that would hold this change and nobody else. Run the member's own fugaro update, then run this again", safetext.Field(member.Project), accesslib.PathNode)
 	}
-	// The document the write stores: every row whose pair is not being taken
-	// back, in the order the node holds them, and the additions sorted after
-	// them by their pair -- so a row this command does not touch keeps its place.
+	// The document the write stores: every row not taken back, in the order the
+	// node holds them, and the additions sorted after them by their pair -- so a
+	// row this command does not touch keeps its place, and a row of the judged
+	// pair at another scope (a repository-scope grant of the same member and
+	// role, which derives no binding) is untouched.
 	next := make([]accesslib.Grant, 0, len(rows)+len(p.changes))
 	for _, g := range rows {
-		if removed[g.User+" "+string(g.Role)] {
+		if removed[rowKey(g.User, g.Role, g.Scope)] {
 			continue
 		}
 		next = append(next, g)

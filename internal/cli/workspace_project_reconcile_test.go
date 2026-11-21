@@ -80,7 +80,13 @@ func wu13Run(t *testing.T, d workspaceReconcileDeps, args ...string) (string, er
 // which is the one a binding can come from: the member's own update derives its
 // IAM lists from the project-scope grants alone.
 func wu13Grant(address, role string) accesslib.Grant {
-	return accesslib.Grant{User: "user:" + address, Role: accesslib.Role(role), Scope: accesslib.Scope{Kind: accesslib.ScopeProject}}
+	return wu13GrantAt(address, role, accesslib.Scope{Kind: accesslib.ScopeProject})
+}
+
+// wu13GrantAt is the same row at a scope the test names, which is how a
+// repository-scope row of the same member and role is put in a fixture.
+func wu13GrantAt(address, role string, scope accesslib.Scope) accesslib.Grant {
+	return accesslib.Grant{User: "user:" + address, Role: accesslib.Role(role), Scope: scope}
 }
 
 // wu13Grants encodes a roster fixture the way the member's own CLI writes it,
@@ -388,6 +394,66 @@ func TestReconcileAddsMissingGrant(t *testing.T) {
 	if want := "20261121T090000Z-"; !strings.HasPrefix(audit.events[0].ID, want) {
 		t.Errorf("the event id %q does not open with %q", audit.events[0].ID, want)
 	}
+}
+
+// TestReconcileReadsTheRowsScope: the row a binding comes from is a
+// project-scope one, and a row of the same member and role at another scope is
+// not that row in either direction. A repository-scope grant derives no entry in
+// the member's IAM lists (update_access.go's deriveAccess), so it does not close
+// a missing binding and it is not the row an extra binding is taken back from.
+func TestReconcileReadsTheRowsScope(t *testing.T) {
+	repoScope := accesslib.Scope{Kind: accesslib.ScopeRepos, Repos: []string{"github/acme/app"}}
+
+	t.Run("a missing binding is added beside it", func(t *testing.T) {
+		ops := &wu13FakeOps{t: t,
+			raw:   wu13Grants(t, wu13GrantAt("alice@example.com", "operator", repoScope)),
+			etag:  "wu13-etag-1",
+			found: true}
+		audit := &wu13FakeAudit{t: t}
+		d := wu13Deps(t, workspace.DriftReport{
+			Missing: []workspace.DriftBinding{wu13Missing("alice@example.com", "operator", workspace.PrincipalPerson)},
+		}, ops, audit)
+
+		if _, err := wu13Run(t, d, wu13Member.Project); err != nil {
+			t.Fatalf("workspace project reconcile: %v", err)
+		}
+		if len(ops.writes) != 1 {
+			t.Fatalf("the member's roster was written %d times, want the project-scope row the binding comes from", len(ops.writes))
+		}
+		want := []string{
+			"user:alice@example.com operator github/acme/app",
+			"user:alice@example.com operator project",
+		}
+		if got := wu13Rows(wu13Decode(t, ops.writes[0])); !slices.Equal(got, want) {
+			t.Errorf("the roster holds %v, want %v: a repository-scope row derives no binding, so the difference is closed by a new row and the row that was there is left alone", got, want)
+		}
+		if len(audit.events) != 1 || audit.events[0].Action != workspace.ActionGrantWrite {
+			t.Errorf("the trail holds %+v, want the one addition", audit.events)
+		}
+	})
+
+	t.Run("an extra is named rather than taken back", func(t *testing.T) {
+		before := wu13Grants(t, wu13GrantAt("bob@example.com", "admin", repoScope))
+		ops := &wu13FakeOps{t: t, raw: before, etag: "wu13-etag-1", found: true}
+		audit := &wu13FakeAudit{t: t}
+		d := wu13Deps(t, workspace.DriftReport{
+			Extra: []workspace.DriftBinding{wu13Extra("bob@example.com", "admin", workspace.PrincipalPerson)},
+		}, ops, audit)
+
+		out, err := wu13Run(t, d, wu13Member.Project)
+		if err != nil {
+			t.Fatalf("workspace project reconcile: %v", err)
+		}
+		if len(ops.writes) != 0 || len(audit.ids) != 0 {
+			t.Errorf("a repository-scope row was taken back and audited: %s", ops.writes)
+		}
+		if !bytes.Equal(ops.raw, before) {
+			t.Errorf("the roster changed under a difference no project-scope row answers:\n%s", ops.raw)
+		}
+		if !strings.Contains(out, "no grant of this pair at the project scope") {
+			t.Errorf("the difference is not named as one the roster's project-scope rows do not answer:\n%s", out)
+		}
+	})
 }
 
 // TestReconcileRefusesOnAnUnmigratedList: an absent roster node is the state an
