@@ -991,13 +991,13 @@ bootstrap on every repository of the project — which moved the *Image-skew `Si
 from 60 to 61. The two keys ship in one release and one constant, one judge and one gate serve both,
 which is why the row moved by one and not by two.)
 
-(Amended 2026-11-21: the credentials-service follow-ups' KS2 — a provider key goes to the bundle
-rather than to a container of its own — added `repoCredentialSince` to
-`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 61 to 62.
-Same row, same reason for naming it: the census asks the command to reproduce the figure it sits
-beside, and the constant is a real gate — every writer of a provider key goes through it, so a
-service too old to read the bundle entry is refused at the writer. The figure was left at 61 in
-KS2's own commit and the row was red until this moved it.)
+(Amended 2026-11-21: the secrets-brokering plan's KS2 — a provider key entering the
+credentials service's bundle under C1's name instead of a container of its own — added
+`repoCredentialSince` to `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since`
+constants* row from 61 to 62. The constant is the guard every writer of such a key holds against a
+service too old to read the entry, so the row moved with the release that starts writing it, as the
+entries above do. Nothing in this folder changed; the row is named here for the reason the ones
+above are: a reader who finds the figure stale should find who moved it.)
 
 | Construct | Count | Command |
 | --- | --- | --- |
@@ -1013,7 +1013,7 @@ KS2's own commit and the row was red until this moved it.)
 | Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 62 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 153 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 154 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 10 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |

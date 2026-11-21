@@ -7169,6 +7169,8 @@
         "scripts/live-checks/check-500_test.sh",
         "scripts/live-checks/check-501.sh",
         "scripts/live-checks/check-501_test.sh",
+        "scripts/live-checks/check-760-runs-ls-speed.sh",
+        "scripts/live-checks/check-760-runs-ls-speed_test.sh",
         "scripts/live-checks/check-c39.sh",
         "scripts/live-checks/check-c39_test.sh",
         "scripts/live-checks/check-lc4.sh",
