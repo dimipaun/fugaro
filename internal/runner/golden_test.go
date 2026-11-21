@@ -20,10 +20,10 @@ var (
 	// the way goldenTime's does, and goldenTime's shape (RFC3339, with the T)
 	// never matches it.
 	goldenStamp = regexp.MustCompile(`\d{4}-\d\d-\d\d \d\d:\d\dZ`)
-	goldenSHA  = regexp.MustCompile(`\b[0-9a-f]{40}\b|\b[0-9a-f]{7}\b`)
-	goldenDur  = regexp.MustCompile(`\| (\d+(\.\d+)?(ms|µs|s|m\d+s|m|h\d+m\d+s)) \|`)
-	goldenPct  = regexp.MustCompile(`, \d+% of the run's`)
-	goldenWall = regexp.MustCompile(`of the run.s \d+s wall clock`)
+	goldenSHA   = regexp.MustCompile(`\b[0-9a-f]{40}\b|\b[0-9a-f]{7}\b`)
+	goldenDur   = regexp.MustCompile(`\| (\d+(\.\d+)?(ms|µs|s|m\d+s|m|h\d+m\d+s)) \|`)
+	goldenPct   = regexp.MustCompile(`, \d+% of the run's`)
+	goldenWall  = regexp.MustCompile(`of the run.s \d+s wall clock`)
 )
 
 // normalize blanks what differs between two runs of the same task: clock
