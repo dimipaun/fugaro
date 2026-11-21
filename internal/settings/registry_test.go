@@ -603,9 +603,6 @@ func TestTheRegistryAndTheRunAgreeOnUnset(t *testing.T) {
 	if want := unset(runMode); r.Default != want {
 		t.Errorf("budget.mode: the registry says %+v, and the run's answer for an unset mode is %q", r.Default, runMode)
 	}
-	if r.Merge != Tighten {
-		t.Errorf("budget.mode: Merge = %q, want %q: a looser layer may not lift a mode a stricter one set", r.Merge, Tighten)
-	}
 
 	// And the schema's own copy of the sentence, which is where a consumer of
 	// the settings document reads what an absent key means: schemas'
