@@ -548,6 +548,60 @@ export function meetsCliFloor(version: string, floorLine: string): boolean {
 export const CLI_HARD_FLOOR_VERSION = '0.6.0'
 
 /**
+ * RUNS_STREAM_CLI_FLOOR, SPEND_STREAM_CLI_FLOOR and BUDGET_STREAM_CLI_FLOOR are
+ * the oldest CLIs that carry `runs ls --stream`, `report --stream` and
+ * `budget show --stream`: the three live reads of the console improvements plan
+ * (RS1, RS3, RS4, D2906's widening).
+ *
+ * **No release carries these flags yet, so each is `null`** and the console
+ * spawns none of the three today (the idiom `LICENCE_KEY_CLI_FLOOR`,
+ * `NO_APPLY_CLI_FLOOR` and `WHOAMI_CLI_FLOOR` follow). A floor is a claim about
+ * a release that exists, and a version this file guessed at would be a
+ * `--stream` handed to a CLI that answers `unknown flag: --stream` and fails the
+ * whole read. Unset is the safe direction and the only honest one.
+ *
+ * They are **one constant per read and not one for the set**, because the three
+ * flags arrive with three different CLI tasks (RS1 in `internal/cli`, RS3 in
+ * `ee/report`, RS4 in `budget`) and a release may carry one without the others.
+ * The release that ships them sets each to its own version in a one-line pull
+ * request -- a release step and not a task of the plan.
+ */
+export const RUNS_STREAM_CLI_FLOOR: string | null = null
+export const SPEND_STREAM_CLI_FLOOR: string | null = null
+export const BUDGET_STREAM_CLI_FLOOR: string | null = null
+
+/**
+ * SETUP_CLI_FLOOR is the oldest CLI that carries `setup --answers-file` and
+ * `setup --events` (ST1/ST2, D2904): the two words the first-run wizard's plan
+ * and apply are built from. It is one constant for both rows because they are
+ * one release and one command -- `setup --plan-only` and `setup` are the same
+ * binary's two argvs -- and no CLI answers either word before it.
+ *
+ * `null` until that release names itself, which is where the wizard stands
+ * today: the two rows exist in the allow-list and the handlers behind them
+ * answer 'not available in this build'.
+ */
+export const SETUP_CLI_FLOOR: string | null = null
+
+/**
+ * IMAGE_CATALOG_CLI_FLOOR and RECIPES_CLI_FLOOR are the two reads of the
+ * console improvements plan that need **no release of their own** (AL settles
+ * the plan's U7): `image ls --json` and `recipes ls --json` are commands as old
+ * as the console's own hard floor, so the value that says "no floor" is the
+ * floor the console already refuses below.
+ *
+ * **Written as the constant and not as `null`**, and the difference matters:
+ * every reader of a floor treats `null` as *refuse* -- `src/source/new-reads.ts`
+ * throws the console's own "needs a fugaro release no CLI has yet" for it -- so
+ * a `null` here would withhold two reads every supported CLI answers. They are
+ * constants of their own rather than an inline use of `CLI_HARD_FLOOR_VERSION`
+ * at the call site, because each is one operation's floor and the release that
+ * one day raises it names one name.
+ */
+export const IMAGE_CATALOG_CLI_FLOOR: string | null = CLI_HARD_FLOOR_VERSION
+export const RECIPES_CLI_FLOOR: string | null = CLI_HARD_FLOOR_VERSION
+
+/**
  * CONSOLE_CLI_UPGRADE_COMMAND is the fix line an *old* CLI's banner offers. It
  * is the CLI's own constant rather than one this file invented:
  * `internal/updatecheck/updatecheck.go`'s `BrewCommand`, which is the command

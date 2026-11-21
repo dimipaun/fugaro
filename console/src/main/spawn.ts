@@ -529,6 +529,34 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   // which no renderer argument and no field of the operation's schema names.
   '--to',
   '--expect',
+  // The console improvements' five (AL). Each is a fixed word of one row's
+  // command path -- no renderer argument and no field of any schema spells one
+  // -- and each is on this list for the same reason `--watch` is: this is the
+  // module that may emit it at all, and `assertArgvFlags` holds every word of
+  // every argv here. None of them is on a never row, and each is a word of a
+  // command no release of the CLI in this tree registers yet -- which is what
+  // the floors in `src/shared/version.ts` are for.
+  //
+  // `--stream` is the three live reads' mode word (`runs ls --stream`,
+  // `report --stream`, `budget show --stream`): the same document, printed as
+  // it changes, one line at a time. It is in the command path rather than a
+  // declared flag because a stream is long-lived, and a word a payload could
+  // turn off would be a payload choosing between two reads.
+  '--stream',
+  // `--me` is `user ls`'s own scope word: the caller's role and nobody else's.
+  // The read it makes is the reason `whoami` is a row rather than a `--user`
+  // argument -- there is no form of this operation that is about another person.
+  '--me',
+  // The first-run wizard's three (D2904). `--plan-only` is what makes `setup`
+  // a read, and it is the whole of the difference between the two rows that
+  // drive that command. `--answers-file` is passed with `-` and never with a
+  // path: the answers reach the child on its standard input, from bytes main
+  // holds in memory. `--events` asks for the run's account as a feed of lines
+  // instead of the one `--json` document, and it is why those two rows have a
+  // deadline of their own (`SETUP_DEADLINE_MS` below).
+  '--plan-only',
+  '--answers-file',
+  '--events',
 ])
 
 /** DEFAULT_BACKOFF is the CLI's own stream backoff (`backMin`/`backMax`,
@@ -567,6 +595,21 @@ export const READ_TIMEOUT_MS = 90_000
 /** VERSION_TIMEOUT_MS is the version handshake's own, shorter deadline: the
  * command prints one constant line. */
 export const VERSION_TIMEOUT_MS = 5000
+
+/**
+ * SETUP_DEADLINE_MS is the first-run wizard's own deadline, and it is an hour
+ * rather than `READ_TIMEOUT_MS`'s ninety seconds because of what the command
+ * behind it does: a converge applies Terraform, waits on a build and reconciles
+ * an installation, and ninety seconds would kill it part-way through -- which
+ * is the one outcome worse than a slow screen, because the second attempt
+ * starts from a project that is half-built.
+ *
+ * **It is a ceiling and not the way the child ends.** A setup run ends when the
+ * CLI exits, which is the `done` or `error` line that closes its feed, or when
+ * the operator cancels; this number only bounds how long a child that never
+ * says anything may hold a modal open (the console improvements plan, AL).
+ */
+export const SETUP_DEADLINE_MS = 60 * 60 * 1000
 
 /** MAX_STDOUT_LENGTH bounds what a one-shot read may print, in UTF-16 code
  * units. The largest document is `logs --json`; this is generously above it,
@@ -743,6 +786,13 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   // and a word no renderer sends.
   roadmapNode: 'roadmapTask',
   roadmapRelease: 'roadmapRelease',
+  // The first-run wizard's answers (AL, D2904). The mapping is the launch's
+  // own `stdin`: what the validator hands over is one string -- main's own
+  // serialisation of the five answers it checked -- and it reaches the child on
+  // standard input, where `--answers-file -` reads it. It is the second kind
+  // that emits no argv word, and for a stronger reason than the first: a path
+  // in an argv is what `--answers-file <PATH>` would be.
+  setupAnswers: 'stdin',
   // `licenceKey` is the second kind whose operation spawns nothing
   // (`licence.read`/`licence.save`, S2.7, carry `command: null`), for
   // `gitProvider`'s reason: the mapping is total over ipc.ts's kinds, and
@@ -1499,6 +1549,133 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // of it as a flag (rule 2).
     operation: 'apply.pending',
     words: ['apply', '--status', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  // The console improvements' eight rows (AL). Every one of them is inert
+  // today: the CLI release that registers the row's new words is not the
+  // release in this tree, and each operation's floor
+  // (`src/shared/version.ts`) is `null` until one names it, so no caller
+  // reaches these rows at all. They are here rather than in a later task
+  // because the allow-list is the thing the whole console spawns through, and
+  // a row added after its screen exists is a row reviewed after its argv is on
+  // the wire.
+  {
+    // The runs list's live form (`runs ls --stream --json --since <w>`). Three
+    // things are deliberately absent.
+    //
+    // **`--since` is a declared argument and not a word**, and it is the one
+    // ring the read shares with `runs.list`: the window is that row's own kind
+    // (`runSince`, the CLI's `parseSince` grammar), so a stream and a list
+    // cannot spell one window two ways.
+    //
+    // **No `--repo`, `--mine`, `--pr`, `--all`, `--limit`, `--after`**: the
+    // operation's schema has none of them, so `argvFor` refuses them by name
+    // before this row is reached -- the stream is the window's own list.
+    //
+    // **`--stream` is in the command path**, like `graph watch`'s `--watch`:
+    // it is what makes the child long-lived, and a declared flag would be a
+    // word a renderer could turn off.
+    operation: 'runs.stream',
+    words: ['runs', 'ls', '--stream', '--json'],
+    takesProject: true,
+    args: [{ key: 'since', flag: '--since', kind: 'value' }],
+    dirFlag: false,
+  },
+  {
+    // The spend report's live form (`report --stream --json` plus the four
+    // arguments the whole-document read declares, unchanged and for the same
+    // reasons -- so the two reads of one figure cannot narrow it two ways).
+    operation: 'spend.stream',
+    words: ['report', '--stream', '--json'],
+    takesProject: true,
+    args: [
+      { key: 'by', flag: '--by', kind: 'value' },
+      { key: 'since', flag: '--since', kind: 'value' },
+      { key: 'until', flag: '--until', kind: 'value' },
+      { key: 'repo', flag: '--repo', kind: 'value' },
+    ],
+    dirFlag: false,
+  },
+  {
+    // The caps read's live form (`budget show --stream --json` plus the three
+    // arguments `budget.show` declares, `--compute` included: it is the one
+    // that costs a listing of the runs bucket, and the stream carries exactly
+    // what the read carries).
+    operation: 'budget.stream',
+    words: ['budget', 'show', '--stream', '--json'],
+    takesProject: true,
+    args: [
+      { key: 'repo', flag: '--repo', kind: 'value' },
+      { key: 'all', flag: '--all', kind: 'boolean' },
+      { key: 'compute', flag: '--compute', kind: 'boolean' },
+    ],
+    dirFlag: false,
+  },
+  {
+    // The caller's own role (`user ls --me --json`). `--me` is in the command
+    // path: the operation has no argument at all, so no payload can ask the
+    // roster question this flag's absence would be.
+    operation: 'whoami',
+    words: ['user', 'ls', '--me', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // The image catalog (`image ls --json`): the group's one read, and the
+    // group's writers are all on `NEVER_REACHABLE`. No argument at all.
+    operation: 'image.catalog.ls',
+    words: ['image', 'ls', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // The recipes (`recipes ls --json`). `recipes publish` is a write and
+    // `recipes validate` takes a free `FILE` positional: neither is this row.
+    operation: 'recipes.ls',
+    words: ['recipes', 'ls', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // The first-run wizard's plan (`setup --plan-only --answers-file -
+    // --events --json`), and the first of the two rows that drive `setup` at
+    // all -- the command's never-row grants them by name and refuses every
+    // other argv of it (`src/main/ipc.ts`).
+    //
+    // **`--plan-only` is the word that makes this a read**, and it is why the
+    // two rows are rows of their own rather than one row with a declared flag:
+    // the word decides whether the child creates a GCP project, so it belongs
+    // where no payload can reach it.
+    //
+    // **`--answers-file` is followed by `-` and never by a path.** The answers
+    // reach the child on its standard input, as the bytes main made from the
+    // payload it validated -- so no file exists for another process of the same
+    // user to swap between main's check and the CLI's read, and there is no word
+    // in this argv a path could be spelled into. `--events` asks for the run's
+    // account as a feed of lines; `--json` is the row's own, as on every row.
+    operation: 'setup.plan',
+    words: ['setup', '--plan-only', '--answers-file', '-', '--events', '--json'],
+    takesProject: true,
+    args: [{ key: 'answers', flag: null, kind: 'stdin' }],
+    dirFlag: false,
+  },
+  {
+    // The first-run wizard's apply (`setup --answers-file - --events --json`):
+    // the row above less `--plan-only`, and the console's third write.
+    //
+    // **It declares no argument, and that is the whole of its safety**: the
+    // answers file the child reads on stdin is the one main held when it showed
+    // the plan window, so a payload cannot name a different project, region or
+    // rigor between the window and the write. There is no `--yes` and no flag
+    // beside `--json`: the CLI asks nothing (`docs/no-prompt-policy/`), and the
+    // operator's confirmation is the window's, not an argv word.
+    operation: 'setup.apply',
+    words: ['setup', '--answers-file', '-', '--events', '--json'],
     takesProject: true,
     args: [],
     dirFlag: false,
