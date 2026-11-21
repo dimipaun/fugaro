@@ -724,7 +724,14 @@ type initRun struct {
 	installLabel     string
 	historyNoted     bool
 	coordinatorNoted bool
-	printed          bool // the --json result has been printed
+	// declined is the Firebase stage's one line when its no-flag arm found that
+	// this run may neither adopt nor create the installation's budget database
+	// (R2): the stage changed nothing, says why in this line, and the rest of
+	// the run carries on. It is "" on every other run, and the stage clears it
+	// before it runs so that a plan pass and an apply pass of the same run do
+	// not report two different things.
+	declined string
+	printed  bool // the --json result has been printed
 	// events is the --events feed (setup_events.go), or nil for every run
 	// that did not ask for one — which is what keeps a run without the flag
 	// byte for byte the run it was: no line is written, and the loop's three

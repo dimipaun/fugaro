@@ -606,6 +606,53 @@ func DatabaseURLs(ctx context.Context, c *Clients, fp string) ([]string, error) 
 	return urls, nil
 }
 
+// DatabaseCreatorPermissions are the project's own IAM changes the Firebase
+// root makes: it creates the token signer's custom role and the account that
+// wears it, and it grants the role to it (modules/firebase/iam.tf). They are
+// what the caller of a run that would CREATE the budget database is asked for
+// (R2): a person who holds them can make the project's IAM changes and the
+// stage may go ahead, and one who does not gets the stage's one line naming a
+// project owner instead of a failed apply halfway through the root.
+//
+// The list is the permissions and not a role: roles/editor holds none of the
+// project's policy write, and whether an operator's roles suffice is exactly
+// the question (U1, AB7's probe). roles/owner holds all four.
+var DatabaseCreatorPermissions = []string{
+	"resourcemanager.projects.getIamPolicy",
+	"resourcemanager.projects.setIamPolicy",
+	"iam.roles.create",
+	"iam.serviceAccounts.create",
+}
+
+// CanMakeIAMChanges reports whether the caller holds every permission the
+// Firebase root's own IAM changes need on project fp. It reads the caller's
+// OWN permissions (projects.testIamPermissions) and never the project's policy,
+// which is the API's own division: the policy says who may do what, and this
+// says what this credential, here, may.
+//
+// A project the caller cannot read at all is an error rather than a no: the two
+// are different answers, and the caller is the one that knows which of them its
+// own line names.
+func CanMakeIAMChanges(ctx context.Context, c *Clients, fp string) (bool, error) {
+	if c.CRM == nil {
+		return false, errors.New("no Resource Manager client (endpoints.cloud_resource_manager is not set)")
+	}
+	res, err := c.CRM.Projects.TestIamPermissions(fp, &crm.TestIamPermissionsRequest{Permissions: DatabaseCreatorPermissions}).Context(ctx).Do()
+	if err != nil {
+		return false, fmt.Errorf("testing your permissions on project %s: %w", fp, err)
+	}
+	held := map[string]bool{}
+	for _, p := range res.Permissions {
+		held[p] = true
+	}
+	for _, p := range DatabaseCreatorPermissions {
+		if !held[p] {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // ErrNoFirebaseOutputs means the Firebase root's state holds no outputs.
 var ErrNoFirebaseOutputs = errors.New("the Firebase root's state has no outputs; it has not been applied")
 
