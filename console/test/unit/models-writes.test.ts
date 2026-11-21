@@ -494,12 +494,27 @@ describe('the models write behind the modal', () => {
   it('is one write at a time: a second plan while one is pending is refused, and writes nothing', async () => {
     const { writer, confirmer, calls } = aWriter()
     await ask(writer, 'models.add.plan', aValues())
-    expect(await refusalOf(() => writer['models.add.plan']({ id: ID, route: ROUTE }))).toBe(
-      MODELS_ADD_PLAN_PENDING_REFUSAL,
-    )
-    // One child, one window, and nothing written.
+    // The second plan asks for **another** model, which is the mutation this
+    // catches: a console that replaced the pending plan would write the second
+    // one's argv over the first's, and the operator would be answering a window
+    // whose argv had moved under it.
+    expect(
+      await ask(writer, 'models.add.plan', aValues({ id: 'deepseek/another-model' })),
+    ).toStrictEqual({ ok: false, reason: MODELS_ADD_PLAN_PENDING_REFUSAL })
     expect(calls).toHaveLength(1)
     expect(confirmer.opened).toHaveLength(1)
+
+    // ...and the yes that follows still writes the **first** plan, once: the
+    // refused second plan left no record and no argv behind it.
+    expect(viewOf(confirmer.opened[0]?.subject).model).toBe(ID)
+    confirmer.opened[0]?.decide(true)
+    await flush()
+    expect(calls).toHaveLength(2)
+    expect(commandLine(calls[1] as SpawnCall)).toStrictEqual([...WRITE_ARGV])
+    // A second yes is not a second write.
+    confirmer.opened[0]?.decide(true)
+    await flush()
+    expect(calls).toHaveLength(2)
   })
 
   it('spawns nothing when the apply arrives before the window’s own yes', async () => {
