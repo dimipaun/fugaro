@@ -320,6 +320,20 @@ type Tried struct {
 	Reason string
 }
 
+// serviceCall reports whether this call is the credentials service's own, and
+// so is read, answered and halted the way a service call is: the service's
+// Messages path (no route at all beside a service upstream), and a SERVED
+// provider route, whose key is the service's too (Served, KS5, R1/R12).
+//
+// A route the job holds the key for beside a service upstream is not one of
+// these even though its kind's upstream is: it went to the provider's own
+// endpoint with the job's key (a switched api-key run, R6/D1634), so its
+// answer is the provider's, it is retried by this gateway, and a service
+// refusal is not something it can be given.
+func (s *Server) serviceCall(rt route) bool {
+	return s.o.Upstream.Kind == KindService && (rt.provider == nil || rt.provider.Served)
+}
+
 // serviceUpstream builds a service call's headers and credential: the model
 // request's own headers as the anthropic upstream would forward them, the
 // job service account's Google ID token as the bearer credential Cloud Run
@@ -331,15 +345,19 @@ type Tried struct {
 // job's own: validate refuses a service upstream that has one, and this
 // function writes only the two identities above — the agent's own headers,
 // the gateway token and every credential header Claude Code sent are already
-// gone from what forwardHeaders returns. A route is refused as well, on
-// oauthUpstream's reasoning: a route is a provider's own endpoint and is
-// reached with the provider's key, which a service run does not have. A
-// routed call never reaches this function at all — upstreamRequest returns
-// the provider's own request before the kind switch — and the check is kept
-// so a route handed to it in code cannot have a service call built for it
-// either.
+// gone from what forwardHeaders returns. A route the job holds the key for is
+// refused as well, on oauthUpstream's reasoning: such a route is a provider's
+// own endpoint and is reached with that key, which a cascade run does not
+// have. That call never reaches this function at all — upstreamRequest returns
+// the provider's own request before the kind switch — and the check is kept so
+// a route handed to it in code cannot have a service call built for it either.
+//
+// A SERVED route is the opposite case and does reach this function (KS5):
+// its key is the service's, so the call this builds is the call a routed
+// served call is made of — the two identities, and then the provider's name
+// on top, which upstreamRequest sets from the route (HeaderProvider).
 func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) (http.Header, error) {
-	if rt.provider != nil {
+	if rt.provider != nil && !rt.provider.Served {
 		return nil, errServiceOnRoute
 	}
 	sv := s.o.Upstream.Service
@@ -362,8 +380,12 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	// dropped for that same second reason: the agent runs inside the
 	// repository whose auth it is, so a mode or an account it wrote would
 	// read as the runner's statement about a repository it may not be in —
-	// what travels below is what the runner resolved for this run.
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount} {
+	// what travels below is what the runner resolved for this run. The
+	// provider's name (HeaderProvider) is dropped for it too: it is what
+	// decides which of the repository's keys the service serves a routed
+	// call with (R2, KS5), so it is set here from the route the gateway
+	// routed to and never taken from a header the agent wrote.
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount, HeaderProvider} {
 		h.Del(k)
 	}
 	h.Set("Authorization", "Bearer "+id)
@@ -504,16 +526,21 @@ const maxServiceAnswerBytes = 128 << 10
 // so a test can answer that question directly.
 var serviceCallClient = serviceUpstreamClient(upstreamClient(nil))
 
-// errServiceOnRoute is the refusal a service call gives a route offered to it,
-// from validateRoutes and from serviceUpstream. There is no cycle to break
-// here (a route's key would be the job's own credential, which a cascade run
-// does not have): it is refused by name so a misconfiguration says what it
-// is, and in both places so a Route built in code past validation cannot
-// reach a provider through a service run either. The one service upstream
-// that does have a key of its own is a switched api-key run's, whose routes
-// validateRoutes admits (B2.2, R6/D1634) — and whose routed calls the
-// upstream path never builds a service request for.
-var errServiceOnRoute = errors.New("a provider route is never reached through the credentials service: a route is a provider's own endpoint and is called with the job's own key, which a cascade run does not have (D143)")
+// errServiceOnRoute is the refusal a service call gives a route the job holds
+// the key for, from validateRoutes and from serviceUpstream. There is no cycle
+// to break here (such a route's key is the job's own credential, which a
+// cascade run does not have): it is refused by name so a misconfiguration says
+// what it is, and in both places so a Route built in code past validation
+// cannot reach a provider through a service run either. The one service
+// upstream that does hold provider keys is a switched api-key run's, whose
+// routes validateRoutes admits (B2.2, R6/D1634) — and whose routed calls the
+// upstream path still sends to the provider's own address.
+//
+// It is about the UNSERVED route, and that is what its sentence says (KS5): a
+// served route (Served) carries no key of the job's, and its call goes to the
+// service's provider route by design (R1, R12) — validateRoutes admits it
+// beside the service upstream and upstreamRequest builds its call there.
+var errServiceOnRoute = errors.New("a provider route the job holds a key for is never reached through the credentials service: such a route is a provider's own endpoint and is called with the job's own key, which a cascade run does not have (D143)")
 
 // errServiceUnidentified is every way a service call fails before it is sent
 // for want of an identity: the run's own token, or the job's Google ID token,
@@ -1008,6 +1035,15 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		return haltOn(refusalDetail(e.Error)), true, "", nil
 	case ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity:
 		return haltOn(refusalDetail(e.Error)), true, "", nil
+	case ErrorProviderNotServed, ErrorProviderNotAllowed:
+		// The provider route's own two refusals (C1, KS5): the service holds
+		// no key for this repository and this provider, or the published
+		// policy does not allow the call. Both halt the run (D143): this job
+		// carries R12's fact, which is the owner's own record that the keys
+		// are served, so an absent key there is a snapshot of the
+		// installation and not a state a run papers over with a mounted key
+		// -- and there is none mounted for a served route in any case.
+		return haltOn(refusalDetail(e.Error)), true, "", nil
 	}
 	// A refusal whose type this release does not know. It is the service's
 	// own answer and is not relayed, and the call cannot be accounted for
@@ -1063,6 +1099,18 @@ func refusalDetail(typ string) string {
 		// does not claim that is the only one, because the same type answers
 		// for a server tool, an unbounded shape and a max_tokens bound.
 		return "the credentials service refused this request (request_refused: check the project's published budget.allowed_models and this call's model, tools and max_tokens)"
+	case ErrorProviderNotServed:
+		// The provider route's own refusal (C1, KS5), and the operator's two
+		// documents are named because the cause is one of two: an entry the
+		// bundle does not hold for this repository and provider, or one whose
+		// value the copy never wrote. Neither is a key's value and neither is
+		// a credential's name.
+		return "the credentials service holds no key for this repository's provider (provider_not_served: check the installation's bundle for this repository's provider entry and the copy's record, then run fugaro update)"
+	case ErrorProviderNotAllowed:
+		// The other one: the key is held and the published policy is what
+		// refuses the call (R11, D3003), so the reader is sent to the
+		// allowance and never to a key.
+		return "the credentials service refused this provider call (provider_not_allowed: check the project's published allowance and this repository's own admission)"
 	}
 	return stateDetailUnreadable
 }

@@ -280,13 +280,16 @@ func TestServiceUpstreamReadsTierAndCredential(t *testing.T) {
 }
 
 // TestServiceNeverSentToProviderRoute is D143's other half, on
-// TestOAuthNeverSentToProviderRoute's shape: a route is a provider's own
-// endpoint and is reached with the job's own key for that provider, which a
-// cascade run does not have. A cascade's service upstream therefore takes no
-// routes at all -- not at start-up, and not from a Route built in code past
-// validation either. (A switched api-key run's does: it is the one service
-// upstream with a key of its own, and
-// TestSwitchedAPIKeyServiceUpstreamKeepsItsProviderRoutes is that case.)
+// TestOAuthNeverSentToProviderRoute's shape: a route the job holds the key for
+// is a provider's own endpoint, reached with that key, which a cascade run does
+// not have. A cascade's service upstream therefore takes no such route -- not
+// at start-up, and not from a Route built in code past validation either. (Two
+// service upstreams do take routes: a switched api-key run's, which is the one
+// with a key of its own, and the case
+// TestSwitchedAPIKeyServiceUpstreamKeepsItsProviderRoutes pins; and any
+// upstream beside a SERVED route, whose key is the credentials service's and
+// whose calls the service's provider route answers -- KS5,
+// route_service_test.go.)
 func TestServiceNeverSentToProviderRoute(t *testing.T) {
 	_, psrv := anthropicfake.New(t, anthropicfake.MessageOK(dsModel, smallUsage))
 	cred := func() (string, error) { return "provider-key-" + t.Name(), nil }
@@ -298,7 +301,8 @@ func TestServiceNeverSentToProviderRoute(t *testing.T) {
 		}
 	}
 
-	// 1. A service upstream takes no routes at all, whatever they point at.
+	// 1. A service upstream takes no route the job holds a key for, whatever
+	//    it points at.
 	for _, base := range []string{psrv.URL + "/api", psrv.URL, "https://api.anthropic.com"} {
 		gw, err := Start(context.Background(), Options{
 			Upstream: Upstream{Kind: KindService, BaseURL: "https://creds.example", Service: svc()},
@@ -331,7 +335,7 @@ func TestServiceNeverSentToProviderRoute(t *testing.T) {
 		t.Errorf("validateRoutes refused a service upstream with no routes: %v", err)
 	}
 
-	// 3. The upstream's own path refuses a provider route even if one were
+	// 3. The upstream's own path refuses such a route even if one were
 	//    handed to it: the check is where the job's identity is attached,
 	//    not only at start-up.
 	pr := &Route{Name: "openrouter", BaseURL: psrv.URL + "/api", Auth: "bearer", Credential: cred}

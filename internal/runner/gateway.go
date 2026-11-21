@@ -386,6 +386,21 @@ func (r *run) serviceSwitched() bool {
 	return !r.d.Local && ServiceSwitchedAuth(r.modelAuth()) && envLookup(r.d.Env, credentialsServiceURLEnv) != ""
 }
 
+// serviceModelPath reports whether this run's model calls reach the
+// installation's credentials service at all: the two arms gatewayUpstream
+// builds a service upstream for — a switched repository's run (serviceSwitched)
+// and a cascade run, which a review class run's model path is spelled as
+// (modelAuth) — and never a local invocation, which serviceUpstream refuses
+// (D149).
+//
+// It is the runner's own answer to "which upstream does this run's gateway
+// build", asked by the readers that have to know before a gateway exists: R12's
+// fact decides a run's routed calls are the service's only where the service is
+// reached at all (providerKeysThroughService).
+func (r *run) serviceModelPath() bool {
+	return !r.d.Local && (r.serviceSwitched() || r.modelAuth() == config.AuthCascade)
+}
+
 // servedAuth is the auth this run's model path is spelled as for the arms that
 // know the four auths and nothing about the switch: agent.BuildEnv and
 // agent.GatewayVars build the agent's environment from it, and the record's
