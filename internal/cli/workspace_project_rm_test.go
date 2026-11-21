@@ -43,6 +43,12 @@ const wu6Admin = "admin-1@example.com"
 // git config the test machine happens to carry (localcfg.Config.Me).
 const wu6OwnerUser = "person-1@example.com"
 
+// wu6Stranger is a person the workspace's own node records a grant for without
+// the admin list naming them: a mark outlives the admin list it was written
+// under, and it is the mark and not the list that tells a detach what to take
+// back (D2818).
+const wu6Stranger = "member-2@example.com"
+
 // wu6BetaEntry is a second member the owner's table declares and this machine
 // holds no config for, which is the state a member's own config read refuses.
 const wu6BetaEntry = `  beta:
@@ -177,8 +183,9 @@ func TestProjectRmPrintsShutdownLink(t *testing.T) {
 }
 
 // TestProjectRmRemovesWorkspaceAdminGrants is the member side of the detach: the
-// grants the workspace's admins hold in the member's own roster and the mirror of
-// the workspace's member list go, the workspace's own node keeps no mark for a
+// grants the workspace's own node marks this project with go out of the member's
+// roster (D2818's marks, not the admin list of the moment), the mirror of the
+// workspace's member list goes, the workspace's own node keeps no mark for a
 // project it no longer holds, and the removal is filed in the workspace's trail.
 func TestProjectRmRemovesWorkspaceAdminGrants(t *testing.T) {
 	r, _, _ := wu6NewRig(t)
@@ -250,6 +257,77 @@ func TestProjectRmRemovesWorkspaceAdminGrants(t *testing.T) {
 	}
 	if got, want := r.auth.unlinked, []workspace.MemberTarget{{Project: "aurora-gcp", Firebase: "aurora-fb"}}; len(got) != 1 || got[0] != want[0] {
 		t.Errorf("the workspace's authority was dropped on %v, want once on the member's own pair of projects %v", got, want)
+	}
+	assertNoPrompt(t, out)
+}
+
+// TestProjectRmKeepsTheMembersOwnGrantForAnAdmin is the over-removal half of the
+// match: the member's roster may hold grants for a person who is also a workspace
+// admin, and the ones the workspace wrote are the ones its own node marks — the
+// address, the role and the project scope together. Here the same address holds
+// an all-repos admin grant the member's own admins wrote and a project-scope
+// admin grant the workspace wrote: the second goes, and the first is not this
+// command's to take away.
+func TestProjectRmKeepsTheMembersOwnGrantForAnAdmin(t *testing.T) {
+	r, _, _ := wu6NewRig(t)
+	r.members.grants = wu6Doc(t, "wu6-grants-etag", wu6GrantsDoc(t,
+		// The workspace's own: the address, the role and the scope its mark names.
+		wu6Grant(t, wu6Admin, accesslib.RoleAdmin),
+		// The member's own for the same person: the same role at another scope,
+		// which the workspace's mark for this project does not name (D2815).
+		wu6GrantAt(t, wu6Admin, accesslib.RoleAdmin, "all-repos"),
+	))
+
+	out, err := wu6Run(t, r.deps(), "aurora", "--no-apply")
+	if err != nil {
+		t.Fatalf("workspace project rm: %v\n%s", err, out)
+	}
+	kept, err := accesslib.Decode(r.members.grantsWritten)
+	if err != nil {
+		t.Fatalf("the roster this command wrote is not one the member's own CLI reads: %v", err)
+	}
+	if len(kept) != 1 {
+		t.Fatalf("the member's roster came back with %d grants, want the one the workspace did not write: %+v", len(kept), kept)
+	}
+	if got := kept[0]; got.User != "user:"+wu6Admin || got.Role != accesslib.RoleAdmin || got.Scope.Kind != accesslib.ScopeAllRepos {
+		t.Errorf("the surviving grant is %+v, want the member's own all-repos admin grant for %s: a grant of the same address and role at another scope was not written by this workspace", got, wu6Admin)
+	}
+	assertNoPrompt(t, out)
+}
+
+// TestProjectRmRemovesAMarkedGrantForANonAdmin is the under-removal half: what the
+// command takes back is what the workspace's own node marks for the project, and
+// the admin list of the moment is not part of that question. A person who is no
+// longer a workspace admin is still a person the workspace wrote a grant for, and
+// leaving it behind in the member would be a grant surviving with no mark left to
+// find it by.
+func TestProjectRmRemovesAMarkedGrantForANonAdmin(t *testing.T) {
+	r, _, _ := wu6NewRig(t)
+	// The node's marks name a person the admin list does not: the workspace wrote
+	// the grant before that person stopped being an admin, and the mark is what
+	// records it.
+	r.store.doc = wu6Roster(t, []string{wu6Admin}, []string{wu6Admin, wu6Stranger},
+		workspace.StoredGrant{Project: "aurora", User: wu6Stranger, Role: workspace.RoleViewer})
+	r.members.grants = wu6Doc(t, "wu6-grants-etag", wu6GrantsDoc(t,
+		wu6Grant(t, wu6Stranger, accesslib.RoleViewer),
+		wu6Grant(t, "local-1@example.com", accesslib.RoleViewer),
+	))
+
+	out, err := wu6Run(t, r.deps(), "aurora", "--no-apply")
+	if err != nil {
+		t.Fatalf("workspace project rm: %v\n%s", err, out)
+	}
+	kept, err := accesslib.Decode(r.members.grantsWritten)
+	if err != nil {
+		t.Fatalf("the roster this command wrote is not one the member's own CLI reads: %v", err)
+	}
+	for _, g := range kept {
+		if g.User == "user:"+wu6Stranger {
+			t.Errorf("the grant the workspace's own node marks is still in the member's roster: %+v", kept)
+		}
+	}
+	if len(kept) != 1 || kept[0].User != "user:local-1@example.com" {
+		t.Errorf("the member's own grant did not survive the detach: %+v", kept)
 	}
 	assertNoPrompt(t, out)
 }
@@ -535,11 +613,26 @@ func wu6Run(t *testing.T, deps workspaceProjectRmDeps, args ...string) (string, 
 // and the marks the workspace keeps.
 func wu6RosterDoc(t *testing.T, marks ...workspace.StoredGrant) []byte {
 	t.Helper()
+	return wu6Roster(t, []string{wu6Admin}, []string{wu6Admin}, marks...)
+}
+
+// wu6Roster is the workspace's own node with the admin list and the people it
+// names given rather than fixed: the two answer different questions, and the
+// difference is what a detach must not confuse (D2818).
+func wu6Roster(t *testing.T, admins, people []string, marks ...workspace.StoredGrant) []byte {
+	t.Helper()
+	person := func(address string) workspace.Person {
+		return workspace.Person{Address: address, Kind: workspace.KindHuman}
+	}
+	named := make([]workspace.Person, 0, len(people))
+	for _, address := range people {
+		named = append(named, person(address))
+	}
 	raw, err := workspace.EncodeRoster(&workspace.Roster{
 		Version:   workspace.RosterVersion,
 		Mechanism: workspace.MechanismSA,
-		People:    []workspace.Person{{Address: wu6Admin, Kind: workspace.KindHuman}},
-		Admins:    []string{wu6Admin},
+		People:    named,
+		Admins:    admins,
 		Grants:    marks,
 	})
 	if err != nil {
@@ -568,6 +661,23 @@ func wu6Grant(t *testing.T, address string, role accesslib.Role) accesslib.Grant
 		t.Fatal(err)
 	}
 	scope, err := accesslib.ParseScope("project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return accesslib.Grant{User: member, Role: role, Scope: scope}
+}
+
+// wu6GrantAt is one stored grant at a scope the test names: the same address and
+// the same role at another scope is a different grant, which is how a test says
+// a member's own grant is not one the workspace's mark for this project names
+// (D2815).
+func wu6GrantAt(t *testing.T, address string, role accesslib.Role, scopeValue string) accesslib.Grant {
+	t.Helper()
+	member, err := accesslib.Member(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := accesslib.ParseScope(scopeValue)
 	if err != nil {
 		t.Fatal(err)
 	}

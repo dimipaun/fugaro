@@ -6,12 +6,12 @@ package cli
 // separation of those two acts is the whole of its design (spec.md, "rm
 // detaches and never deletes"). A detach is five things a person can repeat or
 // walk away from — a snapshot of the member's state, the grants the workspace's
-// admins were written into the member's roster, the mirror, the marks the
-// workspace's own node keeps for it, and the authority the workspace held over
-// it — and a deletion is Google's own flow, with Google's own safeguards, run
-// by the owner. So this command takes the five back, drops the member's entry
-// from the owner's table, and says out loud what is still there and still
-// costing money, with the console page the owner shuts the project down from.
+// own node marks as written into the member's roster, the mirror, the marks
+// themselves, and the authority the workspace held over it — and a deletion is
+// Google's own flow, with Google's own safeguards, run by the owner. So this
+// command takes the five back, drops the member's entry from the owner's table,
+// and says out loud what is still there and still costing money, with the
+// console page the owner shuts the project down from.
 // It opens nothing: printing a link is a person's decision left to the person.
 //
 // Four more rules shape it, and each of them is a decision of the plan rather
@@ -29,11 +29,14 @@ package cli
 //     nothing either way, because a question is not a fence (the no-prompt
 //     policy, D1540).
 //   - It works after the member owner's `unlink` too (D2822). Unlink drops the
-//     authority and only the authority — a member owner cannot read the
-//     workspace's roster, and a member roster cannot tell the workspace's
-//     grants from its own — so the admins' stored grants and the mirror are
-//     this command's to take back, in the state `status` shows as "unlinked,
-//     grants left".
+//     authority and only the authority, so the grants the workspace wrote into
+//     the member's roster and the mirror are still there afterwards — the state
+//     `status` shows as "unlinked, grants left" — and this command is what takes
+//     them back. Which grants those are is the workspace's OWN node's answer
+//     (D2818's mark: the member's project, the address and the role) and never a
+//     guess from who is an admin today: a member's roster cannot tell the
+//     workspace's grants from its own, and the mark is the record that can — and
+//     it outlives the unlink because it is the workspace's own.
 //   - It writes no binding on a member project (D2801, A6). Everything that
 //     reaches the member goes through C2's own seams, and the one binding this
 //     command drops — the SA mechanism's `roles/owner` for the workspace IAM
@@ -224,20 +227,23 @@ func runWorkspaceProjectRm(cmd *cobra.Command, project string, deps workspacePro
 	if err != nil {
 		return err
 	}
-	var admins []string
-	if roster != nil {
-		admins = roster.Admins
-	}
 
-	removed, err := workspaceProjectRmMemberGrants(ctx, deps.Members, target, admins)
+	// The marks are what tells this member's roster which of its grants are the
+	// workspace's, and they are read before the grants are, because it is the
+	// marks and not the member's roster that answer that question (D2818).
+	marks := workspaceRosterMarksFor(roster, project)
+	removed, err := workspaceProjectRmMemberGrants(ctx, deps.Members, target, marks)
 	if err != nil {
 		return err
 	}
-	if len(removed) == 0 {
-		fmt.Fprintf(out, "no grant of the workspace's admins was in %s's own roster\n", safetext.Field(project))
-	} else {
-		fmt.Fprintf(out, "took back the %d grant(s) the workspace's admins held in %s's own roster: %s\n",
+	switch {
+	case len(removed) > 0:
+		fmt.Fprintf(out, "took back the %d grant(s) the workspace recorded for %s: %s\n",
 			len(removed), safetext.Field(project), safetext.Field(strings.Join(removed, ", ")))
+	case len(marks) == 0:
+		fmt.Fprintf(out, "the workspace's own node records no grant for %s, so none was taken out of its roster\n", safetext.Field(project))
+	default:
+		fmt.Fprintf(out, "no grant the workspace recorded for %s was still in its own roster\n", safetext.Field(project))
 	}
 
 	mirrored, err := workspaceProjectRmMemberMirror(ctx, deps.Members, target)
@@ -353,24 +359,28 @@ func workspaceProjectRmReadRoster(ctx context.Context, store workspace.Store) (w
 	return rev, roster, nil
 }
 
-// workspaceProjectRmMemberGrants takes the workspace admins' stored grants back
-// out of the member's own roster, and answers the grants it removed.
+// workspaceProjectRmMemberGrants takes the grants the workspace wrote back out of
+// the member's own roster, and answers the grants it removed.
 //
-// Which grants those are is D2822's own limit, said out loud: a member's roster
-// holds grants and no record of who wrote which — the workspace's mark lives in
-// the workspace's own node and a member owner cannot read it — so the grants
-// this identifies are the ones naming an admin of the workspace. A grant the
-// member's own admins wrote for somebody who is also a workspace admin goes
-// with them, which is the price the owner accepted for not carrying the mark
-// into the mirror.
+// Which grants those are is the workspace's OWN node's answer (D2818) and not a
+// reading of the member's roster: the mark is the workspace's record of what it
+// wrote — the member's project, the address and the role — and the grant this
+// removes is the one the member's roster holds for that same address and role at
+// the project scope. Matching on the addresses of today's admins instead would
+// be wrong in both directions: a grant the member's own admins wrote for somebody
+// who happens to be a workspace admin would go with it, and a marked grant for
+// somebody who is no longer an admin would be left behind in the member while its
+// only mark was dropped. The mark is also what makes the command work after the
+// member owner's `unlink` (D2822): the unlink takes the authority and touches no
+// workspace node, so the marks are still there and still say what to take back.
 //
 // A member whose grants node was never written holds nothing to take back: the
 // workspace's own grants are written by commands that refuse an unmigrated list
 // (C2's WriteGrants, as `fugaro user grant` does), so there is nothing here
 // this workspace could have written, and the write is skipped rather than
 // rewriting a node the member's own CLI has not migrated.
-func workspaceProjectRmMemberGrants(ctx context.Context, members workspace.MemberOps, target workspace.MemberTarget, admins []string) ([]string, error) {
-	if len(admins) == 0 {
+func workspaceProjectRmMemberGrants(ctx context.Context, members workspace.MemberOps, target workspace.MemberTarget, marks []workspace.StoredGrant) ([]string, error) {
+	if len(marks) == 0 {
 		return nil, nil
 	}
 	doc, err := members.ReadGrants(ctx, target)
@@ -384,17 +394,21 @@ func workspaceProjectRmMemberGrants(ctx context.Context, members workspace.Membe
 	if err != nil {
 		return nil, userErr("the grants in %s's own roster: %v", safetext.Field(target.Project), err)
 	}
-	held := make(map[string]bool, len(admins))
-	for _, admin := range admins {
-		member, err := accesslib.Member(admin)
+	held := make(map[workspaceRosterGrantKey]bool, len(marks))
+	for _, m := range marks {
+		member, err := accesslib.Member(m.User)
 		if err != nil {
-			return nil, userErr("the workspace admin %s is not an address a stored grant can name, so the grants of this workspace's admins cannot be told apart in %s's roster: %v", safetext.Field(admin), safetext.Field(target.Project), err)
+			return nil, userErr("the address %s the workspace's own node records a grant for is not one a stored grant can name, so the workspace's grants cannot be told apart in %s's roster: %v", safetext.Field(m.User), safetext.Field(target.Project), err)
 		}
-		held[member] = true
+		held[workspaceRosterGrantKey{user: member, role: string(m.Role)}] = true
 	}
 	kept, removed := make([]accesslib.Grant, 0, len(grants)), make([]string, 0, len(grants))
 	for _, g := range grants {
-		if held[g.User] {
+		// The project scope is part of the match and not decoration: the scope the
+		// workspace writes is the project's own (D2815, D2818), so a grant of the
+		// same address and role at another scope is one somebody wrote afterwards,
+		// and it is not this command's to take away.
+		if g.Scope.Kind == accesslib.ScopeProject && held[workspaceRosterGrantKey{user: g.User, role: string(g.Role)}] {
 			removed = append(removed, g.User)
 			continue
 		}
@@ -411,6 +425,35 @@ func workspaceProjectRmMemberGrants(ctx context.Context, members workspace.Membe
 		return nil, userErr("writing %s's own roster without the workspace's grants: %v", safetext.Field(target.Project), err)
 	}
 	return removed, nil
+}
+
+// workspaceRosterMarksFor answers the marks one project of the workspace's own
+// node holds: the grants the workspace recorded writing into that member's
+// roster, in the node's own order. A workspace whose roster was never written
+// marks nothing, which is a state this plan's first release leaves behind
+// (`init` writes the roster beside a table that is already there).
+func workspaceRosterMarksFor(roster *workspace.Roster, project string) []workspace.StoredGrant {
+	if roster == nil {
+		return nil
+	}
+	var marks []workspace.StoredGrant
+	for _, g := range roster.Grants {
+		if g.Project == project {
+			marks = append(marks, g)
+		}
+	}
+	return marks
+}
+
+// workspaceRosterGrantKey is one grant as the two sides name it: the member
+// string a mark's address builds and the role. It is the pair a mark and a
+// member's own grant are matched on, and it is a type of its own rather than a
+// joined string because the address is a value with a grammar and a role is one
+// of three words — joining them would be a lookup that depends on no address
+// ever containing the join.
+type workspaceRosterGrantKey struct {
+	user string
+	role string
 }
 
 // workspaceProjectRmMemberMirror removes the member's mirror, and answers
