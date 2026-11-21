@@ -472,11 +472,14 @@ import (
 // whether FUGARO_LICENCE_KEY was in each child's environment, so a case says
 // which id the build's ring holds and what a production build did with a
 // staging-signed key. Check 575's are a fake `curl` that serves a reseller's own
-// terms, customers, keys, statements and the credit limit's refusal, and a fake
-// `gcloud` that serves the API's revision, the scheduler job, the fire and the
-// run line api_statements.go logs -- so a case bends a sale the credit limit
-// must refuse, a month whose lines do not sum and a token minted for the wrong
-// audience, and says what the check recorded of each.
+// terms, customers, keys, statements, the operations area's workspaces and the
+// credit limit's refusal, and a fake `gcloud` that serves the API's revision, the
+// scheduler job, the fire and the run line api_statements.go logs -- so a case
+// bends a sale the credit limit must refuse, a sale whose workspace the mint
+// cannot resolve (the project id a key carries against the workspace document id
+// the mint reads), a token that may not read the operations area, a month whose
+// lines do not sum and a token minted for the wrong audience, and says what the
+// check recorded of each.
 var liveCheckScripts = []struct {
 	name string
 	test string
