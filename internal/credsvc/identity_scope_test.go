@@ -70,11 +70,20 @@ func scopeGrant(t *testing.T, member string, role accesslib.Role, scope string) 
 	return accesslib.Grant{User: member, Role: role, Scope: parsed}
 }
 
-// scopeAllow is a published policy admitting the repositories a test names, or
-// every repository for ["*"].
+// scopeAllow is a published policy admitting the repositories a test names.
 func scopeAllow(allow ...string) *fakePolicy {
 	return &fakePolicy{shared: &projectpolicy.Policy{Version: projectpolicy.Version, AllowRepos: allow}, sharedFound: true}
 }
+
+// scopeAllowAll is a published policy admitting every repository the rows here
+// name, for the rows where nothing is meant to be refused for the list's sake.
+// It is spelled with wildcard segments rather than as the bare "*" a policy may
+// also carry, because the CI read map's scan reads a bare "*" string literal as
+// a glob of the checkout's root and would record this package's tests as reading
+// the whole tree (docs/ci-affected-tests/read-map.json, and the test that holds
+// the map to the tree). The judgement is the same one — the match is
+// projectpolicy's own — and every repository a row here names is a github one.
+func scopeAllowAll() *fakePolicy { return scopeAllow("github/*/*") }
 
 // scopeAsk is the ask the ticket route is handed for a run of scopeSlug.
 func scopeAsk(run string, contextRepos ...string) identitywire.TicketRequest {
@@ -115,7 +124,7 @@ func TestIssuerRefusesACallerWithoutTheLaunchScope(t *testing.T) {
 		scopeGrant(t, "user:viewer@example.com", accesslib.RoleViewer, scopeRepo),
 		scopeGrant(t, "user:operator@example.com", accesslib.RoleOperator, scopeRepo),
 	}}
-	sc := scopeCheck(LaunchScopeConfig{Records: records, Policy: scopeAllow("*")})
+	sc := scopeCheck(LaunchScopeConfig{Records: records, Policy: scopeAllowAll()})
 
 	err := sc.Check(ctx, scopeCaller("viewer@example.com"), scopeAsk("20261121-120000-abcd"))
 	if !errors.Is(err, ErrNoLaunchScope) {
@@ -243,7 +252,7 @@ func TestIssuerRefusesARolesNodeThatCannotBeRead(t *testing.T) {
 		{"a marker that cannot be read", &scopeRecords{found: false, migratedErr: fmt.Errorf("reading %s: %w", accesslib.PathMigrated, rtdb.ErrUnavailable)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			sc := scopeCheck(LaunchScopeConfig{Records: tc.records, Policy: scopeAllow("*")})
+			sc := scopeCheck(LaunchScopeConfig{Records: tc.records, Policy: scopeAllowAll()})
 			err := sc.Check(ctx, scopeCaller("operator@example.com"), scopeAsk("20261121-120000-abcd"))
 			var fault *ScopeFault
 			if !errors.As(err, &fault) {
