@@ -124,6 +124,27 @@ tell)
   ;;
 run)
   [ ! -f "$FAKE740_DIR/launch.status" ] || exit "$(cat "$FAKE740_DIR/launch.status")"
+  # `fugaro run`'s own contract, held here because this fake is the only thing
+  # the test launches with: the task is the positional TEXT or a file named by
+  # --task-file, so a PATH handed over positionally is a run whose task is the
+  # literal path and whose brief never arrives. The fake therefore REFUSES a
+  # launch without --task-file, reads the file the real CLI would read, and
+  # keeps it for a case to read back.
+  taskfile="" prev=""
+  for a in "$@"; do
+    if [ "$prev" = "--task-file" ]; then taskfile=$a; fi
+    case "$a" in --task-file=*) taskfile=${a#--task-file=} ;; esac
+    prev=$a
+  done
+  if [ -z "$taskfile" ]; then
+    printf 'fake fugaro: run without --task-file: the positional argument is the task TEXT, so the brief has to be handed over as a file\n' >&2
+    exit 64
+  fi
+  if [ ! -r "$taskfile" ]; then
+    printf 'fake fugaro: --task-file %s is not a file this launcher can read\n' "$taskfile" >&2
+    exit 64
+  fi
+  cp "$taskfile" "$FAKE740_DIR/task.txt"
   cat "$FAKE740_DIR/launch.json"
   ;;
 runs)
@@ -417,6 +438,11 @@ case_healthy() {
 
   # It launched one real run of the repository it was given, by name.
   expect_calls "fugaro run --repo $REPO" "healthy: the run is launched in the repository named"
+  # The brief goes over as --task-file, never as the positional argument, which
+  # is the task TEXT: a path passed that way launches a run whose task is the
+  # path, which the fake refuses. The file it read back is the brief itself.
+  expect_calls "run --repo $REPO --json --task-file " "healthy: the brief is handed over with --task-file, not as the positional TEXT"
+  expect_contains "$(cat "$dir/state/task.txt" 2>/dev/null || true)" "# Task: check 740" "healthy: the launcher read the brief the check wrote, so the run's task is the one-small-file task and not a path"
   expect_calls "runs ls --repo $REPO" "healthy: the run is followed through the CLI"
   # It read the record of THAT run, from the runs bucket, under the slug the
   # launch named.

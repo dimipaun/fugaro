@@ -830,6 +830,12 @@ step_bound() {
 # (`--repo owner/name`), so this check needs no checkout of the repository and
 # nothing of yours is read from disk; `--json` is what names the run it then
 # follows, and a launch that prints no run ID is a finding about the launcher.
+#
+# The brief goes over as --task-file and never as the positional argument: that
+# argument is the task TEXT (`fugaro run [TEXT]`), so handing it a path launches
+# a run whose task is the path itself, with the brief this check wrote never
+# reaching it — and a run doing that on a one-line sentence is not the run these
+# rows are readings of.
 step_launch() {
   cat >"$SCRATCH/task.md" <<'TASK_EOF'
 # Task: check 740 — one small file for the run-messages check
@@ -844,7 +850,8 @@ TASK_EOF
   say "launching one real run of ${REPO} (the run this check messages)"
   local status=0
   run_call "$LAUNCH_SECONDS" "$SCRATCH/launch.out" "$SCRATCH/launch.err" \
-    "$FUGARO_BIN" run --repo "$REPO" ${RECIPE:+--recipe "$RECIPE"} --json "$SCRATCH/task.md" || status=$?
+    "$FUGARO_BIN" run --repo "$REPO" ${RECIPE:+--recipe "$RECIPE"} --json \
+    --task-file "$SCRATCH/task.md" || status=$?
   if [ "$status" = 124 ]; then
     unmeasured run-launched "the launch did not finish inside ${LAUNCH_SECONDS}s and was ended: this check has no run to message. What it printed is in $SCRATCH/launch.out and $SCRATCH/launch.err"
     return 0
