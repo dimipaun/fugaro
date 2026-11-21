@@ -16,10 +16,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway"
 )
@@ -195,14 +197,15 @@ func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 	var hdr http.Header
 	var key string
 	switch {
-	case e.Kind == KindProvider:
-		// The provider path. It is chosen by KIND and not by tier: exactly one
-		// entry of a document has this kind, and both facts the call needs —
-		// where it goes and how the key is sent — were validated when that entry
-		// was read (providerValue), so neither the destination nor the header
-		// built here can be one the loader refused. The credential is the
-		// entry's own value, and the helper refuses a subscription credential on
-		// a route, as every route's does (D133).
+	case providerServed(e.Kind):
+		// The provider path — the project's provider key (AK6b) or one
+		// repository's named entry (KS4's route). It is chosen by KIND and not
+		// by tier: the two facts the call needs — where it goes and how the key
+		// is sent — are the entry's own, and they were validated when it was
+		// read (providerValue), so neither the destination nor the header built
+		// here can be one the loader refused. The credential is the entry's own
+		// value, and the helper refuses a subscription credential on a route, as
+		// every route's does (D133).
 		hdr, key, err = gateway.RouteHeaders(providerRoute(e), cl.header, scrub)
 	case e.Tier == creds.TierA:
 		// Tier A: the subscription upstream, whose destination check lives in
@@ -249,8 +252,9 @@ func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 // path, and the call's query unless that query carries one of the caller's own
 // tokens.
 //
-// The base is the entry's own when the entry is a provider key — the URL the
-// document holds, which is the only place a provider's address exists (D1418):
+// The base is the entry's own when the entry is one a provider call is served
+// from (providerServed) — the URL the document holds, which is the only place a
+// provider's address exists (D1418):
 // no task, no policy and no environment tells this service where a provider is,
 // and a run is told nothing about it either — and Anthropic's otherwise. The
 // join is the same one in both cases, and it is the gateway's own: a base may
@@ -265,7 +269,7 @@ func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 // query of a call to Anthropic is a token in Anthropic's logs.
 func (s *Server) destination(cl *call, e Entry) (string, error) {
 	base := gateway.AnthropicBase(gateway.Upstream{})
-	if e.Kind == KindProvider {
+	if providerServed(e.Kind) {
 		base = e.baseURL
 	}
 	if base == "" {
@@ -278,9 +282,11 @@ func (s *Server) destination(cl *call, e Entry) (string, error) {
 	return u, nil
 }
 
-// providerRoute is the gateway's own Route for a provider key's entry (AK6b):
-// the name it goes by in a log, the base URL the document holds, the auth shape
-// it names, and the entry's value as the credential, read per call.
+// providerRoute is the gateway's own Route for an entry a provider call is
+// served from (providerServed: the project's provider key, AK6b, or one
+// repository's named entry, KS4): the name it goes by in a log, the base URL the
+// document holds, the auth shape it names, and the entry's value as the
+// credential, read per call.
 //
 // It is a gateway.Route rather than a header set of this file's own so that a
 // provider's call is built by the rule that already exists for one
@@ -291,9 +297,10 @@ func (s *Server) destination(cl *call, e Entry) (string, error) {
 // prevent: the two forwarders must not drift.
 //
 // Models and FeePct are left zero: this service does not route by model ID (the
-// bundle holds one provider key and the call's model was already pinned by the
-// project's own allow-list) and it adds no fee (a fee is a run's budget, which
-// lives in the runner's gateway and not here). Neither is read by RouteHeaders.
+// call's model was already judged against the policy's own providers by the
+// route, providerCall, and what a provider's route claims is the policy's and
+// not this entry's) and it adds no fee (a fee is a run's budget, which lives in
+// the runner's gateway and not here). Neither is read by RouteHeaders.
 func providerRoute(e Entry) *gateway.Route {
 	return &gateway.Route{
 		Name:    e.Name,
@@ -303,6 +310,267 @@ func providerRoute(e Entry) *gateway.Route {
 			return e.Value(), nil
 		},
 	}
+}
+
+// providerServed reports whether an entry is one a PROVIDER call is served
+// from: where a call with it goes is the entry's own base URL (destination) and
+// how it is sent is the gateway's provider rule (send). Two kinds qualify, and
+// they are the same credential at two scopes: the project's single provider key
+// (KindProvider, AK6b), which every repository of the installation shares, and
+// one repository's own named provider credential (KindRepoCredential, C1's
+// family, R2) — which is why the two questions are asked through one function
+// and not by spelling the two kinds twice in each of them.
+func providerServed(k Kind) bool { return k == KindProvider || k == KindRepoCredential }
+
+// providerNamed is the provider a routed call is for, read off the CALL and not
+// off the header set readCall builds: that one has already dropped every
+// X-Fugaro- header (the provider's endpoint has no use for any of them), and
+// the provider's name is this service's whole business on this route.
+//
+// It answers the name and, for a call that names none or that names something
+// that cannot be a provider's name, the sentence the call is refused with. The
+// value is deliberately not quoted back: what arrives here is a caller's text
+// (C1's wire holds it to ValidProviderName before it is used for anything, and
+// the refusal is the answer for a value that is not one), and a name that is not
+// a provider's name is text this service has no sentence of its own about.
+// TWO names are refused as well as none, because the header is a caller's and a
+// caller that sent two has not named one: reading the first would be this
+// service choosing between them.
+func providerNamed(r *http.Request) (string, string) {
+	held := r.Header.Values(HeaderProvider)
+	switch len(held) {
+	case 0:
+		return "", "a call to the provider route names the provider it is for in " + HeaderProvider +
+			", and this one names none"
+	case 1:
+	default:
+		return "", "a call to the provider route names one provider, and this one names " + strconv.Itoa(len(held)) + " in " + HeaderProvider
+	}
+	if !ValidProviderName(held[0]) {
+		return "", HeaderProvider + " carries a provider's name — one lowercase letter followed by up to nineteen lowercase letters, digits or dashes — and this call's value is not one"
+	}
+	return held[0], ""
+}
+
+// providerServedEntry is the entry a routed call is served from, derived from
+// the run's VERIFIED repository and the provider the call named (R2, R11): the
+// bundle's named entry for that pair, as the Entry the forwarder attaches and as
+// the candidate the selection is made over.
+//
+// Both halves are the service's own facts and never the call's: slug is the
+// identity the front door verified (creds.Identity.Slug) and name is the header,
+// held to ValidProviderName before it is passed here — so a call can reach one
+// repository's entry and no other's, which is HG1's whole reach rule, and there
+// is no name a caller could send that would find somebody else's key.
+//
+// It reads the entry through C1's accessor and not out of the bundle's own map:
+// ReadProviderKey is what the contract names as the reader of this family, and
+// its "no such credential" is the answer a repository whose key was never copied
+// meets (KS12). The Entry the forwarder needs is then assembled from the
+// accessor's answer — the value and the two routing facts — plus the two facts
+// the DOCUMENT KEY carries, which are read through the bundle's own naming rule
+// (RepoCredentialKey) and its own key table (CredentialKey) rather than being
+// restated here: the name an audit line and an answer's credential header carry
+// is the document key and not the credential's bare name, because that bare name
+// is a name another repository's entry of the family carries too (R5), and the
+// tier is the credential half's answer.
+//
+// A pair the naming rule refuses is not served, and that is the same answer as
+// an entry the document does not hold: neither is a call this service can serve,
+// and the caller can do nothing different with the two.
+func providerServedEntry(b *Bundle, slug, name string) (Entry, creds.Credential, bool) {
+	pk, ok := ReadProviderKey(b, slug, name)
+	if !ok {
+		return Entry{}, creds.Credential{}, false
+	}
+	key, err := RepoCredentialKey(slug, name)
+	if err != nil {
+		return Entry{}, creds.Credential{}, false
+	}
+	held, kind, tier, ok := CredentialKey(key)
+	if !ok || kind != KindRepoCredential {
+		return Entry{}, creds.Credential{}, false
+	}
+	e := Entry{
+		Kind: kind, Name: held, Tier: tier, Key: key,
+		baseURL: pk.BaseURL, auth: pk.Auth, source: pk.Source,
+		value: secret{value: pk.Value()},
+	}
+	// The candidate carries the provider the key is the key OF (K3's tie,
+	// creds.Credential.Provider): the selection is handed a list of one, and
+	// the tie is what says that this key is for the provider the call named —
+	// which the model's own class rule cannot say on its own (checkCandidates).
+	return e, creds.Credential{Name: held, Tier: tier, Provider: name}, true
+}
+
+// providerCall answers a call to this service's provider route (C1, KS4, R11):
+// the one route of this service whose caller names the provider its call is for
+// and whose rules are the published policy's rather than the cascade's.
+//
+// The route exists because a provider's key is not the project's and not a
+// subscription's: a run whose model a provider serves is a run whose gateway
+// routes the call, and the key it routes with is the installation's — held in
+// the bundle, one entry per repository (R2, D3008) — so the call arrives here
+// with the provider's NAME on it and no key at all, and this handler derives the
+// entry from the repository the run identity names and forwards.
+//
+// What it does, in order, and why each step is where it is:
+//
+//   - the provider's name, off the call's own header and held to the wire's
+//     shape rule. Nothing is read before it: a call that names no provider is
+//     not a call this route can answer anything about, and the sentence is about
+//     the header.
+//   - the project's published policy. It is a policy read and not a credential,
+//     and it is the document one of the two refusals this route has comes from.
+//   - the policy's rules over the provider and the model: the block must NAME
+//     the provider, it must publish a model allow-list at all (a project that
+//     publishes none refuses every provider call — requestNoAllowListRefusal's
+//     rule, F32 — rather than being forwarded under no ceiling), the call must
+//     name a model, and the named provider's own models list must claim it. The
+//     last one is the tie the whole route exists for: one provider's key is
+//     never sent to another provider's model, and which models a provider claims
+//     is what its block says (config.PatternMatches, the primitive the gateway's
+//     own routes match with, so a route's answer and this one cannot disagree).
+//   - the request itself, on the messages endpoint, through the gateway's own
+//     check over the routes the policy builds (providerRequestRefusal). This is
+//     the half that keeps a HAND-BUILT call from escaping the gateway's rules
+//     (D3003): an agent holding the job's own token can compose a body and post
+//     it here, and every rule the gateway would apply to a routed call — the
+//     project's pin, the variant suffix, the foreign field, the shape, the
+//     max_tokens bound — is applied here before any credential is read. The
+//     token count's body is not held to those rules, for the reason the messages
+//     route gives: it carries no max_tokens and the gateway does not hold it to
+//     them either (its own forwardFree).
+//   - the bundle, and the entry the verified repository and the provider's name
+//     derive. This is the first credential read of this path.
+//   - the selection, over a list of ONE (creds.Selector.Select): the entry is
+//     the only candidate, and the selection is what decides whether it may serve
+//     this call at all — the model's class rule, the provider tie and the Check
+//     50 gate for an Anthropic model are creds' own rules (D3000, D150), and
+//     this service reaches every one of them through the same call the cascade
+//     does rather than by judging them again here. What a Claude model on this
+//     route meets is therefore Check 50's own refusal, spelled once.
+//   - the forward itself, and the answer: one attempt, no retry, no mark, no
+//     usage-limit scan, and no switch.
+//
+// The last two are the parts this route does NOT do that the cascade's forward
+// does, and each is left out for a reason of its own. A retry and the mark a
+// failed attempt leaves are the cascade's business — they move a run between
+// credentials of a pool, and a call whose credential is derived from its own
+// repository has no second one to move to: the entry is the only thing this
+// repository's provider key is, so the honest answer to an upstream that refused
+// it is that answer. The usage-limit scan is the cascade's too: it reads the
+// upstream's own "you are out of quota" event and marks the credential, and a
+// provider's quota is not a Fugaro account's (it is the owner's with that
+// provider, and a mark on the family's entry would idle every call this
+// repository routes for a window nobody here can see). The SWITCH is absent for
+// the same reason: a switch is a move to another credential of the pool, and
+// there is no other.
+//
+// A slip does not fence this route, and that is the slip rule read exactly: what
+// a slip must name is a credential of the per-user or project grammar
+// (slipRequiresSlip), and a named provider entry is a bundle key of neither
+// (C1's family), like every other entry the bundle itself holds.
+func (s *Server) providerCall(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity, purpose string, req Request) {
+	sc := scopeOfCall(ctx, s)
+	name, why := providerNamed(r)
+	if why != "" {
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+why)
+		return
+	}
+	shared, found, err := sc.Policy().Shared(ctx)
+	if err != nil || !found {
+		s.refuseCallCause(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
+			"the project's policy could not be read", labelRead(readPolicyShared, err))
+		return
+	}
+	provider, named := shared.Providers[name]
+	if !named {
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusRequestRefused, ErrorProviderNotAllowed,
+			requestRefused+"the project's published providers block names no provider "+strconv.Quote(name)+
+				", so a call to this route has no provider to be served by")
+		return
+	}
+	if noAllowList := requestNoAllowListRefusal(shared); noAllowList != "" {
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusRequestRefused, ErrorProviderNotAllowed, requestRefused+noAllowList)
+		return
+	}
+	cl, err := readCall(r, callScrubs(ctx, req))
+	if err != nil {
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, err.Error())
+		return
+	}
+	// The provider's own path: the route's path with this service's prefix cut
+	// off. It is a shape check and not a rewrite — the two endpoints of this
+	// route are the two C1 declares, and a path that is one of them under the
+	// prefix is the whole of what a provider may be reached with. servedRoute
+	// admitted this call, so the check cannot fail; it is made because the path
+	// the provider is reached on is what the entry's base URL is joined to, and a
+	// join made from an unread path is a call to an address nobody chose.
+	endpoint, cut := strings.CutPrefix(cl.path, ProviderRoutePrefix)
+	if !cut || (endpoint != MessagesPath && endpoint != CountTokensPath) {
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
+			"the provider route was reached on a path it does not serve")
+		return
+	}
+	cl.path = endpoint
+	if cl.path == MessagesPath {
+		typ, refusal, err := s.providerRequestRefusal(shared, cl.body)
+		if err != nil {
+			// The project's own prices could not be read: the same state the
+			// messages route refuses on, and the same read named on the line.
+			s.refuseCallCause(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
+				"the project's model prices could not be read", labelRead(readPolicyPrices, err))
+			return
+		}
+		if refusal != "" {
+			s.refuseCall(ctx, w, id, purpose, "", "", StatusRequestRefused, typ, requestRefused+refusal)
+			return
+		}
+	}
+	model, _ := callModel(cl.body)
+	if model == "" {
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusRequestRefused, ErrorProviderNotAllowed,
+			requestRefused+"a routed call names the model it is for, so that the provider that serves it can be read off it, and this one names none")
+		return
+	}
+	if !slices.ContainsFunc(provider.Models, func(pat string) bool { return config.PatternMatches(pat, model) }) {
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusRequestRefused, ErrorProviderNotAllowed,
+			requestRefused+"the provider "+strconv.Quote(name)+" does not serve the model this call names: a provider's models list is what says which models its key may be sent for, and one provider's key never serves another provider's model")
+		return
+	}
+	b, err := s.cfg.Bundles.Load(ctx)
+	if err != nil {
+		s.refuseCallCause(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
+			BundleRefusal(err), labelRead(readBundle, err))
+		return
+	}
+	e, cand, ok := providerServedEntry(b, id.Slug, name)
+	if !ok {
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorProviderNotServed,
+			"the bundle holds no provider key for "+strconv.Quote(name)+" and this repository: a call to this route is served the entry the run's own repository and the provider's name derive, and one is copied there for each repository whose runs may route to it")
+		return
+	}
+	// The selector is built over the SCOPE's state and not the deployment's, for
+	// the cascade's reason (R1, R8): every mark this call writes lands in the
+	// database of the scope that answered the caller.
+	sel := &creds.Selector{Store: sc.State(), Settings: settingsOf(shared), Now: s.now, Model: model, Provider: name, Strategy: creds.StrategyFailover}
+	chosen, _, err := sel.Select(ctx, creds.Run{Slug: id.Slug, ID: id.Run}, []creds.Credential{cand})
+	if err != nil {
+		// The selector's own refusals, each spelled once: what this call cannot
+		// be served by (the class rule and the provider tie — checkCandidates),
+		// Check 50's gate for a Claude model, a wait on an entry the owner's own
+		// marks hold, and an unreadable state.
+		s.refuseSelection(ctx, w, id, err, nil)
+		return
+	}
+	ans, err := s.send(ctx, cl, e)
+	if err != nil {
+		s.refuseCallCause(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
+			err.Error(), labelRead(readUpstream, err))
+		return
+	}
+	s.answer(ctx, w, id, cl, ans, chosen, nil, nil)
 }
 
 // trimSlash drops a base URL's trailing slashes, so a prefix and a path are
