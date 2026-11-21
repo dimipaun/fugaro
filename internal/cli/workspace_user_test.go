@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -308,9 +309,13 @@ func (a *wu7Authority) AdminBindings(context.Context) ([]string, error) {
 // wu7World is one test's workspace: the roster the store holds, the fakes beside
 // it, and the caller every command of the test runs as.
 type wu7World struct {
-	t    *testing.T
+	t *testing.T
+	// now and rand are the two seams a command takes for the event id it mints.
+	// rand is an io.Reader and not a *wu7Rand, so a test can leave the seam nil
+	// and reach the fallback the deps document (a typed nil in an interface is
+	// not nil, and would panic in Read rather than fall back).
 	now  func() time.Time
-	rand *wu7Rand
+	rand io.Reader
 
 	store     *wu7Store
 	audit     *wu7Audit
@@ -872,6 +877,80 @@ func TestLastWorkspaceAdminKept(t *testing.T) {
 	second.must("workspace", "user", "rm", "ada@example.com", "--admin", "--workspace", "workspace-alpha")
 	second.refuses([]string{"last workspace admin"},
 		"workspace", "user", "rm", "founder@example.com", "--admin", "--workspace", "workspace-alpha")
+}
+
+// TestUserRmSelfAdminLeavesNoUnbackedEntry: an admin may remove their OWN entry
+// while another admin is left, and that command takes their own live binding away
+// before the roster node is written. The gate it was admitted by therefore cannot
+// be read a second time on the write path: doing so refuses the command's own
+// work, and what is left behind is the shape D2823 exists for — a roster naming
+// an admin no live binding backs — with the binding dropped, every member
+// offboarded and no event filed.
+func TestUserRmSelfAdminLeavesNoUnbackedEntry(t *testing.T) {
+	w := wu7Admin(t, workspace.Roster{
+		People: []workspace.Person{
+			{Address: "ada@example.com", Kind: workspace.KindHuman},
+			{Address: "founder@example.com", Kind: workspace.KindHuman},
+		},
+		Admins:  []string{"ada@example.com", "founder@example.com"},
+		Domains: []string{"example.com"},
+	})
+	w.linked = []workspace.MemberTarget{{Project: "aurora"}}
+	w.authority.bound = []string{"user:ada@example.com", "user:founder@example.com"}
+
+	w.must("workspace", "user", "rm", "founder@example.com", "--admin", "--workspace", "workspace-alpha")
+
+	after := w.store.roster()
+	if w.hasPerson("founder@example.com") || slices.Contains(after.Admins, "founder@example.com") {
+		t.Errorf("the admin who removed themselves is still recorded: people %+v, admins %v", after.People, after.Admins)
+	}
+	if !slices.Contains(after.Admins, "ada@example.com") {
+		t.Errorf("the admins are %v, want the one who was not removed", after.Admins)
+	}
+	// Every entry the node still names is one a live binding backs: an entry the
+	// command's own half-finished work left behind is what `status` reports as
+	// tampering.
+	for _, admin := range after.Admins {
+		if !slices.Contains(w.authority.bound, "user:"+admin) {
+			t.Errorf("the roster names %s as a workspace admin, and no live binding backs that entry", admin)
+		}
+	}
+	if len(w.authority.removed) != 1 || w.authority.removed[0] != "founder@example.com" {
+		t.Errorf("the bindings removed are %v, want the caller's own once", w.authority.removed)
+	}
+	if strings.Join(w.members.offboarded, "|") != "aurora founder@example.com" {
+		t.Errorf("the members offboarded are %v, want every one the workspace holds", w.members.offboarded)
+	}
+	// Both halves of the change are filed, under the caller's own name: the
+	// person who acted is read from the credential and not from the node.
+	for _, action := range []workspace.Action{workspace.ActionUserRemove, workspace.ActionAdminRemove} {
+		if event := w.audit.one(t, action); event.Actor != "founder@example.com" {
+			t.Errorf("the %s event is %+v, want the caller as its actor", action, event)
+		}
+	}
+}
+
+// TestUserAddMintsItsEventIDWithoutATerminal: an event id minted with no rand
+// seam comes from the system's randomness, which is what the seam documents a nil
+// to be. A write of this family mints an id per event on every run, so a fallback
+// to the process's own stdin would block a command behind a prompt nothing prints
+// — or fail it with an EOF — after the roster node had already been written.
+func TestUserAddMintsItsEventIDWithoutATerminal(t *testing.T) {
+	w := wu7Admin(t, workspace.Roster{
+		People:  []workspace.Person{{Address: "founder@example.com", Kind: workspace.KindHuman}},
+		Admins:  []string{"founder@example.com"},
+		Domains: []string{"example.com"},
+	})
+	w.rand = nil
+
+	w.must("workspace", "user", "add", "grace@example.com", "--workspace", "workspace-alpha")
+	if !w.hasPerson("grace@example.com") {
+		t.Error("the add with no rand seam wrote no member")
+	}
+	event := w.audit.one(t, workspace.ActionUserAdd)
+	if event.ID == "" {
+		t.Errorf("the event is %+v, want an id the trail can hold", event)
+	}
 }
 
 // TestDomainsRoundTrip: `domains add|rm|ls` edit the workspace's allowed domains

@@ -53,6 +53,7 @@ package cli
 
 import (
 	"context"
+	crand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -392,7 +393,10 @@ func (d workspaceRosterDeps) changeRoster(ctx context.Context, judge func(*works
 // whenever the node moved under this writer. It is changeRoster's second half
 // for the commands whose member- and authority-side effects must happen before
 // the node is written (`rm`): the effects are made once, and only the judgement
-// and the write are repeated.
+// and the write are repeated. What judge is handed on a retry is the node as it
+// is really there, and what it judges is the CHANGE: a gate cannot be part of it,
+// because the effects already made may be what changed the gate's own answer
+// (`rm` passes workspaceRmJudged alone; the gate was read once, before them).
 func (d workspaceRosterDeps) writeRoster(ctx context.Context, judge func(*workspace.Roster) (*workspace.Roster, error), roster *workspace.Roster, rev workspace.Revision) error {
 	for attempt := 0; ; attempt++ {
 		next, err := judge(roster)
@@ -461,8 +465,13 @@ func (d workspaceRosterDeps) admin(ctx context.Context, roster *workspace.Roster
 // the admin the gate admitted, and the id is minted per event, so a second write
 // of one is the create-only refusal the trail is built on rather than a
 // replacement of an entry already there.
+//
+// The randomness a nil seam falls back to is crypto/rand and never the process's
+// own stdin: the id is minted on every write of this family, and a read of a
+// stream a person's terminal holds would either block the command behind a
+// prompt nothing prints or fail it after the roster node was already written.
 func (d workspaceRosterDeps) file(ctx context.Context, actor string, action workspace.Action, project, subject string, role workspace.Role) error {
-	now, r := time.Now, io.Reader(os.Stdin)
+	now, r := time.Now, io.Reader(crand.Reader)
 	if d.now != nil {
 		now = d.now
 	}
@@ -844,29 +853,25 @@ func runWorkspaceUserRm(cmd *cobra.Command, open workspaceRosterOpen, o *workspa
 		return err
 	}
 
-	// actor is the admin the gate admitted, read once and carried: a command that
-	// removes the caller's OWN binding (an admin who removes themselves, with
-	// another admin left) would fail the gate on a second read, and it is the
-	// same person's act either way. The judgement runs again on a retry, and it
-	// re-reads the actor with it.
-	var actor string
-	judge := func(roster *workspace.Roster) (*workspace.Roster, error) {
-		caller, err := d.admin(ctx, roster)
-		if err != nil {
-			return nil, err
-		}
-		next, err := workspaceRmJudged(roster, address, o.admin)
-		if err != nil {
-			return nil, err
-		}
-		actor = caller
-		return next, nil
-	}
+	// The gate is read ONCE, here, before any effect is made, and the actor it
+	// answered is carried to the trail. It cannot be read again on the write
+	// path: an admin who removes their OWN entry — allowed while another admin is
+	// left — has taken their own live binding away by the time the node is
+	// written, so a second gate read would refuse the command's own work and
+	// leave a roster naming an admin no binding backs (the shape D2823 calls
+	// tampering), with the binding dropped, the members offboarded and no event
+	// filed. What a retry re-judges is the CHANGE against the bytes that are
+	// really there; the caller's authority was established against the node this
+	// command read.
 	roster, rev, err := d.readRoster(ctx)
 	if err != nil {
 		return err
 	}
-	if _, err := judge(roster); err != nil {
+	actor, err := d.admin(ctx, roster)
+	if err != nil {
+		return err
+	}
+	if _, err := workspaceRmJudged(roster, address, o.admin); err != nil {
 		return err
 	}
 	person := workspacePersonOf(roster, address)
@@ -890,7 +895,9 @@ func runWorkspaceUserRm(cmd *cobra.Command, open workspaceRosterOpen, o *workspa
 			return fmt.Errorf("removing %s's workspace admin binding: %w", safetext.Field(address), err)
 		}
 	}
-	if err := d.writeRoster(ctx, judge, roster, rev); err != nil {
+	if err := d.writeRoster(ctx, func(current *workspace.Roster) (*workspace.Roster, error) {
+		return workspaceRmJudged(current, address, o.admin)
+	}, roster, rev); err != nil {
 		return err
 	}
 	if err := d.file(ctx, actor, workspace.ActionUserRemove, "", address, ""); err != nil {
