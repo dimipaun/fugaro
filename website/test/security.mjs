@@ -195,8 +195,14 @@ const REPORTING_ID = 'reporting-a-vulnerability'
  * the flip has taken the token's mount and the accessor away rather than that the job still
  * mounts the token until the flip — two words more, and it stays inside the ceiling,
  * which is a few words of room rather than the section's exact count.
+ *
+ * Re-re-re-derived 2026-11-21: dynamic-delivery's DS4.3 states the intake and the slips a run
+ * holds, and its bullet — the trust boundary the intake and a slip add, and the three limits
+ * that come with it (an unclaimed slip stealable, a forged slip, the stale bundle entry an
+ * older CLI is served) — took the section from 303 words to 381. The section still renders as
+ * eight bullets, which is what the brief's "at most about 8 short bullets" allows.
  */
-const MAX_SUMMARY_WORDS = 310
+const MAX_SUMMARY_WORDS = 386
 
 /**
  * The words the pointer to the document may spend around its link: "The full policy is … in
