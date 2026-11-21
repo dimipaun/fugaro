@@ -181,9 +181,15 @@ export function readModelsAddDocument(raw: unknown): ModelsAddDocumentRead {
   const path = textAt(raw, 'path')
   const layer = textAt(raw, 'layer')
   const changed = boolAt(raw, 'changed')
-  const claimEntry = textAt(raw, 'claim')
-  const allowEntry = textAt(raw, 'allowed_models')
-  const priceKey = textAt(raw, 'prices')
+  // The three records the document nests (`claim`, `allowed_models`, `prices`),
+  // read as records first and then member by member: the `entry` and `key` of a
+  // record are **inside** it, so a reader that looked for `claim` as a string
+  // would refuse every document the CLI prints.
+  const claim = recordAt(recordAt(raw) === null ? null : (recordAt(raw) as Record<string, unknown>)['claim'])
+  const allow = recordAt(
+    recordAt(raw) === null ? null : (recordAt(raw) as Record<string, unknown>)['allowed_models'],
+  )
+  const prices = recordAt(recordAt(raw) === null ? null : (recordAt(raw) as Record<string, unknown>)['prices'])
   const stepsRaw = recordAt(raw) === null ? null : (recordAt(raw) as Record<string, unknown>)['steps']
   if (
     model === null ||
@@ -191,24 +197,27 @@ export function readModelsAddDocument(raw: unknown): ModelsAddDocumentRead {
     path === null ||
     layer === null ||
     changed === null ||
-    claimEntry === null ||
-    allowEntry === null ||
-    priceKey === null ||
+    claim === null ||
+    allow === null ||
+    prices === null ||
     !Array.isArray(stepsRaw)
   ) {
     return { ok: false, because: MODELS_ADD_DOCUMENT_SHAPE_REFUSAL }
   }
-  const claim = recordAt((recordAt(raw) as Record<string, unknown>)['claim'])
-  const allow = recordAt((recordAt(raw) as Record<string, unknown>)['allowed_models'])
-  const prices = recordAt((recordAt(raw) as Record<string, unknown>)['prices'])
+  const claimEntry = textAt(claim, 'entry')
   const claimedBy = textAt(claim, 'claimed_by')
+  const allowEntry = textAt(allow, 'entry')
   const allowPresent = boolAt(allow, 'present')
+  const priceKey = textAt(prices, 'key')
   const priceIn = numberAt(prices, 'input_per_m')
   const priceOut = numberAt(prices, 'output_per_m')
   const priceSource = textAt(prices, 'source')
   if (
+    claimEntry === null ||
     claimedBy === null ||
+    allowEntry === null ||
     allowPresent === null ||
+    priceKey === null ||
     priceIn === null ||
     priceOut === null ||
     priceSource === null
