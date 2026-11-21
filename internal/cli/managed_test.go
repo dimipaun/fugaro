@@ -1027,10 +1027,17 @@ var initFlagCases = map[string]string{
 	// person's — the project's creation, the billing link, the Firestore
 	// location, every secret value — have no member in the document, which is
 	// what a member for one is refused by name for.
+	// location (LP4 of docs/location-preference) is the fourth, and it is
+	// --region's own question in a person's words: the place a first run of
+	// setup chooses (us or eu), turned into the region before anything is
+	// checked or asked (settleLocation), so what reaches a confirmation is the
+	// region --region reaches and nothing new. It is a first run's answer: a
+	// --repo run creates no installation and refuses it by name
+	// (installationFlags).
 	"admin": "value", "alert-email": "value", "answers-file": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",
 	"display-name": "value", "expect-digest": "value", "gcp-project": "value", "github-app-id": "value",
-	"image-source": "value", "name": "value", "no-log-isolation": "value",
+	"image-source": "value", "location": "value", "name": "value", "no-log-isolation": "value",
 	"operator": "value", "parent": "value", "project": "value", "region": "value", "rigor": "value",
 	"registry-cleanup": "value", "runs-bucket": "value", "scheduler-region": "value",
 	"state-bucket": "value; under --managed the value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",

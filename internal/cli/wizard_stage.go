@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
@@ -266,6 +267,16 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		// --rigor is refused here rather than ignored (task W): the mode of a
 		// project that already exists is the project's own, and the one command
 		// that changes it is `fugaro rigor set`.
+		// --location is refused first, and for the same reason (LP4's review):
+		// a run that selects a project config creates nothing either, and the
+		// answer would be materialized into the place's default region and then
+		// meet the region-move guard — which names a --region the caller never
+		// typed — or be dropped in silence where the two agree. It comes before
+		// --rigor below because the place is the question the wizard reaches
+		// first (setupQuestions).
+		if err := setupLocationRefusal(o.location); err != nil {
+			return err
+		}
 		if err := setupRigorRefusal(o.rigor); err != nil {
 			return err
 		}
@@ -298,19 +309,57 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		}
 		o.cloud.gcpProject = v
 	}
-	if o.cloud.region == "" {
-		q := questionFor("--region")
-		s.a.asked = append(s.a.asked, q.label)
-		v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, defaultRegion, func(v string) error {
-			if !regionRE.MatchString(v) {
-				return errors.New("a region looks like us-east5 or europe-west4")
+	if o.cloud.region == "" && o.location == "" {
+		// The place question (LP4, D3080, D3081): where the installation
+		// lives, with US as the suggestion. It is the wizard's region question
+		// in a person's words rather than a second question (F2) — the answer
+		// may be a place or a region typed in full — and it is asked on the
+		// run that creates the installation only: `fugaro update` on a machine
+		// with no config asks for the region itself, because the installation
+		// it is looking for has one already (setupCreates).
+		if o.setupCreates(true) {
+			q := questionFor("--location")
+			s.a.asked = append(s.a.asked, q.label)
+			v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, string(place.US), func(v string) error {
+				_, _, verr := placeAnswer(v)
+				return verr
+			})
+			if err != nil {
+				return s.answer(err)
 			}
-			return nil
-		})
-		if err != nil {
-			return s.answer(err)
+			p, region, err := placeAnswer(v)
+			if err != nil {
+				// The prompt validated the same value one line above, so this
+				// cannot be reached; the region is set only from an answer
+				// that read back.
+				return err
+			}
+			// A region typed in full settles the answer by itself, and the
+			// place is derived from it wherever it is read (D3080) — so only
+			// a place is recorded as the place, and a region is recorded as
+			// the region. Neither has a second copy to drift from.
+			if region != "" {
+				o.cloud.region = region
+			} else {
+				o.location = string(p)
+			}
+		} else {
+			q := questionFor("--region")
+			s.a.asked = append(s.a.asked, q.label)
+			v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, defaultRegion, func(v string) error {
+				if !regionRE.MatchString(v) {
+					return errors.New("a region looks like us-east5 or europe-west4")
+				}
+				return nil
+			})
+			if err != nil {
+				return s.answer(err)
+			}
+			o.cloud.region = v
 		}
-		o.cloud.region = v
+	}
+	if err := o.settleLocation(); err != nil {
+		return s.answer(err)
 	}
 	// An installation may already be there (one this machine has no project
 	// config for: the owner's second machine, or a teammate's). `setup` only
@@ -380,6 +429,14 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		// at this one (s.answer).
 		return s.answer(err)
 	}
+	// Where each thing goes (R7): the one thing the run says about the
+	// placement rather than asks — it is printed once the region is settled
+	// and before anything is created, so a person reading it can still change
+	// an answer or stop, and the question the placement is spelled in is the
+	// region question above, never one of its own.
+	if o.setupCreates(true) && o.cloud.region != "" {
+		r.printWhereEachThingGoes()
+	}
 	// The billing question is the last of the wizard's questions (W4.3): it is
 	// about the GCP project the answers above settled, and it is asked only
 	// where the answer is one this run acts on (asksBilling, billing_prompt.go).
@@ -387,6 +444,54 @@ func (s *wizardStage) ask(ctx context.Context) error {
 	// the run resumes at it, and the refusal is the one line it has always
 	// been.
 	return s.answer(r.askBilling(ctx))
+}
+
+// whereEachThingGoesIntro is the line above the mapping: what the block is,
+// and the one thing a reader has to know about it — there is nothing to answer
+// here, because the placement is the region answer they have already given
+// (R7).
+const whereEachThingGoesIntro = "where each thing goes (the region above decides it; the fallbacks are stated under their own line, and there is nothing to answer here):"
+
+// printWhereEachThingGoes is R7: where each thing the installation creates
+// will go, one line per row of the mapping, with every fallback's reason under
+// the line it belongs to — before anything is created, and asking nothing.
+//
+// It says the region itself for the things that follow it (the compute, the
+// registry, the buckets and the builds), the run history's Firestore database,
+// the budget's Realtime Database, the secret containers and the run log
+// bucket, in the mapping's own words (place.For), so a fallback cannot be
+// described here as anything other than what it is. A region in neither place
+// (London, Zürich, anything but us-* and europe-*) is said to carry no promise,
+// which is what D3081 promises it: nothing is refused, and everything it falls
+// back to is on a line above.
+//
+// The scheduler is not one of the things that follow the region, and so is not
+// named among them: its own region is gcp.SchedulerRegion's answer, which for
+// the US default is us-east4 rather than us-east5 (F3), and R7's mapping has no
+// row for it to be read from. Saying nothing about it is better than saying
+// where it goes in a line that is the region's own.
+func (r *initRun) printWhereEachThingGoes() {
+	m := place.For(r.o.cloud.region)
+	fmt.Fprintf(r.w, "%s%s\n", r.o.programPrefix(), whereEachThingGoesIntro)
+	fmt.Fprintf(r.w, "  the installation's own region: %s (the jobs, the image registry and the runs bucket)\n", m.Region)
+	rows := []struct {
+		what string
+		loc  place.Location
+	}{
+		{"the run history (Firestore)", m.Firestore},
+		{"the budget's database (the Realtime Database)", m.RealtimeDatabase},
+		{"the secret containers", m.Secrets},
+		{"the run log bucket", m.LogBucket},
+	}
+	for _, row := range rows {
+		fmt.Fprintf(r.w, "  %s: %s\n", row.what, row.loc.Where)
+		if row.loc.Reason != "" {
+			fmt.Fprintf(r.w, "    %s\n", row.loc.Reason)
+		}
+	}
+	if m.Place == place.None {
+		fmt.Fprintf(r.w, "  %s is in neither US nor EU: it carries no promise, so every fallback above is stated rather than assumed\n", m.Region)
+	}
 }
 
 // wizardOptions is the input phase's run: the run's own conditions — nobody is
