@@ -121,6 +121,37 @@ const (
 // never has to guess it or drift from them.
 var PlatformEnv = []string{BucketEnv, BackendEnv, GCPProjectEnv, ProjectEnv, RegionEnv, VertexRegionEnv, VertexProjectEnv}
 
+// JobEnvNames is every environment variable name a deployed job of a workflow
+// may carry in its plain environment, both shapes a job comes in together: a
+// per-repository workflow job (the template Workflow builds) and a shared
+// project job (projectJobEnv, plus the two values that follow from the
+// profile). The names are the constants the two builders write, so this list
+// cannot drift from either of them without the constants moving first; the
+// secrets' own variables are not here, because a secret travels by name under
+// secretVariables and never as a plain variable's value.
+//
+// It exists for the Cloud Batch backend (batch-run-identity F8, BR8). A Cloud
+// Run run is handed the deployed job's own environment by the platform: the
+// execution's override is merged into it, so nothing has to restate it. A
+// Batch job is created per run from nothing, so the launcher reads the
+// installation's values under exactly these names and passes them to the
+// backend (batch.Options.JobEnv), which writes them into the task's variables
+// — the run's whole environment on a VM. internal/infra's
+// TestABatchJobCarriesEveryVariableADeployedJobDoes holds the list to a real
+// template and the job to the list: a variable the template gains and this
+// list does not is a variable a Batch run would not carry. Not to be written
+// to.
+var JobEnvNames = []string{
+	BucketEnv, BackendEnv, GCPProjectEnv, ProjectEnv, RegionEnv,
+	VertexRegionEnv, VertexProjectEnv,
+	ImageEntryEnv, CheckoutEnv, RemoteEnv,
+	providers.EnvGitHubAppID, providers.EnvCredentialsServiceURL,
+	ComputePricesEnv,
+	BudgetModeEnv, MaxRunTokensEnv, AllowedModelsEnv, MaxRunUSDEnv,
+	ModelPricesEnv, RTDBURLEnv, FirebaseAPIKeyEnv, BudgetGraceEnv,
+	ModelProvidersEnv, runner.SecretEnvsVar,
+}
+
 // githubGitUser is the HTTPS username of a GitHub App installation token.
 const githubGitUser = "x-access-token"
 
