@@ -584,6 +584,38 @@ const escalationSince = "0.23.0"
 // refuses its task) or too early (an image that can judge stays blocked).
 const evaluateSince = "0.24.0"
 
+// levelRolesSince is the first fugaro release whose recipe reader knows the
+// by_level: key (LD9): the recipe's one conditional, the roles mapping a
+// recipe resolves at a rigor level. A runner before it does not drop the key
+// — it refuses the whole recipe ("by_level is not a recipe key"), so a launch
+// carrying one dies at bootstrap with the launch already paid for. This gate
+// turns that into a refusal at the launcher's terminal, naming fugaro image
+// refresh, exactly as adversarialSince does for its own construct.
+//
+// What the gate protects is the parse and not a behaviour: no run applies the
+// block yet (recipe.RolesFor has no caller, and docs/recipes.md says so where
+// it describes the key), so the launch an older image would take and then
+// refuse at bootstrap is one it would refuse whatever its entries hold —
+// which is exactly why the judge below is the key's presence.
+//
+// The key's presence is the whole of what the gate judges: recipe.UsesLevelRoles
+// decides by the key and never by what its entries hold, because an older
+// parser refuses by_level: {} too, and the recipe that survives is still one
+// the run cannot read.
+//
+// It carries no shipped flag, like artifactsSince and escalationSince:
+// refusing every image that predates the key is exactly the direction this
+// gate wants, and an image with no release tag (a dev build, a hand-pushed
+// one) only warns, the same as for every other *Since constant here — safe
+// either way, since the runner fails closed on the unknown key anyway.
+//
+// It names 0.27.0, the release this work is slotted for
+// (docs/release-streams.yaml has 0.26.0 current and Xerus 0.27.0 next), which
+// is not tagged yet: docs/release.md's ("Before you tag") checklist verifies
+// the constant against the tag actually cut, the way rigorSpellingSince's
+// bullet records, and moves it if the key lands in another release.
+const levelRolesSince = "0.27.0"
+
 // mergeJudgeSince is the first fugaro release whose runner runs the merge
 // judge (E6, D2031): its recipe parser knows `merge_judge` as a kind, and
 // mode: evaluate's own step list carries it, so the judge's recipe — one step,
@@ -870,10 +902,11 @@ const bitbucketTokenSince = "0.24.0"
 // `fugaro creds set` is the bundle's only writer, so the guard is at that write
 // too (creds.go's refuseAnEntryTheServiceCannotRead, which judges the release
 // that SERVES the document rather than the installation's pin). It is the
-// guard's third entry and not a second writer: the runner-path key types are
-// refused at the same write and never reach the document
-// (credsKeyCredentialHalfRefusal), so no document of this release holds an
-// entry of this family that a second write path could create.
+// guard's third entry and not a second writer: a RUNNER-path key type has been
+// refused at that write since KS2 (D1670 reversed by D2975) and its key is
+// written into repoCredentialSince's family instead, so the entries of THIS
+// family are the service-served credentials' alone and no write of a provider
+// key adds one.
 //
 // It names 0.26.0, the release this work ships in, and it is the first constant
 // of this file whose reader has never been in a released image: MC22's
@@ -898,6 +931,35 @@ const bitbucketTokenSince = "0.24.0"
 // deployed service already reads it, with `fugaro update` no remedy for them.
 // docs/release.md's ("Before you tag") list carries that reading.
 const keyCredentialSince = "0.26.0"
+
+// repoCredentialSince is the first fugaro release whose credentials service
+// reads the bundle's repository-credential family (credsvc.RepoCredentialPrefix,
+// credsvc.RepoCredentialKey, C1 of docs/keys-through-service): the entries
+// repo-credential--<slug>--<credential>, one per (repository, provider
+// credential) pair, each holding the provider key and the two routing facts the
+// service attaches when it forwards a call (credsvc's providerFacts). It is a
+// fourth entry of the same kind as providerEntrySince above and a constant of
+// its own for the reason that entry's comment gives: the loader refuses the
+// WHOLE document for a key it does not know, so the release a document is
+// readable by is decided by the newest entry it holds.
+//
+// The guard is no longer one write's: the family has THREE writers (F27) — the
+// key credential's own `fugaro creds set credential-<name>-key`, `fugaro
+// accounts add --type openrouter`, and `fugaro secrets set` of a model
+// provider's own secret, at repository scope and project-wide — and all three
+// go through refuseAnEntryTheServiceCannotRead before the value is read
+// (creds.go's providerKeyBundleWrite).
+//
+// It names 0.27.0, the release this work ships in, and it is the second
+// constant of this file whose reader has never been in a released image: C1's
+// wire and KS1's loader are newer than the `v0.26.1` tag, so the release before
+// this one serves a bundle without the family and cannot read a document that
+// holds it. The direction the siblings' tests protect holds from 0.27.0 on: a
+// value ABOVE the tag that shipped the family refuses every provider-key write
+// on installations whose deployed service already reads it, with `fugaro
+// update` no remedy for them. docs/release.md's ("Before you tag") list carries
+// that reading, and TestRepoCredentialSinceHasAReleaseBullet holds its bullet.
+const repoCredentialSince = "0.27.0"
 
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
@@ -1563,8 +1625,9 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 // repoRecipeForGate is a repository-sourced task's recipe, read from this
 // checkout the way recipeForLaunch reads it — the working tree, the
 // launcher's own approximation of the ref the runner checks out. Only
-// recipeSinceFor's adversarial arm reads it: that step is the one construct
-// whose gate the task's own fields cannot carry (see recipeSinceFor). nil for
+// recipeSinceFor's adversarial and level-roles arms read it: those are the
+// constructs whose gates the task's own fields cannot carry (see
+// recipeSinceFor). nil for
 // every other launch, and for one whose file cannot be read here, which keeps
 // the plain recipesSince it always had; the runner's own parse refusal is the
 // backstop there, exactly as it is for a name this launcher cannot resolve at
@@ -1592,9 +1655,11 @@ func repoRecipeForGate(ctx context.Context, spec *task.Spec) *recipe.Recipe {
 // and start a job whose runner refuses the whole task at bootstrap, the
 // manifest being a field it does not know.
 //
-// The judge's step, the adversarial step and the escalation constructs are
-// judged from rp too, and they are the newest a recipe can carry
-// (mergeJudgeSince, then escalationSince, then adversarialSince), so their
+// The level's role mapping, the judge's step, the adversarial step and the
+// escalation constructs are judged from rp too, and — the level's role
+// mapping first (levelRolesSince, the newest), then the judge's step, the
+// escalation constructs and the adversarial step — they are the newest a
+// recipe can carry, so their
 // cases come first. Unlike the manifest and mode: artifact — a repository
 // recipe's digest run and its mode both reach the task as fields, which carry
 // their own gates above — none of those three has anything in the task behind
@@ -1614,6 +1679,8 @@ func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 	r := embeddedRecipeOf(spec)
 	if len(spec.DigestRuns) == 0 && r == nil && rp != nil {
 		switch {
+		case recipe.UsesLevelRoles(rp):
+			return levelRolesSince
 		case recipe.UsesMergeJudge(rp):
 			return mergeJudgeSince
 		case recipe.UsesRebase(rp) || recipe.UsesHandOver(rp):
@@ -1628,6 +1695,11 @@ func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 		since = digestSince
 	case r == nil:
 		since = recipesSince
+	case recipe.UsesLevelRoles(r):
+		// The key is 0.27.0's, newer than every construct below, so it is
+		// the binding gate whenever it is written: a launch from a 0.24.0
+		// image is refused here whatever else the recipe holds.
+		since = levelRolesSince
 	case recipe.UsesMergeJudge(r):
 		since = mergeJudgeSince
 	case recipe.UsesRebase(r) || recipe.UsesHandOver(r):
@@ -3318,6 +3390,107 @@ func checkCloneTriageImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Con
 	return checkCloneImageSince(lc, spec, triageSince, subject, triageKnows, "; or "+alt, warn)
 }
 
+// reviewAgainstTaskKnows names, for the image gates' messages, what the job
+// image's runner has to know: the check itself and the key that turns it off.
+// The message reads "needs a job image whose runner knows <this>".
+const reviewAgainstTaskKnows = "the review-against-task check and its switch (agent.review_against_task)"
+
+// reviewAgainstTaskSubject is triageSubject for agent.review_against_task, and
+// for its reason: the absent key means the check on (Agent.ReviewAgainstTaskOn),
+// so a file that wrote true loses nothing by removing the key, while one that
+// wrote false gives the check back to its default on the first image that reads
+// the file. written is the key's own field (Agent.ReviewAgainstTask): nil is the
+// key absent, which no caller reaches — reviewAgainstTaskSources gates all four —
+// and reads as false, the branch that has a cost to name.
+func reviewAgainstTaskSubject(repo string, written *bool) (subject, alt string) {
+	subject = "fugaro.yaml's agent.review_against_task of " + repo
+	if written != nil && *written {
+		return subject, "remove agent.review_against_task from fugaro.yaml: the absent key means the check on, which is what this file writes, and a job image that predates the check reviews the code alone whatever the file says"
+	}
+	return subject, "remove agent.review_against_task from fugaro.yaml only if the off-switch may go with it: a job image that predates the check reviews the code alone, and the first image that reads the key finds the check on again"
+}
+
+// reviewAgainstTaskSources reports, for the launch's reviewSpecSince gate,
+// whether the configuration the run will read writes the key: the repository's
+// own fugaro.yaml and nothing else (Config.RepoReviewAgainstTaskSet). There is
+// no layer to ask, for triageSources' reason — config.Scopes gives
+// agent.review_against_task InRepo alone, so a project layer writing it never
+// reaches a resolution at all. The owner's published policy node is the other
+// home of the answer (policy.Layer.ReviewAgainstTask) and is not judged here:
+// it is not a key any file of this repository's decodes, so an older runner
+// does not refuse it at bootstrap.
+func reviewAgainstTaskSources(cfg *config.Config) bool {
+	return cfg != nil && cfg.RepoReviewAgainstTaskSet
+}
+
+// reviewAgainstTaskImageWarnings warns, once, that a configuration which writes
+// agent.review_against_task (RepoReviewAgainstTaskSet) needs every job image on
+// reviewSpecSince. It is validate's half of checkReviewAgainstTaskImage, and a
+// warning rather than a Problem for triageImageWarnings' reason: the file is
+// valid, and what has to move is the installation's image, which is why both
+// ways to move one are named.
+func reviewAgainstTaskImageWarnings(c *config.Config) []config.Problem {
+	if !reviewAgainstTaskSources(c) {
+		return nil
+	}
+	return []config.Problem{{Path: "agent.review_against_task", Message: "this file's agent.review_against_task needs fugaro " + reviewSpecSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
+// refuseReviewAgainstTaskSkew refuses fugaro update --repo, before any cloud
+// effect, when the configuration the checkout resolves writes
+// agent.review_against_task and the installation's base image predates
+// reviewSpecSince — a runner built from it decodes fugaro.yaml with KnownFields
+// and refuses the run at bootstrap on a key it does not know. It is the half
+// checkReviewAgainstTaskImage cannot be: a launch from outside a checkout reads
+// no fugaro.yaml at all, so the key the run will find once it has one is judged
+// here, by the operator's own converge (refuseTriageSkew's shape and its
+// reason). The states of ref are read as refuseTriageSkew reads them: no base
+// image passes, one that is not a release only warns. It takes the
+// configuration rather than the one bit a predicate would pass, because the way
+// out its message offers is worded for the answer the file wrote
+// (reviewAgainstTaskSubject, Agent.ReviewAgainstTask).
+func refuseReviewAgainstTaskSkew(repo string, cfg *config.Config, ref string, warn io.Writer) error {
+	if !reviewAgainstTaskSources(cfg) {
+		return nil
+	}
+	subject, alt := reviewAgainstTaskSubject(repo, cfg.Agent.ReviewAgainstTask)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, reviewSpecSince):
+		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the file strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, reviewAgainstTaskKnows, reviewSpecSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// checkReviewAgainstTaskImage refuses a launch whose job image runs a fugaro
+// older than reviewSpecSince while the configuration the run reads writes
+// agent.review_against_task: that runner decodes fugaro.yaml with KnownFields,
+// so the key alone kills the run at bootstrap, whatever it says. The judge is
+// the build record's base_ref, as every checkImageSince gate's is, and cfg is
+// the file the run will read — nil, a launch that could not read one, gated by
+// nothing, as reviewAgainstTaskSources' nil is.
+func checkReviewAgainstTaskImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
+	if !reviewAgainstTaskSources(cfg) {
+		return nil
+	}
+	subject, alt := reviewAgainstTaskSubject(spec.Repo, cfg.Agent.ReviewAgainstTask)
+	return checkImageSince(ctx, env, slug, spec, kind, reviewSpecSince, subject, reviewAgainstTaskKnows, "; or "+alt, warn)
+}
+
+// checkCloneReviewAgainstTaskImage is checkReviewAgainstTaskImage for a
+// checkout: clone workflow: see checkCloneImageSince.
+func checkCloneReviewAgainstTaskImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	if !reviewAgainstTaskSources(cfg) {
+		return nil
+	}
+	subject, alt := reviewAgainstTaskSubject(spec.Repo, cfg.Agent.ReviewAgainstTask)
+	return checkCloneImageSince(lc, spec, reviewSpecSince, subject, reviewAgainstTaskKnows, "; or "+alt, warn)
+}
+
 // followUpSince names the release that carries the two fields `fugaro followups
 // --launch` writes into a task: the parent run and the finding keys it settles
 // (task.Spec.FollowUpOf) and the debt mark (task.Spec.Debt). A runner built
@@ -3891,6 +4064,134 @@ func rigorSpellingLaunchSources(ctx context.Context, env *cloudEnv, spec *task.S
 		return false, false, false
 	}
 	return cfg.RepoRigorLevelSet, cfg.RepoRigorScalarSet, cfg.Layer.SetsRigorLevel()
+}
+
+// rigorMembersSince is the first fugaro release whose config reader knows what
+// LD4 adds to the project layer's rigor block: a `members:` key of one of its
+// defaults.rigor.areas rules, and the per-repository defaults.rigor.repos map
+// beside them. Both keys are the layer's alone — a repository's own file knows
+// no repos: and refuses members: on a rule of its own (rigor.Area.Validate) —
+// and the layer is decoded with KnownFields, so a layer that carries either
+// makes every repository of the project whose job image is older than this
+// release fail at bootstrap on a key its runner does not know, before the agent
+// starts and after the launch was paid for.
+//
+// It is not rigorSpellingSince, which names the release whose reader knows the
+// two spellings of that block: that constant's judge booleans are an area
+// rule's `level:` key and the scalar shorthand, and a layer writing members or
+// repos need write neither (an area rule still reads `mode:`, and the layer
+// never carried the shorthand), so the gate it drives passes a layer this one
+// refuses. Like rigorSpellingSince the judge is the image that runs the run:
+// the installation's base image for a checkout: clone workflow, the base a
+// workflow's build record was built FROM for a derived one. fugaro update
+// --repo gates it before any cloud effect (gateRigorMembers, beside
+// gateRigorSpelling), a launch gates it the way checkJobsImage does
+// (checkRigorMembersImage, checkCloneRigorMembersImage) from a checkout of the
+// repository, where the layer the run will read can be read here at all, and
+// fugaro validate warns (rigorMembersImageWarnings). Outside a checkout only
+// fugaro update --repo checks.
+//
+// It names 0.27.0, the release this work is slotted for (docs/release.md's
+// Before-you-tag bullet verifies it against the tag actually cut), which is not
+// tagged yet: a wrong value refuses too late (a run on an image whose runner
+// cannot read the keys dies at bootstrap) or too early (an image that knows
+// them stays blocked).
+const rigorMembersSince = "0.27.0"
+
+// rigorMembersLayerSet reports whether the project layer the configuration
+// resolves over writes either key, at any value: SetsRigorMembers' question,
+// and its reason — `members:` with nothing under it and `repos: {}` are lines
+// an older runner's decoder refuses just as a populated one is, and the parsed
+// rule cannot tell the two apart. The configuration is launchFileConfig's, so
+// the launch gates fire where the sibling gates' do: from a checkout of the
+// repository, where the layer the run will read can be read here at all
+// (checkoutConfig, or the ref's file resolved over the layer the task carries,
+// cascadeRefConfig). Outside one it is nil and nothing is gated, which is the
+// shape rigorSpellingSince and jobsSince have: there only fugaro update --repo
+// checks.
+func rigorMembersLayerSet(cfg *config.Config) bool {
+	return cfg != nil && cfg.Layer.SetsRigorMembers()
+}
+
+// rigorMembersSubject names, for the gates' messages, what the layer wrote and
+// the way out its author has: the layer is the operator's file, and the
+// repositories the key breaks each have the same fix — removing it and
+// publishing the layer again. One subject names both keys, because one release
+// reads both and the operator finds whichever they wrote in the same block.
+func rigorMembersSubject(repo string) (subject, alt string) {
+	// The subject takes the gates' singular verb ("needs a job image whose
+	// runner knows …"), so the two keys are joined by "or" rather than by a
+	// comma: the verb then agrees with the nearer one, and the sentence reads
+	// for either key an operator wrote.
+	return "the project layer's `members:` key or its `defaults.rigor.repos` map (read for " + repo + ")",
+		"remove the members: key or the repos: map from the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way"
+}
+
+// rigorMembersKnows names, for the image gates' messages, the keys the job
+// image's runner has to know: the refusal reads "needs a job image whose runner
+// knows <this>", and the two keys are the layer's whole half of LD4.
+const rigorMembersKnows = "the project layer's rigor members, an area rule's `members:` key and the `defaults.rigor.repos` map"
+
+// rigorMembersImageWarnings warns, once, that the project layer a configuration
+// resolves over writes members: or repos:, which needs every job image on
+// rigorMembersSince. It is validate's half of checkRigorMembersImage and a
+// warning rather than a Problem for rigorImageWarnings' reason: the layer is
+// valid, and what has to move is the installation (the base image, or a
+// workflow's derived one), which is why both ways to move an image are named.
+func rigorMembersImageWarnings(c *config.Config) []config.Problem {
+	if !rigorMembersLayerSet(c) {
+		return nil
+	}
+	return []config.Problem{{Path: "defaults.rigor", Message: rigorMembersKnows + " need fugaro " + rigorMembersSince + " or later in the job image that runs it, and in the CLI of everyone who reads this layer: an older runner decodes the layer strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
+// refuseRigorMembersSkew refuses fugaro update --repo, before any cloud effect,
+// when the project layer the checkout resolves writes members: or repos: and
+// the installation's base image predates rigorMembersSince — a runner built
+// from it decodes the layer with KnownFields and refuses it at bootstrap. The
+// states of ref are read as refuseRigorSkew reads them: no base image passes,
+// one that is not a release only warns.
+func refuseRigorMembersSkew(repo string, fromLayer bool, ref string, warn io.Writer) error {
+	if !fromLayer {
+		return nil
+	}
+	subject, alt := rigorMembersSubject(repo)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, rigorMembersSince):
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the layer strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, rigorMembersSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// checkRigorMembersImage and checkCloneRigorMembersImage are the launch's own
+// rigorMembersSince gate, for a workflow whose job image is a derived one and
+// for a checkout: clone workflow respectively: the pair every other
+// per-workflow image gate has (checkImageSince/checkCloneImageSince), with
+// checkJobsImage's judge and its one source — the project layer, which is the
+// only file that can write either key. A launch whose configuration writes
+// neither is never gated.
+func checkRigorMembersImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	if !rigorMembersLayerSet(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := rigorMembersSubject(spec.Repo)
+	return checkImageSince(ctx, env, slug, spec, kind, rigorMembersSince, subject, rigorMembersKnows, "; or "+alt, warn)
+}
+
+// checkCloneRigorMembersImage is checkRigorMembersImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneRigorMembersImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
+	if !rigorMembersLayerSet(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := rigorMembersSubject(spec.Repo)
+	return checkCloneImageSince(env.lc, spec, rigorMembersSince, subject, rigorMembersKnows, "; or "+alt, warn)
 }
 
 // refuseGovernanceSkew refuses fugaro update --repo, before any cloud effect,

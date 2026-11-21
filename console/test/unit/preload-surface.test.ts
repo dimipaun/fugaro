@@ -53,6 +53,7 @@ import {
   createConfirmBridge,
   isConfirmReply,
 } from '../../src/preload/confirm'
+import type { ConfirmAnswer } from '../../src/preload/confirm'
 import {
   INSTALLATION_BRIDGE_KEY,
   INSTALLATION_BRIDGE_PREFIX,
@@ -343,13 +344,19 @@ describe('the confirmation window’s built preload', () => {
     const { window, sent } = runBuiltConfirm({ window: {}, document: {} })
     const api = (window ?? {})[CONFIRM_BRIDGE_KEY] as {
       fields: () => Promise<unknown>
-      answer: (yes: boolean) => Promise<unknown>
+      answer: (answer: ConfirmAnswer) => Promise<unknown>
     }
+    // The answer is **one object** (SU1, D2902) rather than the launch's old
+    // `answer(yes, ticked?)` pair: the one channel carries a value the operator
+    // typed, a reset, and a confirmation alike, and the whole object is what
+    // crosses -- a preload that unpacked it into positional arguments would be a
+    // second shape for main to read.
+    const answer: ConfirmAnswer = { answer: 'submit', value: '30' }
     expect(await api.fields()).toStrictEqual({ ok: true, data: {} })
-    expect(await api.answer(true)).toStrictEqual({ ok: true, data: {} })
+    expect(await api.answer(answer)).toStrictEqual({ ok: true, data: {} })
     expect(sent).toStrictEqual([
       { channel: `${CONFIRM_BRIDGE_PREFIX}fields`, args: [] },
-      { channel: `${CONFIRM_BRIDGE_PREFIX}answer`, args: [true] },
+      { channel: `${CONFIRM_BRIDGE_PREFIX}answer`, args: [answer] },
     ])
   })
 
@@ -373,7 +380,7 @@ describe('the confirmation window’s built preload', () => {
         throw new Error('no answer')
       },
     })
-    expect(await failing.answer(false)).toStrictEqual({
+    expect(await failing.answer({ answer: 'no' })).toStrictEqual({
       ok: false,
       reason: 'the confirmation window could not be reached (no answer)',
     })

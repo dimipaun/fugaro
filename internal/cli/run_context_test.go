@@ -484,8 +484,8 @@ func TestContextReposRefusalJudgesTheDecidedJob(t *testing.T) {
 	env := memEnv(t, switched.cloudFixture)
 	spec := readSpec(t, switched.cloudFixture, budgetRun)
 	auth, deployed := env.repoServiceAuth(context.Background(), spec, io.Discard)
-	for name, job := range map[string]string{"the repository's own job": "", "the shared project job": switched.job} {
-		if got := credentialsServiceLaunchEnv(env.lc, job, spec.Repo, auth, env.policyMode(context.Background()), deployed, false); len(got) == 0 {
+	for name, profile := range map[string]string{"the repository's own job": "", "the shared project job": "standard"} {
+		if got := credentialsServiceLaunchEnv(env.lc, profile, spec.Repo, auth, env.policyMode(context.Background()), deployed, false); len(got) == 0 {
 			t.Fatalf("%s is handed no address (auth %q, deployed %v) on a switched repository", name, auth, deployed)
 		}
 	}

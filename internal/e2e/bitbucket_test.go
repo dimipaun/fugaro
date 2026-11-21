@@ -197,12 +197,15 @@ func bitbucketRun(t *testing.T, early bool) {
 		"--bucket", "file://"+bucket, "--task-file", taskFile,
 		"--workdir", work, "--remote", remote.URL, "--state-dir", filepath.Join(tmp, "state"),
 		"--provider", "bitbucket", "--claude", claude, "--cancel-poll", "100ms")
-	cmd.Env = []string{
+	// The job's budget database, as every harness here gives a run: the run
+	// itself is unchanged by it, since neither the job's mode nor the
+	// checkout's policy asks for a session (testutil.Budget).
+	cmd.Env = append([]string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + tmp,
 		"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
 		"ANTHROPIC_API_KEY=test-key-1234", "FIXTURE_FAILS_FILE=" + filepath.Join(tmp, "fails"),
 		"FUGARO_BITBUCKET_TOKEN=" + token, "FUGARO_BITBUCKET_API_URL=" + apiSrv.URL + "/2.0",
-	}
+	}, testutil.NewBudget(t).Env()...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGQUIT) }
 	cmd.WaitDelay = 5 * time.Second
 	var stderr strings.Builder

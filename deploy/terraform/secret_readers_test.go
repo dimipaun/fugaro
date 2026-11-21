@@ -64,7 +64,6 @@ var secretReaderExceptions = []struct {
 			"deploy/terraform/gcp/modules/installation/coordinator.tf google_cloud_run_v2_job.coordinator",
 		},
 	},
-	{id: "E5", keys: []string{"internal/backend/batch/run.go"}},
 	{id: "E6", keys: []string{"internal/backend/gcp/build.go", "internal/backend/gcp/catalog.go"}},
 	{
 		id: "E7",
@@ -83,7 +82,13 @@ var secretReaderExceptions = []struct {
 			"deploy/terraform/gcp/modules/workflow/sa.tf google_secret_manager_secret_iam_member.service",
 		},
 	},
-	{id: "E8", keys: []string{"internal/cli/creds.go", "internal/cli/doctor_brokering.go"}},
+	// owner_probe.go is E8's second read of the bundle's own container and not
+	// another reader of a value: it asks Secret Manager what the caller may do
+	// ON that container (TestIamPermissions), which is the one question that
+	// tells a project owner from an operator before a provider key is written
+	// into the bundle's entries (KS2, D3006, F36). No value is read, and the
+	// answer is a permission list.
+	{id: "E8", keys: []string{"internal/cli/creds.go", "internal/cli/doctor_brokering.go", "internal/cli/owner_probe.go"}},
 	{
 		id: "E9",
 		keys: []string{
@@ -244,6 +249,15 @@ var secretReaderExceptions = []struct {
 		id:   "E32",
 		keys: []string{"deploy/terraform/gcp/roots/workspace/main.tf google_secret_manager_secret_iam_member.workspace_bundle"},
 	},
+	// The locations read (location-preference LP7): `fugaro update` and
+	// `fugaro setup` list the project's `fugaro=managed` containers to write
+	// down whether they are automatic, regional or both, which is the one row
+	// of the record LP14 keeps that Secret Manager answers (D3087). It is the
+	// read class E23 and E27 make -- a listing by label, as the operator's own
+	// identity -- and it is a row of its own because it is a file of its own:
+	// no value comes out of it, and a listing answers names, labels and
+	// replication policy and nothing else.
+	{id: "E33", keys: []string{"internal/infra/locations_observe.go"}},
 }
 
 // A key under this prefix names a rule the scan enforces rather than a hit it

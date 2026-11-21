@@ -617,8 +617,8 @@ func TestBitbucketGetRefusesWithoutReadConsumer(t *testing.T) {
 		t.Fatalf("a read with no read consumer was answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
 	}
 	e := refusal(t, resp.StatusCode, body)
-	if e.Error != ErrorStateUnavailable {
-		t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorStateUnavailable, e.Message)
+	if e.Error != ErrorNoReadConsumer {
+		t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorNoReadConsumer, e.Message)
 	}
 	if !strings.Contains(e.Message, ErrReadNoConsumer.Error()) {
 		t.Errorf("the refusal is %q, want it to name the missing consumer (%q)", e.Message, ErrReadNoConsumer.Error())

@@ -1831,7 +1831,10 @@ func TestUpdateManagedRefusesASessionWideningFlag(t *testing.T) {
 		// --region rewrites the persisted region (and the cover's region and
 		// registry), --github-app-id the App ID the repository jobs carry: both
 		// are written to the local config by an apply this gate would admit.
-		{"region", []string{"--region", "us-west1"}, nil},
+		// The region is the installation's own here, because another one is
+		// refused before the gate is ever asked (LP8, D3088): the row is about
+		// the flag a session may not pass, and that refusal is the flag's.
+		{"region", []string{"--region", "us-east5"}, nil},
 		{"github app id", []string{"--github-app-id", "123456"}, nil},
 		{"the owner's delete list", []string{"--allow-delete", address}, nil},
 	} {
@@ -2313,7 +2316,7 @@ func TestUpdateManagedWorkspaceStageUnderTheGate(t *testing.T) {
 	// migration it admits: this test is about the stage after it, and a first
 	// publish there is the one write a session is never admitted (D854).
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
-	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+	appendWorkspaceConfig(t, r, wsOwnerTable+wsOwnerCap)
 	// The node the table replaces: member-b as the table declares it (and no
 	// widening anywhere in it) plus a member this table does not declare, so
 	// this publish removes rather than admits.
@@ -2361,15 +2364,100 @@ func TestUpdateManagedWorkspaceStageUnderTheGate(t *testing.T) {
 	}
 }
 
+// TestUpdateManagedPublishesTheCredentialsNodeForAPublishedRecord is the state
+// every workspace owner is in when they upgrade from the release that published
+// the record, and the state every later change to the pool alone leaves them in:
+// the record at workspaces/<name> already carries what this installation
+// declares, so this run's whole write is the credentials node beside it — which
+// is absent, because the release behind wrote the record and nothing else.
+//
+// The gate has to judge that write, and the document it judges is the node's
+// bytes: the record has none to write, and a gate that refused the step for the
+// absent document would leave it to the owner on every run (the loop's needs-you
+// sentence), so the node would never be published for a record that is already
+// right and the workspace's own service would have nothing to resolve a caller
+// by. This is that run, end to end, on a managed project in a coding agent's
+// session: the node is written, the record is not touched, and the record the
+// gate leaves names the credentials node as the document it judged.
+func TestUpdateManagedPublishesTheCredentialsNodeForAPublishedRecord(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	isolateGateCredentials(t)
+	updating(t, r)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+	// The policy node is a release behind, so that stage's own write is the
+	// migration it admits, and the stage after it is the one this test is about.
+	db.Set(projectpolicy.PathShared(), v3Node(nil))
+	appendWorkspaceConfig(t, r, wsOwnerTable+wsOwnerCap)
+	// The record this installation declares, already published and nothing else:
+	// the table's one member with its repositories sorted as the record builds
+	// them, the same ceiling, and no credentials node at all.
+	db.Set(projectpolicy.PathWorkspace(initProjectName), map[string]any{
+		"version": projectpolicy.WorkspaceVersion,
+		"name":    initProjectName,
+		"members": []any{wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b")},
+		"cap":     map[string]any{"monthly_micros": 25_000_000},
+	})
+	if v := db.Value(projectpolicy.PathWorkspaceCredentials(initProjectName)); v != nil {
+		t.Fatalf("the fixture seeded the credentials node this run is supposed to write: %v", v)
+	}
+
+	out, errOut, err := executeStdin(t, "", "update")
+	got := out + errOut
+	if err != nil {
+		t.Fatalf("a managed project's agent session did not publish the credentials node over a record that was already right (%v):\n%s", err, got)
+	}
+	// The lines the stage reports itself with are the node-only arms of its two
+	// sentences: the record's half of the diff says it writes nothing there, and
+	// the step's own detail says the credentials node is what this run published.
+	// That is the state this test is for, and not a record this run happened to
+	// rewrite identically. (The step's detail is asserted up to the words the
+	// report elides a long line at.)
+	recordLine := "workspaces/" + initProjectName + ": the published record already carries what this installation declares; this run writes nothing to it"
+	if !strings.Contains(got, recordLine) {
+		t.Errorf("the run did not leave the published record alone (%q):\n%s", recordLine, got)
+	}
+	nodeLine := "published the workspace credentials node this installation declares"
+	if !strings.Contains(got, nodeLine) {
+		t.Errorf("the run did not report the node-only write (%q):\n%s", nodeLine, got)
+	}
+	if !strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
+		t.Errorf("the admitted workspace step did not say it proceeded:\n%s", got)
+	}
+	node := wsCredsNode(t, db, initProjectName)
+	if len(node.Members) != 1 || node.Members[0].Project != "member-b" {
+		t.Errorf("the credentials node this run published resolves %+v, want the table's one member member-b:\n%s", node.Members, got)
+	}
+	// The audit record is of the document the gate judged, and that document is
+	// the credentials node: the rule the stage answered before the write names
+	// the node's own version rather than the record's, which this run does not
+	// write at all.
+	var workspace []managedmode.AuditRecord
+	for _, rec := range audits(t, r) {
+		for _, rule := range rec.Rules {
+			if strings.Contains(rule, "the published credentials node is one this binary's own may write over") {
+				workspace = append(workspace, rec)
+			}
+		}
+	}
+	if len(workspace) != 1 {
+		t.Fatalf("%d record(s) say the credentials node was judged, want one: %+v", len(workspace), audits(t, r))
+	}
+	if rec := workspace[0]; rec.Verdict != managedmode.AuditAdmitted {
+		t.Errorf("the credentials node's record reads %q, want an admission", rec.Verdict)
+	}
+}
+
 // TestWorkspaceMemberPublishRefusesInAnAgentSession is the fence itself, one
 // step below the run that test above drives: a publish that ADMITS something to
 // the group is refused in a coding agent's session whatever the document says
 // of it (D1555, the same fence as D1552's), and what refuses it is the widening
-// (p.widens) read beside the session's own marker rather than any verdict about
-// the node. The refusal is classified GateRefusedUnjudged, because the step is
-// one no plan gate judges whatever the document looks like (D1026), and what
-// stands beside it is the stage's own command (Left) — the one thing an agent's
-// report to its owner can act on.
+// (p.allWidens()) read beside the session's own marker rather than any verdict
+// about the node. The refusal is classified GateRefusedUnjudged, because the
+// step is one no plan gate judges whatever the document looks like (D1026), and
+// what stands beside it is the stage's own command (Left) — the one thing an
+// agent's report to its owner can act on.
 //
 // The control at the end is the same gate, the same session and a write that
 // admits nothing: the gate has no sentence for that one and leaves it to its own
@@ -2411,6 +2499,53 @@ func TestWorkspaceMemberPublishRefusesInAnAgentSession(t *testing.T) {
 	}
 }
 
+// TestWorkspacePoolPublishRefusesInAnAgentSession is that fence for the other
+// half of the class rule, and the state the record's own list cannot see: the
+// published record already carries what this installation declares, so the run's
+// whole write is the credentials node (p.widens is empty — no member is admitted)
+// and what the node puts in is its pool — a credential offered to a caller of a
+// member where nobody could be served one, or offered to more of them. That is
+// the workspace's own money spent by a caller, which is why the rule the fence
+// reads is the confirmation's own list (p.allWidens()) and not the record's
+// widening: a gate that admitted this step would let a coding agent's session put
+// a credential in a member's reach behind nothing but a mark.
+func TestWorkspacePoolPublishRefusesInAnAgentSession(t *testing.T) {
+	run := &initRun{o: &initOptions{door: updateDoor.name}, w: io.Discard, cmd: NewRootCmd()}
+	run.gate = &initGate{managed: true}
+	s := &workspaceStage{e: &initEngine{r: run}}
+	t.Setenv("CLAUDECODE", "1")
+
+	admitted, err := s.gateStep(context.Background(), &workspacePublication{
+		creds: &workspaceCredentialsPublication{
+			body: []byte(`{"version":2,"name":"workspace-alpha","members":[],"shared":[]}`),
+			pool: []string{"claude-oauth-token is offered to a caller of member-b where nobody could be served it"},
+		},
+	})
+	if !admitted {
+		t.Error("a pool publish in a coding agent's session was left to its own confirmation, and nothing in that session can answer for what the workspace's callers are served")
+	}
+	var ge *initflow.GatedError
+	if !errors.As(err, &ge) {
+		t.Fatalf("the refusal is %v, want the gate's own sentence", err)
+	}
+	if ge.Refusal != initflow.GateRefusedUnjudged {
+		t.Errorf("the refusal is classified %v, want %v: the step is one no plan gate judges", ge.Refusal, initflow.GateRefusedUnjudged)
+	}
+	if !strings.Contains(ge.Reason, "no plan gate judges") {
+		t.Errorf("the refusal does not name what refused the node: %q", ge.Reason)
+	}
+
+	// The control is the same node write with an empty pool: a run that migrates
+	// the node or rewrites it with what the pool already carried admits nothing,
+	// and it is the ordinary step the gate may stand in for.
+	admitted, err = s.gateStep(context.Background(), &workspacePublication{
+		creds: &workspaceCredentialsPublication{body: []byte(`{"version":2,"name":"workspace-alpha","members":[],"shared":[]}`)},
+	})
+	if admitted || err != nil {
+		t.Errorf("a pool publish that puts nothing new in: admitted=%v, err=%v, want it left to its own confirmation", admitted, err)
+	}
+}
+
 // And the one write the gate never admits: a publish that puts a project in the
 // group the published node does not carry. The record decides who is in the
 // workspace, so the step is one no plan gate judges (D846's widening read as
@@ -2427,7 +2562,7 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
 	// The local table declares a member the published node does not carry.
-	r.appendConfig(t, wsOwnerTwoMembers+wsOwnerCap)
+	appendWorkspaceConfig(t, r, wsOwnerTwoMembers+wsOwnerCap)
 	db.Set(projectpolicy.PathWorkspace(initProjectName), map[string]any{
 		"version": projectpolicy.WorkspaceVersion,
 		"name":    initProjectName,
@@ -2492,7 +2627,7 @@ func TestUpdateManagedRefusesTheFirstWorkspacePublish(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
-	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+	appendWorkspaceConfig(t, r, wsOwnerTable+wsOwnerCap)
 
 	got, err := updateRun(t, r, "update")
 	if err == nil {

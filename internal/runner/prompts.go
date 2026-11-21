@@ -137,8 +137,28 @@ func binaryCapWords(maxBytes int64) string {
 	return fmtBytes(maxBytes)
 }
 
-// SystemPrompt is appended to Claude Code's system prompt for implement and fix stages.
-func SystemPrompt(d PromptData, instructions string) string {
+// personaBlock is a persona as a prompt carries it: the level's text with the
+// blank line that separates it from what the stage is asked to do. persona is
+// the text personaFor answered for the level the run has reached, and it is
+// prepended to the brief — the level's stance is what the stage works under,
+// and every rule below it is read in that light.
+//
+// An empty persona adds nothing at all, not a heading and not a blank line: a
+// level the table does not know answers "", and a stage is then handed the
+// brief every run had before personas existed rather than a section about a
+// stance nobody took.
+func personaBlock(persona string) string {
+	p := strings.TrimSpace(persona)
+	if p == "" {
+		return ""
+	}
+	return p + "\n\n"
+}
+
+// SystemPrompt is appended to Claude Code's system prompt for implement and
+// fix stages. persona is the coder text of the level the run has reached
+// (persona.go), which leads the brief.
+func SystemPrompt(d PromptData, instructions, persona string) string {
 	explain := "the pull request description"
 	if d.FollowUp != nil {
 		// A follow-up leaves the title and description as they are.
@@ -184,7 +204,7 @@ func SystemPrompt(d PromptData, instructions string) string {
 	if strings.TrimSpace(instructions) != "" {
 		s += "\nRepository instructions:\n\n" + instructions
 	}
-	return s
+	return personaBlock(persona) + s
 }
 
 const defaultReview = "You are reviewing a pull request written by another engineer. Look for correctness bugs, missing or weak tests, security problems, and deviations from this repository's conventions (see CLAUDE.md if present). Ignore pure style preferences."
@@ -390,8 +410,12 @@ func clipBaseInstructions(files []baseInstruction, max int) (kept []baseInstruct
 // baseUnread says the pull request's own base could not be read (baseUnreadable),
 // so rev is a fallback and the reviewer must restrict itself to the branch's
 // own commits.
-func ReviewPrompt(review, promptFile, rev string, size DiffSize, baseUnread bool) string {
-	return reviewBrief(review, promptFile, rev, size, baseUnread, reviewScoring, inRunVerdictAsk)
+//
+// persona is the reviewer text of the level the run has reached (persona.go):
+// a reviewer judges the change by the task's own standard rather than by one of
+// its own (spec §5, LD1).
+func ReviewPrompt(review, promptFile, rev string, size DiffSize, baseUnread bool, persona string) string {
+	return reviewBrief(review, promptFile, rev, size, baseUnread, reviewScoring, inRunVerdictAsk, persona)
 }
 
 // inRunVerdictAsk is the ask every review stage but the independent review
@@ -421,14 +445,25 @@ const reviewArtifactAsk = "When you are done, answer with the JSON object the sc
 // words its schema closes on, and the artifact's ask in place of the in-run
 // one. Asking the job for the in-run five labels would have it answer a shape
 // its own reader refuses.
-func reviewArtifactPrompt(review, promptFile, rev string, size DiffSize, baseUnread bool) string {
-	return reviewBrief(review, promptFile, rev, size, baseUnread, artifactScoring, reviewArtifactAsk)
+func reviewArtifactPrompt(review, promptFile, rev string, size DiffSize, baseUnread bool, persona string) string {
+	return reviewBrief(review, promptFile, rev, size, baseUnread, artifactScoring, reviewArtifactAsk, persona)
 }
 
 // reviewBrief is the review stage's prompt with the given scoring contract and
 // ask: what a reviewer is shown is the same whatever shape its verdict takes,
 // and only the contract's severity clause and the last sentence differ.
-func reviewBrief(review, promptFile, rev string, size DiffSize, baseUnread bool, scoring, ask string) string {
+//
+// The persona follows whatever opens the brief — the configured review text,
+// the command or the default line — rather than leading the prompt, for the two
+// reasons the brief's own order is what it is. A configured review may be a
+// slash command, and the reviewer's skill only loads when the prompt starts
+// with it (reviewPromptWithFocus says the same of the focus); and
+// AdversarialPrompt drops the default opening line by trimming exactly that
+// line and its blank line off the front, so a persona in front of it would
+// leave the line in place — level 3 would be told it is the ordinary reviewer —
+// and a trim widened to step over the persona would be a trim that depends on
+// where the persona ends.
+func reviewBrief(review, promptFile, rev string, size DiffSize, baseUnread bool, scoring, ask, persona string) string {
 	scope := fmt.Sprintf("Review the changes on this branch against %s (see `git diff %s...HEAD`). Do not modify any files.", rev, rev)
 	if gitops.IsFullSHA(rev) {
 		scope = ownRangeNote(rev) + "\n\n" + scope
@@ -440,13 +475,14 @@ func reviewBrief(review, promptFile, rev string, size DiffSize, baseUnread bool,
 		scope = baseUnreadNote(rev) + "\n\n" + scope
 	}
 	tail := "\n\n" + scoring + "\n\n" + ask
+	body := personaBlock(persona) + scope
 	switch {
 	case strings.HasPrefix(review, "/"):
-		return review + " " + scope + tail
+		return review + " " + body + tail
 	case promptFile != "":
-		return promptFile + "\n\n" + scope + tail
+		return promptFile + "\n\n" + body + tail
 	default:
-		return defaultReview + "\n\n" + scope + tail
+		return defaultReview + "\n\n" + body + tail
 	}
 }
 
@@ -520,9 +556,13 @@ func reviewPromptWithFocus(reviewPrompt, focus string) string {
 // PickPrompt is the review stage prompt for a pick run (design generic-tool
 // §3.6, G12): nums[i]'s checkout is dirs[i], one directory per attempt, so
 // the reviewer reads every one and names which to keep; see ReviewPrompt
-// for review, promptFile and the scope line review-only's single-PR case
-// uses instead of this.
-func PickPrompt(review, promptFile string, nums []int, dirs []string) string {
+// for review, promptFile, persona and the scope line review-only's single-PR
+// case uses instead of this.
+//
+// It carries the level's reviewer persona for the same reason ReviewPrompt
+// does: a pick run's reviewer reads the same change under the same standard,
+// and the one choice it is asked to make is a judgement at that level.
+func PickPrompt(review, promptFile string, nums []int, dirs []string, persona string) string {
 	var b strings.Builder
 	switch {
 	case strings.HasPrefix(review, "/"):
@@ -532,7 +572,7 @@ func PickPrompt(review, promptFile string, nums []int, dirs []string) string {
 	default:
 		b.WriteString(defaultReview)
 	}
-	b.WriteString("\n\nSeveral attempts at the same task are checked out, each in its own directory, as separate pull requests. Do not modify any files. " + binaryRule + "\n")
+	b.WriteString("\n\n" + personaBlock(persona) + "Several attempts at the same task are checked out, each in its own directory, as separate pull requests. Do not modify any files. " + binaryRule + "\n")
 	for i, n := range nums {
 		fmt.Fprintf(&b, "- PR #%d: %s\n", n, dirs[i])
 	}
@@ -860,8 +900,14 @@ func fixFindingField(s string, neutralize func(string) string) string {
 // may ask for more than the round's findings do (D2943) — so the closing
 // sentence is rule 4's when a block rides here, and the brief's own "touch
 // nothing else" only when none does.
-func FixPrompt(findings []Finding, messages string) string {
+//
+// persona is the coder text of the level the run has reached when this brief is
+// built (persona.go), which is the level the fix round itself runs at: a fix
+// reads the level the moment that bought it resolved, so a round after a rise
+// is handed the raised level's stance rather than the one the run started at.
+func FixPrompt(findings []Finding, messages, persona string) string {
 	var b strings.Builder
+	b.WriteString(personaBlock(persona))
 	b.WriteString("A code review of your changes asked for these fixes:\n\n")
 	fixable := fixableFindings(findings)
 	var scopes []string

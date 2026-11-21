@@ -552,6 +552,8 @@ func refuseOperations(w http.ResponseWriter, err error) {
 		refuseAPI(w, http.StatusUnprocessableEntity, "invalid_check_interval", "A check interval is an ISO 8601 duration of 1 to 30 days, and it belongs to the row: the air-gapped row's key never checks the server, and no other row's may say that.")
 	case errors.Is(err, errOperationsBadQuery):
 		refuseAPI(w, http.StatusUnprocessableEntity, "invalid_query", "This read names nothing to look up. Name a term, an organisation, a workspace or a month, and ask again.")
+	case errors.Is(err, errReportCurrency):
+		refuseAPI(w, http.StatusConflict, "unsupported_currency", "This report states micro-dollars, and that month holds sales in another currency: read the month in the ledger, where every line carries its own currency, and take the two apart there.")
 	case errors.Is(err, errOperationsBadState):
 		refuseAPI(w, http.StatusUnprocessableEntity, "invalid_state", "The only queue this API serves is the parked events, asked for as `state=parked`.")
 	case errors.Is(err, errOperationsBadList):

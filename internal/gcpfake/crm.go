@@ -5,6 +5,7 @@ import (
 	"maps"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -59,6 +60,7 @@ type CRM struct {
 	PendingPolls int
 
 	noPolicy map[string]bool      // projects whose getIamPolicy answers 403 (the plain read stays readable)
+	held     map[string][]string  // what testIamPermissions reports the caller holds, by project
 	taken    map[string]bool      // IDs held by projects the caller cannot read
 	creates  []CreatedProject     // creates accepted, in order
 	failNew  *apiError            // answers every create (an organization policy, say)
@@ -136,6 +138,7 @@ var (
 	crmProjectRE     = regexp.MustCompile(`^/v1/projects/([^/:]+)$`)
 	crmPolicyRE      = regexp.MustCompile(`^/v1/projects/([^/:]+):getIamPolicy$`)
 	crmSetPolicyRE   = regexp.MustCompile(`^/v1/projects/([^/:]+):setIamPolicy$`)
+	crmTestPermsRE   = regexp.MustCompile(`^/v1/projects/([^/:]+):testIamPermissions$`)
 	crmV3GetRE       = regexp.MustCompile(`^/v3/projects/([^/:]+)$`)
 	crmV3MoveRE      = regexp.MustCompile(`^/v3/projects/([^/:]+):move$`)
 	crmV3OpRE        = regexp.MustCompile(`^/v3/(operations/[^/]+)$`)
@@ -148,7 +151,7 @@ func NewCRM(t *testing.T) *CRM {
 	t.Helper()
 	f := &CRM{projects: map[string]int64{}, labels: map[string]map[string]string{}, names: map[string]string{}, named: map[string]bool{},
 		policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
-		noPolicy: map[string]bool{}, noUpdate: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{},
+		noPolicy: map[string]bool{}, held: map[string][]string{}, noUpdate: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{},
 		folders: map[string]gcpFolder{}, folderPolicies: map[string][]Binding{}, folderAudits: map[string][]AuditConfig{}, parents: map[string]string{},
 		nextProj: FirstCreatedProjectNumber - 1, nextFolder: FirstCreatedFolderNumber - 1}
 	f.Server = newServer(t, f.handle)
@@ -327,6 +330,39 @@ func (f *CRM) FailGet(project string, code int, status, msg string) {
 	if code != 0 {
 		f.failGet[project] = &apiError{code: code, status: status, msg: msg}
 	}
+}
+
+// SetHeldPermissions sets what testIamPermissions on project reports the
+// caller holds (by default nothing). The read is about the caller's own
+// permissions, so what it answers is set rather than derived from the
+// project's policy, exactly as the real API answers it.
+func (f *CRM) SetHeldPermissions(project string, perms ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.held[project] = perms
+}
+
+// testPermissions answers projects.testIamPermissions: the permissions asked
+// for that the caller holds, in the order they were asked, and nothing else —
+// a permission the caller does not hold is left out, which is how the real API
+// answers it (never with a refusal: a caller that holds none of them is
+// answered an empty list). The caller holds mu, and has checked that the
+// project is one this caller may read.
+func (f *CRM) testPermissions(w http.ResponseWriter, project string, body []byte) {
+	var in struct {
+		Permissions []string `json:"permissions"`
+	}
+	if err := json.Unmarshal(body, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a list of permissions is required")
+		return
+	}
+	var got []string
+	for _, p := range in.Permissions {
+		if slices.Contains(f.held[project], p) {
+			got = append(got, p)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"permissions": got})
 }
 
 // DenyPolicy makes project's getIamPolicy answer 403 while its plain read
@@ -665,6 +701,18 @@ func (f *CRM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			bs = []Binding{}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"version": 3, "etag": "BwX1", "bindings": bs})
+		return
+	}
+	if m := crmTestPermsRE.FindStringSubmatch(r.URL.Path); m != nil && r.Method == http.MethodPost {
+		// A project this caller cannot read answers 403 rather than an empty
+		// list, as the fake's other IAM reads do: an empty list is the real
+		// API's answer to a caller that holds none of the permissions it
+		// asked about, and the two must not be one answer.
+		if _, ok := f.projects[m[1]]; !ok || f.noPolicy[m[1]] || f.noGet[m[1]] {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
+			return
+		}
+		f.testPermissions(w, m[1], body)
 		return
 	}
 	m := crmProjectRE.FindStringSubmatch(r.URL.Path)

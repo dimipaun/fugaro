@@ -37,6 +37,11 @@ import (
 // call, as real Secret Manager refuses it, so the retirement is observable
 // and not only recorded.
 //
+// A create carries a replication policy, which the fake checks as the API
+// checks it — automatic, or user-managed with a location for every replica —
+// stores with the container, and answers back on every read of it, so a test
+// can assert where the container a call created lives (Replication).
+//
 // Known differences from real Secret Manager: the list filter supports only
 // the one shape Fugaro sends, and pages are never split.
 type Secrets struct {
@@ -118,6 +123,13 @@ type Secrets struct {
 	// a run lists the versions of many — and a test asking whether a secret
 	// was touched at all asks the other question.
 	versionLists map[string]int
+	// held is what a secrets.testIamPermissions call answers, by secret ID: the
+	// subset of the asked permissions the caller holds. It is nil for a test that
+	// never set it, and nil holds EVERY permission asked — the fake cannot model
+	// a project's IAM, and the default a test should have to opt OUT of is the
+	// one that changes no other test's behaviour. SetHeldPermissions is how a test
+	// says a caller is not an owner (SetHeldPermissions(id) with no permission).
+	held map[string][]string
 }
 
 type fakeSecret struct {
@@ -125,6 +137,11 @@ type fakeSecret struct {
 	created  time.Time
 	versions [][]byte
 	policy   []Binding
+	// regions is the container's user-managed replication as the create that
+	// made it named it; empty is automatic, the zero value, which is what a
+	// container the fake did not create itself (Seed) carries: the policy
+	// every Fugaro container had before LP5a wrote one in the region.
+	regions []string
 	// disabled says every version of this secret is DISABLED, the state an
 	// operator's disable leaves: the container exists, no enabled version
 	// does. Set by DisableVersions.
@@ -161,11 +178,16 @@ var (
 	// prints and the time beside them are one version's.
 	accessRE       = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/(latest|[0-9]+):access$`)
 	secretPolicyRE = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+):getIamPolicy$`)
-	versionRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+)$`)
-	destroyRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):destroy$`)
-	disableRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):disable$`)
-	enableRE       = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):enable$`)
-	labelTermRE    = regexp.MustCompile(`^labels\.([a-z0-9_-]+)=([a-z0-9_-]*)$`)
+	// secretPermissionsRE is the pre-flight probe every writer of a provider key
+	// makes before it reads a value (the project-owner probe, KS2 of
+	// docs/keys-through-service): it answers which of the asked permissions the
+	// caller holds on ONE container, and never a policy.
+	secretPermissionsRE = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+):testIamPermissions$`)
+	versionRE           = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+)$`)
+	destroyRE           = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):destroy$`)
+	disableRE           = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):disable$`)
+	enableRE            = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):enable$`)
+	labelTermRE         = regexp.MustCompile(`^labels\.([a-z0-9_-]+)=([a-z0-9_-]*)$`)
 )
 
 // NewSecrets starts a Secret Manager fake that lives until the test ends.
@@ -300,6 +322,20 @@ func (f *Secrets) Enabled() []string {
 	return append([]string(nil), f.enables...)
 }
 
+// Replication answers the replica locations of secret id's user-managed
+// replication, or nil when the container is automatic or does not exist. It
+// reads what the create stored rather than the create request: a run creates
+// several containers, and the policy of ONE of them is the question.
+func (f *Secrets) Replication(id string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s := f.secrets[id]
+	if s == nil {
+		return nil
+	}
+	return append([]string(nil), s.regions...)
+}
+
 // AddVersion appends a version to secret id, as another writer of the same
 // secret would: it changes the fake's state without a client call, so a test
 // can land a concurrent write inside a window of the code under test — and
@@ -333,6 +369,23 @@ func (f *Secrets) SetPolicy(id string, bindings []Binding) {
 		f.t.Fatalf("gcpfake: SetPolicy(%q): no such secret", id)
 	}
 	s.policy = cloneBindings(bindings)
+}
+
+// SetHeldPermissions is what a secrets.testIamPermissions call answers for secret
+// id: the permissions the caller holds there. A call with none held is the
+// caller that is no project owner, which is the state the provider-key writers
+// refuse. A test that never calls this gets an unset held, which holds
+// everything asked (Secrets.held).
+func (f *Secrets) SetHeldPermissions(id string, permissions ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.secrets[id] == nil {
+		f.t.Fatalf("gcpfake: SetHeldPermissions(%q): no such secret", id)
+	}
+	if f.held == nil {
+		f.held = map[string][]string{}
+	}
+	f.held[id] = append([]string(nil), permissions...)
 }
 
 func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
@@ -401,6 +454,41 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		servePolicy(w, r.URL.Query(), s.policy)
+	case (r.Method == http.MethodGet || r.Method == http.MethodPost) && secretPermissionsRE.MatchString(p):
+		m := secretPermissionsRE.FindStringSubmatch(p)
+		s := f.secrets[m[2]]
+		if s == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Secret ["+m[2]+"] not found.")
+			return
+		}
+		// The generated client sends the permissions in the POST body
+		// (projects.secrets.testIamPermissions takes its request there), while a
+		// hand-made GET carries them in the query; both are served, so a test
+		// can drive the probe either way.
+		asked := r.URL.Query()["permissions"]
+		if r.Method == http.MethodPost && len(body) != 0 {
+			var req struct {
+				Permissions []string `json:"permissions"`
+			}
+			if err := json.Unmarshal(body, &req); err == nil && len(req.Permissions) != 0 {
+				asked = req.Permissions
+			}
+		}
+
+		// An unset held (nil) holds everything asked: the fake models no IAM, and
+		// the answer every existing test's write already relies on is the one that
+		// keeps this probe from refusing writes those tests are not about.
+		if f.held == nil {
+			writeJSON(w, http.StatusOK, map[string]any{"permissions": asked})
+			return
+		}
+		held := make([]string, 0, len(asked))
+		for _, want := range asked {
+			if slices.Contains(f.held[m[2]], want) {
+				held = append(held, want)
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"permissions": held})
 	case r.Method == http.MethodDelete && secretPathRE.MatchString(p):
 		m := secretPathRE.FindStringSubmatch(p)
 		if f.secrets[m[2]] == nil {
@@ -491,19 +579,22 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		id := r.URL.Query().Get("secretId")
 		var req struct {
 			Labels      map[string]string `json:"labels"`
-			Replication struct {
-				Automatic *struct{} `json:"automatic"`
-			} `json:"replication"`
+			Replication createReplication `json:"replication"`
 		}
-		if err := json.Unmarshal(body, &req); err != nil || id == "" || req.Replication.Automatic == nil {
-			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "want a secretId and automatic replication")
+		if err := json.Unmarshal(body, &req); err != nil || id == "" {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "want a secretId and a replication policy")
+			return
+		}
+		regions, ok := req.Replication.regions()
+		if !ok {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "want automatic, or user-managed with a location for every replica")
 			return
 		}
 		if f.secrets[id] != nil {
 			writeError(w, http.StatusConflict, "ALREADY_EXISTS", "Secret ["+id+"] already exists.")
 			return
 		}
-		s := &fakeSecret{labels: req.Labels, created: time.Now()}
+		s := &fakeSecret{labels: req.Labels, created: time.Now(), regions: regions}
 		f.secrets[id] = s
 		writeJSON(w, http.StatusOK, s.json(m[1], id))
 	case r.Method == http.MethodGet && secretsPathRE.MatchString(p):
@@ -607,8 +698,57 @@ func (s *fakeSecret) json(project, id string) map[string]any {
 		"name":        "projects/" + project + "/secrets/" + id,
 		"createTime":  s.created.UTC().Format(time.RFC3339Nano),
 		"labels":      s.labels,
-		"replication": map[string]any{"automatic": map[string]any{}},
+		"replication": replicationJSON(s.regions),
 	}
+}
+
+// replicationJSON is a replication policy as the API answers it: automatic,
+// or user-managed with the replica locations it holds (empty locations are
+// automatic, which is the zero value every seeded container has).
+func replicationJSON(regions []string) map[string]any {
+	if len(regions) == 0 {
+		return map[string]any{"automatic": map[string]any{}}
+	}
+	replicas := make([]any, 0, len(regions))
+	for _, r := range regions {
+		replicas = append(replicas, map[string]any{"location": r})
+	}
+	return map[string]any{"userManaged": map[string]any{"replicas": replicas}}
+}
+
+// createReplication is the replication policy a create request carries. The
+// API takes exactly one of automatic and userManaged, and a user-managed
+// policy names a location for every replica: a request that names the policy
+// any other way is refused, as real Secret Manager refuses it.
+type createReplication struct {
+	Automatic   *struct{} `json:"automatic"`
+	UserManaged *struct {
+		Replicas []struct {
+			Location string `json:"location"`
+		} `json:"replicas"`
+	} `json:"userManaged"`
+}
+
+// regions is the policy's replica locations, nil for automatic; ok is false
+// for a policy the API refuses: both, neither, a user-managed one with no
+// replica, or a replica with no location.
+func (r createReplication) regions() (regions []string, ok bool) {
+	switch {
+	case r.Automatic != nil && r.UserManaged != nil, r.Automatic == nil && r.UserManaged == nil:
+		return nil, false
+	case r.Automatic != nil:
+		return nil, true
+	}
+	if len(r.UserManaged.Replicas) == 0 {
+		return nil, false
+	}
+	for _, rep := range r.UserManaged.Replicas {
+		if rep.Location == "" {
+			return nil, false
+		}
+		regions = append(regions, rep.Location)
+	}
+	return regions, true
 }
 
 // version is version n of s, or nil when the secret has no such version.
