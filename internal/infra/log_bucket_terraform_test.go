@@ -187,7 +187,10 @@ func TestForgetPlansWhatItPlansToday(t *testing.T) {
 	_, rows := installationPlanAgainst(t, spec, nil, func(vars map[string]any) map[string]any {
 		return logIsolationState(t, vars, "global")
 	})
-	for _, addr := range append(slices.Clone(ForgetDeletes), forgetViewGrants) {
+	// The four the rollback deletes, and each view grant beside them when the
+	// installation has one (this fixture names no launcher, so the plan holds
+	// none).
+	for _, addr := range ForgetDeletes {
 		rc, ok := rows[addr]
 		if !ok {
 			t.Errorf("the rollback's plan holds no change for %s", addr)
