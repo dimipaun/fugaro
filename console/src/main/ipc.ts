@@ -235,6 +235,21 @@ export const RUNS_LIST_MAX_LIMIT = 200
 export const SUMMARY_SINCE_WINDOWS: readonly string[] = Object.freeze(['7d', '1d'])
 
 /**
+ * RUNS_STREAM_SINCE_WINDOWS is the closed set of windows `runs ls --stream
+ * --since` may be asked for from here, and **it is the console's own window
+ * rather than the command's grammar**. `runs ls` reads `parseSince` (`runSince`,
+ * `internal/cli/runs.go`), whose first branch is `0` -- no lower bound at all --
+ * and a *live* read of every run an installation ever made, still arriving, is
+ * the one window a feed must not be opened on. The window this console makes its
+ * `runs ls` reads for is a day (`RUNS_SINCE`, `src/renderer/entry.ts`), so the
+ * stream admits exactly that word: the feed and the whole-document listing its
+ * screen falls back to cover the same window, and a renderer cannot widen one of
+ * the two under another spelling of the same flag. The set is stated once, here,
+ * and both the schema and the argv builder read it.
+ */
+export const RUNS_STREAM_SINCE_WINDOWS: readonly string[] = Object.freeze(['24h'])
+
+/**
  * GRAPH_SCOPE_RE is the closed shape of a `graph.read` scope argument: the two
  * selector words, and an id-carrying scope whose id is one lower-case letter or
  * digit followed by up to 39 more of those or a hyphen. It is **the CLI's own
@@ -369,6 +384,16 @@ const MAX_ROADMAP_RELEASE_LENGTH = 64
  *     of `runSince` because the *position* differs as well: the row emits it as
  *     the `=` form `--since=<window>`, one word, so a value can never read as a
  *     flag;
+ *   - `runsStreamSince` -- `runs ls --stream --since`'s window: one of
+ *     `RUNS_STREAM_SINCE_WINDOWS` and nothing else, which is the console's own
+ *     day rather than `parseSince`'s grammar (`runSince`). It is closed for
+ *     `summarySince`'s reason and one more the live read adds: `parseSince`'s
+ *     `0` is no lower bound at all, and on a feed that is every run the
+ *     installation ever made, still arriving. It is a kind of its own rather
+ *     than a reuse of `runSince` for that reason *and*, as `summarySince`'s is,
+ *     for the position: this row emits the space form `--since <window>`, the
+ *     one `runs ls`'s whole-document row emits, so a stream and the listing its
+ *     screen falls back to ask for one window one way;
  *   - `reportDimension` -- `report --by`'s closed set of eight words;
  *   - `secretScope` -- `secrets ls`'s two mutually exclusive scopes;
  *   - `pullRequest` -- a pull request number, a positive integer;
@@ -450,6 +475,7 @@ export type ArgumentKind =
   | 'runLimit'
   | 'runAfter'
   | 'summarySince'
+  | 'runsStreamSince'
   | 'reportDimension'
   | 'secretScope'
   | 'pullRequest'
@@ -467,6 +493,7 @@ export type ArgumentKind =
   | 'graphSource'
   | 'roadmapNode'
   | 'roadmapRelease'
+  | 'setupAnswers'
   | 'licenceKey'
 
 /** ArgumentSpec is one field of an operation's closed argument schema. */
@@ -2015,6 +2042,242 @@ export const CONSOLE_OPERATIONS = [
     summary: 'the follow-up steps a management command saved for a later `fugaro apply`, the change that asked for each of them, and whether a record is on disk and still stamped against the config this machine now has',
     args: [],
   },
+  // The console-improvements rows (AL, F24–F26). Nine operations, and every
+  // one of them is **inert until used**: the argv is here and the handler is a
+  // stub (`src/main/index.ts`), because the CLI release that carries each flag
+  // is not the release in this tree. Each row's floor (`src/shared/version.ts`)
+  // is a plain `string | null = null` until that release names one, so no child
+  // is spawned for any of these today.
+  //
+  // **None of them has a flag the renderer can choose.** Every word beside the
+  // command path is a fixed word of the row's `words` -- `--stream`, `--me`,
+  // `--plan-only`, `--answers-file -`, `--events` -- and `flags` carries only
+  // `--json`, which is the surface's own. That is the graph watch's shape read
+  // across a set rather than a new rule: a mode word that makes a child
+  // long-lived, or that decides what a child does, belongs in the command path
+  // where nothing a payload says can turn it on or off.
+  {
+    // The runs list's live form (RS2, `runs ls --stream --json --since <w>`):
+    // the same rows the whole-document read draws, one line at a time. The
+    // window is the console's own closed set (`RUNS_STREAM_SINCE_WINDOWS`) --
+    // the day every `runs ls` here is read for -- and never `parseSince`'s
+    // grammar, whose `0` is every run the installation ever made arriving one
+    // line at a time. It is **required**, because a stream that opened on the
+    // command's default window would be a feed whose first question nobody
+    // answered. The row's other columns --
+    // `--repo`, `--mine`, `--pr`, `--all`, `--limit`, `--after` -- are absent,
+    // so the stream is the window's own list and never a filtered one.
+    name: 'runs.stream',
+    method: 'streamRuns',
+    command: 'runs ls --stream',
+    flags: ['--json'],
+    summary: 'the run list as it changes: one row per line, and a final line that ends the feed',
+    args: [
+      {
+        key: 'since',
+        kind: 'runsStreamSince',
+        required: true,
+        why: 'the window the feed covers: the console’s own day (`RUNS_STREAM_SINCE_WINDOWS`) and no other word. Required rather than defaulted: a live list whose window nobody chose is the read the console must not make on a screen’s behalf.',
+      },
+    ],
+  },
+  {
+    // The Spend screen's live form (RS2): `spend.report`'s argv plus
+    // `--stream`. The four declared arguments are the whole-document read's
+    // own, unchanged and for the same reasons -- so a stream and a report
+    // cannot narrow the same figure two ways.
+    name: 'spend.stream',
+    method: 'streamSpend',
+    command: 'report --stream',
+    flags: ['--json'],
+    summary: 'the spend report as it changes: one line per line of the report, and a final line that ends the feed',
+    args: [
+      {
+        key: 'by',
+        kind: 'reportDimension',
+        required: false,
+        why: 'the breakdown’s dimension, `report`’s own closed set.',
+      },
+      {
+        key: 'since',
+        kind: 'reportSince',
+        required: false,
+        why: 'the range’s start, a day the grammar reads.',
+      },
+      {
+        key: 'until',
+        kind: 'reportSince',
+        required: false,
+        why: 'the range’s end, in the same grammar.',
+      },
+      {
+        key: 'repo',
+        kind: 'repository',
+        required: false,
+        why: 'the one repository the report is about.',
+      },
+    ],
+  },
+  {
+    // The caps read's live form (RS2, RS4): `budget.show`'s argv plus
+    // `--stream`. The three arguments are the whole-document read's own --
+    // including `compute`, the opt-in that costs a listing of the runs bucket
+    // -- so the stream carries exactly what the read carries.
+    name: 'budget.stream',
+    method: 'streamBudget',
+    command: 'budget show --stream',
+    flags: ['--json'],
+    summary: 'caps, counters and the effective per-run cap as they change, one line at a time',
+    args: [
+      {
+        key: 'repo',
+        kind: 'repository',
+        required: false,
+        why: 'the design allow-list admits `--repo R` on this command.',
+      },
+      {
+        key: 'all',
+        kind: 'flag',
+        required: false,
+        why: 'the project-wide read, admitted on this command and refused together with `--repo` by `REFUSED_PAIRS`.',
+      },
+      {
+        key: 'compute',
+        kind: 'flag',
+        required: false,
+        why: 'the opt-in that also lists the runs bucket: refused with `--all`, as it is on the whole-document read.',
+      },
+    ],
+  },
+  {
+    // The caller's own role (WH1, D2907): `user ls --me --json`. **The flag is
+    // a word of the command path and not an argument**, because there is no
+    // form of this read that is about anybody else: a payload that could turn
+    // `--me` off would be a payload that asked the roster question, and the
+    // roster is a screen this console does not have. It is not refused in an
+    // agent session for `members.list`'s reason: it reads the caller's own
+    // role, resolved by the same gates that answer the writes.
+    name: 'whoami',
+    method: 'whoAmI',
+    command: 'user ls --me',
+    flags: ['--json'],
+    summary: 'the caller’s own role, the scope it is held at, and the repositories it reaches',
+    args: [],
+  },
+  {
+    // The image catalog (MO-C's read): `image ls --json`, the installation's
+    // own image catalog. It is the group's one read and takes no argument at
+    // all, and five of the group's writers are refused below -- `image add`,
+    // `image rm` and `image promote` as commands and as words of `image`,
+    // beside the `image build` and `image refresh` rows.
+    name: 'image.catalog.ls',
+    method: 'listImageCatalog',
+    command: 'image ls',
+    flags: ['--json'],
+    summary: 'the installation’s image catalog: what each kind resolves to and how it was pinned',
+    args: [],
+  },
+  {
+    // The recipes (RB4/RS2's read): `recipes ls --json`, the recipes the
+    // project may run. It takes no argument at all, and the group's two other
+    // words are refused below: `recipes publish` as a command and as a word of
+    // `recipes`, and `recipes validate` as a word, for the free `FILE`
+    // positional a renderer would fill. Nothing a payload says reaches this
+    // argv.
+    name: 'recipes.ls',
+    method: 'listRecipes',
+    command: 'recipes ls',
+    flags: ['--json'],
+    summary: 'the recipes this project may run, with what each is for and what it needs',
+    args: [],
+  },
+  {
+    // The first-run wizard's plan (SW3a, D2904): `setup --plan-only
+    // --answers-file - --events --json`. Three things about this row are the
+    // whole of its safety.
+    //
+    // **The answers travel on stdin and never in a word.** `--answers-file -`
+    // is a fixed word of the command path, so the only value the child can
+    // read is the one main writes to its standard input -- there is no file for
+    // another process of the same user to swap between main's check and the
+    // CLI's read, and no argv word a path could be spelled into (the kind is
+    // `stdin`, `spawn.ts`'s, the same one `run --task-file -` uses).
+    //
+    // **`--plan-only` is what makes this a read.** Without it the same command
+    // creates the GCP project, the installation and a repository's wiring, so
+    // the word in the command path is the difference the `setup` never-row
+    // turns on -- and that row grants this operation by name (`except` below).
+    //
+    // **`--events` is what makes it a feed.** The plan's account arrives as
+    // newline-delimited events and not as one document, which is why this
+    // operation has the setup feed's deadline rather than `READ_TIMEOUT_MS`
+    // (`SETUP_DEADLINE_MS`, `spawn.ts`).
+    name: 'setup.plan',
+    method: 'planSetup',
+    command: 'setup --plan-only --answers-file - --events',
+    flags: ['--json'],
+    summary: 'what a first run would do, as a feed of events and with nothing created',
+    args: [
+      {
+        key: 'answers',
+        kind: 'setupAnswers',
+        required: true,
+        why: 'the wizard’s five answers, validated here key by key and serialised by this process into the document the child decodes: the payload carries an object and never a path, and `version` is main’s to write.',
+      },
+    ],
+  },
+  {
+    // The first-run wizard's apply (SW3a, D2904): `setup --answers-file -
+    // --events --json`, the same two words less `--plan-only`.
+    //
+    // **The payload is `{}` and that is deliberate.** The answers file this row
+    // hands the child is the one main held when it showed the plan window, so a
+    // renderer cannot slip a different project, region or rigor in between the
+    // window and the write -- a second answers object on the wire would be a
+    // second thing to validate and a second thing to disagree with the window.
+    // There is no argument of this row at all.
+    //
+    // **It is one of the lapse's rows.** A converge is a write, so
+    // `refusedAfterLapse` takes it away with the launch, the settings write and
+    // the record's move (T12), and `setup.plan` -- the same command as a read --
+    // is not this row and keeps answering.
+    name: 'setup.apply',
+    method: 'applySetup',
+    command: 'setup --answers-file - --events',
+    flags: ['--json'],
+    summary: 'the write: converge the installation from the answers main held at plan time, as a feed of events',
+    refusedAfterLapse: true,
+    args: [],
+  },
+  {
+    // The settings editor (SU1, D2902): the one operation of the nine whose
+    // command is **null**, because it spawns nothing as itself. It opens the
+    // main process's own window for one key of the document the settings read
+    // answered -- the entry, the validation, the dry run and the confirmation
+    // window are that window's -- and it answers the outcome object rather than
+    // a document, exactly as `settings.edit` does.
+    //
+    // **`key` is the whole payload.** The layer and the phase are main's,
+    // decided from the read's own row and the dry run's document, so a renderer
+    // cannot name where or when a write lands -- which is why the editor is an
+    // operation of its own rather than a flag on the write. It is the same
+    // `settingKey` kind `settings.edit` uses, and the same reading of it: the
+    // grammar is a key's shape, and whether the generic path owns a key is the
+    // CLI's own allow-list (D1102).
+    name: 'settings.editor.open',
+    method: 'openSettingsEditor',
+    command: null,
+    flags: [],
+    summary: 'the write’s window: one setting’s entry, its dry run and the operator’s confirmation',
+    args: [
+      {
+        key: 'key',
+        kind: 'settingKey',
+        required: true,
+        why: 'the setting the window is for — a key of the document the read answered, so the console invents none. The layer and the phase stay main’s.',
+      },
+    ],
+  },
 ] as const satisfies readonly ConsoleOperation[]
 
 /** OperationName is the closed union of the surface's operation names. */
@@ -2094,14 +2357,20 @@ export interface NeverReachable {
    * about every command at once. */
   readonly command?: string
   /**
-   * `except` is the operations a `flag` row does **not** apply to, by operation
-   * name, and it is how one argv on this surface may carry a word the table
-   * refuses everywhere else. It exists for a word that is the *only* way into a
-   * command's stream rather than a second name for a read the console already
-   * has: `--watch` on `runs ls` is `watch` under another name and stays refused
-   * on every command, but `graph --watch` is `graph`'s own streaming form --
-   * there is no `fugaro graph watch` word to use instead -- so `graph.watch` is
-   * the one name here.
+   * `except` is the operations this row does **not** apply to, by operation
+   * name, and it is how one argv on this surface may reach what the table
+   * refuses. It exists for something that is the *only* way into a read rather
+   * than a second name for one the console already has: `--watch` on `runs ls`
+   * is `watch` under another name and stays refused on every command, but
+   * `graph --watch` is `graph`'s own streaming form -- there is no `fugaro
+   * graph watch` word to use instead -- so `graph.watch` is that row's one
+   * name; and `setup` is a write in every form but the first-run wizard's two,
+   * so `setup.plan` and `setup.apply` are that row's.
+   *
+   * **It is a `flag` row's field and a `command` row's alike** (the console
+   * improvements plan, AL): the two shapes need it for the same reason, and the
+   * alternative -- taking `setup` off the table and refusing its sibling
+   * commands one by one -- would be the denylist this table exists not to be.
    *
    * **It is keyed by operation and never by command.** A name is the whole of
    * what this surface has: a caller that does not say which operation it is
@@ -2109,9 +2378,11 @@ export interface NeverReachable {
    * below), so `assertReachableSurface` and the per-row tests still refuse the
    * bare word, and a second argv on `graph` would be a second surface row rather
    * than a second member of this list. The check that an exception is *used* is
-   * `src/main/spawn.ts`'s: a row whose argv carries the word is refused there
-   * unless the operation is on this list, and this list admits nothing the spawn
-   * table does not build.
+   * `src/main/spawn.ts`'s: a row whose argv carries the word, or whose command
+   * path is the command or a longer path under it, is refused there unless the
+   * operation is on this list, and this list admits nothing the spawn table does
+   * not build -- and a name that is not an operation at all is refused by
+   * `assertReachableSurface` at startup.
    */
   readonly except?: readonly string[]
 }
@@ -2293,6 +2564,22 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'setup',
     why: 'a write: the first-run converge creates the GCP project, the installation and a repository’s Fugaro wiring, and it applies Terraform',
     where: 'internal/cli/setup.go:235 (the setup door of internal/cli/init.go’s newInitCmdWith)',
+    // **The row stays, and two names are excepted from it** (the console
+    // improvements plan, AL and D2904): the first-run wizard is a screen, and a
+    // screen has no terminal -- so the plan the wizard shows and the apply the
+    // operator confirms are `setup --plan-only …` and `setup …`, two argvs of
+    // this same command. A ban is kept and narrowed rather than a denylist
+    // written, which is what makes "the console never converges anything but
+    // what the wizard's window showed" a fact of this table: the two names are
+    // the whole of the exception, `setup.plan`'s argv carries `--plan-only` and
+    // `setup.apply`'s carries none of the creating flags, and both take their
+    // answers from main's own bytes on stdin.
+    //
+    // **A third argv of `setup` is refused**, and that is the direction that
+    // matters: a name is a row this file's own table declares, so a later edit
+    // cannot widen this exception by adding a word to some argv -- it would
+    // have to come back here and name the new operation.
+    except: ['setup.plan', 'setup.apply'],
   },
   {
     shape: 'command',
@@ -2341,6 +2628,27 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'recipes publish',
     why: 'a write: it publishes a recipe',
     where: 'internal/cli/recipes.go:327',
+  },
+  // The recipes group's other two words, in the second shape the models rows
+  // below are drawn in: refused **as words** wherever a `recipes` argv spells
+  // them, because `recipes ls publish` is not the command `recipes publish`
+  // and a command row alone would admit it. `publish` is the write above;
+  // `validate` is a read, and the word of this group a renderer could fill in
+  // -- it takes a free `FILE` positional, where the surface's one read,
+  // `recipes ls`, takes no argument at all.
+  {
+    shape: 'argv',
+    command: 'recipes',
+    value: 'publish',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/recipes.go:327',
+  },
+  {
+    shape: 'argv',
+    command: 'recipes',
+    value: 'validate',
+    why: 'a read, and the one word of this group that takes a **positional** `FILE` a renderer would fill: this surface reads the project’s recipes with `recipes ls`, which takes no argument at all, and a free word a caller chooses is the shape this table keeps off it',
+    where: 'internal/cli/recipes.go:453 (Use: "validate FILE")',
   },
   // **The `user` group's writers, in the two shapes the models rows below are
   // drawn in.** `fugaro user ls --json` is the group's one reachable word
@@ -2522,6 +2830,93 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     why: 'it prints a git credential — the console never handles a secret value, not even one it would only pass through',
     where: 'internal/cli/gitcred.go:42',
   },
+  // **The image group's writers the rows above did not carry, in the two
+  // shapes the models and `user` rows are drawn in.** The catalog's own three
+  // words -- `add` appends an entry to the installation's image catalog, `rm`
+  // drops one, and `promote` copies a repository's existing image definition
+  // into the catalog and points the repository at it -- are writes to a
+  // project setting a reviewer signed off on, which is why they are here
+  // beside the `image build` and `image refresh` rows above rather than
+  // reachable. The console's one word of this group stays `image ls --json`
+  // (`image.catalog.ls` above), and it takes no argument at all.
+  //
+  // The `argv` rows under them refuse the seven **words** wherever an
+  // operation under `image` spells them, in the command path or in the flags
+  // it fixes, on the models rows' own reasoning: a command row alone would
+  // admit a future operation whose command is `image add <name>` rather than
+  // the command `image add`. Each `command` row stays **above** the `argv` row
+  // carrying its word, so `isNeverReachable` answers with the narrower one and
+  // `console/test/unit/ipc.test.ts` can assert it per row. The credential
+  // helper above is the one word here with no `argv` row, as the `secrets`
+  // group's words have none: it is refused as a command, and a word-shaped
+  // refusal is for a word an argv could carry into a read.
+  {
+    shape: 'command',
+    value: 'image add',
+    why: 'a write: it appends an entry to the installation’s image catalog, a project setting a reviewer signed off on',
+    where: 'internal/cli/image_catalog.go:337 (Use: "add <name>")',
+  },
+  {
+    shape: 'command',
+    value: 'image rm',
+    why: 'a write: it removes an entry from the installation’s image catalog, which stops every repository the catalog’s map points at it',
+    where: 'internal/cli/image_catalog.go:705 (Use: "rm <name>")',
+  },
+  {
+    shape: 'command',
+    value: 'image promote',
+    why: 'a write: it copies a repository’s image definition into the catalog and rewrites the repository’s workflow to name the entry, in the checkout it runs in',
+    where: 'internal/cli/image_promote.go:22 (Use: "promote <repo> [name]")',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'add',
+    why: 'the catalog write above, refused as a word of this command as well: an `image` argv that spells `add` is refused before `spawn` is called, whether it spells it in the command path or in the flags it fixes',
+    where: 'internal/cli/image_catalog.go:337 (Use: "add <name>")',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'rm',
+    why: 'the catalog write above, refused as a word of this command as well',
+    where: 'internal/cli/image_catalog.go:705 (Use: "rm <name>")',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'promote',
+    why: 'the catalog write above, refused as a word of this command as well',
+    where: 'internal/cli/image_promote.go:22 (Use: "promote <repo> [name]")',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'build',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/image.go:77',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'gate',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/image_record.go:63',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'record',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/image_record.go:148',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'refresh',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/image_refresh.go:330',
+  },
   {
     shape: 'command',
     value: 'secrets set',
@@ -2670,11 +3065,15 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
  * not `run`) -- and its flags are matched one by one, so `doctor --json` is
  * allowed while `doctor --json --check-github-app` is not.
  *
- * A flag row's `except` names the operations that row does not apply to, and it
- * is read only when the caller names the operation it is asking about: the word
- * itself is refused for every other operation and for a caller that names none,
- * so an exception is a fact about one argv on the surface rather than a
- * permission for a word (`graph.watch`'s row above).
+ * A row's `except` names the operations that row does not apply to, and it is
+ * read only when the caller names the operation it is asking about: the word,
+ * or the command, is refused for every other operation and for a caller that
+ * names none, so an exception is a fact about one argv on the surface rather
+ * than a permission for a word (`graph.watch`'s and `setup`'s rows above). A
+ * `command` row's exception is otherwise the strictest thing here: the command
+ * row matches the row's own words or a longer path under them, and never a
+ * command the row does not name -- so an exception cannot widen into a
+ * permission for a sibling command.
  */
 export function isNeverReachable(operation: {
   /** `name` is the operation asking, and it is **optional on purpose**: the
@@ -2687,11 +3086,33 @@ export function isNeverReachable(operation: {
   readonly command: string | null
   readonly flags: readonly string[]
 }): NeverReachable | null {
+  const asking = operation.name ?? null
+  // An exception is read only for a caller that named the operation it is
+  // asking about: a caller that named none is asking about the word or the
+  // command itself, and every one of those is refused.
+  const excepted = (entry: NeverReachable): boolean =>
+    asking !== null && entry.except !== undefined && entry.except.includes(asking)
   for (const entry of NEVER_REACHABLE) {
-    if (entry.shape === 'command' && entry.value === operation.command) return entry
+    // A `command` row is about one command, and it matches an operation whose
+    // command path is that command **or a longer path under it** -- the same
+    // reading the `argv` rows below take, and for the same reason. The launch's
+    // command carries two fixed words of its argv (`run --task-file -`), and so
+    // do the first-run wizard's two (`setup --plan-only --answers-file -
+    // --events`, `setup --answers-file - --events`): the mode word that decides
+    // what the child does belongs in the command path, which is what keeps it
+    // out of a payload, and a ban that only matched the bare word would leave
+    // every argv carrying one beneath it ungranted-and-unrefused.
+    if (
+      entry.shape === 'command' &&
+      operation.command !== null &&
+      (entry.value === operation.command || operation.command.startsWith(`${entry.value} `))
+    ) {
+      if (!excepted(entry)) return entry
+      continue
+    }
     if (entry.shape === 'flag' && operation.flags.includes(entry.value)) {
-      const name = operation.name ?? null
-      if (name === null || entry.except === undefined || !entry.except.includes(name)) return entry
+      if (!excepted(entry)) return entry
+      continue
     }
     // An `argv` row is about one word on one command, and it matches an
     // operation whose command path is that command *or* a longer path under it,
@@ -2798,6 +3219,59 @@ const MAX_SETTING_KEY_LENGTH = 120
  */
 const SETTINGS_KEY_RE = /^[a-z0-9_*]+(\.[a-z0-9_*]+)*$/
 
+// The first-run wizard's answers (docs/console-improvements, D2904).
+
+/**
+ * SETUP_ANSWER_KEYS is the five questions `fugaro setup` answers from one
+ * document (`setupAnswerQuestions`, `internal/cli/setup_answers.go`), in the
+ * order the CLI asks them.
+ *
+ * **The console keeps its own copy rather than importing
+ * `src/shared/new-ops.ts`'s**, and that direction is the design's: the contract
+ * task's own interface line says the allow-list implements the operations
+ * *beside* the contract and does not import them, so `src/shared` carries no
+ * authority over what a payload may contain. The two copies are held equal by
+ * the plan's own integration step (I-OPS) against the CLI goldens, which is
+ * what keeps two spellings of one fact from drifting.
+ */
+export const SETUP_ANSWER_KEYS: readonly string[] = Object.freeze([
+  'gcp_project',
+  'region',
+  'name',
+  'rigor',
+  'bake_repos',
+])
+
+/** SETUP_ANSWERS_VERSION is the answers file's own schema version
+ * (`schemas/setup-answers.schema.json`). It is main's to write: the file's
+ * `version` is the reader's contract and not one of the wizard's questions, so
+ * no renderer member names it. */
+export const SETUP_ANSWERS_VERSION = 1
+
+/**
+ * SETUP_RIGOR_WORDS is the rigor answer's closed set, and it is the **file's**
+ * four (`schemas/setup-answers.schema.json`'s `enum`), not the five the console
+ * draws elsewhere: `fugaro run --mode hotfix` is an operator's per-run mode a
+ * layer never sets, so an answers document carrying it is refused by the CLI's
+ * own decoder -- and a payload that can only fail after a child is spawned is
+ * exactly what this schema is here to refuse before one exists.
+ */
+export const SETUP_RIGOR_WORDS: readonly string[] = Object.freeze(['poc', 'startup', 'pro', 'critical'])
+
+/** MAX_SETUP_ANSWER_LENGTH bounds one answer before its grammar runs. Every
+ * question's answer is a word: a GCP project id, a region, a project name, a
+ * rigor mode, or a boolean. It is exported because it is a bound of the
+ * operation rather than an implementation detail: `ipc.test.ts` holds the
+ * refusal to the number itself, so a later widening of it is a test's failure
+ * and not a silent one. */
+export const MAX_SETUP_ANSWER_LENGTH = 256
+
+/** SETUP_ANSWERS_MAX_LENGTH bounds the serialised answers file. Each member is
+ * bounded above, so this is the whole document's own ceiling rather than a
+ * bound a single answer could be refused by -- and it is the number main hands
+ * to `payloadWidth`'s sibling for this kind (`kindLimit`). */
+export const SETUP_ANSWERS_MAX_LENGTH = 4096
+
 /** PROTOTYPE_KEYS are the three names a payload may never carry. They are not
  * arguments of any operation, so the closed-schema check would refuse them
  * anyway; naming them means the refusal says what it is. */
@@ -2817,9 +3291,16 @@ const PROTOTYPE_KEYS: readonly string[] = Object.freeze(['__proto__', 'construct
  * `runs ls --pr` *without* `--repo` is deliberately not here: whether that is
  * refused depends on how many repositories the local config lists, and the
  * console does not read the operator's config (rule 7).
+ *
+ * **`budget.stream` carries `budget.show`'s pair and for the same reason** (the
+ * console improvements plan, AL): the stream's argv is the read's own plus
+ * `--stream`, so `--repo` with `--all` is the same argv the CLI refuses at
+ * `internal/cli/budget.go:387` -- and it would be refused after a long-lived
+ * child had already started rather than before one existed.
  */
 const REFUSED_PAIRS: Readonly<Record<string, readonly (readonly [string, string, string])[]>> = Object.freeze({
   'budget.show': [['repo', 'all', "--repo and --all don't go together"]],
+  'budget.stream': [['repo', 'all', "--repo and --all don't go together"]],
   'runs.list': [
     ['repo', 'all', "--repo and --all don't go together"],
     ['pr', 'all', 'runs ls --pr needs --repo: a pull request number means something only in one repository'],
@@ -3056,6 +3537,78 @@ function refuse(reason: string): { readonly ok: false; readonly reason: string }
 }
 
 /**
+ * setupAnswersValue validates the first-run wizard's answers and answers with
+ * **the file the child reads**, as one string.
+ *
+ * Two things are deliberate, and both are rule 6's.
+ *
+ * **The payload carries an object and never a path.** The only path this
+ * operation ever sees is the `-` main puts in the argv (`--answers-file -`,
+ * `spawn.ts`'s own row words), so no renderer member can name a file -- and a
+ * member that is not one of the five known keys is refused by name right here,
+ * before any child exists. The object is checked as a plain payload, so the
+ * `{__proto__: ...}` shape `isPlainPayload` exists for is refused too.
+ *
+ * **The value returned is main's own serialisation and not the renderer's
+ * object.** Every member is read one key at a time, checked against its own
+ * grammar, and written into a document this function builds; the string that
+ * comes out is therefore made of values that were each validated, and there is
+ * no path for an unchecked member to ride along. `version` is added here: it is
+ * the answers file's schema member and not one of the wizard's questions.
+ *
+ * The bytes themselves are not made here. They are the caller's (`setup.plan`'s
+ * handler, SW3a), which encodes this string and hands it to the child on
+ * standard input -- so no file exists for another process of the same user to
+ * change between this check and the CLI's read.
+ */
+function setupAnswersValue(
+  spec: ArgumentSpec,
+  value: unknown,
+): { readonly ok: true; readonly value: ValidatedArgument } | { readonly ok: false; readonly reason: string } {
+  if (!isPlainPayload(value)) return refuse(`${spec.key} must be an object of the wizard’s answers`)
+  for (const key of Object.keys(value)) {
+    // The refusal names the key and never its value: a path a renderer sent is
+    // the case this branch is for, and echoing it would print it.
+    if (!SETUP_ANSWER_KEYS.includes(key)) return refuse(`${spec.key} takes no ${key}`)
+  }
+  const answers: Record<string, string | boolean> = {}
+  for (const key of SETUP_ANSWER_KEYS) {
+    const member: unknown = value[key]
+    if (member === undefined) return refuse(`${spec.key} is missing ${key}`)
+    if (key === 'bake_repos') {
+      if (typeof member !== 'boolean') return refuse(`${spec.key}'s bake_repos must be true or false`)
+      answers[key] = member
+      continue
+    }
+    if (typeof member !== 'string') return refuse(`${spec.key}'s ${key} must be a string`)
+    if (member === '' || member.length > MAX_SETUP_ANSWER_LENGTH) {
+      return refuse(
+        `${spec.key}'s ${key} must be a non-empty answer of at most ${MAX_SETUP_ANSWER_LENGTH} characters`,
+      )
+    }
+    const hidden = hiddenCharacterReason(member)
+    if (hidden !== null) return refuse(`${spec.key}'s ${key} ${hidden}`)
+    // A GCP project id, a region and a project name are words; `/` is the one
+    // character none of their grammars has, and refusing it here is what keeps
+    // a filesystem path out of the document the child decodes.
+    if (member.includes('/') || member.includes('\\')) {
+      return refuse(`${spec.key}'s ${key} must not be a path`)
+    }
+    if (key === 'rigor' && !SETUP_RIGOR_WORDS.includes(member)) {
+      return refuse(`${spec.key}'s rigor must be one of ${SETUP_RIGOR_WORDS.join(', ')}`)
+    }
+    answers[key] = member
+  }
+  const file: Record<string, unknown> = { version: SETUP_ANSWERS_VERSION }
+  for (const key of SETUP_ANSWER_KEYS) file[key] = answers[key]
+  const text = JSON.stringify(file)
+  if (text.length > SETUP_ANSWERS_MAX_LENGTH) {
+    return refuse(`${spec.key} must be an answers file of at most ${SETUP_ANSWERS_MAX_LENGTH} characters`)
+  }
+  return { ok: true, value: text }
+}
+
+/**
  * validateValue checks one argument against its kind. The strings it accepts are
  * ASCII by construction (every grammar is), it bounds each kind's length before
  * matching, and the `link` kind is the only one that is not a grammar: it is
@@ -3068,6 +3621,9 @@ function validateValue(
   spec: ArgumentSpec,
   value: unknown,
 ): { readonly ok: true; readonly value: ValidatedArgument } | { readonly ok: false; readonly reason: string } {
+  // The wizard's answers are the one kind whose payload is an object: it is
+  // checked before the kind's length is (the document's own bound is inside).
+  if (spec.kind === 'setupAnswers') return setupAnswersValue(spec, value)
   if (spec.kind === 'flag') {
     if (typeof value !== 'boolean') return refuse(`${spec.key} must be true or false`)
     return { ok: true, value }
@@ -3202,6 +3758,20 @@ function validateValue(
       // read by another spelling of the same flag.
       if (!SUMMARY_SINCE_WINDOWS.includes(value)) {
         return refuse(`${spec.key} must be one of ${SUMMARY_SINCE_WINDOWS.join(', ')}`)
+      }
+      return { ok: true, value }
+    case 'runsStreamSince':
+      // `runs ls --stream --since`, and **the console's own set rather than the
+      // command's grammar**: `runs ls` reads `parseSince` the way `runs stats`
+      // does, and its first branch is `0` -- no lower bound -- which on a live
+      // feed is every run the installation ever made, still arriving. The window
+      // is the day this console reads a run list for
+      // (`RUNS_STREAM_SINCE_WINDOWS`), so the feed and the whole-document
+      // listing its screen falls
+      // back to cover the same window; every other form the command takes
+      // (`0`, `7d`, `36h`, a date) is refused before a child exists.
+      if (!RUNS_STREAM_SINCE_WINDOWS.includes(value)) {
+        return refuse(`${spec.key} must be one of ${RUNS_STREAM_SINCE_WINDOWS.join(', ')}`)
       }
       return { ok: true, value }
     case 'reportDimension':
@@ -3391,6 +3961,10 @@ function kindLimit(kind: ArgumentKind): number {
       // longer than these two cannot be refused by the bound before its own
       // membership check sees it.
       return Math.max(...SUMMARY_SINCE_WINDOWS.map((window) => window.length))
+    case 'runsStreamSince':
+      // The longest window in the closed set, read off the set for
+      // `summarySince`'s reason.
+      return Math.max(...RUNS_STREAM_SINCE_WINDOWS.map((window) => window.length))
     case 'reportDimension':
       return 8
     case 'secretScope':
@@ -4096,6 +4670,34 @@ export function assertReachableSurface(operations: readonly ConsoleOperation[]):
     }
     names.add(operation.name)
   }
+  // Every exception the never table grants names an operation of *this* table,
+  // and a `command` row's names one under that same command. It is the check
+  // that keeps a name in that table from being a permission for a row that does
+  // not exist -- the one thing a name-keyed exception must not become, since a
+  // typo would otherwise turn a total ban into a ban that refuses nothing.
+  //
+  // The command is read the way `isNeverReachable` reads it: the row's own
+  // words, or a longer command path under them. `setup`'s exception names two
+  // operations whose command path carries the wizard's mode words, and a check
+  // that demanded the bare word would refuse the only exception the table has.
+  for (const entry of NEVER_REACHABLE) {
+    for (const name of entry.except ?? []) {
+      const named = operations.find((candidate) => candidate.name === name)
+      if (named === undefined) {
+        throw new Error(
+          `the never table's ${entry.value} row excepts ${name}, which is not an operation of the surface: an exception names a row of this table and nothing else`,
+        )
+      }
+      const under =
+        named.command !== null &&
+        (named.command === entry.value || named.command.startsWith(`${entry.value} `))
+      if (entry.shape === 'command' && !under) {
+        throw new Error(
+          `the never table's ${entry.value} row excepts ${name}, which drives ${String(named.command)}: a command row's exception names an operation of that command's own argv (the match is the row's words or a longer path under them)`,
+        )
+      }
+    }
+  }
 }
 
 /**
@@ -4198,7 +4800,11 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  *     per-person `counted_usd` and `notional_usd` -- the same spend figures the
  *     reduced mode withholds (D7), under another name -- so withholding
  *     `spend.report` while answering it would put the withheld dollars on
- *     screen through the by-person panel. `runs.summary` (console 0.119.0's
+ *     screen through the by-person panel, and **`spend.stream` is the same
+ *     read's live form** (the console improvements plan, AL): the same figures,
+ *     one line at a time, so withholding it costs nothing a reduced console had
+ *     -- a stream of a report it may not read is the report by another name.
+ *     `runs.summary` (console 0.119.0's
  *     jobs-free totals read) carries the same two quantities again, as
  *     `spent_micros` and `notional_micros` over the window and over each
  *     repository, so it is withheld with them for the same reason: a totals
@@ -4207,7 +4813,9 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  *     `budget show`.** The tab's own `VIEWS` entry declares the view this list
  *     is the other half of (`src/renderer/entry.ts`, `{ id: 'projects', … view:
  *     'caps' }`), so the section is offered and drawn only where `budget.show`
- *     may be read. `settings.read` (the settings-edit plan's C1) carries the
+ *     may be read, and **`budget.stream` is that same read's live form**, so it
+ *     is withheld with it (the console improvements plan, AL).
+ *     `settings.read` (the settings-edit plan's C1) carries the
  *     same kind of figure under a different name: the registry's `budget.*` and
  *     `agent.max_budget_usd` rows are the project's configured caps, and the
  *     reduced mode withholds caps -- a settings table answered here would put a
@@ -4239,8 +4847,8 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  */
 export const REDUCED_VIEW_OPERATIONS: Readonly<Record<ReducedView, readonly OperationName[]>> =
   Object.freeze({
-    spend: Object.freeze(['spend.report', 'runs.stats', 'runs.summary'] as const),
-    caps: Object.freeze(['budget.show', 'settings.read', 'policy.show'] as const),
+    spend: Object.freeze(['spend.report', 'spend.stream', 'runs.stats', 'runs.summary'] as const),
+    caps: Object.freeze(['budget.show', 'budget.stream', 'settings.read', 'policy.show'] as const),
     kill: Object.freeze([] as const),
   })
 

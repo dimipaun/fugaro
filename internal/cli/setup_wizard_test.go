@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -52,8 +53,11 @@ func wizardRun(t *testing.T, stdin string, o *initOptions) (*initRun, *strings.B
 // built from the temporary directory's name.
 var wizardAnswers = map[string]string{
 	"--gcp-project": "proj-1234\n",
-	"--region":      "\n",
-	"--name":        "\n",
+	// The place question's suggestion is US, which Enter takes (R2, D3086);
+	// --region answers the same question precisely and has no row of its own.
+	"--location": "\n",
+	"--region":   "\n",
+	"--name":     "\n",
 	// The rigor question has no suggestion on purpose (task W of
 	// docs/rigor-command/implementation-plan.md; D900): Enter is not an answer,
 	// so this is a value and not the "\n" every other row takes.
@@ -88,7 +92,10 @@ func stdinGiving(gives map[string]string, except ...string) string {
 	}
 	var b strings.Builder
 	for _, q := range setupQuestions {
-		if skip[q.flag] {
+		// One row may be answered by either of two flags: the place question
+		// is --location or the region itself (R2, D3080), so a caller that
+		// answers it with --region has answered the row --location names.
+		if skip[q.flag] || (q.flag == "--location" && skip["--region"]) {
 			continue
 		}
 		if line, ok := gives[q.flag]; ok {
@@ -110,6 +117,8 @@ func optionsFor(flags ...string) *initOptions {
 		switch flag {
 		case "--gcp-project":
 			o.cloud.gcpProject = "proj-1234"
+		case "--location":
+			o.location = string(place.US)
 		case "--region":
 			o.cloud.region = defaultRegion
 		case "--name":

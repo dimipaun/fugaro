@@ -174,7 +174,7 @@ func TestSetupAnswersFile(t *testing.T) {
 // a document it did not understand — exactly the plan's "an unknown key ... is
 // refused with the fix".
 func TestSetupAnswersFileRefusesUnknownKey(t *testing.T) {
-	const members = "the file holds exactly version, gcp_project, region, name, rigor, bake_repos"
+	const members = "the file holds exactly version, gcp_project, location, region, name, rigor, bake_repos"
 	for _, tc := range []struct {
 		name  string
 		doc   string
@@ -275,9 +275,14 @@ func TestSetupAnswersFileRefusesUnknownKey(t *testing.T) {
 		// Enumerated rather than assumed: the document's members are the
 		// wizard's five questions and its own version, so a key for any of the
 		// steps that are a person's is refused by name.
+		// `location` is not in this list: it is the wizard's place question
+		// (LP4 of docs/location-preference; R2), and the members a person's
+		// steps are spelled with are the others. `firestore_location` stays:
+		// that permanent location is confirmed by a person at the terminal and
+		// is not an answer any document carries.
 		for _, key := range []string{
 			"create_project", "link_billing", "billing_account", "firestore_location",
-			"project", "location", "yes", "confirm", "ask", "secrets", "secret",
+			"project", "yes", "confirm", "ask", "secrets", "secret",
 		} {
 			if slices.Contains(setupAnswerKeys(), key) {
 				t.Errorf("%q is a member of the answers file, and it is not an answer of the wizard's", key)
@@ -348,18 +353,27 @@ func TestSetupAnswersSchema(t *testing.T) {
 		if extra, _ := body["additionalProperties"].(bool); extra {
 			t.Error("the schema allows a member its own properties do not name")
 		}
-		if len(setupAnswerQuestions) != len(setupQuestions) {
-			t.Fatalf("%d rows for %d questions: every question of the wizard has exactly one key",
-				len(setupAnswerQuestions), len(setupQuestions))
+		// Every question of the wizard has a key, each key is its flag's own
+		// spelling, and the place question has a second one: the region is the
+		// precise form of the same answer (R2, D3080), so `region` answers the
+		// question `--location` asks and is a member in its own right.
+		keys, answered := map[string]bool{}, map[string]bool{}
+		for _, row := range setupAnswerQuestions {
+			if want := strings.ReplaceAll(strings.TrimPrefix(row.flag, "--"), "-", "_"); row.key != want {
+				t.Errorf("%s is answered by the key %q, want %q", row.flag, row.key, want)
+			}
+			if keys[row.key] {
+				t.Errorf("two rows of the answers file carry the key %q", row.key)
+			}
+			keys[row.key], answered[row.flag] = true, true
 		}
-		for i, q := range setupQuestions {
-			row := setupAnswerQuestions[i]
-			if row.flag != q.flag {
-				t.Errorf("row %d answers %s, and the wizard asks %s there", i, row.flag, q.flag)
+		for _, q := range setupQuestions {
+			if !answered[q.flag] {
+				t.Errorf("the wizard asks %s and no member of the file answers it", q.flag)
 			}
-			if want := strings.ReplaceAll(strings.TrimPrefix(q.flag, "--"), "-", "_"); row.key != want {
-				t.Errorf("%s is answered by the key %q, want %q", q.flag, row.key, want)
-			}
+		}
+		if !answered["--region"] {
+			t.Error("the answers file has no `region` member: it is the place question's precise form (D3080), and the console writes it")
 		}
 		// The mode has no default (D900) and hotfix is out of it (D834), so
 		// the schema requires the one and refuses the other.
@@ -389,6 +403,14 @@ func TestSetupAnswersSchema(t *testing.T) {
 			doc  string
 		}{
 			{"every answer", fullAnswers()},
+			// The place question's two members (LP4 of docs/location-preference;
+			// R2, D3080): the schema's enum and the reader's own refusal are one
+			// answer, and a document that answers both spellings of the one
+			// question is a whole document — whether they agree is the run's to
+			// settle, not the file's.
+			{"the place alone", answersDoc(`"rigor":"pro"`, `"location":"eu"`)},
+			{"the place and its region together", answersDoc(`"rigor":"pro"`, `"location":"eu"`, `"region":"europe-west4"`)},
+			{"a location that is no place", answersDoc(`"rigor":"pro"`, `"location":"asia"`)},
 			{"a question left out", answersDoc(`"rigor":"pro"`)},
 			{"no rigor", answersDoc(`"name":"aurora"`)},
 			{"hotfix", answersDoc(`"rigor":"hotfix"`)},
@@ -474,7 +496,7 @@ func TestSetupAnswersFileGrantsNoConsent(t *testing.T) {
 		// project, the billing link, the permanent Firestore location and
 		// every secret value have no key here, and a run that read one would
 		// be a run a document confirmed something for.
-		want := []string{"version", "gcp_project", "region", "name", "rigor", "bake_repos"}
+		want := []string{"version", "gcp_project", "location", "region", "name", "rigor", "bake_repos"}
 		if got := setupAnswerKeys(); !slices.Equal(got, want) {
 			t.Errorf("the answers file's members are %v, want %v", got, want)
 		}
@@ -524,7 +546,13 @@ func TestSetupAnswersFileGrantsNoConsent(t *testing.T) {
 			}
 			r, out := answersRun(t, answersFile(t, fullAnswers()), "", tc.o)
 			for _, q := range setupQuestions {
-				if !r.o.answerGiven(q.flag) {
+				// The place question takes either of its two keys (R2, D3080):
+				// the document above answers it with the region.
+				answered := r.o.answerGiven(q.flag)
+				if q.flag == "--location" {
+					answered = answered || r.o.answerGiven("--region")
+				}
+				if !answered {
 					t.Errorf("the file answers %s and the run has no answer for it:\n%s", q.flag, out)
 				}
 			}

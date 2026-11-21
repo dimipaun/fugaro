@@ -184,10 +184,12 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	// launcher wrote it into the task, and a hand-written task carries
 	// whatever its writer typed), so it is the one layer that must not be able
 	// to loosen what the ceiling, the default branch or the branch resolved
-	// (D1044). pre is the merge under it, and chainLayer reads only its mode
-	// out of it.
+	// (D1044). It reads no mode off the merge under it any more — that gate was
+	// whether the run had a ledger at all, and from AB1a on the run's database
+	// is what answers it (chainLedgers, D3009, R3) — and pre is still the merge
+	// the ignored counts below are read from.
 	pre := policy.Merge(ceiling, def, file)
-	chain, err := r.chainLayer(ctx, pre)
+	chain, err := r.chainLayer(ctx)
 	if err != nil {
 		return err
 	}
@@ -208,10 +210,14 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	// second is the chain's (recordPolicy reads them back).
 	nDef := len(policy.Merge(ceiling, def).Ignored)
 	nFile := len(pre.Ignored)
+	// The run is accounted for whatever the layers said: the merged mode is
+	// read through C1's vocabulary, where a mode no layer set — and the word
+	// that was a mode — is observe (D3009, R3). The string itself is kept as
+	// the merge left it, because the gateway's question reads it and only AB1b
+	// makes that question unconditional; what the run is accounted for is
+	// asked through C1 from here on (Spend.On just below, and the mode the
+	// budget record writes).
 	s := Spend{Mode: e.Mode, MaxRunTokens: e.MaxRunTokens, AllowedModels: e.AllowedModels, Prices: c.Prices}
-	if s.Mode == "" {
-		s.Mode = policy.ModeOff
-	}
 	if e.PerRunUSD > 0 {
 		if src := e.Sources[policy.KeyPerRunUSD]; src == policy.SourceCeiling {
 			// The ceiling's own cap, scaled by the run's mode and not by a
@@ -228,10 +234,10 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 			}
 		}
 	}
-	if s.On() && s.Prices == nil {
-		// The ceiling was off with no price overrides (they would have
-		// been loaded); a committed observe or enforce charges the same
-		// table, built with no overrides.
+	if s.Prices == nil {
+		// A Spend built by hand, with no table of its own: every run is priced
+		// now (Spend.On answers yes for every mode there is), so the run prices
+		// it here, by the same rules SpendFromEnv prices from the environment.
 		prices, err := r.priceTable(nil)
 		if err != nil {
 			return fmt.Errorf("pricing the models: %w", err)
@@ -329,9 +335,10 @@ var chainDimensions = []runstore.Dimension{runstore.USD, runstore.Tokens, runsto
 // zero, and the dimension is left unmeasured instead of charged nothing
 // (D1049, D1051).
 //
-// pre is the merge under this layer, and only its mode is read: with the
-// budget off there is no ledger at all, the records are the figures and the
-// chain is a report rather than a stop (D1046, T10).
+// pre is the merge under this layer, and only its mode is read: from AB1a on
+// every mode is accounted for (D3009, R3), so the one run with no ledger to
+// read is a run whose job carries no database — and there the records are the
+// figures and the chain is a report rather than a stop (D1046, T10).
 //
 // A chain with nothing left of a dimension this run is asked to carry is a
 // refusal at bootstrap and not a run that starts and halts at once (D1050
@@ -344,7 +351,7 @@ var chainDimensions = []runstore.Dimension{runstore.USD, runstore.Tokens, runsto
 // what the launcher resolved against the previous run's stored task, which is
 // what survives the gap — are the bound the run runs under, applied as the
 // first bound alone and refused over when they are spent (D1052).
-func (r *run) chainLayer(ctx context.Context, pre policy.Effective) (policy.Layer, error) {
+func (r *run) chainLayer(ctx context.Context) (policy.Layer, error) {
 	var l policy.Layer
 	o := r.spec.Overrides
 	if o.MaxUSD == nil && o.MaxTokens == nil && o.MaxTime == "" && o.MaxReviewRounds == nil {
@@ -354,7 +361,7 @@ func (r *run) chainLayer(ctx context.Context, pre policy.Effective) (policy.Laye
 		// ordinary run — resolves exactly as it did before this layer existed.
 		return l, nil
 	}
-	ledgers, err := r.chainLedgers(ctx, pre)
+	ledgers, err := r.chainLedgers(ctx)
 	if err != nil {
 		return l, err
 	}
@@ -430,10 +437,10 @@ func (r *run) chainLayer(ctx context.Context, pre policy.Effective) (policy.Laye
 			advice = "the chain behind it cannot be read (the bucket has aged its records out), so launch a run that is not part of this chain"
 		}
 		if !enforced {
-			// With the budget off the chain is UNENFORCED: a report and not a
-			// stop (D1046, T10), so a spent chain is said out loud and the run
-			// goes on to spend past it.
-			r.d.Log.Warn(spent+", and the budget is off, so nothing stops this run from spending past it",
+			// With no ledger to read the chain is UNENFORCED: a report and not
+			// a stop (D1046, T10), so a spent chain is said out loud and the
+			// run goes on to spend past it.
+			r.d.Log.Warn(spent+", and this run reads no ledger, so nothing stops it from spending past it",
 				"dimension", chainDimensionWord(d))
 			continue
 		}
@@ -450,14 +457,14 @@ func (r *run) chainLayer(ctx context.Context, pre policy.Effective) (policy.Laye
 // chainLedgers is the ledger reader this run reads its chain with, nil when
 // there is no ledger at all.
 //
-// The gate is the resolved policy's mode and not the job's: the ceiling can be
-// off while a repository commits observe or enforce, and the chain's money
-// figures are the database's exactly when the run is accounted for
-// (Spend.On). The reader itself is this run's own node — see ownLedger.
-func (r *run) chainLedgers(ctx context.Context, pre policy.Effective) (runstore.LedgerReader, error) {
-	if !(Spend{Mode: pre.Mode}).On() {
-		return nil, nil
-	}
+// The ledger is the database's, so the question is the database's and not the
+// mode's: there was a gate here that read the resolved policy's mode, because
+// the ceiling can carry no mode while a repository commits observe or enforce,
+// and a mode-off run read no ledger (D1046, T10). Every mode is accounted for
+// from AB1a on (D3009, R3), so the run with no ledger is the run with no
+// database to read one from, and budgetClient is where that is answered. The
+// reader itself is this run's own node — see ownLedger.
+func (r *run) chainLedgers(ctx context.Context) (runstore.LedgerReader, error) {
 	db, err := r.budgetClient(ctx)
 	if err != nil {
 		return nil, err
@@ -678,10 +685,11 @@ func chainDimensionWord(d runstore.Dimension) string {
 }
 
 // envCeiling is the ceiling the job environment deploys: the owner's mode, cap,
-// token ceiling and allow-list as fugaro update wrote them. The mode "off" is
-// unset — it is the absence of a mode, not a ceiling that says nothing may be
-// accounted — and a mode that is not one of the three is refused by
-// SpendFromEnv long before this.
+// token ceiling and allow-list as fugaro update wrote them. A mode no layer
+// wrote, and the word that was a mode, contribute no mode here — C1 answers
+// observe for both, so the ceiling is the absence of a restriction and never a
+// ceiling that says nothing may be accounted (D3009, R3) — and a mode that
+// names no mode at all is refused by SpendFromEnv long before this.
 //
 // The cap comes through the run's rigor mode (D16, plan T6.1): the ceiling is
 // the ceiling and a mode's per-run default is a fraction of it, so what the
@@ -691,7 +699,7 @@ func chainDimensionWord(d runstore.Dimension) string {
 // owner's cap exactly.
 func envCeiling(c Spend, mode rigor.Rigor) policy.Layer {
 	l := policy.Layer{MaxRunTokens: c.MaxRunTokens, AllowedModels: c.AllowedModels}
-	if c.Mode != "" && c.Mode != policy.ModeOff {
+	if c.Mode != "" && !policy.Mode(c.Mode).Removed() {
 		l.Mode = c.Mode
 	}
 	if c.Cap > 0 {

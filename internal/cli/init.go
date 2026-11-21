@@ -126,6 +126,7 @@ type initOptions struct {
 	ask                                 bool
 	provisionBatch                      bool   // --provision-batch: provision the Batch backend's installation-level root (owner-run, typed confirmation)
 	coordinator                         bool   // --coordinator: opt the installation in to the coordinator's aggregation job (owner-run, at a terminal, and no flag stands in for one)
+	orchestrator                        bool   // --orchestrator: opt the installation in to the resident orchestrator (owner-run, at a terminal, and no flag stands in for one)
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
 	allowDelete                         []string
 	operatorsChanged, adminsChanged     bool
@@ -184,6 +185,15 @@ type initOptions struct {
 	// which is the one stage that edits the one local layer file — the
 	// question phase applies nothing.
 	rigor string
+
+	// --location is the wizard's place question answered without a terminal
+	// (LP4 of docs/location-preference; R2, D3081): us or eu, and nothing
+	// else, because a region typed in full is --region's own answer to the
+	// same question (D3080). It is not stored anywhere: settleLocation
+	// (init_inputs.go) turns it into the region this run carries, which is the
+	// one setting an installation keeps, and refuses one that disagrees with
+	// --region.
+	location string
 
 	// answersFile is --answers-file: the wizard's five questions answered as
 	// one document, whose members fill the fields above and nothing else
@@ -563,6 +573,10 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// is the run's own state (a project config, or not) rather than the verb
 	// the reader typed. `fugaro run --mode hotfix` is named here because it is
 	// the one door hotfix has, and it is not a layer's to set (D834).
+	// The place question (LP4 of docs/location-preference; R2, D3080, D3081,
+	// D3086). It names no door: what says the question is a first run's is the
+	// run's own state (a project config, or not).
+	f.StringVar(&o.location, "location", "", "answer the wizard's place question without a terminal: where the installation lives, us or eu. US is the suggestion and its region is us-east5; EU's is europe-west1. The region is what the installation stores and the place is read back from it (D3080), so --region answers this same question precisely — a region typed in full, such as europe-west4 — and the two given together must agree: a run whose --location and --region name different places is refused at once, naming both. Like every question of the first run, a run that cannot ask and was given neither is refused with both flags. It is a first run's flag: a run that creates no installation — an update, a forget, a run that selects a project config, --config-only, --print-vars and --publish-config — refuses it by name, and the region itself (--region <region>) is what such a run names")
 	f.StringVar(&o.rigor, "rigor", "", "answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set")
 	// --answers-file answers every question the wizard asks from one document
 	// (setup_answers.go, D2904 of docs/console-improvements): the surface that
@@ -570,7 +584,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// this is where its answers travel. The help names the members because the
 	// file is the reader's whole contract, and it says what the file is not: an
 	// answer is not a confirmation.
-	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the five questions a first run asks (--gcp-project, --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
+	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the five questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
 	// --events writes the same account --json prints as a stream of lines
 	// instead of one document (setup_events.go, D2904 of
 	// docs/console-improvements). The help names every kind of line, because
@@ -642,6 +656,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// get to.
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal)")
 	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
+	f.BoolVar(&o.orchestrator, "orchestrator", false, "with --firebase-project, opt the installation in to the resident orchestrator (docs/mobile/design/always-on-orchestrator.md, P5.1): the fugaro-orch service account with exactly the grants that design's section 4.3 table lists — the launcher's project role, the runs bucket's conditioned write and its unconditioned read, iam.serviceAccounts.signJwt on the budget signer (the widest grant there is: a holder may mint any identity in the installation), the job runner's role on each of the installation's jobs and roles/run.invoker on the credentials service — the fugaro-orch-pairing secret container, the Cloud Run service that account runs (min-instances = 0, woken by a Scheduler tick) and a Scheduler job per minute. Nothing creates any of it by default, and it is refused where the installation has no credentials service, no Firebase backend or no released image to pin. The opt-in is recorded in the installation root's tfvars (its orchestrator block) by the same command, so later runs keep it and move only the image inside it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
 	f.BoolVar(&o.ask, "ask", false, "ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer \"managed\" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
@@ -929,6 +944,18 @@ type initRun struct {
 	// struct writes into the local config, so a run that first names a backend
 	// gives the stage its database after the stage's read-only pass is over.
 	workspaceStage *workspaceStage
+	// rootPlanEmpty and rootApplied are the LAST install-root call's own
+	// outcome: whether the plan it made changed nothing, and whether it reached
+	// an apply at all. installRoot's cycle sets them, and the one stage that
+	// asks — the installation-2 stage, around the call that carries the
+	// resident orchestrator's block — resets them first, because every earlier
+	// stage plans that same root and a plan of theirs says nothing about the
+	// orchestrator. The pair is what decides whether the block that stage's
+	// writer has already put in the workdir has become a fact about the
+	// installation or has to be taken back out (init_stages.go's
+	// unsetOrchestratorBlock).
+	rootPlanEmpty bool
+	rootApplied   bool
 	// The retirement (init_retire.go): what the run read before its first
 	// plan -- the state's addresses, the retirement set of design §3.1a and
 	// the notes Orphans returned -- and whether its flow ran and applied, so
@@ -1115,6 +1142,14 @@ func runInit(r *initRun) error {
 	if err := r.applySetupAnswers(); err != nil {
 		return err
 	}
+	// The place answer becomes the region before anything is checked or asked
+	// (R2, D3080): a --location and a --region that name different places are
+	// refused at once, here, and a place with no region beside it takes the
+	// place's default region — so every later reader, the questions included,
+	// sees the one answer the installation stores (settleLocation).
+	if err := o.settleLocation(); err != nil {
+		return err
+	}
 	if o.checkApp {
 		if err := refuseAppKeyReadInAgent(os.Getenv, checkGitHubAppFlag); err != nil {
 			return err
@@ -1131,6 +1166,11 @@ func runInit(r *initRun) error {
 	}
 	if o.coordinator {
 		if err := r.refuseCoordinatorUnattended(); err != nil {
+			return err
+		}
+	}
+	if o.orchestrator {
+		if err := r.refuseOrchestratorUnattended(); err != nil {
 			return err
 		}
 	}
@@ -1918,6 +1958,19 @@ func (o *initOptions) check() error {
 	if o.githubAppID != "" && (o.forget || o.configOnly || o.printVars) {
 		return userErr("--github-app-id is for the repository stage of the converge (or --repo); it has no use with --forget, --config-only and --print-vars")
 	}
+	if o.location != "" && (o.forget || o.configOnly || o.printVars || o.publishConfig || o.door == updateDoor.name) {
+		// The place is the first run's own question (setupCreates): these four
+		// stop before the stages that write it and the update door creates
+		// nothing at all, so the flag has no reader here — and left on the run's
+		// options it is not inert, it becomes the place's default region
+		// (settleLocation) and then meets the region-move guard in the region's
+		// own words. Refused by name here, before anything is read, ahead of
+		// --rigor below because the place is the question the wizard reaches
+		// first (setupQuestions). A run that selects a project config is refused
+		// by the same sentence where that is known (wizard_stage.go), because
+		// whether it creates is not known until its config has been looked for.
+		return setupLocationRefusal(o.location)
+	}
 	if o.rigor != "" && (o.forget || o.configOnly || o.printVars || o.publishConfig) {
 		// These four stop before the converge's stages — forgetting, writing
 		// this machine's config, printing the variables, publishing the shared
@@ -1985,6 +2038,11 @@ func (o *initOptions) check() error {
 	}
 	if o.coordinator {
 		if err := o.checkCoordinator(); err != nil {
+			return err
+		}
+	}
+	if o.orchestrator {
+		if err := o.checkOrchestrator(); err != nil {
 			return err
 		}
 	}
@@ -3101,11 +3159,12 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// And the resident orchestrator's block, the fifth key this spec never
 	// carries: the account and the bindings of the mobile orchestrator design's
 	// section 4.3, which are the whole of what that account may hold (mobile plan
-	// task P5.1b). No writer in this tree composes the key yet — the variable has
-	// no CLI writer, so the one installation that has the block is one whose
-	// owner put it in terraform.tfvars.json by hand — and every document this
-	// function writes is rebuilt from a spec that does not carry it. Without the
-	// carry the next `fugaro update` of an installation that opted in hands
+	// task P5.1b). The key is written once, by the writer beside this reader
+	// (`fugaro update --firebase-project <id> --orchestrator`, init_stages.go's
+	// ensureOrchestratorBlock), and the spec never carries it: what turns the
+	// account on is the installation's own recorded opt-in, not a value this
+	// run's config holds. Without the carry the next `fugaro update` of an
+	// installation that opted in hands
 	// Terraform a document with no orchestrator block: the plan is the account's
 	// and its bindings' removal, and the removal of a google_service_account is
 	// data-bearing under D1551, so the run is refused and the installation stops
@@ -3381,6 +3440,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			return nil, remote(err)
 		}
 		if !changed {
+			r.rootPlanEmpty = true
 			r.res.Changes = &infra.PlanCounts{}
 			fmt.Fprintln(r.stageDetail(), "No changes: the installation matches the plan.")
 			if r.o.planOnly {
@@ -3451,6 +3511,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		if err := r.landFlaggedLists(ctx); err != nil {
 			return plan, err
 		}
+		// Set BEFORE the apply, so a run that fails inside it is one that
+		// reached an apply: what it may have created is state, and the
+		// document that names it must stay the one that is planned.
+		r.rootApplied = true
 		if err := r.applyAndRecord(ctx, t); err != nil {
 			return plan, err
 		}
@@ -4543,10 +4607,57 @@ func (r *initRun) refuseCoordinatorUnattended() error {
 	return nil
 }
 
+// checkOrchestrator refuses the --orchestrator opt-in where it cannot be what
+// the owner reads and confirms. It is --coordinator's gate one account over and
+// for its reasons, plus the ordering this one has of its own: the block's
+// token-minter row is bound on the Firebase root's signer account, in that
+// root's project, and `fugaro update` applies the installation root BEFORE it
+// applies Firebase — so the block may only be written by the run that has the
+// Firebase outputs already (internal/cli's newInstallation2Stage, which is why
+// --firebase-project is required rather than merely useful).
+func (o *initOptions) checkOrchestrator() error {
+	if o.firebase == "" {
+		return userErr("--orchestrator opts the installation in to the resident orchestrator, the account that launches this installation's runs and consumes its mailbox: the block it writes binds iam.serviceAccounts.signJwt on the Firebase root's signer account and starts a service that reads the installation's database, so it is written by the run that has the Firebase outputs — it needs --firebase-project (fugaro update --firebase-project <id> --orchestrator)")
+	}
+	if o.yes {
+		return userErr("--orchestrator is not covered by any flag this run takes: the opt-in creates an account that may mint any identity in the installation (iam.serviceAccounts.signJwt on the budget signer), holds a copy of the pairing key and starts a Cloud Run service, so it is confirmed at a real terminal")
+	}
+	var set []string
+	for _, f := range []struct {
+		name string
+		on   bool
+	}{{"--repo", o.repo}, {"--forget", o.forget}, {"--print-vars", o.printVars},
+		{"--config-only", o.configOnly}, {"--publish-config", o.publishConfig}, {"--anchor", o.anchor}} {
+		if f.on {
+			set = append(set, f.name)
+		}
+	}
+	if len(set) > 0 {
+		return userErr("--orchestrator turns the resident orchestrator on, which is an apply: it excludes %s", strings.Join(set, ", "))
+	}
+	return nil
+}
+
+// refuseOrchestratorUnattended is the rest of --orchestrator's gate, the part
+// that reads the environment: a coding agent's session is refused, and so is a
+// run with no terminal to confirm at.
+func (r *initRun) refuseOrchestratorUnattended() error {
+	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
+		return userErr("--orchestrator opts the installation in to the resident orchestrator: %s", initflow.AgentRefusal(m))
+	}
+	if r.cmd == nil || !stdinIsTerminal(r.cmd.InOrStdin()) {
+		return userErr("--orchestrator is confirmed at a real terminal: run it from one")
+	}
+	return nil
+}
+
 // checkRepo refuses flag combinations that mean nothing for --repo.
 func (o *initOptions) checkRepo() error {
 	if o.coordinator {
 		return userErr("--coordinator opts the installation in to the coordinator's aggregation job, which is an apply of the installation's own root: it excludes --repo (run fugaro update --firebase-project <id> --coordinator for the installation)")
+	}
+	if o.orchestrator {
+		return userErr("--orchestrator opts the installation in to the resident orchestrator, which is an apply of the installation's own root: it excludes --repo (run fugaro update --firebase-project <id> --orchestrator for the installation)")
 	}
 	if o.provisionBatch {
 		// This run validates here and never reaches check(), so the pair has
@@ -4615,6 +4726,12 @@ func (o *initOptions) installationFlags() []string {
 		// both would drop the answer. Refused by name instead, in the sentence
 		// each of those two walks already has for a flag it cannot act on.
 		"--rigor": o.rigor != "",
+		// --location is the place a first run of `fugaro setup` chooses, and a
+		// --repo run creates no installation: it would drop the answer the
+		// same way (LP4 of docs/location-preference). A --region is not in
+		// this table: on these commands it is the per-invocation override it
+		// has always been, and it is the region itself rather than a place.
+		"--location": o.location != "",
 	}
 	var set []string
 	for _, f := range slices.Sorted(maps.Keys(installationOnly)) {
@@ -4635,6 +4752,13 @@ func runInitRepo(r *initRun, args []string) error {
 	// asks none of the wizard's questions, and the flags its answers fill are
 	// refused by name rather than dropped (installationFlags).
 	if err := r.applySetupAnswers(); err != nil {
+		return err
+	}
+	// The place answer is settled exactly as on the converge, so the two doors
+	// refuse a --location and a --region that disagree in one sentence
+	// (settleLocation). A --repo run refuses --location by name below either
+	// way: it creates no installation, so it has no place to choose.
+	if err := o.settleLocation(); err != nil {
 		return err
 	}
 	if o.checkApp {
@@ -4796,6 +4920,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// stopFractionSince, in either file: a launch from outside a checkout
 	// cannot judge the repository's own half, so the converge does.
 	if err := r.gateStopFraction(o, repo, lc, cfg); err != nil {
+		return err
+	}
+	// agent.workspace_beat is the same kind of break on workspaceBeatSince, in
+	// either file: the repository writes it in fugaro.yaml and the project in
+	// the layer file it publishes.
+	if err := r.gateWorkspaceBeat(o, repo, lc, cfg); err != nil {
 		return err
 	}
 	// agent.triage is the same kind of break on triageSince, in the
@@ -5482,6 +5612,28 @@ func (r *initRun) gateStopFraction(o *initOptions, repo string, lc *localcfg.Con
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseStopFractionSkew(repo, cfg.RepoStopFractionSet, cfg.Layer.SetsStopFraction(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateWorkspaceBeat is fugaro update --repo's gate for workspaceBeatSince:
+// refuseWorkspaceBeatSkew, with gateStopFraction's shape and for its reason.
+// Both files can write the key — the repository's agent.workspace_beat and the
+// project layer's defaults.agent.workspace_beat — and both are decoded with
+// KnownFields, so each is judged where it is set and the subject names it.
+//
+// Each half is the key being written rather than the value it holds
+// (gateSecurity's own reading): RepoWorkspaceBeatSet for the repository's file,
+// and the layer's own SetsWorkspaceBeat, which counts a key written as null —
+// SetsDefault would not, and the layer would then be converged onto an image
+// whose runner refuses it at bootstrap for every repository of the project.
+func (r *initRun) gateWorkspaceBeat(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseWorkspaceBeatSkew(repo, cfg.RepoWorkspaceBeatSet, cfg.Layer.SetsWorkspaceBeat(), lc.BaseImage(config.BaseKind), w)
 }
 
 // gateTriage is fugaro update --repo's gate for triageSince: refuseTriageSkew,

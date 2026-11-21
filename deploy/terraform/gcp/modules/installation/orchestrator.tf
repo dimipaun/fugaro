@@ -57,10 +57,16 @@
 # update` applies the installation root BEFORE it applies Firebase. On an
 # installation that already exists the signer is there and the binding is
 # created; on an installation opting in on its very first apply the account
-# does not exist yet and this binding fails that apply. Nothing can opt in
-# today (the variable has no CLI writer, below), and the release that adds one
-# either orders the two steps or moves this binding into modules/firebase,
-# which is where the role it names is declared.
+# does not exist yet and this binding fails that apply. The writer orders the
+# two steps rather than this file: `fugaro update --firebase-project <id>
+# --orchestrator` writes var.orchestrator at the stage that runs AFTER the
+# Firebase root (internal/cli's ensureOrchestratorBlock, called from the
+# installation stage's --firebase-project branch), so the block reaches this
+# root only once the signer and its role exist — and an installation whose
+# Firebase root has never been applied has no budget block and no Firebase
+# outputs either, which is what the writer refuses by name. The other way out
+# stays open: moving this binding into modules/firebase, where the role it
+# names is declared.
 #
 # What the account may never do is the design's section 6 and it is not
 # expressible as a comment here: no IAM (nothing this file creates carries

@@ -397,6 +397,13 @@ type run struct {
 	// because the beat's own goroutine runs while the run goes on.
 	slip   *slipHold
 	slipMu sync.Mutex
+	// workspaceBeat is the keep-warm beat this run sends to its workspace's
+	// credentials service, or nil for a run whose route record serves no kind
+	// there, a run whose agent.workspace_beat is off, and a local run — which
+	// is not routed at all (WS13, R10). workspaceMu guards it, because the
+	// beat's own goroutine runs while the run goes on.
+	workspaceBeat *workspaceBeat
+	workspaceMu   sync.Mutex
 	// The gateway, when the budget is on for an api-key or vertex run, and
 	// what its stages cost; all guarded by mu. gwUsed is the money its calls
 	// settled -- the run's billed model spend -- and gwNotional is the tier-A
@@ -781,11 +788,12 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("panic: %v", p)
 		}
-		// First, on every path out of here: the keep-warm beat is the one
-		// goroutine of this run that is not waited for anywhere else, and a
+		// First, on every path out of here: the keep-warm beats are the two
+		// goroutines of this run that are not waited for anywhere else, and a
 		// request still in flight when the run ends is a request of a
-		// finished run (DS1.5).
+		// finished run (DS1.5, WS13's beat for the workspace's service).
 		r.stopSlipBeat()
+		r.stopWorkspaceBeat()
 		if errors.Is(err, ErrDuplicateExecution) || errors.Is(err, errOwnerUnknown) {
 			// Another execution owns this run, or may: its result.json and
 			// lock are not ours to touch.
@@ -5417,6 +5425,36 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 			req.SessionID, req.Resume = agent.NewSessionID(), false
 			continue
 		}
+		var un *unreachableError
+		if errors.As(err, &un) {
+			// The credentials service could not be reached at all (D2983):
+			// the stage in flight ended -- it did not fail -- and the run waits
+			// for the service until the instant the gateway's own bound names,
+			// then resumes the stage's session. The attempt that ended spent
+			// what it spent, for the reason the exhausted branch below counts
+			// its own (countTokens, halt.go).
+			//
+			// No cap of its own, unlike the exhausted branch: the bound is the
+			// gateway's and it halts the run, naming the service, on the first
+			// call that meets the spent bound -- so the wait below ends at the
+			// bound, and the call the resumed stage makes either reaches the
+			// service or ends the run. maxCredentialResumes is not it: an
+			// outage is not a credential the run could switch to, and a run
+			// stopped with a credential's reason would send its operator to
+			// 'fugaro accounts ls'.
+			r.countTokens(res)
+			session := res.SessionID
+			if !agent.ValidSessionID(session) {
+				session = req.SessionID
+			}
+			if werr := r.waitForService(ctx, name, un.Service, un.Until); werr != nil {
+				return res, false, werr
+			}
+			r.d.Log.Info("the wait for the credentials service is over; resuming the stage",
+				"stage", name, "service", un.Service, "session", session)
+			req.SessionID, req.Resume = session, true
+			continue
+		}
 		var ex *exhaustedError
 		if !errors.As(err, &ex) {
 			return res, ok, err
@@ -5945,6 +5983,19 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.noteStageExhausted(name)
 		r.save(ctx)
 		return res, false, exhausted
+	}
+
+	// A call that could not reach the credentials service at all ended this
+	// stage (D2983), the way an exhausted answer does and with the same
+	// reading: the stage did not fail, nothing is recorded about it, and stage
+	// waits for the instant the answer names and resumes the stage's session.
+	// It has no counterpart of noteStageExhausted above: which service the
+	// call goes to is not a walk, and the call the resumed stage makes is
+	// served by the same one.
+	var unreachable *unreachableError
+	if errors.As(context.Cause(stageCtx), &unreachable) && (err != nil || res.IsError) {
+		r.save(ctx)
+		return res, false, unreachable
 	}
 
 	// The message's stop, before everything below: the agent stopped itself

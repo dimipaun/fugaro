@@ -351,13 +351,8 @@ const (
 // the two rows an area rule's members are (LF4). The three layer rows are
 // reached by the `layer.defaults.` prefix and the block's own is not carried, so
 // four rows and three of them move the allowlist's figure.
-// CM32 of docs/credentials-belong-to-models/ is the last mover, by one row and
-// by none: the pool carrying the cascade's marker (`pools.*.cascade`) is the
-// installation's own key — `fugaro update` is the whole of its writer, for the
-// pool it migrates out of a project whose cascade serves (D3064) — so it names
-// the accounts family and no name or prefix of the allowlist reaches it.
 const (
-	cfmRegistryRows   = 527
+	cfmRegistryRows   = 529
 	cfmAllowlistNamed = 121
 )
 

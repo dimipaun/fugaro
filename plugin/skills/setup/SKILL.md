@@ -43,7 +43,7 @@ From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --
 fugaro setup --project <name>
 ```
 
-**The wizard's own question is the project's rigor mode** (`poc`, `startup`, `pro` or `critical`): how much review every run of the project gets, **not** this repository's `agent.review_rounds` (topic 8). It has no suggestion: never answer it for the user.
+**The wizard's own questions: the place** (`us`, `eu`, or a region; US suggested, fixed from then on) **and the rigor mode** (`poc`, `startup`, `pro` or `critical`): how much review every run of the project gets, **not** this repository's `agent.review_rounds` (topic 8). It has no suggestion: never answer it for the user.
 
 If it names other missing pieces, the user decides whether to fix them; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: both tell new setup from fixing.
 
