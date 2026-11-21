@@ -546,6 +546,30 @@ func TestGrantNeedsDatabaseAdmin(t *testing.T) {
 		t.Errorf("the refused write left a node behind: %s", ops.grants.Raw)
 	}
 
+	// A refusal the writer itself classified is not flattened into an outage:
+	// WU4's concrete write refuses a member whose own lists have not been
+	// migrated into its node, in that member's own words, and a caller that
+	// reported it as "the database did not answer" would send a person looking
+	// for an outage instead of running the member's own `fugaro update`. The
+	// sentence is the layer below's, and this command passes it on.
+	t.Run("a refusal from the writer keeps its own sentence and code", func(t *testing.T) {
+		refused := wu8Rig(t, []workspace.MirrorEntry{wu8Person(wu8Alice)})
+		refused.writeErr = userErr("nothing was granted: project %s has no grants node at %s yet, and its own lists still hold 2 member(s): the member's own fugaro update migrates them first", wu8Member, accesslib.PathNode)
+		all, err := wu8Run(t, refused, wu8Caller, "grant", wu8Alice, wu8Member, "operator")
+		if err == nil {
+			t.Fatalf("a grant the writer refused was written:\n%s", all)
+		}
+		if !strings.Contains(all, "the member's own fugaro update migrates them first") {
+			t.Errorf("the writer's own sentence was replaced:\n%s", all)
+		}
+		if got := ExitCode(err); got != ExitUserError {
+			t.Errorf("the refusal exits %d, want %d: it is the member's to fix and not an outage", got, ExitUserError)
+		}
+		if len(refused.audits) != 0 {
+			t.Errorf("a refused write filed an audit entry: %s", refused.audits[0].event)
+		}
+	})
+
 	// A refused read is the credential's too, and not an outage: the read is
 	// what the change is judged against, so a caller who can write but not read
 	// is refused rather than judged from a read they could not make.
