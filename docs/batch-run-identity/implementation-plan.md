@@ -752,14 +752,15 @@ it (R21).
   moved to) and the block's own file, which it renames.
 - Tests: `TestNoConstructorNamesTheSealKey`, `TestTheSettingsRegistryHasNoBatchKeyFact`,
   `TestAnOldBlockWithAKeyFactStillLoads`, `TestTheOptInFactStaysWhereItMoved`.
-- Command: `go build ./... && ! git grep -nE 'BatchSealKey|ParseSealKeyPublicKey|FUGARO_BUDGET_TOKEN_WRAPPED|sealkey_wire|wrap_contract' -- '*.go' ':!*_test.go' ':!internal/cli/init_compute.go' ':!internal/localcfg/batch.go' && go test ./internal/localcfg/ -run 'OldBlockWithAKeyFact|OptInFactStays' -count=1 && go test ./internal/settings/ -run RegistryCoversEveryConfigField -count=1 && go test ./internal/backend/batch/ ./internal/credsvc/ -count=1`.
-  The grep names the identifiers this task deletes, **not the words `seal` and `key`**, which many
-  things this task does not own spell: `ErrSealKey` and the Cloud Run seal in
-  `internal/budget/token/` stay until the launcher plan's LM18, and the Batch backend's `SealKey`
-  option is a field of `internal/backend/batch/seal.go`, BR1's file. The two exclusions are the
-  acceptance's own text sites: `internal/cli/init_compute.go`, BR16's block writer, which this task
-  does not wait on, and `internal/localcfg/batch.go`, this task's own reader, which skips the one
-  retired key so a block an un-updated machine still holds loads.
+- Command: `go build ./... && ! git grep -nE 'BatchSealKey|ParseSealKeyPublicKey|FUGARO_BUDGET_TOKEN_WRAPPED|sealkey_wire|wrap_contract' -- '*.go' ':!*_test.go' && go test ./internal/localcfg/ -run 'OldBlockWithAKeyFact|OptInFactStays' -count=1 && go test ./internal/settings/ -run RegistryCoversEveryConfigField -count=1 && go test ./internal/backend/batch/ ./internal/credsvc/ -count=1`.
+  The grep names the identifiers this task deletes, **not the words `seal` and `key`**, which code
+  this task does not own spells: `ErrSealKey` and the Cloud Run seal in `internal/budget/token/`
+  stay until the launcher plan's LM18, and the Batch backend's `SealKey` option is a field of
+  `internal/backend/batch/seal.go`, BR1's file. Nothing is excluded for the two places the
+  acceptance keeps: both name the retired key as text, and a text mention matches none of the five
+  names, so the grep stays able to fail on a real user — including `internal/cli/init_compute.go`,
+  BR16's writer, which names no field of the retired key by the time this task runs, a level after
+  BR16.
 - Red step: the build fails on a deleted file's last user.
 - Depends on: C1; BR1, BR2, BR4 and BR17 (kept: each stops using the code this deletes, one file
   at a time); BR19 (kept: two files, `sharedcfg.go` and `shared_test.go`, which both tasks write).
