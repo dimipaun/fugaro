@@ -28,7 +28,7 @@ import (
 // them around a read of internal/rigor/personas that reaches most of the tree,
 // while no entry named a file the checkout had lost.
 const (
-	readMapPath = "../../docs/ci-affected-tests/read-map.json"
+	readMapFile = "../../docs/ci-affected-tests/read-map.json"
 	readMapRoot = "../.."
 
 	// readMapAdvice is the repair every failure here names: the map is
@@ -39,7 +39,7 @@ const (
 
 func committedReadMap(t *testing.T) ReadMap {
 	t.Helper()
-	m, err := LoadReadMap(filepath.FromSlash(readMapPath))
+	m, err := LoadReadMap(filepath.FromSlash(readMapFile))
 	if err != nil {
 		t.Fatalf("the committed read map does not load: %v", err)
 	}
