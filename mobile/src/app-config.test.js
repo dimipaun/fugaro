@@ -591,7 +591,7 @@ test('a resolved config links no advertising-id support, on both platforms', () 
   assert.deepEqual(optionsOf('expo-build-properties'), { ios: { useFrameworks: 'dynamic' } });
 });
 
-test('the Android switches firebase.json carries are the plan’s four', () => {
+test('the Android switches firebase.json carries are the plan’s four, and messaging’s auto-registration is off', () => {
   // The Android collection and ad switches are read by the SDK at **build
   // time**, from `firebase.json` at the app root, under `react-native` -- the
   // Analytics library's own `build.gradle` turns each into a manifest
@@ -609,6 +609,21 @@ test('the Android switches firebase.json carries are the plan’s four', () => {
   // **AndroidManifest** meta-data name (`analytics/android/src/main/
   // AndroidManifest.xml:18`), not the `firebase.json` key, so writing it here
   // would leave the switch unreachable and ad personalisation on.
+  //
+  // **The two messaging keys are P5.2.8's, and they are off** (Security review
+  // finding on this change, 2026-11-21). On the pinned SDK a launch registers
+  // the phone unless they say otherwise: iOS's
+  // `messaging/ios/RNFBMessaging/RNFBMessaging+NSNotificationCenter.m:101` calls
+  // `registerForRemoteNotifications` when
+  // `messaging_ios_auto_register_for_remote_messages` is unset (`defaultValue:
+  // YES`), and Android's `messaging/android/build.gradle:82-92` writes
+  // `firebase_messaging_auto_init_enabled` -- the AndroidManifest meta-data
+  // name -- from `messaging_auto_init_enabled`, which defaults to true. Both
+  // false is what makes SECURITY.md's "an act rather than a default" true of
+  // this build: nothing reaches FCM or APNs until `mobile/src/push/messaging.js`
+  // calls `registerDeviceForRemoteMessages` and then `getToken`, which its own
+  // tests pin in that order. Mutation: drop either key and this deepEqual goes
+  // red, and a build with it would auto-register with no user act.
   const firebase = JSON.parse(readFileSync(join(HERE, '..', 'firebase.json'), 'utf8'));
   assert.deepEqual(firebase, {
     'react-native': {
@@ -616,6 +631,8 @@ test('the Android switches firebase.json carries are the plan’s four', () => {
       crashlytics_auto_collection_enabled: true,
       google_analytics_adid_collection_enabled: false,
       analytics_default_allow_ad_personalization_signals: false,
+      messaging_auto_init_enabled: false,
+      messaging_ios_auto_register_for_remote_messages: false,
     },
   });
 });

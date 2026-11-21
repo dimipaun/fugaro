@@ -125,13 +125,16 @@ const CORE_PACKAGE = '@react-native-firebase/app';
  * where "carried, and not a report about the reader" gets written down.
  *
  * **`messaging` is FCM**, P5.2.8's package: it delivers an alert the phone asked
- * for, and the only thing the app sends through it is its own registration,
- * which is a mailbox message signed for the pairing and written to the
- * installation's own project (`docs/mobile/design/push-notifications.md` §3.3,
- * §3.5 (b)). What a push disclosure would have to say is that document's §9 and
- * the owner's Q9 answer, and it is not on the page today -- so naming FCM from
- * this scan would be inventing a sentence the privacy page does not carry, and
- * the statement the shell renders stays about the reports.
+ * for, and what the app sends through it is not its registration
+ * (`docs/mobile/design/push-notifications.md` §3.3, §3.5 (b)). The device token
+ * FCM mints goes to **a relay the publisher operates**, which answers the token
+ * the app registers -- and that registration is a mailbox message signed for
+ * the pairing and written to the installation's own project (the owner's Q7
+ * answer of 2026-11-21, §9). What a push disclosure would have to say is that
+ * document's §9 and the owner's Q8 answer, and where it went is SECURITY.md's
+ * push section rather than the privacy page: naming FCM from this scan would be
+ * inventing a sentence the privacy page does not carry, and the statement the
+ * shell renders stays about the reports.
  */
 const NON_REPORTING_PACKAGES = Object.freeze({
   '@react-native-firebase/messaging': 'Firebase Cloud Messaging',
