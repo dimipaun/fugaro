@@ -114,14 +114,12 @@ const credsServiceSince = "0.10.0"
 const providerEntriesSince = "0.27.0"
 
 // providerEntriesLoaderShipped is whether the loader this tree's service is
-// built with knows C1's named-provider family — the arm KS1 adds to
+// built with knows C1's named-provider family — the arm KS1 added to
 // credsvc.CredentialKey, the key rule internal/credsvc/bundle.go reads every
-// document key with. It is FALSE in this tree, and that is this tree's state
-// rather than a placeholder: the family is KS1's to add and that task has not
-// landed, so a document carrying a key of it is one this loader refuses WHOLE
-// (credsvc.ErrBundleUnknownKey answers the document and not the entry alone),
-// and the service a release of this tree deploys would answer every call of
-// the installation with that refusal.
+// document key with. It is TRUE in this tree because KS1 has landed: a
+// document carrying a key of the family is one this loader reads. Before the
+// arm it was false, because the loader refused such a document WHOLE
+// (credsvc.ErrBundleUnknownKey answers the document and not the entry alone).
 //
 // It is what readCredentialsBundle gates the whole reading on. It is a
 // variable so that a test can put the tree in the state the release that lands
@@ -129,7 +127,7 @@ const providerEntriesSince = "0.27.0"
 // restored by a helper — while TestProviderEntriesSinceIsTheLoaderThisTreeBuilds
 // holds it to the loader's own key rule, so that flipping it without the arm,
 // or landing the arm without flipping it, fails there instead of in a release.
-var providerEntriesLoaderShipped = false
+var providerEntriesLoaderShipped = true
 
 // errProviderEntriesUnreadable is what a bundle holding a key of that family
 // is answered with while providerEntriesLoaderShipped is false: the reading is

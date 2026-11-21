@@ -101,7 +101,10 @@ type Upstream struct {
 	// It is also what admits Routes beside this upstream: an api-key
 	// declaration is a switched api-key run, whose provider keys stay on the
 	// runner path (R6, D1634), so the models its routes claim are the
-	// provider's and the rest are the service's (validateRoutes).
+	// provider's and the rest are the service's (validateRoutes). A SERVED
+	// route (Route.Served) is admitted beside this upstream whatever this
+	// declares: its key is the service's, so it is the service that serves it
+	// and the declaration has nothing to say about it (KS5).
 	AuthMode string
 	// Account names the Claude account an oauth run goes out on, declared
 	// beside AuthMode (HeaderAuthAccount) and empty for every other auth. The
@@ -191,9 +194,10 @@ type Options struct {
 	Upstream Upstream
 	// Routes send the models they claim to a provider, each with its own
 	// credential; every other model goes to Upstream. Only with the
-	// anthropic upstream, or with a service upstream that declares api-key
-	// (B2.2: a switched api-key run's provider keys stay on the runner path,
-	// R6/D1634).
+	// anthropic upstream, or with a service upstream — of which a route that
+	// declares api-key is a switched run's, whose provider keys stay on the
+	// runner path (B2.2, R6/D1634), and one that is Served is the
+	// credentials service's own (KS5, R1/R12).
 	Routes []Route
 	// Workspace, when set, is the run's second upstream: the workspace's
 	// credentials service (D2981), which the run reaches for the kinds its own
