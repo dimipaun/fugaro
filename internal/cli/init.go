@@ -126,6 +126,7 @@ type initOptions struct {
 	ask                                 bool
 	provisionBatch                      bool   // --provision-batch: provision the Batch backend's installation-level root (owner-run, typed confirmation)
 	coordinator                         bool   // --coordinator: opt the installation in to the coordinator's aggregation job (owner-run, at a terminal, and no flag stands in for one)
+	orchestrator                        bool   // --orchestrator: opt the installation in to the resident orchestrator (owner-run, at a terminal, and no flag stands in for one)
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
 	allowDelete                         []string
 	operatorsChanged, adminsChanged     bool
@@ -655,6 +656,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// get to.
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal)")
 	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
+	f.BoolVar(&o.orchestrator, "orchestrator", false, "with --firebase-project, opt the installation in to the resident orchestrator (docs/mobile/design/always-on-orchestrator.md, P5.1): the fugaro-orch service account with exactly the grants that design's section 4.3 table lists — the launcher's project role, the runs bucket's conditioned write and its unconditioned read, iam.serviceAccounts.signJwt on the budget signer (the widest grant there is: a holder may mint any identity in the installation), the job runner's role on each of the installation's jobs and roles/run.invoker on the credentials service — the fugaro-orch-pairing secret container, the Cloud Run service that account runs (min-instances = 0, woken by a Scheduler tick) and a Scheduler job per minute. Nothing creates any of it by default, and it is refused where the installation has no credentials service, no Firebase backend or no released image to pin. The opt-in is recorded in the installation root's tfvars (its orchestrator block) by the same command, so later runs keep it and move only the image inside it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
 	f.BoolVar(&o.ask, "ask", false, "ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer \"managed\" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
@@ -942,6 +944,18 @@ type initRun struct {
 	// struct writes into the local config, so a run that first names a backend
 	// gives the stage its database after the stage's read-only pass is over.
 	workspaceStage *workspaceStage
+	// rootPlanEmpty and rootApplied are the LAST install-root call's own
+	// outcome: whether the plan it made changed nothing, and whether it reached
+	// an apply at all. installRoot's cycle sets them, and the one stage that
+	// asks — the installation-2 stage, around the call that carries the
+	// resident orchestrator's block — resets them first, because every earlier
+	// stage plans that same root and a plan of theirs says nothing about the
+	// orchestrator. The pair is what decides whether the block that stage's
+	// writer has already put in the workdir has become a fact about the
+	// installation or has to be taken back out (init_stages.go's
+	// unsetOrchestratorBlock).
+	rootPlanEmpty bool
+	rootApplied   bool
 	// The retirement (init_retire.go): what the run read before its first
 	// plan -- the state's addresses, the retirement set of design §3.1a and
 	// the notes Orphans returned -- and whether its flow ran and applied, so
@@ -1152,6 +1166,11 @@ func runInit(r *initRun) error {
 	}
 	if o.coordinator {
 		if err := r.refuseCoordinatorUnattended(); err != nil {
+			return err
+		}
+	}
+	if o.orchestrator {
+		if err := r.refuseOrchestratorUnattended(); err != nil {
 			return err
 		}
 	}
@@ -2019,6 +2038,11 @@ func (o *initOptions) check() error {
 	}
 	if o.coordinator {
 		if err := o.checkCoordinator(); err != nil {
+			return err
+		}
+	}
+	if o.orchestrator {
+		if err := o.checkOrchestrator(); err != nil {
 			return err
 		}
 	}
@@ -3135,11 +3159,12 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// And the resident orchestrator's block, the fifth key this spec never
 	// carries: the account and the bindings of the mobile orchestrator design's
 	// section 4.3, which are the whole of what that account may hold (mobile plan
-	// task P5.1b). No writer in this tree composes the key yet — the variable has
-	// no CLI writer, so the one installation that has the block is one whose
-	// owner put it in terraform.tfvars.json by hand — and every document this
-	// function writes is rebuilt from a spec that does not carry it. Without the
-	// carry the next `fugaro update` of an installation that opted in hands
+	// task P5.1b). The key is written once, by the writer beside this reader
+	// (`fugaro update --firebase-project <id> --orchestrator`, init_stages.go's
+	// ensureOrchestratorBlock), and the spec never carries it: what turns the
+	// account on is the installation's own recorded opt-in, not a value this
+	// run's config holds. Without the carry the next `fugaro update` of an
+	// installation that opted in hands
 	// Terraform a document with no orchestrator block: the plan is the account's
 	// and its bindings' removal, and the removal of a google_service_account is
 	// data-bearing under D1551, so the run is refused and the installation stops
@@ -3415,6 +3440,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			return nil, remote(err)
 		}
 		if !changed {
+			r.rootPlanEmpty = true
 			r.res.Changes = &infra.PlanCounts{}
 			fmt.Fprintln(r.stageDetail(), "No changes: the installation matches the plan.")
 			if r.o.planOnly {
@@ -3485,6 +3511,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		if err := r.landFlaggedLists(ctx); err != nil {
 			return plan, err
 		}
+		// Set BEFORE the apply, so a run that fails inside it is one that
+		// reached an apply: what it may have created is state, and the
+		// document that names it must stay the one that is planned.
+		r.rootApplied = true
 		if err := r.applyAndRecord(ctx, t); err != nil {
 			return plan, err
 		}
@@ -4577,10 +4607,57 @@ func (r *initRun) refuseCoordinatorUnattended() error {
 	return nil
 }
 
+// checkOrchestrator refuses the --orchestrator opt-in where it cannot be what
+// the owner reads and confirms. It is --coordinator's gate one account over and
+// for its reasons, plus the ordering this one has of its own: the block's
+// token-minter row is bound on the Firebase root's signer account, in that
+// root's project, and `fugaro update` applies the installation root BEFORE it
+// applies Firebase — so the block may only be written by the run that has the
+// Firebase outputs already (internal/cli's newInstallation2Stage, which is why
+// --firebase-project is required rather than merely useful).
+func (o *initOptions) checkOrchestrator() error {
+	if o.firebase == "" {
+		return userErr("--orchestrator opts the installation in to the resident orchestrator, the account that launches this installation's runs and consumes its mailbox: the block it writes binds iam.serviceAccounts.signJwt on the Firebase root's signer account and starts a service that reads the installation's database, so it is written by the run that has the Firebase outputs — it needs --firebase-project (fugaro update --firebase-project <id> --orchestrator)")
+	}
+	if o.yes {
+		return userErr("--orchestrator is not covered by any flag this run takes: the opt-in creates an account that may mint any identity in the installation (iam.serviceAccounts.signJwt on the budget signer), holds a copy of the pairing key and starts a Cloud Run service, so it is confirmed at a real terminal")
+	}
+	var set []string
+	for _, f := range []struct {
+		name string
+		on   bool
+	}{{"--repo", o.repo}, {"--forget", o.forget}, {"--print-vars", o.printVars},
+		{"--config-only", o.configOnly}, {"--publish-config", o.publishConfig}, {"--anchor", o.anchor}} {
+		if f.on {
+			set = append(set, f.name)
+		}
+	}
+	if len(set) > 0 {
+		return userErr("--orchestrator turns the resident orchestrator on, which is an apply: it excludes %s", strings.Join(set, ", "))
+	}
+	return nil
+}
+
+// refuseOrchestratorUnattended is the rest of --orchestrator's gate, the part
+// that reads the environment: a coding agent's session is refused, and so is a
+// run with no terminal to confirm at.
+func (r *initRun) refuseOrchestratorUnattended() error {
+	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
+		return userErr("--orchestrator opts the installation in to the resident orchestrator: %s", initflow.AgentRefusal(m))
+	}
+	if r.cmd == nil || !stdinIsTerminal(r.cmd.InOrStdin()) {
+		return userErr("--orchestrator is confirmed at a real terminal: run it from one")
+	}
+	return nil
+}
+
 // checkRepo refuses flag combinations that mean nothing for --repo.
 func (o *initOptions) checkRepo() error {
 	if o.coordinator {
 		return userErr("--coordinator opts the installation in to the coordinator's aggregation job, which is an apply of the installation's own root: it excludes --repo (run fugaro update --firebase-project <id> --coordinator for the installation)")
+	}
+	if o.orchestrator {
+		return userErr("--orchestrator opts the installation in to the resident orchestrator, which is an apply of the installation's own root: it excludes --repo (run fugaro update --firebase-project <id> --orchestrator for the installation)")
 	}
 	if o.provisionBatch {
 		// This run validates here and never reaches check(), so the pair has
