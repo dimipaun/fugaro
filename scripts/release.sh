@@ -65,11 +65,11 @@
 # the tag started.
 #
 # The ordinary path's step 4 dispatches the same run on the merge commit itself
-# when that commit has none (`gh workflow run ci -f full=true`, R12): CI starts
-# on no commit by itself, and the release gate reads the checks of a full run.
-# A dispatch runs a workflow at its ref's tip, so when main has moved past the
-# merge the run lands elsewhere and the release is refused, naming the commit and
-# a command that puts a full run on it.
+# when that commit has none (`gh workflow run ci`, with `-f full=true` when main's
+# own ci.yml declares that input, R12): CI starts on no commit by itself, and the
+# release gate reads the checks of a full run. A dispatch runs a workflow at its
+# ref's tip, so when main has moved past the merge the run lands elsewhere and the
+# release is refused, naming the commit and a command that puts a full run on it.
 #
 # A dropped connection to GitHub does not end it: read-only gh and git calls,
 # and the release gate's polling, are retried a bounded number of times
@@ -395,21 +395,36 @@ wait_for_ci_full_run() {
 # dispatches its own. A commit that already has one -- a person's dispatch, or the
 # dispatch of a re-run of this release -- gets no second: the gate reads the
 # newest full run, so a second would only cost a runner.
+#
+# The dispatch may pass an input only when the ci.yml it runs declares it --
+# GitHub refuses an unknown one with a 422 -- and a dispatch with no --ref runs
+# the file on the default branch, which is origin/main here. `full` is CS6's
+# input, and until it lands main's file declares only #3301's live_scripts, so a
+# release in that window is dispatched as `gh workflow run ci` and nothing else:
+# a 422 would stop every ordinary release at this step, and the bare `ci` title
+# of a ci.yml without run-name: is one the gate reads as full (R1) anyway. Nothing
+# is passed on a tree older than both, exactly as before.
 ensure_full_ci_run() {
-  local sha=$1 existing row before dispatch_err
+  local sha=$1 existing row before main_inputs ci_inputs dispatch_err
   existing=$(full_ci_run_on "$sha") || return 1
   if [ -n "$existing" ]; then
     echo "ci run #$existing on $sha is a full one; the release gate reads it"
     return 0
   fi
+  main_inputs=$(git show "origin/main:.github/workflows/ci.yml" 2>/dev/null | workflow_dispatch_inputs)
+  ci_inputs=""
+  if printf '%s\n' "$main_inputs" | grep -qx full; then
+    ci_inputs=" -f full=true"
+  fi
   row=$(latest_ci_run) || return 1
   before=$(run_number_of "$row")
-  if ! dispatch_err=$(gh workflow run ci -f full=true 2>&1); then
+  # shellcheck disable=SC2086 # word splitting is the point: $ci_inputs is the flags
+  if ! dispatch_err=$(gh workflow run ci $ci_inputs 2>&1); then
     printf '%s\n' "$dispatch_err" >&2
-    echo "could not dispatch a full ci run on main (\"gh workflow run ci -f full=true\"), and the release gate reads only a full run's checks. Nothing has been tagged: dispatch it by hand from https://github.com/$repo/actions/workflows/ci.yml, then re-run \"$rerun\"" >&2
+    echo "could not dispatch a full ci run on main (\"gh workflow run ci$ci_inputs\"), and the release gate reads only a full run's checks. Nothing has been tagged: dispatch it by hand from https://github.com/$repo/actions/workflows/ci.yml, then re-run \"$rerun\"" >&2
     return 1
   fi
-  echo "dispatched a full ci run on main (\"gh workflow run ci -f full=true\"); waiting for it to appear..."
+  echo "dispatched a full ci run on main (\"gh workflow run ci$ci_inputs\"); waiting for it to appear..."
   wait_for_ci_full_run "$sha" "$before"
 }
 
@@ -1078,7 +1093,7 @@ Nothing else was changed.
 Without --dry-run this would:
   2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), record $version as the cli stream's current in docs/release-streams.yaml (moving its next name when the release opens a new minor), rewrite the two doc lines that name the released version, commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
   3. wait up to ${timeout_minutes}m for that PR to merge
-  4. dispatch a full ci run on the merge commit when it has none (gh workflow run ci -f full=true), then wait up to ${timeout_minutes}m for its test, terraform and rules checks, and require them to pass (the release gate)
+  4. dispatch a full ci run on the merge commit when it has none (gh workflow run ci, with -f full=true when main's ci.yml declares it), then wait up to ${timeout_minutes}m for its test, terraform and rules checks, and require them to pass (the release gate)
   4b. build this repository's own go catalog entry for real in the sandbox project (FUGARO_LIVE_GCP_PROJECT), with the CLI built from the merge commit (scripts/release-rehearsal.sh run: ONE billable Cloud Build, judged against the project's caps before it is submitted), and refuse the tag unless the record it writes is green for that commit (scripts/release-rehearsal.sh check): the build 0.26.0 left to the owner's next "fugaro update", and the last thing this run does before the tag
   5. create and push the tag $tag (no prompt: the green release gate on the verified merge commit is the safeguard)
 EOF
