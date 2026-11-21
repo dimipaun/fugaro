@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -502,7 +503,7 @@ func (cm *callMeter) take(ctx context.Context, s *Server, cl *call, e Entry) boo
 	case errors.Is(err, budget.ErrWorkspaceCeilingReached):
 		// The ceiling is the one refusal with a number to hand the member: the
 		// room the workspace has left, which is what the member's own gateway
-		// compares its next calls against (gateway.WorkspaceStop).
+		// compares its next calls against (gateway.WorkspaceHeadroomHeader).
 		cl.fail = cm.fail(fmt.Sprintf("the workspace's cap leaves %s this month and this call needs up to %s, so the workspace did not make it",
 			meterDollars(room.Headroom), meterDollars(amount)), gateway.WorkspaceRefusalCap, &room)
 		return false
@@ -809,9 +810,11 @@ func meterCacheTTL(body []byte) string {
 // control, a five-minute write, an hour-long one.
 var meterTTLRank = map[string]int{"": 0, "5m": 1, "1h": 2}
 
-// meterTTLOf is one cache_control's TTL: a value that is not an object, or one
-// that is an object without a ttl, is the API's own default of five minutes,
-// and any other value is reserved like the longer write.
+// meterTTLOf is one cache_control's TTL, by the gateway's own rule exactly: an
+// object without a ttl is the API's default of five minutes, and anything else
+// — including a cache_control that is not an object at all — is reserved like
+// the longer write, because a shape nothing can read is not a reason to
+// under-bound a call.
 func meterTTLOf(cc any) string {
 	m, ok := cc.(map[string]any)
 	if !ok {
@@ -941,7 +944,7 @@ func (u *callUsage) parseBody() {
 		return
 	}
 	u.acc.merge(body.Usage)
-	if !u.acc.out.set || u.acc.negative() || !u.acc.hasInput() {
+	if !u.acc.out.set || u.acc.negative() || !u.acc.hasInput() || u.acc.unpriced() {
 		return
 	}
 	u.started, u.complete = true, true
@@ -998,7 +1001,7 @@ func (u *callUsage) onEvent(name string, data []byte) {
 		}
 	case "message_stop":
 		switch {
-		case u.started && u.deltas && !u.broken:
+		case u.started && u.deltas && !u.broken && !u.acc.unpriced():
 			u.complete = true
 		case u.started:
 			u.broken = true
@@ -1094,6 +1097,14 @@ type meterUsageWire struct {
 	ServerToolUse *struct {
 		WebSearchRequests *int64 `json:"web_search_requests"`
 	} `json:"server_tool_use"`
+	// The three pricing dimensions a response can report that a request's
+	// own worst case does not bound: the request chooses a speed and an
+	// inference geography, and the provider chooses the tier it serves
+	// from. They are read raw, as the gateway reads them, so a value that
+	// is not even a string is still seen rather than dropped.
+	Speed        json.RawMessage `json:"speed"`
+	ServiceTier  json.RawMessage `json:"service_tier"`
+	InferenceGeo json.RawMessage `json:"inference_geo"`
 }
 
 // meterCount is one reported count and whether the answer reported it at all.
@@ -1113,6 +1124,7 @@ func (f *meterCount) take(p *int64) {
 // provider route's conservative merge and the fields nothing here prices).
 type meterAcc struct {
 	in, cc, cr, out, w5, w1, web meterCount
+	speed, tier, geo             json.RawMessage
 }
 
 func (a *meterAcc) merge(u *meterUsageWire) {
@@ -1127,6 +1139,52 @@ func (a *meterAcc) merge(u *meterUsageWire) {
 	if t := u.ServerToolUse; t != nil {
 		a.web.take(t.WebSearchRequests)
 	}
+	// A later event's value for a dimension wins, as each count's own take
+	// does: the answer's last word about the call is the word that stands.
+	for _, x := range []struct {
+		dst *json.RawMessage
+		src json.RawMessage
+	}{{&a.speed, u.Speed}, {&a.tier, u.ServiceTier}, {&a.geo, u.InferenceGeo}} {
+		if len(x.src) > 0 {
+			*x.dst = append(json.RawMessage(nil), x.src...)
+		}
+	}
+}
+
+// unpriced reports whether the answer named a pricing dimension the table has
+// no price for: a speed other than the standard one, a service tier other than
+// the standard one, or an inference geography outside the defaults — the
+// gateway's own three checks (its unpricedDims).
+//
+// The call then settles at its reservation rather than on the usage it
+// reported, which is where this meter and the gateway part company and the
+// honest direction to part in: the gateway charges such a response at the
+// table's maximum rates times a multiplier, and the meter cannot charge more
+// than the room it reserved, so the reservation — the bound of what the
+// workspace agreed to hold for the call — is the most it can settle at. What
+// it must not do is settle at the call's own model's own rates, which is
+// cheaper than the call: the request chooses a speed and a geography, so a
+// member's run could otherwise spend past the workspace's cap by asking for a
+// shape nothing prices.
+func (a *meterAcc) unpriced() bool {
+	return meterDimUnpriced(a.speed, []string{"standard"}) ||
+		meterDimUnpriced(a.tier, []string{pricing.StandardTier}) ||
+		meterDimUnpriced(a.geo, gateway.DefaultGeos)
+}
+
+// meterDimUnpriced reports whether one reported pricing dimension is one the
+// table cannot price. Absent or null is "the answer did not name it"; a value
+// that is not a string is reported rather than dropped, since the table has no
+// price for it either way; and anything outside the allowed set is unpriced.
+func meterDimUnpriced(raw json.RawMessage, allowed []string) bool {
+	if len(raw) == 0 || string(bytes.TrimSpace(raw)) == "null" {
+		return false
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return true
+	}
+	return !slices.Contains(allowed, s)
 }
 
 // hasInput reports whether the answer named an input count at all: the Claude

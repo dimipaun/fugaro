@@ -452,8 +452,6 @@ func TestACutStreamSettlesAtTheWorstCase(t *testing.T) {
 	defer resp.Body.Close()
 	// The client's read may fail where the stream was cut, which is the point of
 	// this test rather than a failure of it.
-	// The client's read may fail where the stream was cut, which is the point of
-	// this test rather than a failure of it.
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	callWorst := wsWorst(t, testModel, []byte(streamBody), 16)
@@ -464,6 +462,43 @@ func TestACutStreamSettlesAtTheWorstCase(t *testing.T) {
 	}
 	if room.Reserved != 0 {
 		t.Errorf("the cut stream left %v of room held, want none: the settle ends the reservation", room.Reserved.USD())
+	}
+}
+
+// A response that reports a pricing dimension the table has no price for — a
+// service tier that is not the standard one, a speed, an inference geography —
+// does not settle the call on the counts it named. The request chooses a speed
+// and a geography and the provider chooses the tier it serves from, so a call
+// charged at its own model's standard rates would be a call cheaper than it
+// really was, and a member's run could spend past the workspace's cap by asking
+// for a shape nothing prices.
+//
+// It settles at its reservation instead, which is the most this meter can
+// charge for a call the table cannot price: the gateway charges its own ledger
+// the table's maximum rates for such a response, and the meter never settles
+// above the room it took. It is the direction the reader already fails in for a
+// usage it cannot read at all.
+func TestAnUnpricedResponseSettlesAtTheReservation(t *testing.T) {
+	f := newWSMeterSvc(t, wsCapUSD, nil, wsPaidOnly)
+	f.up.Script = []anthropicfake.Reply{{
+		Status: http.StatusOK,
+		Body: `{"id":"msg_fake","type":"message","role":"assistant","model":"` + testModel + `",` +
+			`"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn",` +
+			`"usage":{"input_tokens":10,"output_tokens":10,"service_tier":"priority"}}`,
+	}}
+
+	resp, body := f.call(t, callBody("ws8-tier"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call answered %d %s, want it served", resp.StatusCode, body)
+	}
+	callWorst := wsWorst(t, testModel, []byte(callBody("ws8-tier")), 16)
+	room := f.wsRoom(t)
+	if room.Settled != callWorst {
+		t.Errorf("the call settled at %v, want its reservation %v: the answer reported a tier the table does not price, so the counts it named are not a usage the table can charge",
+			room.Settled.USD(), callWorst.USD())
+	}
+	if room.Reserved != 0 {
+		t.Errorf("the month still holds %v of room, want none: the call settled", room.Reserved.USD())
 	}
 }
 
