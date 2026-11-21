@@ -1946,6 +1946,21 @@ func firebaseProjectIDWord(id string) string {
 	return quoteWord(id)
 }
 
+// historyJobOfThisRun reports whether the history job's own apply belongs to
+// this run's second installation stage. It is true where this run has read the
+// Firebase root's outputs — r.fb, which the flag's path sets and the no-flag
+// path sets when it adopted or created the database (AB7, R2) — and where the
+// flag asked for the history job, whose apply is the one that reads them.
+//
+// What it is NOT is "the installation has a budget backend": an installation
+// whose config already records the database never reaches the Firebase root in
+// a plain update (the stage is skipped, F34), and the history job for such a
+// run is composed by the FIRST apply from the recorded backend
+// (installOptionsCarrying) and deployed there.
+func (e *initEngine) historyJobOfThisRun() bool {
+	return e.r.fb != nil || e.r.o.firebase != ""
+}
+
 // budgetDatabaseKnown reports whether this machine's local config already
 // records the installation's budget database: the realtime database's address,
 // which is the whole of what "the database exists and it is ours" means on a
@@ -1957,21 +1972,18 @@ func (e *initEngine) budgetDatabaseKnown() bool {
 	return e.lc.Budget != nil && e.lc.Budget.RTDBURL != ""
 }
 
-// budgetBackendOn reports whether the installation has a budget backend at all,
-// asked one door earlier than budgetDatabaseKnown: a config that names the
-// backend — the switch the installation root's `enable_budget` is set from, the
-// database's own address or the project it lives in — has one, whether THIS
-// machine knows the database's address or only the installation does.
+// budgetBackendOn reports whether the installation has a budget backend at all:
+// the switch the installation root's `enable_budget` is set from — this run's
+// --firebase-project, or a config that records the backend, by its address or by
+// the project it lives in. It is one door earlier than budgetDatabaseKnown: this
+// machine may know only the project, while the installation has the database.
 //
-// It is what the stages that were skipped with --firebase-project ask, so that
-// an installation whose database exists runs them with it (F29): the second
-// installation stage, which deploys the history job and the shared project jobs,
-// the history image's mirror and the budget admins' review. The expression is
-// installOptionsCarrying's own (init.go), respelled: the two must answer the
-// same question, because one decides whether the history account is applied and
-// the other whether the job that writes into it is deployed.
+// It is what the budget admins' review asks (init_review.go), and it is
+// installOptionsCarrying's own expression (init.go), respelled: the two must
+// answer the same question, because one decides whether the history account is
+// applied and the other who is shown as able to change a cap on it.
 func (e *initEngine) budgetBackendOn() bool {
-	return e.lc.Terraform.BudgetBackend || e.budgetDatabaseKnown() ||
+	return e.r.o.firebase != "" || e.lc.Terraform.BudgetBackend ||
 		(e.lc.Budget != nil && e.lc.Budget.FirebaseProject != "")
 }
 
@@ -2040,19 +2052,21 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Installation2, isolate: true,
 		skip: func() string {
 			switch {
-			// The stages behind the flag run with the database (F29): what
-			// deploys the history job is the installation HAVING a budget
-			// backend, not the flag that was needed to build one before AB7 —
-			// this stage is what the no-flag update of an installation whose
-			// database this machine has just recorded now reaches.
-			case e.budgetBackendOn(), e.catalogJobAwaitsItsBase(), e.reportsJobAwaitsItsBase():
+			// F29: what deploys the history job is this run having the Firebase
+			// root's outputs, not the flag that used to be the only way to get
+			// them — the no-flag update that just adopted or created the
+			// database reaches this stage with them.
+			case e.historyJobOfThisRun(), e.catalogJobAwaitsItsBase(), e.reportsJobAwaitsItsBase():
 				return ""
 			case e.catalogBaseIsMissing():
 				return "the project's image catalog builds its entries FROM base_images." + config.BaseKind + ", which this run does not pin: the catalog check job runs FROM that image and nothing else deploys it, so the catalog's entries are checked by nothing until a run that pins it is through"
 			case infra.CatalogBuilds(e.lc):
 				return "the first apply already deployed the scheduled jobs from the recorded base image: this stage has nothing of its own"
 			}
-			return "the installation has no budget backend, so there is nothing to deploy the history job with: an owner's fugaro update --firebase-project <gcp-project-id> builds one"
+			if e.budgetBackendOn() {
+				return "the first apply deployed the history job from the budget backend the project config records: this stage has nothing of its own"
+			}
+			return "the installation has no budget backend, so there is no history job to deploy: run fugaro update once a project owner has created one"
 		},
 		run: func(ctx context.Context) error {
 			if err := e.setup(ctx); err != nil {
@@ -2081,11 +2095,10 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			e.spec.CatalogCheck = next.CatalogCheck
 			e.spec.Reports = next.Reports
 			e.spec.ProjectJobs = next.ProjectJobs
-			// F29: what deploys the history job is the installation HAVING a
-			// budget backend, not the flag that was needed to build one. A plain
-			// update of an installation whose database this run has just adopted
-			// or created (no flag anywhere) reaches this arm.
-			if e.budgetBackendOn() {
+			// F29: the history job is this stage's own apply where this run has
+			// the Firebase root's outputs, whether the flag asked for them or
+			// the no-flag arm adopted or created the database.
+			if e.historyJobOfThisRun() {
 				// The resident orchestrator's block, before the apply that
 				// carries it: this is the stage that has the Firebase outputs
 				// (the module's token-minter row is bound on that root's
@@ -2134,7 +2147,7 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			return e.r.installCatalogCheck(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 		},
 		leftFor: func() initflow.Left {
-			if e.budgetBackendOn() {
+			if e.historyJobOfThisRun() {
 				return promptLeft(initflow.Installation2, "run the command below: it asks you nothing and applies the history job", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord())
 			}
 			return promptLeft(initflow.Installation2, "run the command below: it asks you nothing and applies the scheduled jobs", e.r.o.doorName())
