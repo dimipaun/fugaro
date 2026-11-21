@@ -25,14 +25,23 @@
 //      job wrote can never become a command word. Every element is its own array
 //      entry, and the spawner is always called with `shell: false`.
 //   2. **`--project` goes on every argv that takes it, which is every command
-//      except `version`** (rule 3). `SPAWN_COMMANDS` carries `takesProject` per
-//      row, and the handshake's argv is exactly `["version"]`: `newVersionCmd`
-//      (`internal/cli/root.go`) is `cobra.NoArgs` with no `Flags()` at all, so a
-//      console that appended `--project` to it would fail its own version check
-//      on the first launch, on every machine -- while a console that left it off
-//      `watch` would show another installation's numbers. `--config <path>`
-//      follows `--project` whenever the installation declares one, and the value
-//      is the installation's, never the ambient environment's.
+//      except the three names `COMMANDS_WITHOUT_PROJECT` lists** (rule 3).
+//      `SPAWN_COMMANDS` carries `takesProject` per row, and the handshake's argv
+//      is exactly `["version"]`: `newVersionCmd` (`internal/cli/root.go`) is
+//      `cobra.NoArgs` with no `Flags()` at all, so a console that appended
+//      `--project` to it would fail its own version check on the first launch,
+//      on every machine -- while a console that left it off `watch` would show
+//      another installation's numbers. `--config <path>` follows `--project`
+//      whenever the installation declares one, and the value is the
+//      installation's, never the ambient environment's. **`setup` is the third
+//      name, and the one that is a fact about the command rather than about a
+//      flag**: its two allow-listed argvs *create* the installation their answers
+//      name, so a child aimed at an existing project -- by `--project` or by
+//      `$FUGARO_PROJECT`, which the CLI reads as the same selection
+//      (`localcfg.SelectInput.EnvProject`) -- refuses those answers as a rename
+//      of it (`loadInitConfig`, `internal/cli/init.go`), and a first run, which
+//      has no installation at all, could not build the argv. See rule 3's
+//      amendment in `docs/design/desktop-console.md` (D2904).
 //   3. **The binary is resolved explicitly** (rule 4): the operator's configured
 //      path first -- an absolute one, since a relative path is checked against
 //      the app's working directory and run against the child's, which is a
@@ -62,7 +71,12 @@
 //   4. **The child's environment is built, not inherited** (rule 5, §5.1 rule
 //      8): exactly `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`, the five `XDG_*`
 //      variables and the chosen installation's `FUGARO_PROJECT` -- and nothing
-//      else from the app's own environment. A hostile `AWS_*`,
+//      else from the app's own environment. **The last of those is the row's,
+//      like rule 2's flag**: `$FUGARO_PROJECT` is the CLI's own fallback for
+//      `--project`, so a row `COMMANDS_WITHOUT_PROJECT` names states no project
+//      in its environment either, which is the one thing that lets the first-run
+//      wizard's `setup` child create the installation its answers name. A
+//      hostile `AWS_*`,
 //      `GOOGLE_APPLICATION_CREDENTIALS`, `ANTHROPIC_API_KEY` or ambient
 //      `FUGARO_PROJECT` in the app's environment cannot reach the child, which
 //      is asserted by diffing the child's own view of its environment against
@@ -1674,9 +1688,23 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // user to swap between main's check and the CLI's read, and there is no word
     // in this argv a path could be spelled into. `--events` asks for the run's
     // account as a feed of lines; `--json` is the row's own, as on every row.
+    //
+    // **`takesProject` is false, and of the three names on
+    // `COMMANDS_WITHOUT_PROJECT` this is the one that is not about the flags**:
+    // the command *has* `--project` and `--config`, and passing either would
+    // defeat the row. This argv creates the installation its answers name, the
+    // CLI reads `--project` and `$FUGARO_PROJECT` as a selection rather than as
+    // a suggestion, and `loadInitConfig` (`internal/cli/init.go`) refuses
+    // answers whose `name` differs from the project that selection names -- so a
+    // wizard aimed at the active installation could never create another, and a
+    // first run, which has no installation to aim at, could not build this argv
+    // at all (`isSafeInstallationValue` refuses the empty project name). The
+    // child is handed no `FUGARO_PROJECT` either, by the same column
+    // (`childEnvironment`), and that is the half that would otherwise refuse the
+    // answers even with the flag gone.
     operation: 'setup.plan',
     words: ['setup', '--plan-only', '--answers-file', '-', '--events', '--json'],
-    takesProject: true,
+    takesProject: false,
     args: [{ key: 'answers', flag: null, kind: 'stdin' }],
     dirFlag: false,
   },
@@ -1687,12 +1715,18 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // **It declares no argument, and that is the whole of its safety**: the
     // answers file the child reads on stdin is the one main held when it showed
     // the plan window, so a payload cannot name a different project, region or
-    // rigor between the window and the write. There is no `--yes` and no flag
-    // beside `--json`: the CLI asks nothing (`docs/no-prompt-policy/`), and the
-    // operator's confirmation is the window's, not an argv word.
+    // rigor between the window and the write. There is no `--yes`, no `--name`,
+    // and no word beyond the command path's own: the CLI asks nothing
+    // (`docs/no-prompt-policy/`), and the operator's confirmation is the
+    // window's, not an argv word.
+    //
+    // **And no `--project`/`--config` either**, for the row above's reason and
+    // with one turn more force: this is the argv that *creates* the installation,
+    // so a project selected here would be the one the write renames rather than
+    // the one it makes (`takesProject: false`, `COMMANDS_WITHOUT_PROJECT`).
     operation: 'setup.apply',
     words: ['setup', '--answers-file', '-', '--events', '--json'],
-    takesProject: true,
+    takesProject: false,
     args: [],
     dirFlag: false,
   },
@@ -2782,12 +2816,30 @@ export function assertWslPrefix(prefix: readonly string[]): void {
 /**
  * COMMANDS_WITHOUT_PROJECT and COMMANDS_TAKING_DIR are rules 3 and 5 as the CLI
  * states them, keyed by the *operation's* command (Task 1.2's table), not by the
- * spawn row: `version` is the one command with no `--project`
- * (`newVersionCmd` has no flags at all), and `doctor` is the one with a `--dir`.
- * `assertSpawnSurface` holds every row's `takesProject` and `dirFlag` to these,
- * so the columns `argvFor` keys off cannot drift from the rule.
+ * spawn row: `doctor` is the one command with a `--dir`, and the three names
+ * here are the commands with no `--project`. `assertSpawnSurface` holds every
+ * row's `takesProject` and `dirFlag` to these, so the columns `argvFor` keys off
+ * cannot drift from the rule -- and the `takesProject` column is also what
+ * `childEnvironment` reads to decide whether the child is told a
+ * `FUGARO_PROJECT`, because the variable and the flag are one statement.
+ *
+ * **The three are three different reasons, and only the first is about flags.**
+ * `version` has no `Flags()` at all (`newVersionCmd`), so `--project` on it is an
+ * unknown-flag error. `config list` prints this machine's installations, so there
+ * is no project to name yet and it resolves no checkout to name one from. And
+ * `setup` has the flags -- `addCloudFlags` is on it (`internal/cli/init.go`) --
+ * but **the console must not pass them**: the two argvs §5.1 allows it to spawn
+ * create the installation their answers name, and the CLI reads `--project` and
+ * `$FUGARO_PROJECT` as a *selection*, so a child told the active project refuses
+ * the answers that name another one (`loadInitConfig`, `internal/cli/init.go`),
+ * while a first run has no installation to tell it about (design §5.1 rule 6's
+ * census and §3.4 rule 3's amendment, D2904).
  */
-export const COMMANDS_WITHOUT_PROJECT: readonly string[] = Object.freeze(['version', 'config list'])
+export const COMMANDS_WITHOUT_PROJECT: readonly string[] = Object.freeze([
+  'version',
+  'config list',
+  'setup',
+])
 export const COMMANDS_TAKING_DIR: readonly string[] = Object.freeze(['doctor'])
 
 /**
@@ -2832,10 +2884,18 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
     for (const flag of operation.flags) {
       if (!row.words.includes(flag)) refused(`${row.operation} fixes ${flag} and its argv does not carry it`)
     }
-    const wantsProject = !COMMANDS_WITHOUT_PROJECT.includes(operation.command)
+    // The command's *name*, reduced from the operation's command path: the
+    // leading words before its first flag. A mode word is part of what makes an
+    // operation what it is and not part of the command's name -- `graph
+    // --watch` is `graph`, and the wizard's `setup --plan-only --answers-file -
+    // --events` is `setup` -- which is what `COMMANDS_WITHOUT_PROJECT` is keyed
+    // by, exactly as the design's census names those same commands.
+    const firstFlag = commandWords.findIndex((word) => word.startsWith('-'))
+    const command = (firstFlag === -1 ? commandWords : commandWords.slice(0, firstFlag)).join(' ')
+    const wantsProject = !COMMANDS_WITHOUT_PROJECT.includes(command)
     if (row.takesProject !== wantsProject) {
       refused(
-        `${row.operation} ${wantsProject ? 'must carry' : 'must not carry'} ${PROJECT_FLAG}: every command but ${COMMANDS_WITHOUT_PROJECT.join(' and ')} takes it (rule 3)`,
+        `${row.operation} ${wantsProject ? 'must carry' : 'must not carry'} ${PROJECT_FLAG}: every command but ${COMMANDS_WITHOUT_PROJECT.join(', ')} takes it (rule 3)`,
       )
     }
     const wantsDir = COMMANDS_TAKING_DIR.includes(operation.command)
@@ -3065,7 +3125,8 @@ export function parseVersionLine(text: string):
 /**
  * childEnvironment builds the child's environment: exactly `CHILD_ENV_KEYS`,
  * with `PATH` rebuilt from the resolved binary's directory and the well-known
- * tool prefixes, and `FUGARO_PROJECT` set to the installation's project. The
+ * tool prefixes, and `FUGARO_PROJECT` set to the installation's project for
+ * every child whose row takes one. The
  * app's own environment is read for `HOME`, `TMPDIR`, `LANG`, `LC_ALL` and the
  * five `XDG_*` variables and for nothing else -- the cloud SDK finds the
  * operator's identity in their home directory exactly as it does in a terminal,
@@ -3131,6 +3192,19 @@ export function childEnvironment(options: {
    * app's environment is not a source of it -- and it travels in the environment
    * rather than in an argv, which is the whole of F41's hand-off. */
   readonly licenceKey?: string | undefined
+  /** `takesProject` is the spawn row's own column (`SpawnCommand.takesProject`),
+   * read here because the variable and the flag are one statement: the CLI's
+   * `$FUGARO_PROJECT` is its fallback for `--project`
+   * (`localcfg.SelectInput.EnvProject`, `internal/localcfg/select.go:207`), so a
+   * row the console gives no `--project` is handed no project through the
+   * environment either -- otherwise the wizard's argv, which carries no flag,
+   * would still be aimed at the active installation by the back door and the CLI
+   * would refuse the answers it exists to write (`loadInitConfig`). **False
+   * writes no `FUGARO_PROJECT` at all**, and **omitted is true**, which is what
+   * the callers outside the spawn table want (`wsl.exe`'s own queries,
+   * `src/main/wsl.ts`, whose `project` is the spawn log's field and not a CLI
+   * selection). */
+  readonly takesProject?: boolean | undefined
 }): Readonly<Record<string, string>> {
   const env: Record<string, string> = Object.create(null) as Record<string, string>
   for (const key of CHILD_ENV_KEYS) {
@@ -3139,7 +3213,7 @@ export function childEnvironment(options: {
     if (typeof value === 'string' && value !== '') env[key] = value
   }
   env['PATH'] = childPath(options.binaryPath, options.platform)
-  env['FUGARO_PROJECT'] = options.target.project
+  if (options.takesProject !== false) env['FUGARO_PROJECT'] = options.target.project
   // Written from the argument and never from `appEnv`: the store is the only
   // source of a handed-over key, so a console started with one in its own
   // environment hands it to no child.
@@ -4121,6 +4195,12 @@ export function planFor(
     readonly licenceKey?: string | undefined
   },
 ): SpawnPlan {
+  // The row is read once, for the one column the two routes below need beyond
+  // `argvFor`: `takesProject` says whether the child is told a
+  // `FUGARO_PROJECT`, and the variable is the flag's own fallback in the CLI
+  // (`childEnvironment`). Reading it from the table rather than taking it as a
+  // context field keeps it one fact with the row `argvFor` reads.
+  const takesProject = spawnCommandFor(operation).takesProject
   const wsl = context.wsl
   if (wsl !== undefined) {
     const cliArgs = argvFor(operation, args, {
@@ -4182,6 +4262,12 @@ export function planFor(
         // for no reader. The CLI inside the distribution reads the key file of
         // its own config directory instead (S2.3), which is where a Windows
         // operator's `fugaro licence install` puts it.
+        //
+        // `FUGARO_PROJECT` follows the row on this route as on the host's: the
+        // wizard's `setup` is spawned inside a distribution the same way it is
+        // on the host, and it must reach a CLI with no project selected there
+        // too.
+        takesProject,
       }),
       project: context.target.project,
       backoff: context.backoff ?? DEFAULT_BACKOFF,
@@ -4206,6 +4292,7 @@ export function planFor(
       binaryPath: context.binaryPath,
       appEnv: context.appEnv,
       licenceKey: context.licenceKey,
+      takesProject,
     }),
     project: context.target.project,
     backoff: context.backoff ?? DEFAULT_BACKOFF,

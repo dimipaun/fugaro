@@ -1846,7 +1846,14 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// `--name`, `--gcp-project`, `--region`, `--bake-repos` or any argument
 		// at all: the answers file is the only place a project name crosses, and
 		// a flag beside the file wins over it, so the row spells the command's
-		// argv and the four words the console's two rows carry.
+		// argv and the four words the console's two rows carry. **Nor does
+		// either carry `--project` or `--config`, or hand the child a
+		// `FUGARO_PROJECT`** (design §3.4 rule 3's third exception): the answers
+		// name the installation the run is about to create, and the CLI reads
+		// the flag and the variable as one selection, so a child given an
+		// existing project has `loadInitConfig` refuse those answers as a rename
+		// of it -- and a first run has no project to give it. The rows carry
+		// `takesProject: false` for exactly that (console/src/main/spawn.ts).
 		"setup --plan-only --answers-file - --events --json",
 		"setup --answers-file - --events --json",
 	}
@@ -1931,11 +1938,12 @@ func consoleRowCommand(t *testing.T, argv string) string {
 // the *design's* rows -- `craft ls` is on this table with no console row yet --
 // and not about `SPAWN_COMMANDS`, which the surface test above reads.
 //
-// Both halves are read off the document rather than remembered here: the two
-// exceptions are the sentence's own ("except two: `version`, … and the rail's
-// `config list --json`"), and everything else is what the table's rows spell
-// before their flags, so a row that lands moves this sentence in the same
-// commit and nothing in Go.
+// Both halves are read off the document rather than remembered here: the
+// exceptions are the sentence's own (its spelled count and the commands it
+// names after "except" -- `version`, the rail's `config list --json`, and since
+// AL the first-run wizard's `setup`, which are three), and everything else is
+// what the table's rows spell before their flags, so a row that lands moves this
+// sentence in the same commit and nothing in Go.
 //
 // Mutations that prove it: leave the row and the sentence alone (this test fails
 // naming `coordinator roadmap move`); name a command no row carries; move the
@@ -1974,11 +1982,18 @@ func TestDocsDesktopConsoleProjectFlagCensus(t *testing.T) {
 	}
 
 	// The exceptions, from the sentence's own clause: what it excludes from the
-	// census is what the table's rows below may leave out of it.
-	at := strings.Index(block[1], "except two:")
-	if at < 0 {
-		t.Fatalf("%s's §5.1 rule 6 no longer says how many rows carry no `--project` (\"except two: …\"): the census is read against that clause", path)
+	// census is what the table's rows below may leave out of it. The count is
+	// read off the clause rather than remembered here -- "except two" became
+	// "except three" when the console improvements plan's AL added the
+	// first-run wizard's two `setup` rows, whose exclusion is the console's own
+	// rather than the command's -- so a fourth exception moves the clause and
+	// nothing in Go.
+	exceptions := regexp.MustCompile("except ([a-z]+(?:-[a-z]+)?):").FindStringSubmatch(block[1])
+	if exceptions == nil {
+		t.Fatalf("%s's §5.1 rule 6 no longer says how many rows carry no `--project` (\"except <count>: …\"): the census is read against that clause", path)
 	}
+	spelled := consoleSpelledNumber(t, exceptions[1])
+	at := strings.Index(block[1], "except "+exceptions[1]+":")
 	clause := block[1][at:]
 	if end := strings.Index(clause, "That is not a table annotation"); end >= 0 {
 		clause = clause[:end]
@@ -1987,8 +2002,8 @@ func TestDocsDesktopConsoleProjectFlagCensus(t *testing.T) {
 	for _, m := range regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(clause, -1) {
 		exempt[consoleRowCommand(t, m[1])] = true
 	}
-	if len(exempt) != 2 {
-		t.Errorf("%s's §5.1 rule 6 says \"except two\" and names %d commands that carry no `--project` (%v): the census counts the rest of the table, so the two exceptions are read from that clause", path, len(exempt), exempt)
+	if len(exempt) != spelled {
+		t.Errorf("%s's §5.1 rule 6 says \"except %s\" and names %d commands that carry no `--project` (%v): the census counts the rest of the table, so the exceptions are read from that clause", path, exceptions[1], len(exempt), exempt)
 	}
 
 	// The table's own rows, minus the exceptions: what the census must name.
@@ -2263,14 +2278,20 @@ func consoleOperationCount(t *testing.T, text string) (int, string) {
 }
 
 // consoleSpelledNumber reads a number spelled the way this document spells one:
-// a tens word, or a tens word and a ones word joined by a hyphen. A word outside
-// those is a failure rather than a zero, because the number is compared against
-// the constant and a silent zero would read as a surface of no operations.
+// a ones word, a tens word, or a tens word and a ones word joined by a hyphen
+// (the exception census below the allow-list spells a bare "three" since the
+// console improvements plan's AL added the first-run wizard's `setup` as its
+// third exception). A word outside those is a failure rather than a zero,
+// because the number is compared against the constant and a silent zero would
+// read as a surface of no operations.
 func consoleSpelledNumber(t *testing.T, spelled string) int {
 	t.Helper()
 	tens := map[string]int{"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60}
 	ones := map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
 	if n, ok := tens[spelled]; ok {
+		return n
+	}
+	if n, ok := ones[spelled]; ok {
 		return n
 	}
 	if parts := strings.Split(spelled, "-"); len(parts) == 2 {

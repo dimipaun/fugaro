@@ -4221,9 +4221,18 @@ document's.
 console's two rows use four of them** — `--plan-only`, `--answers-file -`,
 `--events` and `--json` — and nothing else (design §5.1 rule 6): no `--name`, no
 `--gcp-project`, no `--region`, no `--bake-repos`, no `--shared`-style extra
-word, and no argument at all, so a project
-name reaches the CLI from the console only through the answers main validated and
-showed in the confirmation window (design §3.4 rule 3's amendment, D2904). Nor
+word, and no argument at all. **And they carry neither of the two project flags
+every other row of the allow-list carries**: no `--project` and no `--config`,
+and the child is handed no `FUGARO_PROJECT` either (`takesProject: false`,
+`console/src/main/spawn.ts`; design §3.4 rule 3's third exception). The CLI reads
+`--project` and that variable as the same selection
+(`localcfg.SelectInput.EnvProject`), and the answers file *names the project the
+run is about to create*, so a child aimed at an existing installation refuses the
+wizard's own answers as a rename of it (`loadInitConfig`, `internal/cli/init.go`)
+— and a first run, with no installation selected at all, could not build the
+argv. So the one way a project name reaches the CLI from the console is the
+answers main validated and showed in the confirmation window (design §3.4 rule
+3's amendment, D2904). Nor
 does either row pass a flag that confirms a step, and there is none to pass: the
 command has no confirmation flag of its own, on the ruling that being at a real
 terminal is what confirms (`docs/no-prompt-policy/`). The
@@ -4311,7 +4320,7 @@ and **not** off this document or the design:
 | `image ls` | yes (`newImageLsCmd`, §6.30) — the project's image catalog, and with `--shared` the installation's shared-image lock. **It is offline** and writes nothing, and the group's writers — `image add`, `image rm`, `image promote`, `image build`, `image refresh` — are the never table's, which is why this one row is the group's whole reach |
 | `recipes ls` | yes (`newRecipesLsCmd`, §6.31) — the recipes in force, one winner per name. **It is offline** and writes nothing, and `recipes publish` and `recipes validate` are the never table's |
 | `apply --status` | yes (`newApplyCmd`, §6.28) — **the third row here that writes**, and the only one with a read arm: `fugaro apply` runs the follow-up steps a management command saved for later (the composite-commands plan's D1560). The console is admitted to `apply --status --json` and nothing else (D1569, design §5.1 rule 6): the bare `apply` is a row of that table the console does not spawn yet, and the read costs no cloud, so the pair here is what aims it at an installation |
-| `setup` | yes (`newSetupCmd`, §6.32) — **the first row here whose argv arrives partly on stdin as a document rather than as a word**: `--answers-file -` is the wizard's five answers, which the console passes as `-` and never a path. With `--plan-only` the row reads and creates nothing (the console's `setup.plan`), and without it the row is `setup.apply`, **the fourth row here that writes** (design §5.1 rule 5) and the console's fourth write overall |
+| `setup` | yes (`newSetupCmd`, §6.32) — **the first row here whose argv arrives partly on stdin as a document rather than as a word**: `--answers-file -` is the wizard's five answers, which the console passes as `-` and never a path. With `--plan-only` the row reads and creates nothing (the console's `setup.plan`), and without it the row is `setup.apply`, **the fourth row here that writes** (design §5.1 rule 5) and the console's fourth write overall. **The console gives both of the command's rows no project selection at all** — no `--project`, no `--config` and no `FUGARO_PROJECT` — because the answers name the project the run creates (§6.32) |
 | **`run`** | yes (`newRunCmd`, §6.14) — **the first row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the

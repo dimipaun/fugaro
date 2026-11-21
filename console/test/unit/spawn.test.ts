@@ -187,21 +187,32 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * `repos.ls` and `repos.status`, the twenty-ninth and thirtieth: both resolve the
  * installation and then the project whose allow-list they read, so they take
  * the flag like every other project read here. The console-improvements plan's
- * AL added the last eight, thirty-first to thirty-eighth: `runs.stream`,
+ * AL added the last six, thirty-first to thirty-sixth: `runs.stream`,
  * `spend.stream` and `budget.stream` (RS1's, RS3's and RS4's feeds, the same
  * three commands as the reads above with `--stream` on their argv), `whoami`
- * (WH1's `user ls --me`), `image.catalog.ls` and `recipes.ls` (the image
- * catalog and the recipes, `image ls` and `recipes ls`), and `setup.plan` and
- * `setup.apply` (ST2's wizard, `setup --plan-only --answers-file - --events`
- * and `setup --answers-file - --events`). Every one of those commands resolves
- * the installation from the project flags -- `addCloudFlags` is on `setup` too
- * (`internal/cli/init.go:563`), which is why even the wizard takes the flag --
- * so they are rows of this list like every other read or write of a project.
- * The
- * complement -- the commands
- * that take no
- * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
- * command words the CLI itself uses (`version` and the rail's `config list`),
+ * (WH1's `user ls --me`), and `image.catalog.ls` and `recipes.ls` (the image
+ * catalog and the recipes, `image ls` and `recipes ls`). Every one of those
+ * commands resolves the installation from the project flags, so they are rows of
+ * this list like every other read or write of a project.
+ *
+ * **The wizard's two are not**, and that is the one place this list disagrees
+ * with the CLI: `setup.plan` and `setup.apply` (ST2's wizard, `setup
+ * --plan-only --answers-file - --events` and `setup --answers-file - --events`)
+ * drive a command that *has* `--project` -- `addCloudFlags` is on `setup` too
+ * (`internal/cli/init.go:563`) -- but the console must pass neither that flag
+ * nor `--config`.
+ * Those two argvs create the installation their answers name, and the CLI reads
+ * `--project` and `$FUGARO_PROJECT` as a selection, so **a wizard spawned with
+ * the active installation's project refuses the very answers it exists to write**
+ * (`loadInitConfig`, `internal/cli/init.go`: "--project selects project X;
+ * --name says Y"), and a first run, which has no installation at all, cannot
+ * build the argv. They are the third name on the module's list below, and the
+ * row's `takesProject: false` is also what keeps `FUGARO_PROJECT` out of the
+ * child's environment.
+ *
+ * The complement -- the commands the console selects no project for -- is the
+ * *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the command words the CLI
+ * itself uses (`version`, the rail's `config list`, and the wizard's `setup`),
  * which is the same list `assertSpawnSurface` holds the table to; this file
  * imports it rather than spelling it twice.
  */
@@ -242,8 +253,6 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'whoami',
   'image.catalog.ls',
   'recipes.ls',
-  'setup.plan',
-  'setup.apply',
 ]
 /** freshDirectory is a temporary directory this test owns, one per call. */
 function freshDirectory(prefix = 'fugaro-console-test-'): string {
@@ -525,6 +534,21 @@ const CHILD_KEYS_WITHOUT_A_KEY: readonly string[] = Object.freeze(
   CHILD_ENV_KEYS.filter((key) => key !== LICENCE_KEY_VAR),
 )
 
+/** CHILD_KEYS_WITHOUT_A_KEY_OR_PROJECT is what a child of a row that takes no
+ * `--project` receives: the list above less `FUGARO_PROJECT`, which only a row
+ * that takes the flag states (`childEnvironment`'s `takesProject`). The
+ * handshake is such a row -- `version` is one of the three commands
+ * `COMMANDS_WITHOUT_PROJECT` names -- and the key is **left out** rather than
+ * written empty, because the variable is the CLI's own fallback for `--project`
+ * (`localcfg.SelectInput.EnvProject`) and the console states which project a
+ * child is aimed at only where it aims one. The wizard's two rows are the case
+ * this earns its keep: a `setup` child handed the active installation's project
+ * refuses the answers that name another one (`loadInitConfig`,
+ * `internal/cli/init.go`). */
+const CHILD_KEYS_WITHOUT_A_KEY_OR_PROJECT: readonly string[] = Object.freeze(
+  CHILD_KEYS_WITHOUT_A_KEY.filter((key) => key !== 'FUGARO_PROJECT'),
+)
+
 describe('the spawn table and the argv it builds', () => {
   it('has one row per command-bearing operation, and none for the link', () => {
     expect(() => {
@@ -567,7 +591,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: forty argvs, thirty commands, thirty-eight of them with --project', () => {
+  it('fixes the design allow-list exactly: forty argvs, twenty-nine commands, thirty-six of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -723,11 +747,16 @@ describe('the spawn table and the argv it builds', () => {
       'setup --plan-only --answers-file - --events --json',
       'setup --answers-file - --events --json',
     ])
-    // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
-    // are thirty rows over twenty-seven commands: `logs` has two rows,
-    // `--json` and `--url`, and neither of them may be the one that forgets
-    // --project, and `settings` (a read and a write) and `graph` (a read and its
-    // feed) have two each as well.
+    // The rows that take the flag (addCloudFlags, internal/cli/cloud.go:51) are
+    // thirty-six rows over twenty-nine commands -- the wizard's two rows are
+    // not among them, and that is the one place the console leaves a flag of a
+    // command it drives alone: `setup` *has* `--project`, and passing it would
+    // aim the run at the installation it exists to create
+    // (`COMMANDS_WITHOUT_PROJECT`). Of the rest, `logs` has two
+    // rows, `--json` and `--url`, and neither of them may be the one that
+    // forgets --project; `settings` (a read and a write), `graph` (a read and
+    // its feed), and AL's `budget show`, `report`, `runs ls` and `user ls` (a
+    // read and its own stream or its `--me`) have two each as well.
     // A word is a flag or a separator if it begins with `-`, which is what
     // keeps the launch's literal `-` -- the argv word that means "read the task
     // from stdin" -- out of the command path it is compared as.
@@ -763,15 +792,16 @@ describe('the spawn table and the argv it builds', () => {
         'coordinator roadmap move',
         'run',
         'apply',
-        // AL's three commands that were not already here: the two feeds and
-        // the wizard share their commands with rows above; `image ls` and
-        // `recipes ls` are new, and so is `setup`.
+        // AL's two commands that were not already here: the three feeds and
+        // the caller's own role share their commands with rows above, and
+        // `image ls` and `recipes ls` are new. **`setup` is deliberately not
+        // here**: AL added the wizard's two rows, and they are the rows that
+        // take no flag (the case below).
         'image ls',
         'recipes ls',
-        'setup',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(38)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(36)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -779,21 +809,31 @@ describe('the spawn table and the argv it builds', () => {
   })
 
   it.each(SPAWN_COMMANDS.map((row) => [row.operation, row] as const))(
-    '%s puts --project on its argv, from the chosen installation',
+    '%s puts --project on its argv, from the chosen installation, and tells the child the same project',
     (_name, row: SpawnCommand) => {
-      const argv = argvFor(row.operation, {}, contextFor(row.operation, { project: 'chosen' }))
+      const context = contextFor(row.operation, { project: 'chosen' })
+      const argv = argvFor(row.operation, {}, context)
       // The expectation is written out here rather than read from the row: a
       // test that asks the table what it contains cannot catch the table
       // changing, and "does `watch` carry --project" is the whole question.
       if (COMMANDS_TAKING_PROJECT.includes(row.operation)) {
         expect(argv).toContain('--project')
         expect(argv[argv.indexOf('--project') + 1]).toBe('chosen')
+        expect(planFor(row.operation, {}, context).env['FUGARO_PROJECT']).toBe('chosen')
       } else {
         // `COMMANDS_WITHOUT_PROJECT` is keyed by the *command*, not by the
         // operation (`assertSpawnSurface` reads it that way), so the row's own
         // words are what it is asked about.
         expect(COMMANDS_WITHOUT_PROJECT).toContain(row.words.filter((word) => !word.startsWith('-')).join(' '))
         expect(argv).not.toContain('--project')
+        expect(argv).not.toContain('--config')
+        // ...and **the child is told no project either**, which is the half that
+        // makes the wizard able to create one: `$FUGARO_PROJECT` is the CLI's
+        // own fallback for `--project` (`localcfg.SelectInput.EnvProject`), so
+        // the flag's absence is not enough on its own -- a child handed the
+        // active installation would still select it and refuse the answers
+        // (`loadInitConfig`, `internal/cli/init.go`).
+        expect(planFor(row.operation, {}, context).env['FUGARO_PROJECT']).toBeUndefined()
       }
     },
   )
@@ -945,10 +985,22 @@ describe('the spawn table and the argv it builds', () => {
     // the **command path**, not in a payload: a renderer that could turn
     // `--plan-only` off could make the plan window's own button converge the
     // installation.
-    expect(plan?.takesProject).toBe(true)
-    expect(apply?.takesProject).toBe(true)
+    //
+    // **`takesProject` is false on both, and not because the command lacks the
+    // flag**: `addCloudFlags` is on `setup` (`internal/cli/init.go`), and the
+    // console must still not pass it. The run creates the installation its
+    // answers name, and `loadInitConfig` refuses answers whose `name` differs
+    // from the project `--project`/`$FUGARO_PROJECT` selects -- so a wizard
+    // aimed at the active installation could never create another, and a first
+    // run, with no installation at all, could not build this argv.
+    expect(plan?.takesProject).toBe(false)
+    expect(apply?.takesProject).toBe(false)
     expect(plan?.dirFlag).toBe(false)
     expect(apply?.dirFlag).toBe(false)
+    for (const row of [plan, apply]) {
+      expect(row?.words).not.toContain('--project')
+      expect(row?.words).not.toContain('--config')
+    }
     for (const flag of ['--plan-only', '--answers-file', '--events']) {
       expect(SPAWN_FLAGS, flag).toContain(flag)
     }
@@ -975,17 +1027,27 @@ describe('the spawn table and the argv it builds', () => {
     const file = JSON.stringify({ version: 1, ...answers })
     const planArgv = [...argvFor('setup.plan', { answers: file }, safeContext())]
     const applyArgv = [...argvFor('setup.apply', {}, safeContext())]
-    expect(planArgv).toEqual([
-      'setup',
-      '--plan-only',
-      '--answers-file',
-      '-',
-      '--events',
-      '--json',
-      '--project',
-      PROJECT,
-    ])
-    expect(applyArgv).toEqual(['setup', '--answers-file', '-', '--events', '--json', '--project', PROJECT])
+    expect(planArgv).toEqual(['setup', '--plan-only', '--answers-file', '-', '--events', '--json'])
+    expect(applyArgv).toEqual(['setup', '--answers-file', '-', '--events', '--json'])
+    // **And the argv the run is actually started with is built from one
+    // installation and the first run's none.** A first run has no installation
+    // at all -- `NO_INSTALLATION_TARGET`, whose project is the empty string --
+    // and `--project ''` is a value `isSafeInstallationValue` refuses, so a row
+    // that took the flag could not be spawned there at all. This is the case
+    // that says the console can build both argvs with nothing chosen, which is
+    // the whole of what the first-run wizard needs.
+    const freshRun = { ...safeContext(), target: { project: '' } }
+    expect([...argvFor('setup.plan', { answers: file }, freshRun)]).toEqual(planArgv)
+    expect([...argvFor('setup.apply', {}, freshRun)]).toEqual(applyArgv)
+    for (const operation of ['setup.plan', 'setup.apply'] as const) {
+      const built = planFor(operation, operation === 'setup.plan' ? { answers: file } : {}, safeContext())
+      // Neither the argv nor the environment names a project: the child is
+      // handed the answers and nothing that would select the installation the
+      // run exists to create (`childEnvironment`).
+      expect(built.env['FUGARO_PROJECT']).toBeUndefined()
+      expect(built.argv).not.toContain('--project')
+      expect(built.argv).not.toContain('--config')
+    }
     for (const argv of [planArgv, applyArgv]) {
       expect(argv).not.toContain(file)
       // `-` is the only file word there is, and it is the row's own.
@@ -4489,13 +4551,15 @@ describe('the WSL resolution path', () => {
     const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
 
     // The near side: what `wsl.exe` was handed. The `CHILD_ENV_KEYS` this route
-    // carries -- the twelve less the licence key -- plus the two keys this route
-    // writes itself: `WSLENV` empty (T-E2) and `WSL_UTF8=1` (T-F2, and on the
-    // CLI's own call since the review of `#981`). And nothing else, sentinels
-    // included.
+    // carries -- the twelve less the licence key, and less `FUGARO_PROJECT`,
+    // because this child is the handshake's `version`, a row that takes no
+    // `--project` and is therefore told no project (`childEnvironment`) -- plus
+    // the two keys this route writes itself: `WSLENV` empty (T-E2) and
+    // `WSL_UTF8=1` (T-F2, and on the CLI's own call since the review of
+    // `#981`). And nothing else, sentinels included.
     const hop = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
     expect(hop.envKeys.filter((key) => !platformKeys.includes(key)).sort()).toEqual(
-      [...CHILD_KEYS_WITHOUT_A_KEY, WSLENV_KEY, WSL_UTF8_VAR].sort(),
+      [...CHILD_KEYS_WITHOUT_A_KEY_OR_PROJECT, WSLENV_KEY, WSL_UTF8_VAR].sort(),
     )
     expect(hop.env[WSLENV_KEY]).toBe('')
     expect(hop.env[WSL_UTF8_VAR]).toBe(WSL_UTF8_VALUE)
@@ -4517,9 +4581,10 @@ describe('the WSL resolution path', () => {
     // inside the distribution receives, so the double does not hand it over.
     expect(Object.keys(hop.childEnv)).not.toContain(WSLENV_KEY)
 
-    // The far side: what the Linux process got. Exactly the eleven this route
-    // carries -- the distribution's own `PATH`, the allow-list's values, and
-    // nothing else.
+    // The far side: what the Linux process got. Exactly the ten this route
+    // carries -- the distribution's own `PATH`, the allow-list's values less
+    // `FUGARO_PROJECT` (the row is the handshake's, as above), and nothing
+    // else.
     //
     // Part F carries the CLI in `sh -c` (T-F4), and a POSIX shell sets `PWD`
     // and `SHLVL` in the environment of what it `exec`s. Those two are the
@@ -4529,7 +4594,7 @@ describe('the WSL resolution path', () => {
     const child = only(arrangement.wsl.children())
     const shellKeys = ['PWD', 'SHLVL']
     const childKeys = child.envKeys.filter((key) => !platformKeys.includes(key) && !shellKeys.includes(key))
-    expect(childKeys.sort()).toEqual([...CHILD_KEYS_WITHOUT_A_KEY].sort())
+    expect(childKeys.sort()).toEqual([...CHILD_KEYS_WITHOUT_A_KEY_OR_PROJECT].sort())
     expect(child.env['PWD'] ?? '/').toMatch(/^\//)
     expect(child.env['SHLVL'] ?? '1').toMatch(/^[0-9]+$/)
     // The distribution's own `PATH`, with the double's stand-in for the
@@ -4542,7 +4607,12 @@ describe('the WSL resolution path', () => {
     // The filter is a filter and not an empty environment: the allow-listed
     // values did arrive, spelled as the Windows host spells them.
     expect(child.env['HOME']).toBe('C:\\Users\\dimi')
-    expect(child.env['FUGARO_PROJECT']).toBe(PROJECT)
+    // ...and the one allow-listed key this child does not get is the project's.
+    // The handshake's row takes no `--project`, so neither its argv nor its
+    // environment names an installation (`childEnvironment`), while the target
+    // it was resolved with still names one: that is the spawn log's field and
+    // the installation's own identity, not something the child is told.
+    expect(child.env['FUGARO_PROJECT']).toBeUndefined()
     for (const [name, value] of Object.entries(PLANTED)) {
       expect(child.envKeys, name).not.toContain(name)
       expect(child.env[name], name).toBeUndefined()
