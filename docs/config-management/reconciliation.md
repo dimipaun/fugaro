@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 520 rows and the generic writer carries 231 of them.** 121 by name
+- **F1 — the registry is 522 rows and the generic writer carries 231 of them.** 121 by name
   (`internal/cli/settings_set.go:117`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -34,15 +34,17 @@ what the guard at the end of this section re-runs.
   D1161 gives it — a repository's 37 `workflows.*` rows and the project layer's 36 `profiles.*` ones;
   the layer's five `ab.*` rows are listed beside them, but the models family owns them, so this count
   does not carry them — and the four `repos.*` rows a person writes, which D1173 hands this path
-  (`.provider`, `.base_branch`, `.workflows` and `.github_app_id`; the entry's `.vertex` and
-  `.credentials_service_ready` are what `fugaro update` records and stay the `project` family's) —
+  (`.provider`, `.base_branch`, `.workflows` and `.github_app_id`; the entry's `.vertex`,
+  `.credentials_service_ready` and the two facts KS19 records beside that switch,
+  `.provider_keys_served` and `.stage_account_served`, are what `fugaro update` records and stay the
+  `project` family's) —
   and 109 through the ten prefixes
   (`internal/cli/settings_set.go:315`: `agent.`, `git.`, `followup.`, `governance.`, `watch.`,
   `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`, `escalation.`):
   13 + 7 + 2 + 1 + 37 + 36 + 1 + 4 + 4 = 105, the last four being the ladder's per-mode override rows
   below, and R1's thirteen named rows (F1's amendment below) bring it to 118, and W3's two named
   wildcard rows to 120.
-  **289 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
+  **291 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
   which are the installation's own plumbing (F13, D1182). The count moved from 390 by the image setup
   skill's two rows: the map (D1906) is the `image map` family's and one row, so it is not carried here,
   and the bake switch above is — and it moved again by the stop rule's two rows,

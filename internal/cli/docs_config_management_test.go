@@ -325,7 +325,7 @@ const (
 // it is one machine's own — never published, never an input — so no name and no
 // prefix in the allowlist reaches any of its four rows.
 //
-// C1 of docs/batch-run-identity/ is the last mover after it, by three rows and by none:
+// C1 of docs/batch-run-identity/ moved it after that, by three rows and by none:
 // the `batch:` block gains its two identity facts — the opt-in fact
 // (`batch.opt_in`) and the key fact, which is one fact in two fields
 // (`batch.seal_key.version`, `batch.seal_key.public_key`, R13) — each owned by
@@ -333,8 +333,16 @@ const (
 // installation's facts and not a machine's preference. No name in the allowlist
 // and no prefix of it reaches the three, so the rows without a generic writer
 // move by the three.
+//
+// KS19 of docs/keys-through-service/ is the last mover after it, by two rows and by
+// none: the record `fugaro update` writes on a repository's entry gains R12's
+// two facts beside the switch it already carries
+// (`repos.*.provider_keys_served`, `repos.*.stage_account_served`), and they
+// are the same family as that switch — the `project` one, whose writer is
+// `fugaro update` and never the generic path — so the allowlist reaches
+// neither of them and the rows without a generic writer move by the two.
 const (
-	cfmRegistryRows   = 520
+	cfmRegistryRows   = 522
 	cfmAllowlistNamed = 121
 )
 
