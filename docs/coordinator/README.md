@@ -211,7 +211,7 @@ the plan's own re-plan note of 2026-11-07 records. In one place, what that means
 
 - [docs/design/v1.md](../design/v1.md) §1 — what a **Fugaro project** and an
   **installation** are (the spec's unit of deployment).
-- [docs/design/project-centric.md](../design/project-centric.md) — the project as the unit
+- [docs/project-centric/spec.md](../project-centric/spec.md) — the project as the unit
   of configuration, policy and credentials; the `project` Terraform module.
 - `docs/design/always-on-orchestrator.md` — the close sibling: one resident service per
   installation, no model credential in it. **It is in open PR #632 and not on `main`**, so
@@ -228,6 +228,6 @@ the plan's own re-plan note of 2026-11-07 records. In one place, what that means
   the spec's §8 names. Plan only; D130–D154 answered 2026-10-17; nothing implemented.
 - [docs/mobile/](../mobile/README.md) — the orchestrator, the phone, and D115 (phase 2
   deferred).
-- [docs/design/desktop-console-v2.md](../design/desktop-console-v2.md) — the console's
+- [docs/desktop-console-v2/spec.md](../desktop-console-v2/spec.md) — the console's
   project-wide "Overview" (unbuilt) and D22, the one write (launch).
 - [SECURITY.md](../../SECURITY.md) — the trust assumption the spec's §4 contradicts.

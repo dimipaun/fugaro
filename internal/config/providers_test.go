@@ -501,7 +501,7 @@ func TestServiceHeldSecretNamesAreEmptyUntilTheJobGivesTheAppKeyUp(t *testing.T)
 // while the service serves it nothing.
 //
 // The mixed stage account's rows are the `anthropic` arm's one exception (B0's
-// ruling of 2026-11-04, docs/design/mixed-credentials.md §11): the account's
+// ruling of 2026-11-04, docs/mixed-credentials/spec.md §11): the account's
 // own variant job mounts its Claude OAuth token for the stages that go
 // straight to Anthropic through the RUNNER, so the service serves no call of
 // theirs and that mount — and only that one — stays. The Boolean is the fact

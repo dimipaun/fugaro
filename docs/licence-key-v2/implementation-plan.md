@@ -289,7 +289,7 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
 ### Slice K7: notes and release
 
 - **K7.2 Supersede notes.** Files: `docs/licensing/implementation-plan.md`, `docs/subscriptions/implementation-plan.md`,
-  `docs/design/key-signing-service.md` (a dated "superseded by licence-key-v2" note where S2.1, S2.3, S2.4,
+  `docs/key-signing-service/spec.md` (a dated "superseded by licence-key-v2" note where S2.1, S2.3, S2.4,
   S3.1–S3.4 name the old claims). Depends on: none. Commit: `docs: licence key v2 supersedes the old key's claims`.
 
 - **K7.3 Remove the old key format.** Files: `ee/licence/key.go`, `store.go`, `key_test.go`, `testdata/vectors.json` (the old format: the verifier and its Go readers go, but **the fixture stays** -- the console's verifier of that format and the app's read it at module top level, so it leaves with those two readers and not with the Go verifier; `keyv1.go` renamed to the package's `Claims`/`Verify`). Tests: `go test ./ee/... -tags ee -count=1` compiles and passes with no reference to the old format. Depends on: K1.3, K2.1, K2.5, K3.1. Commit: `ee: the old licence key format is removed`. SECURITY.
@@ -336,7 +336,7 @@ runtime is what the Terraform runs.
 | `ee/register/licence_renew.go` | K4.1 (4) |
 | `ee/register/licence_login.go`, `ee/licence/login/login.go` | K3.3 (4) |
 | `deploy/terraform/.../installation/licence.tf`, `variables.tf`, `deployer.tf`, `internal/cli/update_licence.go` | K4.2 (5) |
-| `docs/licensing/implementation-plan.md`, `docs/subscriptions/implementation-plan.md`, `docs/design/key-signing-service.md` | K7.2 (0) |
+| `docs/licensing/implementation-plan.md`, `docs/subscriptions/implementation-plan.md`, `docs/key-signing-service/spec.md` | K7.2 (0) |
 
 No level holds two writers of one file. A change to any task's Files re-checks this table.
 

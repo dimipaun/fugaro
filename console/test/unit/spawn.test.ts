@@ -5711,8 +5711,8 @@ describe('the source as a whole', () => {
     // document and *then* exits `ExitUserError` when a row that blocks a launch
     // failed (`reposStatusPrint`, `internal/cli/project_status.go`), so a source
     // that read the code first would refuse exactly the case the read exists for
-    // -- the failing rows and the fix each one names (`docs/design/desktop-
-    // console.md` section 5.1: "this operation's answer is the document rather
+    // -- the failing rows and the fix each one names (`docs/desktop-console/
+    // spec.md` section 5.1: "this operation's answer is the document rather
     // than the status").
     const directory = freshDirectory()
     const statusDocument = {

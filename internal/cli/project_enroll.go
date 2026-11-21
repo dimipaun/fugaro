@@ -1,7 +1,7 @@
 package cli
 
 // `fugaro project repos` and `fugaro project sync`: enrollment as data (plan
-// task 4.1, docs/design/project-centric.md §4.3). A repository is tied to a
+// task 4.1, docs/project-centric/spec.md §4.3). A repository is tied to a
 // project by three things, all data — its `project:` line, the project's
 // allow-list, and the App's installation — and this file is the allow-list's
 // own commands: `ls` prints it against what the installation has seen run,
@@ -766,7 +766,7 @@ func configRepo(lc *localcfg.Config, arg string) (localcfg.Repo, bool) {
 func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
 	if arg == "*" {
 		// The allow-list's own entry for every repository — the design's
-		// explicit choice (docs/design/project-centric.md §4.3), which
+		// explicit choice (docs/project-centric/spec.md §4.3), which
 		// MatchRepo reads as admitting anything. It is not a repository, so
 		// neither the config lookup below (there is no owner/name to resolve a
 		// provider from) nor projectpolicy.Canonical applies to it: it is

@@ -158,7 +158,7 @@ type SharedAnchor struct {
 // sharedForbidden are the top-level keys the publisher never writes
 // (localcfg.Config.Shared): owner-only, personal, derived or local-only.
 // claude_accounts is here for the same reason providers is: decision T1
-// (design docs/design/named-oauth-tokens.md §3) keeps the named-account
+// (design docs/named-oauth-tokens/spec.md §3) keeps the named-account
 // allow-list in the operator-only local config exclusively, so a launcher
 // with objectAdmin on the runs bucket (anyone who could write this file)
 // must never be able to inject or widen it by publishing one. update_check
@@ -171,7 +171,7 @@ type SharedAnchor struct {
 //
 // project_secrets is the operator's own for claude_accounts' reason, which is
 // why localcfg.Config.Shared nils it: each entry's allow_data_to is what makes
-// a reserved secret mountable project-wide (docs/design/project-secrets.md §4),
+// a reserved secret mountable project-wide (docs/project-secrets/spec.md §4),
 // so a writer of the runs bucket publishing one would widen which repositories
 // mount a credential — the grant this field exists to state. It was missing
 // here while Shared already dropped it, so a tampered document carrying one
@@ -309,7 +309,7 @@ type SharedAnchor struct {
 // while the machine that ran `--provision-batch` and the doctor reading never
 // reads the file at all. localcfg.Config.Shared blanks it, so the selection is
 // the one the machine running the launch wrote, and ParseShared refuses the key
-// besides: design compute-backend.md §4.4 and docs/design/shared-config.md §4.
+// besides: design compute-backend.md §4.4 and docs/shared-config/spec.md §4.
 //
 // binaries is a grant of the same kind one step further out (binary-allow-rule,
 // plan task AR1; D986, F11): the block names the paths a run may add a binary
@@ -371,7 +371,7 @@ type SharedAnchor struct {
 var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "bitbucket_tokens", "clone_urls", "update_check", "issues", "escalation", "mobile_allow", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "review_against_task", "rigor_pending", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap", "workspace_shared", "binaries", "reports_commit", "credential_cascade", "model_grades", "node_removals", "locations"}
 
 // ParseShared validates a published shared config against its anchor and
-// returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
+// returns it (docs/shared-config/spec.md §5). Anyone holding objectAdmin
 // on the runs bucket can write the file, so it refuses, and never repairs,
 // anything the converge would not have written or that points outside the
 // anchor's GCP project: another name, GCP project or bucket, a registry,
@@ -844,7 +844,7 @@ func checkSharedNode(n *yaml.Node) error {
 
 // fetchSharedConfig is project name's shared config, read from the runs
 // bucket of GCP project gcp (fugaro-runs-<gcp>) and validated
-// (ParseShared), through the cache (docs/design/shared-config.md §6): a
+// (ParseShared), through the cache (docs/shared-config/spec.md §6): a
 // cache entry of this very bucket is used as is for SharedFreshFor; after
 // that the bucket is read again, and only when it can't be reached at all
 // does an entry up to SharedOfflineFor old stand in, with note saying so.

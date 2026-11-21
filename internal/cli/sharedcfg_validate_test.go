@@ -715,7 +715,7 @@ func TestParseSharedAcceptsThePositivesTheBatchRefusalsLeaveOpen(t *testing.T) {
 }
 
 // TestParseSharedLeavesAnotherPullThroughRepository pins the residue the design
-// now states instead of smoothing over (docs/design/shared-config.md §5, the
+// now states instead of smoothing over (docs/shared-config/spec.md §5, the
 // follow-up to Task 8's first half): the fugaro-ghcr refusal is by that one
 // repository ID, so a SECOND pull-through repository of the anchor's project —
 // one an operator created under another ID, whose contents are its upstream's
@@ -738,7 +738,7 @@ func TestParseSharedLeavesAnotherPullThroughRepository(t *testing.T) {
 	published := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", ref, 1)
 	c, err := ParseShared([]byte(published), sharedAnchor)
 	if err != nil {
-		t.Fatalf("ParseShared refused %q: %v — the refusal is by the one repository ID fugaro-ghcr and the reader has no repository list, so a refusal here is the change Task 10 step 5 makes, and docs/design/shared-config.md §5 and this test's comment have to move with it", ref, err)
+		t.Fatalf("ParseShared refused %q: %v — the refusal is by the one repository ID fugaro-ghcr and the reader has no repository list, so a refusal here is the change Task 10 step 5 makes, and docs/shared-config/spec.md §5 and this test's comment have to move with it", ref, err)
 	}
 	if c.Batch == nil || c.Batch.Image != ref {
 		t.Fatalf("batch.image = %+v, want %q: the reader passed the reference but not as the batch image", c.Batch, ref)

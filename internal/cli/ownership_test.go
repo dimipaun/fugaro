@@ -18,7 +18,7 @@ import (
 
 // ownership_test.go is the CLI half of the owner's ruling of 2026-10-31: ONE
 // shared ownership check covers every config-driven budget-database write path
-// (docs/design/upgrade.md, "Every writer into that database"). `fugaro update`'s
+// (docs/upgrade/spec.md, "Every writer into that database"). `fugaro update`'s
 // rules and policy stages asked it already (budgetDBUnadopted); these tests hold
 // every command that writes the database to the same question, and to the same
 // answer.

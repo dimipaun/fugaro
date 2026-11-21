@@ -124,7 +124,7 @@ reader, so it is per *command group* and it is stated in
 | In-job | `exec` (hidden) | **Not supported, not shipped as a user command** | Hidden, Linux-only, and untouched (F41). |
 | Plugin | `update-skills` | **Supported** | Skills only, no hooks (F34), with the shell note of D14. |
 | Managed infrastructure | `managed`, `restore` (Terraform half) | **Best effort** | `terraform` on Windows is fine (F19), the Terraform *state* is not platform-specific, but nothing here is verified on Windows in this plan. |
-| Console | — | **Out of scope** | `docs/design/desktop-console.md` D10 owns it (F40). |
+| Console | — | **Out of scope** | `docs/desktop-console/spec.md` D10 owns it (F40). |
 
 **"Best effort" is a promise too**, and it is the one this plan can least
 defend, for the reason `D15` gives: it is the status hardest to keep honest.

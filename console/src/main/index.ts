@@ -968,7 +968,7 @@ const gated: ConsoleHandlers = {
   // above and answers for the active installation, and both are unreachable in
   // a reduced console's withheld views by not being on one: a lapsed
   // installation is exactly the case in which the box that takes a renewal has
-  // to open (`docs/design/lapse-read-only.md`).
+  // to open (`docs/lapse-read-only/spec.md`).
   'licence.read': () => licenceRead(),
   'licence.save': (args) => licenceSave(args),
   // **The nine console-improvements operations, each on an explicit stub**

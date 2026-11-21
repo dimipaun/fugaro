@@ -75,11 +75,23 @@
  * not contain, for a value the CLI validated when it was written. So the two
  * are validating classes of the same kind as `repository`, each holding the
  * grammar the CLI enforces at its own writer, cited in its comment.
+ *
+ * `scope` was added by the Manage section's People & access kind (task MO-P,
+ * review of 2026-11-20), and it is the same case a third time. A stored grant's
+ * scope is one string -- the word `project`, the word `all-repos`, or a
+ * comma-separated list of canonical repository patterns (`internal/access`'s
+ * `ParseScope`, `Scope.String`) -- and `label` drew it: its path rule draws
+ * `github/acme/app` as `github<path>`, so the Scope column showed a reader a
+ * redaction the grants node does not carry. That is the whole of the cell for
+ * the scopes whose Copy-command the builder refuses -- `*` and `,` are not
+ * characters `command.ts` copies, so a `github/acme/*` or a list has no Copy --
+ * which leaves the value the grant really covers nowhere on the row.
  */
 export type TextClass =
   | 'sentence'
   | 'repository'
   | 'repoPattern'
+  | 'scope'
   | 'imageRef'
   | 'slug'
   | 'branch'
@@ -101,6 +113,7 @@ export const TEXT_CLASSES: readonly TextClass[] = Object.freeze([
   'sentence',
   'repository',
   'repoPattern',
+  'scope',
   'imageRef',
   'slug',
   'branch',
@@ -2119,6 +2132,18 @@ const REPOSITORY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
  * (a canonical repository never does). */
 const REPO_PATTERN_RE = /^(?:\*|[a-z0-9*._-]+(?:\/[a-z0-9*._-]+){2,})$/
 
+/** SCOPE_PATTERN_RE is one entry of a stored grant's scope: the same
+ * provider-qualified pattern a policy entry is (`REPO_PATTERN_RE`'s grammar,
+ * which is `internal/projectpolicy`'s `ValidPattern`). Two rules `ParseScope`
+ * adds on top of that grammar -- a grant names its provider, so the provider
+ * segment is never `*`, and a `*` matches inside one path segment, so no
+ * segment carries `**` -- are read by the class below rather than by this
+ * pattern. The literal `*` `REPO_PATTERN_RE` admits is absent here: it is
+ * `all-repos`' meaning, and `ParseScope` refuses it, because `all-repos` is a
+ * scope a project admin grants, and a grant spelling `*` would let its holder
+ * mint the scope they do not hold. */
+const SCOPE_PATTERN_RE = /^[a-z0-9*._-]+(?:\/[a-z0-9*._-]+){2,}$/
+
 /** IMAGE_REF_RE is a container image reference, and it is `internal/config`'s
  * `catalogImageRE` (`ValidateCatalog`, the rule the local configuration and the
  * published policy node are both held to): an optional registry host with an
@@ -2684,6 +2709,46 @@ export function sanitizeText(
     return text.endsWith('.git')
       ? refuse(`${field} is not a valid repository pattern`)
       : ok(text, flags)
+  }
+
+  if (textClass === 'scope') {
+    if (isMarkerText(text)) return ok(text, flags)
+    // The two whole scopes, and they are the whole value: `ParseScope` reads
+    // them spelled exactly once, and a canonical repository always carries a
+    // provider and a `/`, so neither word can be one.
+    if (text === 'project' || text === 'all-repos') return ok(text, flags)
+    for (const entry of text.split(',')) {
+      // The pattern's own reading is `repoPattern`'s, and the bound is the
+      // CLI's: `ParseScope` canonicalises an entry through `ValidPattern`,
+      // whose `MaxPatternLen` is the longest entry the grants node's reader
+      // accepts. An empty entry and a lone `*` are refused by the pattern
+      // alone -- neither carries a provider and two `/` -- so no case is
+      // spelled twice here.
+      if (entry.length > MAX_REPO_PATTERN_LENGTH || !SCOPE_PATTERN_RE.test(entry)) {
+        return refuse(`${field} is not a valid scope`)
+      }
+      const segments = entry.split('/')
+      // The two rules `ParseScope` adds to the allow-list's grammar. A `*` in
+      // the provider segment is what an allow-list entry may carry and a grant
+      // may not ("a pattern may wildcard a provider for the allow-list, and a
+      // grant names the repositories it covers"), and `**` is refused rather
+      // than read as a second wildcard, because a pattern that looks like it
+      // crosses `/` is the one a reader would misread as covering a nested
+      // repository. A `.` or `..` segment is refused for `repoPattern`'s
+      // reason: `CanonicalRepo` refuses such a repository, so a grant carrying
+      // one covers nothing.
+      if (segments[0] === '*') return refuse(`${field} is not a valid scope`)
+      for (const segment of segments) {
+        if (segment === '.' || segment === '..' || segment.includes('**')) {
+          return refuse(`${field} is not a valid scope`)
+        }
+      }
+      // A canonical repository never ends in `.git` (`CanonicalRepo` trims it),
+      // and `ParseScope` trims it before it stores an entry, so a stored scope
+      // never carries one.
+      if (entry.endsWith('.git')) return refuse(`${field} is not a valid scope`)
+    }
+    return ok(text, flags)
   }
 
   if (textClass === 'imageRef') {

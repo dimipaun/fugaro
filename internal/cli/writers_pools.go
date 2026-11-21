@@ -40,6 +40,14 @@ import (
 // `accounts pool add` takes no flag for it (D2608): there is no command line
 // that changes this leaf, and registering one that does something else would be
 // a writer that lies.
+//
+// `pools.*.cascade` is the same case one marker over (CM32): only `fugaro
+// update` writes it, for the pool it migrates out of a project whose cascade
+// serves (D3064 as amended), and no command line may write it either — a marker
+// an operator could set on any pool would be the way past the
+// subscription-spread switch that F24 found. Both leaves stand in the
+// conformance ledger as rows with no writer until the migration registers its
+// own, which is CM4's half.
 var accountsPoolWriters = []struct {
 	pattern string
 	writer  settings.Writer

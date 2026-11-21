@@ -109,10 +109,11 @@ func orchestratorIdentityOf(lc *localcfg.Config) orchestratorIdentity {
 // is not: a project ID says nothing about whether a daemon account was created
 // under it. The local config is the record of the SERVICE (its URL, published
 // by `fugaro update`), and the block is the record of the ACCOUNT — the two
-// halves of one identity, each from where it is really written. Nothing in this
-// tree composes the block yet (P5.1b: the variable has no CLI writer), so the
-// one installation that holds it is one whose owner put it there by hand, and
-// every installation that did not is unchanged by this identity existing.
+// halves of one identity, each from where it is really written. The block is
+// written by P5.1b's writer (`fugaro update --firebase-project <id>
+// --orchestrator`) and by nothing else, so an installation holds it exactly when
+// its owner asked for a resident orchestrator — and every installation that did
+// not is unchanged by this identity existing.
 //
 // Every way of not holding it is one answer here — a project that is not a
 // project ID, a machine that holds no workdir for it, a document this program

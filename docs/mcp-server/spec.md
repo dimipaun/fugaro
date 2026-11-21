@@ -1121,7 +1121,7 @@ is. **Fortification is to be revisited later by other means** ([reconciliation.m
   what the run can spend before its content matters at all.
 - **The content the fence would not have covered is open too, and it is the same residual stated
   wider.** `task.json` is **unsigned text a launcher wrote** — signing it is an explicit non-goal of
-  the runs-bucket design (`docs/design/bucket-iam.md:412`) — and M9 gives the front door the
+  the runs-bucket design (`docs/bucket-iam/spec.md:412`) — and M9 gives the front door the
   runs-bucket write, so a compromised coordinator **can write a task whose `repo`, `prompt`, `workflow`
   and `recipe` it chose**. With the fence declined it can **also rewrite the job's environment, its
   template and its arguments**. Nothing in this design calls the task authenticated, and a reader who

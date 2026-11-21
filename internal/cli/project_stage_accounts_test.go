@@ -13,7 +13,7 @@ import (
 // The account-choice keys have two ends that meet nowhere else: the local
 // config holds them and `project policy publish` copies them into the node
 // (this file's first test), while the ruling that bounds them
-// (config.CheckStageAccountMix, docs/design/mixed-credentials.md §11) needs an
+// (config.CheckStageAccountMix, docs/mixed-credentials/spec.md §11) needs an
 // auth the node does not carry and fires at the launch and in `fugaro validate`
 // (the second test).
 

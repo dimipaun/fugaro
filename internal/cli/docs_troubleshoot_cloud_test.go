@@ -29,7 +29,7 @@ const (
 	// SKILL.md is at its byte budget (plugin/skills_lint_test.go's
 	// maxSkillBytes), so the sentence the tier arrives with is one line there
 	// and the detail behind it is a reference file, the way the setup skill's
-	// managed rules moved to its own (docs/plans/2026-10-18-managed-projects-
+	// managed rules moved to its own (docs/managed-projects/
 	// task-3.0-decisions.md).
 	troubleshootCloudSkillRef = "plugin/skills/working/reference/troubleshoot.md"
 	// The catalog entry's row in the recipes guide: the one place a person reads

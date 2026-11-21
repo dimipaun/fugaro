@@ -358,7 +358,7 @@ person decides whether storing one value for sixty-five repositories is safe.
   entry), a new paragraph in the same section carrying D1273's sentence (the wildcard's reach, the
   repo-wins rule, and the fact that the value is what the repository's build and tests read),
   `docs/project-layer.md:244` (the parenthesis that says a name with a project-wide meaning cannot be
-  shared through a workflow's block), `docs/design/project-secrets.md` §4 item 4 (a pointer to this
+  shared through a workflow's block), `docs/project-secrets/spec.md` §4 item 4 (a pointer to this
   folder, not a rewrite — that document's §4 *Decision: storage*, the fourth point of "Who writes a
   version"), and `plugin/skills/setup/SKILL.md:128` (a covered workflow secret is not prompted for
   either).

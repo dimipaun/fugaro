@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// The pin for docs/plans/2026-10-19-mobile-telemetry.md, the plan for Firebase
+// The pin for docs/mobile/telemetry-plan.md, the plan for Firebase
 // Crashlytics and Firebase Analytics in the Expo app. It is the rebuilt
 // replacement for the draft on PR #693, and what it had to change is what this
 // pin is mostly about: the numbers.
@@ -37,7 +37,7 @@ import (
 // written into the tree, and about the app's dependency list naming the SDKs
 // the plan's flags are read by.
 const (
-	telemetryPlan         = "docs/plans/2026-10-19-mobile-telemetry.md"
+	telemetryPlan         = "docs/mobile/telemetry-plan.md"
 	telemetryMobileReadme = "docs/mobile/README.md"
 	telemetryImplPlan     = "docs/mobile/implementation-plan.md"
 	telemetryRegister     = "docs/gcp-live-checklist.md"
@@ -257,7 +257,7 @@ func TestTelemetryPlanIsRegisteredInTheMobileDocuments(t *testing.T) {
 	impl := readDoc(t, telemetryImplPlan)
 
 	for _, want := range []string{
-		"| [../plans/2026-10-19-mobile-telemetry.md](../plans/2026-10-19-mobile-telemetry.md) |",
+		"| [telemetry-plan.md](telemetry-plan.md) |",
 		"| **D253–D260** | **the telemetry plan**",
 		"| **Checks 120–122** | **the telemetry plan**",
 		"**Status (2026-10-22): the telemetry plan is merged and the owner has passed its gate.**",
@@ -400,7 +400,7 @@ func TestTelemetryPlanNeverCommitsTheNativeConfigFiles(t *testing.T) {
 // docs/plans/", which is the failure the five real links would have raised.
 func TestTelemetryPlanLinksResolve(t *testing.T) {
 	for _, doc := range []struct{ path, dir string }{
-		{telemetryPlan, "docs/plans"},
+		{telemetryPlan, "docs/mobile"},
 		{telemetryMobileReadme, "docs/mobile"},
 		{telemetryImplPlan, "docs/mobile"},
 		{"docs/mobile/design/voice-evaluation-switch.md", "docs/mobile/design"},

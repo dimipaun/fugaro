@@ -143,7 +143,7 @@ func WorkspaceWorkdir(getenv func(string) string, project string) (string, error
 // ManagedWorkdir is where fugaro managed apply works on the agent-authored
 // root of project: $XDG_STATE_HOME/fugaro/terraform/<project>/managed, beside
 // the installation's workdir and never the checkout the root is read from
-// (docs/design/managed-projects.md, D76). A workdir of its own, for the same
+// (docs/managed-projects/spec.md, D76). A workdir of its own, for the same
 // reason the Firebase root's is one: the installation's tfvars, imports and
 // saved plan must never be written by an apply of another root, and a plan
 // saved by one root must never be gated and applied as another's.

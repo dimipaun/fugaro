@@ -953,7 +953,7 @@ changes are cited as the feedback's own.
   rather than silently absorbed.
 - **The site's green is its own value, and not the console's `--ok`.** The bold look's success
   tone was first written as the board's own green, `#4CC38A` — which is also the console's
-  `--ok`, and `docs/design/console-styling.md` §3.2 records that colour as one of six the
+  `--ok`, and `docs/console-styling/spec.md` §3.2 records that colour as one of six the
   console **invents** because "the website has no equivalent". `internal/cli`'s
   `TestDocsConsoleStylingTokenProvenance` holds that sentence true by refusing those six literals
   anywhere in `website/src/styles/palette-logo.css`, the palette in force, so the first value was

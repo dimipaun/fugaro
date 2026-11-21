@@ -793,7 +793,7 @@ func TestDocsProjectWorkflowSecretsResidualNamesTheManagedExposure(t *testing.T)
 //   - docs/project-layer.md's "outside this table" paragraph, where the scope
 //     of a secret name is decided and the layer's own non-secrets are
 //     enumerated;
-//   - docs/design/project-secrets.md §4's list of what `fugaro secrets set`
+//   - docs/project-secrets/spec.md §4's list of what `fugaro secrets set`
 //     accepts, where a reader of the parent design lands on the refusal this
 //     design adds a second form beside — a pointer, not a rewrite;
 //   - the setup skill, whose step 9 is the other place a value is stored, and
@@ -836,7 +836,7 @@ func TestDocsProjectWorkflowSecretsReachIsSaidWhereAPersonMeetsIt(t *testing.T) 
 			// is what makes it true, so the clause may not stand alone again.
 			"cannot be shared through a workflow's block;",
 		}},
-		{"docs/design/project-secrets.md", []string{
+		{"docs/project-secrets/spec.md", []string{
 			"which has no project-wide meaning (§3; a workflow's own secret has a project-wide form of its own since 0.19.0",
 			"[project-workflow-secrets/](../project-workflow-secrets/)",
 		}, []string{

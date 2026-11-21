@@ -24,7 +24,7 @@ import (
 //
 // It is the read the v1 design's D13 names — "fugaro config list --json" —
 // and it closes that design's gap 5 ("nothing enumerates installations",
-// docs/design/desktop-console.md §4.3), which the console's installation
+// docs/desktop-console/spec.md §4.3), which the console's installation
 // picker and its first run are built on (console v2 plan V2.1.1; design
 // F1/F2, D13, D31 and §3.4 rule 7). Two local sources, and no third:
 //
@@ -110,7 +110,7 @@ type configListInstallation struct {
 	// this project, in identity order, oldest path first — and where each of
 	// them is, re-validated on this read. It is what makes the console's
 	// first run zero-configuration: the installation list and the local
-	// checkouts arrive in one document (docs/design/desktop-console.md D13
+	// checkouts arrive in one document (docs/desktop-console/spec.md D13
 	// and §3.4 rule 7).
 	//
 	// An older CLI does not carry this key at all, so a reader must read an
@@ -395,7 +395,7 @@ func validIdentity(id localcfg.CheckoutIdentity) bool {
 // (cloudEnv.localRepo). One resolver for the two readers is the point: the
 // branch printed here is the branch the run is cut from, so an entry spelled
 // "acme/app.git", or two spellings of one repository, cannot make this row say
-// one branch and the run use another (docs/design/desktop-console.md §5.1
+// one branch and the run use another (docs/desktop-console/spec.md §5.1
 // rule 11, "the branch the window shows is the branch the run is cut from").
 func recordedBaseBranch(lc *localcfg.Config, repo string) string {
 	r, ok := lc.RepoFor(repo)

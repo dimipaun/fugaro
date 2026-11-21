@@ -234,7 +234,7 @@ latest_released_version() {
 # behind -- and `write` rewrites it to X.Y.Z, byte for byte the same when it
 # already says X.Y.Z.
 released_version_docs_list=(
-  "docs/design/project-named-oauth-tokens.md" "(released; the released CLI is " ")"
+  "docs/project-named-oauth-tokens/spec.md" "(released; the released CLI is " ")"
   "docs/project-claude-accounts.md" "The released Fugaro is " ","
 )
 released_version_docs() {
@@ -1110,7 +1110,7 @@ EOF
   exit 0
 fi
 
-commit_body="Bump the plugin version and every skill header to $version (scripts/bump-plugin-version.sh) so the release gate's version check passes once this merges to main, and record $version as the cli stream's current in docs/release-streams.yaml so the file the console's dependency graph draws describes what has shipped. Name $version as the released version in docs/design/project-named-oauth-tokens.md and docs/project-claude-accounts.md, whose status lines a docs test pins to the tree's version.
+commit_body="Bump the plugin version and every skill header to $version (scripts/bump-plugin-version.sh) so the release gate's version check passes once this merges to main, and record $version as the cli stream's current in docs/release-streams.yaml so the file the console's dependency graph draws describes what has shipped. Name $version as the released version in docs/project-named-oauth-tokens/spec.md and docs/project-claude-accounts.md, whose status lines a docs test pins to the tree's version.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 pr_body="Bumps plugin/.claude-plugin/plugin.json and every skill header to $version (scripts/bump-plugin-version.sh), per docs/release.md, and records $version as the cli stream's current in docs/release-streams.yaml and as the released version in the two docs that name it. Opened by scripts/release.sh; auto-merge (squash) is enabled."

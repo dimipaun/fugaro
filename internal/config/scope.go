@@ -3,7 +3,7 @@ package config
 import "strings"
 
 // Scope is the set of layers a fugaro.yaml key may be set in
-// (docs/design/layered-config.md §5). The Fugaro default is not a scope:
+// (docs/layered-config/spec.md §5). The Fugaro default is not a scope:
 // applyDefaults fills what no layer set.
 type Scope uint8
 
@@ -22,6 +22,22 @@ type ScopeRow struct {
 	Key string
 	In  Scope
 	Why string
+
+	// Retired is where the key is retired (R3 of
+	// docs/credentials-belong-to-models/reconciliation.md): the documents a
+	// document still writing it is told about, and zero for a live key. It is
+	// a subset of In rather than a flag, because a key can be retired in one
+	// document and live in the other — a grade's access is retired in a
+	// repository's file and is what the project layer still names (F38,
+	// whyGrade) — so the mark carries the bit of each document it holds in:
+	// InRepo for a repository's own fugaro.yaml, InProject for a project
+	// layer's defaults:. RetiredKeys reads this table out.
+	Retired Scope
+
+	// RetiredWhy is the sentence a person reads where a document still writes
+	// a retired key: RetiredKeyNotes carries it and `fugaro update`,
+	// `validate` and `doctor` print it. Empty exactly when Retired is zero.
+	RetiredWhy string
 }
 
 const (
@@ -39,6 +55,22 @@ const (
 	whyGovernance       = "it is a guardrail Fugaro ships: the project layer sets it for every repository of the project" +
 		" (a top-level key of the layer file, like claude_models) and a repository can only tighten it," +
 		" because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6)"
+
+	// The retired keys' sentences (R3 of
+	// docs/credentials-belong-to-models/reconciliation.md): what a person is
+	// told where a document still writes one. Each says what replaced the key
+	// and what `fugaro update` does with it, and names the folder once.
+	whyRetiredAuth = "a repository has no auth mode any more: a stage goes out on the credential or pool its" +
+		" craft's access names, and the project names that — `fugaro update` migrates this key and offers its" +
+		" removal, see docs/credentials-belong-to-models"
+	whyRetiredAccount = "a Claude account is a credential the project declares now, and a craft's access names the one" +
+		" that craft runs on — `fugaro update` migrates this key and offers its removal, see" +
+		" docs/credentials-belong-to-models"
+	whyRetiredCraftAccess = "a repository's file no longer chooses a credential or pool: the project names each" +
+		" craft's access — `fugaro update` moves this key there and offers its removal, see" +
+		" docs/credentials-belong-to-models"
+	whyRetiredGradeAccess = "a grade's access is the project's own — `fugaro update` moves this key into the project's" +
+		" config and offers its removal, see docs/credentials-belong-to-models"
 )
 
 // Scopes is every fugaro.yaml key and the layers it may be set in. A key
@@ -56,7 +88,7 @@ var Scopes = []ScopeRow{
 	{Key: "git.pr.reviewers", In: InRepo, Why: whyPeople},
 	{Key: "git.pr.early_draft", In: InProject | InRepo},
 	{Key: "git.pr.checkpoints", In: InProject | InRepo},
-	{Key: "agent.auth", In: InProject | InRepo},
+	{Key: "agent.auth", In: InProject | InRepo, Retired: InProject | InRepo, RetiredWhy: whyRetiredAuth},
 	{Key: "agent.model", In: InProject | InRepo | InOverride},
 	{Key: "agent.models.coder", In: InProject | InRepo},
 	{Key: "agent.models.reviewer", In: InProject | InRepo},
@@ -77,24 +109,24 @@ var Scopes = []ScopeRow{
 	// for all of them, because the reason is about the key and not about which
 	// craft writes it.
 	{Key: "agent.crafts.coder.model", In: InProject | InRepo},
-	{Key: "agent.crafts.coder.access", In: InRepo, Why: whyCredentialAccess},
+	{Key: "agent.crafts.coder.access", In: InRepo, Why: whyCredentialAccess, Retired: InRepo, RetiredWhy: whyRetiredCraftAccess},
 	{Key: "agent.crafts.review.model", In: InProject | InRepo},
-	{Key: "agent.crafts.review.access", In: InRepo, Why: whyCredentialAccess},
+	{Key: "agent.crafts.review.access", In: InRepo, Why: whyCredentialAccess, Retired: InRepo, RetiredWhy: whyRetiredCraftAccess},
 	{Key: "agent.crafts.senior-review.model", In: InProject | InRepo},
-	{Key: "agent.crafts.senior-review.access", In: InRepo, Why: whyCredentialAccess},
+	{Key: "agent.crafts.senior-review.access", In: InRepo, Why: whyCredentialAccess, Retired: InRepo, RetiredWhy: whyRetiredCraftAccess},
 	{Key: "agent.crafts.security-review.model", In: InProject | InRepo},
-	{Key: "agent.crafts.security-review.access", In: InRepo, Why: whyCredentialAccess},
+	{Key: "agent.crafts.security-review.access", In: InRepo, Why: whyCredentialAccess, Retired: InRepo, RetiredWhy: whyRetiredCraftAccess},
 	{Key: "agent.crafts.merge-judge.model", In: InProject | InRepo},
-	{Key: "agent.crafts.merge-judge.access", In: InRepo, Why: whyCredentialAccess},
+	{Key: "agent.crafts.merge-judge.access", In: InRepo, Why: whyCredentialAccess, Retired: InRepo, RetiredWhy: whyRetiredCraftAccess},
 	// The escalation ladder's two model grades (docs/outer-loop-escalation E2,
 	// D2039): the pair a craft carries, in one block of its own, and the one
 	// place a project layer may name an access (whyGrade). A repository's entry
 	// is admitted, so that the merge can drop it and record it rather than the
 	// file being refused where the value is what lost.
 	{Key: "model_grades.strong.model", In: InProject | InRepo, Why: whyGrade},
-	{Key: "model_grades.strong.access", In: InProject | InRepo, Why: whyGrade},
+	{Key: "model_grades.strong.access", In: InProject | InRepo, Why: whyGrade, Retired: InRepo, RetiredWhy: whyRetiredGradeAccess},
 	{Key: "model_grades.strongest.model", In: InProject | InRepo, Why: whyGrade},
-	{Key: "model_grades.strongest.access", In: InProject | InRepo, Why: whyGrade},
+	{Key: "model_grades.strongest.access", In: InProject | InRepo, Why: whyGrade, Retired: InRepo, RetiredWhy: whyRetiredGradeAccess},
 	{Key: "agent.review_rounds", In: InProject | InRepo | InOverride},
 	{Key: "agent.max_budget_usd", In: InProject | InRepo | InOverride},
 	{Key: "agent.instructions", In: InRepo, Why: whyFiles},
@@ -125,8 +157,14 @@ var Scopes = []ScopeRow{
 	// of the run's budget, so it belongs where the timeouts do: a project sets
 	// it for the workflows whose budget it knows, and a repository replaces it.
 	{Key: "agent.review_stop_fraction", In: InProject | InRepo},
+	// The keep-warm beat's switch (R10, D2985): a run's own behaviour, turned
+	// off where its other behaviour is configured. A project whose deployment
+	// shape says the beat is not needed sets it for every repository of it,
+	// and a repository replaces it — neither is a widening, because a run
+	// that sends no beat is slower at a call and never less correct.
+	{Key: "agent.workspace_beat", In: InProject | InRepo},
 	{Key: "agent.recipe", In: InProject | InRepo | InOverride},
-	{Key: "agent.oauth_token", In: InRepo | InOverride, Why: "it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists"},
+	{Key: "agent.oauth_token", In: InRepo | InOverride, Retired: InRepo, RetiredWhy: whyRetiredAccount, Why: "it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists"},
 	{Key: "agent.compression", In: InRepo | InOverride, Why: "it changes what the model sees on every call; the project layer and a profile are the same launcher-writable bucket object agent.oauth_token already distrusts for the identical reason"},
 	// The triage stage's switch (D1854): the repository's own reviewed file and
 	// nothing else, not even a task flag. A launcher writes the task and the

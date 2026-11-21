@@ -385,7 +385,7 @@ for b in $(git ls-remote --heads origin | awk '{print $2}' | sed 's#refs/heads/#
 done
 ```
 
-**A number reserved by an unmerged plan is invisible to a grep of `main`**, and a number reserved in a merged plan is invisible to a grep of `docs/gcp-live-checklist.md` — `docs/plans/2026-10-16-voice.md` §2 (line 58) states both, and it is why the fourth command above reads the checklist and the designs' own files rather than one file. (`§5.3` is [voice.md](../design/voice.md)'s section, not the plan's: it works the same claims through, and the plan is where the allocation is written.)
+**A number reserved by an unmerged plan is invisible to a grep of `main`**, and a number reserved in a merged plan is invisible to a grep of `docs/gcp-live-checklist.md` — `docs/voice/implementation-plan.md` §2 (line 58) states both, and it is why the fourth command above reads the checklist and the designs' own files rather than one file. (`§5.3` is [voice.md](../voice/spec.md)'s section, not the plan's: it works the same claims through, and the plan is where the allocation is written.)
 
 **This work takes D2400–D2429: D2400–D2417 are written here and every one is answered (2026-11-15, as recommended), and D2418–D2429 are reserved and unused.** Its checks are **620–629**, of which **620** is written in the plan and **621–629** are reserved.
 

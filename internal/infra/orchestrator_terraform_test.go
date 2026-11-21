@@ -104,6 +104,12 @@ func addresses(plan map[string]plannedResource) []string {
 // so "the opt-in" is one shape and a test cannot pass by opting into something
 // narrower than another test reads.
 //
+// The account, the service and the tick are read off the constants the WRITER
+// composes the block with (OrchestratorAccountID, OrchestratorServiceName,
+// OrchestratorSchedulerJob), so these plans are also what holds the writer's
+// names to the module's: a writer that spelled another account or another tick
+// would plan a second service beside the one the fixture creates.
+//
 // The image is this run's fixture registry and the recorded owner, in the
 // released pin's closed shape — `us-east5-docker.pkg.dev/proj-1234/
 // fugaro-ghcr/dimipaun/fugaro-<kind>:<version>@sha256:<64 hex>` — which is what
@@ -122,10 +128,10 @@ func orchestratorBlock(t *testing.T, spec InstallationSpec, fp string) map[strin
 		"account_id":        OrchestratorAccountID,
 		"firebase_project":  fp,
 		"signer_account_id": SignerAccountID,
-		"service":           "fugaro-orchestrator",
+		"service":           OrchestratorServiceName,
 		"image":             "us-east5-docker.pkg.dev/" + spec.Project + "/fugaro-ghcr/" + orchestratorImageOwner + "/fugaro-base:1.2.3@sha256:" + strings.Repeat("ab", 32),
 		"rtdb_url":          "https://" + fp + "-default-rtdb.firebaseio.com",
-		"scheduler_job":     "fugaro-orchestrator-tick",
+		"scheduler_job":     OrchestratorSchedulerJob,
 		"scheduler_region":  spec.Region,
 	}
 }

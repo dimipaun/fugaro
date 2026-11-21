@@ -23,7 +23,7 @@ resource "google_service_account_iam_member" "operator" {
 # This is a widening of the 0.7.0 property that a job account's objects are
 # its own repository's: one project job serves every repository admitted to
 # its profile, so the object it writes is no longer inside one repository's
-# prefix. SECURITY.md and docs/design/bucket-iam.md state the regression in
+# prefix. SECURITY.md and docs/bucket-iam/spec.md state the regression in
 # full (D4), including another queued run's budget token (D13, accepted
 # 2026-10-15) and another run's launch.json/result.json (task 3.4). Every
 # project job gets this same condition whatever its profile, so a profile

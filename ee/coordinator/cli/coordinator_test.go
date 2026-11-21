@@ -1498,7 +1498,7 @@ type coordinatorReportFixture struct {
 // budget.rtdb_url — the pair `fugaro update --firebase-project` writes — and the
 // database carrying the mark that same command writes. It is the shape the
 // ownership question every writer into that database asks is answered "yes"
-// by (budgetDBUnadopted, docs/design/upgrade.md), so a test that hands the
+// by (budgetDBUnadopted, docs/upgrade/spec.md), so a test that hands the
 // database another installation's mark, or empties the mark and leaves data, is
 // the refusal and not a fixture that never could have been written to.
 func newCoordinatorReportFixture(t *testing.T) *coordinatorReportFixture {

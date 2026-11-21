@@ -107,7 +107,7 @@ func TestAccountsLsShowsAStateItDoesNotKnow(t *testing.T) {
 }
 
 // TestAccountsLsDefaultFirstThenNamedSorted pins config.AllowedClaudeAccounts'
-// own order (design docs/design/named-oauth-tokens.md §6a): "default" always
+// own order (design docs/named-oauth-tokens/spec.md §6a): "default" always
 // first, then every allowed name sorted.
 func TestAccountsLsDefaultFirstThenNamedSorted(t *testing.T) {
 	f := newCloudFixture(t)

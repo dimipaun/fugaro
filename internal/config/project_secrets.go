@@ -11,7 +11,7 @@ import (
 // ProjectSecret is one entry of the local config's project_secrets block:
 // the owner's decision to store a reserved secret's value once per project
 // and mount it from every repository the entry allow-lists (design
-// docs/design/project-secrets.md §3). It is the same shape as
+// docs/project-secrets/spec.md §3). It is the same shape as
 // ClaudeAccount, and like it, operator-only local config: never
 // fugaro.yaml, never the project layer, never published.
 //
@@ -159,7 +159,7 @@ func ProjectSecretReaches(secrets map[string]ProjectSecret, name, repo string) b
 
 // ProjectScopeByDefault reports whether name is one of the reserved secrets
 // D2 swept into project scope (plan Task 2.1 step 2, design
-// docs/design/project-centric.md §6.3): the names the platform itself mounts,
+// docs/project-centric/spec.md §6.3): the names the platform itself mounts,
 // so its own rules already decide who may read them. Two of the four are not
 // swept in.
 //

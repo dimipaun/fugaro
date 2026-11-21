@@ -1747,7 +1747,7 @@ func TestSecretsLsSaysWhenTheRepositorysOwnListCouldNotBeRead(t *testing.T) {
 
 // --- Task 2.1: project scope is the default (D2) -------------------------
 //
-// D2 (design docs/design/project-centric.md §6.3) reverses #343's
+// D2 (design docs/project-centric/spec.md §6.3) reverses #343's
 // default-safe rule for a name that has a project-wide meaning:
 // `fugaro secrets set NAME` with neither flag stores the PROJECT copy, and
 // `--repo` -- bare, or with a slug -- is what asks for one repository's own

@@ -307,7 +307,7 @@ a destructive command means confirming it again.
 ## The lapse (S6.3; D436, T12)
 
 The licence has its own refuser here, and it is the only one that is not about
-the network. `docs/design/lapse-read-only.md` §4.2 is the table, `state.js` owns
+the network. `docs/lapse-read-only/spec.md` §4.2 is the table, `state.js` owns
 it, and this client is where it is enforced -- because `send` is the app's one
 write path (D113), a lapse enforced anywhere else would be one a caller could
 walk around. It runs **before the connection gate**: both can be true of one

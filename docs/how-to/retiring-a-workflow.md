@@ -28,7 +28,7 @@ It is the whole transition, in the order the design fixes:
 
 ## On a managed project (**per repository**)
 
-A [managed project](../design/managed-projects.md) delivers itself, so its repository step takes no confirmation, and **plain `fugaro update` makes the retirement by itself** — no `--retire`, no typed project name: it removes the protected addresses from Terraform's state, plans, applies and deletes the orphaned jobs through the Cloud Run API, in the order below, and still writes the plan, the full delete list and the project's own audit record.
+A [managed project](../managed-projects/spec.md) delivers itself, so its repository step takes no confirmation, and **plain `fugaro update` makes the retirement by itself** — no `--retire`, no typed project name: it removes the protected addresses from Terraform's state, plans, applies and deletes the orphaned jobs through the Cloud Run API, in the order below, and still writes the plan, the full delete list and the project's own audit record.
 
 Only the **derived** resources of that repository are retired that way: the IAM grants, the service accounts, the Cloud Run jobs and the Scheduler entries of a workflow, account or variant the configuration no longer produces. A retirement whose set holds **one** address that is not one of those — a bucket or an object, a secret container, an Artifact Registry repository, a database, a log bucket, the installation's own resources, or a type this CLI has no decision about — stops, names that address and the reason it stopped, and keeps the two typed confirmations and the `--retire` command this page documents. A coding agent's session, `--ask`, `--json` and a pipe are never retired by themselves either, whatever the plan says.
 
@@ -44,4 +44,4 @@ If you prefer it, or the binary is older than 0.7.5:
 
 Turning every workflow's `check: off` instead of removing it is the same transition, smaller: the plan deletes that repository's check job, its Scheduler job and the scheduler's invoker grant.
 
-A managed project has no `fugaro update --forget` ([design/managed-projects.md](../design/managed-projects.md) §10.2). Design of record: [design/config-transitions.md](../design/config-transitions.md).
+A managed project has no `fugaro update --forget` ([managed-projects/spec.md](../managed-projects/spec.md) §10.2). Design of record: [config-transitions/spec.md](../config-transitions/spec.md).

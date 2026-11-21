@@ -124,7 +124,7 @@ could touch).
 | `internal/runner/review_key_test.go` (new) | L1 | AK1 |
 | `internal/runner/provider_policy_test.go` | L1 | AK1 |
 | `docs/multi-model.md` | L1 | AK2 |
-| `docs/design/mixed-credentials.md` | L1 | AK2 |
+| `docs/mixed-credentials/spec.md` | L1 | AK2 |
 | `internal/cli/docs_mixed_credentials_test.go` | L1 | AK2 |
 | `internal/runstore/runstore.go` | L1 | AK3 |
 | `internal/runstore/runstore_test.go` | L1 | AK3 |
@@ -293,14 +293,14 @@ reads the fixture values against the repository's no-secret-shaped-literals rule
 
 **Slice:** in-job (L1). **Depends on:** AK1 (the sentences describe what AK1 pins).
 
-**Files (3):** `docs/multi-model.md`, `docs/design/mixed-credentials.md`,
+**Files (3):** `docs/multi-model.md`, `docs/mixed-credentials/spec.md`,
 `internal/cli/docs_mixed_credentials_test.go` (the pin).
 
 **Interfaces:** none. `docs/multi-model.md` §3 already states the Anthropic-key rule in the owner's
 words and §4 already shows the configuration; the change is a section that says **which credential
 the review then runs on** and what it costs, and a correction of §3's stale "Missing" list
 (**F4**, **F9**). `internal/cli/docs_mixed_credentials_test.go` is the file that pins
-`docs/design/mixed-credentials.md` today, so the corrected sentences are pinned in the same change
+`docs/mixed-credentials/spec.md` today, so the corrected sentences are pinned in the same change
 (CLAUDE.md: keep the pinned fact, change the wording both places).
 
 **Tests and command:**

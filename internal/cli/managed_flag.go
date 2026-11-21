@@ -21,7 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// fugaro managed flag (docs/design/managed-projects.md D58, the plan's Task
+// fugaro managed flag (docs/managed-projects/spec.md D58, the plan's Task
 // 6.1) is the owner's decision that an EXISTING project — one a Fugaro run
 // did not create — is managed, recorded in that project's own marker object.
 // It is the second way a project becomes managed; the first is a run that
@@ -364,7 +364,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 		// command, the rule Task 3.0's refusal text keeps, because this
 		// command's output is the operator's (a coding agent's session is
 		// refused above and never reaches it).
-		return fail(remote(fmt.Errorf("wrote gs://%s/%s, but not the %s=%s label on GCP project %s (%v): the read requires both marks, so %s is not managed yet and nothing is skipped for it. The label is written on the account that owns the project, in the owner's own terminal, and docs/design/managed-projects.md has that one line; it is not a second run of this command, which replaces only the creation fact that records no amount",
+		return fail(remote(fmt.Errorf("wrote gs://%s/%s, but not the %s=%s label on GCP project %s (%v): the read requires both marks, so %s is not managed yet and nothing is skipped for it. The label is written on the account that owns the project, in the owner's own terminal, and docs/managed-projects/spec.md has that one line; it is not a second run of this command, which replaces only the creation fact that records no amount",
 			safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), safetext.FieldErr(err), safetext.Field(lc.Name))))
 	}
 	// Read back through the managed read itself, with its project-number
@@ -408,8 +408,8 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// command that takes both off (D1020), the one this line used to say did
 	// not exist. The gcloud line takes the label off on
 	// its own, and no test can run it, so it stays marked UNVERIFIED as the
-	// backfill in docs/design/managed-projects.md is.
-	fmt.Fprintf(out, "undo: this command wrote two things, and either one alone makes the project unmanaged again, because the read requires both — take both off with `fugaro managed unflag %s` in your own terminal, which removes the object gs://%s/%s and the %s=%s label on the project itself; the label alone comes off with `gcloud projects update %s --remove-labels=%s`, which is UNVERIFIED until an operator has run it live (docs/design/managed-projects.md carries the same line)\n",
+	// backfill in docs/managed-projects/spec.md is.
+	fmt.Fprintf(out, "undo: this command wrote two things, and either one alone makes the project unmanaged again, because the read requires both — take both off with `fugaro managed unflag %s` in your own terminal, which removes the object gs://%s/%s and the %s=%s label on the project itself; the label alone comes off with `gcloud projects update %s --remove-labels=%s`, which is UNVERIFIED until an operator has run it live (docs/managed-projects/spec.md carries the same line)\n",
 		safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), managed.ProjectLabelKey)
 	return nil
 }

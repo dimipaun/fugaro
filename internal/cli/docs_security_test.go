@@ -34,7 +34,7 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		"fugaro verify",
 		"followup.trusted",
 		"docs/design/v1.md",
-		"docs/design/bucket-iam.md",
+		"docs/bucket-iam/spec.md",
 		"Budget mode defaults to off.",
 		"Vertex has no dollar cap, in any mode.",
 		"roles/storage.objectAdmin",
@@ -206,7 +206,7 @@ func TestSecurityMdNamesTheDeployersNinthGrant(t *testing.T) {
 	// (§7 and §8 count it) is not mistaken for the paragraph.
 	const f4aOpening = "**F4a — the ninth grant"
 	var f4a []string
-	for _, line := range strings.Split(readDoc(t, "docs/design/managed-deployer-fence.md"), "\n") {
+	for _, line := range strings.Split(readDoc(t, "docs/managed-deployer-fence/spec.md"), "\n") {
 		if len(f4a) == 0 {
 			if !strings.HasPrefix(line, f4aOpening) {
 				continue

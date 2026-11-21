@@ -16,7 +16,7 @@ import (
 // first-run wizard (D2904 of docs/console-improvements) — answers them all
 // without a terminal.
 //
-// It is an input and never a consent. The file fills the same five flags the
+// It is an input and never a consent. The file fills the same flags the
 // wizard's answers fill (setupQuestions, setup.go), and nothing else: the
 // steps that are a person's — creating the GCP project, linking its billing
 // account, the permanent Firestore location, every secret value — have no
@@ -36,10 +36,11 @@ import (
 // rather than reading it as this one.
 const setupAnswersVersion = 1
 
-// setupAnswerKeys are the document's members, its version first: the five
-// questions of the wizard's table and nothing besides, which is what the
-// schema's additionalProperties: false says in prose
-// (schemas/setup-answers.schema.json).
+// setupAnswerKeys are the document's members, its version first: the questions
+// of the wizard's table and nothing besides — the place question contributing
+// two keys, `location` and `region`, because the region is the precise form of
+// the same answer — which is what the schema's additionalProperties: false
+// says in prose (schemas/setup-answers.schema.json).
 func setupAnswerKeys() []string {
 	keys := make([]string, 0, len(setupAnswerQuestions)+1)
 	keys = append(keys, "version")
@@ -59,6 +60,12 @@ var setupAnswerQuestions = []struct {
 	flag string
 }{
 	{"gcp_project", "--gcp-project"},
+	// One question, two keys (LP4 of docs/location-preference; R2, D3080): the
+	// place the wizard asks (us or eu) and the region its precise form names.
+	// Both are members because a member never changes meaning — `region` is
+	// the field it always was — and a document may answer either one; the run
+	// refuses the two only where they disagree (settleLocation).
+	{"location", "--location"},
 	{"region", "--region"},
 	{"name", "--name"},
 	{"rigor", "--rigor"},
@@ -71,6 +78,7 @@ var setupAnswerQuestions = []struct {
 type setupAnswers struct {
 	Version    int    `json:"version"`
 	GCPProject string `json:"gcp_project"`
+	Location   string `json:"location"`
 	Region     string `json:"region"`
 	Name       string `json:"name"`
 	Rigor      string `json:"rigor"`
@@ -86,7 +94,7 @@ type setupAnswers struct {
 // Every refusal names the file, the member that is wrong and the fix, and none
 // of them quotes a value: the document is read, never echoed. The members are
 // checked by name here rather than by the decoder's own strictness, because the
-// sentence a reader is owed is the one that names the six members the file may
+// sentence a reader is owed is the one that names every member the file may
 // carry and not only the one it may not (the schema's additionalProperties:
 // false, in the words of a terminal).
 func readSetupAnswers(path string, stdin io.Reader) (*setupAnswers, error) {
@@ -129,6 +137,19 @@ func readSetupAnswers(path string, stdin io.Reader) (*setupAnswers, error) {
 		return nil, userErr("%s: rigor: %v, or pass --rigor <mode>", where, err)
 	}
 	a.Rigor = string(mode)
+	// The place is an answer of two values (D3081), which is the schema's own
+	// enum, and the reader refuses anything else in the words a run uses: the
+	// document is the console's, and a place it writes must not be carried to
+	// a flag that refuses it later. The region beside it is not checked for
+	// shape here: a place and a region that disagree are a refusal about the
+	// run rather than about the file, and the reading that settles them
+	// (settleLocation, init_inputs.go) is the one that makes it.
+	if a.Location != "" {
+		if _, ok := parsePlace(a.Location); !ok {
+			return nil, userErr("%s answers a location that is not a place: answer us or eu, and name a region in full with --region <region> (%s)", where, fix)
+		}
+		a.Location = strings.ToLower(strings.TrimSpace(a.Location))
+	}
 	return a, nil
 }
 
@@ -179,6 +200,8 @@ func (a *setupAnswers) answer(key string) (string, bool) {
 	switch key {
 	case "gcp_project":
 		return a.GCPProject, a.GCPProject != ""
+	case "location":
+		return a.Location, a.Location != ""
 	case "region":
 		return a.Region, a.Region != ""
 	case "name":
@@ -205,6 +228,8 @@ func (o *initOptions) setAnswer(flag, value string) {
 	switch flag {
 	case "--gcp-project":
 		o.cloud.gcpProject = value
+	case "--location":
+		o.location = value
 	case "--region":
 		o.cloud.region = value
 	case "--name":
@@ -228,6 +253,8 @@ func (o *initOptions) answerGiven(flag string) bool {
 	switch flag {
 	case "--gcp-project":
 		return o.cloud.gcpProject != ""
+	case "--location":
+		return o.location != ""
 	case "--region":
 		return o.cloud.region != ""
 	case "--name":

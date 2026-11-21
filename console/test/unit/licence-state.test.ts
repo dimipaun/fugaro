@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The console's lapse state, at the handler (subscriptions plan S6.2; the
-// design is `docs/design/lapse-read-only.md`, D436 and T12).
+// design is `docs/lapse-read-only/spec.md`, D436 and T12).
 //
 // What this file holds, and why each part is a test rather than an argument:
 //

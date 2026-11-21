@@ -117,7 +117,7 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "docs/design/bucket-iam.md",
+          "docs/bucket-iam/spec.md",
           "plugin/skills/working/SKILL.md",
           "plugin/skills/landing/SKILL.md",
           "docs/releases/v0.27.0.md",

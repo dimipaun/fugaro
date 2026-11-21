@@ -303,6 +303,12 @@ func registerLayerMeta() {
 		Min:         "0",
 		Max:         "1",
 	})
+	each("layer.defaults.agent.workspace_beat", Meta{
+		Label:       "Workspace keep-warm beat",
+		Description: "Whether the project's runs keep their workspace's credentials service warm between calls.",
+		Group:       GroupProfiles,
+		Type:        TypeBool,
+	})
 	each("layer.defaults.agent.recipe", Meta{
 		Label:       "Model recipe",
 		Description: "The named recipe the project's model choices are taken from.",

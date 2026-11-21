@@ -228,11 +228,13 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 // checkTestHooks refuses the hidden test flags where they could take the
 // model's credential somewhere else: the gateway's upstream must be on
 // loopback, and the managed settings path can move only with such an
-// upstream, or when no gateway runs (the budget is off). A malformed
-// budget counts as on, since the runner will fail it anyway. The budget is
-// on when the merged mode is: a committed observe or enforce switches the
-// gateway on under an off ceiling, so fileMode, the mode the checkout's own
-// fugaro.yaml asks for, counts with the ceiling's.
+// upstream. A malformed budget counts as on, since the runner will fail it
+// anyway. The mode used to decide that — an off ceiling, or an off mode in
+// the checkout's own fugaro.yaml, let the path move — and from AB1a every run
+// is accounted for whatever it asks for (D3009, R3), so the merged mode below
+// answers on whatever it merges. The read stays for the task that takes the
+// mode out of this file, and out of the flag's help, with the rest of them
+// (AB3).
 func checkTestHooks(o execOptions, spend runner.Spend, spendErr error, fileMode string) error {
 	on := runner.Spend{Mode: policy.Merge(policy.Layer{Mode: spend.Mode}, policy.Layer{Mode: fileMode}).Mode}.On()
 	if o.identityURL != "" && !loopbackUpstream(o.identityURL) {
@@ -265,9 +267,9 @@ func loopbackUpstream(s string) bool {
 // names every job carries since M9a.
 func oldJobEnvReason(missing string) string {
 	if missing == "FUGARO_GCP_PROJECT" {
-		return "job environment lacks FUGARO_GCP_PROJECT (it was set up before M9a): run fugaro update --repo from the repository's checkout; see docs/design/m9-budget-and-dashboard.md §13.1"
+		return "job environment lacks FUGARO_GCP_PROJECT (it was set up before M9a): run fugaro update --repo from the repository's checkout; see docs/m9-budget-and-dashboard/spec.md §13.1"
 	}
-	return "job environment lacks " + missing + ": run fugaro update --repo from the repository's checkout; see docs/design/m9-budget-and-dashboard.md §13.1"
+	return "job environment lacks " + missing + ": run fugaro update --repo from the repository's checkout; see docs/m9-budget-and-dashboard/spec.md §13.1"
 }
 
 // refuseOldJobEnv is nil unless this process is in the cloud and its job

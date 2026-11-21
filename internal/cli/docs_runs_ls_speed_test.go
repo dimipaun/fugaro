@@ -19,8 +19,8 @@ import (
 
 const (
 	// The design of record the bucket's grants and their limits live in
-	// (docs/design/bucket-iam.md §10, the threat model).
-	runsLsSpeedBucketIAM = "docs/design/bucket-iam.md"
+	// (docs/bucket-iam/spec.md §10, the threat model).
+	runsLsSpeedBucketIAM = "docs/bucket-iam/spec.md"
 	// The step-by-step audit of `fugaro update` while runs are in flight:
 	// RL2B wrote the index row, and RL3 is the release that makes runs read it.
 	runsLsSpeedUpdateInFlight = "docs/design/update-in-flight.md"
