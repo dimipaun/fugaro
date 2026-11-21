@@ -938,13 +938,71 @@ func TestProbeCandidatesFollowThePolicy(t *testing.T) {
 		{"no fallback written", creds.Settings{}, 1},
 		{"auto", creds.Settings{Fallback: creds.Auto}, 2},
 	} {
-		got := probeCandidates(cands, tc.set)
+		got := probeCandidates(cands, tc.set, testModel, "")
 		if len(got) != tc.want {
 			t.Errorf("%s: %d candidates are open to a probe, want %d", tc.name, len(got), tc.want)
 		}
 		for _, c := range got {
 			if c.Tier != creds.TierA && !tc.set.Fallback.Spends() {
 				t.Errorf("%s: %q of tier %s is open to a probe under a policy that does not spend", tc.name, c.Name, c.Tier)
+			}
+		}
+	}
+}
+
+// TestAProbeAsksOnlyTheCredentialsTheModelAdmits: a probe sends the call's OWN
+// model through the credential it asks about, so the model decides which
+// classes may be probed, in both directions (creds.ProviderServes, D3000,
+// D3007). A tier-C candidate may be probed only for a model a provider may
+// serve: without that gate the service would make the very call Check 50 gates
+// — a Claude model through a third party — and would clear the mark on the way,
+// handing the next selection a usable provider key for a Claude call. And a
+// tier-A or tier-B candidate may be probed only for a model that IS a Claude
+// one, since neither can run a provider's model, and a probe that cleared one
+// would hand the next selection a credential the call cannot be served by.
+// The model decides it and not the policy: a repository's own provider
+// credential is offered under every auth the service serves (F32), and a call
+// that names no model reads as a Claude one.
+//
+// Which provider's key the probe may take is the tying half of the same
+// question (creds.Selector.Provider, D3000): the list holds one key per
+// provider the policy names, and the probe is made on the credential the call
+// would be served by, so it is the named provider's key or none.
+func TestAProbeAsksOnlyTheCredentialsTheModelAdmits(t *testing.T) {
+	cands := []creds.Credential{
+		{Name: "default", Tier: creds.TierA},
+		{Name: "repo-credential--gh-acme-app-1a2b--openrouter", Tier: creds.TierC, Provider: "openrouter"},
+		{Name: "repo-credential--gh-acme-app-1a2b--deepseek", Tier: creds.TierC, Provider: "deepseek"},
+	}
+	for _, tc := range []struct {
+		name     string
+		set      creds.Settings
+		model    string
+		provider string
+		want     string
+	}{
+		{"a Claude model under a spending policy", creds.Settings{Fallback: creds.Auto}, testModel, "", "default"},
+		{"no model named under a spending policy", creds.Settings{Fallback: creds.Auto}, "", "", "default"},
+		{"another model under a spending policy, its provider named", creds.Settings{Fallback: creds.Auto}, openRouterModel, "openrouter", "repo-credential--gh-acme-app-1a2b--openrouter"},
+		{"another model under a spending policy, the other provider named", creds.Settings{Fallback: creds.Auto}, openRouterModel, "deepseek", "repo-credential--gh-acme-app-1a2b--deepseek"},
+		{"another model under a spending policy, no provider named", creds.Settings{Fallback: creds.Auto}, openRouterModel, "", ""},
+		{"a Claude model under oauth-only", creds.Settings{Fallback: creds.OAuthOnly}, testModel, "", "default"},
+		{"another model under oauth-only, its provider named", creds.Settings{Fallback: creds.OAuthOnly}, openRouterModel, "openrouter", "repo-credential--gh-acme-app-1a2b--openrouter"},
+	} {
+		got := probeCandidates(cands, tc.set, tc.model, tc.provider)
+		var names []string
+		for _, c := range got {
+			names = append(names, c.Name)
+		}
+		if strings.Join(names, ", ") != tc.want {
+			t.Errorf("%s: the candidates open to a probe are [%s], want [%s]", tc.name, strings.Join(names, ", "), tc.want)
+		}
+		for _, c := range got {
+			if c.Tier == creds.TierC && (!creds.ProviderServes(tc.model) || c.Provider != tc.provider) {
+				t.Errorf("%s: the provider credential %q is open to a probe, and a probe would send %q through it (the call named %q)", tc.name, c.Name, tc.model, tc.provider)
+			}
+			if c.Tier != creds.TierC && creds.ProviderServes(tc.model) {
+				t.Errorf("%s: %q of tier %s is open to a probe, and a probe would send %q, which it cannot run", tc.name, c.Name, c.Tier, tc.model)
 			}
 		}
 	}

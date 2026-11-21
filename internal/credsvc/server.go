@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -263,6 +264,10 @@ func servedRoute(r *http.Request) bool {
 	}
 	switch r.URL.Path {
 	case MessagesPath, CountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
+		return true
+	// The five identity routes (C1, R2): a run's identity is issued here, with
+	// every one of them answered ahead of the shared parse below.
+	case identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath, identitywire.DevicePath, identitywire.ProbePath:
 		return true
 	}
 	return false
@@ -660,7 +665,9 @@ type Config struct {
 	AuditLog slog.Handler
 	// JobAccounts binds a job service account to the repository whose runs
 	// are launched as it. It is the table the run-to-job binding is checked
-	// against (N1), so an empty one refuses every call.
+	// against (N1), so an empty one leaves the deployment's own scope with
+	// nothing to bind — which NewServer refuses unless the deployment handed in
+	// a resolver of its own (Resolver), whose binding is its own.
 	JobAccounts []JobAccount
 	// ReviewAccounts are the installation's review jobs (C3.9a): the same rows
 	// AuthConfig.ReviewJobAccounts holds, and the reason they are here as well
@@ -713,6 +720,16 @@ type Config struct {
 	// and a workspace's scope answers its own for the routes it serves
 	// (scope_workspace.go, WS2). The field is how a workspace's deployment is
 	// built without a second Server (WS5).
+	//
+	// Identity is the identity configuration the five identity routes are
+	// served from (C1, R2; identity_config.go). Its zero value is an
+	// installation not yet given an issuer, and the routes answer the
+	// contract's "not served" on it (R7) — this release mounts them in every
+	// service so that a launcher can ask and be told, rather than asking a
+	// service that does not know the path. `credentials serve` reads it out of
+	// the environment (LM22) and wires the issuer in (I1); no caller, no record
+	// and no policy can set any of it.
+	Identity IdentityConfig
 	Resolver ScopeResolver
 }
 
@@ -1010,7 +1027,24 @@ func NewServer(cfg Config) (*Server, error) {
 		// service whose every issuance and every mint would refuse.
 		return nil, errors.New("credsvc: the service has no audit handler, so it cannot record a probe and a backed-off credential could never come back")
 	}
-	if len(cfg.JobAccounts) == 0 {
+	if len(cfg.JobAccounts) == 0 && cfg.Resolver == nil {
+		// The table is the INSTALLATION's binding (N1): it is what
+		// installationResolver pairs a caller's verified account with, so an
+		// empty one leaves the deployment's own scope with nothing to bind — and
+		// a deployment that admits nobody is one an operator would read as
+		// healthy while every run halted (D143). A deployment that hands in a
+		// resolver of its own binds its runs through that resolver instead: a
+		// workspace's scope takes the calling account's member and repositories
+		// from the published node (scope_workspace.go, C3), which is also the
+		// only place they can come from, because the workspace's container
+		// carries no job document and sets no FUGARO_JOB_ACCOUNTS
+		// (internal/infra/tf's WorkspaceServiceEnv, WS6). THIS TABLE is not what
+		// admits a caller there and its emptiness is not an admission: the
+		// resolver's own front door is the workspace's verifier, and a caller it
+		// does not admit is refused before any handler runs, while the handlers
+		// that verify their caller themselves read cfg.Auth above, whose table is
+		// the node's member accounts. Neither is this table, and a deployment
+		// that handed none in admits nobody here.
 		return nil, errors.New("credsvc: the service has no job accounts, so it can bind no run to a repository")
 	}
 	if len(cfg.ReviewAccounts) > 0 && len(cfg.Repos) == 0 {
@@ -1181,7 +1215,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+" and "+BuildCredentialsPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+" and "+identitywire.ProbePath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	// The scope this call is served under (R1, C1), asked once and before any
@@ -1344,6 +1378,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// so it goes through the shared parse below and is branched on after the
 		// stop switches, exactly as the mint is.
 		s.slipGrant(ctx, w, r)
+		return
+	}
+	if _, isIdentity := identitywire.RouteFor(r.URL.Path); isIdentity {
+		// The five identity routes (C1, R2), answered before the shared parse
+		// for the slip's grant reason and not a new one: their caller holds no
+		// run identity — a ticket is asked for before the run exists, and a
+		// claim is the run's own first call — so RequestFromHTTP would refuse
+		// the call for the missing identity headers before the class ever read
+		// its token. What replaces the parse is each route's own read: the
+		// caller's Google ID token off the Authorization bearer (the roster
+		// class the slip's grant already uses) and its own body, read strictly
+		// (identitywire.DecodeStrict).
+		//
+		// It is one door and not five because what is behind it is the issuer's
+		// own handler, which reads the class and the body off the route itself;
+		// until that is wired in (I1) every one of them answers the contract's
+		// "not served" (R7), which is the answer the CLI of this release bridges
+		// on.
+		s.identityRoute(ctx, w, r)
 		return
 	}
 	// The caller this call was resolved as (the resolver's own work: the two
