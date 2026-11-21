@@ -329,10 +329,13 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		// a node that says it is one no reader of this release serves (the
 		// runner refuses the run, AB1b, and the decoder refuses the node, AB2),
 		// so publishing it is what would stop the project's next run with a
-		// sentence about a policy this very command wrote. Judged per attempt, on
-		// the node this attempt would write, so a retry re-reads the value it
-		// decided on.
-		if err := refuseARemovedBudgetMode(pol.Budget.Mode); err != nil {
+		// sentence about a policy this very command wrote. Judged on the mode the
+		// local config states, which is the word this publish is an attempt to
+		// write: the build both doors take hands the node the mode that word asks
+		// for (publishedMode, AB8a), so the node this door would write never
+		// carries it and the refusal is what stands between the operator and a
+		// config that says a word this release does not serve.
+		if err := refuseARemovedBudgetMode(lc.Budget.Mode); err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
 		// A policy whose allow-list admits nothing stops every run of the
@@ -479,9 +482,9 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 	return remote(fmt.Errorf("the policy node kept changing under the write (%d attempts); the shared node is as it was%s; run it again", setAttempts, narrowedNote(narrowedSoFar)))
 }
 
-// refuseARemovedBudgetMode is C1's refusal at the publish door: the word the
-// budget mode's vocabulary dropped is refused here, before a node is written,
-// whatever the rest of the installation looks like.
+// refuseARemovedBudgetMode is C1's refusal at the publish door: a local config
+// that states the word the budget mode's vocabulary dropped is refused here,
+// before a node is written, whatever the rest of the installation looks like.
 //
 // It is one refusal and not a conditional one because the word is not a mode at
 // all any more (D3009): a node that carries it is one no reader of this release
@@ -492,6 +495,11 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 // was written; what it means and the fix are the vocabulary's own text
 // (policy.ModeOffRefusal), so this refusal and the flag's, the file's and the
 // node's cannot drift (docs/always-a-budget/contract-mode.md).
+//
+// It reads the mode the local config states and not the node this publish would
+// write, because that node no longer says the word at all: the build both doors
+// take hands it the mode the word asks for (publishedMode, AB8a). The operator's
+// file is the thing to fix, and the sentence says so.
 //
 // It replaces the narrower refusal of D2071 (a), which refused the word only
 // while the credentials service served a switched repository. That state is
@@ -507,7 +515,7 @@ func refuseARemovedBudgetMode(mode string) error {
 	if !policy.Mode(mode).Removed() {
 		return nil
 	}
-	return userErr("this publish would write the budget mode as %s: %s", mode, policy.ModeOffRefusal)
+	return userErr("the local config says the budget mode is %s: %s", mode, policy.ModeOffRefusal)
 }
 
 // requirePolicyRules refuses a publish without the deployed rules marker
@@ -1410,11 +1418,18 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		stageAccounts[stage], _ = lc.ResolveAccount(choice.ClaudeAccount)
 	}
 	defaultAccount, _ := lc.ResolveAccount(lc.DefaultClaudeAccount)
+	// The budget mode is the one the file asks for (publishedMode, AB8a): a file
+	// that spells the word the mode's vocabulary dropped is asking for the mode
+	// it means, and copying the word into the node would undo the migration step
+	// that has just taken it out of the published node — the update's own publish
+	// path reaches this builder with no refusal of its own, and the node it wrote
+	// would be one no reader of this release serves. The publish door's own
+	// refusal of the word is above it, and the file itself loses it in AB8b.
 	pol := &projectpolicy.Policy{
 		DefaultClaudeAccount: defaultAccount,
 		ClaudeAccountStages:  stageAccounts,
 		Version:              projectpolicy.Version,
-		Budget:               projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
+		Budget:               projectpolicy.Budget{Mode: publishedMode(lc.Budget.Mode), PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
 		AllowRepos:           nonNil(allow),
 		BaseBranch:           lc.BaseBranch,
 		Providers:            policyProviders(lc),
