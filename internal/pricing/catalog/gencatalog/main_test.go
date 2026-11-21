@@ -106,7 +106,7 @@ func (s *snapshots) genFile(ids ...string) *catalog.File {
 // refreshing the snapshots is one edit here rather than two that could drift
 // apart, and the date a reader of a failure message is told to pass to the
 // script is the same one.
-const snapshotDate = "2026-10-23"
+const snapshotDate = "2026-11-21"
 
 // TestGeneratedFileMatchesSnapshots regenerates the checked-in catalog.json
 // from testdata/openrouter and compares the bytes: the file is generated,
