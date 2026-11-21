@@ -171,7 +171,7 @@ func TestDocsCheck340RecordsTheFirstRun(t *testing.T) {
 	// What this run left behind is an attempt and not an answer: the section
 	// has to say the PASS came later, or its block reads as the block that
 	// answered R12's question.
-	if !strings.Contains(section, "the fourth run is the answer") {
+	if !strings.Contains(section, "Four runs have been made and the fourth is the answer") {
 		t.Errorf("Check %s's section does not tie the PASS to the fourth run: the first run ended exit 2 and measured nothing about the attribute, so a section that let its block be read as the answer would hand R12 a string nobody measured", check340Number)
 	}
 }
