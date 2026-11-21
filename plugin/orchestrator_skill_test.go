@@ -353,11 +353,15 @@ func TestSkillSaysFirestoreIsNotTheStore(t *testing.T) {
 const handoffAnchor = "Who launches the runs"
 
 // handoffRules is what the hand-off section has to carry, as the phrases it
-// does it in. The first two are the reads that decide it, the next two are who
-// launches, and the rest are the two doors the work goes through and the fact
-// the daemon asks the session to import with.
+// does it in. The first four are the reads that decide it — the switch, the
+// project's lease, and this machine's own unit — the next is who launches, and
+// the rest are the two doors the work goes through and the fact the daemon asks
+// the session to import with.
 var handoffRules = []struct{ what, text string }{
 	{"the switch a session reads before it launches anything", "fugaro settings orchestrator_enabled --json"},
+	{"the project-wide read that says whether a daemon is live at all", "fugaro orchestrator ls"},
+	{"that a live lease is read as a daemon on the project, on whichever machine", "lease"},
+	{"that this machine's unit is the rotation and not the project", "in the rotation"},
 	{"that this machine's unit is read too", "fugaro orchestrator status"},
 	{"that the daemon is the launcher", "the daemon is the launcher"},
 	{"that the session never launches, sweeps or watches", "never launch, sweep or watch a run yourself"},
@@ -472,6 +476,52 @@ func TestSkillSaysStopSweepingWhileDaemonLive(t *testing.T) {
 		if selfDriveViolation(hostile.u) == "" {
 			t.Errorf("%s is not caught by these checks, so the pass above proves nothing:\n%s", hostile.what, hostile.u.ctx)
 		}
+	}
+}
+
+// unitAbsenceRE is the claim about this machine's own login unit that the
+// section may not turn into a project-wide answer: the daemon serves the whole
+// project, and one machine holds the lease.
+var unitAbsenceRE = regexp.MustCompile(`(?i)(no login unit|no unit|unit is not installed)`)
+
+// TestSkillDecidesLivenessOnTheProjectNotThisMachine (R5, D2703, D1358): the
+// daemon serves the project and one machine holds its lease, so a machine's own
+// unit says whether that machine is in the rotation and nothing about whether
+// the project is being driven. A section that read a missing unit as "nothing
+// is launching this project" would have a session launch, sweep and watch runs
+// beside a live daemon on another machine — and queue the same work as items,
+// which that daemon launches a second time once the person approves them.
+func TestSkillDecidesLivenessOnTheProjectNotThisMachine(t *testing.T) {
+	section := skillSection(t, orchestratorSkill(t), handoffAnchor)
+	driving := 0
+	for i, line := range strings.Split(section, "\n") {
+		if !strings.Contains(line, "drive the runs as before") {
+			continue
+		}
+		driving++
+		if unitAbsenceRE.MatchString(line) {
+			t.Errorf("the hand-off section's line %d reads this machine's missing unit as a project nobody is driving:\n%s", i+1, line)
+		}
+		// The only two things that say no daemon is driving the project are the
+		// switch and the lease: a line that reaches the rule without either is
+		// one that decided it from this machine.
+		if !strings.Contains(line, "lease") && !strings.Contains(line, "switch") {
+			t.Errorf("the hand-off section's line %d sends a session to drive the runs as before without the switch or the project's lease, and those are the two things that answer it:\n%s", i+1, line)
+		}
+	}
+	if driving == 0 {
+		t.Error("the hand-off section has no rule for a project nobody is driving, so the two checks above passed by reading nothing")
+	}
+	// Predicates that matched nothing would pass those checks by saying nothing:
+	// the sentence the section carried before is what the first one is for, and
+	// a line that decided it from this machine alone is what the second is.
+	was := "`fugaro orchestrator status` reporting no login unit, or the switch read as `false`, is the other answer: no daemon is launching anything here, so drive the runs as before."
+	if !unitAbsenceRE.MatchString(was) {
+		t.Error("the missing-unit check does not catch the sentence it exists for, so its pass above proves nothing")
+	}
+	hostile := "With no unit installed here, drive the runs as before."
+	if !unitAbsenceRE.MatchString(hostile) || strings.Contains(hostile, "lease") || strings.Contains(hostile, "switch") {
+		t.Error("a line that decided it from this machine alone is not what the checks above catch")
 	}
 }
 

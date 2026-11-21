@@ -47,4 +47,11 @@ A session in a checkout whose project has a live daemon hands the work over
 rather than launching it: one item for one piece of work, or a plan imported
 whole with `fugaro orchestrator import --plan docs/<plan>`, and it approves
 neither — a person's word is what the daemon launches on. With the switch off,
-or on a machine whose unit is not installed, sessions drive the runs as before.
+or with nobody holding the project's lease, sessions drive the runs as before.
+
+Whether a daemon is live is the project's answer and not this machine's: the
+daemon serves the project and one machine holds its lease, so a machine whose
+unit is not installed is out of the rotation rather than a project without a
+daemon. `fugaro orchestrator ls` is where a session reads it — the project's
+holder and the time of its last beat, and a beat inside the lease's ninety
+seconds is a daemon driving the project on whichever machine that is.
