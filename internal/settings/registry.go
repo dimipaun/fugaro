@@ -981,6 +981,17 @@ var localRows = []Row{
 	loc("batch.secrets", "none", "secrets", "docs/backends.md"),
 	loc("batch.socket_gid", "the image's own docker group", "setup", "docs/backends.md"),
 	loc("batch.task_timeout", "Fugaro's own task timeout", "setup", "docs/backends.md"),
+	// The Batch installation's two identity facts (R2, R13, D3110, D3111). Their
+	// owner is `update` and not `setup` and not a settings family, and that is
+	// the rule rather than a column: R13 says `fugaro update` writes the key
+	// fact from the compute root's own output and no settings command writes it,
+	// because a key fact a settings command could write is a substituted public
+	// key — and a substituted one hands its holder every seal key wrapped to it.
+	// The opt-in fact is an OPERATOR's, written by opting in (R2) and by opting
+	// out (R16), and never by a machine that merely selects the backend again.
+	loc("batch.opt_in", "the installation has not opted in, so no compute root is applied", "update", "docs/backends.md"),
+	loc("batch.seal_key.public_key", "none: without the key fact a sealed launch is refused", "update", "docs/backends.md"),
+	loc("batch.seal_key.version", "none: without the key fact a sealed launch is refused", "update", "docs/backends.md"),
 
 	loc("build.service_account", "the project's default service account", "setup", docSetup),
 	{Key: "build.machine_type", Layers: []string{LayerLocal, LayerShared}, Merge: Replace, Owner: "setup", Doc: docSetup},
