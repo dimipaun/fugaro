@@ -19,12 +19,14 @@ import (
 // number delivered on the answer it is already sending needs no write to
 // deliver.
 //
-// Nothing writes it on an answer yet: the service's paid-call path takes no
-// headroom and copies the answer's headers through as they are, so today no
-// answer carries this header and every reader below answers "none"
-// (internal/credsvc/workspace_cap.go's header states the deferral and the task
-// it needs). The constant, the writer and the reader are all here, which is
-// what makes the delivery a wiring and not a design.
+// Every answer of a metered scope carries it: the service's paid-call path
+// writes it off the workspace's own room, on a served call and on a refusal
+// alike (internal/credsvc/forward.go's answer and refuseMeter, pinned by
+// internal/credsvc/meter_test.go). No service this tree builds resolves a
+// caller to a workspace yet — that scope is WS2's and does not exist here — so
+// in a live deployment the header arrives with WS2, and the member's gateway
+// reads "none" until then. The constant, the writer and the reader are all
+// here, which is what makes the delivery a wiring and not a design.
 //
 // The value is micro-dollars, decimal: what the workspace's own ceiling still
 // leaves, this month, across all of its members — budget.WorkspaceRoom, read
@@ -36,9 +38,10 @@ import (
 // It is ADVISORY. The workspace service refuses the call at the ceiling
 // whatever a member's gateway believes: a member that never read a header is
 // still cut off there. That refusal is the meter's — taken before the call is
-// made, internal/credsvc/workspace_cap.go — and it is not wired to the
-// service's paid-call path yet either, so until it is, the only ceiling that
-// cuts a call off is the member's own.
+// made, internal/credsvc/workspace_cap.go — and the workspace's service answers
+// it, not the member's own gateway: the ceiling that cuts a call off is the
+// workspace's, and a member's gateway that read the header still learns of the
+// refusal from the answer.
 const WorkspaceHeadroomHeader = "X-Fugaro-Workspace-Headroom"
 
 // WorkspaceHeadroom reads the advisory headroom off an answer: what the

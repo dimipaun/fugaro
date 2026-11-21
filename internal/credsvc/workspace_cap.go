@@ -21,24 +21,22 @@ import (
 // (internal/budget/workspace.go holds the transaction), and it answers each
 // member with the advisory headroom the ceiling still leaves.
 //
-// THE METER IS NOT WIRED TO THE CALL YET, and that is this task's own open
-// piece rather than something these comments hide: nothing in this package
-// calls NewWorkspaceMeter, Reserve, Settle, Room or SetWorkspaceHeadroom, and
-// internal/credsvc/forward.go's paid-call path (send, and the answer
-// copyAnswerHeaders builds) takes no reservation, settles nothing and carries
-// no headroom header. So a deployment of this service today serves every call
-// it pays for unmetered, refuses nothing at the ceiling and tells no member
-// what room is left: the cap binds nothing until the wiring lands. The wiring
-// is the interface the task is written to, and it is NOT among W7's files
-// (docs/workspaces/implementation-plan.md names eleven, and the service's
-// forwarding path is none of them), nor does any other task of that plan own
-// it — W6 builds the workspace's second deployment and its identity, W8 the
-// stop and `fugaro workspace cap`, W9 the docs. It needs a task of its own,
-// because what it adds is behavior and not a correction: the caller's identity
-// resolved to a member, the per-call worst case reserved before the call, the
-// settle on the response's usage with the call refused when that write fails,
-// and the header written on an answer that is already going out. It is
-// reported on this task's pull request rather than half-landed here.
+// THE METER IS WIRED TO THE CALL. internal/credsvc/forward.go reserves a paid
+// call's worst case before the request goes out — the probe the cascade owes a
+// backed-off key included, since a probe is a call the workspace pays for too
+// (C1.16) — settles it on the usage the answer reported, refuses the CALL when
+// that settle cannot be written, and writes the headroom on every answer of a
+// metered scope. Its tests are meter_test.go, one per promise, and its own
+// task is WS8 of docs/workspace-service/implementation-plan.md.
+//
+// What no deployment of this tree reaches yet is the meter itself: the
+// workspace's own scope is WS2's and does not exist here (scope_stub.go answers
+// with an installation's scope), and Scope.Meter is nil for an installation, so
+// every service this tree builds serves its calls unmetered — which is the
+// installation's behavior and is exactly what R1 keeps: one code path serves
+// both deployments, and the meter in the scope is the whole of what differs.
+// meter_test.go stands in for WS2 by handing the forwarding path a scope with a
+// meter over it.
 //
 // Three things about the shape are the design and not an accident:
 //
@@ -204,20 +202,20 @@ func SetWorkspaceHeadroom(h http.Header, room budget.WorkspaceRoom) {
 // (gateway.ValidWorkspaceRefusal), and a service that answered something else
 // is answering a refusal that is not the workspace's own.
 //
-// IT IS NOT WIRED TO A REFUSAL YET, and the reason is workspace_cap.go's own:
-// the marker belongs on the three refusals the workspace's service answers on
-// its own account — the stop it reads from the workspace's kill switch, the
-// cap its meter takes the room against, and the settle it could not write
-// back — and none of the three is on a call path this release runs. The stop
-// is answered by the workspace's own deployment of this service, which this
-// tree does not yet build (NewWorkspace has no non-test caller, and the
+// TWO OF THE THREE ARE WRITTEN, and the third is not. The cap and the settle
+// are the meter's own refusals, and the wiring above writes both: a call at the
+// ceiling carries `cap` and a call whose cost could not be recorded carries
+// `settle` (forward.go's refuseMeter). The stop is not written by anything this
+// tree runs: it is answered by the workspace's own deployment of this service,
+// which this tree does not build (NewWorkspace has no non-test caller, and the
 // service cannot tell its two deployments apart until one names the
-// workspace); the cap and the settle are the meter, whose wiring to the
-// service's paid-call path is the task docs/workspaces/implementation-plan.md
-// W7 says no task of that plan owns. So a member's run records the marker
-// only against a service that writes it, which is what the tests beside this
-// file stand in for, and the writer arrives with the wiring that makes a
-// workspace's refusal happen at all.
+// workspace), and the plan that cuts the work declines to wire it — ending a
+// run on the workspace's stop needs a halt reason the run record's closed
+// vocabulary does not have, a wire change with its own readers, and it stays
+// the workspaces design's open check U4
+// (docs/workspace-service/implementation-plan.md §10). So a member's run
+// records the marker only against a service that writes it, and the tests
+// beside this file stand in for the stop.
 func SetWorkspaceRefusal(h http.Header, reason string) {
 	if !gateway.ValidWorkspaceRefusal(reason) {
 		return
