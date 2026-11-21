@@ -316,6 +316,10 @@ func applyDefaults(c *Config) {
 	if c.Agent.FirstLineReview == "" {
 		c.Agent.FirstLineReview = FirstLineAuto
 	}
+	if c.Agent.WorkspaceBeat == nil {
+		t := true
+		c.Agent.WorkspaceBeat = &t
+	}
 	if c.Agent.MaxBudgetUSD == 0 {
 		c.Agent.MaxBudgetUSD = DefaultMaxBudgetUSD
 	}

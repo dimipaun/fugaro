@@ -2611,6 +2611,11 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	if c := doctorAllowListUncovered(lc, p); c != nil {
 		checks = append(checks, *c)
 	}
+	// The mobile block's own line (P6 of docs/mobile-identity-pairing, D2796):
+	// what a project that turns sync on stores in the identity project, said on
+	// the node the pairing route reads. A measurement, not a finding, and
+	// silent where the block is absent or the surface is off.
+	checks = append(checks, doctorMobileChecks(lc, p)...)
 	// The project layer's own rigor names (LD4), judged against the same node:
 	// an area's member or a per-repo entry that names a repository the published
 	// allow_repos does not admit describes a level no run of it will ever take,

@@ -352,7 +352,7 @@ const (
 // reached by the `layer.defaults.` prefix and the block's own is not carried, so
 // four rows and three of them move the allowlist's figure.
 const (
-	cfmRegistryRows   = 526
+	cfmRegistryRows   = 528
 	cfmAllowlistNamed = 121
 )
 
