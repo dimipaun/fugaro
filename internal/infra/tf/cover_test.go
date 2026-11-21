@@ -1437,7 +1437,7 @@ func intakeAccount(acts ...string) ResourceChange {
 
 // intakeService is the secrets intake as modules/installation/intake.tf writes
 // it: one container at template[0].containers[0] running the CREDENTIALS
-// image, with the module's own args, its four environment variables and the
+// image, with the module's own args, its five environment variables and the
 // account the module creates for it. The address is what tells the two services
 // apart in the cover (cloudRunServiceName), so it carries the module's own
 // resource name.
@@ -1451,6 +1451,7 @@ func intakeAccount(acts ...string) ResourceChange {
 func intakeService(image string) ResourceChange {
 	c := map[string]any{"image": image, "command": []any{}, "args": []any{"intake", "serve"}, "env": []any{
 		map[string]any{"name": "FUGARO_GCP_PROJECT", "value": "proj-1", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_REGION", "value": "us-east5", "value_source": []any{}},
 		map[string]any{"name": "FUGARO_INTAKE_URL", "value": "https://fugaro-intake-123456789012.us-east5.run.app", "value_source": []any{}},
 		map[string]any{"name": "FUGARO_RUNS_BUCKET", "value": "fugaro-runs-proj-1", "value_source": []any{}},
 		map[string]any{"name": "FUGARO_LAUNCHER_ACCOUNTS", "value": `["me@example.com"]`, "value_source": []any{}},
@@ -1479,7 +1480,7 @@ func intakeServicePlan(r ResourceChange) *Plan {
 //
 // The image is held by the same credentialsImageOK the credentials service's is
 // (the intake runs the same pin, and an image of its own is one no release
-// builds), the environment by the four names intake.tf sets with literal values
+// builds), the environment by the five names intake.tf sets with literal values
 // and no value_source, and invoker_iam_disabled must be false, all for the
 // reasons that case's comment gives.
 //

@@ -103,6 +103,16 @@ type initOptions struct {
 	// `fugaro upgrade` that was not a converge at all.
 	checkOnly bool
 
+	// planning is whether this run plans an installation, which is what makes a
+	// --region that is not the installation's own a refusal (LP8, D3088 as
+	// amended). Only the runs that plan set it: repoEngine, which is
+	// `fugaro update --repo` and the converge's repository stage both. The
+	// loaders are shared with commands that read a checkout's config without
+	// planning anything — `update --check` (through resolveCloudRepo) and
+	// `image refresh` — and those keep --region as the per-invocation override
+	// it is.
+	planning bool
+
 	publishConfig       bool // --publish-config: publish the shared config to the runs bucket and stop
 	anchor              bool // --anchor: write the checkout's gcp_project line, after its checks, and stop
 	forget, yes, asJSON bool
@@ -180,6 +190,14 @@ type initOptions struct {
 	// (setup_answers.go, D2904 of docs/console-improvements). "-" reads it from
 	// stdin, which is what a surface with no file of its own passes.
 	answersFile string
+
+	// events is --events: write the run to stdout as the newline-delimited
+	// event feed of setup_events.go in place of the one --json document, so a
+	// surface driving the CLI draws each stage as it settles. It is the other
+	// half of the same task's contract (ST2, D2904) and it needs --json,
+	// because stdout is where the document goes: the feed takes its place and
+	// the run's own progress stays on stderr, where --json already puts it.
+	events bool
 
 	// --repo: onboard the repository of a checkout.
 	repo, noBuild, allowJobDelete bool
@@ -456,6 +474,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			switch {
 			case foreign:
 				err = userErr("fugaro %s does not take --%s: that is %s's (%s)", d.name, ff.name, ff.owner, ff.hint)
+			case o.events && !o.asJSON:
+				// The feed and the document are the same answer on the same
+				// writer, so --events without --json is refused rather than
+				// guessed at: the run that asked for lines is told which flag
+				// makes them an answer instead of a mixture with the account
+				// --json keeps on stderr (setup_events.go).
+				err = userErr("--events writes the run to stdout as newline-delimited events, and stdout is where the run's own account goes without --json: pass --json with it (fugaro %s --json --events)", d.name)
 			case o.checkOnly:
 				// --check is the one mode of this door that is not a
 				// converge: it reads the checkout's own files, writes
@@ -472,7 +497,18 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			default:
 				err = runInit(r)
 			}
-			if err != nil && o.asJSON && !r.printed {
+			if r.events != nil {
+				// The run asked for lines instead of the document
+				// (setup_events.go): the stage each step reached, the stage
+				// each one settled and the steps left for the user have gone
+				// out as they happened, and what is left to say is how the run
+				// ended — `done` with the exit code the process exits with, or
+				// `error` for the stage it stopped at. It is written here,
+				// where the command's own outcome is decided and nowhere else,
+				// so the feed cannot come to say something the process does
+				// not do.
+				r.events.finish(&r.res, err)
+			} else if err != nil && o.asJSON && !r.printed {
 				// A refusal before any stage ran: --json still prints one
 				// object, with the reason (the exit code is the error's).
 				r.res.Error = err.Error()
@@ -535,6 +571,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// file is the reader's whole contract, and it says what the file is not: an
 	// answer is not a confirmation.
 	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the five questions a first run asks (--gcp-project, --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
+	// --events writes the same account --json prints as a stream of lines
+	// instead of one document (setup_events.go, D2904 of
+	// docs/console-improvements). The help names every kind of line, because
+	// the feed is the reader's whole contract, and it says what the flag is
+	// not: an event is not a confirmation, and a step that needs one arrives
+	// as left_for_you like every step a --json run cannot confirm.
+	f.BoolVar(&o.events, "events", false, "write the run to stdout as newline-delimited events instead of the one --json document: one `step` line as the run reaches a stage, one `stage` line as a stage settles (its name, state, detail and the stage it waited for), one `left_for_you` line for each thing only you can do — with the one line to run — and one last line that ends the feed: `done` with the run's exit code, or `error` naming the stage the run stopped at. A run that ends with steps left for you ends `done` with exit code 1 — it did not fail, and the steps are the left_for_you lines above it — which is the hand-off a surface draws rather than an error. It needs --json: the feed takes the document's place on stdout, and the run's own progress stays on stderr where --json already puts it. Nothing here confirms a step: --json confirms none, so every step that needs a confirmation arrives as left_for_you for you to run in your own terminal window")
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
@@ -667,8 +710,13 @@ type initRun struct {
 	historyNoted     bool
 	coordinatorNoted bool
 	printed          bool // the --json result has been printed
-	anchorNoted      bool // update --repo's pointer at --anchor has been said
-	ideNoted         bool // the IDE-terminal notice has been said, once per run
+	// events is the --events feed (setup_events.go), or nil for every run
+	// that did not ask for one — which is what keeps a run without the flag
+	// byte for byte the run it was: no line is written, and the loop's three
+	// hooks (initEngine.options) stay nil.
+	events      *setupEvents
+	anchorNoted bool // update --repo's pointer at --anchor has been said
+	ideNoted    bool // the IDE-terminal notice has been said, once per run
 	// enrolmentNote is what the repo engine did for a repository a deployed
 	// profile admits, in one line (M7): the engine prints it where there is no
 	// stage of its own to carry it (the update --repo door), and the converge's
@@ -946,6 +994,17 @@ func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
 	r.w = runWriter{r: r, out: cmd.OutOrStdout()}
 	if o.asJSON {
 		r.w = runWriter{r: r, out: cmd.ErrOrStderr()}
+	}
+	if o.events && o.asJSON {
+		// The event feed takes the one --json document's place on stdout
+		// (setup_events.go): a run that asked for lines gets lines and not a
+		// document, and its own progress is where --json already puts it,
+		// which is stderr. Both flags are needed, and a run with only --events
+		// is refused before this run exists: without --json stdout is where
+		// the run's own account goes, so there is no place a line of a feed
+		// could be written — which is why the refusal is the whole of what
+		// --events alone does, and it leaves the run byte for byte what it was.
+		r.events = newSetupEvents(cmd.OutOrStdout())
 	}
 	r.in = cmd.InOrStdin()
 	return r
@@ -2013,8 +2072,14 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 		return nil, "", nil, err
 	}
 	if lc != nil {
-		// A config to be created is announced once it exists, below.
+		// A config to be created is announced once it exists, below. The
+		// installation's own region is read before the announcement, which
+		// applies the typed one: it is what the typed one is refused against.
+		own := lc.Region
 		if err := announce(o.cloud, sel, lc); err != nil {
+			return nil, "", nil, err
+		}
+		if err := refuseAnotherRegion(o, own); err != nil {
 			return nil, "", nil, err
 		}
 	}
@@ -2026,6 +2091,7 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 		}
 		return nil, "", nil, userErr("%s selects project %s; --name says %s (renaming a project isn't supported)", sel.From, name, o.name)
 	}
+	created := false // this run starts the config, so its region is not written anywhere yet
 	if lc != nil {
 		path = sel.Path
 		if old, err = os.ReadFile(path); err != nil {
@@ -2047,8 +2113,9 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 			if o.runsBucket != "" {
 				lc.RunsBucket = o.runsBucket
 			}
-			return lc, "", nil, nil
+			return lc, "", nil, checkNewRegion(ctx, o, lc)
 		}
+		created = true
 		switch {
 		case name == "":
 			return nil, "", nil, userErr("there is no project config yet: pass --name <name> (the project's name), --gcp-project and --region to create one")
@@ -2074,6 +2141,12 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 		lc.RunsBucket = o.runsBucket
 		if lc.Bucket != "" && lc.Bucket != "gs://"+o.runsBucket {
 			return nil, "", nil, userErr("--runs-bucket %s is not the local config's bucket_url %s", o.runsBucket, lc.Bucket)
+		}
+	}
+	if created {
+		// After --runs-bucket, which says which bucket this installation's is.
+		if err := checkNewRegion(ctx, o, lc); err != nil {
+			return nil, "", nil, err
 		}
 	}
 	return lc, path, old, nil
@@ -4398,6 +4471,14 @@ func (r *initRun) printResult() error {
 	if !r.o.asJSON {
 		return nil
 	}
+	if r.events != nil {
+		// --events replaced the document with the feed (setup_events.go): this
+		// run's account is the lines already written, and its last one is
+		// written where the command ends (RunE), which is the only place the
+		// exit code is known. Printing the object here as well would put two
+		// answers on one stdout.
+		return nil
+	}
 	if r.res.LeftForYou == nil {
 		r.res.LeftForYou = []initflow.Left{} // an array, never null
 	}
@@ -4613,6 +4694,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err != nil {
 		return err
 	}
+	// This run plans the repository's resources, so the loader below refuses a
+	// --region that is not the installation's own (LP8, D3088 as amended): the
+	// commands that read a checkout's config without planning do not set this
+	// and keep the flag as the per-invocation override it is.
+	o.planning = true
 	lc, path, old, err := loadRepoConfig(ctx, o, dir)
 	if err != nil {
 		return err
@@ -4696,6 +4782,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// repository's own file alone: the key is InRepo, so no layer can carry
 	// it.
 	if err := r.gateTriage(o, repo, lc, cfg); err != nil {
+		return err
+	}
+	// agent.review_against_task is the same kind of break on
+	// reviewSpecSince, in the repository's own file alone, for gateTriage's
+	// reason: the key is InRepo, so no layer can carry it.
+	if err := r.gateReviewAgainstTask(o, repo, lc, cfg); err != nil {
 		return err
 	}
 	// The security: block, in either file, is the same kind of break, on
@@ -5377,6 +5469,29 @@ func (r *initRun) gateTriage(o *initOptions, repo string, lc *localcfg.Config, c
 	return refuseTriageSkew(repo, cfg, lc.BaseImage(config.BaseKind), w)
 }
 
+// gateReviewAgainstTask is fugaro update --repo's gate for reviewSpecSince:
+// refuseReviewAgainstTaskSkew, with gateTriage's escapes and for its reason. One
+// file can write the key and not two — agent.review_against_task is repo-scope
+// alone (config.Scopes), so there is no layer half here the way
+// gateStopFraction has one, and the layer's own loader refuses the key before
+// any image is judged.
+//
+// The half it asks is the key being written rather than the value it holds
+// (gateSecurity's own reading): RepoReviewAgainstTaskSet, because a runner
+// older than reviewSpecSince is refused by the key whatever it says. The
+// configuration goes along because the value is what words the way out the
+// refusal offers (refuseReviewAgainstTaskSkew's own reading of it).
+func (r *initRun) gateReviewAgainstTask(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseReviewAgainstTaskSkew(repo, cfg, lc.BaseImage(config.BaseKind), w)
+}
+
 // gateSecurity is fugaro update --repo's gate for securitySince:
 // refuseSecuritySkew, with gateRigor's escapes and for its reason. Each half is
 // the key being written rather than the rows it holds: a runner older than
@@ -5491,8 +5606,19 @@ func loadRepoConfig(ctx context.Context, o *initOptions, dir string) (lc *localc
 	if err := refuseSharedWrite(sel); err != nil {
 		return nil, "", nil, err
 	}
+	// The installation's own region, read before the announcement applies the
+	// typed one: a run that plans converges a repository of an installation
+	// that exists, so the config's region is what the typed one is refused
+	// against (o.planning); a run that only reads the config keeps --region as
+	// the per-invocation override it is (LP8, D3088 as amended).
+	own := lc.Region
 	if err := announce(o.cloud, sel, lc); err != nil {
 		return nil, "", nil, err
+	}
+	if o.planning {
+		if err := refuseAnotherRegion(o, own); err != nil {
+			return nil, "", nil, err
+		}
 	}
 	if o.name != "" && o.name != lc.Name {
 		return nil, "", nil, userErr("--name %s is not the selected project %s", o.name, lc.Name)
@@ -5776,12 +5902,14 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			// ordinary path — the one a project that is not managed takes —
 			// may not owe the user a flag or a second command for it (the
 			// proxied token's is infra.ProxiedTokenAccessorAllowDelete, the
+			// model credentials' is infra.ModelAccessorAllowDelete, the
 			// fetched class's is infra.VaultAccessorAllowDelete, the S4
 			// flip's are infra.BuildAccessorAllowDelete; CLAUDE.md's HARD
 			// RULE, and the switch in init_retire.go's retireManaged is the
 			// managed path's own). Every other change in this plan is judged
 			// exactly as it was.
 			allowed := append(slices.Clone(r.o.allowDelete), infra.ProxiedTokenAccessorAllowDelete(plan, spec)...)
+			allowed = append(allowed, infra.ModelAccessorAllowDelete(plan, spec)...)
 			allowed = append(allowed, infra.VaultAccessorAllowDelete(plan, spec)...)
 			allowed = append(allowed, infra.BuildAccessorAllowDelete(plan, spec)...)
 			if err := r.guard(ctx, c, plan, allowed); err != nil {

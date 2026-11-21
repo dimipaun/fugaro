@@ -181,8 +181,12 @@ var computeBackendSymbols = map[string][]string{
 		"checkDocker", "checkSecrets", "checkVM", "checkNetwork",
 	},
 	"internal/backend/batch/run.go": {
-		"jobDefinition", "func (b *Backend) Launch", "SecretVariables",
+		"jobDefinition", "func (b *Backend) Launch",
 	},
+	// The mount moved out of the job definition when the identity work split it
+	// along its seams (batch-run-identity BRS): the plan's tasks mean the field
+	// the job carries, and secrets.go is the helper that writes it now.
+	"internal/backend/batch/secrets.go": {"secretVariables", "SecretVariables"},
 	"internal/backend/batch/reap.go": {
 		"Reaper", "NewReaper", "func (r *Reaper) Reap", "ReaperOptions",
 		"ActionDeleteJob", "ActionDeleteVM", "Report",

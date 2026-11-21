@@ -317,7 +317,8 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 - Acceptance: a launch on the Batch backend is refused with one stated reason that names the
   token's missing carrier; `doctor` and `validate` say so for an installation on Batch;
   `docs/backends.md` says so, and `docs/design/budget-token-channel.md` loses its stale line about
-  unbuilt wiring (D3021).
+  unbuilt wiring (D3021). The carrier is planned in
+  [batch-run-identity](../batch-run-identity/README.md), whose BR1 replaces this refusal.
 - Files: `internal/backend/batch/run.go`, `internal/cli/doctor_batch.go`,
   `internal/cli/validate_batch.go`, `docs/backends.md`, `docs/design/budget-token-channel.md`.
 - Interfaces: none.

@@ -273,7 +273,7 @@ var secretsBoolFlags = map[string]bool{"--json": true, "--project-wide": true, "
 var budgetBoolFlags = map[string]bool{
 	"--global": true, "--defaults": true, "--clear": true,
 	"--ask": true,
-	"--all": true, "--json": true, "--compute": true,
+	"--all": true, "--json": true, "--compute": true, "--stream": true,
 	// budget history's own, and the --help cobra adds at Execute time.
 	"--sweep": true, "--rollover": true, "--force": true, "--help": true,
 }

@@ -217,7 +217,9 @@ func (k *KeySet) serveJWKS(w http.ResponseWriter, _ *http.Request) {
 
 // keySetExpiry reads the `exp` a signed key-set document carries.
 //
-// The document is the JWS compact form C1's vector fixes: three base64url
+// The document is the JWS compact form C1's contract fixes — internal/mobilesession's
+// KeySet, and the key_set section of shared/mobile-session/vectors.json, which
+// jwks_test.go's TestKeySetExpiryReadsC1sVector replays — three base64url
 // segments, and the claims the root key signed in the payload's `exp`, `iat`
 // and `seq`. The payload is read for its expiry and left otherwise alone — the
 // envelope's whole shape is the contract's and A4's to write, and a reader that

@@ -228,7 +228,7 @@ func (e *initEngine) redaction() func() []string {
 func (e *initEngine) options() initflow.Options {
 	r, o := e.r, e.r.o
 	e.slots() // built once: the loop, the stage and the log share the slots
-	return initflow.Options{
+	opts := initflow.Options{
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: r.stdinTerminal(), JSON: o.asJSON, Agent: agentMarker(os.Getenv, r.stdinTerminal()), Out: r.w,
 		Program: o.loopProgram(),
@@ -246,6 +246,15 @@ func (e *initEngine) options() initflow.Options {
 		// mark on account of this line.
 		ManagedGate: e.managedStage,
 	}
+	// The event feed (setup_events.go): a run told to write one hands the loop
+	// the three moments a consumer renders — a stage reached, a stage settled,
+	// and a step left for the user — and a run without --events hands it
+	// nothing at all, which leaves the hooks nil and is exactly the run the CLI
+	// had before the flag existed.
+	if r.events != nil {
+		opts.OnStep, opts.OnStage, opts.OnLeft = r.events.step, r.events.stage, r.events.left
+	}
+	return opts
 }
 
 // initStages is the stages converge() runs, in the canonical order, built
@@ -643,10 +652,21 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// an issue on GitHub needs (`gh`), and that nothing else about issues does.
 	e.announceGhHint()
 	if len(res.Left) > 0 && !o.planOnly {
-		return userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))
+		return &notFinished{userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))}
 	}
 	return nil
 }
+
+// notFinished is a run's own end with steps left for the user: it applied
+// everything it had, the steps that remain are the person's, and that is exit
+// 1 and not a failure. It is a type of its own rather than a plain userErr
+// because the event feed tells the two apart with it (setup_events.go): a run
+// with steps left ends its feed `done` with exit 1 — the hand-off a wizard
+// draws — where a refusal ends it `error`, and this error and the refusals
+// above it are otherwise the same error with the same code.
+type notFinished struct{ error }
+
+func (e *notFinished) Unwrap() error { return e.error }
 
 // planned is the one-line summary of the installation plan the engine
 // just showed, if it showed one.

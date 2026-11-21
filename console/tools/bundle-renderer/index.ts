@@ -491,6 +491,10 @@ export const THEME_STYLESHEETS: readonly string[] = Object.freeze([
   // directory's whole contents and stays still, which is what the two refusals
   // above enforce from both sides.
   'screens.css',
+  // The Manage section's own rules (the console-improvements plan's task MO-SH):
+  // a section drawn by `src/renderer/manage/shell.ts` and by no screen, so its
+  // rules are their own layer and land with the file that is the section.
+  'manage.css',
 ])
 
 /** StylesheetOptions is what the stylesheet step is given: the theme directory

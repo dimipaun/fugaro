@@ -325,19 +325,8 @@ func offboardWriteRoster(ctx context.Context, db *rtdb.Client, lc *localcfg.Conf
 		if dropped == 0 {
 			return 0, nil
 		}
-		// F17.2's other half, and it is asked of the node being written rather
-		// than of the one first read: the rule is that the roster does not land
-		// with an empty admin list, and a retry may be writing onto a roster
-		// whose other admins have just been removed. The list is access.Admins',
-		// which is the same derivation `fugaro update` publishes from the node
-		// (D1940) and not a count written here — so what this refuses is exactly
-		// the list the installation would go without. It is a comparison of two
-		// non-empty-to-empty moves and not "is the member an admin": a node whose
-		// admin list is ALREADY empty is not emptied by this write, and refusing
-		// there would shut a door that is already shut.
-		if len(accesslib.Admins(node.Grants)) > 0 && len(accesslib.Admins(next)) == 0 {
-			return 0, userErr("nothing was offboarded: offboarding %s would leave %s's roster with no project-scope admin grant, and the admin list the next `%s update` publishes from it would be empty — every admin binding would be dropped, and no stored grant would admit anybody to this command or to the intake's shared prefix (F17.2, D1940) — so a project Owner from outside the roster runs `%s update --admin` to put an admin on it first: nothing was written",
-				safetext.Field(member), safetext.Field(lc.Name), selfCommand(), selfCommand())
+		if err := offboardNoAdminLeft(lc.Name, member, node.Grants, next); err != nil {
+			return 0, err
 		}
 		err := accesslib.WriteIfMatch(ctx, db, next, node.ETag)
 		switch {
@@ -356,6 +345,30 @@ func offboardWriteRoster(ctx context.Context, db *rtdb.Client, lc *localcfg.Conf
 		}
 	}
 	return 0, userErr("the roster was written by another admin every time this one tried to take %s off it: nothing was offboarded — run the command again", safetext.Field(member))
+}
+
+// offboardNoAdminLeft is F17.2's second half, and it is asked of the node
+// being written rather than of the one first read: the rule is that a roster
+// does not land with an empty admin list, and a retry may be writing onto a
+// roster whose other admins have just been removed. The list is
+// access.Admins', which is the same derivation `fugaro update` publishes from
+// the node (D1940) and not a count written here — so what this refuses is
+// exactly the list the installation would go without. It is a comparison of
+// two non-empty-to-empty moves and not "is the member an admin": a node whose
+// admin list is ALREADY empty is not emptied by this write, and refusing there
+// would shut a door that is already shut.
+//
+// It is one function for the two rosters an offboarding writes -- the
+// installation's own (offboardWriteRoster) and a member's (WU9's
+// offboardDropRoster) -- because the rule is the roster format's and not
+// either command's taste: name is the installation or the member project the
+// roster belongs to, which is the name the refusal cites.
+func offboardNoAdminLeft(name, member string, before, after []accesslib.Grant) error {
+	if len(accesslib.Admins(before)) == 0 || len(accesslib.Admins(after)) > 0 {
+		return nil
+	}
+	return userErr("nothing was offboarded: offboarding %s would leave %s's roster with no project-scope admin grant, and the admin list the next `%s update` publishes from it would be empty — every admin binding would be dropped, and no stored grant would admit anybody to this command or to the intake's shared prefix (F17.2, D1940) — so a project Owner from outside the roster runs `%s update --admin` to put an admin on it first: nothing was written",
+		safetext.Field(member), safetext.Field(name), selfCommand(), selfCommand())
 }
 
 // offboardSweep deletes the member's whole prefix through the installation's
@@ -381,6 +394,15 @@ func offboardSweep(ctx context.Context, lc *localcfg.Config, address string) ([]
 	if err != nil {
 		return nil, err
 	}
+	return offboardSweepVia(ctx, serviceURL, address)
+}
+
+// offboardSweepVia is the delete itself, at an intake address the caller has
+// already resolved: the single installation's sweep resolves it out of the
+// local config (offboardSweep) and a member's own intake is resolved by the
+// side that reaches that member (memberSweeper), and both make this one call,
+// so the route, the scope and the owner the delete names are written once.
+func offboardSweepVia(ctx context.Context, serviceURL, address string) ([]string, error) {
 	var answer intake.DeleteAnswer
 	if err := secretsIntakeDo(ctx, serviceURL, secretsIntakeCall{
 		Path: intake.DeletePath,
