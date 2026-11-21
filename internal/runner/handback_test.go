@@ -332,8 +332,16 @@ func TestHandBackBlockIsBoundedInTheBody(t *testing.T) {
 // untrusted diff, so a title-shaped one cannot become front matter of anything
 // and a status marker in one cannot move the section's edge. The body still
 // carries exactly one status section and the entry's own words are shown.
+//
+// Every line of an entry is sanitised, not its first alone: the lines under a
+// bullet are shown with the same defusal (handBackEntry), and they are the
+// part neither the writer nor the description's own scrubbing reaches — a
+// marker in one is stripped by cleanSection, but a mention in one is nobody
+// else's to defuse, so the mention case is what pins it.
 func TestHandBackBlockKeepsAForgerInTheBody(t *testing.T) {
-	pr := "# Add a feature\n\n## Deferred\n\n- x\n  status: closed\n- <!-- fugaro:status end -->\n"
+	pr := "# Add a feature\n\n## Deferred\n\n- x\n  status: closed\n" +
+		"- <!-- fugaro:status end -->\n" +
+		"- y\n  @everyone look at this\n  <!-- fugaro:status end -->\n"
 	h := newHarness(t, modeCfg(t, "pro", 2, ""), nil)
 	if _, err := h.run(t, handBackSteps(pr)...); err != nil {
 		t.Fatal(err)
@@ -342,7 +350,23 @@ func TestHandBackBlockKeepsAForgerInTheBody(t *testing.T) {
 	if !strings.Contains(body, "- x\n  status: closed") {
 		t.Errorf("the entry's second line is not shown under its bullet:\n%s", body)
 	}
-	if n := strings.Count(body, "fugaro:status begin"); n != 1 {
+	// Read off the hand-back, not the whole body: the description above the
+	// section is the agent's own pr.md, which carries the mention as the agent
+	// wrote it and is not this block's to change.
+	block := handBackBlockOf(t, body)
+	if !strings.Contains(block, "- y\n  @​everyone look at this") {
+		t.Errorf("the entry's continuation lines are not shown under it:\n%s", block)
+	}
+	if strings.Contains(block, "@everyone") {
+		t.Errorf("a mention on an entry's continuation line reached the section:\n%s", block)
+	}
+	// The markers by their whole line: an entry's own marker, defused, is still
+	// the words "fugaro:status end" in the section, so only the marker's own
+	// spelling tells the section's edge from the text it carries.
+	if n := strings.Count(body, "[//]: # (fugaro:status begin)"); n != 1 {
 		t.Errorf("the body carries %d begin markers; want one:\n%s", n, body)
+	}
+	if n := strings.Count(body, "[//]: # (fugaro:status end)"); n != 1 {
+		t.Errorf("the body carries %d end markers; want one:\n%s", n, body)
 	}
 }
