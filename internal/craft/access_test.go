@@ -384,6 +384,34 @@ func TestTheLegacyRuleAnswersEveryOldAuthValue(t *testing.T) {
 		},
 	}
 
+	// The unsuffixed default's own spelling is a name an operator can write, and
+	// both keys that may carry one admit it deliberately (localcfg's
+	// choiceRefProblem): a stage key or an agent.oauth_token spelled `default`
+	// named that account, so F35's "not chosen" — the one case the walk may move
+	// off an exhausted subscription — belongs to the run that named none, and
+	// Chosen comes from the rung rather than from the name it answered.
+	for _, tc := range []struct {
+		name string
+		edit func(*LegacyInput)
+	}{
+		{"a stage's own key", func(in *LegacyInput) {
+			in.StageAccounts = map[string]string{"review_first": config.DefaultClaudeAccount}
+		}},
+		{"the file's agent.oauth_token", func(in *LegacyInput) {
+			in.OAuthToken = config.DefaultClaudeAccount
+		}},
+	} {
+		t.Run("the sentinel spelled by hand in "+tc.name+" is a chosen account (F35)", func(t *testing.T) {
+			in := legacyHero()
+			in.Auth = "oauth"
+			tc.edit(&in)
+			got, ok := LegacyAccess(in, "review_first", "")
+			if !ok || got.Name != config.DefaultClaudeAccount || !got.Chosen {
+				t.Fatalf("LegacyAccess(review_first) = %+v, ok=%v; want the unsuffixed account named and chosen", got, ok)
+			}
+		})
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			in := legacyHero()

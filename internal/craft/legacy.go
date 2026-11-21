@@ -27,10 +27,11 @@ import (
 //   - agent.oauth_token and a stage's account name a Claude subscription
 //     account. An account IS a credential of type claude-oauth in the new
 //     vocabulary (R7's first clause: each named account is already a credential,
-//     deriveCraftCredentials), so the access names the account — and the
-//     project's DEFAULT account is the one case of F35's second condition:
-//     nothing chose it, so a run may walk away from it when it is exhausted
-//     (CM11 walks only that one).
+//     deriveCraftCredentials), so the access names the account — and F35's
+//     second condition is the run that named NO account: it falls through to
+//     the unsuffixed default, nothing chose it, and a run may walk away from
+//     that one when it is exhausted (CM11 walks only that one). An account a
+//     key spells, the unsuffixed default's own spelling included, was named.
 //   - agent.auth names the four values of config.AgentAuths. vertex is the
 //     built-in credential, named explicitly and only here; api-key is the
 //     project's own Anthropic key (config.CredentialAnthropicKey) — for the
@@ -99,10 +100,11 @@ type LegacyInput struct {
 	// DefaultAccount is the project's default_claude_account, resolved past any
 	// alias, and "" where the key names none or names the unsuffixed-default
 	// sentinel (config.DefaultClaudeAccount) — which is no account of its own,
-	// the reading mixedStageAccount and claudeAccountChoice both give it. It is
-	// the walk's rung 4, read AFTER the file's agent.oauth_token, and under
-	// api-key it is the one Claude account a run's mix stages may go out on
-	// (mixedStageAccount).
+	// the reading mixedStageAccount and claudeAccountChoice both give it — so a
+	// spelled sentinel leaves the rule on the unchosen fallback, as it leaves
+	// the launch there. It is the walk's rung 4, read AFTER the file's
+	// agent.oauth_token, and under api-key it is the one Claude account a run's
+	// mix stages may go out on (mixedStageAccount).
 	DefaultAccount string
 	// Accesses is the file's own agent.crafts block, the retired per-craft
 	// access included.
@@ -164,44 +166,53 @@ func LegacyAccess(in LegacyInput, stage, grade string) (Access, bool) {
 		// adversarial review and the triage, and for no other stage. Answering
 		// the key for those three would move them onto the paid key, which is
 		// the one thing a migration may not do (R3, R7).
-		if account := in.mixAccount(stage); account != "" {
-			return in.account(account), true
+		if account, ok := in.mixAccount(stage); ok {
+			return in.account(account, true), true
 		}
 		return in.credential(config.CredentialAnthropicKey, config.CredentialTypeAnthropic, true), true
 	case config.AuthOAuth:
-		return in.account(in.stageAccount(stage)), true
+		account, chosen := in.stageAccount(stage)
+		return in.account(account, chosen), true
 	case config.AuthCascade:
 		return in.pool(in.CascadePool)
 	}
 	return Access{}, false
 }
 
-// stageAccount is the account an oauth stage runs on: the project's own key for
-// that stage where it writes one (rung 2), the file's agent.oauth_token where
-// the project writes none (rung 3), the project's default_claude_account where
-// neither does (rung 4), and the unsuffixed default where the project names
-// none of the three — the walk today's account choice makes, in today's order,
-// and the last of them is the one case F35 calls "not chosen".
+// stageAccount is the account an oauth stage runs on, and whether a rung named
+// it: the project's own key for that stage where it writes one (rung 2), the
+// file's agent.oauth_token where the project writes none (rung 3), the project's
+// default_claude_account where neither does (rung 4), and the unsuffixed default
+// where the project names none of the three — the walk today's account choice
+// makes, in today's order.
+//
+// The flag is the rung and not the name, and the last rung is the whole of
+// F35's second condition: a run that named NO account is the one a walk may
+// move off an exhausted subscription, while a config that writes an account
+// named the account it runs on — the unsuffixed default's own spelling
+// (`default`) included, which choiceRefProblem admits for all three keys
+// deliberately (localcfg). Reading the flag off the name instead is what made a
+// stage key or a token spelled `default` look unchosen.
 //
 // The order is load-bearing and is why the file's token stands above the
 // project's default: a repository pinned to an account of its own keeps it,
 // and the project default is what a repository that names nothing inherits.
-func (in LegacyInput) stageAccount(stage string) string {
+func (in LegacyInput) stageAccount(stage string) (string, bool) {
 	if account := in.StageAccounts[stage]; account != "" {
-		return account
+		return account, true
 	}
 	if in.OAuthToken != "" {
-		return in.OAuthToken
+		return in.OAuthToken, true
 	}
 	if in.DefaultAccount != "" {
-		return in.DefaultAccount
+		return in.DefaultAccount, true
 	}
-	return config.DefaultClaudeAccount
+	return config.DefaultClaudeAccount, false
 }
 
 // mixAccount is the Claude account an api-key run's mix stages may go out on
-// (mixedStageAccount), and "" for every other stage and for a run whose project
-// names no such account. The mix's stages are config.MixedAccountStages — the
+// (mixedStageAccount), and ok=false for every other stage and for a run whose
+// project names no such account. The mix's stages are config.MixedAccountStages — the
 // senior review, the adversarial review and the triage — and they are exactly
 // the stages an api-key run may name an account for (config.CheckStageAccountMix
 // refuses a stage key anywhere else, so such a file never reaches a launch).
@@ -213,21 +224,26 @@ func (in LegacyInput) stageAccount(stage string) string {
 // (claudeAccountAllowed refuses any other as an account of an oauth run's), so
 // a token that disagreed with the mix would be a launch refused, never a
 // credential a stage runs on.
-func (in LegacyInput) mixAccount(stage string) string {
+func (in LegacyInput) mixAccount(stage string) (string, bool) {
 	if !slices.Contains(config.MixedAccountStages, stage) {
-		return ""
+		return "", false
 	}
 	if account := in.StageAccounts[stage]; account != "" {
-		return account
+		return account, true
 	}
-	return in.DefaultAccount
+	return in.DefaultAccount, in.DefaultAccount != ""
 }
 
 // account is a subscription account as an access: the credential of that
-// account's name, served by the credentials service. An account is never
-// "chosen" when it is the project's default one (F35).
-func (in LegacyInput) account(name string) Access {
-	return in.credential(name, config.CredentialTypeClaudeOAuth, name != config.DefaultClaudeAccount)
+// account's name, served by the credentials service.
+//
+// chosen is the caller's, and it is the rung the account came from (F35): a run
+// that named an account is chosen, and the unsuffixed fallback is not. It is
+// never read off the name — the name `default` is the unsuffixed account's own
+// spelling, and a config that wrote it wrote an account (choiceRefProblem
+// admits it for the stage key, the token and the project default alike).
+func (in LegacyInput) account(name string, chosen bool) Access {
+	return in.credential(name, config.CredentialTypeClaudeOAuth, chosen)
 }
 
 // credential is one credential as an access, with the type the caller knows it
