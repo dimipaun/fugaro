@@ -298,13 +298,11 @@ func TestProxiedTransportKeepsTheEscapedPath(t *testing.T) {
 // returns is a tokenless one, and the secrets it reports are none, so nothing
 // a run redacts or stores is a credential.
 func TestProxiedBitbucketReadsNoToken(t *testing.T) {
-	env := []string{
-		// The value the flip will take off the job, planted here with one a
-		// provider that read it would use: a proxied run must not.
-		EnvBitbucketToken + "=bb-token-1234",
-		EnvCredentialsServiceURL + "=https://creds.example",
-	}
-	p, secrets, err := Proxied(env, "http://127.0.0.1:1"+forwardPath, nil, nil, nil, false)(ctx, gitprov.KindBitbucket, "acme/web")
+	// The service the run's own route names for the kind. There is no
+	// environment to hand this opener (WS18): the token the flip will take off
+	// the job is not a parameter it could read, and what this case watches is
+	// that the provider it builds still carries no git credential.
+	p, secrets, err := Proxied("https://creds.example", "http://127.0.0.1:1"+forwardPath, nil, nil, nil, false)(ctx, gitprov.KindBitbucket, "acme/web")
 	if err != nil {
 		t.Fatalf("opening a proxied bitbucket provider: %v", err)
 	}
@@ -336,7 +334,7 @@ func TestProxiedPagingThroughForwarder(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"is_private":true}`))
 	})
-	p, _, err := Proxied([]string{EnvCredentialsServiceURL + "=https://creds.example"}, srv.URL+forwardPath, nil, nil, nil, false)(ctx, gitprov.KindBitbucket, "acme/web")
+	p, _, err := Proxied("https://creds.example", srv.URL+forwardPath, nil, nil, nil, false)(ctx, gitprov.KindBitbucket, "acme/web")
 	if err != nil {
 		t.Fatal(err)
 	}
