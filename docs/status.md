@@ -73,7 +73,7 @@ Merged since the last read (86 commits, read from `b5f778175`; 5 are specs' own 
 | managed-flag-ergonomics | a design only, nothing built and no task approved (docs/managed-flag-ergonomics, moved from docs/design on 2026-11-21) |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
 | voice-module, collateral, backlog, plans, design | no plan or not a spec (plans holds v1's milestone plans M0 to M6, design holds v1 and update-in-flight) |
-| workspace-credentials | an addendum with no plan (docs/workspace-credentials): D2960–D2979 all answered 2026-11-19 (D2978: one project-then-workspace cascade for every credential kind; D2975 the owner's own answer: every model key through the credentials service, none mounted, which needs its own spec; D150's gate stays until Check 50 passes); it waits on the workspace service being deployed under its own plan (D2968) |
+| workspace-credentials | plan only: 0/18 tasks merged, no task approved (docs/workspace-credentials); it plans what workspace-service and keys-through-service left: sharing a provider key at the workspace (WC1) and a person's own Claude token at the workspace (WC0, WC2–WC14, I1), every personal task behind the owner's answers to the threat model's review (WC0); D2960–D2979 answered 2026-11-19 (D2975 the owner's own answer) and D3140–D3148 answered 2026-11-21, all as recommended (D3141: a personal token follows the route, so a project's own model credential shadows it); WC1 waits on workspace-service WS19, WC5 on WS8, WC8 on WS18, WC13 on WS21, I1 on workspace-service's I1; owner-run Checks 850 and 851 |
 
 ## Done
 
