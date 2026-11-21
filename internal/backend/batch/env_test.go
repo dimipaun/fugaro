@@ -99,15 +99,19 @@ func TestABatchJobNamesItsDeployedJob(t *testing.T) {
 // TestALaunchEntryCannotSetThem: every name the deployed job's values arrive
 // under is reserved against the launch's own entries, because a launch entry
 // is applied into the same map: an entry naming the bucket, the budget
-// backend, the credentials service's address, the price table or a cap would
-// be the value the run believes about itself, which is the one thing the
-// launcher's entry may not choose (backend.LaunchEnv). The refusal comes
-// before the create, so nothing is sent for any of them.
+// backend, the price table or a cap would be the value the run believes about
+// itself, which is the one thing the launcher's entry may not choose
+// (backend.LaunchEnv). The refusal comes before the create, so nothing is
+// sent for any of them. The credentials service's address is the one name in
+// the set that is not reserved, and the last case here is why: a launch is
+// itself the writer of that entry, and reserving it would refuse on Batch a
+// launch that starts on Cloud Run.
 func TestALaunchEntryCannotSetThem(t *testing.T) {
 	ctx := context.Background()
 	deployed := deployedJobEnv()
 	b, bf, _, _ := newTestBackend(t, func(o *Options) { o.JobEnv = deployed })
 	names := slices.Sorted(maps.Keys(deployed))
+	names = slices.DeleteFunc(names, func(name string) bool { return name == credentialsServiceEnv })
 	names = append(names, backend.DeployedJobEnv)
 	for _, name := range names {
 		sent := len(bf.Creates())
@@ -119,5 +123,23 @@ func TestALaunchEntryCannotSetThem(t *testing.T) {
 		if got := len(bf.Creates()); got != sent {
 			t.Fatalf("a launch env naming %s was applied: %d job(s) created, want the %d before it", name, got, sent)
 		}
+	}
+	// The launcher's own entry for a switched repository: carried, and its
+	// value the run reads -- the deployed job's own address is what this
+	// launch overrides, exactly as an execution's override does on Cloud Run.
+	// internal/cli writes the same entry for a launch on a shared project job
+	// (credentialsServiceLaunchEnv takes either job name), which is the launch
+	// this reservation would have refused before BR10 lets it reach this
+	// backend.
+	const switched = "https://fugaro-credentials-xyz.a.run.app"
+	s := spec()
+	s.Env = []string{credentialsServiceEnv + "=" + switched}
+	if _, err := b.Launch(ctx, s); err != nil {
+		t.Fatalf("Launch with the launcher's own %s entry = %v, want it carried: a switched repository's launch writes it, and Cloud Run accepts it", credentialsServiceEnv, err)
+	}
+	creates := bf.Creates()
+	vars := object(t, creates[len(creates)-1].Job, "taskGroups", "0", "taskSpec", "environment", "variables")
+	if got := vars[credentialsServiceEnv]; got != switched {
+		t.Errorf("the task's %s = %v, want %q: the launch's own entry is what a switched run reads", credentialsServiceEnv, got, switched)
 	}
 }

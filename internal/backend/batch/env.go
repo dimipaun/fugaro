@@ -7,6 +7,16 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
+// credentialsServiceEnv is where a run learns the address of its
+// installation's credentials service, a deployed job's name for it and a
+// launch entry's: the launcher writes it on a switched repository's execution
+// (internal/cli's credentialsServiceLaunchEnv) under the same spelling
+// providers.EnvCredentialsServiceURL gives it, which internal/infra's
+// JobEnvNames carries and internal/runner reads (its own
+// credentialsServiceURLEnv). It is spelled here because this package decides
+// what a launch entry may name, and one of those writers is a launch.
+const credentialsServiceEnv = "FUGARO_CREDENTIALS_SERVICE_URL"
+
 // jobVariables is the task's environment variables: everything the deployed
 // job this run stands in for carries (F8), the run's own identity, the VM's
 // Docker socket when the run asked for a daemon, and the launch's own entries.
@@ -16,12 +26,13 @@ import (
 // the map is what makes its own entries reserved: a later write to a map key
 // is what a run would believe about itself, so an entry naming one of them is
 // refused rather than applied (backend.LaunchEnv, asked with every key this
-// job already sets). The platform's own five join those keys
-// (backend.ReservedEnvNames), the same list Cloud Run hands the same function,
-// so the two backends refuse one set of launch entries rather than each its
-// own. Reserving a name the map does not hold costs a launcher nothing it was
-// allowed to set: the bucket is the installation's configuration either way
-// (backend.PlatformEnvNames). The catalog stamp joins them: this backend
+// job already sets, the one exception below apart). The platform's own five
+// join those keys (backend.ReservedEnvNames), the same list Cloud Run hands
+// the same function, so the two backends refuse one set of launch entries
+// rather than each its own. Reserving a name the map does not hold costs a
+// launcher nothing it was allowed to set: the bucket is the installation's
+// configuration either way (backend.PlatformEnvNames). The catalog stamp joins
+// them: this backend
 // applies every non-secret entry into the task's variables, which are the
 // run's environment, so an entry naming it would tell a run its image came
 // from the operator's catalog when it did not -- and the runner reads exactly
@@ -81,8 +92,22 @@ func (b *Backend) jobVariables(spec backend.LaunchSpec, full, socket string) (ma
 		// side only for a run that has a socket.
 		vars["DOCKER_HOST"] = "unix://" + socket
 	}
+	// Every key of the map, with one exception: the credentials service's
+	// address, the only name in the deployed job's set that a launch entry is
+	// itself the writer of. A switched repository's launch hands its execution
+	// that address -- on the shared project job it runs on as on its own
+	// (internal/cli's credentialsServiceLaunchEnv) -- and Cloud Run carries the
+	// entry, where it lands in the execution's override; refusing it here would
+	// refuse a launch on Batch that starts on Cloud Run, which is the one thing
+	// this list exists to prevent. Its value is the launch's and wins over the
+	// deployed job's (they are applied below). Nothing else a launch writes is
+	// a name in this set: FUGARO_SLIP, FUGARO_SERVICES and FUGARO_REVIEW_JOB
+	// name no part of a deployed job's environment.
 	reserved := make([]string, 0, len(vars)+len(backend.PlatformEnvNames)+1)
 	for name := range vars {
+		if name == credentialsServiceEnv {
+			continue
+		}
 		reserved = append(reserved, name)
 	}
 	reserved = append(reserved, backend.ImageEntryEnv)

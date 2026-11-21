@@ -201,8 +201,10 @@ type Options struct {
 	// is that key set). **BR8 fills a run's job from this** (env.go): a Batch
 	// job's variables are the run's whole environment, so these are written
 	// into the task's environment beside the identity entries, each reserved
-	// against the launch's own entries, and a run can write its results and
-	// open its session where it could not before (F8). Empty means the
+	// against the launch's own entries bar the credentials service's URL, which
+	// a switched launch is itself the writer of (env.go), and a run can write
+	// its results and open its session where it could not before (F8). Empty
+	// means the
 	// installation's values are not passed in, which is every launch today;
 	// the values are the launcher's to read, because a backend that read them
 	// itself would be the config layer this seam deliberately is not.
