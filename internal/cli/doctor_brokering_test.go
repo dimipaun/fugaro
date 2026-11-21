@@ -2642,10 +2642,19 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 	// a security finding and the pointer is how the screen says the sweep has
 	// something. The installation that runs without the budget is a legitimate
 	// one, so neither the item nor the count fails doctor.
-	t.Run("the model key reaches the agent", func(t *testing.T) {
+	//
+	// The credential in that state is oauth's: an api-key run has a gateway in
+	// every mode now (AB1b, D3026), and the gateway is what holds its key out of
+	// the agent's environment, so no api-key repository is in this state any
+	// more — while an oauth run never starts a gateway (F30), and its token is
+	// in the agent's environment until the credentials service is in front of
+	// it. The state the subtest used to be, an api-key repository with no mode
+	// named, is asserted to be silent where the check's own tests are
+	// (TestDoctorBrokeringModelKeyInAgent).
+	t.Run("the model credential reaches the agent", func(t *testing.T) {
 		newDoctorRig(t)
 		dir := checkoutWith(t, map[string]string{"fugaro.yaml": strings.Replace(cliMinimalYAML,
-			"workflows:", "agent: { auth: api-key }\nworkflows:", 1)})
+			"workflows:", "agent: { auth: oauth }\nworkflows:", 1)})
 		testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
 		out, _, _ := execute(t, "doctor", "--json")
 		var o doctorOutput
@@ -2658,11 +2667,11 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		}
 		def := doctorDefaultOutput(t, o.Checks)
 		wants(t, def,
-			"info model-key-in-agent:", "the gateway holds the key",
-			"update deploys it")
+			"info model-key-in-agent:", "update deploys it",
+			"an oauth run never starts one")
 		counted(t, def, "`fugaro doctor --security`")
 		wants(t, doctorSecurityOutput(t, o.Checks),
-			"model-key-in-agent", "the gateway holds the key")
+			"model-key-in-agent", "an oauth run never starts one")
 	})
 }
 

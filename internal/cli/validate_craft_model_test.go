@@ -103,8 +103,15 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 // config's crafts name two models no run of this file reads, and a validate
 // that judged them would report the coder's at a key of a document its reader
 // may not even have.
+//
+// The world carries the security review model's price for the sibling test's
+// reason: the price rule reaches the crafts' models in every mode now (AB1b,
+// D3009), so a model with no row in the shipped table would be a problem this
+// fixture contributed rather than the crafts-of-the-installation rule it is
+// about.
 func TestValidateIgnoresTheCraftsNoRunReads(t *testing.T) {
-	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4-1\", \"claude-sonnet-5-5\"] }\n")
+	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4-1\", \"claude-sonnet-5-5\"] }\n"+
+		"model_prices:\n  claude-opus-4-1: { input_per_m: 15, output_per_m: 75 }\n")
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftPinnedYAML})
 	out, errOut, err := execute(t, "validate", "--offline", "fugaro.yaml")
 	if ExitCode(err) != ExitOK {
