@@ -524,6 +524,24 @@ import (
 // about, and says that no message was sent into a stage that never ran. Every
 // case holds the same two things wherever it is about something else: a
 // message's own text never reaches the block, and no access token is asked for.
+// Check 680's fakes are a fake `fugaro`, a fake `gcloud` and a fake `git` over
+// the installation's own project config, written to hold STATE rather than
+// answer: the fake `fugaro` judges the very file the check doctors -- the base
+// image's release against the one the workflow's job has to know, then the
+// credentials service's own switch, then the read the tier makes in its own
+// project -- which is what lets a case arrange an installation by writing that
+// file, and its `troubleshoot` answers the tier the judgement allows while
+// appending an execution line the way a launched job would; the fake `gcloud`
+// serves the project's executions, `projects describe` and a mini object store
+// the bucket's reads come out of; the fake `git` gives a checkout's toplevel and
+// its origin. So a case says what each of D2408's three parts read -- the
+// deliberately refused launch and the absence of an execution behind it, the
+// tier made unavailable by a project that is not there or a service this
+// installation does not publish, and the cloud answer with its cost, its record,
+// its class marker, its artifacts and the bundle that is gone -- that the launch
+// is made only after the decline that proved it refused, that the config comes
+// back byte-identical with its sidecar removed, and that no value of the
+// installation's ever reaches the block.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -628,6 +646,7 @@ var liveCheckScripts = []struct {
 	{"check-830.sh", "check-830_test.sh"},
 	{"check-840.sh", "check-840_test.sh"},
 	{"check-740-run-messages.sh", "check-740-run-messages_test.sh"},
+	{"check680.sh", "check680_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
@@ -692,7 +711,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 297 items on one runner (99 scripts, three shards each) and under
+// The suite is 300 items on one runner (100 scripts, three shards each) and under
 // a minute each; a split that dropped one, ran one twice or fell back to
 // everything would show up as a green run that tested less, which is the failure
 // this pins.
