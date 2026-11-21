@@ -4,9 +4,9 @@
 [launcher-does-not-mint](../launcher-does-not-mint/README.md); plan only, and nothing here is
 approved.** The release this plan was written around — the key to a sealed budget token — has been
 re-planned as a **VM-attested claim** on that plan's contract C1, which is merged:
-`internal/identitywire` and its `contract.md`. The owner's approvals of 2026-11-20 (C1, BRS, BR0,
-BR6) are **on hold**, by that plan's D3129 (its O16): a re-cut contract is one nobody approved, and
-every amended answer is put to him again — the list is "Answers amended by LM19" in
+`internal/identitywire` and its `contract.md`. **C1's and BR6's approvals of 2026-11-20 are on
+hold**, by that plan's D3129 (its O16); BRS and BR0 keep theirs: a re-cut contract is one nobody
+approved, and every amended answer is put to him again — the list is "Answers amended by LM19" in
 [reconciliation.md](reconciliation.md). Three tasks merged while this document was being written
 (C1 #3380, BRS #3379, BR0 #3381) and the key-release half of C1 is what BR23 now retires. See
 [docs/status.md](../status.md) for the current table. Spec owner: Dimi Paun (the owner). Date:

@@ -4,12 +4,12 @@
 [launcher-does-not-mint](../launcher-does-not-mint/README.md): the release is re-planned as a
 VM-attested claim on that plan's merged C1, so nothing here is approved and nothing is launched.**
 Three tasks merged while this document was being written — C1 (#3380), BRS (#3379) and BR0
-(#3381) — and the key-release half of C1 is what BR23 retires. The owner's approvals of 2026-11-20
-(C1, BRS, BR0, BR6) are on hold by that plan's D3129 (its O16): a re-cut contract is a contract
-nobody approved, D3113 to D3115 are unanswered, and **every amended answer is put to him again** —
-the list is "Answers amended by LM19" in [reconciliation.md](reconciliation.md). It builds
-[spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md), which wins where the two
-disagree.
+(#3381) — and the key-release half of C1 is what BR23 retires. **C1's and BR6's approvals of
+2026-11-20 are on hold** by that plan's D3129 (its O16); BRS and BR0 keep theirs. A re-cut contract
+is a contract nobody approved, D3113 to D3115 are unanswered, and **every amended answer is put to
+him again** — the list is "Answers amended by LM19" in [reconciliation.md](reconciliation.md). It
+builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md), which wins where the
+two disagree.
 
 **What the amendment changes, in one paragraph.** A launcher no longer mints and a Batch run no
 longer opens anything: the launcher asks the issuer for a ticket and names the Batch job it is
