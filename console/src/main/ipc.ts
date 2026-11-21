@@ -2166,8 +2166,10 @@ export const CONSOLE_OPERATIONS = [
   },
   {
     // The image catalog (MO-C's read): `image ls --json`, the installation's
-    // own image catalog. The group's writers are all on `NEVER_REACHABLE`; this
-    // is the group's one read, and it takes no argument at all.
+    // own image catalog. It is the group's one read and takes no argument at
+    // all, and five of the group's writers are refused below -- `image add`,
+    // `image rm` and `image promote` as commands and as words of `image`,
+    // beside the `image build` and `image refresh` rows.
     name: 'image.catalog.ls',
     method: 'listImageCatalog',
     command: 'image ls',
@@ -2177,9 +2179,11 @@ export const CONSOLE_OPERATIONS = [
   },
   {
     // The recipes (RB4/RS2's read): `recipes ls --json`, the recipes the
-    // project may run. `recipes publish` is a write and stays on
-    // `NEVER_REACHABLE`; `recipes validate` takes a free `FILE` positional and
-    // is no part of this row. Nothing a payload says reaches this argv.
+    // project may run. It takes no argument at all, and the group's two other
+    // words are refused below: `recipes publish` as a command and as a word of
+    // `recipes`, and `recipes validate` as a word, for the free `FILE`
+    // positional a renderer would fill. Nothing a payload says reaches this
+    // argv.
     name: 'recipes.ls',
     method: 'listRecipes',
     command: 'recipes ls',
@@ -2625,6 +2629,27 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     why: 'a write: it publishes a recipe',
     where: 'internal/cli/recipes.go:327',
   },
+  // The recipes group's other two words, in the second shape the models rows
+  // below are drawn in: refused **as words** wherever a `recipes` argv spells
+  // them, because `recipes ls publish` is not the command `recipes publish`
+  // and a command row alone would admit it. `publish` is the write above;
+  // `validate` is a read, and the word of this group a renderer could fill in
+  // -- it takes a free `FILE` positional, where the surface's one read,
+  // `recipes ls`, takes no argument at all.
+  {
+    shape: 'argv',
+    command: 'recipes',
+    value: 'publish',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/recipes.go:327',
+  },
+  {
+    shape: 'argv',
+    command: 'recipes',
+    value: 'validate',
+    why: 'a read, and the one word of this group that takes a **positional** `FILE` a renderer would fill: this surface reads the project’s recipes with `recipes ls`, which takes no argument at all, and a free word a caller chooses is the shape this table keeps off it',
+    where: 'internal/cli/recipes.go:453 (Use: "validate FILE")',
+  },
   // **The `user` group's writers, in the two shapes the models rows below are
   // drawn in.** `fugaro user ls --json` is the group's one reachable word
   // (`members.list` above, the roles-and-scopes plan's RS7); the five commands
@@ -2804,6 +2829,93 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'image git-credential',
     why: 'it prints a git credential — the console never handles a secret value, not even one it would only pass through',
     where: 'internal/cli/gitcred.go:42',
+  },
+  // **The image group's writers the rows above did not carry, in the two
+  // shapes the models and `user` rows are drawn in.** The catalog's own three
+  // words -- `add` appends an entry to the installation's image catalog, `rm`
+  // drops one, and `promote` copies a repository's existing image definition
+  // into the catalog and points the repository at it -- are writes to a
+  // project setting a reviewer signed off on, which is why they are here
+  // beside the `image build` and `image refresh` rows above rather than
+  // reachable. The console's one word of this group stays `image ls --json`
+  // (`image.catalog.ls` above), and it takes no argument at all.
+  //
+  // The `argv` rows under them refuse the seven **words** wherever an
+  // operation under `image` spells them, in the command path or in the flags
+  // it fixes, on the models rows' own reasoning: a command row alone would
+  // admit a future operation whose command is `image add <name>` rather than
+  // the command `image add`. Each `command` row stays **above** the `argv` row
+  // carrying its word, so `isNeverReachable` answers with the narrower one and
+  // `console/test/unit/ipc.test.ts` can assert it per row. The credential
+  // helper above is the one word here with no `argv` row, as the `secrets`
+  // group's words have none: it is refused as a command, and a word-shaped
+  // refusal is for a word an argv could carry into a read.
+  {
+    shape: 'command',
+    value: 'image add',
+    why: 'a write: it appends an entry to the installation’s image catalog, a project setting a reviewer signed off on',
+    where: 'internal/cli/image_catalog.go:337 (Use: "add <name>")',
+  },
+  {
+    shape: 'command',
+    value: 'image rm',
+    why: 'a write: it removes an entry from the installation’s image catalog, which stops every repository the catalog’s map points at it',
+    where: 'internal/cli/image_catalog.go:705 (Use: "rm <name>")',
+  },
+  {
+    shape: 'command',
+    value: 'image promote',
+    why: 'a write: it copies a repository’s image definition into the catalog and rewrites the repository’s workflow to name the entry, in the checkout it runs in',
+    where: 'internal/cli/image_promote.go:22 (Use: "promote <repo> [name]")',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'add',
+    why: 'the catalog write above, refused as a word of this command as well: an `image` argv that spells `add` is refused before `spawn` is called, whether it spells it in the command path or in the flags it fixes',
+    where: 'internal/cli/image_catalog.go:337 (Use: "add <name>")',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'rm',
+    why: 'the catalog write above, refused as a word of this command as well',
+    where: 'internal/cli/image_catalog.go:705 (Use: "rm <name>")',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'promote',
+    why: 'the catalog write above, refused as a word of this command as well',
+    where: 'internal/cli/image_promote.go:22 (Use: "promote <repo> [name]")',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'build',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/image.go:77',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'gate',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/image_record.go:63',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'record',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/image_record.go:148',
+  },
+  {
+    shape: 'argv',
+    command: 'image',
+    value: 'refresh',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/image_refresh.go:330',
   },
   {
     shape: 'command',

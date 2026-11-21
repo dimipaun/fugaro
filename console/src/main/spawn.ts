@@ -1655,7 +1655,10 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
   },
   {
     // The image catalog (`image ls --json`): the group's one read, and the
-    // group's writers are all on `NEVER_REACHABLE`. No argument at all.
+    // group's one word on this table. `image add`, `image rm` and `image
+    // promote` are `NEVER_REACHABLE` rows beside the `image build` and `image
+    // refresh` ones, each as a command and as a word of `image`
+    // (`src/main/ipc.ts`). No argument at all.
     operation: 'image.catalog.ls',
     words: ['image', 'ls', '--json'],
     takesProject: true,
@@ -1664,7 +1667,8 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
   },
   {
     // The recipes (`recipes ls --json`). `recipes publish` is a write and
-    // `recipes validate` takes a free `FILE` positional: neither is this row.
+    // `recipes validate` takes a free `FILE` positional: neither is this row,
+    // and both are the never table's as words of `recipes` as well.
     operation: 'recipes.ls',
     words: ['recipes', 'ls', '--json'],
     takesProject: true,

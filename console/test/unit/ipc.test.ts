@@ -670,18 +670,21 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // project's image catalog names, each entry's tags, default, build source and
   // last recorded digest -- `fugaro image ls --json`. `allowed` because the
   // surface drives it, and it is the `image` group's **only** reachable word:
-  // `image build`, `image gate`, `image record`, `image refresh` and the
-  // credential helper are all on `NEVER_REACHABLE` below, so this row is what
-  // keeps the group's writers off the console's surface. It takes no argument
+  // the group's three catalog writers (`image add`, `image rm` and `image
+  // promote` below) and `image build`, `image gate`, `image record`, `image
+  // refresh` and the credential helper are all on `NEVER_REACHABLE`, each as a
+  // command and, for the seven writers, as a word of `image` too -- so no
+  // writer of this group is reachable from the console. It takes no argument
   // (cobra's `NoArgs`) and its `--shared` is not a word this surface fixes.
   { command: 'image ls', kind: 'allowed', where: 'internal/cli/image_catalog.go:65' },
   // The recipes (the console improvements plan's RB4/RS2, AL): the recipes this
   // project may run, with what each is for and what it needs -- `fugaro recipes
   // ls --json`. **It was `unused` until AL and is `allowed` now**, and the
   // change is the whole of the row: the console grew the screen that reads it.
-  // The group's writer (`recipes publish`) stays on `NEVER_REACHABLE` below, and
-  // `recipes validate` takes a free `FILE` positional, so this is the group's
-  // whole reach. It takes no argument.
+  // The group's other two words stay on `NEVER_REACHABLE` below, as commands
+  // and as words of `recipes`: `recipes publish` is a write and `recipes
+  // validate` takes a free `FILE` positional, so this is the group's whole
+  // reach. It takes no argument.
   { command: 'recipes ls', kind: 'allowed', where: 'internal/cli/recipes.go:257' },
   // **The rest of the models group, classified by what each word does.** The
   // three writers edit a configuration a reviewer signed off on -- the project
@@ -760,6 +763,9 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'config init', kind: 'mutating', where: 'internal/cli/config_init.go:80' },
   { command: 'config publish', kind: 'mutating', where: 'internal/cli/config_publish.go:31' },
   { command: 'recipes publish', kind: 'mutating', where: 'internal/cli/recipes.go:327' },
+  { command: 'image add', kind: 'mutating', where: 'internal/cli/image_catalog.go:337' },
+  { command: 'image rm', kind: 'mutating', where: 'internal/cli/image_catalog.go:705' },
+  { command: 'image promote', kind: 'mutating', where: 'internal/cli/image_promote.go:22' },
   { command: 'image build', kind: 'mutating', where: 'internal/cli/image.go:77' },
   { command: 'image gate', kind: 'mutating', where: 'internal/cli/image_record.go:63 (hidden)' },
   { command: 'image record', kind: 'mutating', where: 'internal/cli/image_record.go:148 (hidden)' },
@@ -1241,7 +1247,20 @@ describe("the allow-list's read-only invariant", () => {
         // Neither is forbidden -- the console just has no screen for the
         // unused ones. What keeps them unreachable is that the surface is the
         // table: an operation is the only way to a command.
-        expect(NEVER_REACHABLE.some((row) => row.value === entry.command)).toBe(false)
+        //
+        // **An `argv` row is read under the command it belongs to**, the way
+        // the row-identity check below keys one: it refuses *one word of one
+        // command*, so a word row under `recipes` says nothing about the
+        // top-level `validate` command of the same name (`recipes validate`
+        // is the `unused` read AL's fence refuses as a word, and `fugaro
+        // validate` is another command entirely). Comparing the value alone
+        // would read the two as one row.
+        expect(
+          NEVER_REACHABLE.some(
+            (row) =>
+              row.value === entry.command && (row.shape !== 'argv' || row.command === entry.command),
+          ),
+        ).toBe(false)
         return
       }
       expect(
@@ -1541,6 +1560,106 @@ describe("the allow-list's read-only invariant", () => {
         },
       ]),
     ).toThrow(/user\.grant drives user grant/)
+  })
+
+  it('reaches no `image` word but `ls` and no `recipes` word but `ls`, and refuses each writer in both shapes', () => {
+    // **The image and recipes groups' fences** (the console improvements plan's
+    // AL: its contract text and design rows claim the groups' writers are the
+    // never table's, and the first review round found the claim true of some of
+    // them and the fence drawn in neither of the two shapes). `fugaro image ls
+    // --json` and `fugaro recipes ls --json` are the one word of each group this
+    // console may drive, and each group's other words are refused in the two
+    // shapes the models and `user` fences are drawn in: a `command` row per
+    // writer, and an `argv` row per word. Both are read back here in an argv
+    // that could actually be spawned, because the loops above read a row's
+    // `command` and never its `value`: a dropped row, or a word spelled into a
+    // longer command path or into a row's flags, would otherwise leave the half
+    // of the fence a command row cannot see unguarded while every test above
+    // stayed green.
+    const refusedBy = (command: string, flags: readonly string[]): string | null =>
+      isNeverReachable({ command, flags })?.value ?? null
+
+    expect(
+      CONSOLE_OPERATIONS.filter((operation) => operation.name === 'image.catalog.ls').map(argvOf),
+    ).toEqual(['image ls --json'])
+    expect(CONSOLE_OPERATIONS.filter((operation) => operation.name === 'recipes.ls').map(argvOf)).toEqual([
+      'recipes ls --json',
+    ])
+    expect(refusedBy('image ls', ['--json'])).toBeNull()
+    expect(refusedBy('image ls', ['--json', '--shared'])).toBeNull()
+    expect(refusedBy('recipes ls', ['--json'])).toBeNull()
+
+    for (const word of ['add', 'rm', 'promote', 'build', 'gate', 'record', 'refresh'] as const) {
+      expect(
+        NEVER_REACHABLE.filter((row) => row.shape === 'command' && row.value === `image ${word}`),
+        word,
+      ).toHaveLength(1)
+      expect(
+        NEVER_REACHABLE.filter(
+          (row) => row.shape === 'argv' && row.command === 'image' && row.value === word,
+        ),
+        word,
+      ).toHaveLength(1)
+      // The command path the design's never list names...
+      expect(refusedBy(`image ${word}`, ['--json']), word).toBe(`image ${word}`)
+      // ...the same word spelled into a longer command path...
+      expect(refusedBy(`image ls ${word}`, ['--json']), word).toBe(word)
+      // ...and into the flags, which is the half a command row cannot see.
+      expect(refusedBy('image ls', ['--json', word]), word).toBe(word)
+    }
+    // `git-credential` is the one refused word of this group with no `argv` row,
+    // as the `secrets` group's words have none: it is a secret value's helper
+    // rather than a word an argv could carry into a read, and the command row is
+    // what refuses it.
+    expect(refusedBy('image git-credential', ['--json'])).toBe('image git-credential')
+    expect(refusedBy('image ls', ['--json', 'git-credential'])).toBeNull()
+
+    // `recipes`' two other words: `publish` is a write with both rows, and
+    // `validate` is a read with **no command row at all** (it is `unused`
+    // above), so the word row is the only one it can ever match.
+    expect(
+      NEVER_REACHABLE.filter((row) => row.shape === 'command' && row.value === 'recipes publish'),
+    ).toHaveLength(1)
+    expect(refusedBy('recipes publish', ['--json'])).toBe('recipes publish')
+    expect(refusedBy('recipes ls publish', ['--json'])).toBe('publish')
+    expect(refusedBy('recipes ls', ['--json', 'publish'])).toBe('publish')
+    for (const [command, flags] of [
+      ['recipes validate', ['--json']],
+      ['recipes ls validate', ['--json']],
+      ['recipes ls', ['--json', 'validate']],
+    ] as const) {
+      expect(refusedBy(command, flags), command).toBe('validate')
+    }
+
+    // The whole-table controls: an operation driving either group's writer, or
+    // the free-`FILE` read, cannot be added to the surface at all, and the
+    // refusal names it.
+    expect(() =>
+      assertReachableSurface([
+        ...CONSOLE_OPERATIONS,
+        {
+          name: 'image.add',
+          method: 'addImage',
+          command: 'image add',
+          flags: ['--json'],
+          summary: 'a write this console must not have',
+          args: [],
+        },
+      ]),
+    ).toThrow(/image\.add drives image add/)
+    expect(() =>
+      assertReachableSurface([
+        ...CONSOLE_OPERATIONS,
+        {
+          name: 'recipes.validate',
+          method: 'validateRecipe',
+          command: 'recipes ls',
+          flags: ['--json', 'validate'],
+          summary: 'a read this console must not have',
+          args: [],
+        },
+      ]),
+    ).toThrow(/recipes\.validate drives validate/)
   })
 
   it('drives no command whose argv carries a never-table flag', () => {

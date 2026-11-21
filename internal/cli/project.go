@@ -392,8 +392,10 @@ var consoleReadPaths = map[string]bool{
 	// `recipes ls --json` prints the recipes this installation can run. Both
 	// are offline reads of the installation's own records and write nothing,
 	// the remembered checkouts included, so a console that asks either
-	// remembers no checkout. Their writers are the never table's: `image add`
-	// and `image rm`, `recipes publish` and `recipes validate`.
+	// remembers no checkout. Their writers are the never table's: `image
+	// add`, `image rm` and `image promote`, `recipes publish` and `recipes
+	// validate` -- each as a command and as a word of its group, so no other
+	// word of either group is reachable from the console.
 	"fugaro image ls":   true,
 	"fugaro recipes ls": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
