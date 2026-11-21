@@ -117,6 +117,26 @@ const REPORTING_PACKAGES = Object.freeze({
 });
 const CORE_PACKAGE = '@react-native-firebase/app';
 
+/**
+ * The Firebase packages the app carries that are **neither the core nor a
+ * reporter**, and what each one is. The scan below refuses a
+ * `@react-native-firebase` package it cannot classify, so a package the app
+ * adds is a decision taken here rather than a silent pass, and this list is
+ * where "carried, and not a report about the reader" gets written down.
+ *
+ * **`messaging` is FCM**, P5.2.8's package: it delivers an alert the phone asked
+ * for, and the only thing the app sends through it is its own registration,
+ * which is a mailbox message signed for the pairing and written to the
+ * installation's own project (`docs/mobile/design/push-notifications.md` §3.3,
+ * §3.5 (b)). What a push disclosure would have to say is that document's §9 and
+ * the owner's Q9 answer, and it is not on the page today -- so naming FCM from
+ * this scan would be inventing a sentence the privacy page does not carry, and
+ * the statement the shell renders stays about the reports.
+ */
+const NON_REPORTING_PACKAGES = Object.freeze({
+  '@react-native-firebase/messaging': 'Firebase Cloud Messaging',
+});
+
 /** The tags that end a paragraph or a block, which is where the page's prose is
  * cut: everything else is emphasis and line wrapping. */
 const BLOCK_END = /<\/(?:p|div|li|ul|ol|h[1-6]|section|table|tr)>|<(?:br|hr)\s*\/?>/gi;
@@ -218,9 +238,16 @@ test('the statement names every reporter the app ships, and none it does not', (
   assert.ok(firebase.length > 0, 'no `@react-native-firebase/` package is in mobile/package.json, and the app has at least one reporter');
   for (const pkg of firebase) {
     assert.ok(
-      pkg === CORE_PACKAGE || Object.hasOwn(REPORTING_PACKAGES, pkg),
-      `mobile/package.json carries ${pkg} and this scan does not know what the statement owes it: add it to REPORTING_PACKAGES with the words the statement has to carry`,
+      pkg === CORE_PACKAGE
+        || Object.hasOwn(REPORTING_PACKAGES, pkg)
+        || Object.hasOwn(NON_REPORTING_PACKAGES, pkg),
+      `mobile/package.json carries ${pkg} and this scan does not know what the statement owes it: add it to REPORTING_PACKAGES with the words the statement has to carry, or to NON_REPORTING_PACKAGES with what it is and why the statement owes it nothing`,
     );
+  }
+  // The two lists are disjoint, and the statement is read against the reporters
+  // alone: a package in both would be a reporter whose product no clause names.
+  for (const pkg of Object.keys(NON_REPORTING_PACKAGES)) {
+    assert.equal(Object.hasOwn(REPORTING_PACKAGES, pkg), false, `${pkg} is classified twice`);
   }
 
   // Both directions, and the second is the one that keeps the statement honest

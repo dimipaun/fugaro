@@ -97,6 +97,7 @@ const DECLARED = Object.freeze({
     '@react-native-firebase/app',
     ['@react-native-firebase/analytics', { ios: { withoutAdIdSupport: true } }],
     '@react-native-firebase/crashlytics',
+    '@react-native-firebase/messaging',
   ],
   ios: { ...CONFIG.expo.ios, infoPlist: { ITSAppUsesNonExemptEncryption: false } },
   android: {
@@ -382,7 +383,9 @@ test('a resolved config declares that the app uses only exempt encryption', () =
 //
 // The app gains Firebase (the mobile plan's Phase 7): `@react-native-firebase/app`
 // puts the SDK in the app, `analytics` and `crashlytics` are the two products it
-// carries, and the native config file that names the Firebase project is the
+// carries, P5.2.8's `messaging` is the fourth (the one that mints the push token
+// an installation registers with), and the native config file that names the
+// Firebase project is the
 // **owner's** -- registered in the console, delivered to the build as an EAS file
 // environment variable, and never committed (D259, §4.3). Two things follow, and
 // both are checkable from the tree alone:
@@ -395,7 +398,7 @@ test('a resolved config declares that the app uses only exempt encryption', () =
 //     it asserts the rule git actually applies -- and proves the question can
 //     answer "no" with a path that is not ignored.
 //   * **the resolved config wires the plugin.** `app.config.js` is the one file
-//     the three packages' config plugins are registered in, and a resolution is
+//     the four packages' config plugins are registered in, and a resolution is
 //     what a build reads. What the plugin *options* mean -- the ad-ID switches,
 //     the iOS variant -- is the build-time walk's (§7.4, P7.1b); what is pinned
 //     here is that the entries exist, in both modes, once each, and that the
@@ -404,11 +407,12 @@ test('a resolved config declares that the app uses only exempt encryption', () =
 /** The two native config files, by the names the Firebase console writes. */
 const NATIVE_CONFIG_FILES = Object.freeze(['google-services.json', 'GoogleService-Info.plist']);
 
-/** The three packages, in the order the config registers them. */
+/** The four packages, in the order the config registers them. */
 const FIREBASE_PACKAGES = Object.freeze([
   '@react-native-firebase/app',
   '@react-native-firebase/analytics',
   '@react-native-firebase/crashlytics',
+  '@react-native-firebase/messaging',
 ]);
 
 /** The plugin's name, whether the entry is a bare string or a `[name, options]` pair. */
@@ -453,7 +457,7 @@ test('the two native Firebase config files are untracked and ignored', () => {
   }
 });
 
-test('a resolved config registers the three @react-native-firebase plugins', () => {
+test('a resolved config registers the four @react-native-firebase plugins', () => {
   const SAMPLE = 'com.example.sample';
   const staticPlugins = (CONFIG.expo.plugins ?? []).map(pluginName);
   for (const [what, env] of [
@@ -583,7 +587,7 @@ test('a resolved config links no advertising-id support, on both platforms', () 
   // `@react-native-firebase/app` plugin's own source says the Firebase Apple
   // SDK is Swift-Package-Manager-only and a project built from it must use
   // dynamic frameworks. It is the one dependency this task added beyond the
-  // three packages, and this is what it is for.
+  // four packages, and this is what it is for.
   assert.deepEqual(optionsOf('expo-build-properties'), { ios: { useFrameworks: 'dynamic' } });
 });
 
