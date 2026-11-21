@@ -154,18 +154,20 @@ const ReapMargin = 15 * time.Minute
 
 // TicketLife is how long a run's identity ticket lives, and therefore the whole
 // of the budget a Batch run may spend waiting for a VM: it is the issuer's
-// stated ticket life (D3106 as amended, BR14), and one hour is what the
-// launcher plan's R2 states for it -- a ticket, its nonce and the job's identity
-// token together are a run's token "for that long and no longer"
-// (identitywire.TicketResponse.ExpiresAt, token.Lifetime), which is the same
-// hour the sealed object's own token lived before the ticket replaced it.
+// stated ticket life (D3106 as amended, BR14). An hour is what one comes to:
+// the launcher plan's R2 states that a ticket, its nonce and the job's identity
+// token together are a run's token "for that long and no longer", and the token
+// they come to is a custom token, which Firebase caps at an hour
+// (identitywire.TicketResponse.ExpiresAt, token.Lifetime). It is the hour the
+// sealed token D3106 first spoke of lived too, so the amendment moved the
+// object that deadline is read from and not its length.
 //
 // It is a default and not a fact of this package: the issuer is what states a
-// ticket's life, and a caller that knows its installation's own hands it over
-// in ReaperOptions.TicketLife. What the reaper does with the number is its own:
-// it stops the wait BEFORE the life is spent, by the two margins below, so that
-// the job it ends is one that could not have claimed in time even if Batch had
-// started it that second.
+// ticket's life, ticket by ticket, and a caller that knows its installation's
+// own hands it over in ReaperOptions.TicketLife. What the reaper does with the
+// number is its own: it stops the wait BEFORE the life is spent, by the two
+// margins below, so that the job it ends is one that could not have claimed in
+// time even if Batch had started it that second.
 const TicketLife = time.Hour
 
 // TicketStartMargin is the last of a ticket's life that a run still needs: the
@@ -607,8 +609,10 @@ func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 // state before the reaper calls it stuck. TicketDeadline bounds a QUEUED job
 // whose environment carries a run's identity ticket: the ticket's life less the
 // start margin (TicketStartMargin, the last of the life a run needs to boot and
-// claim) and less ReapMargin, because a pass can only act at its own schedule's
-// boundaries -- a job left inside the deadline by one pass would spend it
+// claim) and less ReapMargin, which is the interval the installation's Scheduler
+// starts a pass on (deploy/terraform/gcp/modules/compute/reaper.tf: the `*/15`
+// cadence IS ReapMargin, not a preference) -- a pass can only act at its own
+// boundaries, so a job left inside the deadline by one pass would spend it
 // before the next, and could be given a VM in between with a ticket that cannot
 // cover its first call. It is never more than the queue deadline: a ticket can
 // shorten a wait, never lengthen one.
