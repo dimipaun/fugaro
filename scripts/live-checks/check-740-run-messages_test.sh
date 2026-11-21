@@ -252,22 +252,29 @@ write_launch() { # dir
 EOF
 }
 
-write_rows() { # dir — rows.1: implement; rows.2: ended
+write_rows() { # dir [ended-status] [ended-stage] — rows.1: implement; rows.2: ended
+  local estatus=${2:-succeeded} estage=${3:-finalize}
   cat >"$1/state/rows.1.json" <<EOF
 {"runs":[{"run_id":"$RUN_ID","repo":"$REPO","run":"$RUN_REF","status":"running","stage":"implement","execution":"$EXECUTION","terminal":false}]}
 EOF
   cat >"$1/state/rows.2.json" <<EOF
-{"runs":[{"run_id":"$RUN_ID","repo":"$REPO","run":"$RUN_REF","status":"succeeded","stage":"finalize","execution":"$EXECUTION","terminal":true}]}
+{"runs":[{"run_id":"$RUN_ID","repo":"$REPO","run":"$RUN_REF","status":"$estatus","stage":"$estage","execution":"$EXECUTION","terminal":true}]}
 EOF
 }
 
-write_record() { # dir [plain-state] [plain-stage] [now-state] [now-stage] [now-reason]
+write_record() { # dir [plain-state] [plain-stage] [now-state] [now-stage] [now-reason] [record-stage] [record-status]
   local state=${2:-delivered} stage=${3:-implement}
   local nstate=${4:-delivered} nstage=${5:-implement} reason=${6:-}
+  # The run's own ending: a run that got past implement ends at a later stage
+  # and succeeded, which is the default every case that is not about the ending
+  # takes. A record's `stage` and `status` are top-level fields the runner always
+  # writes, so a fixture that left them out would be a record no run writes.
+  local rstage=${7:-finalize} rstatus=${8:-succeeded}
   local reason_json=""
   [ -z "$reason" ] || reason_json=",\"reason\":\"$reason\""
   cat >"$1/state/record.json" <<EOF
 {"version":1,"run_id":"$RUN_ID","repo":"$REPO","execution":"$EXECUTION",
+ "stage":"$rstage","status":"$rstatus",
  "messages":{"accepting":true,"format":1,"flags":["now","wrap_up"],"messages":[
   {"seq":1,"state":"$state","stage":"$stage","flags":[],"object":"tokens/acme-widgets/$RUN_ID/messages/0001.msg.json","text":"$TEXT_SENTINEL"},
   {"seq":2,"state":"$nstate","stage":"$nstage","flags":["now"],"object":"tokens/acme-widgets/$RUN_ID/messages/0002.msg.json","text":"$TEXT_SENTINEL"$reason_json}]}}
@@ -477,6 +484,41 @@ case_now_boundary() {
   expect_fact message-now UNVERIFIED "now-boundary"
   expect_contains "$out" "NOT settled here" "now-boundary: the row says what it did not settle"
   expect_contains "$out" "CHECK 740 RESULT: INCOMPLETE (exit 3)" "now-boundary: the verdict line"
+}
+
+case_now_ended_in_implement() {
+  setup_case now-ended-in-implement
+  # The fate a FAILED resume leaves. The entry is written when the stop claims
+  # the message and BEFORE the turn it resumes runs, and the session-lost reason
+  # is written only for a FORCED stop whose resume failed — so a quiet-point stop
+  # whose resume found no session to continue (agent.ErrNoSession, which a first
+  # run's implement has no recovery for) leaves delivered/implement/reason="" and
+  # the run ends failed right there. The record's own ending is what tells that
+  # apart from a resume that went on, and this one is NOT U2 holding.
+  write_record "$dir" delivered implement delivered implement "" implement failed
+  write_rows "$dir" failed implement
+  run740 --installation "$INSTALLATION" --repo "$REPO"
+  expect_status "$status" 3 "now-ended-in-implement: a row left unmeasured is INCOMPLETE, never a pass"
+  expect_fact message-plain PASS "now-ended-in-implement: the plain message did reach a coder stage"
+  expect_fact message-now UNVERIFIED "now-ended-in-implement: a run that ended in implement cannot read as the quiet point the row asks about"
+  expect_contains "$out" "U2 and U3 are NOT settled by this run" "now-ended-in-implement: the row says what it did not settle"
+  expect_contains "$out" "stage=implement" "now-ended-in-implement: the row names the ending it read"
+  expect_absent "$out" "U2 and U3 hold" "now-ended-in-implement: the same-session statement must not be printed"
+  expect_contains "$out" "CHECK 740 RESULT: INCOMPLETE (exit 3)" "now-ended-in-implement: the verdict line"
+}
+
+case_now_ended_later() {
+  setup_case now-ended-later
+  # The run went on PAST implement and failed later (a review round, say). The
+  # turn after the stop did run — implement is behind it — so U2 and U3 are
+  # settled, and how the run ended afterwards is the run-ended row's business
+  # and not this one's.
+  write_record "$dir" delivered implement delivered implement "" review failed
+  write_rows "$dir" failed review
+  run740 --installation "$INSTALLATION" --repo "$REPO"
+  expect_fact run-ended PASS "now-ended-later: every fate is this run's own whatever its ending"
+  expect_fact message-now PASS "now-ended-later: the run is past the stage the message reached, so the turn after the stop ran"
+  expect_contains "$out" "SAME session" "now-ended-later: the same-session statement"
 }
 
 case_now_undelivered() {
@@ -905,6 +947,8 @@ t case_quiet_point_missed
 t case_session_lost
 t case_unknown_reason
 t case_now_boundary
+t case_now_ended_in_implement
+t case_now_ended_later
 t case_now_undelivered
 t case_plain_undelivered
 t case_plain_reached_reviewer

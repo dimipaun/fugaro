@@ -22531,9 +22531,16 @@ dropped rather than refused).
   `stage=implement` and its **reason** is the answer. The runner writes a reason only where the stop did
   **not** land as the rule reads it — `no quiet point in 10m` when its own ten-minute bound was reached
   (`agent.YieldAtBound`) and `session lost at forced stop` when a forced stop left a session that could not
-  be resumed (`internal/runner/yield.go`) — so an **empty** reason on a `delivered` fate at that stage is
-  the runner's own statement that a quiet point **was** found and that the turn after it ran in the
-  **same** session. Either reason is this row failing, and the row quotes it.
+  be resumed (`internal/runner/yield.go`) — so an **empty** reason on a `delivered` fate at that stage, in a
+  run whose own record went **past** implement (its `stage` and `status`, read from the same record), is the
+  runner's own statement that a quiet point **was** found and that the turn after it ran in the **same**
+  session. Either reason is this row failing, and the row quotes it. The ending is read with the fate
+  because an empty reason alone is not that statement: the entry is written before the turn it resumes runs
+  (`claimYield`), and `session lost at forced stop` is written afterwards by `retagYield` for a **forced**
+  stop only — so a quiet-point stop whose resume failed with `agent.ErrNoSession`, which a first run's
+  implement has no recovery for, leaves `delivered`/`implement` with no reason and ends the run there. A
+  record that ends in implement is therefore written **not measured** (the block is INCOMPLETE), never read
+  as U2 and U3 holding.
 - **D2941's fence, asked about the real accounts** (step 3). The check takes the account the run really ran
   as — the record's own `execution` (`projects/<project>/locations/<location>/jobs/<job>/executions/<execution>`),
   then `gcloud run jobs describe` for `spec.template.spec.template.spec.serviceAccountName` — and, where

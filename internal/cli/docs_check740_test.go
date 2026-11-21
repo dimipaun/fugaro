@@ -28,7 +28,9 @@ import (
 // own record really says a plain message was `delivered` at a coder stage, that
 // a `--now` stop found a quiet point and the SAME session went on from it (the
 // reconciliation's U2 and U3, whose negatives are the two reasons the runner
-// writes — `no quiet point in 10m` and `session lost at forced stop`), that the
+// writes — `no quiet point in 10m` and `session lost at forced stop` — read
+// against a record that went past the stage the message reached, because an
+// empty reason is written before the turn it resumes runs), that the
 // REAL job account of a workflow and of a project job is denied
 // `storage.objects.create` on a message object (D2941), and that the applied
 // bucket carries RM6's `.msg.json` lifecycle rule (U4). The section has to say
@@ -156,6 +158,15 @@ func TestDocsCheck740StatesWhatOnlyTheRunSettles(t *testing.T) {
 		"no quiet point in 10m",
 		"session lost at forced stop",
 		"same",
+		// What an empty reason needs beside it: the run's own ending, because
+		// the entry is written BEFORE the turn it resumes runs, and the
+		// session-lost reason is written only for a FORCED stop whose resume
+		// failed. A record that ends in implement is not measured, never read
+		// as U2 and U3 holding.
+		"went **past** implement",
+		"retagyield",
+		"agent.errnosession",
+		"not measured",
 		// Step 3: D2941's fence, asked about the installation's own accounts by
 		// the Policy Troubleshooter, and why a throwaway account would prove
 		// nothing.

@@ -172,6 +172,8 @@ EXEC_PROJECT=""
 EXEC_LOCATION=""
 EXEC_JOB=""
 ACCEPTING=""
+RECORD_STAGE=""
+RECORD_STATUS=""
 ROW_STAGE=""
 ROW_STATUS=""
 ROW_TERMINAL=""
@@ -571,13 +573,20 @@ def cmd_record(path):
     """The run's own record, read from the bucket
     (runs/<slug>/<run>/result.json). What it carries that this check reads: the
     run it is, its `execution` (the job the run landed on, which is how the real
-    job account is found) and the messages block the runner writes -- one entry
-    per message, with the state, the stage it reached, its flags and the
-    runner's own reason where a stop carried one. The block is the ONLY statement
-    about delivery this check trusts: `fugaro runs show --json` prints the same
-    block as the CLI states it, and this command reads the record itself."""
+    job account is found), its own `stage` and `status` (the stage the run was
+    in when it ended, and how it ended) and the messages block the runner writes
+    -- one entry per message, with the state, the stage it reached, its flags and
+    the runner's own reason where a stop carried one. The block is the ONLY
+    statement about delivery this check trusts: `fugaro runs show --json` prints
+    the same block as the CLI states it, and this command reads the record
+    itself. The stage and the status are read for the one thing a fate cannot
+    say on its own: whether the run went on past the stage a stop delivered into
+    (see the --now row), which is why they are read from the record and not from
+    `fugaro runs ls`, whose row is the CLI's own view of it."""
     doc = load(path)
     print("run_id=%s" % clip(doc.get("run_id") or ""))
+    print("stage=%s" % clip(doc.get("stage") or ""))
+    print("status=%s" % clip(doc.get("status") or ""))
     print("execution=%s" % clip(doc.get("execution") or "", 400))
     msgs = doc.get("messages") or {}
     print("accepting=%s" % ("yes" if msgs.get("accepting") else "no"))
@@ -1040,6 +1049,11 @@ step_record() {
   fi
   EXECUTION=$(field_of execution "$REC")
   ACCEPTING=$(field_of accepting "$REC")
+  # The stage the run was in when it ended and how it ended: the one reading a
+  # fate cannot give on its own, because an entry is written when a stop claims
+  # a message and before the turn it resumes runs (the --now row).
+  RECORD_STAGE=$(field_of stage "$REC")
+  RECORD_STATUS=$(field_of status "$REC")
   # The object the plain message really is, when the record names it: the
   # Policy Troubleshooter is then asked about an object that exists, rather than
   # about the key the store would give a run's first message.
@@ -1061,10 +1075,21 @@ step_record() {
 # The plain message's criterion is rule 1: written while the run was going, it
 # reaches a coder stage. The `--now` message's criterion is the quiet point
 # (U2/U3): its fate carries NO reason exactly where the stop found a quiet point
-# inside implement AND the turn after it ran in the same session — the runner
-# writes `no quiet point in 10m` when its bound was reached, and `session lost at
-# forced stop` when a forced stop left a session that could not be resumed and
-# the stage went on in a fresh one. Each of those is quoted as it stands.
+# inside implement — the runner writes `no quiet point in 10m` when its bound was
+# reached, and `session lost at forced stop` when a forced stop left a session
+# that could not be resumed and the stage went on in a fresh one — and each of
+# those is quoted as it stands.
+#
+# An empty reason is NOT on its own the statement that the session resumed. The
+# entry is written by claimYield BEFORE the turn it resumes runs, and the
+# session-lost reason is written afterwards by retagYield, for a FORCED stop
+# only (internal/runner/yield.go). A quiet-point stop whose resume failed with
+# agent.ErrNoSession — a failure a first run's implement has no recovery for —
+# therefore leaves delivered/implement/reason="" and ends the run there: the
+# record is exactly that of a resume that went on. What the row needs besides
+# the fate is the run's own ending, which is why the record's stage and status
+# are read with it: a run that was still in implement when it ended cannot be
+# read as U2 and U3 holding, and the row says so rather than claiming them.
 step_messages() {
   if [ "$RECORD_READ" != yes ]; then
     unmeasured message-plain "the run's own record was NOT read — the record row above says why — and a fate can be read only from the record the runner wrote. Nothing about this message is concluded here"
@@ -1137,7 +1162,27 @@ step_messages() {
   fi
   case "$stage" in
   implement)
-    fact message-now PASS "the --now message ${SEQ_NOW} is delivered into implement with NO reason on its fate, which is the runner's own statement that the stop found a quiet point inside implement and that the turn after it ran in the SAME session (the reason is written only where a quiet point was missed or the session was lost, internal/runner/yield.go). U2 and U3 hold on this escalation: the real binary marked a quiet point as the rule reads it, and the session resumed with the turns before it"
+    # What the fate cannot say on its own, and what the row therefore reads with
+    # it: the run's ending. The row is measured only where the record shows the
+    # run going PAST the stage the message reached — implement behind it, which
+    # is the runner's own statement that the turn after the stop ran. `ended_in`
+    # names why it did not, in the two shapes that leave the record unable to say
+    # so: a record that still names implement as its own stage (the run stopped
+    # while the stage the stop delivered into was running — the one ending an
+    # empty reason can hide a failed resume behind, because the entry is written
+    # by claimYield before that turn runs and retagYield's session-lost reason
+    # only ever follows a FORCED stop), and a record with no stage to read.
+    local ended_in=""
+    if [ -z "$RECORD_STAGE" ]; then
+      ended_in="it carries no stage this check can read"
+    elif [ "$RECORD_STAGE" = implement ]; then
+      ended_in="it ends at stage=implement, status=${RECORD_STATUS:-unreadable}"
+    fi
+    if [ -n "$ended_in" ]; then
+      unmeasured message-now "the --now message ${SEQ_NOW} reached implement with NO reason on its fate, but this run's own record does not show the run going past that stage: ${ended_in}. The record therefore cannot say whether the turn after the quiet point ran in the SAME session or the resume never happened at all — an empty reason is written BEFORE that turn runs (internal/runner/yield.go, claimYield), and the session-lost reason is written after it fails, for a FORCED stop only (retagYield), so a quiet-point stop whose resume failed with agent.ErrNoSession leaves exactly this fate: delivered into implement with no reason, with the run ending failed there. U2 and U3 are NOT settled by this run, and nothing here reads as them holding: read the record yourself with 'fugaro runs show ${RUN_ID} --json', and run the check again"
+    else
+      fact message-now PASS "the --now message ${SEQ_NOW} is delivered into implement with NO reason on its fate, and the run went on PAST that stage — its record ends at stage=${RECORD_STAGE}, status=${RECORD_STATUS} — which is the runner's own statement that the turn after the stop really ran. The reason is written only where a quiet point was missed (no quiet point in 10m) or a FORCED stop's session could not be resumed (session lost at forced stop); the fate alone cannot say the turn after it ran, because the entry is written before that turn does (internal/runner/yield.go, claimYield), which is why the run's own ending is read with it. U2 and U3 hold on this escalation: the stop found a quiet point inside implement as the rule reads it, and the turn after it ran in the SAME session, which is what the ending past implement says"
+    fi
     ;;
   *)
     if [ "${CODER_STAGES#* $stage }" != "$CODER_STAGES" ]; then
