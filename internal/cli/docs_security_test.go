@@ -737,6 +737,17 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		// still there, the runner just no longer reads the key.
 		"the release after the owner's live Check 96 proves the deployed service mints",
 		"no longer reads the key and mints at the service instead",
+		// KS4's own limit (D3003, R11): the service checks the route for
+		// every caller, and the cap is still the gateway's, so a call an
+		// agent builds itself and posts to the provider route directly is
+		// served under the policy's rules and never priced. Stated here
+		// rather than only where the route is described, because a reader
+		// who takes "the service holds the credentials" as the whole story
+		// would conclude the run's cap bounds every call that spends one.
+		"a hand-built call reaches the service without the gateway, and escapes the run's cost cap",
+		"whoever built the request",
+		"is not counted against the run's own cap",
+		"Metering these calls in the service was considered and declined",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the `### The credentials service` section does not state the known limit %q: a limit that is not stated is read as a guarantee", want)
