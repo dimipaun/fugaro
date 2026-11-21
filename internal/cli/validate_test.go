@@ -1107,7 +1107,7 @@ func TestValidateWarnsProviderSecretOffConvention(t *testing.T) {
 }
 
 // TestValidateNotesAnthropicKeyNeededOffline (design
-// docs/design/project-centric.md §6.1): a pin that goes direct to Anthropic
+// docs/project-centric/spec.md §6.1): a pin that goes direct to Anthropic
 // needs the Anthropic key, and validate says so offline -- whether the secret
 // has a version is a fact only the cloud knows -- naming the fix. A run whose
 // pins a provider may all serve gets no such note.
@@ -2248,7 +2248,7 @@ func TestValidateJudgesTheAllowListOfThePinsTheRunHas(t *testing.T) {
 
 // TestValidateNotesAClaudePinWithNoKeyAndNoSwitch is plan task 1b.3's second
 // requirement, design §6.2's safeguard: a project that routes Claude through a
-// provider — the owner docs/design/mixed-credentials.md §1 describes, an
+// provider — the owner docs/mixed-credentials/spec.md §1 describes, an
 // OpenRouter key and no Anthropic one — and pins a Claude model the switch
 // leaves on the direct route is told so, and the line names the one write that
 // sends the call to that route.

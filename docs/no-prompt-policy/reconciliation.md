@@ -143,9 +143,9 @@ D1545; each is a plan task or an open tension):
 `.claude/rules/terraform.md` ("`cover.go` decides what one `fugaro update` confirmation covers… Never widen
 those tables to make a plan pass"; "IAM, the cover tables and the credentials service's grants are
 security-sensitive. Get an independent review"; "Never run … `fugaro update`… from an agent run"),
-`.claude/rules/credentials-service.md`, `SECURITY.md` (managed-project statements), `docs/design/managed-projects.md`,
-`docs/design/managed-projects-spec.md`, `docs/managed-agent-converge/*`, `docs/console-managed-screens/*`,
-`docs/design/image-refresh.md`, `plugin/skills/upgrade` ("never works around the refusal of cloud writes"),
+`.claude/rules/credentials-service.md`, `SECURITY.md` (managed-project statements), `docs/managed-projects/spec.md`,
+`docs/managed-projects/spec-source.md`, `docs/managed-agent-converge/*`, `docs/console-managed-screens/*`,
+`docs/image-refresh/spec.md`, `plugin/skills/upgrade` ("never works around the refusal of cloud writes"),
 `plugin/setup_skill_test.go` (asserts the managed gate is open), `internal/managed/*_test.go` (the
 `TestGateRefuses…` and `TestApplyRefuses…` families), `internal/initflow/stage.go`
 (`CanConfirmManaged`, `GateConfirms`, `Managed.Removes`, the `Typed` class and D1026 which pins it),

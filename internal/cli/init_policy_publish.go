@@ -362,7 +362,7 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	// The account-choice keys are compared too — the project's
 	// default_claude_account and each stage's own claude_account — because
 	// this file is their only store and the publish is what carries them
-	// (docs/design/mixed-credentials.md §11): the runner reads them off the
+	// (docs/mixed-credentials/spec.md §11): the runner reads them off the
 	// published node alone (resolveMixedStages, mixedDefaultAccount), so a
 	// config that names an account while the node does not carry it is a
 	// launch that admits the mix and a job that mounts the token beside a
@@ -904,7 +904,7 @@ func policyLoosening(old, new *projectpolicy.Policy) []policyCeiling {
 // It is a widening in the sense the typed name is asked for, and it is measured
 // member by member against the node it replaces for that reason. The account is
 // the credential a mixed run's review goes out on
-// (docs/design/mixed-credentials.md §11), so a node that starts naming one hands
+// (docs/mixed-credentials/spec.md §11), so a node that starts naming one hands
 // a stage a credential it did not hold — and, to an api-key run, the mix the
 // ruling admits, which the launch resolver reads off this node and nothing else,
 // while the credential itself is mounted into the job's environment from this
@@ -1821,6 +1821,12 @@ func reseedPolicyKeys(old []byte, lc *localcfg.Config, p *projectpolicy.Policy, 
 			})
 		case "base_branch":
 			set(member, []string{"base_branch"}, p.BaseBranch, func() { lc.BaseBranch = p.BaseBranch })
+		case "mobile":
+			// The block is the node's own and no config key carries it: the
+			// publish writes the node's block back (MobileForPublish), so there
+			// is nothing in this file for a re-seed to bring in line, and
+			// sending the operator to a hand edit for it would ask for a key
+			// the config has no place for.
 		default:
 			// The account-choice members — default_claude_account and each
 			// claude_account_stages.<stage> — land here, and the refusal above

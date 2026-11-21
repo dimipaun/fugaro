@@ -240,7 +240,7 @@
           "internal/cli/init_retire_test.go",
           "internal/cli/update_delete_keys_test.go",
           "internal/cli/update_converge_test.go",
-          "docs/design/config-transitions.md",
+          "docs/config-transitions/spec.md",
           "internal/cli/update_in_flight.go",
           "docs/design/update-in-flight.md",
           "docs/releases/*.md"

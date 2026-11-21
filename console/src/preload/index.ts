@@ -563,7 +563,7 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // (`installation.current`'s rule). Neither answer carries the key text: what
   // comes back is the claims and the state, or the sentence that refuses a bad
   // key -- so a renderer draws a tier and an expiry and never a key. The screen
-  // is the one that is never gated (`docs/design/lapse-read-only.md`): a lapse
+  // is the one that is never gated (`docs/lapse-read-only/spec.md`): a lapse
   // is exactly when the operator has to reach the box that takes a renewal.
   ['licence.read', 'readLicence'],
   ['licence.save', 'saveLicence'],

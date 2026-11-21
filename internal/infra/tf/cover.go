@@ -671,7 +671,7 @@ type Cover struct {
 }
 
 // CloudAssetRole is the installation's whole-project inventory read role
-// (Task 4.1a of docs/plans/2026-10-16-managed-projects.md, the owner's ruling
+// (Task 4.1a of docs/managed-projects/implementation-plan.md, the owner's ruling
 // of 2026-10-17): a custom role of the installation holding exactly
 // cloudasset.assets.searchAllResources, the one permission the whole-project
 // read's SearchAllResources call needs. The predefined roles/cloudasset.viewer
@@ -1076,7 +1076,7 @@ var (
 
 // The deployer account of D75, and the condition that fences the half of it
 // that may touch an existing resource (Task 1.5 of
-// docs/plans/2026-10-16-managed-projects.md).
+// docs/managed-projects/implementation-plan.md).
 //
 // A managed apply does not run as the operator: it assumes the deployer
 // account the installation module creates, which holds eight custom roles,
@@ -1114,7 +1114,7 @@ const (
 	// could not be applied (17 logical operators where IAM allows 12, a
 	// resource.name.contains() which is not a supported function, and
 	// resource.name unsupported for five of the nine types it named), so the
-	// fence was gated off and redesigned — docs/design/managed-deployer-fence.md.
+	// fence was gated off and redesigned — docs/managed-deployer-fence/spec.md.
 	// The module creates them, and their bindings, only with
 	// managed_deployer_scoped, which fugaro writes for an installation that
 	// uses managed projects (0.10.0). A plan without them has
@@ -1196,7 +1196,7 @@ const (
 // empty string), and the empty string does not start with the prefix, so a
 // non-match denies under that same reading — C7, which the design records as
 // UNVERIFIED and models with extractSegment rather than by a live probe
-// (docs/design/managed-deployer-fence.md). What remains UNVERIFIED,
+// (docs/managed-deployer-fence/spec.md). What remains UNVERIFIED,
 // and what Check 68 measures, is whether these services honour resource.name at
 // all (C3).
 type DeployerClause struct {
@@ -1218,7 +1218,7 @@ func (c DeployerClause) String() string {
 // the one condition its one binding carries.
 //
 // The split is what makes the fence expressible at all (F1 of
-// docs/design/managed-deployer-fence.md): one condition covering all nine
+// docs/managed-deployer-fence/spec.md): one condition covering all nine
 // types needs nine clauses and 17 logical operators where IAM allows 12, a
 // resource.name.contains() that is not a supported function, and resource.name
 // forms five of those services do not have. One condition per service needs
@@ -3483,7 +3483,7 @@ func IntakeAdminListCondition(bucket string) string {
 }
 
 // bucketCondition says why a bucket grant's condition is not the modules'
-// (docs/design/bucket-iam.md H6), "" when it is: objectAdmin carries none; an
+// (docs/bucket-iam/spec.md H6), "" when it is: objectAdmin carries none; an
 // objectViewer carries none, except an account's, which may carry exactly
 // one tokens/<slug>/ clause on one of this run's buckets (the job's read of
 // its own budget token objects, budget-token-channel.md §7.2) — and then only

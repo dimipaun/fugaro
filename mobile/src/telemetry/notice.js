@@ -23,7 +23,7 @@
 // P7.2 and section 7.4 amended before they are built**. That amendment is task
 // **T0.1**'s (`docs/review-levels-ab-jobmax/implementation-plan.md`, which
 // rewrites section 6, P7.2 and the section 7.4 scan in
-// `docs/plans/2026-10-19-mobile-telemetry.md`), and the build side is task
+// `docs/mobile/telemetry-plan.md`), and the build side is task
 // **T3.1**'s: the app's one collection call site, read
 // from the project's own `settings` node, and the page's paragraph beside it.
 // Neither has landed, so this module carries **the half of the statement both

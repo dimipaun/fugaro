@@ -44,7 +44,7 @@ The answers that shape the plan:
 
 The move series (`ee-reorg` E2.3) splits governance by D521: **the wire and the mechanism stay in
 `internal/` under MIT, the policy goes to `ee/governance` under the enterprise licence**
-(`docs/design/ee-boundary-moves.md` §4). The line runs through the shared packages rather than
+(`docs/ee-reorg/boundary-moves.md` §4). The line runs through the shared packages rather than
 around one of them. What this plan's remaining tasks touch, and where each part ends:
 
 | Part | Lives in |
@@ -59,7 +59,7 @@ around one of them. What this plan's remaining tasks touch, and where each part 
 | The first governance command, if one is ever added | `ee/governance/cli` |
 | The wiring: one `Set*` call per hook, once | `ee/register/governance.go` |
 
-The four seams the remaining tasks plug into, from `docs/design/ee-boundary-moves.md` §5: the
+The four seams the remaining tasks plug into, from `docs/ee-reorg/boundary-moves.md` §5: the
 **governance policy hook** (`internal/policy/hook.go`, E1.2), the **runner stage hook**
 (`internal/runner/governance_hook.go`, E1.2 — `SetStage` with `Timeout` and `TimedOut`), the
 **digest section hook** (`internal/digest/section.go`, E1.2 — `SetSections`, core default none), and
@@ -314,7 +314,7 @@ senior `review` step, so **every pull request passes a model review stage**; art
 commit; and the job's account already reads and writes its own repository's `runs/<slug>/` prefix
 (`roles/storage.objectUser` under `gcp.BucketCondition`), so **no new grant is needed** for reading
 a record by name. **Listing** the prefix is another matter: a list is a bucket-level call, the
-condition matches object names, and `docs/design/bucket-iam.md` (V7) records that a prefix-limited
+condition matches object names, and `docs/bucket-iam/spec.md` (V7) records that a prefix-limited
 list would need an unverified request attribute — so the job most likely cannot list (U8). The plan
 therefore never lists in the job: the **launcher**, which runs with the person's credentials and
 already lists runs for `fugaro runs ls`, puts the run IDs into the task (T3.6), and the step reads

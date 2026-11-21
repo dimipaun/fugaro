@@ -41,7 +41,7 @@ func TestRunStagesAreTheModelCallingStages(t *testing.T) {
 }
 
 // TestCheckStageAccountMixIsTheB0Ruling is the ruling of
-// docs/design/mixed-credentials.md §11 read as the one function every layer
+// docs/mixed-credentials/spec.md §11 read as the one function every layer
 // that judges it calls: an api-key run holds one provider key and one Claude
 // account, and that account serves the senior review and the adversarial
 // review and no other stage.

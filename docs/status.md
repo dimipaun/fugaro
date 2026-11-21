@@ -68,9 +68,12 @@ Merged since the last read (86 commits, read from `b5f778175`; 5 are specs' own 
 | Spec | State |
 | --- | --- |
 | credentials-belong-to-models | plan only: 0/38 tasks merged, all approved 2026-11-20, launching by plan edges (docs/credentials-belong-to-models); D3060–D3073 answered 2026-11-20, all as recommended, D3061 amended by the owner and D3064 after review (`agent.auth` is retired: a craft's access names the credential, an unset one is the first declared credential that reaches the model, and Vertex only where named (D3061, amended by the owner); D3065 retires the consent switch and D3072 sets the version rule aside for `fugaro.yaml`); two releases; it starts after always-a-budget's I1, keys-through-service's KS5, KS12 and KS19 (D3071) and replaces keys-through-service KS6, KS9 and KS10; release 2 waits on release 1 and on keys-through-service KS13; owner-run Checks 810 and 811 |
+| key-signing-service | a design and threat model with no plan of its own (docs/key-signing-service, moved from docs/design on 2026-11-21); its own status line says the infrastructure and the issuing service are written and neither is applied; not re-derived against licence-key-v2 and portal |
+| lapse-read-only | a design with no plan, not built (docs/lapse-read-only, moved from docs/design on 2026-11-21) |
+| managed-flag-ergonomics | a design only, nothing built and no task approved (docs/managed-flag-ergonomics, moved from docs/design on 2026-11-21) |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
-| voice-module, collateral, backlog, plans | no plan or not a spec |
-| workspace-credentials | an addendum with no plan (docs/workspace-credentials): D2960–D2979 all answered 2026-11-19 (D2978: one project-then-workspace cascade for every credential kind; D2975 the owner's own answer: every model key through the credentials service, none mounted, which needs its own spec; D150's gate stays until Check 50 passes); it waits on the workspace service being deployed under its own plan (D2968) |
+| voice-module, collateral, backlog, plans, design | no plan or not a spec (plans holds v1's milestone plans M0 to M6, design holds v1 and update-in-flight) |
+| workspace-credentials | plan only: 0/18 tasks merged, no task approved (docs/workspace-credentials); it plans what workspace-service and keys-through-service left: sharing a provider key at the workspace (WC1) and a person's own Claude token at the workspace (WC0, WC2–WC14, I1), every personal task behind the owner's answers to the threat model's review (WC0); D2960–D2979 answered 2026-11-19 (D2975 the owner's own answer) and D3140–D3148 answered 2026-11-21, all as recommended (D3141: a personal token follows the route, so a project's own model credential shadows it); WC1 waits on workspace-service WS19, WC5 on WS8, WC8 on WS18, WC13 on WS21, I1 on workspace-service's I1; owner-run Checks 850 and 851 |
 
 ## Done
 
@@ -78,63 +81,97 @@ Merged since the last read (86 commits, read from `b5f778175`; 5 are specs' own 
 | --- | --- |
 | account-aliases | owner Check 550, not run; D2090–D2102 answered as recommended |
 | accounts-add | owner checks LC1 to LC4 |
+| adopt-firebase-root | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| agent-env | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | api-key-review | owner Check 330 (AK8); AK9 and AK10 are folded into model-crafts MC6 (F26, D1638) |
+| artifact-runs | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| base-image | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | binary-allow-rule | none (AR7 merged as #3077 on 2026-11-17; all approved 2026-11-15) |
 | bitbucket-credentials | owner Check 149; 148's read half parked by the owner 2026-11-14 until the coordinator job is deployed (`fugaro update --firebase-project <id> --coordinator`) (Check 145 ran 2026-11-14: U3 shows the read token reaches past its workspace; the owner accepted the reach, D360 and D361 stand) (S2, D1961); T3.3's trust paths (S3 is otherwise superseded by the secrets-brokering proxy chain, 2026-11-10) |
 | bitbucket-token-types | owner Checks 590 and 591 (scripts on main), not run |
+| bucket-iam | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| budget-token-channel | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | c39-review-identity | owner live check (Check 530; its script, merged as #2626, is on main and not yet run) |
 | catalog-build-context | issue #1738 (milestone 0.26.0): the gate flip is merged (#3080) and shipped in 0.26.0; the script that writes Check 292 is merged (#3145); owner Check 292 runs after it, on the sandbox installation only |
 | central-orchestrator | superseded by stateless-orchestrator |
+| checkpoint-pushes | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | cli-output-console-graph | owner Checks 310 (with its `--scratch` mode), 311, 313 and 314 (all scripts on main), not yet run |
 | cloud-senior-review | CSR17 and CSR18 moved to api-key-review |
 | compatibility-matrix | owner CM4 (the read of the copy) |
 | compute-backend | declared operational by the owner 2026-11-15; owner Checks 57b (its stranded-job submission fixed) and 124, not yet run (Task 13 was dropped) |
 | config-management | none |
 | config-ownership | none (22/22 merged: K1 as #3337, I1 as #3391, D1 as #3386); D2611, D2613, D2614, D2616 and T3, T5 answered 2026-11-15; no owner check; after deploy: `fugaro update` |
+| config-transitions | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | console-coordinator-v2 | owner Check C0 (profiling) |
 | console-dependency-graph | owner Check 123 (the graph in the packed, signed macOS app, GV2.6), not yet run |
 | console-managed-screens | none (console 0.121.0) |
 | console-settings-edit | none (console 0.120.0) |
+| console-styling | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | console-windows | owner Check 119 |
 | contract-first-decoupling | none |
 | coordinator | P7 and P8 re-planned under mcp-server |
 | credentials-service | none, Done by the owner's ruling and not re-counted here (no agent task is left; the owner-run Checks 91, 92, 94, 95, 96 and 99 are the owner's to run or record (Check 90 ran 2026-10-21), and Check 96 holds C2.3's flip, which waits on the deployed service minting a token) |
+| desktop-console | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| desktop-console-v2 | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | diagnose-agent | owner Checks 410 to 412 |
 | ee-reorg | owner E3.4 (Checks 200 and 201, scripts on main, not yet run); E4.1 deferred |
 | failure-classes | owner Check 350 |
 | feature-matrix | T6 is done (the owner read the preview on 2026-11-17, no footnote, O1 answered) and CR1 is not raised, so it is not counted; the owner's mapping corrections merged as #3047 (mapping only); D2440–D2449 answered; no check taken; no after-deploy step |
 | forge-labels | owner Check 640 (its script is merged, #3155; not run) |
+| generic-tool | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| headroom-compression | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | how-to | not a spec |
 | image-env | owner Check 291 (script on main, not yet run) |
+| image-refresh | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | image-setup-skill | owner Checks 500 and 501 |
 | in-job-review | historical; delivered through cloud-senior-review, review-levels and api-key-review |
 | issue-mine | owner Checks 470 to 472: all ran 2026-11-14 and none has passed in full (470 passed in part, its issue-record read and two human steps unmeasured; 471 failed its cache-cleared row; 472 passed on an empty store, not at size), so re-runs are owner-run |
 | issues-resolved-on-update | none |
+| layered-config | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| m10-multi-model | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| m11-setup-and-skills | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| m9-budget-and-dashboard | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | managed-agent-converge | none |
+| managed-deployer-fence | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| managed-projects | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | mcp-server | M9 parked (D936, the fence declined, no release schedules it); M11 declined (2026-11-09) |
+| mixed-credentials | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | mobile-auth | owner live checks, numbered Checks 620 to 627 on main (draft #2700's 601 to 608 was closed); P5's D231 gap is a follow-up awaiting the owner's decision — revoking the last device empties the node, so the next publish re-seeds the revoked entry |
 | model-ab-testing | owner Checks 210 to 212 (written on main, not run; drafts #2634 and #2637 were closed as superseded) |
 | models-commands | none |
+| named-oauth-tokens | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | no-prompt-policy | owner Checks 380 to 382 (scripts on main), not yet run; the T11 verification runs found nothing to fix (#2728, #2729) |
 | outer-loop-escalation | owner Checks 540 to 542 (written as scripts, E15 merged as #3147); `escalation.ready_drafts` ships on by default (#3146, D2046) and the daemon already reads it (#3149 found it wired and changed nothing) |
 | plugin-user-scope | E1, the release itself (rides the next CLI release; no operator step) |
 | post-review-triage | owner TR13 (Checks 490 to 492; the scripts are on main, not yet run) |
+| project-centric | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | project-image-catalog | none |
+| project-named-oauth-tokens | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| project-secrets | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | project-workflow-secrets | none |
+| provider-price-catalog | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| recipes | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| registry-remote-repository | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| retire-image-mirror | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | review-job | owner Checks 610 and 611 (scripts on main, #3150 and #3154), not run |
 | rigor-command | none (R2 to R5 were closed 2026-11-10 as duplicates of settings-commands and config-management, which win; every live task has merged) |
+| roles | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | roles-scopes | owner live check that a viewer cannot launch or cancel (not yet run) |
 | run-limit-carry-over | owner-run live check (named, not numbered: a chain that halts at its dollar cap, continued with `--continues`, reports a smaller remaining than it started with) |
 | run-without-checkout | no live check covers a launch from outside a checkout |
 | security-classification | none |
 | settings-commands | none |
 | setup-wizard | owner Checks 27 (script on main) and 111 |
+| shared-config | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | short-run-ids | owner SR13 (Check 440 as a script and Check 441 as the register's steps, on main, not yet run) |
 | spend-accuracy | OR1 and Checks 650–651 (script written, #2971) owner-run; D2640–D2651 answered 2026-11-15 (D2643 not the recommendation; four amended after review); SA1.4, SA2.3 and SA6.1 merged 2026-11-17 (#2969, #2974, #3053) |
 | stateless-orchestrator | owner Checks 301 to 305 (O16b; 301 deferred); the orchestrator is installed under launchd and replaces /jobmax, and its state is stale (goal not set) |
 | task-governance | owner Checks 137 and 138 (scripts on main, #3087), not run |
 | troubleshoot-issue | none |
+| upgrade | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | vision-model | owner Checks 520 and 521, not run; issue #1865 carries the 0.26.0 milestone: its code merged in 0.25.0 and only these two checks remain |
+| voice | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
+| watch-queued | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | website | W3.3 explainer video (parked), owner Check 69c (not written yet; 69a and 69b passed 2026-11-15) |
 | website-changelog | WC4 lands with the next release |
 | windows-cli | superseded by console-windows |

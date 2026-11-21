@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "plan": "docs/plans/2026-10-15-desktop-console-v2.md",
+  "plan": "docs/desktop-console-v2/implementation-plan.md",
   "stream": "cli",
   "nodes": [
     {

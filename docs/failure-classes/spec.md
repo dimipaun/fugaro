@@ -1,7 +1,7 @@
 # The spec: a design for a closed failure class on the run record, and a failures report
 
 **Status: the asked-for document, verbatim, with this header added; it states no decision of its
-own.** The document below is `docs/design/failure-classes.md` **byte for byte**, copied on
+own.** The document below is `docs/failure-classes/design.md` **byte for byte**, copied on
 2026-11-07 from the tree of `main` at `56c91f66` — the commit whose own history is pull request
 **#1746** ("a closed failure class on every run record, and a failures report"), which is **merged**,
 is **docs only**, and added both the design and the pin that holds it
@@ -17,7 +17,7 @@ installation and whose own 7-day report the design's arithmetic came from — in
 in this folder, by this repository's rule.
 
 **This copy is dated, and the design has already moved past it once.** The design is not frozen by
-being copied: the design's own pin reads `docs/design/failure-classes.md`, not this file, and **FC1**
+being copied: the design's own pin reads `docs/failure-classes/design.md`, not this file, and **FC1**
 shipped on 2026-11-07, which moved the **design** under the copy — it rewrote the design's status line
 and §3's name for the vocabulary's slice (it now reads `failure.Classes()`) — while the copy below is
 untouched and keeps the status line it was copied with, byte for byte. **FC2 will falsify the copy in
@@ -29,7 +29,7 @@ document itself is never edited by this folder.
 **Two relative links in the copy below were written for `docs/design/` and do not resolve from this
 folder.** The body stays byte for byte, so they are named here rather than edited in it:
 `[v1.md](v1.md)` is `docs/design/v1.md` (`../design/v1.md` from this folder) and
-`[artifact-runs.md](artifact-runs.md)` is `docs/design/artifact-runs.md` (`../design/artifact-runs.md`).
+`[artifact-runs.md](artifact-runs.md)` is `docs/artifact-runs/spec.md` (`../artifact-runs/spec.md`).
 Every other relative link in the copy — `../releases/README.md`, `../backlog/FORMAT.md`,
 `../task-governance/reconciliation.md`, `../rigor-modes/reconciliation.md`,
 `../periodic-reviews/README.md` and `../binary-allow-rule/spec.md` — resolves from this folder exactly
@@ -634,7 +634,7 @@ classifier reads model output, so FC2 carries an SEC flag and needs an independe
   test package, because this is an unexported writer**, and the design recommends that new file over
   extending `record_save_internal_test.go` (an `internal` test file is not one of the
   `docs_*_test.go` files the census counts) — plus the two files this task's own change falsifies:
-  `docs/design/failure-classes.md` (§1's "36 statements, in 24 functions across 8 files" is
+  `docs/failure-classes/design.md` (§1's "36 statements, in 24 functions across 8 files" is
   rewritten, because after `recordEnd` takes the status no statement assigns one itself) and
   `internal/cli/docs_pr_state_test.go`, **whose census pin this task rewrites**: the pattern it
   counts (`\brec\.Status[^=!]*= runstore\.Status`) matches nothing the tree writes once every writer
@@ -792,7 +792,7 @@ FC2's own test is a guard over the tree and not a fixture per site.
 | `internal/runview/runview.go`, its own test file | FC5 (L3) |
 | `internal/cli/runs_test.go` | FC1 (L0), FC5 (L3), FC6 (L4) |
 | `internal/cli/docs_pr_state_test.go` | FC1 (L0), FC2 (L1) |
-| `docs/design/failure-classes.md` | FC2 (L1) |
+| `docs/failure-classes/design.md` | FC2 (L1) |
 | `internal/cli/runs.go`, `runid_test.go`, the `internal/cli/testdata` golden, `website/content/cli-reference.md` | FC6 (L4) |
 | `internal/digest/*.go`, `internal/digest/testdata` | FC7 (L4) |
 | `docs/design/v1.md`, `console/docs/json-contract.md`, `docs/task-governance/reconciliation.md`, `plugin/skills/working/reference/diagnose.md`, `internal/cli/docs_desktop_console_test.go`, `docs/releases/vX.Y.Z.md` | FC8 (L5) |

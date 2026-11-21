@@ -70,7 +70,7 @@ the rule: the database grants are **project-level**, so every instance and every
 inherits them and the rules do not bind their holders. `deploy/terraform/gcp/modules/firebase/iam.tf:44`
 gives `roles/firebasedatabase.viewer` to every launcher and operator, `:53` gives
 `roles/firebasedatabase.admin` to every admin and budget admin, and `:81` gives it to the history
-account. `docs/design/roles.md:104` states the consequence in one line: **"[a]ny confidential thing
+account. `docs/roles/spec.md:104` states the consequence in one line: **"[a]ny confidential thing
 placed in RTDB is readable by everyone on either list."** So spec.md §8's "read by the coordinator's
 account over IAM and by nobody else" does not hold in the project's database, whoever writes the
 rules, and [reconciliation.md](reconciliation.md) §3 carries it as **F32**.
@@ -473,7 +473,7 @@ Terraform file rather than any interface any other task builds against.
   live here any more**: they live in the store M2 defines, because this installation's database grants
   are project-level and no rule can keep a launcher, an operator, a budget admin or the history
   account out of this database (`deploy/terraform/gcp/modules/firebase/iam.tf:44`, `:53`, `:81`;
-  `docs/design/roles.md:104`, and [reconciliation.md](reconciliation.md) F32). **What #1715 added
+  `docs/roles/spec.md:104`, and [reconciliation.md](reconciliation.md) F32). **What #1715 added
   stays as a defence in depth**, and the comment above the node must say exactly that, in these terms:
   *that the node holds nothing* (nothing writes it any more, and the records are elsewhere);
   *why it is closed anyway* (a value written here by mistake — an older build, a hand-run script, a
@@ -518,8 +518,8 @@ Terraform file rather than any interface any other task builds against.
   proves — and **not** refused to the installation's own IAM identities: the token records, the
   client list, the redirect URIs, the revocation state and the whole tool-call audit were inside that
   exposure. The rules package already records this fact for `config/admin`
-  (`internal/budget/rules/rules.go:57-59`), [roles.md](../design/roles.md) states it for the database as
-  a whole (`docs/design/roles.md:104` — "Any confidential thing placed in RTDB is readable by
+  (`internal/budget/rules/rules.go:57-59`), [roles.md](../roles/spec.md) states it for the database as
+  a whole (`docs/roles/spec.md:104` — "Any confidential thing placed in RTDB is readable by
   everyone on either list"), and M3's own SEC bullet above is the question it answers: something
   other than the coordinator's account **can** reach this node. **The options it put to the owner,
   none of them decided in it:** a store the installation's RTDB roles do not reach (a separate
@@ -642,12 +642,12 @@ below is what that release's notes carry.
     "the only other identity that reaches it"; **that is too narrow, and `SECURITY.md` says so in
     its own words for a bucket this installation owns**: "Project Owners, Editors and anyone with a
     project-level storage role bypass the bucket's own policy regardless, hardened or not"
-    (`SECURITY.md:88`, over [docs/design/bucket-iam.md](../design/bucket-iam.md) §9). And a new
+    (`SECURITY.md:88`, over [docs/bucket-iam/spec.md](../bucket-iam/spec.md) §9). And a new
     bucket answers to more than the policy this task writes: **GCS attaches its convenience bindings
     to every bucket it creates** — `projectOwner:` and `projectEditor:` as
     `roles/storage.legacyBucketOwner`, and `projectViewer:` as `roles/storage.legacyBucketReader`
     plus `roles/storage.legacyObjectReader` (`internal/gcpfake/gcs.go:250`,
-    `docs/design/bucket-iam.md:47`) — so **a basic project Viewer reads the
+    `docs/bucket-iam/spec.md:47`) — so **a basic project Viewer reads the
     store unless those bindings are taken off it**, and that is the reading check 8 gains. Four
     classes therefore reach a bucket this task has just made, and they are not one:
     - **Project Owners and Editors**, through their project-level roles, which no bucket policy

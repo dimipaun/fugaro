@@ -322,7 +322,7 @@ const imageContextShipped = true
 // take it as: the fence has not been measured. The deployer's scoped half is
 // seven per-service custom roles, each bound exactly once under its own
 // condition (deploy/terraform/gcp/modules/installation/deployer.tf,
-// docs/design/managed-deployer-fence.md), and no test can ask Google whether
+// docs/managed-deployer-fence/spec.md), and no test can ask Google whether
 // IAM accepts those seven bindings or honours resource.name per type — that is
 // what Check 68 (docs/gcp-live-checklist.md) measures, and it is owner-run
 // AFTER this release, by the same ruling. So 0.10.0 ships a fence it cannot
@@ -968,7 +968,7 @@ const repoCredentialSince = "0.27.0"
 // does for the job's clone. A runner before it ignores the field (plain
 // json.Unmarshal) and falls back to the repository's own ID, which mounts a
 // secret with no version once that name has moved to project scope (design
-// docs/design/project-secrets.md §5, §6 step 4a).
+// docs/project-secrets/spec.md §5, §6 step 4a).
 //
 // It is a genuine, narrow exception to P6's "no *Since constant per feature":
 // unlike every other gate here, it is not judged against a build record
@@ -979,7 +979,7 @@ const repoCredentialSince = "0.27.0"
 const gitSecretIDSince = "0.7.5"
 
 // namedTokensSince is the first fugaro release whose runner reads a task's
-// oauth_token field (docs/design/named-oauth-tokens.md); an older runner
+// oauth_token field (docs/named-oauth-tokens/spec.md); an older runner
 // refuses it, since task.Spec's decoder disallows unknown fields. It must
 // equal the release that ships task.Spec.OAuthToken: docs/release.md
 // ("Before you tag") has the release checklist verify it. internal/cli/run.go
@@ -989,7 +989,7 @@ const gitSecretIDSince = "0.7.5"
 const namedTokensSince = "0.6.5"
 
 // sealSince is the first fugaro release whose runner reads a sealed budget
-// token (docs/design/budget-token-channel.md §7.1): the marker's value is the
+// token (docs/budget-token-channel/spec.md §7.1): the marker's value is the
 // launch's seal key, parsed strictly and never echoed, the key is registered
 // with the run's redactor before anything can print it, and the token object
 // is read from tokens/, never from runs/ and never as plaintext. A runner
@@ -1090,7 +1090,7 @@ const externalSince = "0.26.0"
 // task.Spec.CompressionOff, and docs/release.md ("Before you tag") is where
 // that is verified: its bullet for this constant does not exist yet, because
 // it is written with the release that cuts the feature -- Task 9 of
-// docs/plans/2026-10-12-headroom-compression.md, whose Task 6 added this
+// docs/headroom-compression/implementation-plan.md, whose Task 6 added this
 // constant and this gate, the same way planTaskSince's bullet arrived with the
 // release that shipped the plan task. internal/cli/run.go gates a launch
 // against an older build record, exactly as it does for a plan task
@@ -1131,7 +1131,7 @@ var compressionForTest string
 // cannot be read. A file the launcher cannot read at all is never gated on the
 // key: the run's own bootstrap, which reads the file this launcher could not,
 // is what refuses the key then. agent.compression is repository-scope and no
-// project layer or profile may set it (docs/design/layered-config.md §5), so
+// project layer or profile may set it (docs/layered-config/spec.md §5), so
 // the resolved value is this file's own.
 func compressionRequested(ctx context.Context, env *cloudEnv, spec *task.Spec) (on, known bool) {
 	if compressionForTest != "" {

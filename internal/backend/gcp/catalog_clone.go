@@ -76,7 +76,7 @@ const (
 	// An image and not a named build context: `--build-context` is a buildx
 	// flag, and the step that builds an entry is the template's plain
 	// `docker build` on a worker that ships the docker CLI and no buildx
-	// (docs/design/base-image.md) — a request that wrote one fails the whole
+	// (docs/base-image/spec.md) — a request that wrote one fails the whole
 	// build at its first flag, which is what an update of the `go` image found
 	// out. Docker resolves the name in `COPY --from=<name>` out of the local
 	// image store before the registry — its default resolve mode is "prefer

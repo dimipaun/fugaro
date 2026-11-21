@@ -3,7 +3,7 @@ package config
 import "strings"
 
 // Scope is the set of layers a fugaro.yaml key may be set in
-// (docs/design/layered-config.md §5). The Fugaro default is not a scope:
+// (docs/layered-config/spec.md §5). The Fugaro default is not a scope:
 // applyDefaults fills what no layer set.
 type Scope uint8
 

@@ -96,7 +96,7 @@ import type { TextClass } from './sanitize'
  * for most of the people who use it. The **whole** recorded value is drawn in
  * the Run screen's header, in `person`, exactly as this map says -- so no
  * address is drawn anywhere. `console/README.md`'s class table and
- * `docs/design/desktop-console.md` §6.2 record the decision; `launcher.ts` is
+ * `docs/desktop-console/spec.md` §6.2 record the decision; `launcher.ts` is
  * the module and carries the reasoning.
  */
 export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.freeze({
@@ -307,7 +307,7 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // class, which draws `HOST_PLACEHOLDER` for every value. That is the
   // console's rule for a machine and not a decision this document gets to
   // change -- the panel cannot show which host a route points at, and
-  // `docs/design/desktop-console.md` §5.1's row is where that is stated.
+  // `docs/desktop-console/spec.md` §5.1's row is where that is stated.
   host: 'host',
   // A route's or a model's `note`, a row's `refused` (why it has no price) and
   // a repository's `problems[]` (the refusals a launch would give for its pins)
@@ -1279,7 +1279,7 @@ export const FINISHED_KEYS = [
  * names a cause for — not on a row that did not fail, and not on a row the read
  * side ended itself, a row the CLI could not follow among them (contract
  * section 5): one value of the closed vocabulary of
- * `docs/design/failure-classes.md` §3 — the class the runner wrote beside the
+ * `docs/failure-classes/design.md` §3 — the class the runner wrote beside the
  * terminal status, or, for a record written before the field shipped, this
  * build's reading of the record's own `reason` (`runview.ClassOf`; contract
  * section 5). It is `plan_task`'s and `owner_decisions`' omission a fifth time,

@@ -7,7 +7,7 @@
 # list and not one word: it was created under the name `belong`, its resources
 # run in the GCP project `edge-devel-dimi` and its database is the Firebase
 # project `fugaro-belong` (internal/orchestrator/never.go's neverBelong
-# comment; docs/design/m9-budget-and-dashboard.md, D19), and the register's own
+# comment; docs/m9-budget-and-dashboard/spec.md, D19), and the register's own
 # checks refuse `edgeappinc` beside it (scripts/live-checks/check-lc4.sh,
 # check291.sh, check-c39.sh).
 #

@@ -61,6 +61,13 @@ const (
 	// shared project job or a review job (C3.9) — is decided there too, from the
 	// account and never from this header.
 	HeaderRunJob = "X-Fugaro-Run-Job"
+	// HeaderPersonIdentity carries a person's own Google ID token to the GitHub
+	// read mint, beside the same token in Authorization. Cloud Run's front end
+	// consumes a valid ID token in Authorization for the invoker check and hands
+	// the service that header changed, so a person's token (gcloud's own
+	// audience, the only one a user account can mint) never arrives there as a
+	// bearer; this header is not one the front end reads, so it arrives intact.
+	HeaderPersonIdentity = "X-Fugaro-Person-Identity"
 	// HeaderSlip names the slip a run's call is bound to: the id the grant
 	// answered (DS1.3), which the launcher passes to the job and the runner
 	// presents on the claim and on every call after it (DS1.6).
@@ -1271,6 +1278,24 @@ func bearerFromHTTP(r *http.Request) (string, error) {
 		return "", errors.New("credsvc: the Authorization header's token is not one token")
 	}
 	return bearer, nil
+}
+
+// personBearerFromHTTP is bearerFromHTTP for a route whose caller is a person:
+// the token comes from HeaderPersonIdentity when the call sends it and from
+// Authorization otherwise, so a caller that reaches the service without a front
+// end in between (a test, a local run) is served as before.
+func personBearerFromHTTP(r *http.Request) (string, error) {
+	if len(r.Header.Values(HeaderPersonIdentity)) == 0 {
+		return bearerFromHTTP(r)
+	}
+	tok, err := oneHeader(r, HeaderPersonIdentity)
+	if err != nil {
+		return "", err
+	}
+	if !printableHeaderValue(tok, maxTokenBytes) {
+		return "", errors.New("credsvc: the " + HeaderPersonIdentity + " header's token is not one token")
+	}
+	return tok, nil
 }
 
 // oneHeader returns the single value of a request header, refusing a header

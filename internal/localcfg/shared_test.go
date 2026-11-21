@@ -497,7 +497,7 @@ func TestMergeSharedNeverCarriesProviders(t *testing.T) {
 
 // TestMergeSharedNeverCarriesClaudeAccounts: claude_accounts is the
 // operator-only allow-list of decision T1 (design
-// docs/design/named-oauth-tokens.md §3) — never published, so neither the
+// docs/named-oauth-tokens/spec.md §3) — never published, so neither the
 // local nor a published config's claude_accounts reaches the output. This
 // is the regression test for the leak a bucket writer could otherwise use
 // to inject or widen the allow-list (MergeShared(nil, lc).Marshal() used to
@@ -792,7 +792,7 @@ func TestMergeSharedKeepsTheOwnerInStep(t *testing.T) {
 }
 
 // TestMergeSharedNeverCarriesProjectSecrets: project_secrets is
-// operator-only local config (design docs/design/project-secrets.md §7),
+// operator-only local config (design docs/project-secrets/spec.md §7),
 // never published -- neither the local nor a published config's block
 // reaches the output.
 func TestMergeSharedNeverCarriesProjectSecrets(t *testing.T) {

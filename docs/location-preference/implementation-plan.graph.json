@@ -289,7 +289,7 @@
           "SECURITY.md",
           "website/content/security.md",
           "docs/gcp-setup.md",
-          "docs/design/m9-budget-and-dashboard.md",
+          "docs/m9-budget-and-dashboard/spec.md",
           "internal/cli/docs_location_test.go",
           "docs/releases/*.md"
         ]

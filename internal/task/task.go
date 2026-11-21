@@ -242,7 +242,7 @@ type Spec struct {
 	// changeSetSince) instead.
 	ChangeSet *ChangeSet `json:"change_set,omitempty"`
 	// ProjectLayer is the project layer the launching CLI read
-	// (docs/design/layered-config.md §8): its exact text, which the runner
+	// (docs/layered-config/spec.md §8): its exact text, which the runner
 	// resolves fugaro.yaml against. Nil: none. A runner before 0.6.0
 	// refuses an unknown field, so fugaro run's own launch-time image gate
 	// (checkImageSince, layered-config plan Task 11) refuses the launch
@@ -254,10 +254,10 @@ type Spec struct {
 	// at most config.MaxClaudeAccountNameLen characters, never
 	// config.DefaultClaudeAccount itself — "" means that — and never the name
 	// the bundle reserves, config.ReservedClaudeAccountName) this run holds
-	// (docs/design/named-oauth-tokens.md): the account an agent.auth: oauth
+	// (docs/named-oauth-tokens/spec.md): the account an agent.auth: oauth
 	// workflow used, and, for a mixed agent.auth: api-key run, the one Claude
 	// account its review and adversarial stages are served by, beside the
-	// provider key the gateway holds (docs/design/mixed-credentials.md §11).
+	// provider key the gateway holds (docs/mixed-credentials/spec.md §11).
 	// Both are the account whose job variant the run is on, which is the job
 	// that mounts its token, so a reader outside this binary reads it as the
 	// run's own account either way. A runner before namedTokensSince refuses
@@ -267,7 +267,7 @@ type Spec struct {
 	OAuthToken string `json:"oauth_token,omitempty"`
 	// CompressionOff, when true, disables agent.compression for this run
 	// only, overriding fugaro.yaml (fugaro run --no-compression;
-	// docs/design/headroom-compression.md §4's deliberately one-directional
+	// docs/headroom-compression/spec.md §4's deliberately one-directional
 	// override: there is no field and no flag to force compression *on*,
 	// only off). A runner before compressionSince refuses the field, since
 	// this package's decoder disallows unknown fields, which is why the
@@ -394,7 +394,7 @@ type Spec struct {
 	//
 	// It is the launcher's list and nobody else's: the job reads each named
 	// record by name and never lists (a list is a bucket-level call the
-	// per-repository grant cannot hold, docs/design/bucket-iam.md), so this
+	// per-repository grant cannot hold, docs/bucket-iam/spec.md), so this
 	// field is what decides which records a run reads — the reason T3.6 is
 	// reviewed as a security change. The runner reads the IDs of its own
 	// repository's prefix only, whatever this list says (G2).
@@ -1206,7 +1206,7 @@ func PlanTaskProblem(t string) string {
 	return ""
 }
 
-// Recipe is the recipe the launching CLI resolved (docs/design/recipes.md §5).
+// Recipe is the recipe the launching CLI resolved (docs/recipes/spec.md §5).
 type Recipe struct {
 	Name   string `json:"name"`
 	Source string `json:"source"`           // "repo" | "project" | "catalog"

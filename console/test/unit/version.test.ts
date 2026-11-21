@@ -374,7 +374,7 @@ describe('launchSupported', () => {
     // `--plan-task`, `internal/cli/recipes_skew.go`'s planTaskSince = "0.11.2",
     // is the newest flag the argv carries, and rule 11's own sentence is that
     // the operation is offered only to an installation whose CLI is at least
-    // that (docs/design/desktop-console.md §5.1 rule 11, "a CLI too old for a
+    // that (docs/desktop-console/spec.md §5.1 rule 11, "a CLI too old for a
     // flag of the row").
     expect(LAUNCH_CLI_FLOOR).toBe('0.11.2')
     // And the floor is a **patch** inside that minor, which is exactly what a
@@ -926,7 +926,7 @@ describe('classifyCliVersion', () => {
   })
 
   it('names dev as the one non-version line it accepts, and guesses at no other', () => {
-    // The boundary the plan's open item 3 settles (`docs/plans/2026-10-15-desktop-console.md`,
+    // The boundary the plan's open item 3 settles (`docs/desktop-console/implementation-plan.md`,
     // answered by the owner 2026-10-22): a build without the release `-ldflags`
     // prints `dev` -- a non-semver string the console *recognises* and reduces --
     // while any other line that is not a version stays the refusal `refuses a

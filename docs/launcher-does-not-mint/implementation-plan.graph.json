@@ -319,8 +319,8 @@
     "paths": [
      "SECURITY.md",
      "website/content/security.md",
-     "docs/design/budget-token-channel.md",
-     "docs/design/roles.md",
+     "docs/budget-token-channel/spec.md",
+     "docs/roles/spec.md",
      "docs/mobile/design/always-on-orchestrator.md",
      "docs/releases/*.md"
     ]

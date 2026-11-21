@@ -107,7 +107,7 @@ Check numbers are allocated, never reused and never renumbered once taken — th
 checklist's own numbering ruling (`docs/gcp-live-checklist.md`). **Decision numbers follow the
 same rule and state it in their own document**: *"a decision number, once allocated, is never
 reused or renumbered either"*, with the allocation made by the owner in advance to a line of
-work rather than to whoever answers first (`docs/design/desktop-console-v2.md`). **Corrected
+work rather than to whoever answers first (`docs/desktop-console-v2/spec.md`). **Corrected
 2026-11-07:** the D-block row above reads the register at this plan's base commit, and the
 coordinator's own index has recorded since 2026-10-21 that the reading has moved —
 **D193–D197** are that work's own, so what is free for a move into the block is **D198 onward**
@@ -156,9 +156,9 @@ it claims no check number either way and takes the next free one at merge time (
   2026-11-10 by `docs/outer-loop-escalation`:** the non-goal now reads "No merge outside the orchestrator's gated rule".
 - [SECURITY.md](../../SECURITY.md) — the trust assumptions every credential question here
   inherits: the launcher's reach, that a run is the untrusted party, and the accepted
-  blast-radius paragraphs of `docs/design/project-centric.md` §4.1 (§3 #20, #46, **D4**).
-- [docs/design/desktop-console.md](../design/desktop-console.md) §5.1 and
-  [docs/design/desktop-console-v2.md](../design/desktop-console-v2.md) — the console's rules
+  blast-radius paragraphs of `docs/project-centric/spec.md` §4.1 (§3 #20, #46, **D4**).
+- [docs/desktop-console/spec.md](../desktop-console/spec.md) §5.1 and
+  [docs/desktop-console-v2/spec.md](../desktop-console-v2/spec.md) — the console's rules
   that bound what a client of this service may be: the renderer never talks to the network
   (`console/src/main/protocol.ts`'s `connect-src 'none'`), and the IPC surface is a fixed list
   (§3 #29, #30, **D5**).

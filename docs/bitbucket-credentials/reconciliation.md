@@ -95,7 +95,7 @@ round 2). **No CLI command reads it**: `coordinator.Store.Read` has no caller in
 | The service holds the GitHub App key and mints from it | Yes, for **runs only**: `POST /v1/github/installation-token` (`credsvc.MintPath`), audited (`PurposeMint`), fail-closed (`ErrMintNoAppKey`, `ErrMintUnaudited`), with no repository field | `internal/credsvc/github.go` |
 | Who may call the service | Only an installation's **per-repository job** service account presenting a **live run identity**. Shared project jobs are refused (Global Constraint 6) | `internal/credsvc/auth.go` `Authenticator.Verify`, `verifyJob`, `verifyRun`, `checkLive` |
 | The Bitbucket credential | One repository access token per repository: `bitbucket-token`, mounted as `FUGARO_BITBUCKET_TOKEN` | `internal/gitprov/providers/providers.go` `EnvBitbucketToken`; `internal/config/project_secrets.go` `PerRepositorySecret` |
-| A project-wide Bitbucket token | Possible only through an explicit `project_secrets.bitbucket-token` allow-list entry in the local config, for an operator who holds a workspace or project token. Shared jobs never mount it | `docs/git-providers.md` §Bitbucket Cloud; `docs/design/project-centric.md` §4.5 |
+| A project-wide Bitbucket token | Possible only through an explicit `project_secrets.bitbucket-token` allow-list entry in the local config, for an operator who holds a workspace or project token. Shared jobs never mount it | `docs/git-providers.md` §Bitbucket Cloud; `docs/project-centric/spec.md` §4.5 |
 
 ## 3. Bitbucket Cloud credentials, as Atlassian documents them (read 2026-10-26)
 
@@ -162,7 +162,7 @@ no agent. But it should be stated rather than discovered. → D365.
 
 **F4, Rule.** The owner's ruling of 2026-10-15 says a Bitbucket credential cannot be scoped to one
 Fugaro project's repositories, so Bitbucket stays per repository. It is recorded in
-`docs/git-providers.md` (§Bitbucket Cloud), in `docs/design/project-centric.md` (D5 as amended,
+`docs/git-providers.md` (§Bitbucket Cloud), in `docs/project-centric/spec.md` (D5 as amended,
 §Task 3.2) and in `config.PerRepositorySecret`. The spec's "more generic Bitbucket credential" is
 exactly a workspace-reach or project-reach credential (§3). *Consequence:* the spec reopens that
 ruling, and the owner has to reopen it explicitly. The recommendation reopens it **for read-only
@@ -207,7 +207,7 @@ the sweep already stored. → D364.
 
 **F10, Gap.** The console cannot run `coordinator status`, and P6 is not built. A console child gets
 exactly the 11 keys in `CHILD_ENV_KEYS` (`console/src/main/spawn.ts`). Rule 8 of
-`docs/design/desktop-console.md` §5.1 says no secret goes in an environment variable the app
+`docs/desktop-console/spec.md` §5.1 says no secret goes in an environment variable the app
 writes, so no App key reaches the child. `console/src` names no coordinator operation, and the
 console 0.112.0 notes say the project view *"… and the coordinator's project view are not in this release"*. *Consequence:* coordinator
 P6 depends on a read that needs no key. The sweep's stored view (`coordinator/`, readable

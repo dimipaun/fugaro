@@ -9,7 +9,7 @@
 // third, and it is not generated here any more. The reference describes the
 // binary that ships, and that binary is the tagged one, so it is written from
 // the tagged command tree by `go run ./ee/clidoc` (design
-// docs/design/ee-boundary-moves.md §9). Two generators writing one file would
+// docs/ee-reorg/boundary-moves.md §9). Two generators writing one file would
 // overwrite each other, whichever ran last, so this command no longer writes
 // it at all. The renderer both generators read is internal/clidoc/cliref.
 //

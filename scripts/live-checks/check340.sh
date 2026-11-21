@@ -11,7 +11,7 @@
 # script reads any more. The full-path form stays recorded as answered rather
 # than being re-read: reading it again would buy a second grant, a second
 # removal, a propagation wait and the both-forms contradiction for a question
-# that already has its answer. `docs/design/bucket-iam.md`
+# that already has its answer. `docs/bucket-iam/spec.md`
 # §4 (the H3 veto) and its §11 item **V7** record the attribute as unverified,
 # and no code in this repo reads it: grepping the tree finds it in the design
 # alone. R12 writes one conditioned binding per prefix for the reports job, each

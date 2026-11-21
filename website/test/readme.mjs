@@ -136,7 +136,7 @@ function resolveSource(token) {
   }
 
   // A generator: `go run ./internal/clidoc` for the security and terms pages, `go run
-  // ./ee/clidoc` for the CLI reference (design docs/design/ee-boundary-moves.md §9). What
+  // ./ee/clidoc` for the CLI reference (design docs/ee-reorg/boundary-moves.md §9). What
   // makes the token real is the flag set the directory it names declares: a command run
   // with a flag its generator does not define fails on the reader's machine.
   const generator = /^go run (\.\/\S+)/.exec(token)
@@ -242,7 +242,7 @@ test('the Go gate the README prints selects the site\'s own tests', () => {
   // The site's Go test files: the docs_website_* pins in internal/cli, and the generated
   // documents' own tests -- internal/clidoc's, the renderer's beside it in
   // internal/clidoc/cliref, and ee/clidoc's, where the committed reference is held to the
-  // tagged tree (design docs/design/ee-boundary-moves.md §9).
+  // tagged tree (design docs/ee-reorg/boundary-moves.md §9).
   const cliDir = path.join(REPO_ROOT, 'internal', 'cli')
   const generatorDirs = [
     path.join(REPO_ROOT, 'internal', 'clidoc'),

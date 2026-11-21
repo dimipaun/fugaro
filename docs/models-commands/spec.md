@@ -171,7 +171,7 @@ write unchanged except for the keys the command touches:
 ## 10. The console and the mobile app
 
 Neither reads model configuration today. The console's model information comes from `fugaro watch
---json` (each run's coder and reviewer models and spend, `docs/design/desktop-console.md` §2.1) and
+--json` (each run's coder and reviewer models and spend, `docs/desktop-console/spec.md` §2.1) and
 `fugaro diagnose`; it never reads `~/.config/fugaro` itself. A console models screen, when wanted, reads
 `fugaro models ls --json` the way the console reads every other CLI document, and writes nothing. The
 mobile app reads nothing of this. No console or mobile task is in this plan.

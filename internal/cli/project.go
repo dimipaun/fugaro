@@ -235,7 +235,7 @@ func providerForHost(host string) string {
 }
 
 // consoleReadCtxKey marks the commands the desktop console spawns as reads:
-// docs/design/desktop-console.md §5.1's exact-argv allow-list, plus the one
+// docs/desktop-console/spec.md §5.1's exact-argv allow-list, plus the one
 // read that design names for the console and whose allow-list row the console
 // task adds (`plan graph --json` for the graph document, V2.2.1).
 //
@@ -553,7 +553,7 @@ func checkCloudName(ctx context.Context, b *blobx.Bucket, lc *localcfg.Config, g
 	}
 	r, err := b.Bucket.NewReader(ctx, infra.ProjectMarkerObject, nil)
 	if gcerrors.Code(err) == gcerrors.NotFound {
-		return userErr("project %s's installation has no project name yet; an operator runs fugaro setup --name %s (see docs/design/m9-budget-and-dashboard.md §13.1)", lc.Name, lc.Name)
+		return userErr("project %s's installation has no project name yet; an operator runs fugaro setup --name %s (see docs/m9-budget-and-dashboard/spec.md §13.1)", lc.Name, lc.Name)
 	}
 	if err != nil {
 		return remote(fmt.Errorf("reading %s from %s: %w", infra.ProjectMarkerObject, bucketURL, err))

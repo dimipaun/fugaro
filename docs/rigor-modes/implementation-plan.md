@@ -87,7 +87,7 @@ one of them is named so a reader can check the claim:
 | `internal/gitprov/gitprov.go` `PRSpec` | the provider call a filed item travels in, and the reason a cross-repo filing is a task and not a line | F43 |
 | `internal/clidoc`, and `internal/pricing/catalog/gencatalog` for the other half of the discipline | the generated-index pattern the backlog's index follows, and the trap its second guard answers | F45 |
 | `internal/runstore` `ReviewSummary`, and the stored transcript `fugaro diagnose` re-reads | what a deferred finding looks like today: a count on the record, its text in the transcript | F46, F47 |
-| `docs/plans/2026-10-17-managed-projects-review-follow-ups.md`, and the four `docs/plans` lists F46 names | the deferral practice the backlog replaces, and what D32's sweep converts | F46 |
+| `docs/managed-projects/review-follow-ups.md`, and the four `docs/plans` lists F46 names | the deferral practice the backlog replaces, and what D32's sweep converts | F46 |
 
 ## 2. The slices, in one table
 

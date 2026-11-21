@@ -282,7 +282,7 @@ func bitbucketWriters(ctx context.Context, sel localcfg.Selection, lc *localcfg.
 	}
 	// This writes into the database, so it asks the ONE ownership question
 	// every writer into it asks (requireOwnBudgetDB, the call of
-	// budgetDBUnadopted that docs/design/upgrade.md's audit lists a path per
+	// budgetDBUnadopted that docs/upgrade/spec.md's audit lists a path per
 	// writer for) before the name check beside it — the two are different
 	// questions, and a name at /fugaro/project is a string two installations
 	// can both carry.

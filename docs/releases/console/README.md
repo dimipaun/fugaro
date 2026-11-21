@@ -65,7 +65,7 @@ not gone sour. The list grows by one when the next console release is cut, in th
 writes its notes file.
 
 **Never below `0.10.0`.** The console's updater refuses a downgrade (Task 4.4 of
-`docs/plans/2026-10-15-desktop-console.md`), so a console released with a version lower than
+`docs/desktop-console/implementation-plan.md`), so a console released with a version lower than
 the one an installation already runs would refuse every update it was offered from then on.
 The console's first release on its own stream is **`0.110.0` "Cherry"**: the version line and
 the tag may not go below `0.10.0`, which is the console that shipped inside CLI `v0.10.0`, and

@@ -169,6 +169,6 @@ the hand-rolled base64 has to agree with a reference instead of with itself.
 Where the reasoning lives: [implementation-plan.md](../../docs/mobile/implementation-plan.md)
 (P1.3, and the "shared files" table that gives this package's manifest to P0.1
 alone), [reconciliation.md](../../docs/mobile/reconciliation.md) (D118, D119),
-[voice.md](../../docs/design/voice.md) (D48's severity table, D49 as amended
+[voice.md](../../docs/voice/spec.md) (D48's severity table, D49 as amended
 by D110), and the CLI's own redactor,
 [`internal/agent/redact.go`](../../internal/agent/redact.go).

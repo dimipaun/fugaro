@@ -7,7 +7,7 @@
 // One binary ships (T21), and the reference describes that binary, so the tree
 // it is generated from is the tagged one -- the tree this command reaches by
 // blank-importing ee/register, the one assembly point the ee build tag
-// compiles in (design docs/design/ee-boundary-moves.md §9). It calls no setter
+// compiles in (design docs/ee-reorg/boundary-moves.md §9). It calls no setter
 // itself: a generator that registered a command to document it would be a
 // second writer of the seams, which §5.5 puts in ee/register alone.
 //

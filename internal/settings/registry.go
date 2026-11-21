@@ -1135,6 +1135,13 @@ var localRows = []Row{
 	locLocal("pools.*.owner", "required: the pool is served to its owner and the users it names", "accounts", docCrafts),
 	locLocal("pools.*.allowed_users", "only the owner", "accounts", docCrafts),
 	locLocal("pools.*.legacy_open", "false: only the policy migration writes this, for a pool that predates owners", "accounts", docCrafts),
+	// The cascade's own marker, legacy_open's neighbour in every way that
+	// matters here: `fugaro update` is its only writer, for the pool it
+	// migrates out of a project whose cascade serves (D3064 as amended), so it
+	// is in the registry for `fugaro settings` to name and is no key an
+	// operator writes — a marker written by hand is refused where the config is
+	// validated (config.ValidateCascadePools).
+	locLocal("pools.*.cascade", "false: only `fugaro update` writes this, for the pool it migrates out of a cascade that serves", "accounts", docCrafts),
 	// The pools' subscription switch (F22, D1622, D1636): whether a run may
 	// spread a project across two or more Claude OAuth subscriptions at all.
 	// With it off a pool of two or more subscriptions serves nothing and a

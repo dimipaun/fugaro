@@ -23,7 +23,7 @@ import (
 
 // ProjectJob is one shared project job: one entry of the installation root's
 // project_jobs, keyed by its Cloud Run job name (design
-// docs/design/project-centric.md §4.1, plan task 3.2 step 1). The tagged
+// docs/project-centric/spec.md §4.1, plan task 3.2 step 1). The tagged
 // fields are the Terraform module's object type, exactly.
 //
 // It carries nothing per-repository: a project job serves every repository
@@ -988,7 +988,7 @@ func recordedGitHubAppID(lc *localcfg.Config) (string, error) {
 			continue
 		}
 		if id != r.GitHubAppID {
-			return "", userErr("the local config records two GitHub Apps: %s has %s and %s has %s. A shared project job runs every repository admitted to its profile on one job, and that job holds one App's ID and one github-app-key secret, so a project that uses several Apps cannot share jobs (design docs/design/project-centric.md §4.5): put the repositories a profile admits on one App, or keep the others on per-repository jobs (a profile is what a repository with checkout: clone selects, so a profile left out of the repository's fugaro.yaml keeps its own job)",
+			return "", userErr("the local config records two GitHub Apps: %s has %s and %s has %s. A shared project job runs every repository admitted to its profile on one job, and that job holds one App's ID and one github-app-key secret, so a project that uses several Apps cannot share jobs (design docs/project-centric/spec.md §4.5): put the repositories a profile admits on one App, or keep the others on per-repository jobs (a profile is what a repository with checkout: clone selects, so a profile left out of the repository's fugaro.yaml keeps its own job)",
 				holder, id, name, r.GitHubAppID)
 		}
 	}
@@ -1365,7 +1365,7 @@ func projectJobEnv(lc *localcfg.Config, bucket string, vertex bool) map[string]s
 // A profile is shared by every repository admitted to it, so it may mount
 // only project-wide containers — a name with no container is refused rather
 // than granted, because the grant would name a secret the installation does
-// not create (design docs/design/project-secrets.md §4). That is also why
+// not create (design docs/project-secrets/spec.md §4). That is also why
 // nothing per-repository can be mounted here: a repository's own secret is
 // reachable only by a job that repository alone runs.
 //

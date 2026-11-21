@@ -22,7 +22,7 @@ as_of: v0.27.0
 | Review a pull request on its own, at a chosen depth | A pull request can be reviewed by a separate review job, with the review depth chosen for the project and a second model offered as the reviewer. | Coming soon | ✓ | ✓ | ✓ |
 | Choose the model and the account behind every stage | Each stage of a run can use a different model and a different account, with named accounts, aliases that can be repointed, and a vision model that reads pictures for a coder that cannot. | Coming soon | ✓ | ✓ | ✓ |
 | Change any setting with a command | Every setting at every level — local, repository and project — is read and changed by a command, so no configuration file is edited by hand. | Coming soon | ✓ | ✓ | ✓ |
-| One write path behind every setting | A setting is changed through one write path, whichever command owns the field, so a field with invariants or a publish step is written only by the command that understands it. A generic write to a field another command owns is refused, naming the command to use. | Coming soon | ✓ | ✓ | ✓ |
+| One write path behind every setting | A setting is changed through one write path, whichever command owns the field, so a field with invariants or a publish step is written only by the command that understands it. A generic write to a field another command owns is refused, naming the command to use. | Available | ✓ | ✓ | ✓ |
 | Choose how thorough a run is | A project picks a rigor mode, from a quick proof of concept to a change that must not break anything, and every stage of a run follows it. | Coming soon | ✓ | ✓ | ✓ |
 | Nothing stops to ask you a question | No command prompts, and none waits on a closed input: a step that needs a decision takes a flag, a budget cap or a refusal that prints the fix. | Available | ✓ | ✓ | ✓ |
 | Bring your own job image | A project keeps a small catalogue of named images, each built from a Dockerfile you already have or from a base image of your own, and a skill proposes and validates them. An image's own environment variables reach the run that uses it. | Available | ✓ | ✓ | ✓ |
@@ -197,7 +197,7 @@ as_of: v0.27.0
       "id": "one-write-path",
       "name": "One write path behind every setting",
       "explanation": "A setting is changed through one write path, whichever command owns the field, so a field with invariants or a publish step is written only by the command that understands it. A generic write to a field another command owns is refused, naming the command to use.",
-      "status": "coming-soon",
+      "status": "available",
       "plans": {
         "community": true,
         "team": true,

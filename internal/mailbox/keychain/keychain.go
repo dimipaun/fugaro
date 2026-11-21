@@ -1,7 +1,7 @@
 // Package keychain reads the per-pairing MAC key from the OS keychain, by item
 // name, and never prints it.
 //
-// This is task T2 of docs/plans/2026-10-18-mobile-mailbox-consumer.md (mobile
+// This is task T2 of docs/mobile/mailbox-consumer-plan.md (mobile
 // P4.1) and it lands the read M5 requires: the pairing key D171's tag is
 // computed with lives in the operator's OS keychain, the consumer's settings
 // hold only the item's **name** (Voice D42(2), D113b), and the key itself is

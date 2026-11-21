@@ -315,8 +315,8 @@ resource "google_storage_bucket_iam_member" "runs_reader" {
 # Launchers write runs/, tokens/ and issues/ only. objectUser, not
 # objectCreator: the launch claim's takeover overwrites and its release
 # deletes, and the sealed budget token in tokens/ is replaced on a retry and
-# deleted after a launch that did not start (docs/design/budget-token-
-# channel.md section 7.2, D16: the deliberate widening that came with moving
+# deleted after a launch that did not start (docs/budget-token-channel/spec.md
+# section 7.2, D16: the deliberate widening that came with moving
 # the token out of runs/, still one condition and not a role on the bucket).
 # issues/ is the launcher's third write, and the only area of the shared issue
 # store (docs/troubleshoot-issue/reconciliation.md D1727: the launcher who

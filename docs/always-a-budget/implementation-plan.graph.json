@@ -238,7 +238,7 @@
           "internal/cli/doctor_batch.go",
           "internal/cli/validate_batch.go",
           "docs/backends.md",
-          "docs/design/budget-token-channel.md"
+          "docs/budget-token-channel/spec.md"
         ]
       }
     },
@@ -288,7 +288,7 @@
         "paths": [
           "README.md",
           "docs/how-to/budgets.md",
-          "docs/design/m9-budget-and-dashboard.md",
+          "docs/m9-budget-and-dashboard/spec.md",
           "docs/design/v1.md",
           "docs/multi-model.md",
           "docs/gcp-live-checklist.md",

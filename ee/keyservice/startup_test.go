@@ -4,7 +4,7 @@
 package keyservice
 
 // The refusals New makes, one case each (subscriptions plan S3.2; the design
-// docs/design/key-signing-service.md §3.5, §7.2). They are held here because
+// docs/key-signing-service/spec.md §3.5, §7.2). They are held here because
 // every other test in this package drives a *complete* deployment — the fixture
 // hands the service a store, a minter, a mailer, a code host and a rate — so a
 // guard in New can be deleted with all of them green, and what it guards is the
