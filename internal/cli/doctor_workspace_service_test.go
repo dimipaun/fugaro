@@ -252,6 +252,40 @@ func TestDoctorReportsTheWorkspaceService(t *testing.T) {
 			t.Errorf("%s = %+v, names %s, which the bundle does hold: the entries it does hold are not findings", workspacePoolCheckID, c, config.AnthropicSecret)
 		}
 	})
+
+	// The pool's check is a reader of the workspace's own bundle document, so it
+	// is behind the refusal that guards every other reader of one (credsOwnerOnly):
+	// a coding agent's session is answered "the bundle was not read" instead of
+	// answering, and the document is left unopened. Every other subtest here clears
+	// the markers (wsDoctorServiceRig), which is why this one sets one back: without
+	// it the refusal could be deleted and the whole suite would still pass.
+	t.Run("an agent's session is not served the bundle", func(t *testing.T) {
+		r, db, svcs := wsDoctorServiceRig(t, wsDoctorSharedYAML)
+		svcs.AddService(creds.WorkspaceServiceName)
+		wsDoctorSeedNode(t, db, "aurora", wsDoctorNode("aurora", wsDoctorShared()...))
+		bundleID := bundleFixtureFor(t, r.sm, "aurora", wsDoctorBundleDoc(t, true))
+		t.Setenv("CLAUDECODE", "1")
+
+		o, out := wsDoctorRun(t)
+		c, ok := doctorCheckByID(o.Checks, workspacePoolCheckID)
+		if !ok {
+			t.Fatalf("no %s check in an agent's session, which is the machine an owner never runs doctor on:\n%s", workspacePoolCheckID, out)
+		}
+		// An unread line is a measurement that answers nothing: not ok, and info so
+		// that it fails no run (--json carries no "unread" field, so what it says is
+		// in the line's own words).
+		if c.OK || c.Severity != "info" {
+			t.Errorf("%s = %+v, want the unread info line: whether the bundle holds the node's entries is not answered in an agent's session, and that is not a finding about the workspace", workspacePoolCheckID, c)
+		}
+		for _, want := range []string{"was not read", "could not be read"} {
+			if !strings.Contains(c.Problem, want) {
+				t.Errorf("%s does not carry %q, so a reader cannot tell a bundle that was refused from one that was read:\n%s", workspacePoolCheckID, want, c.Problem)
+			}
+		}
+		if slices.Contains(r.sm.Accessed(), bundleID) {
+			t.Errorf("an agent's session opened the bundle's document (%s): the refusal is asked before the store is opened, and no value of it is read on that machine", bundleID)
+		}
+	})
 }
 
 // TestDoctorReportsAMembersRoute is the member's half: the pin's address (R3)
