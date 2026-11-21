@@ -34,16 +34,19 @@ package cli
 // (D2805).
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -136,9 +139,13 @@ project link, D2819):
     machine, from their own credentials, and this command finishes the add
     afterwards.
 
-A project another workspace shows -- in the member list already written into its
-database -- is refused: a project belongs to one workspace (D1291, R2, R14).
-Nothing is ever removed from a member by this command.
+A member the workspace holds whose database already carries another workspace's
+member list is refused: a project belongs to one workspace (D1291, R2, R14). The
+two documents that reading is made from -- the member's mirror and the parent it
+hangs under -- are readable once the workspace holds the member (R14), so a
+project this workspace does not hold is refused by fugaro workspace project link,
+on the member owner's own machine, and not here. Nothing is ever removed from a
+member by this command.
 
 Only the keys it writes are rewritten: every comment and every other key of the
 config is kept, except inside the entry it replaces, which is written fresh.`,
@@ -191,10 +198,9 @@ type workspaceProjectAdd struct {
 	// linked is whether the workspace holds the member now (R11): the member's
 	// own owner has consented through `link`, so the add adopts into it.
 	linked bool
-	// mirror is the member's mirror as its database holds it. A mirror that is
-	// there while the workspace does not hold the member is another workspace's
-	// member, or this workspace's own member whose owner has unlinked it (R2,
-	// R14, D2822).
+	// mirror is the member's mirror as its database holds it, read only for a
+	// member the workspace holds (R14). An entry of it that is not a person of
+	// the workspace's own roster is another workspace's (R2).
 	mirror workspace.MemberDoc
 	// adopt are the member's grantees that are not people of the workspace yet,
 	// each with the external mark D2812 gives it.
@@ -205,6 +211,17 @@ type workspaceProjectAdd struct {
 }
 
 func runWorkspaceProjectAdd(cmd *cobra.Command, project string, o *workspaceProjectAddOptions, seams workspaceProjectAddSeams) error {
+	// The fence, before anything is read and for the whole command (A7, threat
+	// model §5). It is here and not in the declaration below, because the
+	// declaration is only one of this command's writes: once the workspace holds
+	// the member, the add writes the workspace's roster, the member's own roster
+	// and mirror and the workspace's trail, and `applySettingsEdit`'s own fence
+	// stands behind its "no change" answer for an entry the table already
+	// carries -- so a replay of the same add reaches every one of those writes
+	// in a coding agent's session with nothing in the way.
+	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
+		return userErr("nothing was written: fugaro workspace project add declares a member in the workspace's own table and, once the workspace holds it, writes the workspace's people into the member's own roster and mirror with the workspace owner's credentials, so it is run by a person: %s", initflow.AgentRefusal(m))
+	}
 	if err := workspaceRefuseName(project, "project"); err != nil {
 		return err
 	}
@@ -274,8 +291,15 @@ func (a *workspaceProjectAdd) readRoster(ctx context.Context, store workspace.St
 }
 
 // read is everything the add reads before it writes anything: the workspace's
-// own roster (C1), the member's mirror and, where the workspace holds the member,
-// the member's roster and the live bindings its admins are trusted by (C2).
+// own roster (C1) and, where the workspace holds the member, the member's own
+// database (C2). A member the workspace does not hold is read nowhere but the
+// workspace's own node: the authority over a member's project is given at
+// `link`, by the member's own owner on their own machine (D2800, D2819), so
+// before it the workspace has no grant to read the member's database with --
+// R14's own words are that the mirror and the parent folder are readable once
+// linked -- and a read there would either fail on a denial or make a caller
+// treat one as an absent document, which no contract here allows
+// (internal/workspace/rosterstore.go).
 func (a *workspaceProjectAdd) read(ctx context.Context) error {
 	store, err := a.openStore(ctx)
 	if err != nil {
@@ -291,13 +315,6 @@ func (a *workspaceProjectAdd) read(ctx context.Context) error {
 	}
 	a.roster = roster
 
-	ops, err := a.openMember(ctx)
-	if err != nil {
-		return err
-	}
-	if a.mirror, err = ops.ReadMirror(ctx, a.member); err != nil {
-		return userErr("reading project %s's own member list at %s: %v", safetext.Field(a.member.Project), workspace.PathMemberMirror, err)
-	}
 	auth, err := a.openAuthority(ctx)
 	if err != nil {
 		return err
@@ -306,28 +323,42 @@ func (a *workspaceProjectAdd) read(ctx context.Context) error {
 		return userErr("asking whether workspace %s holds project %s: %v", safetext.Field(a.options.workspace), safetext.Field(a.member.Project), err)
 	}
 	if !a.linked {
-		// A member the workspace does not hold whose database already carries a
-		// member list is a project in another workspace (R2, R14: the mirror is
-		// the one reading of "another workspace" this machine reaches -- the
-		// parent folder's half is the authority's own refusal, made when the
-		// member's owner links) or one of this workspace's own members whose
-		// owner has unlinked it (D2822). Both are refused rather than declared:
-		// D1291 puts a project in one workspace, and only the member's own owner
-		// can put this one back.
-		if a.mirror.Found {
-			return userErr("project %s's own database already carries a workspace's member list at %s, and workspace %s does not hold the project: a project belongs to one workspace (D1291), so either it is another workspace's member -- whose owner removes it there with fugaro workspace project rm %s -- or it is one of workspace %s's own members whose owner has unlinked it, and then fugaro workspace project link on the member's own machine is what puts it back (D2822, R11). Nothing was written",
-				safetext.Field(a.member.Project), workspace.PathMemberMirror, safetext.Field(a.options.workspace),
-				safetext.Field(a.member.Project), safetext.Field(a.options.workspace))
-		}
+		// Nothing of the member's is read and nothing is decided about it here:
+		// R2's "another workspace" is read from the member's mirror and its
+		// parent folder, and neither is readable before the workspace holds the
+		// project (R14), so the refusal a project in another workspace meets is
+		// the authority's own, made when the member's own owner links (C2 Link
+		// refuses a member whose project is already another workspace's: WU2 by
+		// the folder it sits in, WU18 by the rest). What is left here is the
+		// declaration and the sentence that tells the owner to link.
 		return nil
 	}
-	return a.readLinked(ctx, ops, auth)
+	return a.readLinked(ctx, auth)
 }
 
-// readLinked is what only a linked member has to read: its own roster, which the
-// grantees are adopted from, and the live bindings, which decide which of the
-// workspace's admins the workspace may write a grant for (D2823).
-func (a *workspaceProjectAdd) readLinked(ctx context.Context, ops workspace.MemberOps, auth workspace.Authority) error {
+// readLinked is what only a member the workspace holds has to read: its mirror,
+// which says whether this project is another workspace's (R2, R14), its own
+// roster, which the grantees are adopted from, and the live bindings, which
+// decide which of the workspace's admins the workspace may write a grant for
+// (D2823).
+func (a *workspaceProjectAdd) readLinked(ctx context.Context, auth workspace.Authority) error {
+	ops, err := a.openMember(ctx)
+	if err != nil {
+		return err
+	}
+	if a.mirror, err = ops.ReadMirror(ctx, a.member); err != nil {
+		return userErr("reading project %s's own member list at %s: %v", safetext.Field(a.member.Project), workspace.PathMemberMirror, err)
+	}
+	entries, err := workspaceMirrorEntries(a.mirror)
+	if err != nil {
+		return userErr("project %s's own member list at %s: %v. It is the member's own document and this add replaces it with the workspace's own list, so it reads one it can trust or writes nothing",
+			safetext.Field(a.member.Project), workspace.PathMemberMirror, err)
+	}
+	if foreign := workspaceProjectAddForeignPeople(a.roster, entries); len(foreign) > 0 {
+		return userErr("project %s's own member list at %s names %s, none of which is a person of workspace %s: that list was written by another workspace (R2, R14), and a project belongs to one workspace (D1291), so the workspace it belongs to has to remove it there -- its own owner runs fugaro workspace project rm %s -- before this project is added to this one. Nothing was written",
+			safetext.Field(a.member.Project), workspace.PathMemberMirror, workspaceAddressesPhrase(foreign),
+			safetext.Field(a.options.workspace), safetext.Field(a.member.Project))
+	}
 	doc, err := ops.ReadGrants(ctx, a.member)
 	if err != nil {
 		return userErr("reading project %s's own roster at %s: %v", safetext.Field(a.member.Project), accesslib.PathNode, err)
@@ -397,10 +428,15 @@ func (a *workspaceProjectAdd) judgeGrants(grants []accesslib.Grant) error {
 
 // declare is `workspace member add`'s own write: one entry, built from the same
 // flags by the same validation, replacing whole any entry the table already
-// declares for the project. It is where this command's fence stands -- the write
-// path refuses a coding agent's session and prints the diff for the person to run
-// -- so every cloud write below happens after it, and a refused add has written
-// nothing anywhere.
+// declares for the project.
+//
+// It is not where this command's fence stands. That write path does refuse a
+// coding agent's session and print the diff for the person to run, but it
+// answers "no change" for an entry the table already carries BEFORE that refusal
+// (settings_write.go), and a replay of the same add still reaches the workspace's
+// roster, the member's own database and the trail below -- so the refusal is the
+// first thing runWorkspaceProjectAdd does, and this function is only one of the
+// writes it covers (A7).
 func (a *workspaceProjectAdd) declare(cmd *cobra.Command, project string) error {
 	old, err := settingsReadDocument(settingsTarget{kind: settingsDocLocal, path: a.path})
 	if err != nil {
@@ -634,13 +670,11 @@ func (a *workspaceProjectAdd) writeMirror(ctx context.Context, roster *workspace
 // The entries are C1's MirrorEntry, whose three keys the contract fixes. The
 // document around them is C2's and C2 declares no type for it ("the member
 // roster's and the mirror's formats ... are C2's", contract-member.md §8, and C2
-// moves the mirror's bytes), so WU5 -- the first writer of one -- spells the
-// document here, and this is where a reader of one finds its version.
+// moves the mirror's bytes), so WU5 -- the first writer of one and its only
+// reader -- spells the document here, and this is where a reader of one finds
+// its version.
 func workspaceMirrorDocument(people []workspace.Person) ([]byte, error) {
-	doc := struct {
-		Version int                     `json:"version"`
-		Members []workspace.MirrorEntry `json:"members"`
-	}{Version: workspaceMirrorVersion, Members: make([]workspace.MirrorEntry, 0, len(people))}
+	doc := workspaceMirrorDoc{Version: workspaceMirrorVersion, Members: make([]workspace.MirrorEntry, 0, len(people))}
 	for _, p := range people {
 		entry := workspace.MirrorEntry{Address: p.Address, Kind: p.Kind, External: p.External}
 		if err := entry.Validate(); err != nil {
@@ -653,6 +687,75 @@ func workspaceMirrorDocument(people []workspace.Person) ([]byte, error) {
 		return nil, userErr("rendering the member list this add would mirror: %v", err)
 	}
 	return raw, nil
+}
+
+// workspaceMirrorDoc is the mirror document workspaceMirrorDocument renders and
+// workspaceMirrorEntries reads: the version this command writes and C1's
+// entries.
+type workspaceMirrorDoc struct {
+	Version int                     `json:"version"`
+	Members []workspace.MirrorEntry `json:"members"`
+}
+
+// workspaceMirrorEntries reads a member's mirror, strictly, as every document a
+// reader acts on is read here: the node is the member's own database, its own
+// admins can rewrite it (WU0's threat model), and what this add does with the
+// answer is refuse or replace the document whole -- so an unknown key, a second
+// JSON value, a version this command does not write or an entry C1's Validate
+// refuses is a refusal rather than a document read as the part of it that
+// happened to parse. An absent node is a member the workspace has not mirrored
+// into, which is no entries and not an error.
+func workspaceMirrorEntries(doc workspace.MemberDoc) ([]workspace.MirrorEntry, error) {
+	if !doc.Found {
+		return nil, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(doc.Raw))
+	dec.DisallowUnknownFields()
+	var m workspaceMirrorDoc
+	if err := dec.Decode(&m); err != nil {
+		return nil, err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, errors.New("the document carries more than one JSON value")
+	}
+	if m.Version != workspaceMirrorVersion {
+		return nil, fmt.Errorf("version: %d is not the version this command writes (%d)", m.Version, workspaceMirrorVersion)
+	}
+	for i, entry := range m.Members {
+		if err := entry.Validate(); err != nil {
+			return nil, fmt.Errorf("members[%d]: %w", i, err)
+		}
+	}
+	return m.Members, nil
+}
+
+// workspaceProjectAddForeignPeople is R2's "another workspace" as it can be read
+// once the workspace holds the member (R14): the entries of the member's mirror
+// that are not people of the workspace's own roster. D2813 has every membership
+// write and every converge rewrite the mirror from the roster, and the grantee
+// an add adopts becomes a person of the roster in the same write, so this
+// workspace's own mirror carries its own people and nothing else -- an entry the
+// roster does not know was written by another workspace, into a project that
+// belongs to one (D1291).
+//
+// It is a refusal to add rather than a fence, and deliberately: the mirror is
+// the member's own database and its own admins may rewrite it (WU0's threat
+// model, D2813), so a rewritten one can stop this workspace's own add and can
+// still say nothing about who a member really is -- drift, read against the
+// workspace node, is what answers that.
+func workspaceProjectAddForeignPeople(roster *workspace.Roster, entries []workspace.MirrorEntry) []string {
+	people := make(map[string]struct{}, len(roster.People))
+	for _, p := range roster.People {
+		people[p.Address] = struct{}{}
+	}
+	var foreign []string
+	for _, entry := range entries {
+		if _, ok := people[entry.Address]; !ok {
+			foreign = append(foreign, entry.Address)
+		}
+	}
+	slices.Sort(foreign)
+	return slices.Compact(foreign)
 }
 
 // writeMemberGrants writes the workspace's own grants into the member's roster:

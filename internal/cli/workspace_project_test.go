@@ -464,6 +464,23 @@ func TestProjectAddAdoptsGrants(t *testing.T) {
 	if len(cloud.targets) == 0 || cloud.targets[0] != wantTarget {
 		t.Errorf("the member was opened as %+v, want %+v", cloud.targets, wantTarget)
 	}
+
+	// The mirror this add wrote is the workspace's own -- the people it names
+	// are the people of the node it wrote them from -- so a second add of the
+	// same member reads it and proceeds: R2's reading is "written by another
+	// workspace", never "already there" (D2813).
+	again := wu5NewCloud()
+	again.store.node = cloud.store.node
+	again.auth.holds = true
+	again.auth.bindings = cloud.auth.bindings
+	again.member.grants = cloud.member.grants
+	again.member.mirror = cloud.member.mirror
+	if out, err := wu5Run(t, again.seams(t), wu5AddArgs("--external")...); err != nil {
+		t.Fatalf("a second add of the same member: %v\n%s", err, out)
+	}
+	if len(again.order) == 0 {
+		t.Error("the second add wrote nothing: a re-run is what finishes a half-landed add")
+	}
 }
 
 // TestProjectAddWaitsForLink is the unlinked half: the entry is declared, the
@@ -490,6 +507,13 @@ func TestProjectAddWaitsForLink(t *testing.T) {
 	if len(cloud.order) != 0 {
 		t.Errorf("the add wrote %v into a member the workspace does not hold", cloud.order)
 	}
+	// Nor is the member's own database READ: the authority over it is given at
+	// `link`, so a project the workspace does not hold is one this machine has
+	// no grant to read, and R2's reading of it is the authority's own refusal,
+	// made on the member owner's machine (R14).
+	if len(cloud.targets) != 0 {
+		t.Error("the add opened the member's own database for a project the workspace does not hold (R14)")
+	}
 	if cloud.member.mirror.found || cloud.member.grants.found {
 		t.Error("the member's own database was written to")
 	}
@@ -499,33 +523,38 @@ func TestProjectAddWaitsForLink(t *testing.T) {
 	}
 }
 
-// TestProjectAddRefusesOtherWorkspace is R2 and R14: a project whose own
-// database already carries a workspace's member list, while this workspace does
-// not hold it, is another workspace's member or one this workspace's owner has
-// unlinked — and the add declares nothing, says which two commands are the way
-// out, and writes nothing anywhere.
+// TestProjectAddRefusesOtherWorkspace is R2 and R14, judged where the reading
+// can be made: the member's own mirror is readable once the workspace holds the
+// member, and a list carrying somebody the workspace's own roster does not know
+// was written by another workspace. The add refuses, names the command that
+// removes the member there, and writes nothing anywhere.
+//
+// The other half of R2 — the parent folder, and a project this workspace does
+// not hold at all — is not this command's to refuse: neither document is
+// readable before the workspace holds the member (R14), so that refusal is the
+// authority's own, made at `link` (C2's Link, WU2 and WU18).
 func TestProjectAddRefusesOtherWorkspace(t *testing.T) {
-	_, _, owner := workspaceOwnerHome(t)
-	before := readFileString(t, owner)
-	cloud := wu5NewCloud()
-	cloud.store.node = wu5NodeDoc(t, wu5RosterDoc(t, workspace.Roster{
-		People: []workspace.Person{{Address: "owner@example.com", Kind: workspace.KindHuman}},
-		Admins: []string{"owner@example.com"},
-	}))
+	cloud, owner := wu5Linked(t, []accesslib.Grant{
+		wu5ProjectGrant("alice@example.com", accesslib.RoleViewer),
+	})
 	cloud.member.mirror = wu5NodeDoc(t, []byte(`{"version":1,"members":[{"address":"someone@other.test","kind":"human","external":false}]}`))
+	before := readFileString(t, owner)
 
 	out, err := wu5Run(t, cloud.seams(t), wu5AddArgs()...)
 	if err == nil {
-		t.Fatalf("the add accepted a project another workspace's mirror shows:\n%s", out)
+		t.Fatalf("the add accepted a project whose own database carries another workspace's member list:\n%s", out)
 	}
-	if !strings.Contains(out, "fugaro workspace project rm") || !strings.Contains(out, "fugaro workspace project link") {
-		t.Errorf("the refusal does not name the two ways out:\n%s", out)
+	if !strings.Contains(out, "fugaro workspace project rm") || !strings.Contains(out, "someone@other.test") {
+		t.Errorf("the refusal does not name the way out and the entry that shows the workspace is another's:\n%s", out)
 	}
 	if after := readFileString(t, owner); after != before {
 		t.Errorf("the refused add wrote into the workspace's table:\n--- before\n%s--- after\n%s", before, after)
 	}
 	if len(cloud.order) != 0 {
 		t.Errorf("the refused add wrote %v", cloud.order)
+	}
+	if cloud.member.mirrorWrite != nil || cloud.member.grantsWrite != nil {
+		t.Error("the refused add wrote into the member's own database")
 	}
 }
 
@@ -613,6 +642,44 @@ func TestProjectAddOnlyOnTheTablesMachine(t *testing.T) {
 	}
 	if cloud.opened != 0 {
 		t.Errorf("the refusal opened %d seams, want none", cloud.opened)
+	}
+}
+
+// TestProjectAddRefusesUnderACodingAgentMarker is A7 and threat model §5: every
+// write command of the family refuses in a coding agent's session, and the
+// refusal covers this command's whole surface, not only the table entry.
+//
+// The entry alone is not enough: `applySettingsEdit` answers "no change" for an
+// add the table already carries, BEFORE the fence it holds, and the add goes on
+// to write the workspace's roster, the member's own roster and mirror and the
+// workspace's trail — so a replay inside an agent's session reaches four cloud
+// writes with a fence that never saw it. The refusal is therefore the first
+// thing the command does, and no seam is opened for it.
+func TestProjectAddRefusesUnderACodingAgentMarker(t *testing.T) {
+	cloud, owner := wu5Linked(t, []accesslib.Grant{
+		wu5ProjectGrant("alice@example.com", accesslib.RoleViewer),
+	})
+	before := readFileString(t, owner)
+	t.Setenv(agentMarkers[0], "1")
+
+	out, err := wu5Run(t, cloud.seams(t), wu5AddArgs()...)
+	if err == nil {
+		t.Fatalf("the add ran in a coding agent's session:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), agentMarkers[0]) {
+		t.Errorf("the refusal does not name the marker: %v", err)
+	}
+	if cloud.opened != 0 {
+		t.Errorf("the refusal opened %d seams, want none", cloud.opened)
+	}
+	if len(cloud.order) != 0 {
+		t.Errorf("the refusal wrote %v", cloud.order)
+	}
+	if after := readFileString(t, owner); after != before {
+		t.Errorf("the refusal wrote into the workspace's table:\n--- before\n%s--- after\n%s", before, after)
 	}
 }
 
