@@ -252,8 +252,12 @@ release, so what it measures is the only evidence the claim stands on (R4 as re-
   `TestEachRefusalWritesOneAuditLine`, `TestNoAuditLineCarriesTheTicketOrTheAttestation`.
 - Command: `go test ./internal/credsvc/ -run 'ServedToTheJobsOwnVM|ClaimedWithoutAnAttestation|AnotherJobsVM|OutsideTheJobTable|RecreatedJobIsRefusedByItsId|StaleRecord|UnlistedServiceAccount|VMOutsideTheProject|BoundAllowsTheStatedClock|RefusalWritesOne|CarriesTheTicketOrTheAttestation' -count=1`.
 - Red step: a claim whose record names a job is signed without an attestation.
-- Depends on: C1; BR3 (kept, behaviour: it asks the link whether the VM is the job's own — the
-  route and the link are two sides, and the link is the one that decides).
+- Depends on: C1 alone. Its old waits on BR1 and on BR3 are the two C1 broke — §5's broken table,
+  "BR2 after BR1" and "BR3 after BR2" — because what this task needs from either of them is a shape
+  the contract declares: the link implements an interface the claim calls, so BR2 is written
+  against C1's `VMIdentity` and never against the link's code. Its behaviour is where it was, and it
+  is the link's: this task asks the link whether the VM is the job's own — the route and the link
+  are two sides, and the link is the one that decides.
 - Commit: `credsvc: the identity is served to the job's own VM, and to nobody else (BR2, D3101 as amended, D3114)`.
 - Reviewer tier: opus, mandatory independent review.
 
