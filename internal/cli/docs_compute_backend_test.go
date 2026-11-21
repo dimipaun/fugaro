@@ -183,10 +183,15 @@ var computeBackendSymbols = map[string][]string{
 	"internal/backend/batch/run.go": {
 		"jobDefinition", "func (b *Backend) Launch",
 	},
-	// The mount moved out of the job definition when the identity work split it
-	// along its seams (batch-run-identity BRS): the plan's tasks mean the field
-	// the job carries, and secrets.go is the helper that writes it now.
-	"internal/backend/batch/secrets.go": {"secretVariables", "SecretVariables"},
+	// BR11 took the mount out of the tree (batch-run-identity, D3104): the
+	// plan's field name no longer exists anywhere, because a Batch job mounts
+	// nothing at all. What this file holds now is the check the plan names,
+	// held against the map an installation's block still carries until its next
+	// `fugaro update` rewrites it (R10), with the two name patterns that check
+	// is written with. The removal itself is held by the secret-reader guard
+	// (deploy/terraform/secret_readers_test.go): its scan finds
+	// `SecretVariables` again the moment a job mounts one.
+	"internal/backend/batch/secrets.go": {"checkSecrets", "envNameRE", "secretNameRE"},
 	"internal/backend/batch/reap.go": {
 		"Reaper", "NewReaper", "func (r *Reaper) Reap", "ReaperOptions",
 		"ActionDeleteJob", "ActionDeleteVM", "Report",

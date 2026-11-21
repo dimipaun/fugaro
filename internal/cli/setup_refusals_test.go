@@ -113,6 +113,8 @@ var cliStages = []cliStage{
 		build: func(e *initEngine) initflow.Stage { return newWorkspaceProjectStage(e) }},
 	{stage: initflow.Workspace, ctor: "newWorkspaceStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newWorkspaceStage(e) }},
+	{stage: initflow.CredentialsRoute, ctor: "newCredentialsRouteStage(", self: true,
+		build: func(e *initEngine) initflow.Stage { return newCredentialsRouteStage(e) }},
 	{stage: initflow.Layer, ctor: "newLayerStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newLayerStage(e) }},
 	{stage: initflow.Checkout, ctor: "newCheckoutStage(", self: true,

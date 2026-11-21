@@ -284,6 +284,38 @@ func TestResolveOverAnEmptyLayerIsParse(t *testing.T) {
 	}
 }
 
+// TestResolveDropsTheLayersPerRepoRigorMap: defaults.rigor.repos is the project
+// layer's alone (LD4). It names the level each repository of the project runs
+// at, a repository's own file cannot write it (Rigor.UnmarshalYAML refuses the
+// key), and so it has no half to merge with: left in the document the merged
+// config is decoded from, it makes the strict decode refuse every repository of
+// the project. The layer keeps the map, and ProjectRigor reads it there, which
+// is what the resolution carries it for.
+func TestResolveDropsTheLayersPerRepoRigorMap(t *testing.T) {
+	l := mustLayer(t, strings.Replace(testLayer, "defaults:\n",
+		"defaults:\n  rigor:\n    default: pro\n    repos: { acme/app: critical }\n", 1))
+	c, res, ps := Resolve([]byte(minimalRepo), l)
+	if len(ps) > 0 {
+		t.Fatalf("a repository resolving over a layer that names its per-repo levels: %v", ps)
+	}
+	// The layer's areas and default do reach the merged block — they are what a
+	// run's area rules are read from — and the per-repo map does not.
+	if c.Rigor == nil || c.Rigor.Default != "pro" || len(c.Rigor.Areas) != 0 {
+		t.Fatalf("Rigor = %+v, want the layer's default and no areas", c.Rigor)
+	}
+	if got := res.SourceOf("rigor.default"); got != SourceProject {
+		t.Errorf("SourceOf(rigor.default) = %q, want %q", got, SourceProject)
+	}
+	for p, src := range res.Sources {
+		if p == "rigor.repos" || strings.HasPrefix(p, "rigor.repos.") {
+			t.Errorf("Sources[%s] = %q: the map belongs to the layer, not to the merged config", p, src)
+		}
+	}
+	if got := c.ProjectRigor().ProjectRepos["acme/app"]; got != "critical" {
+		t.Errorf("ProjectRigor().ProjectRepos = %v, want the layer's map", c.ProjectRigor().ProjectRepos)
+	}
+}
+
 // literalsRepo holds values YAML would read as numbers, a date or a bool,
 // and folded, literal and tagged scalars whose decoded value depends on
 // chomping, a more-indented line or an explicit tag, not just its text.

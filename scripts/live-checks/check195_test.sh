@@ -235,6 +235,9 @@ elif sub == ("run", "services", "get-iam-policy"):
 elif sub == ("run", "services", "add-iam-policy-binding"):
     if mode == "grant-fails":
         die("run.services.setIamPolicy denied on resource")
+    if mode == "grant-not-visible-once" and state_get("grant_tries") != "1":
+        state_set("grant_tries", "1")
+        die("INVALID_ARGUMENT: Service account " + flag("--member").split(":", 1)[1] + " does not exist.")
     if flag("--role") != "roles/run.invoker":
         die("this check grants roles/run.invoker on its own service and nothing else")
     if mode != "grant-ignored":
@@ -977,6 +980,16 @@ test_a_build_whose_line_was_not_read_is_a_failure() {
   expect_absent "$out" "FACT call: PASS" "no log: the row is not a pass"
 }
 
+# A service account created a moment ago is not visible to every IAM front end:
+# the first grant answers "does not exist", the retry lands, and the run goes on.
+test_a_grant_for_a_not_yet_visible_account_is_retried() {
+  local dir=$work/grantretry
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=grant-not-visible-once CHECK195_GRANT_RETRY_SECONDS=0
+  expect_contains "$out" "FACT invoker-grant: PASS" "a not-yet-visible account: the grant landed on the retry"
+  expect_absent "$out" "FACT invoker-grant: FAIL" "a not-yet-visible account: no failed grant row"
+}
+
 # A refusal on the way in is a stop with the reason named, not a run that goes on
 # and reports a call it never made.
 test_a_grant_that_fails_stops_before_the_build() {
@@ -1107,6 +1120,7 @@ t test_a_token_for_another_account_is_a_failure
 t test_a_build_that_ran_as_another_account_is_a_failure
 t test_a_build_read_back_by_its_unique_id_is_a_pass
 t test_a_build_whose_line_was_not_read_is_a_failure
+t test_a_grant_for_a_not_yet_visible_account_is_retried
 t test_a_grant_that_fails_stops_before_the_build
 t test_a_service_that_cannot_be_deleted_is_a_failure
 t test_an_account_that_cannot_be_deleted_is_a_failure
