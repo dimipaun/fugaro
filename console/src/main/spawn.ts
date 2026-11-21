@@ -2492,13 +2492,16 @@ export function argvFor(
       case 'equalsValue': {
         // One word, `--flag=value`: the value stays inside the flag's own word,
         // so it can never be read as a flag -- the design's reason for the `=`
-        // form on the rows that carry one (design §5.1 rule 6). The value's own
-        // grammar is the validator's (`ipc.ts`'s `modelRoute` and
-        // `modelPrice`), so what is refused here is only a word no argv could
-        // carry at all.
+        // form on the rows that carry one (design §5.1 rule 6), and the reason
+        // `isSafeArgumentValue`'s leading-`-` rule is **not** applied here: a
+        // value spelled `--json` is inside this word and is a value. What is
+        // checked is what an argv element can be at all -- non-empty, inside the
+        // console's bound, and in `ARGUMENT_RE`'s alphabet, which refuses every
+        // control character and every shell metacharacter. The value's own
+        // grammar is the validator's (`ipc.ts`'s `modelRoute` and `modelPrice`).
         if (typeof value !== 'string') refused(`${operation}'s ${spec.key} is not a string`)
         const word = `${spec.flag ?? ''}${value}`
-        if (value === '' || word.includes('\u0000') || !isSafeArgumentValue(value)) {
+        if (value === '' || value.length > MAX_ARGUMENT_LENGTH || !ARGUMENT_RE.test(value)) {
           refused(`${operation}'s ${spec.key} is not a value this console will pass to the CLI`)
         }
         argv.push(word)
