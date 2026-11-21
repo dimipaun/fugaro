@@ -22,15 +22,22 @@ package credsvc
 //
 // # What these routes record
 //
-// The audit's purpose set is closed and holds no purpose of the identity acts
-// (audit.go): C1 declared this contract and left the writer alone, this plan's
-// tasks may not edit that file, and the four mobile purposes arrived in a task
-// of their own (docs/mobile-identity-pairing's P0). A line written under
-// another route's purpose would be a false record in the trail an operator
-// greps, which is worse than none — so these routes write no audit line, and
-// record what they did on the service's own log: one line per token issued, and
-// the mint's own failure as the service failure it is. A purpose for the
-// identity acts is a task this plan does not have.
+// One line per token issued, on the service's own log, and no audit line. That
+// is the grant route's own reading of the act it answers — "a StatusOK line
+// requires a credential, and a grant issues none" (slip.go) — with a second
+// reason on top of it: the audit's purpose set is closed and holds no purpose
+// of the identity acts (audit.go). C1 declared this contract and left the
+// writer alone, every task of this plan is told not to edit that file, and the
+// four mobile purposes arrived in a task of their own (the mobile identity
+// plan's P0). A line written under another route's purpose would be a false
+// record in the trail an operator greps, which is worse than none; a purpose
+// for the identity acts is a task this plan does not have.
+//
+// No refusal here is one the audit's rule reaches either: the rule starts once
+// a caller is verified, and these routes refuse before that, at the class
+// itself — which is what refuseLauncher already does and why it writes no line.
+// The mint's own failure is the service's failure and not a refusal of a
+// caller, and it is recorded on the same log.
 
 import (
 	"context"
