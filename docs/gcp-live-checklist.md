@@ -1169,6 +1169,8 @@ probe account carries predefined grants only).
 | 628 | **The model half, on a real installation: a craft's model is what a run runs** ([`docs/model-crafts/`](model-crafts/activation-plan.md), its task **MC26** and the block it reserves — **628–637**, 628–632 used): a project layer whose `defaults.agent.crafts.coder.model` names a model the project's allow-list admits, `fugaro craft ls --json` naming that model for the coder craft and the access that serves it, one sandbox run whose record (`result.json`) carries that model in every stage the coder's craft serves (`plan`, `implement`, `fix` — `internal/runner`'s `stageCraft`) and names the same credential, and the gateway's own lines for that execution carrying **no** `budget: request refused` whose `violation` says a model "is not pinned for" a stage — while `agent.models.coder` is **not** what wrote the model, which is the acceptance's own "left alone". This build's record carries no `craft_credentials` (**MC8**'s record half has not landed), so the row that would read the stage's credential off that field reads the surfaces this build has — `stage_accounts`, the stages' own `credential`/`served_by`, and the credentials service's audit line — and says so; **Check 420** reports the same missing field the same way. Run by **you**, on a **sandbox installation, project and repository, never `belong`**, at your own terminal, as **one command**: `bash scripts/live-checks/check628.sh --sandbox <the sandbox repository checkout>`, with the test that drives it against fake tools only, `scripts/live-checks/check628_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** It launches **one** sandbox run — a real run, on the sandbox's own budget, whose branch and draft pull request it leaves for you to decline — and every other call is a read. **OWNER-RUN, NOT RUN.** |
 | 629 | **The publish, on a real installation: the node a run is served from** ([`docs/model-crafts/`](model-crafts/activation-plan.md), its task **MC26** and the block it reserves — **628–637**, 629 used): a credential and a pool declared in the installation's own config, `fugaro project policy publish`, the published node read back carrying `craft_credentials`, `craft_pools` and `crafts`, and one sandbox run whose call is served by the pool's **second** member after the first is exhausted — the run's own record showing the switch and the credentials service's audit line naming the member that served it. The check reads the declaration first and **publishes nothing from a config it could not read**: a node written from a half-read config is a change nobody asked for, so that row is `unmeasured` and the publish and the run both stand down. **The record's `craft_credentials` field is MC8's and this build does not carry it**, so that one clause is reported as an `INFO` naming MC8 rather than failed. Run by **you**, on a **sandbox installation, project and repository, never `belong`**, at your own terminal, as **one command**: `bash scripts/live-checks/check629.sh --sandbox <the sandbox repository checkout>`, with the test that drives it against fake tools only, `scripts/live-checks/check629_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** It publishes the node once and launches **one** sandbox run — a real run, on the sandbox's own budget — and every other call is a read. **OWNER-RUN, NOT RUN.** |
 | 630 | **The crossing, on a real installation: one pool per half, and the update that gets you there** ([`docs/model-crafts/`](model-crafts/activation-plan.md), its task **MC26** and the block it reserves — **628–637**, 630 used): a pool naming an OpenRouter member and an Anthropic-key member refused by name — at `fugaro accounts pool add` (the door a new member list is written through, `internal/config`'s `ValidatePoolPaths`) and at the read of the **published node** (`projectpolicy.Decode`'s `ValidatePublishedPools`, which `doctor`, the runner's `Read`, the credentials service's per-call re-read and `update` all go through) — with the one sentence ("name two pools, one per half"), and an installation that already held one converged by `fugaro update` into two pools, `<pool>-claude` and `<pool>-provider`, each member on its own path in the order the pool listed them. **Two of the acceptance's own clauses are not this build's, and the check reports them as `INFO` rather than passing a clause it does not hold**: `fugaro validate` reads a repository's `fugaro.yaml` and is **not** the crossing's second door — the section below names the door that is, and this is what the acceptance's "and at `fugaro validate`" reads against this build — and the plan's *"whose policy version the update moves to 8"* is the version step **`migrateV8ToV9`**, the version a node of that vintage starts from, while the chain is at **10** today. Run by **you**, on a **sandbox installation, project and repository, never `belong`**, at your own terminal, as **one command**: `bash scripts/live-checks/check630.sh --sandbox <the sandbox repository checkout>`, with the test that drives it against fake tools only, `scripts/live-checks/check630_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** It asks the write door for one pool (which it must refuse, and the listing is read back to be sure), then runs `fugaro update` on the installation and reads the config and the node back: run twice it converges what it finds and says so, and **no run is launched**. **OWNER-RUN, NOT RUN.** |
+| 631 | **The key credential, on a real installation: `accounts add` at your own terminal, and what serves the run it declares** ([`docs/model-crafts/`](model-crafts/activation-plan.md), its task **MC26** and the block it reserves — **628–637**, 631 used): `fugaro accounts add <name> --type anthropic` and `--type openrouter` at **your own terminal** — the command's own hidden prompt, nothing of the value echoed by either command, the value in **no file** under `~/.config/fugaro/` (the backups included) and in **no shell history**, the declaration stored under the credential's own secret (`credential-<name>-key`, never an account's token container) — the refusal a **coding agent's session** gets by name (it may write the declaration and never the key, and stores nothing), `fugaro accounts ls --json` naming each credential's `serving_path` (`credsvc` for the Anthropic-key one, `runner` for the OpenRouter one), and **one sandbox run served by it**: the check declares its own pool, points the acceptance's craft at it, publishes the node and reads the credentials service's own audit line for the run — the credential's **name**, never a value. **The acceptance's last clause is reported as this build has it**: this build refuses `fugaro accounts rm` while a pool lists the credential and names `fugaro accounts pool rm`, so the check measures the refusal, then the pool's removal, then that `accounts rm` succeeds and the listing no longer names it, and says in its own row that "clearing a pool that listed it" is this build's two steps rather than one. Run by **you**, on a **sandbox installation, project and repository, never `belong`**, at your own terminal, as **one command**: `bash scripts/live-checks/check631.sh --sandbox <the sandbox repository checkout>`, with the test that drives it against fake tools only — a fake `fugaro`, a fake `gcloud` and a real pty for the two pastes, no cloud, no installation and no run — `scripts/live-checks/check631_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** It launches **one** sandbox run — a real run, on the sandbox's own budget, whose branch and draft pull request it leaves for you to decline — and every other call is a read. **OWNER-RUN, NOT RUN.** |
+| 632 | **Convergence and the run in flight, on a real installation: one `fugaro update` over all four halves, and the run it does not disturb** ([`docs/model-crafts/`](model-crafts/activation-plan.md), its task **MC26** and the block it reserves — **628–637**, 632 used): an installation **behind this CLI** (the acceptance's premise, read off `fugaro doctor --json`'s own fix line), the four halves read **before** the update (the node's version and blocks, the coder craft's model, the pools and their members, the credentials and their serving paths), **one sandbox run launched and still going** when the update starts, `fugaro update` — the acceptance's verb — exiting 0 with its own **one in-flight line** (`N runs in flight: update waits for none and changes nothing they hold`) whose count is the runs the check knows are in flight, and **no line of it** sending the owner to another `fugaro` command to finish; then the four halves **converged**, each read back with a read alone and nothing written: the coder craft's model, the node carrying its crafts blocks with a version that did not go down, no pool naming members of both halves, and every credential with its type and serving path; and the run **undisturbed** — it reached its terminal state after the update, `fugaro runs show --json` still accounts for the same run, its counters (money, tokens, time) never went backwards, and its record (`result.json`) carries the same run id, task and repository with an outcome. Run by **you**, on a **sandbox installation, project and repository, never `belong`**, at your own terminal, as **one command**: `bash scripts/live-checks/check632.sh --sandbox <the sandbox repository checkout>`, with the test that drives it against fake tools only, `scripts/live-checks/check632_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** It launches **one** sandbox run and runs the update, which is the acceptance's own convergence and is **not** undone; every other call is a read. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -22559,7 +22561,9 @@ back for the row; a key the run never reached reads `FAIL — not reached`.
 
 **The knobs.** Every one of them is read from the environment and none of them is asked for:
 `CHECK628_SANDBOX` and `CHECK628_PROJECT` (the checkout and the installation, when you would rather set them
-there than on the command line), `CHECK628_CRAFT` (coder — what the craft must be), `CHECK628_TASK` and
+there than on the command line), `CHECK628_CRAFT` (coder — what the craft must be), `CHECK628_ROLE` (coder —
+the role slot in the ladder below the craft, which the acceptance's "left alone" is read against),
+`CHECK628_TASK` and
 `CHECK628_RECIPE` (what the run is launched with), `CHECK628_LOG_VIEW` and `CHECK628_REGION` (us-east5; the
 view to scope the gateway read to, when the installation keeps its logs in one),
 `CHECK628_RUN_TIMEOUT_SECONDS` (3600), `CHECK628_POLL_SECONDS` (15), `CHECK628_CLI_TIMEOUT_SECONDS` (180),
@@ -22732,3 +22736,171 @@ launches **no run** and costs nothing billable; the wall clock is the update's.
 **OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
 `scripts/live-checks/check630_test.sh`, which drives every step of it against fake tools — a fake `fugaro`,
 no cloud, no installation, no publish and no update — and is run by `go test ./scripts`.
+
+## Check 631: the key credential, on a real installation — `accounts add` at your own terminal, and what serves the run it declares (a sandbox installation, project and repository, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **MC26** of
+[docs/model-crafts/activation-plan.md](model-crafts/activation-plan.md) — its row for **631**, the fourth of
+that task's five owner-run checks — and it answers the plan's fourth input: a key credential declared at your
+own terminal is stored, hidden, declared and served, and a run is served by it. **No agent runs any step of
+it**, and none can: the two values are pasted by you, at your terminal, and the check launches a real run.
+
+**What it settles.**
+
+- **The declaration, and nothing echoed.** `fugaro accounts add <name> --type anthropic` is handed the value
+  on **stdin** — never a flag, never an argument, never an environment entry — and
+  `fugaro accounts add <name> --type openrouter` is declared with the value pasted at the
+  **command's own hidden prompt**, which is the prompt the acceptance names. Neither command's output carries
+  a line of the value, and the CLI stores each under the credential's own secret
+  (`credential-<name>-key`) rather than an account's token container.
+- **The value is in no file, and in no history.** Every file under the fugaro config directory
+  (`~/.config/fugaro/`, the `.bak-<UTC>` backups included) and every shell history file this machine has is
+  scanned for the value — by a child that takes it in its environment and prints **file names only**. The
+  hidden prompt reads the terminal directly, so the shell that started the check never saw a keystroke of it.
+- **A coding agent's session is refused by name.** The same `accounts add`, run with `CLAUDECODE` set, prints
+  the session refusal — a session may write the declaration and never the key — and stores nothing; the check
+  reads the listing back to say which of the two the refusal left behind.
+- **`accounts ls --json` names the serving path.** Each credential's type and the half that serves it
+  (`credsvc` for the Anthropic-key credential, `runner` for the OpenRouter one) — the fact that decides where
+  a run's calls are spent.
+- **One sandbox run is served by it.** The check declares its own pool, points the acceptance's craft at it,
+  publishes the policy node (the access half a run reads is the published one), launches **one** run, and
+  reads the credentials service's own audit line for that run (`credsvc: audit`,
+  `internal/credsvc/audit.go`) — the credential's **name**, never a value.
+- **`accounts rm` and the pool that listed it.** This build **refuses** `accounts rm` while a pool lists the
+  credential, naming the pool and `fugaro accounts pool rm`; the check reads that refusal, then removes the
+  pool, then that `accounts rm` succeeds and the listing names it no longer. The acceptance's own words
+  ("clearing a pool that listed it") name a removal that does this in one step, and this is this build's
+  **two** — the section, the script and the row all say so rather than passing a clause this build does not
+  hold.
+
+**The command.** It is **one command**, run from the sandbox checkout at your own terminal:
+
+```sh
+bash scripts/live-checks/check631.sh --sandbox <the sandbox repository checkout>
+```
+
+`--dry-run` makes every guard and prints every command it would run, calling nothing; `--help` prints the
+header above. The script declares two credentials, writes one pool and one publish, launches **one** sandbox
+run, and prints ONE block on **stdout** headed `CHECK 631 RESULT`, ending `CHECK 631 RESULT END (exit N)`:
+exit **0** when every criterion held, **1** when one did not or a guard stopped the run, **2** when the check
+could not measure — a tool is missing, the checkout is not one, a read did not answer, or the run never
+ended. Paste that block back for the row; a key the run never reached reads `FAIL — not reached`.
+
+**The knobs.** Every one of them is read from the environment and none of them is asked for:
+`CHECK631_SANDBOX` and `CHECK631_PROJECT`, `CHECK631_ANTHROPIC` and `CHECK631_OPENROUTER` (the two names the
+check declares, so the credentials you already have are never touched), `CHECK631_POOL` and
+`CHECK631_CRAFT` (the pool the run is served through and the craft whose access is taken over and put back),
+`CHECK631_OWNER` (the address the pool is served to; the default is the account `gcloud` is authenticated
+as), `CHECK631_TASK` and `CHECK631_RECIPE` (what the run is launched with), `CHECK631_REGION` (us-east5),
+`CHECK631_LOG_VIEW`, `CHECK631_RUN_TIMEOUT_SECONDS` (3600), `CHECK631_POLL_SECONDS` (15),
+`CHECK631_CLI_TIMEOUT_SECONDS` (180), `CHECK631_DOCTOR_TIMEOUT_SECONDS` (300),
+`CHECK631_LAUNCH_TIMEOUT_SECONDS` (600), `CHECK631_PUBLISH_TIMEOUT_SECONDS` (600), `CHECK631_TTY` (the
+terminal the two pastes are read from; only the check's own test points it elsewhere) and
+`CHECK631_VALUE_FILE` (a file the value is read from instead of the hidden prompt: the check's own test sets
+it, and a person never does), `CHECK631_DRY_RUN` and `CHECK631_KEEP_SCRATCH`.
+
+**Reading the `CHECK 631 RESULT` block.** One block of `FACT <key>: PASS|FAIL|INFO — <what it read>` lines,
+in this order, one per criterion above: `fugaro-version`, `xtrace`, `agent-session`, `belong`,
+`installation`, `declaration`, `agent-refusal`, `value-read`, `add-anthropic`, `nothing-echoed`,
+`add-openrouter`, `prompt-hidden`, `no-file`, `no-history`, `serving-path`, `wiring`, `publish`,
+`run-launched`, `terminal`, `record`, `served-by`, `unwiring`, `rm-refusal`, `rm-clears`, `restore` and
+`scratch-removed`. A `FAIL` under `declaration` stands every write down by name rather than declaring from a
+config it could not read; the rows below it read `FAIL — not reached`.
+
+**What it reads, and what it never reads.** Names, types, paths, prompts, statuses, owners, exit codes and
+the words of a refusal: the credentials' names and serving paths, the craft's access and where it came from,
+the pools and their members, the node's own blocks and version, the run's id and stage, and the audit line's
+purpose, status and credential name. **No credential value is read out of the installation by any step**, and
+none can reach the block: the one value the check ever holds is the one you paste, it is held in this
+process's own memory, and the only file that ever carries it is the scratch file the check's own test writes.
+
+**What it does not put back.** The check unwinds what it wrote — the craft's access is put back and the node
+re-published, its own pool is removed, and both credentials are removed. What it does **not** put back: the
+Secret Manager versions of the two keys (a value cannot be unlearned — rotate them if they were not yours to
+spend), and the sandbox run with the branch and the draft pull request it left, which are yours to decline
+and delete. The `restore` row says exactly that, and the scratch directory is removed from the exit trap even
+on a failed assertion or a Ctrl-C. It costs one sandbox run and what its task spends.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check631_test.sh`, which drives every step of it against fake tools — a fake `gcloud`, a
+fake `fugaro` and a real pty for the two pastes, no cloud, no installation and no run — and is run by
+`go test ./scripts`.
+
+## Check 632: convergence and the run in flight, on a real installation — one `fugaro update` over all four halves, and the run it does not disturb (a sandbox installation, project and repository, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **MC26** of
+[docs/model-crafts/activation-plan.md](model-crafts/activation-plan.md) — its row for **632**, the last of
+that task's five owner-run checks — and it is the plan's own last input: the four halves converge in **one
+command**, and a run launched before it finishes undisturbed. **No agent runs any step of it**, and none can:
+it updates the owner's own installation and launches a real run.
+
+**What it settles.**
+
+- **The installation is behind this CLI.** `fugaro doctor --json` carrying a check whose `fix` names
+  `fugaro update` is the acceptance's own premise — an installation the update has something to converge. A
+  doctor with no such check says it is already current, and the update then converges nothing; the row says
+  which of the two it read, so the reading below is never mistaken for a convergence that had nothing to do.
+- **What it held before, read only.** The policy node's version and its three blocks
+  (`fugaro project policy show --json`), the coder craft's model (`fugaro craft ls --json`), the pools and
+  their members (`fugaro accounts pool ls`) and the credentials and their serving paths
+  (`fugaro accounts ls --json`).
+- **One run is in flight when the update starts.** A sandbox run launched from the checkout with
+  `fugaro run --json`, still going (`fugaro runs ls --json`) when `fugaro update` begins — the state the
+  acceptance is about, and the state no run of this check may be asked to leave first.
+- **The update converges, in one command.** `fugaro update` exits 0, its own output carries the **one**
+  in-flight line (`N runs in flight: update waits for none and changes nothing they hold`) whose count is the
+  runs this check knows are in flight, and **no line of it** sends the owner to another `fugaro` command — a
+  release that shipped an operator step beside `update` is the HARD RULE's own failure.
+- **The four halves converged, each read back with a read alone.** The coder craft's model; the node carrying
+  its crafts blocks with a version that did not go down; no pool naming members of both halves (the listing
+  and the config's own pools); and every credential with its type and serving path.
+- **The run is undisturbed.** It reached a terminal state after the update, its ledger still accounts for the
+  same run (`fugaro runs show --json`), its counters never went backwards (money, tokens and time), and its
+  record (`result.json`, read at the key the listing's own ref gives) carries the same run id, task and
+  repository with an outcome. That is the acceptance's *"the run it does not disturb"*, read as the three
+  things a run holds: its ledger, its counters and its record.
+
+**The command.** It is **one command**, run from the sandbox checkout at your own terminal:
+
+```sh
+bash scripts/live-checks/check632.sh --sandbox <the sandbox repository checkout>
+```
+
+`--dry-run` makes every guard and prints every command it would run, calling nothing; `--help` prints the
+header above. The script launches **one** sandbox run, runs `fugaro update` over the installation while that
+run is in flight, and prints ONE block on **stdout** headed `CHECK 632 RESULT`, ending
+`CHECK 632 RESULT END (exit N)`: exit **0** when every criterion held, **1** when one did not or a guard
+stopped the run, **2** when the check could not measure — a tool is missing, the checkout is not one, a read
+did not answer, the update did not finish, or the run never ended. Paste that block back for the row; a key
+the run never reached reads `FAIL — not reached`.
+
+**The knobs.** Every one of them is read from the environment and none of them is asked for:
+`CHECK632_SANDBOX` and `CHECK632_PROJECT`, `CHECK632_TASK` and `CHECK632_RECIPE` (what the run is launched
+with), `CHECK632_REGION` (us-east5), `CHECK632_LOG_VIEW`, `CHECK632_RUN_TIMEOUT_SECONDS` (3600),
+`CHECK632_POLL_SECONDS` (15), `CHECK632_CLI_TIMEOUT_SECONDS` (180),
+`CHECK632_DOCTOR_TIMEOUT_SECONDS` (300), `CHECK632_LAUNCH_TIMEOUT_SECONDS` (600),
+`CHECK632_UPDATE_TIMEOUT_SECONDS` (1800), `CHECK632_DRY_RUN` and `CHECK632_KEEP_SCRATCH`.
+
+**Reading the `CHECK 632 RESULT` block.** One block of `FACT <key>: PASS|FAIL|INFO — <what it read>` lines,
+in this order, one per criterion above: `fugaro-version`, `xtrace`, `agent-session`, `belong`,
+`installation`, `version-before`, `before`, `run-launched`, `run-in-flight`, `update`, `update-notes-runs`,
+`no-operator-step`, `converge-model`, `converge-publish`, `converge-crossing`, `converge-key`,
+`run-terminal`, `ledger-intact`, `counters-intact`, `record-intact`, `restore` and `scratch-removed`. A
+`FAIL` under `run-launched` or `run-in-flight` means the update ran with no run to disturb, and the rows that
+read the run below it read `FAIL — not reached`.
+
+**What it reads, and what it never reads.** Names, members, paths, versions, counts, statuses, money, tokens,
+durations and the words of the update's own note: the node's blocks and version, the crafts' models, the
+pools' members and their order, the credentials' types and serving paths, the run's id, stage, ledger and
+counters. **No credential value is read by any step**, and none can reach the block.
+
+**What it does not put back.** The update is the acceptance's own convergence and is **not** undone: a config
+or node the update converged stays converged, and the `restore` row names exactly what moved. The run's own
+branch and the draft pull request it opens are yours to decline and delete. The scratch directory is removed
+from the exit trap even on a failed assertion or a Ctrl-C. It costs one sandbox run and what its task spends,
+plus the wall clock of the update.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check632_test.sh`, which drives every step of it against fake tools — a fake `fugaro`
+and a fake `gcloud`, no cloud, no installation, no update and no run — and is run by `go test ./scripts`.
