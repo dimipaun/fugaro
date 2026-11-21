@@ -82,7 +82,13 @@ var secretReaderExceptions = []struct {
 			"deploy/terraform/gcp/modules/workflow/sa.tf google_secret_manager_secret_iam_member.service",
 		},
 	},
-	{id: "E8", keys: []string{"internal/cli/creds.go", "internal/cli/doctor_brokering.go"}},
+	// owner_probe.go is E8's second read of the bundle's own container and not
+	// another reader of a value: it asks Secret Manager what the caller may do
+	// ON that container (TestIamPermissions), which is the one question that
+	// tells a project owner from an operator before a provider key is written
+	// into the bundle's entries (KS2, D3006, F36). No value is read, and the
+	// answer is a permission list.
+	{id: "E8", keys: []string{"internal/cli/creds.go", "internal/cli/doctor_brokering.go", "internal/cli/owner_probe.go"}},
 	{
 		id: "E9",
 		keys: []string{
