@@ -60,6 +60,9 @@ batch.boot_image	label:file
 batch.image	label:file
 batch.machine_type	label:file
 batch.network	label:file
+batch.opt_in	label:file
+batch.seal_key.public_key	label:file
+batch.seal_key.version	label:file
 batch.secrets	label:file
 batch.service_account	label:file
 batch.socket_gid	label:file
