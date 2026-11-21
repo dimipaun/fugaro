@@ -88,6 +88,8 @@ import {
 } from '../../src/main/settingsedit'
 import type { SettingsEditDeps } from '../../src/main/settingsedit'
 import type { SettingsEntryView } from '../../src/main/settingsview'
+import { setupConfirmID, setupView } from '../../src/main/setupview'
+import type { SetupView } from '../../src/main/setupview'
 import { SETTINGS_EDIT_MOVED } from '../../src/source/source'
 import type { SettingsEditSpawn } from '../../src/source/source'
 import { displayTaskText } from '../../src/main/launchrules'
@@ -2081,6 +2083,59 @@ describe('the settings edit behind the same window', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The same window's fourth subject: a first setup (SW3a, D2904).
+//
+// The window is one implementation for every question it is asked (D1115,
+// D2902), and the setup wizard is the subject SW3a added to `ConfirmSubject`.
+// What this describe holds is the window's **shared** half, the two things that
+// are written per subject rather than per flow: the phase rule (`phaseTakes`),
+// which says which answer the question on screen is answered with, and the
+// identity (`confirmSubjectID`), which is how a caller that knows only the
+// project closes its own window.
+//
+// What the case pins. A setup window takes a yes and refuses a submit -- the
+// form's answer arriving at a question that has no form and no dry run behind
+// it -- and the decider's empty call list is the claim that a refused answer
+// decided nothing. Asserted, not inferred from the entry form's case: the phase
+// rule is a truth table over the union, and SW3a's fourth subject is the one
+// nobody had written a row for. The identity half is the one that moves: with
+// `confirmSubjectID` left as the launch-or-settings pair it was, the close below
+// finds no window.
+// ---------------------------------------------------------------------------
+
+describe('the setup wizard behind the same window', () => {
+  it('refuses a submit on a setup window, and knows one by its project', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const decider = recordingDecider()
+    confirmer.open(setupSubject(), decider.decide)
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    // A setup window asks one question -- the operator's go to run the CLI -- and
+    // a `submit` is the entry form's answer arriving at it. It is refused by name
+    // rather than guessed at, nothing is decided, and the window stays open on
+    // the question it was actually asking.
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'submit', value: 'x' }),
+    ).toStrictEqual({ ok: false, reason: CONFIRM_PHASE_REFUSAL })
+    expect(decider.calls).toStrictEqual([])
+    expect(window.closeRequested()).toBe(false)
+
+    // The window's identity is the project its answers name, which is what the
+    // flow holds: a close by that id reaches this window and declines it, and a
+    // setup window is not closed by the run id a launch's is named by.
+    expect(setupConfirmID(PROJECT)).toBe(`setup:${PROJECT}`)
+    expect(setupConfirmID(PROJECT)).not.toBe(RUN_ID)
+    confirmer.close(RUN_ID)
+    expect(window.closeRequested()).toBe(false)
+    confirmer.close(setupConfirmID(PROJECT))
+    expect(window.closeRequested()).toBe(true)
+    expect(decider.calls).toStrictEqual([[false, undefined]])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // D2902's one modal: the entry form, the dry run's diff and the confirmation,
 // in the same window (SU1).
 //
@@ -2709,6 +2764,44 @@ async function entryShownOf(
   expect(subject.kind).toBe('settings-entry')
   if (subject.kind !== 'settings-entry') throw new Error('the window was not asked the entry form’s question')
   return subject
+}
+
+// ---------------------------------------------------------------------------
+// The fixture the setup window is opened over (SW3a).
+// ---------------------------------------------------------------------------
+
+/** SETUP_PLAN_ARGV and SETUP_APPLY_ARGV are the two command lines the window is
+ * shown for a first setup, program word included: the same two rows the setup
+ * flow spawns (`wizardrun.ts`, which rebuilds AL's allow-list entries and adds
+ * no word to them). They are written out here rather than imported from it
+ * because a window whose rows were read from the flow that spawns them could not
+ * catch the flow showing one command line and running another. */
+const SETUP_PLAN_ARGV: readonly string[] = [
+  BINARY,
+  'setup',
+  '--plan-only',
+  '--answers-file',
+  '-',
+  '--events',
+  '--json',
+]
+const SETUP_APPLY_ARGV: readonly string[] = [BINARY, 'setup', '--answers-file', '-', '--events', '--json']
+
+/** setupSubject is one setup window's subject as `setupView` builds it: the five
+ * answers main parsed, the digest of the bytes it holds and the two command
+ * lines. `bakeRepos` is answered, so the window draws the operator's own word
+ * for it rather than the CLI's default. */
+function setupSubject(): SetupView {
+  return setupView({
+    project: PROJECT,
+    region: 'europe-west1',
+    name: PROJECT,
+    rigor: 'pro',
+    bakeRepos: true,
+    digest: 'a'.repeat(64),
+    planArgv: SETUP_PLAN_ARGV,
+    applyArgv: SETUP_APPLY_ARGV,
+  })
 }
 
 /** deferred is a promise a case settles by hand, for the states that exist only
