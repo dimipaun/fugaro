@@ -49,6 +49,14 @@ import (
 // claim is the run's first call. The two together are D3136's "recorded,
 // unstarted attempt"; this file is the record half of it.
 //
+// ONE THING THE RECORD DOES SHOW, AND THE GATE AGREES ABOUT. The item the
+// attempt belongs to must be one the record has NOT finished (Phase.Done: done
+// or cancelled). That is the orchestrator's own gate read from this side:
+// `reissuable` refuses to start an attempt of an item that is done or
+// cancelled, so a launcher with a modified CLI must not be able to ask the
+// issuer for what that gate refuses — work a person called off is not
+// re-issued.
+//
 // THE TWO SIDES ARE SPELLED DIFFERENTLY, AND ONE OF THEM IS DERIVED. An item
 // carries its repository canonically — `owner/name`, as
 // orchestrator-state.schema.json pins it — and an ask carries the storage slug
@@ -95,14 +103,53 @@ type OrchestratorRecord interface {
 // ErrOrchestratedAsk is the refusal of an ask in the orchestrator's class that
 // the orchestrator's own record does not carry: a run id the record never
 // recorded, an attempt that is not the one that run id belongs to, an attempt
-// that has ended, an attempt of another repository, or an ask that names a
-// context repository at all (D3136).
+// of an item the record has finished or one that has ended, an attempt of
+// another repository, or an ask that names a context repository at all
+// (D3136).
 //
 // It is one value because the route's answer is one: every one of those is the
 // contract's `identity_refused`, and a caller branches on the code and not on
 // the sentence (identitywire's refusal codes). The sentence the wrap carries
 // names which of them it was, for the operator reading the line.
 var ErrOrchestratedAsk = errors.New("credsvc: the orchestrator's record does not carry that unstarted attempt")
+
+// OrchestratedFault is what an ask of the orchestrator's class is answered when
+// the orchestrator's own record cannot be read: the service's own failure
+// (R16's ScopeFault rule), with the caller the service verified carried beside
+// it.
+//
+// WHY THE CALLER TRAVELS HERE. The audit rule is one line per refusal once the
+// caller's identity is verified (audit.go), and the line is written from the
+// identity the service verified — which for this class is an address and a
+// class and NOT a run identity: a person's address, a roster service account's,
+// the orchestrator daemon's, none of which is a run of this installation. C1's
+// *ScopeFault carries a Caller of its own, but that field is a run Identity
+// (scope.go), so it cannot name this class's caller, and the front door answers
+// a fault whose Caller is nil with the service's own failure and NO audit line
+// at all (refuseResolve, server.go): the one line the rule requires of a
+// verified caller's refusal would be no line. So the caller travels beside the
+// fault instead, and whoever answers the class — the ticket route, which holds
+// the caller it verified — writes that line from this field, as the slip grant
+// route writes a launcher's (refuseGrant) and the mobile routes write a
+// member's. Handing this fault to a reader that knows only *ScopeFault is
+// therefore a way to lose the line, and that is what the field exists to
+// prevent.
+type OrchestratedFault struct {
+	// ScopeFault is the fault itself: what failed, and the reader's own error.
+	// It is embedded so that every reader that knows C1's fault — the front
+	// door's own reading of the three answers included — still reads this as
+	// the service's failure and never as a verdict about the caller.
+	*ScopeFault
+	// Caller is the identity this service verified for the ask: what the
+	// refusal's one line is written from, and never a value read out of the
+	// ask or the record.
+	Caller IdentityCaller
+}
+
+// Unwrap keeps C1's fault in the chain beside the caller: a reader that asks
+// for a *ScopeFault (errors.As) finds it here, and one that asks for this type
+// finds the caller with it.
+func (e *OrchestratedFault) Unwrap() error { return e.ScopeFault }
 
 // NewOrchestratedScope builds the ticket route's scope check with the
 // orchestrator's class judged against the orchestrator's own record (LM24).
@@ -142,13 +189,13 @@ func (c orchestratedScope) Check(ctx context.Context, caller IdentityCaller, ask
 	if caller.Class != identitywire.ClassOrchestrator {
 		return c.next.Check(ctx, caller, ask)
 	}
-	return c.checkOrchestrated(ctx, ask)
+	return c.checkOrchestrated(ctx, caller, ask)
 }
 
 // checkOrchestrated is the orchestrator's arm: the ask is bound to the record
 // and to nothing else. The cheap refusals come first so that an ask that cannot
 // be the record's does not read the node at all.
-func (c orchestratedScope) checkOrchestrated(ctx context.Context, ask identitywire.TicketRequest) error {
+func (c orchestratedScope) checkOrchestrated(ctx context.Context, caller IdentityCaller, ask identitywire.TicketRequest) error {
 	if len(ask.ContextRepos) != 0 {
 		// The list is signed into the run's identity and a reader of that
 		// identity holds a signature and not a role (F31), so an ask that names
@@ -168,13 +215,27 @@ func (c orchestratedScope) checkOrchestrated(ctx context.Context, ask identitywi
 		// The record could not be read, which is this service's own failure and
 		// not a refusal of the caller: the route answers it as one
 		// (StatusUnavailable with ErrorStateUnavailable, R16's ScopeFault rule)
-		// and writes the line its verified caller earns.
-		return &ScopeFault{What: "the orchestrator's own record", Err: err}
+		// and writes the line its verified caller earns — from the caller this
+		// fault carries, because this class's caller holds no run identity for
+		// C1's ScopeFault.Caller to name (OrchestratedFault).
+		return &OrchestratedFault{
+			ScopeFault: &ScopeFault{What: "the orchestrator's own record", Err: err},
+			Caller:     caller,
+		}
 	}
 	attempt := string(ask.Attempt)
 	item, ok := state.Item(orchestrator.IntentItem(attempt))
 	if !ok {
 		return fmt.Errorf("%w: %q names the attempt %q, and the orchestrator's record carries no work item for it", ErrOrchestratedAsk, safetext.OneLine(ask.Run), safetext.OneLine(attempt))
+	}
+	if item.Phase.Done() {
+		// The item is finished: a person called the work off (cancelled) or it
+		// is over (done), and the orchestrator's own gate refuses to start an
+		// attempt of such an item (`reissuable`, internal/orchestrator). What
+		// the class may be issued is an attempt of work the record has not
+		// finished, so the issuer gives the gate's own answer rather than
+		// starting a run for work a person called off.
+		return fmt.Errorf("%w: the attempt %q belongs to an item the record has finished (%s), and only an attempt of work that is not called off is re-issued", ErrOrchestratedAsk, safetext.OneLine(attempt), safetext.OneLine(string(item.Phase)))
 	}
 	if !askNamesTheItemsRepo(ask.Slug, item.Repo) {
 		// The attempt is a recorded one, and it is the record's for another

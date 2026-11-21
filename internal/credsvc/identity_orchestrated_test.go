@@ -12,11 +12,12 @@ import (
 
 // These tests are LM24's: the orchestrator's class at the issuer is bound to the
 // orchestrator's own record, and to nothing else (D3136 as amended, F34). What
-// each of them holds is one of the three things the class may not be issued —
-// an attempt the record does not carry, an attempt that has started or ended,
-// and an ask that names a context repository — plus the case that must go
-// through, which is a recorded attempt of the ask's repository that nothing has
-// reported on.
+// each of them holds is one of the things the class may not be issued — an
+// attempt the record does not carry, an attempt that has started or ended (an
+// item the record has finished, or an intent something has reported on), and an
+// ask that names a context repository — plus the case that must go through,
+// which is a recorded attempt of the ask's repository, of work the record has
+// not finished, that nothing has reported on.
 //
 // The two sides of that binding are spelled differently and the tests carry
 // each in its own spelling, because reading them as one string is what the
@@ -72,7 +73,14 @@ func (r *recordFake) State(context.Context) (orchestrator.State, error) {
 // Its repository is the canonical one the node stores (orchestrator-state's
 // schema: task.CanonicalRepo's owner/name).
 func orchestratedItem(id, repo string) orchestrator.WorkItem {
-	return orchestrator.WorkItem{ID: id, Repo: repo, Phase: orchestrator.PhaseRunning}
+	return orchestratedItemIn(id, repo, orchestrator.PhaseRunning)
+}
+
+// orchestratedItemIn is that item in a phase of the test's own: the two the
+// record has finished (done, cancelled) are the ones the issuer must refuse an
+// attempt of, exactly as the orchestrator's own gate does (`reissuable`).
+func orchestratedItemIn(id, repo string, phase orchestrator.Phase) orchestrator.WorkItem {
+	return orchestrator.WorkItem{ID: id, Repo: repo, Phase: phase}
 }
 
 // orchestratedIntent is one committed attempt: the id internal/orchestrator's
@@ -166,13 +174,19 @@ func TestOrchestratedAskNeedsARecordedUnstartedAttempt(t *testing.T) {
 	})
 
 	refusals := []struct {
-		name  string
-		ask   identitywire.TicketRequest
-		state func() *recordFake
+		name string
+		ask  identitywire.TicketRequest
+		// wantReads is how many times the record is read for this ask: an ask
+		// that names no attempt the orchestrator's own spelling could have
+		// written is refused before the node is touched, and every other one is
+		// judged against it.
+		wantReads int
+		state     func() *recordFake
 	}{
 		{
-			name: "an attempt that has ended",
-			ask:  orchestratedAsk(slug, run, "wi-1:1"),
+			name:      "an attempt that has ended",
+			ask:       orchestratedAsk(slug, run, "wi-1:1"),
+			wantReads: 1,
 			state: func() *recordFake {
 				return &recordFake{state: orchestrator.State{
 					WorkItems: []orchestrator.WorkItem{orchestratedItem("wi-1", repo)},
@@ -181,9 +195,36 @@ func TestOrchestratedAskNeedsARecordedUnstartedAttempt(t *testing.T) {
 			},
 		},
 		{
-			name:  "an attempt the record does not carry",
-			ask:   orchestratedAsk(slug, run, "wi-1:2"),
-			state: open,
+			name:      "an attempt the record does not carry",
+			ask:       orchestratedAsk(slug, run, "wi-1:2"),
+			wantReads: 1,
+			state:     open,
+		},
+		{
+			// The orchestrator's own gate refuses to start an attempt of an
+			// item that is done or cancelled (`reissuable`), and a launcher
+			// with a modified CLI must not be able to ask the issuer for what
+			// that gate refuses: work a person called off is not re-issued.
+			name:      "an attempt of an item that was cancelled",
+			ask:       orchestratedAsk(slug, run, "wi-1:1"),
+			wantReads: 1,
+			state: func() *recordFake {
+				return &recordFake{state: orchestrator.State{
+					WorkItems: []orchestrator.WorkItem{orchestratedItemIn("wi-1", repo, orchestrator.PhaseCancelled)},
+					Intents:   []orchestrator.Intent{orchestratedIntent("wi-1:1", run, "")},
+				}}
+			},
+		},
+		{
+			name:      "an attempt of an item that is done",
+			ask:       orchestratedAsk(slug, run, "wi-1:1"),
+			wantReads: 1,
+			state: func() *recordFake {
+				return &recordFake{state: orchestrator.State{
+					WorkItems: []orchestrator.WorkItem{orchestratedItemIn("wi-1", repo, orchestrator.PhaseDone)},
+					Intents:   []orchestrator.Intent{orchestratedIntent("wi-1:1", run, "")},
+				}}
+			},
 		},
 		{
 			name:  "a reference the orchestrator's own spelling could not have written",
@@ -204,19 +245,35 @@ func TestOrchestratedAskNeedsARecordedUnstartedAttempt(t *testing.T) {
 			if !errors.Is(err, ErrOrchestratedAsk) {
 				t.Fatalf("the ask was answered %v, want a refusal of the orchestrator's own record (%v)", err, ErrOrchestratedAsk)
 			}
+			if rec.reads != tc.wantReads {
+				t.Errorf("the orchestrator's record was read %d times, want %d: the refusals the record can answer are judged against it, and the ones it cannot are refused before it is read", rec.reads, tc.wantReads)
+			}
 		})
 	}
 
 	t.Run("a record that cannot be read is the service's own failure", func(t *testing.T) {
 		rec := &recordFake{err: errors.New("test: the node could not be read")}
 		check, _ := orchestratedScopeFor(t, rec)
-		err := check.Check(context.Background(), IdentityCaller{Address: "orch@example.invalid", Class: identitywire.ClassOrchestrator}, orchestratedAsk(slug, run, "wi-1:1"))
+		caller := IdentityCaller{Address: "orch@example.invalid", Class: identitywire.ClassOrchestrator}
+		err := check.Check(context.Background(), caller, orchestratedAsk(slug, run, "wi-1:1"))
 		var fault *ScopeFault
 		if !errors.As(err, &fault) {
 			t.Fatalf("an unreadable record answered %v, want a *ScopeFault: a node nobody could read must not be refused as a caller who is not admitted (R16)", err)
 		}
 		if errors.Is(err, ErrOrchestratedAsk) {
 			t.Errorf("an unreadable record was answered as a refusal of the caller: %v", err)
+		}
+		// The fault carries the caller the service verified, which is the only
+		// thing the refusal's one audit line can be written from: this class's
+		// caller holds no run identity for C1's ScopeFault.Caller to name, and
+		// a fault that carried none would be answered with no line at all
+		// (OrchestratedFault, refuseResolve).
+		var orchestrated *OrchestratedFault
+		if !errors.As(err, &orchestrated) {
+			t.Fatalf("the fault does not carry the caller it was verified for: %v", err)
+		}
+		if orchestrated.Caller != caller {
+			t.Errorf("the fault carries the caller %+v, want the verified one %+v", orchestrated.Caller, caller)
 		}
 	})
 
