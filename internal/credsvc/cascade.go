@@ -1402,7 +1402,14 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 		// and nothing else: the run cannot be refused an answer it already has,
 		// and the reservation stands until it ages out (budget's own TTL), so
 		// the room is held rather than forgotten.
-		if fail := s.settleCall(ctx, cl, use); fail != nil {
+		//
+		// This is the one settle that is tried again, and for that reason: it is
+		// the one whose loss is permanent. Every member's calls write one month
+		// node, so a burst of parallel streams can keep the meter's own fifteen
+		// attempts losing, and a stream whose settle is then abandoned is served
+		// and charged nowhere. settleStreamedCall says why the attempts are made
+		// here rather than after this handler returns.
+		if fail := s.settleStreamedCall(ctx, cl, use); fail != nil {
 			s.log.Error("credsvc: a metered stream's cost could not be recorded",
 				"credential", fail.credential, "tier", fail.tier)
 		}

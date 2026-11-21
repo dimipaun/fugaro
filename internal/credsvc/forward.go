@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	mrand "math/rand/v2"
 	"net/http"
 	"slices"
 	"strconv"
@@ -569,6 +570,27 @@ func (cm *callMeter) priceTable(s *Server) (*pricing.Table, error) {
 	return cm.prices, cm.priceErr
 }
 
+// The attempts a STREAMED call's settle is given once the meter's own write has
+// given up. The meter re-reads the month and re-writes it up to
+// budget.WorkspaceSettleAttempts times (fifteen, three times a reserve's) with a
+// jittered wait that tops out at a quarter of a second, and that is the whole of
+// the bound for a call whose answer is still in the service's hands: a settle
+// that loses it refuses the call, so the cost is not lost. A streamed call
+// cannot be refused — its answer has already left — so its settle is the one
+// that must not give up on the first refusal, and these are the attempts it has.
+//
+// The wait is longer than the meter's own and grows with each failed run: what
+// this catches is a burst of settles colliding on the one month node every
+// member's calls share, and the burst has to have passed for the write to land.
+// The attempts are bounded, and they are made before the handler returns rather
+// than after it: a Cloud Run instance with no CPU outside a request would never
+// run a retry scheduled behind the answer's last byte.
+const (
+	streamSettleAttempts   = 4
+	streamSettleBackoff    = 250 * time.Millisecond
+	streamSettleBackoffMax = 2 * time.Second
+)
+
 // settleCall records what a metered call cost and ends its reservation, and
 // answers the refusal a failure is (nil when the call settled, and nil too when
 // it holds no reservation: a call the meter did not bracket settles nothing).
@@ -581,6 +603,10 @@ func (cm *callMeter) priceTable(s *Server) (*pricing.Table, error) {
 // outcome is known it is charged its full reservation") and the fail-closed one
 // for a cap.
 //
+// ONE attempt is made here. A call this can still refuse is refused on it, which
+// is what keeps the cost from being lost; a streamed call is the case where
+// refusing is impossible, and it goes through settleStreamedCall instead.
+//
 // The write runs on a context stripped of its cancellation, like every other
 // fact about a call that already happened (cascade.go's own rule for the mark a
 // streamed answer writes): a client that hung up mid-call must not be the
@@ -590,34 +616,115 @@ func (s *Server) settleCall(ctx context.Context, cl *call, use *callUsage) *mete
 	if cm == nil || !cm.reserved {
 		return nil
 	}
-	actual := cm.hold.Amount
+	room, err := cm.meter.Settle(context.WithoutCancel(ctx), cm.hold, cm.settleAmount(use))
+	cm.reserved = false
+	if err != nil {
+		return cm.settleFailed()
+	}
+	cm.room, cm.hasRoom = room, true
+	return nil
+}
+
+// settleStreamedCall settles a call whose answer has already left the service,
+// and it is the one settle that tries again: nothing is left to refuse the call
+// on, so a settle that gives up is a cost the workspace's month never hears
+// about — the reservation is left standing until budget.WorkspaceReservationTTL
+// ages it out, and it is released then with the call charged nowhere.
+//
+// What makes that reachable is the meter's own shape rather than a fault: every
+// member's reservations and settles are conditional writes of ONE month node, so
+// a member whose parallel paid streams drive many settles at once can keep the
+// node changing under all of the meter's fifteen attempts, and each stream whose
+// settle loses is served and charged nothing. A member's own operator is exactly
+// the party the workspace's cap exists to hold (SECURITY.md's residual risk 1),
+// and a cap that a member can walk past by making its own calls collide is a cap
+// that binds only the room in flight. The attempts below are the second bound:
+// they are made on a context that outlives the request (a caller that hung up is
+// not a reason to forget what the call cost) and with a longer, jittered wait
+// than the meter's own, and the call's amount is computed once so every attempt
+// offers the meter the same figure.
+func (s *Server) settleStreamedCall(ctx context.Context, cl *call, use *callUsage) *meterFail {
+	cm := cl.meter
+	if cm == nil || !cm.reserved {
+		return nil
+	}
+	amount := cm.settleAmount(use)
+	ctx = context.WithoutCancel(ctx)
+	var room budget.WorkspaceRoom
+	var err error
+	for attempt := 1; attempt <= streamSettleAttempts; attempt++ {
+		room, err = cm.meter.Settle(ctx, cm.hold, amount)
+		if err == nil {
+			break
+		}
+		if attempt < streamSettleAttempts && streamSettleWait(ctx, streamSettleJitter(attempt)) != nil {
+			// The context ended under the wait, which only a shutdown does. The
+			// settle's own error is the one reported: it is what the meter said,
+			// and the wait failing says nothing about why the write did.
+			break
+		}
+	}
+	cm.reserved = false
+	if err != nil {
+		return cm.settleFailed()
+	}
+	cm.room, cm.hasRoom = room, true
+	return nil
+}
+
+// streamSettleJitter is the wait before the attempt after the n-th failed run:
+// the base grows with n and is spread out, the shape the meter gives a lost
+// write, so two settles that collided on the month's node do not collide again.
+func streamSettleJitter(n int) time.Duration {
+	base := min(streamSettleBackoff*time.Duration(n), streamSettleBackoffMax)
+	return base/2 + time.Duration(mrand.Int64N(int64(base)+1))
+}
+
+// streamSettleWait waits d, or gives up when the context is done. The context
+// here is one stripped of its cancellation, so the only way it ends is a
+// shutdown: a service going down does not keep retrying a write nobody will
+// serve.
+func streamSettleWait(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// settleAmount is what the call settles for: zero for an answer the provider
+// billed nothing for, the usage's own cost when the usage is readable, and the
+// reservation — the call's whole worst case — when nothing could be read.
+func (cm *callMeter) settleAmount(use *callUsage) pricing.Micros {
 	switch {
 	case use != nil && use.uncharged:
 		// The provider billed nothing for this answer, so the workspace is
 		// charged nothing for it: what is released is the room the reservation
 		// took, and the figure the member's own gateway settles for the same
 		// answer is a zero too.
-		actual = 0
+		return 0
 	case use != nil && use.complete:
-		actual = cm.row.Rates.Cost(use.usage(cm.row.Rates, cm.ttl))
+		return cm.row.Rates.Cost(use.usage(cm.row.Rates, cm.ttl))
 	}
-	room, err := cm.meter.Settle(context.WithoutCancel(ctx), cm.hold, actual)
-	cm.reserved = false
-	if err != nil {
-		// The reservation is left where it is (the meter does not release it on
-		// a failed settle) and is bounded by budget.WorkspaceReservationTTL: a
-		// hold older than that is a call that cannot still be in flight, so it
-		// is released by the next reservation's own read and the room comes
-		// back. What is NOT done is settling it as zero, which would be the
-		// workspace forgetting a cost it could not record.
-		return &meterFail{
-			message:    "the workspace could not record what this call cost, so the call was not served",
-			marker:     gateway.WorkspaceRefusalSettle,
-			credential: cm.credential, tier: cm.tier,
-		}
+	return cm.hold.Amount
+}
+
+// settleFailed is the refusal a settle that could not be written is. The
+// reservation is left where it is (the meter does not release it on a failed
+// settle) and is bounded by budget.WorkspaceReservationTTL: a hold older than
+// that is a call that cannot still be in flight, so it is released by the next
+// reservation's own read and the room comes back. What is NOT done is settling
+// it as zero, which would be the workspace forgetting a cost it could not
+// record.
+func (cm *callMeter) settleFailed() *meterFail {
+	return &meterFail{
+		message:    "the workspace could not record what this call cost, so the call was not served",
+		marker:     gateway.WorkspaceRefusalSettle,
+		credential: cm.credential, tier: cm.tier,
 	}
-	cm.room, cm.hasRoom = room, true
-	return nil
 }
 
 // unchargedUsage is what settleCall is handed for an attempt the provider did

@@ -135,26 +135,38 @@ func (w *wsMeterWatch) reservedAt(t *testing.T, i int) budget.WorkspaceRoom {
 }
 
 // wsDenyNthDB refuses the n-th write through the meter's own database and lets
-// every other one through. It is how a test fails a SETTLE and nothing before
-// it: a metered call's first write is its reservation and its second is its
-// settle, so denying the second is the write the service must refuse the call
-// on.
+// every other one through, or — with onward — the n-th write and every one after
+// it. It is how a test fails a SETTLE and nothing before it: a metered call's
+// first write is its reservation and its second is its settle, so denying the
+// second is the write the service must refuse the call on. onward is the meter
+// that will not take the settle however many times it is offered, which is what
+// a streamed call's retries meet when the write is refused for a reason no wait
+// changes.
 type wsDenyNthDB struct {
 	budget.WorkspaceSpendDB
 	mu     sync.Mutex
 	n      int
+	onward bool
 	writes int
 }
 
 func (d *wsDenyNthDB) PutIfMatch(ctx context.Context, path, etag string, v any) error {
 	d.mu.Lock()
 	d.writes++
-	deny := d.writes == d.n
+	deny := d.writes == d.n || (d.onward && d.writes > d.n)
 	d.mu.Unlock()
 	if deny {
 		return errors.New("the workspace's database refused the write")
 	}
 	return d.WorkspaceSpendDB.PutIfMatch(ctx, path, etag, v)
+}
+
+// writesSeen is how many writes the meter has offered the database: a test that
+// asserts a settle was tried again reads it.
+func (d *wsDenyNthDB) writesSeen() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.writes
 }
 
 // wsMeterFixture is the fixture's service with a workspace scope over it: the
@@ -367,14 +379,20 @@ func TestACallAtTheCeilingIsRefused(t *testing.T) {
 // when it ages out the call is left recorded as nothing — a month short by its
 // whole worst case, with no figure saying so.
 //
+// The meter here refuses EVERY write from the settle on: a settle that loses one
+// write is tried again (TestASettleThatLosesAWriteIsRetriedAndTheCallIsCharged),
+// and what is left for this test is the meter that refuses them however many
+// times they are offered — the state the retries narrow rather than the one they
+// remove.
+//
 // The whole-body twin of this test (TestAFailedSettleRefuses) is the same write
 // denied at the same point; the two together are what the difference between
 // the paths costs.
 func TestAStreamedSettleThatFailsIsServedAndUncharged(t *testing.T) {
 	// The reservation is the first write of a metered call and the settle the
-	// second, so this fails the settle alone.
+	// second, so this fails the settle and everything after it.
 	f := newWSMeterSvc(t, wsCapUSD, func(db budget.WorkspaceSpendDB) budget.WorkspaceSpendDB {
-		return &wsDenyNthDB{WorkspaceSpendDB: db, n: 2}
+		return &wsDenyNthDB{WorkspaceSpendDB: db, n: 2, onward: true}
 	}, wsPaidOnly)
 	f.up.Script = []anthropicfake.Reply{anthropicfake.StreamOK(testModel, testUsage)}
 
@@ -424,6 +442,55 @@ func TestAStreamedSettleThatFailsIsServedAndUncharged(t *testing.T) {
 	}
 	if after.Reserved != 0 {
 		t.Errorf("the month still holds %v of room past the reservation's TTL, want the hold released", after.Reserved.USD())
+	}
+}
+
+// A streamed call's settle that loses the write is tried AGAIN, and the call is
+// charged: the answer has left, nothing can refuse the call, so a settle that
+// gave up on the first refusal would be a cost the workspace's month never hears
+// about. Every member's calls write one month node, so a member whose parallel
+// paid streams make the meter's own attempts lose is exactly the state this
+// exists for — residual risk 1's member, who without it walks past the cap by
+// colliding with itself.
+//
+// The meter here refuses the settle's first write and only that one: the call
+// must still be served, the month must hold the cost the usage reported, and no
+// failure may be logged — a retry that left the log line behind would be a
+// service that reports a fault it recovered from as the answer a run reads.
+func TestASettleThatLosesAWriteIsRetriedAndTheCallIsCharged(t *testing.T) {
+	deny := &wsDenyNthDB{n: 2}
+	f := newWSMeterSvc(t, wsCapUSD, func(db budget.WorkspaceSpendDB) budget.WorkspaceSpendDB {
+		deny.WorkspaceSpendDB = db
+		return deny
+	}, wsPaidOnly)
+	f.up.Script = []anthropicfake.Reply{anthropicfake.StreamOK(testModel, testUsage)}
+
+	streamBody := `{"model":"` + testModel + `","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"ws8-stream-retry"}]}`
+	resp := f.post(t, MessagesPath, streamBody)
+	defer resp.Body.Close()
+	n, _ := io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the streamed call answered %d, want it served: a lost settle is not the run's refusal", resp.StatusCode)
+	}
+	if n == 0 {
+		t.Error("the answer carried no bytes, so the run was not served the stream this test is about")
+	}
+	// The settle runs after the last byte, so the month is read once the write
+	// the test denied comes back — and a retry is the only way it can hold the
+	// usage: the denied write recorded nothing.
+	room := f.wsRoom(t)
+	if room.Settled != wsRow(t, testModel).Rates.Cost(testUsage) {
+		t.Errorf("the month settled at %v, want the usage's own cost %v: the settle's first write was refused and the call must still be charged",
+			room.Settled.USD(), wsRow(t, testModel).Rates.Cost(testUsage).USD())
+	}
+	if room.Reserved != 0 {
+		t.Errorf("the month still holds %v of room after the call settled, want none", room.Reserved.USD())
+	}
+	if got := deny.writesSeen(); got < 3 {
+		t.Errorf("the meter was offered %d writes, want the reservation, the refused settle and the retry", got)
+	}
+	if s := f.logs.String(); strings.Contains(s, "could not be recorded") {
+		t.Errorf("the service logged a failure for a settle it retried into the month: %s", s)
 	}
 }
 
