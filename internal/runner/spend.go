@@ -38,8 +38,10 @@ type Spend struct {
 	// the string's: c1.Effective answers observe for a mode left unset and for
 	// the word that was a mode, so every reader of what a run is accounted for
 	// asks there (On below, and the budget record's own mode). The raw string
-	// survives because the gateway's question still reads it and only AB1b
-	// makes that question unconditional (D3009, R3).
+	// survives because two questions are still asked of it as a string: the
+	// gateway's, which only AB1b makes unconditional, and projectpolicy's
+	// liveMode, which reads what the *job's own environment* names to tell a
+	// launch its launcher mints for from one it mints nothing for (D3009, R3).
 	Mode   string
 	Cap    pricing.Micros // 0: none
 	Prices *pricing.Table // the built-in table with the owner's overrides; nil only for a Spend built by hand

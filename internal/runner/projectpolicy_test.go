@@ -150,12 +150,18 @@ func TestRunnerHaltsOnADeniedReadWhenTheMarkerExists(t *testing.T) {
 // mode is off or unset and which has published nothing, and such a run has
 // nothing to read. The three subtests below pin the shapes it takes.
 //
-// The other absences stay refusals: a job that names a database and carries no
-// web API key stops on the missing key (the third subtest), and one whose token
-// object cannot be read stops when the launcher's marker says this run had one
-// (the fourth; the marked form is TestRunnerWithTheMintedMarkerRefusesAMissingToken).
-// The markless absent token is the one arm still standing, and AB4 is what
-// closes it, by making the launcher mint on every launch.
+// "Minted nothing" is read from two facts, and both are needed: the launch
+// carries no marker, and the job's own environment names no live mode (a
+// launcher mints for what it can see, and internal/infra writes a mode into the
+// job only for an installation that mints). The other absences stay refusals: a
+// job that names a database and carries no web API key stops on the missing key
+// (the third subtest), a marked job's absent token stops (the fourth; the
+// marked form is TestRunnerWithTheMintedMarkerRefusesAMissingToken), and so
+// does a markless one whose job names a live mode
+// (TestTheMissingTokenRefusalWithoutTheMarkerReadsRight): a job launched with
+// its token's override dropped, which no launcher does and which must not run
+// unaccounted. The markless arm with no live mode is the one still standing,
+// and AB4 is what closes it, by making the launcher mint on every launch.
 func TestALaunchThatMintedNothingOpensNoSession(t *testing.T) {
 	t.Run("the job carries no backend", func(t *testing.T) {
 		g := newGW(t, gwConfig(t, ""), "off", "")
@@ -321,6 +327,56 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 			t.Fatalf("a run with nothing to read made %d database requests", n)
 		}
 	})
+}
+
+// The other sentence of the same refusal: a job whose own environment names a
+// live mode — enforce here, and internal/infra writes the mode into a job only
+// when it is observe or enforce, so the launcher of this installation mints —
+// launched with no marker and with its token object gone. The run cannot tell a
+// bucket aged out from a launch that never carried one, and the mode is what
+// keeps this from being the markless arm that runs on (budgetClient's
+// !liveMode case): a job of an installation that mints nothing carries no mode.
+// It carries the same grant and the same remedy, and this is the sentence the
+// unbalanced parenthesis was in for the other case too — one constant, two
+// sentences, so a test of one of them pins the shape of both.
+func TestTheMissingTokenRefusalWithoutTheMarkerReadsRight(t *testing.T) {
+	const policy = `{"version":9,"budget":{"mode":"enforce","per_run_usd":0.09}}`
+	b := policyRun(t, gwConfig(t, ""), "enforce", "5", policy, capScript(3)...)
+	b.unmarked()
+	if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := b.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a budget-on run whose token cannot be read must stop: rec = %+v", rec)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "was not launched with one") {
+		t.Fatalf("err = %v, want the refusal a launch with no marker gets", err)
+	}
+	for _, want := range []string{"tokens/", "read grant", "fugaro update", "start a new run (fugaro run with the same task)"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// The sentence carries two causes and two cures, and they are told apart
+	// rather than run together: the grant's cure (the operator's `fugaro update
+	// --repo`, inside the aside) and the new run that follows either cause.
+	// Reading it as a list — "…not launched with one, or <grant>, then start a
+	// new run…: … reports it; launch the run again" — left the reader to work
+	// out which cure belonged to which cause, and read as though the init were
+	// optional (review finding m5). The dashes are the shape, so they are what
+	// is pinned: an edit that flattens them back into commas fails here.
+	if !strings.Contains(msg, "— either way, start a new run") {
+		t.Errorf("the two causes and the two cures are not told apart: %v", err)
+	}
+	if !strings.Contains(msg, "reports it — and when the grant is the cause") {
+		t.Errorf("the refusal does not say what to do when the grant is the cause: %v", err)
+	}
+	assertBalancedParens(t, msg)
+	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+		t.Fatalf("the run went on without its token: calls = %d, rec = %+v", len(b.agent.calls), rec)
+	}
 }
 
 // assertBalancedParens fails unless every "(" in s closes, and none closes

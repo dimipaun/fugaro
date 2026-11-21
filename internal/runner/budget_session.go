@@ -447,10 +447,11 @@ func strayTokenNoBackend() error {
 // (C1, D3009, R3) — so nothing here asks the mode before it takes the run's
 // identity. What a run can still meet is a job it has nothing to open a session
 // against: a marked one with no database, which is the refusal below naming its
-// fix, and a markless one whose token object is not there — a launch the
-// launcher minted nothing for, which opens no session and runs on the
-// environment ceiling exactly as it did before AB1a (budgetClient's markless
-// arm; AB4 is what makes every launch mint).
+// fix, and a markless one whose token object is not there and whose own
+// environment names no live mode — a launch the launcher minted nothing for,
+// which opens no session and runs on the environment ceiling exactly as it did
+// before AB1a (budgetClient's markless arm; AB4 is what makes every launch
+// mint). Everything else it can meet is a refusal.
 // It is reached only after admissionCheck has admitted this run — bootstrap
 // calls the check before the lock and before this, and nothing else calls
 // either — so the slug the session is keyed by (r.d.Store.Slug, through the

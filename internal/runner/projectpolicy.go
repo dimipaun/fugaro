@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -34,17 +35,19 @@ import (
 //     down this path either — the launcher's marker does, and the marker is
 //     evidence about this launch rather than about the mode. A job that cannot
 //     be read with — no FUGARO_FIREBASE_API_KEY, an environment this image
-//     cannot parse — stops on the shipped refusals below, and a marked job's
-//     absent token object does too; an exchange that fails halts the run the
-//     way the session's own Open does. A failure is never read as
-//     "no policy here", which would drop the run to the environment ceiling
-//     with the project's policy unenforced (R2-3). The markless absent token is
-//     the one absence that still reads that way, and the launcher bounds it: it
-//     mints for every launch it can see a shared budget or a published policy
-//     for, so markless is an installation whose mode is off or unset and which
-//     has published nothing. Such a run has nothing to read, and until the
-//     launcher mints on every launch (AB4, R6) a refusal here would stop it on a
-//     fix that cannot change what its launcher mints.
+//     cannot parse — stops on the shipped refusals below, and an absent token
+//     object does too unless the launch is one the launcher could not have
+//     minted for; an exchange that fails halts the run the way the session's
+//     own Open does. A failure is never read as "no policy here", which would
+//     drop the run to the environment ceiling with the project's policy
+//     unenforced (R2-3). The one absence that still reads that way is the
+//     markless launch with no token whose job names no live mode (liveMode): a
+//     launcher mints for what it can see — a shared budget, or a published
+//     policy — and internal/infra writes a mode into the job only when it is
+//     observe or enforce, so that is an installation whose mode is off or unset
+//     and which has published nothing. Such a run has nothing to read, and
+//     until the launcher mints on every launch (AB4, R6) a refusal here would
+//     stop it on a fix that cannot change what its launcher mints.
 //   - Whether a policy exists at all may not be guessed from a read this run
 //     cannot make. The rules marker decides (projectpolicy.Read): before the
 //     policy rules are deployed, no policy can have been published here, so an
@@ -69,7 +72,7 @@ type policyRead struct {
 //
 // db nil and err nil mean this run has nothing to read with: the job carries no
 // backend at all, or names one and holds no token object for this run with no
-// marker saying one was minted (see budgetClient).
+// marker saying one was minted and no live mode of its own (see budgetClient).
 type budgetIdentity struct {
 	done   bool
 	cfg    budget.Config
@@ -350,6 +353,21 @@ func (r *run) unreadablePolicy(err error) error {
 		projectpolicy.PathShared(), marker, projectpolicy.RulesVersion, r.redact(err.Error()))
 }
 
+// liveMode reports whether a mode string names one of the two live modes. It
+// has one reader — budgetClient's markless arm — and its subject is the job's
+// own environment rather than what the run is accounted for: internal/infra
+// writes FUGARO_BUDGET_MODE only when the mode is observe or enforce
+// (budgetEnv), so a job carrying one is a job whose launcher mints, while a job
+// carrying "" or the word that was a mode is a launch of an installation whose
+// launcher mints nothing (internal/cli's budgetMintOn: the mode is off, and no
+// policy node was found to mint for). What a run is *accounted for* is C1's
+// answer and never this string (Spend.On, and the record's own mode); the raw
+// string is otherwise kept for the gateway's question, which AB1b makes
+// unconditional.
+func liveMode(mode string) bool {
+	return mode == policy.ModeObserve || mode == policy.ModeEnforce
+}
+
 // budgetClient builds the client this run reads the project's database with,
 // from its own Firebase identity. It is the run's one call site of
 // takeBudgetToken — the memo guard below is what makes it one read of the
@@ -359,24 +377,27 @@ func (r *run) unreadablePolicy(err error) error {
 //
 // A nil client with a nil error means this launch has nothing to read the
 // project's policy with: the job carries no backend at all, or names one and
-// holds no token object for this run with no marker saying one was minted. From
-// AB1a on every run is accounted for (D3009, R3), so the mode is not what
-// decides which absence that is — the launcher's marker is, and it is evidence
-// about this launch rather than about the mode.
+// holds no token object for this run with no marker saying one was minted and
+// no live mode in its own environment (liveMode). From AB1a on every run is
+// accounted for (D3009, R3), so what a run is accounted for is never what
+// decides that — the launcher's evidence about this launch is: its marker, and
+// the mode the job carries, which internal/infra writes only for an
+// installation whose launcher mints.
 //
-// A markless absent token is the one absence that is not a refusal: the
-// launcher mints whenever it can see a shared budget or a published policy
-// (internal/cli's budgetMintOn), so markless is the shape an installation whose
-// mode is off or unset and which has published nothing gives its runs — nothing
-// to read, and no session to open. Such a run holds the environment ceiling
-// exactly as it did before AB1a, and refusing it would stop it on a remedy —
-// fugaro update — that cannot change what its launcher mints until the launcher
-// mints on every launch (AB4, R6).
+// The one absence that is not a refusal is a markless launch with no token
+// whose job names no live mode. The launcher mints whenever it can see a shared
+// budget or a published policy (internal/cli's budgetMintOn), so this is the
+// shape an installation whose mode is off or unset and which has published
+// nothing gives its runs: nothing to read, no session to open, and the
+// environment ceiling exactly as it stood before AB1a. Refusing it would stop
+// such a run on a remedy — fugaro update — that cannot change what its launcher
+// mints until the launcher mints on every launch (AB4, R6).
 //
 // Everything else that leaves this function clientless is a refusal, returned
-// as the error that ends bootstrap, already classified: a marked job's absent
-// token, which is a token this run HAD; an environment this image cannot parse;
-// a job that names a database with no web API key to exchange with.
+// as the error that ends bootstrap, already classified: an absent token when a
+// marker says this run had one, or when the job's own mode is one its launcher
+// mints for; an environment this image cannot parse; a job that names a
+// database with no web API key to exchange with.
 func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 	c := &r.ident
 	if c.done {
@@ -418,26 +439,31 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 	custom, err := r.takeBudgetToken(ctx)
 	switch {
 	case err == nil:
-	case errors.Is(err, token.ErrNoToken) && !r.d.Backend.TokenMarked:
-		// No token object, and no launcher said it minted one: nothing to read.
-		// The launcher mints for every launch it can give an identity to — a
-		// shared budget, or a published policy it can see — so markless here is
-		// a launch that had nothing to mint for, which until the launcher mints
-		// on every launch (AB4, R6) is the deployment of an installation whose
-		// mode is off or unset and which has published nothing. Its runs read no
-		// policy and no cap, exactly as they did before AB1a; the refusal that
-		// used to stand here would stop them on a remedy — fugaro update —
-		// that cannot change what the launcher of that installation mints.
+	case errors.Is(err, token.ErrNoToken) && !r.d.Backend.TokenMarked && !liveMode(r.d.Spend.Mode):
+		// No token object, no launcher said it minted one, and the job's own
+		// environment names no live mode: nothing to read, and no launch that
+		// was entitled to a token. The launcher mints only for what it can see
+		// — a shared budget, or a published policy — and internal/infra writes
+		// the mode into the job only when it is observe or enforce, so this is
+		// the deployment of an installation whose mode is off or unset and
+		// which has published nothing, with no session and no cap, exactly as
+		// before AB1a. Until the launcher mints on every launch (AB4, R6) the
+		// refusal that used to stand here would stop such a run on a remedy —
+		// fugaro update — that cannot change what its launcher mints.
 		return nil, nil
 	case errors.Is(err, token.ErrNoToken):
 		// The shipped refusal (B1, budget_session.go's startBudgetBackend said
-		// the same before this read existed), and it is the marked launch's:
-		// the launcher mints whenever it can see a shared budget or a published
-		// policy, so a marker means this run HAD a token. Reading its absence as
-		// "no policy here" would run a job of a policy-enforcing project with no
-		// session, no cap and no kill switch. The marker is a fact about this
-		// launch, so it is the one the run trusts; the markless case returned
-		// above.
+		// the same before this read existed), in the two sentences it has
+		// always had. The marker picks the marked one (M2) and is a fact about
+		// this launch, so it is the one the run trusts; a markless job whose
+		// own environment names a live mode is a launch its launcher was
+		// entitled to mint for — infra writes no mode on an installation that
+		// mints nothing, and a markless job of one never reaches here (the arm
+		// above) — so an absent token is a token this run's launch should have
+		// carried: a direct execution of the job, or one whose override was
+		// dropped. Reading either absence as "no policy here" would run a job
+		// of a policy-enforcing project with no session, no cap and no kill
+		// switch.
 		//
 		// What the absence means changed with the seal (D16): the take is
 		// read-only and no run can delete a queued run's object, so "already
@@ -449,7 +475,11 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		// since the token moved to tokens/ has none — so the refusal names it
 		// and its cure first. It names no object, and no key.
 		const grant = "this job's service account lacks its read grant on the repository's token objects under tokens/ (a job not re-applied since the upgrade that moved the budget token there: an operator runs fugaro update for this repository in its checkout)"
-		c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment); the run cannot tell a refused read from a missing object. Either %s — then start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it — or the object is gone (a launch that failed and was cleaned up, or the bucket's day-long lifecycle rule): launch the run again", grant)
+		if r.d.Backend.TokenMarked {
+			c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment); the run cannot tell a refused read from a missing object. Either %s — then start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it — or the object is gone (a launch that failed and was cleaned up, or the bucket's day-long lifecycle rule): launch the run again", grant)
+			return nil, c.err
+		}
+		c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket: the run was not launched with one, or %s — either way, start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it — and when the grant is the cause, an operator runs that update first", grant)
 		return nil, c.err
 	default:
 		c.err = err
