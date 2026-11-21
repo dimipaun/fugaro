@@ -299,7 +299,7 @@ func wu11New(t *testing.T) *wu11Harness {
 		t.Fatal(err)
 	}
 	h.store = &wu11FakeStore{raw: raw, writes: h.writes}
-	h.auth = &wu11FakeAuthority{holds: true, admins: slices.Clone(h.roster.Admins), writes: h.writes}
+	h.auth = &wu11FakeAuthority{holds: true, admins: wu11Members(h.roster.Admins), writes: h.writes}
 	h.ops = &wu11FakeOps{
 		bindings: []workspace.MemberBinding{{
 			Project:   "alpha-gcp",
@@ -322,7 +322,7 @@ func wu11New(t *testing.T) *wu11Harness {
 		broker:   brokerState{Serving: true, Detail: " revision acme-00042"},
 		images:   []imageJob{{Name: "fugaro-preload-alpha-gcp", LastSuccess: wu11Now.Add(-4 * time.Hour)}},
 		caps:     memberCaps{Set: true, Monthly: 100_000_000, Spent: 10_000_000, SpentRead: true},
-		accounts: map[string]accountAccess{wu11Account: {Keys: []accountKey{{ID: "key-1", Created: wu11Now.Add(-30 * 24 * time.Hour)}}, ActAs: slices.Clone(h.roster.Admins)}},
+		accounts: map[string]accountAccess{wu11Account: {Keys: []accountKey{{ID: "key-1", Created: wu11Now.Add(-30 * 24 * time.Hour)}}, ActAs: wu11Members(h.roster.Admins)}},
 	}
 	h.memberCfg = &localcfg.Config{}
 	h.getenv = func(string) string { return "" }
@@ -385,6 +385,18 @@ func wu11New(t *testing.T) *wu11Harness {
 	// Every test ends by asserting the read never wrote, on the path it walked.
 	t.Cleanup(func() { h.writes.check(t) })
 	return h
+}
+
+// wu11Members is a list of addresses in the spelling the live side answers in:
+// IAM names a person "user:" and the address, while the record's `Admins` holds
+// the bare address, and the fakes answer the way the API does so the two
+// spellings are what the rows are held to.
+func wu11Members(addrs []string) []string {
+	out := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		out = append(out, "user:"+a)
+	}
+	return out
 }
 
 // wu11Roster builds a roster the encoder accepts: the admins and the granted
@@ -708,7 +720,7 @@ func TestStatusSingleAdminWarns(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.store.raw = raw
-	h.auth.admins = slices.Clone(h.roster.Admins)
+	h.auth.admins = wu11Members(h.roster.Admins)
 
 	d := h.doc("")
 	r := wu11WorkspaceRow(t, d, rowSingleAdmin)
@@ -731,7 +743,7 @@ func TestStatusSingleAdminWarns(t *testing.T) {
 // not name. The record is a claim about IAM, so either direction is a fail.
 func TestStatusFlagsAdminTampering(t *testing.T) {
 	h := wu11New(t)
-	h.auth.admins = []string{"two@example.com", "stranger@example.com"}
+	h.auth.admins = wu11Members([]string{"two@example.com", "stranger@example.com"})
 	r := wu11WorkspaceRow(t, h.doc(""), rowAdminBinding)
 	if r.Status != wsFail {
 		t.Fatalf("tampering is %s, want fail", r.Status)
@@ -811,7 +823,7 @@ func TestStatusNamesAccountKeysAndActAsHolders(t *testing.T) {
 			{ID: "key-1", Created: wu11Now.Add(-30 * 24 * time.Hour)},
 			{ID: "key-2", Created: wu11Now.Add(-90 * 24 * time.Hour)},
 		},
-		ActAs: []string{"one@example.com", "two@example.com", "stranger@example.com"},
+		ActAs: wu11Members([]string{"one@example.com", "two@example.com", "stranger@example.com"}),
 	}
 	d := h.doc("")
 
@@ -852,7 +864,7 @@ func TestStatusNamesAccountKeysAndActAsHolders(t *testing.T) {
 	// No key and only the record's own admins holding actAs: both rows pass,
 	// and they still carry the sentence about what a key is.
 	h = wu11New(t)
-	h.cloud.accounts[wu11Account] = accountAccess{ActAs: slices.Clone(h.roster.Admins)}
+	h.cloud.accounts[wu11Account] = accountAccess{ActAs: wu11Members(h.roster.Admins)}
 	d = h.doc("")
 	for _, id := range []string{rowAccountKeys, rowAccountActAs} {
 		r := wu11WorkspaceRow(t, d, id)
@@ -901,7 +913,7 @@ func TestStatusEscapesMemberStrings(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.store.raw = raw
-	h.auth.admins = []string{"one@example.com"}
+	h.auth.admins = wu11Members([]string{"one@example.com"})
 	table := map[string]localcfg.WorkspaceMember{
 		"alpha" + esc: {
 			FP:              "alpha",
@@ -913,7 +925,7 @@ func TestStatusEscapesMemberStrings(t *testing.T) {
 	h.cloud.creds.Stored = []memberCredential{{Name: "anthropic" + esc, Stored: true, Created: wu11Now}}
 	h.cloud.accounts[wu11Account] = accountAccess{
 		Keys:  []accountKey{{ID: "key" + esc, Created: wu11Now}},
-		ActAs: []string{"stranger" + esc + "@example.com"},
+		ActAs: []string{"user:stranger" + esc + "@example.com"},
 	}
 
 	d := h.doc("")
@@ -944,7 +956,7 @@ func TestProjectLsJSONSchema(t *testing.T) {
 	// A member with a failing row, a warn and a pass all at once, so the
 	// document the schema is held to is not one shape only.
 	h.cloud.creds.Missing = []string{"claude-team"}
-	h.auth.admins = []string{"two@example.com"}
+	h.auth.admins = wu11Members([]string{"two@example.com"})
 	h.ops.pending = workspace.Pending{Admins: []string{"three@example.com"}, NotMeasured: []string{workspace.NotMeasuredViewers}}
 	out, err := h.screen("", true)
 	var exit *ExitError

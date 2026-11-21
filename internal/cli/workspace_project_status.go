@@ -1254,6 +1254,25 @@ func (s *WorkspaceProjectStatus) workspaceRows(ctx context.Context, roster *work
 	return rows
 }
 
+// wsAdminAddress is one of the mechanism's live bindings as the record spells
+// the same person. The two sides spell a principal differently: the record's
+// `Admins` holds the bare address, because that is what a roster is a list of,
+// and IAM holds the member string (`user:` and the address, access.Member's
+// spelling). Every comparison between the two -- D2823's two questions and the
+// actAs one -- is decided between the spellings, never inside one of them: read
+// as written, an untampered workspace would report every one of its admins as
+// tampering with, and `status` would exit nonzero on a workspace nothing is
+// wrong with.
+//
+// Only a person is translated. A workspace admin is a person by the record's own
+// validation, and a role held through a group, a domain or a service account is
+// that principal and not a person of the record: its spelling is returned as it
+// is, so it cannot come to equal an admin's address and is reported as the
+// binding holder the record does not name.
+func wsAdminAddress(member string) string {
+	return strings.TrimPrefix(member, "user:")
+}
+
 // rowAdminBinding is D2823: an `Admins` entry with no live binding, or a live
 // binding whose holder is not in `Admins`. Either direction is a fail, because
 // the accounts that can rewrite `Admins` cannot set a binding: the record is a
@@ -1274,12 +1293,12 @@ func (s *WorkspaceProjectStatus) rowAdminBinding(ctx context.Context, roster *wo
 	}
 	var claimed, unbound []string
 	for _, a := range roster.Admins {
-		if !slices.Contains(live, a) {
+		if !slices.ContainsFunc(live, func(m string) bool { return wsAdminAddress(m) == a }) {
 			claimed = append(claimed, wsEsc(a))
 		}
 	}
 	for _, a := range live {
-		if !slices.Contains(roster.Admins, a) {
+		if !slices.Contains(roster.Admins, wsAdminAddress(a)) {
 			unbound = append(unbound, wsEsc(a))
 		}
 	}
@@ -1366,10 +1385,13 @@ func (s *WorkspaceProjectStatus) accountRows(ctx context.Context, roster *worksp
 	// record's admins: a workspace admin holding actAs is the mechanism working
 	// (they may impersonate the account the workspace acts through), and a
 	// principal the record does not name is somebody who holds the workspace's
-	// own authority without appearing in it.
+	// own authority without appearing in it. The record's `Admins` holds bare
+	// addresses and the account's policy holds member strings, so the two are
+	// compared through wsAdminAddress -- read as written, every legitimate admin
+	// would be reported as a stranger holding the workspace's own authority.
 	var strangers []string
 	for _, h := range acc.ActAs {
-		if !slices.Contains(roster.Admins, h) {
+		if !slices.Contains(roster.Admins, wsAdminAddress(h)) {
 			strangers = append(strangers, wsEsc(h))
 		}
 	}
