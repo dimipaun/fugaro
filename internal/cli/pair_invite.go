@@ -159,7 +159,7 @@ func pairInviteNonce() (string, error) {
 // audience the assertion is checked against.
 func pairMobileEndpoint(lc *localcfg.Config) (string, error) {
 	if lc == nil || lc.CredentialsService == nil || lc.CredentialsService.URL == "" {
-		return "", userErr("this installation has no credentials service in its local config, so there is no address to read the mobile endpoint's out of: the mobile service is deployed with it, by `fugaro update`, which is the whole upgrade — run it and try again")
+		return "", userErr("this installation has no credentials service in its local config, so there is no address to read the mobile endpoint out of, and this release deploys no mobile service to read one for: the mobile service, the pairing endpoint that consumes an invitation and the consumer key the QR pins all arrive in a later release, so no invitation can be sent yet")
 	}
 	u, err := url.Parse(lc.CredentialsService.URL)
 	if err != nil || u.Host == "" {
@@ -214,7 +214,7 @@ func pairConsumerKey(ctx context.Context, lc *localcfg.Config, db *rtdb.Client) 
 		return nil, dbErr(lc, err, false)
 	}
 	if !found || node.V != pairConsumerKeyVersion {
-		return nil, userErr("this installation has published no mailbox consumer key at %s, so an invitation has no fingerprint to put in its QR (O16): run `fugaro update`, which publishes the consumer's public half there, and try again", pairConsumerKeyPath)
+		return nil, userErr("this installation has published no mailbox consumer key at %s, and this release publishes none: the consumer key, the mobile service and the pairing endpoint arrive in a later release, so an invitation has no fingerprint to put in its QR yet (O16)", pairConsumerKeyPath)
 	}
 	key, err := base64.RawURLEncoding.Strict().DecodeString(node.PublicKey)
 	if err != nil || len(key) != 32 {
