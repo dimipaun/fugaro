@@ -15,6 +15,7 @@ package workspace
 import (
 	"cmp"
 	"context"
+	"errors"
 	"reflect"
 	"slices"
 	"strings"
@@ -99,14 +100,21 @@ type wu12Read struct {
 }
 
 // wu12Changes is the Cloud Audit Logs reader: the changes each project's
-// Admin Activity log carries, and the reads it was asked for.
+// Admin Activity log carries, the reads it was asked for, and the project whose
+// read fails if a test wants one to -- a reader the caller may hold no role for
+// is the ordinary case of a workspace admin reading a member's log, so a failure
+// is a state drift has to answer rather than a broken fake.
 type wu12Changes struct {
 	changes map[string][]SetIamPolicyChange
 	asked   []wu12Read
+	fails   string
 }
 
 func (c *wu12Changes) SetIamPolicyChanges(_ context.Context, project string, since time.Time) ([]SetIamPolicyChange, error) {
 	c.asked = append(c.asked, wu12Read{project, since})
+	if project == c.fails {
+		return nil, errors.New("wu12: the caller may not read this project's log")
+	}
 	return c.changes[project], nil
 }
 
@@ -394,7 +402,13 @@ func TestDriftExtraAndMissing(t *testing.T) {
 // applied is the record's, so it is not drift in the first place. The second
 // change below added somebody nobody states and no trail records, and it is the
 // one named; the third added somebody nobody states and a trail of Fugaro's
-// holds, and it is not.
+// holds, and it is not; the last two added Fugaro's own accounts, which are
+// dropped from the live side before anything is compared and are therefore
+// named by neither side -- asking the live bindings about them would answer
+// with silence and call the member's own plumbing a console change.
+//
+// A read that fails is the same kind of state: a window nobody saw, which the
+// report carries as Unmeasured and which does not take the Extra with it.
 func TestDriftNamesConsoleChangeNotUpdate(t *testing.T) {
 	node := wu12Node(t,
 		[]Person{{Address: wu12Alice, Kind: KindHuman}},
@@ -410,6 +424,10 @@ func TestDriftNamesConsoleChangeNotUpdate(t *testing.T) {
 			{Project: wu12Member, Principal: owner, Member: "user:mallory@corp.example", Role: "roles/editor", Entry: "console-entry", At: at.Add(time.Minute)},
 			// One this workspace's own trail recorded, so no cross-check is owed.
 			{Project: wu12Member, Principal: owner, Member: "user:dave@corp.example", Role: "roles/viewer", Entry: "trailed-entry", At: at.Add(2 * time.Minute)},
+			// Fugaro's own accounts, which the record states for nobody because
+			// the update that writes them is Fugaro's own Terraform.
+			{Project: wu12Member, Principal: owner, Member: iamMember(wu12JobAccount), Role: "roles/owner", Entry: "job-entry", At: at.Add(3 * time.Minute)},
+			{Project: wu12Member, Principal: owner, Member: iamMember(wu12IAMAccount), Role: "roles/owner", Entry: "iam-entry", At: at.Add(4 * time.Minute)},
 		},
 	}}
 	src := wu12Sources(node, wu12Authority{t: t, kind: AuthorityFolder, admins: []string{iamMember(wu12Alice)}})
@@ -417,6 +435,8 @@ func TestDriftNamesConsoleChangeNotUpdate(t *testing.T) {
 	src.Bindings = []MemberBinding{
 		wu12Bound(wu12Member, wu12Alice, "roles/editor", PrincipalPerson),
 		wu12Bound(wu12Member, "dave@corp.example", "roles/viewer", PrincipalPerson),
+		wu12Bound(wu12Member, wu12JobAccount, "roles/owner", PrincipalTerraform),
+		wu12Bound(wu12Member, wu12IAMAccount, "roles/owner", PrincipalWorkspaceIAM),
 	}
 	src.Trail = []AuditEvent{{
 		Version: AuditEventVersion, ID: "evt-1", Time: at.Add(2 * time.Minute), Actor: owner,
@@ -438,5 +458,24 @@ func TestDriftNamesConsoleChangeNotUpdate(t *testing.T) {
 	blindReport := wu12Compute(t, blind, wu12Target)
 	if len(blindReport.ConsoleChanges) != 0 || len(blindReport.Unmeasured) == 0 {
 		t.Fatalf("no reader means the cross-check is unmeasured, not clean: %+v", blindReport)
+	}
+
+	// A reader whose read fails on one project: the window nobody could read is
+	// named, one entry for the project, and the report keeps what it did measure
+	// -- the read is a sample of the window, so losing Extra and Missing to it
+	// would be losing the comparison the caller asked for.
+	unread := wu12Sources(node, wu12Authority{t: t, kind: AuthorityFolder, admins: []string{iamMember(wu12Alice)}})
+	unread.Bindings = src.Bindings
+	unread.Changes = &wu12Changes{fails: wu12Member}
+	unreadReport := wu12Compute(t, unread, wu12Target)
+	if len(unreadReport.ConsoleChanges) != 0 {
+		t.Fatalf("a project whose log could not be read names no change: %+v", unreadReport.ConsoleChanges)
+	}
+	if len(unreadReport.Unmeasured) != 1 || !strings.Contains(unreadReport.Unmeasured[0], wu12Member) {
+		t.Fatalf("a failed read is unmeasured, named by the project it was for:\n got %+v", unreadReport.Unmeasured)
+	}
+	wantExtra := []DriftBinding{{Project: wu12Member, Principal: "dave@corp.example", Role: "roles/viewer", Kind: PrincipalPerson}}
+	if !reflect.DeepEqual(unreadReport.Extra, wantExtra) {
+		t.Fatalf("a failed read does not take the comparison with it:\n got %+v\nwant %+v", unreadReport.Extra, wantExtra)
 	}
 }

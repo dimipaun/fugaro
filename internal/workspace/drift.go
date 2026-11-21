@@ -314,8 +314,14 @@ func ComputeDrift(ctx context.Context, src DriftSources, m MemberTarget) (DriftR
 	}
 	live := map[driftPair]driftLive{}
 	var liveBindings []driftLive
+	// Fugaro's own accounts are remembered as their own set before they are
+	// dropped: the cross-check below asks whether a change ADDED one of them, and
+	// a binding that was dropped from `live` would answer that question with
+	// silence (see consoleChanges).
+	fugaro := map[driftPair]bool{}
 	for _, b := range src.Bindings {
 		if b.Kind == PrincipalTerraform || b.Kind == PrincipalWorkspaceIAM {
+			fugaro[driftPair{b.Project, driftAddress(b.Principal)}] = true
 			continue
 		}
 		if !slices.Contains(projects, b.Project) {
@@ -366,10 +372,8 @@ func ComputeDrift(ctx context.Context, src DriftSources, m MemberTarget) (DriftR
 	unmeasured, adminExtra := workspaceAdminDrift(src, m, admins, claimed)
 	extra = append(extra, adminExtra...)
 
-	changes, err := consoleChanges(ctx, src, projects, record, roster, live)
-	if err != nil {
-		return DriftReport{}, err
-	}
+	changes, audit := consoleChanges(ctx, src, projects, record, roster, fugaro)
+	unmeasured = append(unmeasured, audit...)
 	if src.Changes == nil {
 		unmeasured = append(unmeasured, "Cloud Audit Logs: no reader was given, so no SetIamPolicy change was compared")
 	}
@@ -436,13 +440,25 @@ func workspaceAdminDrift(src DriftSources, m MemberTarget, admins []string, clai
 // named whoever made it -- a hand-edited roster applied by an update included,
 // which is exactly the unmapped binding D2805 makes visible.
 //
+// A change that added one of Fugaro's own accounts is not named either, and
+// `fugaro` is the set that answers it: those bindings are dropped from the live
+// side before anything is compared, so asking `live` would answer with silence
+// and name the member's own plumbing -- its Terraform's build account, the
+// workspace's IAM account -- as a change made by hand in Google's console.
+//
 // A change a trail of Fugaro's holds is not named either: the cross-check exists
 // to find what no Fugaro command recorded, and a grant written through the
 // workspace's own commands has an event beside it. The two are matched by the
 // project, the caller, the address the change was made to and the moment, and
 // not by the role, because the trail records Fugaro's roles and the log
 // Google's (trailHolds).
-func consoleChanges(ctx context.Context, src DriftSources, projects []string, record, roster map[driftPair]bool, live map[driftPair]driftLive) ([]ConsoleChange, error) {
+//
+// A read that fails does not fail the drift: what it answered would have been a
+// sample of the window, and reporting nothing at all would lose the Extra and
+// Missing the caller asked for. The failure is named in the second result
+// instead, one entry per project, which the report carries as Unmeasured -- a
+// window nobody read is not a window that was clean.
+func consoleChanges(ctx context.Context, src DriftSources, projects []string, record, roster, fugaro map[driftPair]bool) ([]ConsoleChange, []string) {
 	if src.Changes == nil {
 		return nil, nil
 	}
@@ -455,17 +471,16 @@ func consoleChanges(ctx context.Context, src DriftSources, projects []string, re
 		since = now.Add(-DriftAuditWindow)
 	}
 	var out []ConsoleChange
+	var unmeasured []string
 	for _, project := range projects {
 		changes, err := src.Changes.SetIamPolicyChanges(ctx, project, since)
 		if err != nil {
-			return nil, fmt.Errorf("reading the Cloud Audit Logs of %s: %w", project, err)
+			unmeasured = append(unmeasured, fmt.Sprintf("Cloud Audit Logs of %s: %v", project, err))
+			continue
 		}
 		for _, c := range changes {
 			pair := driftPair{c.Project, driftAddress(c.Member)}
-			if record[pair] || roster[pair] {
-				continue
-			}
-			if l, ok := live[pair]; ok && (l.kind == PrincipalTerraform || l.kind == PrincipalWorkspaceIAM) {
+			if record[pair] || roster[pair] || fugaro[pair] {
 				continue
 			}
 			if trailHolds(src.Trail, c) {
@@ -485,7 +500,7 @@ func consoleChanges(ctx context.Context, src DriftSources, projects []string, re
 		}
 		return strings.Compare(a.Principal, b.Principal)
 	})
-	return out, nil
+	return out, unmeasured
 }
 
 // trailHolds reports whether either of Fugaro's trails records the change: an
