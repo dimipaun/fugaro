@@ -346,6 +346,96 @@ func TestSelectSourcedShellLibraryReachesItsCallers(t *testing.T) {
 	}
 }
 
+// TestSelectAnAnyEntryRunsUnlessEveryChangedPathIsIgnored pins R4: a package
+// the map marks `any` reads a path it builds at run time, so it runs for a
+// change its own list does not name — unless every changed path is one its walk
+// states it steps out of, which is the only way such a package stands down.
+// That is the direction the selector may not fail in (the plan's first global
+// constraint), and the committed map marks 119 of its 135 packages `any`, so a
+// rule that stopped holding would silently run fewer tests than a full run
+// would have failed on.
+func TestSelectAnAnyEntryRunsUnlessEveryChangedPathIsIgnored(t *testing.T) {
+	// Hand-written, because selectFixture clears the committed map's `any`
+	// flags: nothing else here exercises the rule at all.
+	root := selectWriteRoot(t, map[string]string{
+		"go.mod": "module example.com/m\n\ngo 1.24\n",
+		readMapPath: `{"packages":[` +
+			`{"package":"./internal/alpha","reads":["internal/alpha/one.go"],"any":true},` +
+			`{"package":"./internal/beta","reads":["internal/beta/one.go"],"any":true,"ignores":["internal/beta/out"]},` +
+			`{"package":"./internal/named","reads":["internal/named/thing.go"]},` +
+			`{"package":"./internal/quiet","reads":["internal/quiet/other.go"]}]}` + "\n",
+	})
+	rows := []struct {
+		name  string
+		files []string
+		want  []string
+		not   []string
+	}{
+		{
+			name:  "an any entry whose list does not name the path",
+			files: []string{"internal/named/thing.go"},
+			want:  []string{"./internal/alpha", "./internal/beta", "./internal/named"},
+			not:   []string{"./internal/quiet"},
+		},
+		{
+			name:  "an any entry the only changed path is ignored by",
+			files: []string{"internal/beta/out/x.go"},
+			want:  []string{"./internal/alpha"},
+			not:   []string{"./internal/beta", "./internal/named", "./internal/quiet"},
+		},
+		{
+			name:  "an any entry only one of the changed paths is ignored by",
+			files: []string{"internal/beta/out/x.go", "internal/named/thing.go"},
+			want:  []string{"./internal/alpha", "./internal/beta", "./internal/named"},
+			not:   []string{"./internal/quiet"},
+		},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			out := selectIn(t, selectInput(root, []byte(selectTinyGraph), row.files...))
+			if out.Full {
+				t.Fatalf("Full = true: %s", out.Reason)
+			}
+			for _, pkg := range row.want {
+				if !selectHasPkg(out, pkg) {
+					t.Errorf("legs = %v, want %s to run", selectLegPkgs(out), pkg)
+				}
+			}
+			for _, pkg := range row.not {
+				if selectHasPkg(out, pkg) {
+					t.Errorf("legs = %v, want %s not to run", selectLegPkgs(out), pkg)
+				}
+			}
+		})
+	}
+	t.Run("every any entry of the committed map runs", func(t *testing.T) {
+		// The same rule against the real map: each entry it marks `any` that
+		// neither names this path nor steps out of it is one the run must hold.
+		const changed = "internal/localcfg/localcfg.go"
+		m, err := LoadReadMap(filepath.Join(selectRoot(t), readMapPath))
+		if err != nil {
+			t.Fatalf("read map: %v", err)
+		}
+		out := selectIn(t, selectRealInput(t, changed))
+		if out.Full {
+			t.Fatalf("Full = true: %s", out.Reason)
+		}
+		held := 0
+		for _, p := range m.Packages {
+			if !p.Any || readsAny(p, []string{changed}) || ignoredBy(p, changed) {
+				continue
+			}
+			held++
+			if !selectHasPkg(out, p.Package) {
+				t.Errorf("legs = %v, want %s to run: the map marks it `any`", selectLegPkgs(out), p.Package)
+			}
+		}
+		if held == 0 {
+			t.Fatal("the committed map marks no package `any` outside this path, so this subtest says nothing")
+		}
+	})
+}
+
 func TestSelectAnEmptyLegSetSkipsTheShardJob(t *testing.T) {
 	dir := selectWriteRoot(t, map[string]string{
 		"go.mod":    "module example.com/m\n\ngo 1.24\n",
