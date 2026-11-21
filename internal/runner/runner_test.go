@@ -235,9 +235,9 @@ const fixturePins = "models: { coder: claude-sonnet-5-5, reviewer: claude-opus-5
 func withFixturePins(cfg string) string {
 	var doc struct {
 		Agent *struct {
-			Model  string          `yaml:"model"`
-			Models map[string]any  `yaml:"models"`
-			Auth   string          `yaml:"auth"`
+			Model  string         `yaml:"model"`
+			Models map[string]any `yaml:"models"`
+			Auth   string         `yaml:"auth"`
 		} `yaml:"agent"`
 	}
 	if err := yaml.Unmarshal([]byte(cfg), &doc); err != nil || doc.Agent == nil {
