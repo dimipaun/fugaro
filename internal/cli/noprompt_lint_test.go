@@ -733,7 +733,8 @@ var dataReadSites = map[string]string{
 // FOUND, like a sanctioned site, so it cannot outlive the read it explains. A
 // prompt does not belong here: it belongs nowhere.
 var notADecisionSites = map[string]string{
-	"pair.go:pairReadCode": "the --json caller's own line: a console asks the operator for the code and hands the command the answer on stdin (§4.1, \"the typed code is read as one stdin line\"), so what arrives is data a caller delivered rather than a question the CLI put to a person; the interactive half reads the same value through readValue and is not this shape",
+	"pair.go:pairReadCode":         "the --json caller's own line: a console asks the operator for the code and hands the command the answer on stdin (§4.1, \"the typed code is read as one stdin line\"), so what arrives is data a caller delivered rather than a question the CLI put to a person; the interactive half reads the same value through readValue and is not this shape",
+	"workspace_user.go:readRoster": "the workspace's own roster node, read through C1's Store.Read(ctx): one argument, which is the byte-level read's shape, and a database node over IAM rather than a stream a person typed into — the read answers the document and the ETag together, a node that is not there is Found=false rather than a wait, and nothing in the family reads a terminal (the writer's own refusal, A7, prints a sentence and asks nothing)",
 }
 
 // pendingSites is every decision read the package still makes and the task of
