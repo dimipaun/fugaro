@@ -76,7 +76,7 @@ type secretsOptions struct {
 	cloud cloudOptions
 	repo  string
 	// projectWide stores or lists the secret once per Fugaro project rather
-	// than per repository (design docs/design/project-secrets.md §4).
+	// than per repository (design docs/project-secrets/spec.md §4).
 	projectWide bool
 	asJSON      bool
 	// allowDataTo and proxy are the policy write (D1171): the two members of
@@ -1770,7 +1770,7 @@ func projectWideHint(lc *localcfg.Config, name string) string {
 }
 
 // secretsSetProjectWide stores name's value once for the whole Fugaro
-// project (design docs/design/project-secrets.md §4). Eligibility is
+// project (design docs/project-secrets/spec.md §4). Eligibility is
 // projectWideAccepted's decision, and it runs before any value is read.
 func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, st *report.Step, env *cloudEnv, o secretsOptions, name string) (string, string, error) {
 	if !projectWideAccepted(env.lc, name) {

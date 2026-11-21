@@ -126,7 +126,7 @@ func TestAllowedClaudeAccountsEmptyOrNullAllowListMeansNone(t *testing.T) {
 }
 
 // TestClaudeAccountNameCharset pins the exact character set the plan's
-// design settled on (design docs/design/named-oauth-tokens.md §3): lower
+// design settled on (design docs/named-oauth-tokens/spec.md §3): lower
 // case letters, digits and single internal dashes, never "default". Red if
 // ClaudeAccountNameRE is ever widened to accept any of these.
 func TestClaudeAccountNameCharset(t *testing.T) {
@@ -266,7 +266,7 @@ func equalSorted(a, b []string) bool {
 
 // TestValidateClaudeAccountsRefusesWildcard pins that the literal "*" is
 // not a repository slug for a claude account: only providers: gets the
-// wildcard rule (design docs/design/project-secrets.md §3a), so a future
+// wildcard rule (design docs/project-secrets/spec.md §3a), so a future
 // change to ValidateModelProviders's own acceptance is never accidentally
 // copied here by a careless shared-helper edit.
 func TestValidateClaudeAccountsRefusesWildcard(t *testing.T) {

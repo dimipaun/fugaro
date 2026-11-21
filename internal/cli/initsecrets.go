@@ -389,7 +389,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		// The Anthropic key is asked for only when a run actually needs it:
 		// with the gateway on and every pin served by a provider the run never
 		// calls Anthropic, so init does not prompt for a value and does not
-		// store one (design docs/design/project-centric.md §6.1). The rule is
+		// store one (design docs/project-centric/spec.md §6.1). The rule is
 		// needsAnthropicKey (config.AnthropicKeyNeeded over the effective
 		// mode), the one validate and update --repo ask too.
 		needsKey := needsAnthropicKey(lc, cfg, repo)
@@ -406,7 +406,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 				if m.Logical == config.AnthropicSecret && !needsKey {
 					// No call of this run goes to Anthropic, so there is
 					// nothing to ask for: the run never calls it (design
-					// docs/design/project-centric.md §6.1). The container is
+					// docs/project-centric/spec.md §6.1). The container is
 					// still planned, so the owner can store a key later with
 					// `fugaro secrets set`, and a run that needs one without
 					// it is refused with that command.
@@ -424,7 +424,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		// already knows about per workflow; the line it leaves for one of
 		// them is that account's own `fugaro accounts add` command (Left),
 		// not the default's mint-then-store pair (design
-		// docs/design/named-oauth-tokens.md §3 T3, §4). A name the credentials
+		// docs/named-oauth-tokens/spec.md §3 T3, §4). A name the credentials
 		// block declares a key credential is no such account
 		// (config.ClaudeAccountTokenNames): it has no
 		// claude-oauth-token-<name>, and the command the entry would leave the

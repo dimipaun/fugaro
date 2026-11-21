@@ -83,8 +83,8 @@
           "internal/backend/batch/register.go",
           "internal/backend/batch/register_test.go",
           "internal/cli/docs_budget_token_channel_test.go",
-          "docs/design/budget-token-channel.md",
-          "docs/design/compute-backend.md"
+          "docs/budget-token-channel/spec.md",
+          "docs/compute-backend/spec.md"
         ]
       }
     },

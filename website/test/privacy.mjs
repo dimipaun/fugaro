@@ -243,7 +243,7 @@ export const APP_TELEMETRY = Object.freeze([
 // them — the sentence `EARLIER_BUILDS` below — which is the honest half of a statement about
 // an app the reader may not have. When the plan lands nothing here changes: the plan becomes
 // the thing direction B accepts, and the sentence stays true either way.
-export const TELEMETRY_PLAN = 'docs/plans/2026-10-19-mobile-telemetry.md'
+export const TELEMETRY_PLAN = 'docs/mobile/telemetry-plan.md'
 
 /** The sentence that says which version of the app this paragraph is about. */
 const EARLIER_BUILDS = /\b(?:earlier|previous|older) builds?\b[^.]*\bnothing\b/i
@@ -716,7 +716,7 @@ export const HOST_NAMING_LINKS = Object.freeze([
 /** The design the console's reporting sentence comes from. `website/test/console.mjs` holds the
  * downloads page's property to the same section, so the two pages state one fact between them
  * rather than two readings of it. */
-export const CONSOLE_DESIGN = 'docs/design/desktop-console.md'
+export const CONSOLE_DESIGN = 'docs/desktop-console/spec.md'
 
 /** What the design's section 7.4 says about the console's crash reporting, and therefore what
  * the privacy page says too. The design is the source and the page repeats it: the console is
@@ -1162,7 +1162,7 @@ export const SIGNUP_EMAIL_PHRASE = 'email address'
  * section 7.3 obliges the notice to state it, so the page's sentence is held to both. */
 export const MERCHANT_OF_RECORD = 'Paddle'
 export const MERCHANT_RECIPIENT_SENTENCE = 'The merchant of record appears as a recipient of buyers'
-export const SIGNUP_DESIGN = 'docs/design/key-signing-service.md'
+export const SIGNUP_DESIGN = 'docs/key-signing-service/spec.md'
 
 /** What a function writes into the mail it builds: the argument of every `body.WriteString(…)` call
  * in `text`, each read to that call's own matching close rather than to the end of its line, because

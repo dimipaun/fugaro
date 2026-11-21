@@ -77,7 +77,7 @@ func (c *Config) SHA256() string {
 }
 
 // Resolve is a repository's fugaro.yaml resolved over the project layer l
-// and Fugaro's defaults (docs/design/layered-config.md §4): for every key,
+// and Fugaro's defaults (docs/layered-config/spec.md §4): for every key,
 // the repository's value, else its workflow's profile's, else the project
 // layer's defaults', else Fugaro's default. Maps merge key by key; a
 // scalar or a list is replaced whole; null is "not set here". A nil l is

@@ -1069,7 +1069,7 @@ func TestCheckJobPrefixMatchesGo(t *testing.T) {
 
 // The installation's log sink and its _Default exclusion carry one arm per
 // platform a Fugaro-managed job's lines can come from (design
-// docs/design/compute-backend.md §1.5, §8.1 task 4): Cloud Run's
+// docs/compute-backend/spec.md §1.5, §8.1 task 4): Cloud Run's
 // cloud_run_job, which every installation's sink and exclusion already
 // filter on, and Cloud Batch's batch.googleapis.com/Job, without which a
 // Batch run's lines sit in _Default where every project viewer reads them.
@@ -2744,7 +2744,7 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 			// (internal/infra/tf/cover_test.go) with a fixture that refuses a
 			// widening, and each of the eight is bound to one account, the
 			// seven conditioned ones only under the managed-prefix fence of
-			// their own service (docs/design/managed-deployer-fence.md). The
+			// their own service (docs/managed-deployer-fence/spec.md). The
 			// deployer is not an installation role: it holds nothing
 			// project-wide but creation and reads.
 			if strings.HasPrefix(blk.name, "google_project_iam_custom_role.fugaro_deployer") {
@@ -2900,7 +2900,7 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 var quotedPerm = regexp.MustCompile(`"([^"]+)"`)
 
 // The compute module's provisioning, held to what the design says it must be
-// (docs/design/compute-backend.md §3.2, §3.7, §8.1 task 6). These are text
+// (docs/compute-backend/spec.md §3.2, §3.7, §8.1 task 6). These are text
 // checks because the values that matter -- which role, on what, narrowed by
 // what condition -- are what a reviewer has to read, and a plan assertion
 // only ever sees the inputs a test hands it.
@@ -4681,7 +4681,7 @@ func allResourceBlocks(t *testing.T, path string, src []byte) []block {
 // TestLauncherConditionPreconditionMatchesGo pins the installation module's
 // runs_launcher precondition to gcp.LauncherBucketCondition and its title:
 // the launchers' write is widened to tokens/ (the budget token's move,
-// docs/design/budget-token-channel.md §7.2, D16) and to issues/ (the shared
+// docs/budget-token-channel/spec.md §7.2, D16) and to issues/ (the shared
 // issue store, docs/troubleshoot-issue/reconciliation.md D1727) in the Go
 // that writes the tfvars, the install guard and the plan cover, and in this
 // precondition, and
@@ -5510,7 +5510,7 @@ func TestVoiceProviderKeysContainerIsTheGoSpelling(t *testing.T) {
 // voice_service: null looks. That route fails twice over. internal/infra's
 // PrepareWorkdir RemoveAlls the tree and re-extracts the embedded modules on
 // every run, so the edited file is deleted before the plan that would use it
-// (docs/design/config-transitions.md:57 states the same of a repository root:
+// (docs/config-transitions/spec.md:57 states the same of a repository root:
 // "no supported path at all"), and the apply the edit unblocked is one carrying
 // the addresses of exactly that plan — the destroy of the container and of
 // every hand-typed provider key in it, which is the loss prevent_destroy is

@@ -4,7 +4,7 @@
 package keyservice
 
 // The deployment's configuration (portal plan P1.7, design
-// docs/design/key-signing-service.md S3.5 and S3.7): what the two programs read
+// docs/key-signing-service/spec.md S3.5 and S3.7): what the two programs read
 // out of the process's environment and Secret Manager before either one starts
 // serving.
 //

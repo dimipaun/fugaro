@@ -19,7 +19,7 @@ import (
 )
 
 // newBackendsCmd is `fugaro backends`: which compute backend an installation
-// runs its jobs on (design docs/design/compute-backend.md §4.4, plan
+// runs its jobs on (design docs/compute-backend/spec.md §4.4, plan
 // 2026-10-19-compute-backend.md Task 8 step 3, P7: the design asks for the
 // command "when a second backend exists", and a second backend is what Task 8
 // adds).

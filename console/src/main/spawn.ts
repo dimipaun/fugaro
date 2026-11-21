@@ -41,7 +41,7 @@
 //      (`localcfg.SelectInput.EnvProject`) -- refuses those answers as a rename
 //      of it (`loadInitConfig`, `internal/cli/init.go`), and a first run, which
 //      has no installation at all, could not build the argv. See rule 3's
-//      amendment in `docs/design/desktop-console.md` (D2904).
+//      amendment in `docs/desktop-console/spec.md` (D2904).
 //   3. **The binary is resolved explicitly** (rule 4): the operator's configured
 //      path first -- an absolute one, since a relative path is checked against
 //      the app's working directory and run against the child's, which is a

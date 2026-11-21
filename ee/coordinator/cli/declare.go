@@ -13,7 +13,7 @@ import (
 
 // Declare declares one launch to the coordinator's record. It is the writer the
 // launch has always used, now the tagged build's implementation of the core's
-// launch-declarer hook (design docs/design/ee-boundary-moves.md §5.1): the
+// launch-declarer hook (design docs/ee-reorg/boundary-moves.md §5.1): the
 // launch path calls the hook, and an untagged build registers no declarer at
 // all, so its launches declare nothing (D535).
 //

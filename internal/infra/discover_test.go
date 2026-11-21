@@ -1020,7 +1020,7 @@ func TestReadinessCloneDeploysWithoutAnImageBuild(t *testing.T) {
 }
 
 // A named account's job variant (gcp.WorkflowVariant, design
-// docs/design/named-oauth-tokens.md §4) shares its logical workflow's one
+// docs/named-oauth-tokens/spec.md §4) shares its logical workflow's one
 // image, built once: its own "image not built yet" hint must still tell the
 // owner to run fugaro image build --workflow <the fugaro.yaml name>, never
 // --workflow <the variant key>, which --workflow does not accept.

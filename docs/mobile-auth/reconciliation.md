@@ -194,7 +194,7 @@ of the spec's, in which the authorisation input is a provider-signed claim that 
 by up to an hour.
 
 **F6 — Wrong. "The provider credential … refreshable" is a credential the app is designed not to
-hold.** Voice D42 and D54b (`docs/design/voice.md`) are the "the app holds no credential" ruling,
+hold.** Voice D42 and D54b (`docs/voice/spec.md`) are the "the app holds no credential" ruling,
 and `mobile/src/accounts/index.js` states the same boundary for the app's own store: *"the files
 that may write a credential are two, they are named there, and a third one has to be added to that
 list deliberately"*. D112's direct reads were granted under a **user-claim read grant** with no new
@@ -396,7 +396,7 @@ it where it was found rather than renumbered into the sequence.
 The owner may take §4's alternatives, in which case this section is the specification of what
 follows. It is written out here rather than left as a cost sentence, because a decision taken
 against a one-line cost is a decision taken blind. **Every item below is a change to *each*
-project** — Fugaro is one Firebase project per installation (`docs/design/project-centric.md`,
+project** — Fugaro is one Firebase project per installation (`docs/project-centric/spec.md`,
 `docs/mobile/reconciliation.md` D114), so "once" means "once per project, by its owner".
 
 ### 3.1 What would have to change in each project's Firebase configuration
@@ -704,7 +704,7 @@ first screen unchanged except for the
 "ask your admin" state. **Later**, and only by a separate decision: provider sign-in at all (D221),
 the email link (D228), the per-project app instance (D234), and the console's allowlist screen —
 the spec's *"later from the console"*, which needs the console's operator page, itself unbuilt
-(`docs/design/desktop-console-v2.md`'s Overview). **Latest**, and dependent on unbuilt work:
+(`docs/desktop-console-v2/spec.md`'s Overview). **Latest**, and dependent on unbuilt work:
 **custom tokens minted by the credentials service so one email login covers all projects** — which
 is the spec's own deferral, and which needs `docs/credentials-service/`'s first slice to exist
 (§0.2).
@@ -803,7 +803,7 @@ recorded here because a reader will look for them:
    `init` asks the operator to confirm — and the owner may prefer that `init` write nothing and the
    first pairing be the only writer.
 3. **The console's half.** The spec's *"later from the console"* names a screen on a console whose
-   project-wide view is unbuilt (`docs/design/desktop-console-v2.md`). Nothing in this work plans
+   project-wide view is unbuilt (`docs/desktop-console-v2/spec.md`). Nothing in this work plans
    it; D235 records it as later.
 4. **The release.** D236 recommends the release after Phase 6 and gives its reason; the owner names
    releases.

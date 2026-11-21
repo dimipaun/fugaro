@@ -557,7 +557,7 @@ type Layer struct {
 	// the rest of his policy does: read from the owner-only policy node and
 	// put on the ceiling layer (internal/runner's policyCeiling). It is not a
 	// key of fugaro.yaml, of the project layer or of the task, because all
-	// three are written by the launcher (docs/design/bucket-iam.md §10 L1, L2)
+	// three are written by the launcher (docs/bucket-iam/spec.md §10 L1, L2)
 	// — a floor there would be the launcher deciding how much review it gets.
 	// It is merged as a union (see Merge), so a lower layer that writes one
 	// can add a level and never remove one; the merge is what makes that

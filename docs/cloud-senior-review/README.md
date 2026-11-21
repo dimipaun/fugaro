@@ -72,7 +72,7 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
 
 - It adds no code, no schema and no command. Every command below is a proposal.
 - It does **not** lift D9's hold on the OAuth reviewer stage
-  ([docs/plans/2026-10-14-oauth-reviewer-stage.md](../plans/2026-10-14-oauth-reviewer-stage.md), the
+  ([docs/mixed-credentials/oauth-reviewer-stage-plan.md](../mixed-credentials/oauth-reviewer-stage-plan.md), the
   `agent.stage_auth` key). Its own recommendation is that the hold **stays**: this design needs no
   `stage_auth`, because its reviewer is a separate job execution whose credential the coder's job
   never holds. See [spec.md](spec.md) §4 and decision **D881**.
@@ -179,7 +179,7 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   design **#1514**.
 - [docs/project-claude-accounts.md](../project-claude-accounts.md): where the account, its secret,
   its job and its `allow_data_to` are described today.
-- [docs/design/mixed-credentials.md](../design/mixed-credentials.md) §6: the four mitigations, of
+- [docs/mixed-credentials/spec.md](../mixed-credentials/spec.md) §6: the four mitigations, of
   which **mitigation 4 — a separate job execution for the reviewer — is the only one that closes the
   `/proc` and metadata-server gap**, and is what this design builds.
 - [docs/in-job-review/](../in-job-review/README.md): the owner's spec for moving review into the
@@ -192,7 +192,7 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   task-governance design's D320/D327 rows are corrected in that design's own reconciliation.)
 - [docs/dogfooding.md](../dogfooding.md): the recorded lesson this design exists for — *"the in-loop
   reviewer is a different, stronger model than the coder, but it is still not independent review"*.
-  The owner's ruling of 2026-11-06 ([docs/design/mixed-credentials.md §11](../design/mixed-credentials.md))
+  The owner's ruling of 2026-11-06 ([docs/mixed-credentials/spec.md §11](../mixed-credentials/spec.md))
   is why it matters more than it did: a run whose in-job review ran on Opus and passed gets no second
   review by a person (a DeepSeek review still gets a local one), so the in-job reviewers are the whole of the review a change gets.
 - [docs/coordinator/](../coordinator/README.md): the service that would launch the review job and act

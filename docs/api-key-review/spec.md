@@ -22,7 +22,7 @@ The api-key review path: let's start a design.
 
 Today the in-job senior/adversarial review can run on a Claude subscription account. That is the
 mixed run — `stage_accounts`, or `stages.review.claude_account` — proven by **Check 290** on
-2026-11-06, and written up in `docs/design/mixed-credentials.md` §11.
+2026-11-06, and written up in `docs/mixed-credentials/spec.md` §11.
 
 I want a review path that runs on an **Anthropic API key** instead of a subscription OAuth token, so
 that:

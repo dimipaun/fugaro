@@ -77,7 +77,7 @@ variable "workflow" {
     vertex     = bool
     deploy_job = bool
     # Whether this is a mixed stage account's own variant job (B0's one mix,
-    # docs/design/mixed-credentials.md §11): Go's WorkflowSpec.StageAccount,
+    # docs/mixed-credentials/spec.md §11): Go's WorkflowSpec.StageAccount,
     # the one thing that exempts this job's Claude OAuth mount from the
     # credentials service's drop (local.is_stage_account_token, B2.7).
     # Optional and false, so a tfvars written before the fact existed plans
@@ -116,7 +116,7 @@ variable "workflow" {
   # (gcp.TokenBucketCondition): exactly one tokens/<slug>/ clause, so the
   # grant can never be widened past tokens/ or to another prefix, and the slug
   # is the one the job's own runs/ condition names, so a job never reads
-  # another repository's tokens (docs/design/budget-token-channel.md §7.2).
+  # another repository's tokens (docs/budget-token-channel/spec.md §7.2).
   validation {
     condition = (
       length(var.workflow.token_condition.title) > 0 && length(var.workflow.token_condition.title) <= 100 &&

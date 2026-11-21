@@ -626,7 +626,7 @@ func TestExecutionReportsRun(t *testing.T) {
 // TestLaunchCarriesTheSecretEnvInTheOverride: Cloud Run carries a launch's
 // secret entry (the budget seal key, D15) in the execution's own container
 // override, the carrier the design accepts and prices
-// (docs/design/budget-token-channel.md §7.1): the value reaches this
+// (docs/budget-token-channel/spec.md §7.1): the value reaches this
 // execution and not the job's definition.
 func TestLaunchCarriesTheSecretEnvInTheOverride(t *testing.T) {
 	ctx := context.Background()

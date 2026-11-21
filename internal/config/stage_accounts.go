@@ -9,7 +9,7 @@ import (
 
 // The stage vocabulary of the account-choice keys (docs/accounts-add/spec.md
 // §11.1) and the one mix the owner's B0 ruling admits
-// (docs/design/mixed-credentials.md §11). Both rules live here because four
+// (docs/mixed-credentials/spec.md §11). Both rules live here because four
 // readers judge them — the local config at load, the published policy node,
 // `fugaro validate` and the launch — and a second copy of either would be a
 // second answer to drift from.
@@ -32,7 +32,7 @@ var RunStages = []string{"plan", "implement", "review_first", "review", "adversa
 // MixedAccountStages are the stages of a run that mixes credentials: the
 // senior review, the adversarial review and the triage that weighs their
 // findings, and no other stage
-// (docs/design/mixed-credentials.md §11, "An allow-list, not a denylist"). An
+// (docs/mixed-credentials/spec.md §11, "An allow-list, not a denylist"). An
 // api-key run may name its one Claude account for these stages only.
 //
 // triage stands last, after the two reviews, and the order is load-bearing:
@@ -114,7 +114,7 @@ func AccountStageHeldBack(stage string) bool {
 // pin may carry (a "claude-*" name or an explicit "anthropic/<id>"): it is the
 // overlap ladder ClaudePatterns holds, asked by the readers that have to say
 // whether a stage runs on Anthropic at all — rung 4's condition, and the mount
-// a repository's job is built for (docs/design/mixed-credentials.md §11).
+// a repository's job is built for (docs/mixed-credentials/spec.md §11).
 func IsClaudeModel(id string) bool {
 	return slices.ContainsFunc(ClaudePatterns, func(p string) bool { return PatternsOverlap(id, p) })
 }
@@ -162,7 +162,7 @@ func CheckStageSegment(stage, path string) []Problem {
 
 // CheckStageAccountMix judges the stage accounts a run's own credential
 // admits, and it is the B0 ruling written once
-// (docs/design/mixed-credentials.md §11). auth is the agent.auth the run
+// (docs/mixed-credentials/spec.md §11). auth is the agent.auth the run
 // resolves; stages is the stage account each stage would use, already
 // resolved from the config (empty values dropped by the caller or ignored
 // here).
@@ -280,7 +280,7 @@ func mixedAccountProblems(stages map[string]string, path string) []Problem {
 		}
 		if !slices.Contains(MixedAccountStages, stage) {
 			ps = append(ps, Problem{Path: path + "." + stage + ".claude_account",
-				Message: fmt.Sprintf("an api-key run's %s stage runs on the provider key the gateway holds, so a Claude account named for it would never be used: the one account such a run may hold serves %s and no other stage (docs/design/mixed-credentials.md §11) — name the account for %s, or remove this key",
+				Message: fmt.Sprintf("an api-key run's %s stage runs on the provider key the gateway holds, so a Claude account named for it would never be used: the one account such a run may hold serves %s and no other stage (docs/mixed-credentials/spec.md §11) — name the account for %s, or remove this key",
 					stage, MixedStagePhrase(), MixedStageChoice())})
 		}
 		named[account] = true
@@ -294,7 +294,7 @@ func mixedAccountProblems(stages map[string]string, path string) []Problem {
 }
 
 // CheckMixBudget is the mix's budget-mode clause, and the second half of the
-// same rule (docs/design/mixed-credentials.md §11): an api-key run's one
+// same rule (docs/mixed-credentials/spec.md §11): an api-key run's one
 // Claude account exists because the gateway holds the provider key and routes
 // the coder's calls to it, and only budget.mode: enforce routes a call to a
 // provider at all (CheckProviderGateway). So the mix is admitted only when the

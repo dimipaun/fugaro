@@ -212,7 +212,7 @@ func ClipRunes(s string, n int) string { return clipRunes(s, n) }
 // PaidCommandNames are the command names whose code the owner moves out of the
 // core. A reader, not a seam: the commands a build holds are its own business,
 // so there is no setter and a caller cannot change the list the stubs are built
-// from (design docs/design/ee-boundary-moves.md §9, D536).
+// from (design docs/ee-reorg/boundary-moves.md §9, D536).
 //
 // The core's skill checks read it to tell a name the released binary answers to
 // — the core command today, a registration after the move, the stub in a build

@@ -161,7 +161,7 @@ const CLAIM_WHY =
  *
  * The brief's own suggested framing — "no other cloud offers this as one integrated,
  * **disposable** project" — is made of a word the repository rejects: a managed project "is
- * **not disposable** in the way the spec means" (`docs/design/managed-projects.md:18`, and
+ * **not disposable** in the way the spec means" (`docs/managed-projects/spec.md:18`, and
  * `:211` lists what would be lost), so the sentence the page carries is the same sentence with
  * that word taken out (D248, ZF22). And the sentence the brief tells the page *not* to write —
  * "no real alternative" — is the other half: it is a claim about every other cloud, which is a

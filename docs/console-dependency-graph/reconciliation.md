@@ -8,7 +8,7 @@ disagrees with [spec.md](spec.md), this document wins.**
 The spec is the console part of the owner's "Release Names, Watch Fixes and Console Dependency
 Graph" spec plus its "Independent Release Streams" addendum. It was written without the repository
 in view, and it reads greenfield. It is not: console v2 already designed a dependency graph and a
-version roadmap (decisions D21–D38 in [desktop-console-v2.md](../design/desktop-console-v2.md),
+version roadmap (decisions D21–D38 in [desktop-console-v2.md](../desktop-console-v2/spec.md),
 all answered 2026-10-15/16), the graph document and its CLI read already ship, and the coordinator
 (target 0.11.0) plans a project record that holds release targeting. This document says what
 exists, what the spec gets wrong, what it leaves open, and what the owner's answers of
@@ -25,12 +25,12 @@ requests is 122, reserved by PR #922).
 | --- | --- | --- |
 | "Full task dependency graph" | A plan-side graph document and its read, `fugaro plan graph --json` (one plan at a time, schema v1) | `internal/plan/document.go` (`Document`, `Node`, `Edge`), `internal/cli/plan.go` (`newPlanGraphCmd`), `console/docs/json-contract.md` §6.9; design D25 |
 | "Boxes per planned release" | `Node.Version`, a free string, "the roadmap's source of truth now" (D29); the coordinator view's `Record.Release`, read from a `release/v…` branch (branch `coordinator` only) | `internal/plan/document.go`; `origin/coordinator:internal/coordinator/view.go` (`ReleaseOf`) |
-| "Critical path" | Planned, not built: V2.2.3 (D26, critical path in Go) | `docs/plans/2026-10-15-desktop-console-v2.md` V2.2.3 |
+| "Critical path" | Planned, not built: V2.2.3 (D26, critical path in Go) | `docs/desktop-console-v2/implementation-plan.md` V2.2.3 |
 | Node state colours | Run stages in the watch feed | `internal/watch/json.go` (`JSONRun.Stage`), `internal/runner/runner.go` |
 | "Clicking a node opens its PR" | The validated external open | `console/src/main/window.ts` (`openExternalValidated`), operation `link.openExternal` in `console/src/main/ipc.ts` |
-| "Dragged to another release" | Ruled out: D30, read-only roadmap with "copy the change" | `docs/design/desktop-console-v2.md` D30, plan V2.5.3 |
-| ELK layout | Ruled out by D9 (no renderer dependencies), pinned by tests | `docs/design/desktop-console.md` D9, `console/test/unit/pinning.test.ts`, `console/tools/bundle-renderer/index.ts` |
-| Comet, pulse, animated flow | Ruled out by console-styling §3.9 ("nothing else"; "The console animates no chart") | `docs/design/console-styling.md` §3.9, `console/src/renderer/theme/base.css` |
+| "Dragged to another release" | Ruled out: D30, read-only roadmap with "copy the change" | `docs/desktop-console-v2/spec.md` D30, plan V2.5.3 |
+| ELK layout | Ruled out by D9 (no renderer dependencies), pinned by tests | `docs/desktop-console/spec.md` D9, `console/test/unit/pinning.test.ts`, `console/tools/bundle-renderer/index.ts` |
+| Comet, pulse, animated flow | Ruled out by console-styling §3.9 ("nothing else"; "The console animates no chart") | `docs/console-styling/spec.md` §3.9, `console/src/renderer/theme/base.css` |
 | Three release streams | One tag releases everything; console and mobile ride the CLI tag | `docs/release.md`, `.github/workflows/console-release.yml` |
 | Project-level graph and roadmap | Coordinator spec §5/§10 and plan P1/P3/P4/P6 (0.11.0) | `docs/coordinator/` |
 
@@ -119,7 +119,7 @@ tree is the Cloud Run job (`JSONRun.job`), shared per profile. *Consequence:* th
 **F12 — Rule: the renderer has no runtime dependency, by decision and by test.**
 `console/package.json` has no `dependencies` section, asserted by
 `console/test/unit/pinning.test.ts`; design D9 ("TypeScript, no framework runtime, charts on the
-platform", `docs/design/desktop-console.md`); `console/tools/bundle-renderer/index.ts` refuses any
+platform", `docs/desktop-console/spec.md`); `console/tools/bundle-renderer/index.ts` refuses any
 bare specifier (`console/test/unit/bundle.test.ts`, "refuses a bare specifier"). *Consequence:*
 GD3 reverses D9; it needs a bundler change, an exact pin, the lockfile and a supply-chain review
 (plan GV2.2).
@@ -159,7 +159,7 @@ href built from it"; navigation is `VIEWS` in `console/src/renderer/entry.ts`. *
 titles (repository-written) and run titles (job-written) both go through the sanitizer; a node
 click opens a PR only through `openExternalValidated`, never through an href built from text.
 
-**F17 — Rule → GD4: motion.** `docs/design/console-styling.md` §3.9: motion is the 120 ms hover
+**F17 — Rule → GD4: motion.** `docs/console-styling/spec.md` §3.9: motion is the 120 ms hover
 transition "and **nothing else**"; "The console animates no chart". §3.5 "Never colour alone":
 every coloured state carries a word or glyph. *Consequence:* GD4 amends §3.9 for this one screen,
 with a text mark on every coloured state and a static fallback.
@@ -182,9 +182,9 @@ own numbers does not break the handshake.
 
 ### F. Overlap with planned work
 
-**F20 — Exists: console v2 already designed this view.** `docs/design/desktop-console-v2.md` F6/F7
+**F20 — Exists: console v2 already designed this view.** `docs/desktop-console-v2/spec.md` F6/F7
 (graph, four colours), F22–F24 (version roadmap), D25/D26/D28/D29/D30; plan
-`docs/plans/2026-10-15-desktop-console-v2.md` V2.2.3, V2.3.1, V2.5.3, V2.6.1, V2.6.2, V2.8.1.
+`docs/desktop-console-v2/implementation-plan.md` V2.2.3, V2.3.1, V2.5.3, V2.6.1, V2.6.2, V2.8.1.
 V2.2.1 and V2.2.2 merged; the plan's gate sentence "Nothing in v2 is approved or built" is stale
 for those two. *Consequence:* this work is a **revision** of console v2's V2.3 and V2.6 phases,
 not a parallel screen. The plan's §2 lists exactly which tasks it supersedes or amends.
@@ -198,7 +198,7 @@ P3 (the record), P4 (intent record with target release), P6 (the console's proje
 no task and no task-to-task edge. GD1 makes it the graph's future source, so the graph is PR- and
 run-level first, task-level only when that record carries tasks (§4 (d), ruled: per-plan task graphs now).
 
-**F22 — Exists: styling.** `docs/design/console-styling.md` (tokens, §3.4 contrast, §3.5, §4.3
+**F22 — Exists: styling.** `docs/console-styling/spec.md` (tokens, §3.4 contrast, §3.5, §4.3
 keyboard, §4.4 forced colours) governs any new screen.
 
 ### G. Hard questions
@@ -249,7 +249,7 @@ under the coordinator's own design: it needs either the front door (P8, not star
 write grant (a rules change the coordinator plan does not have). §4 (a): ruled read-only until 0.11.0.
 
 **F31 — Gap: two things are called "the project record".** D29 (answered) means project-centric
-phase 6's backing repository (`fugaro project export`, `docs/plans/2026-10-14-project-centric.md`,
+phase 6's backing repository (`fugaro project export`, `docs/project-centric/implementation-plan.md`,
 not built: no `export` subcommand in `internal/cli`); the coordinator plan calls its realtime
 database subtree "the project record" (P3's commit message). *Consequence:* GD1 picks the
 coordinator's; that amends D29's "the project record later" half, and GV0.1 records it.

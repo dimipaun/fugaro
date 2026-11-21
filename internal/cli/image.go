@@ -604,7 +604,7 @@ func appliedBuildMountsServed(lc *localcfg.Config, repo string) bool {
 // converge's first build and the daily image check submit. gitSecretID is the
 // secret the build's clone reads (rs.Secrets[ws.GitSecret] would be the
 // repository's own copy, which Readiness may have resolved past: design
-// docs/design/project-secrets.md §5), never looked up here, and "" for a
+// docs/project-secrets/spec.md §5), never looked up here, and "" for a
 // repository the credentials service serves, whose request names no secret
 // (CredentialsServiceURL, which the caller sets).
 func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineType, bucket, gitSecretID string) (gcp.BuildSpec, error) {

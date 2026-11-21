@@ -30,7 +30,7 @@ const SharedVersion = 1
 // carry, so a published switch would name routes nothing in the file defines
 // (the node, where a run is actually routed, is written by `project policy
 // publish`), and claude_accounts:, whose allow-list is decision T1's operator-only
-// trust anchor (design docs/design/named-oauth-tokens.md §3: never
+// trust anchor (design docs/named-oauth-tokens/spec.md §3: never
 // published, never settable from fugaro.yaml or the project layer, so it
 // must not round-trip through the runs bucket either, which any launcher
 // with objectAdmin on it can write) and the account-choice keys
@@ -53,7 +53,7 @@ const SharedVersion = 1
 // not one machine's — the machine that launches is often not the machine that
 // opted in, and a local-only copy of it is exactly what goes missing (the
 // ledger item of PR #903). **batch: is published**, for the opposite reason: it is the
-// installation's own facts (design docs/design/compute-backend.md §4.4, plan
+// installation's own facts (design docs/compute-backend/spec.md §4.4, plan
 // 2026-10-19-compute-backend.md Task 8 step 2) — the image a run's job runs,
 // the machine type, the network and subnetwork its VMs are placed in, the
 // account they run as, the socket gid — and a machine that onboarded before
@@ -213,7 +213,7 @@ func (c *Config) Shared() *Config {
 	// would therefore move every teammate who has no local config onto VMs
 	// with a `batch:` block they wrote, while the machine that ran the
 	// provisioning and the doctor reading never sees the file at all
-	// (docs/design/shared-config.md §4; the reader refuses the key besides).
+	// (docs/shared-config/spec.md §4; the reader refuses the key besides).
 	s.BackendName = ""
 	// ReviewFloor is the owner's policy and travels the way BaseBranch does,
 	// through `fugaro project policy publish` into the policy node. It is

@@ -653,7 +653,7 @@ func TestDocsInJobReviewStatesTheAuthenticityEvidence(t *testing.T) {
 // citations a reader could not check — a Go symbol that does not exist
 // (runStageError; the real ones are the free function StageError and
 // run.stageReason), a design-decision number that says something else
-// (design/recipes.md's decision 5 is the agent.* knobs, not the reserved keys or
+// (docs/recipes/spec.md's decision 5 is the agent.* knobs, not the reserved keys or
 // the outcome rule, which are in §4), a claim that three CLI flags appear
 // nowhere in the tree (they do, in voice.md's D54, as an option that document
 // refuses), and a quote of git-providers.md whose fragments were in a different
@@ -680,7 +680,7 @@ func TestDocsInJobReviewCitationsWereCorrected(t *testing.T) {
 		"§4's reserved-and-refused list",
 		"Outcome rules are not configurable",
 		// The three flags, where they really are.
-		"only** in [voice.md](../design/voice.md) D54",
+		"only** in [voice.md](../voice/spec.md) D54",
 		// The quote, in the source's own order.
 		"It overwrites the remote branch only when the branch is absent or its tip is one of the run's own commits",
 		"The base branch is never pushed.",
@@ -1158,18 +1158,18 @@ func TestDocsInJobReviewCitationsExist(t *testing.T) {
 		"docs/git-providers.md",
 		"docs/multi-model.md",
 		"docs/gcp-live-checklist.md",
-		"docs/design/recipes.md",
+		"docs/recipes/spec.md",
 		// Where the three tool-permission flags really are (finding #36), and the
 		// frontmatter-key lint that refuses the dash-less spelling.
-		"docs/design/voice.md",
+		"docs/voice/spec.md",
 		"plugin/skills_lint_test.go",
-		"docs/design/generic-tool.md",
-		"docs/design/mixed-credentials.md",
-		"docs/design/project-centric.md",
-		"docs/design/artifact-runs.md",
-		"docs/design/named-oauth-tokens.md",
-		"docs/design/budget-token-channel.md",
-		"docs/plans/2026-10-14-oauth-reviewer-stage.md",
+		"docs/generic-tool/spec.md",
+		"docs/mixed-credentials/spec.md",
+		"docs/project-centric/spec.md",
+		"docs/artifact-runs/spec.md",
+		"docs/named-oauth-tokens/spec.md",
+		"docs/budget-token-channel/spec.md",
+		"docs/mixed-credentials/oauth-reviewer-stage-plan.md",
 		"docs/credentials-service/README.md",
 		"docs/credentials-service/reconciliation.md",
 		"docs/credentials-service/implementation-plan.md",

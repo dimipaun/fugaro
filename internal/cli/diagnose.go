@@ -49,7 +49,7 @@ const (
 	// diagnoseStages bounds the stages a diagnosis prints. It sits above the
 	// loop's own maximum -- 1 + 2*F + R*(2 + 2*F) stages, at most 87 under
 	// config.MaxFirstLineRounds and recipe.MaxReviewRounds, plus the provision
-	// and render stages (docs/design/generic-tool.md §3.1) -- because the
+	// and render stages (docs/generic-tool/spec.md §3.1) -- because the
 	// identity Stages documents holds only for the whole list: a bound that
 	// bit a real run would make sum(stages[].model_usd) + model_by's
 	// unattributed entry miss row.cost.model_usd by the rounds it dropped. It
@@ -73,7 +73,7 @@ type Diagnosis struct {
 	Project string      `json:"project"` // the Fugaro project
 	Row     runview.Row `json:"row"`
 	// FailureClass is why the run did not end succeeded, as one value of the
-	// closed vocabulary of docs/design/failure-classes.md §3 — the same value
+	// closed vocabulary of docs/failure-classes/design.md §3 — the same value
 	// the row carries, on the diagnosis's own shape because diagnose is the
 	// command a person runs to be told why, and D1460 is that a reader of this
 	// document is never sent into the row for it. Absent for a run that did

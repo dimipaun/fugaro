@@ -270,7 +270,7 @@ func TestProjectStoreKeepsTwoKeys(t *testing.T) {
 // object holds them in the order they were written -- Install appends, oldest
 // first -- so the write that came last is the one that applies. A reissue can
 // carry exactly the term of the key it replaces: a seat change reissues with
-// the term's own end (design/key-signing-service.md section 5.3), and the key
+// the term's own end (docs/key-signing-service/spec.md section 5.3), and the key
 // that states the seats the customer bought is the reissue. Decided the other
 // way, a seat change is a silent no-op -- the object holds the new key, the
 // installation runs on the old one, and the renewal sends the new key's secret

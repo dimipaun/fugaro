@@ -84,7 +84,7 @@ What it does not remove is the deployer fence. The seven scoped roles and their
 conditioned bindings stay in the project and in the installation, and fugaro
 update --forget stays refused for a fenced installation. This command makes no
 IAM call at all; undoing the fence is not revocation and is not offered here
-(docs/design/managed-projects.md §10.2).
+(docs/managed-projects/spec.md §10.2).
 
 Run it in your own terminal, as an operator, with your own credentials. The
 permission you give is the PROJECT_ID argument itself: it names the one project
@@ -193,7 +193,7 @@ func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
 	fmt.Fprintf(w, "  the marker object gs://%s/%s in its runs bucket, and the label %s=%s on the project itself — the read requires both, so the project is managed only while the two are there\n",
 		safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
 	fmt.Fprintf(w, "  it gives back: the typed confirmation for this project's applies. From the next apply on a person is asked again, and a coding agent's session is refused as it was before the project was flagged (D55).\n")
-	fmt.Fprintf(w, "  it does not remove: the deployer fence. Its scoped roles and their conditioned bindings stay in the project and in the installation, fugaro update --forget stays refused for a fenced installation, and this command makes no IAM call at all (D75; docs/design/managed-projects.md §10.2).\n")
+	fmt.Fprintf(w, "  it does not remove: the deployer fence. Its scoped roles and their conditioned bindings stay in the project and in the installation, fugaro update --forget stays refused for a fenced installation, and this command makes no IAM call at all (D75; docs/managed-projects/spec.md §10.2).\n")
 	fmt.Fprintf(w, "  a half already gone is not a failure: a project whose object or label is already absent is converged by this one command, and which half it was is said below.\n")
 	// Both halves and the read that settles them are one step, opened after the
 	// statement above so nothing in flight is drawn over it (G1).

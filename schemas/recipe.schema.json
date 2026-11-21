@@ -116,7 +116,7 @@
         },
         "max_files": { "type": "integer", "minimum": 1, "maximum": 32, "description": "How many artifacts the run may upload; absent means 8 (recipe.DefaultOutputFiles)." },
         "max_bytes": { "type": "integer", "minimum": 1, "maximum": 2147483648, "description": "The most ONE artifact may hold; absent means 256 MiB (recipe.DefaultOutputBytes). A written 0 is refused, not read as the default." },
-        "max_total_bytes": { "type": "integer", "minimum": 1, "maximum": 17179869184, "description": "The most the WHOLE SET may hold; absent means 2 GiB (recipe.DefaultOutputTotalBytes). The runner stages a second copy of the set beside the render's originals, so this is what the workflow's resources.memory must hold twice over (docs/design/artifact-runs.md §5.2)." },
+        "max_total_bytes": { "type": "integer", "minimum": 1, "maximum": 17179869184, "description": "The most the WHOLE SET may hold; absent means 2 GiB (recipe.DefaultOutputTotalBytes). The runner stages a second copy of the set beside the render's originals, so this is what the workflow's resources.memory must hold twice over (docs/artifact-runs/spec.md §5.2)." },
         "probe": { "enum": ["probe", "none"], "description": "Whether commands.probe runs on what was rendered; absent means none." }
       }
     },

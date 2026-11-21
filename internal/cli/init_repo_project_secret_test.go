@@ -14,7 +14,7 @@ import (
 
 // Check 40 step 40i's bug, end to end through the engine the owner ran: a
 // model provider the installation shares project-wide (design
-// docs/design/project-secrets.md §5), its key stored in the project
+// docs/project-secrets/spec.md §5), its key stored in the project
 // container, and the repository's own container -- what Terraform's module
 // creates -- holding no version at all. The name is covered, so the run is
 // ready: nothing under "Still missing", nothing in the result's missing list

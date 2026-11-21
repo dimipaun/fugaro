@@ -17,7 +17,7 @@ import (
 )
 
 // This file is the reaper and the queue deadline (design
-// docs/design/compute-backend.md §1.4, §3.4, C8, C14), the residual path
+// docs/compute-backend/spec.md §1.4, §3.4, C8, C14), the residual path
 // that exists because Batch's own teardown -- which the owner measured on
 // Check 57a: a job's VM is gone 3 to 26 seconds after the job reaches a
 // terminal state -- is measured, not guaranteed. The reaper is a SAFETY NET

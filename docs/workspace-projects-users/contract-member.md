@@ -157,7 +157,7 @@ change that wires the concrete sides; no release carries one, and none is ever w
 ## 8. What this document does not decide
 
 - **The member roster's and the mirror's formats.** They are `internal/access`'s and C1's; C2 moves their bytes.
-- **What a member's own `fugaro update` derives.** `docs/design/roles.md` and `internal/access`'s derived lists own
+- **What a member's own `fugaro update` derives.** `docs/roles/spec.md` and `internal/access`'s derived lists own
   that; C2 only reports the difference between them and the member (`PendingApply`).
 - **Which of the two mechanisms a workspace uses.** `workspace init` writes it into the roster; `Authority.Kind` reads
   the implementation, not a member.
