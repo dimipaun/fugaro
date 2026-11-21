@@ -449,20 +449,22 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): ConfirmWindowSeams
 
   /** phaseTakes is whether the question the window is **currently** asking is
    * answered this way (D2902's one window asks two questions in turn): the entry
-   * form takes a submit, a launch or a diff takes a yes, and every phase takes a
-   * no. It is a check rather than a guess because the two questions have
-   * different consequences -- a yes spawns the write's argv, a submit only starts
-   * a dry run -- and because the subject the window holds is what says which one
-   * is on screen. */
+   * form takes a submit, a launch or a diff or a setup takes a yes, and every
+   * phase takes a no. It is a check rather than a guess because the two
+   * questions have different consequences -- a yes spawns the write's argv, a
+   * submit only starts a dry run -- and because the subject the window holds is
+   * what says which one is on screen. */
   function phaseTakes(subject: ConfirmSubject, answer: ConfirmAnswer): boolean {
     if (answer.answer === 'no') return true
     if (subject.kind === 'settings-entry') return answer.answer === 'submit'
-    // Every other subject is answered with a yes and nothing else. The rule is
-    // spelled out rather than left as the entry form's complement because the
-    // subjects are a union: a **setup** window (SW3a) is not an entry form, so
-    // the old `===` would have taken a `submit` to it -- a message that would
-    // have reached a flow with no dry run behind it -- and a fourth subject is
-    // exactly the thing that finds a gate written as a complement.
+    // Every other subject -- a launch, a diff, a setup (SW3a) -- is answered
+    // with a yes and nothing else, written per subject rather than as the entry
+    // form's complement. The biconditional this replaces
+    // (`(kind === 'settings-entry') === (answer === 'submit')`) refuses the same
+    // answers for these four subjects, so this is not a fix to it: what the
+    // spelling buys is a rule that reads one line per subject, which is what a
+    // fifth subject, or one that takes both a yes and a submit, needs and what a
+    // complement cannot say.
     return answer.answer === 'yes'
   }
 
