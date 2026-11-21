@@ -464,6 +464,61 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 	}
 }
 
+// TestCredentialsServiceEnvKnowsTheIdentityNames is the cover's side of LM22
+// (D3121, D3123, F29/R16): the three entries of the identity half are named
+// once, on this allow-list, and are on CredentialsServiceEnvAwaitingTheModule
+// because the installation module does not render them yet.
+//
+// The order is F28's and it is the whole reason this test exists before LM12:
+// credentials.tf's case below refuses a container that sets a name this list
+// does not carry, and internal/cli's TestCredentialsServiceEnvIsTheDeploymentsOwn
+// refuses a module name the command does not read, so the module that renders
+// these three next (LM12) turns nothing red only if both ends already know
+// them — the names first, the module second.
+//
+// The three are named in one place here and read in one place at the command's
+// end (internal/cli's credentialsServiceSigner,
+// credentialsServiceRosterServiceAccounts and credentialsServiceImplicitAdmins),
+// and neither end may rename one without the other: this test would pass on a
+// misspelling that moved both, which is why the pair is also held to the
+// module by TestCredentialsServiceEnvIsTheDeploymentsOwn and to the plans by
+// credentials_golden_test.go's exact environment map.
+func TestCredentialsServiceEnvKnowsTheIdentityNames(t *testing.T) {
+	// The identity half's three (LM22): the signer a run's identity is signed
+	// as, the roster's serviceAccount: entries, and the implicit admins the
+	// CLI's own gate reads out of its configuration.
+	want := []string{
+		"FUGARO_SIGNER_ACCOUNT",
+		"FUGARO_ROSTER_SERVICE_ACCOUNTS",
+		"FUGARO_IMPLICIT_ADMINS",
+	}
+	pending := CredentialsServiceEnvAwaitingTheModule()
+	module := moduleSource(t, "credentials.tf")
+	for _, n := range want {
+		if !slices.Contains(credentialsServiceEnv, n) {
+			t.Errorf("%s is not on credentialsServiceEnv: the credentials service reads it (internal/cli's credentialsServiceConfig), and a container that sets it would be a plan the cover refuses", n)
+		}
+		if !slices.Contains(pending, n) {
+			t.Errorf("%s is not on CredentialsServiceEnvAwaitingTheModule: the installation module does not render it yet, and a name the allow-list admits ahead of its module has to say so (F28)", n)
+		}
+		// The other half of that statement: the module does not render it yet,
+		// so the awaiting list is not a leftover. LM12 turns this around — it
+		// renders all three and drops them from the list in one change — and
+		// this arm is what fails if only one of the two happened.
+		if regexp.MustCompile(`name\s*=\s*"` + n + `"`).MatchString(module) {
+			t.Errorf("modules/installation/credentials.tf renders %s: it is the module LM12 is, so the name has left the awaiting list in that same change", n)
+		}
+	}
+	// ... and the allow-list holds no fourth name of this half: a name added
+	// here without the command reading it is a value the cover admits and
+	// nothing sets, which is the direction this list exists to refuse.
+	for _, n := range pending {
+		if !slices.Contains(credentialsServiceEnv, n) {
+			t.Errorf("%s is awaiting the module and is not on credentialsServiceEnv: the awaiting list names what the allow-list already admits, and a name on it alone would be refused at plan time once the module renders it", n)
+		}
+	}
+}
+
 // A job's FUGARO_CHECK_SPEC tells the check job where to build and what to
 // build from: its registry and every base image must be this run's.
 func jobWithSpec(spec string, unknownValue bool) ResourceChange {

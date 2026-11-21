@@ -673,7 +673,8 @@ describe('the bytes the child is given', () => {
     try {
       expect(path.startsWith(base)).toBe(true)
       expect(path).toContain('fugaro-setup-')
-      expect(statSync(path).mode & 0o777).toBe(SETUP_DIR_MODE)
+      // Windows keeps no POSIX permission bits: stat reports 0o666 for a directory there, so the mode is read only where one exists.
+      if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(SETUP_DIR_MODE)
       expect(SETUP_DIR_MODE).toBe(0o700)
       expect(readdirSync(path)).toEqual([])
     } finally {
