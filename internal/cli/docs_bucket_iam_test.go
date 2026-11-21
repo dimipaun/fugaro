@@ -11,7 +11,7 @@ import (
 )
 
 // Since 0.7.0 launchers hold objectViewer and a runs/-conditioned objectUser
-// on the runs bucket, never objectAdmin (docs/design/bucket-iam.md). The
+// on the runs bucket, never objectAdmin (docs/bucket-iam/spec.md). The
 // sentences that said otherwise are gone from every doc but the hardening's
 // own design, the plans and the release notes (not scanned).
 func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
@@ -40,7 +40,7 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 		// launcher's write reach as runs/ alone is stale in the other direction:
 		// it understates the grant gcp.LauncherBucketCondition writes. These are
 		// the phrasings that survived the 0.9.0 change in gcp-setup.md,
-		// recipes.md, design/v1.md, design/shared-config.md, design/watch-queued.md
+		// recipes.md, design/v1.md, docs/shared-config/spec.md, docs/watch-queued/spec.md
 		// and release.md.
 		"and can write only `runs/`:",
 		"write only `runs/`); only operators can write it",
@@ -94,7 +94,7 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 		// The page that carried this table was docs/gcp-setup.md, which is the
 		// short setup path now; the launcher's grant is written down in the
 		// design of record, which is the contract the code cites.
-		"../../docs/design/bucket-iam.md": {
+		"../../docs/bucket-iam/spec.md": {
 			"runs-bucket-iam", "add-iam-policy-binding", "DATA_WRITE",
 			"| Launcher (not an operator) | read | read | **read, write** | read | **read, write** | **read, write** |",
 			"**No launcher command writes outside `runs/`, `tokens/` and `issues/`.**",
@@ -109,10 +109,10 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 			"`runs-bucket-iam` ok",
 			"0.9.0's sealed budget token widened that condition to `runs/` and `tokens/`",
 		},
-		"../../docs/design/shared-config.md": {
+		"../../docs/shared-config/spec.md": {
 			"plus `objectUser` under the launcher condition",
 		},
-		"../../docs/design/watch-queued.md": {
+		"../../docs/watch-queued/spec.md": {
 			"launchers write only `runs/` and, since 0.9.0, `tokens/`, where a launch writes its sealed budget token, and since 0.22.0 `issues/`",
 		},
 		"../../docs/design/v1.md": {
@@ -162,7 +162,7 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 // runs after this grant ships, and CLAUDE.md puts it in the release notes' own
 // `### For operators` section in the same PR.
 func TestDocsBucketIAMNamesTheReleaseThatCarriesTheGrant(t *testing.T) {
-	const path = "../../docs/design/bucket-iam.md"
+	const path = "../../docs/bucket-iam/spec.md"
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +209,7 @@ func TestDocsBucketIAMNamesTheReleaseThatCarriesTheGrant(t *testing.T) {
 //     recognise it), which is why the ban is on the sentences that read as
 //     the current grant rather than on the older title string.
 func TestDocsBucketIAMStatesTheLaunchersCurrentCondition(t *testing.T) {
-	const path = "../../docs/design/bucket-iam.md"
+	const path = "../../docs/bucket-iam/spec.md"
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

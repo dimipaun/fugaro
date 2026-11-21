@@ -206,7 +206,7 @@ func SecretID(slug, logical string) string {
 }
 
 // ProjectSecretID is the Secret Manager secret holding a project-wide
-// logical secret (design docs/design/project-secrets.md §4), built like
+// logical secret (design docs/project-secrets/spec.md §4), built like
 // SecretID but keyed by the Fugaro project name instead of a repository
 // slug. The hash input is domain-separated with a literal "project\x00"
 // prefix so a Fugaro project name that happened to equal some repository's
@@ -430,7 +430,7 @@ func validWorkflowVariantToken(token string) bool {
 // a token-scoped workflow's resources from: workflow unchanged for the
 // repository's default account ("" or "default", config.DefaultClaudeAccount),
 // so an installation with no named accounts configured gets byte-identical
-// names (design docs/design/named-oauth-tokens.md §5); otherwise
+// names (design docs/named-oauth-tokens/spec.md §5); otherwise
 // workflow+"_"+token. It is a plain string key, not a secret: never
 // log-redacted.
 //
@@ -454,7 +454,7 @@ func validWorkflowVariantToken(token string) bool {
 // pairs that WorkflowVariant collapsed into one string would collapse onto
 // the same Cloud Run job, the same dedicated service account and the same
 // secret, defeating this feature's whole point (one secretAccessor grant
-// per named account, design docs/design/named-oauth-tokens.md §4 option
+// per named account, design docs/named-oauth-tokens/spec.md §4 option
 // B). A plain "--" join is not injective here even though it looks like
 // the rest of this file's names: workflow and token both already allow
 // hyphens, including consecutive ones, so WorkflowVariant("ab--cd", "ef")
@@ -620,7 +620,7 @@ func BucketCondition(bucket string, prefixes []string, slug string) string {
 //	resource.name.startsWith("projects/_/buckets/<b>/objects/locks/")
 //
 // This is a *widening*, and a documented regression of a 0.7.0 property:
-// SECURITY.md and docs/design/bucket-iam.md state it (D4, D13). It is a
+// SECURITY.md and docs/bucket-iam/spec.md state it (D4, D13). It is a
 // separate builder from BucketCondition rather than that one called with an
 // empty slug, so a reader of a per-repository caller cannot mistake this
 // condition for it and so the per-repository path keeps its per-slug
@@ -669,7 +669,7 @@ func bucketPrefixClause(bucket, prefix, slug string) string {
 // prefix the caller asked for, relative to the bucket. A List request names no
 // object, so resource.name matches nothing for it and this attribute is the
 // only thing in the request that says which listing was asked for
-// (docs/design/bucket-iam.md §4, the H3 veto, and §11 item V7).
+// (docs/bucket-iam/spec.md §4, the H3 veto, and §11 item V7).
 const objectListPrefixAttr = "storage.googleapis.com/objectListPrefix"
 
 // projectBucketListClause is the listing half of a prefix-limited condition:
@@ -711,7 +711,7 @@ const CatalogBucketPrefix = "builds/catalog"
 // objectViewer and not objectUser is the property that matters: the copies
 // are written by the operator alone, and a build account that could write
 // one could make every other repository's jobs run an image built from a
-// definition of its choosing (docs/design/bucket-iam.md, PIC4).
+// definition of its choosing (docs/bucket-iam/spec.md, PIC4).
 func CatalogReadCondition(bucket string) string {
 	return projectBucketPrefixClause(bucket, CatalogBucketPrefix)
 }
@@ -746,7 +746,7 @@ const ReportsBucketPrefix = "reports"
 //
 // Both halves are needed and neither is enough. A condition on resource.name
 // grants no listing at all — a List request names no object, so no object
-// clause matches it (docs/design/bucket-iam.md §2.3, live check 7's 403 on
+// clause matches it (docs/bucket-iam/spec.md §2.3, live check 7's 403 on
 // listing runs/) — and the listing half cannot read an object, because a get
 // carries no objectListPrefix. The join is an OR and never an AND: a
 // conjunction is the shape a reader reaches for first and it matches nothing,
@@ -856,7 +856,7 @@ var licenceReadObjects = []string{LicenceMarkerObject, LicenceConfigObject, Lice
 // reordering of the runs bucket's layout can move what it names.
 //
 // There is no listing clause here and none is wanted: a List request names no
-// object, so no clause of this condition matches one (docs/design/bucket-iam.md
+// object, so no clause of this condition matches one (docs/bucket-iam/spec.md
 // §2.3, live check 7's 403 on listing runs/), which is exactly right for a job
 // that reads its three objects by name and never lists the bucket. A name
 // condition cannot be widened into the listing half of the reports job's
@@ -948,7 +948,7 @@ func CatalogRecordsConditionTitle(slug string) string {
 // TokenBucketPrefix is the runs bucket prefix the budget token objects live
 // under (internal/budget/token's ObjectPrefix, pinned equal by a test): out of
 // runs/, so that a job account, which may write runs/, may only read it
-// (docs/design/budget-token-channel.md §7.2, D16). It is not one of
+// (docs/budget-token-channel/spec.md §7.2, D16). It is not one of
 // JobBucketPrefixes, and must never be: those are objectUser.
 const TokenBucketPrefix = "tokens"
 
@@ -1015,7 +1015,7 @@ func ProjectTokenBucketConditionTitle(saID string) string {
 }
 
 // LauncherBucketConditionTitle is the title of the launchers' objectUser
-// grant on the runs bucket (docs/design/bucket-iam.md H5). It names all three
+// grant on the runs bucket (docs/bucket-iam/spec.md H5). It names all three
 // prefixes now that the shared issue store lives under issues/ (D1727): a new
 // title, because the expression widened, so an installation still carrying
 // the runs/ and tokens/ binding reads as a different one rather than as this

@@ -5,7 +5,7 @@
 //
 // WHY A SECOND FAMILY BESIDE `secrets set`. Today's `fugaro secrets set` writes
 // one repository's or the project's Secret Manager container with the person's
-// own project IAM (docs/design/project-secrets.md), and it keeps that meaning
+// own project IAM (docs/project-secrets/spec.md), and it keeps that meaning
 // and those flags. The intake is the other writer: it holds the write and the
 // delete under the two name prefixes (fugaro_u_<sub>_<name>, fugaro_p_<name>)
 // and nothing else, it derives the owner from the verified identity rather than

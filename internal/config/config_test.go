@@ -143,7 +143,7 @@ func TestParseProblems(t *testing.T) {
 		{"empty", "", "", "file is empty", 0},
 		{"unknown field", minimalYAML + "    color: blue\n", "", "field color not found", 11},
 		// claude_accounts is a local-config-only key (design
-		// docs/design/named-oauth-tokens.md §3, decision T1): a fugaro.yaml
+		// docs/named-oauth-tokens/spec.md §3, decision T1): a fugaro.yaml
 		// may never define or widen the named-account allow-list, so the
 		// repository layer's strict decoder (the same KnownFields(true)
 		// decoder as the "unknown field" case above) must refuse it exactly
@@ -165,7 +165,7 @@ func TestParseProblems(t *testing.T) {
 		{"reserved secret", minimalYAML + "    secrets:\n      - { name: claude-oauth-token, env: TOK }\n", "workflows.server.secrets[0].name", "reserved", 0},
 		// claude-oauth-token-<name> is the derived secret ID of a named
 		// Claude account (config.ClaudeAccountSecret, design
-		// docs/design/named-oauth-tokens.md §5): a workflow must never be
+		// docs/named-oauth-tokens/spec.md §5): a workflow must never be
 		// able to declare a secret of that shape as its own, since a name
 		// that happens to collide with (or merely look like) a real or
 		// fictitious account name would let fugaro.yaml itself steer where
@@ -1201,7 +1201,7 @@ func TestDurationMarshalsAsWritten(t *testing.T) {
 // TestRenderTimeoutDefaultsUnderTotal: timeouts.render bounds the render step
 // alone and, like stage and verify, is derived from what is left of the run
 // when nothing writes it: min(verify, total - finalize_reserve), which is
-// never above total (docs/design/artifact-runs.md §3).
+// never above total (docs/artifact-runs/spec.md §3).
 func TestRenderTimeoutDefaultsUnderTotal(t *testing.T) {
 	cfg, problems := Parse([]byte(minimalYAML + "      render: sh render.sh\n      probe: sh probe.sh\n"))
 	if len(problems) > 0 {

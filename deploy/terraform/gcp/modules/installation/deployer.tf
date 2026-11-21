@@ -1,5 +1,5 @@
 # The deployer account of D75 (design managed-projects.md, answered
-# 2026-10-16; Task 1.5 of docs/plans/2026-10-16-managed-projects.md): the
+# 2026-10-16; Task 1.5 of docs/managed-projects/implementation-plan.md): the
 # identity a managed apply runs as, created by this owner-run apply and by
 # nothing else.
 #
@@ -20,7 +20,7 @@
 # condition on one binding cannot fence permissions an unconditioned binding of
 # the same role already grants project-wide.
 #
-# ONE BINDING PER SERVICE (0.10.0 redesign, docs/design/managed-deployer-fence.md).
+# ONE BINDING PER SERVICE (0.10.0 redesign, docs/managed-deployer-fence/spec.md).
 # Until 0.10.0 the conditioned half was ONE role, fugaroDeployerScoped, under one
 # condition, and that condition could not be applied: it joined 9 clauses with
 # 17 logical operators where IAM allows 12, it called resource.name.contains(),

@@ -218,7 +218,7 @@ its two carriers above stay declined.
 **F24 — Gap, found in review round 1: a launcher can already mint the identity itself.** Every
 launcher and operator holds the signer's `signJwt` (`google_service_account_iam_member.minter`,
 `deploy/terraform/gcp/modules/firebase/iam.tf`, granted to launchers and operators alike), and
-`docs/design/budget-token-channel.md` puts that out of the seal's scope. So a second launcher can
+`docs/budget-token-channel/spec.md` puts that out of the seal's scope. So a second launcher can
 mint a token for the first run's identity without the first run's key. K3 stops a launcher from
 obtaining that key; it does not stop one from spending as that run. Against a launcher, K3's gain
 over K1 is the letter of requirement 1, and a boundary only if minting is ever taken off
@@ -232,7 +232,7 @@ the letter of it. The residual the other plan states is a launcher who claims **
 Run (its R5, F30); on Batch the attestation is what closes it (its R5 says so, D3129).
 
 **F5 — Open, answered: why the earlier design rejected a per-run secret, and whether it holds.**
-`docs/design/budget-token-channel.md` rejected C2 for three reasons. (a) The account is shared, so
+`docs/budget-token-channel/spec.md` rejected C2 for three reasons. (a) The account is shared, so
 every peer reads every peer's secret: still true, and F4 makes it worse. (b) Revocation is not
 fail-closed: no longer true as stated, because a secret can carry an expire time at which Google
 deletes it ("the secret and all of its secret versions are irreversibly deleted without warning").
@@ -376,7 +376,7 @@ Consequence: R8, O2. **Amended:** AB9's refusal stays *true* under the amendment
 is never sealed, so a sealed entry on one is still refused — and what changes is only the sentence
 that says why.
 
-**F22 — Wrong: two stale lines.** `docs/design/budget-token-channel.md` and
+**F22 — Wrong: two stale lines.** `docs/budget-token-channel/spec.md` and
 `internal/backend/launchenv.go` both say Batch's launcher wiring is not built. `openCloudFor` and
 `batchOptions` (`internal/cli/cloud.go`) wire it. Consequence: BR1 (the document, with the
 sentences F28 names), BR8 (the comment, with the code beside it).
@@ -410,8 +410,8 @@ and creation time, and the link from a VM to its job needs a second read:
 starts a rebuild of the preload image, which costs money. `fugaro update` asks nothing.
 Consequence: R12.
 
-**F28 — Gap, found in review round 1: pinned sentences.** `docs/design/compute-backend.md` and
-`docs/design/budget-token-channel.md` both carry the sentence that an installation that mints
+**F28 — Gap, found in review round 1: pinned sentences.** `docs/compute-backend/spec.md` and
+`docs/budget-token-channel/spec.md` both carry the sentence that an installation that mints
 cannot launch on Batch, and `internal/cli/docs_budget_token_channel_test.go` holds them to the
 refusal's text in `run.go`. Consequence: BRS and BR1 change the three together. **Amended:** the
 three still change together, and the sentence they carry is a different one: a Batch launch carries
@@ -460,7 +460,7 @@ The review said any launcher can write the published block, so the opt-in, the w
 the key fact could be forged. Checked against the grants: a launcher holds `objectViewer` on the
 runs bucket and `objectUser` under a condition naming `runs/`, `tokens/` and `issues/`
 (`google_storage_bucket_iam_member.runs_launcher`, same file); only an operator (role `admin`)
-holds `objectAdmin`, and the shared file is under `fugaro/`. `docs/design/shared-config.md` §3
+holds `objectAdmin`, and the shared file is under `fugaro/`. `docs/shared-config/spec.md` §3
 says the same: "only an operator can overwrite the marker or the shared file". The comments in
 `internal/localcfg/shared.go` that call the file "writable by any launcher" describe an
 installation whose launcher condition was never applied; the reader keeps refusing keys as

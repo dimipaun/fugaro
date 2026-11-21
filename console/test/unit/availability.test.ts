@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The five availability states, held to the three things the design's first UI
-// rule (docs/design/desktop-console.md section 6.1 rule 1, and
+// rule (docs/desktop-console/spec.md section 6.1 rule 1, and
 // console/docs/json-contract.md section 1) can get wrong (desktop-console plan
 // Task 2.0).
 //

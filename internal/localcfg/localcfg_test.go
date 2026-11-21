@@ -1907,7 +1907,7 @@ func TestReviewFloorDecodeStrict(t *testing.T) {
 // drops it the way it drops update_check and base_branch, and MergeShared
 // never takes it back from a published object: a floor in the runs bucket's
 // shared file would be the launcher the floor exists to bind, setting it
-// (docs/design/bucket-iam.md §10 L1, L2).
+// (docs/bucket-iam/spec.md §10 L1, L2).
 func TestReviewFloorNotInShared(t *testing.T) {
 	c, err := Parse([]byte(sample + "review_floor:\n  pro: [l2]\n"))
 	if err != nil {

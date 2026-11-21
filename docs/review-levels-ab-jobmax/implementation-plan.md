@@ -72,7 +72,7 @@ the plan:
 
 **Trust boundaries to probe in review:**
 
-- The task field and the project layer are written by the launcher (`docs/design/bucket-iam.md` §10 L1, L2), so a hostile task could set a level to `none`, name a model, or embed a layer. The floor is read from the owner-only policy node, and the runner re-runs `ResolveLevels` at bootstrap.
+- The task field and the project layer are written by the launcher (`docs/bucket-iam/spec.md` §10 L1, L2), so a hostile task could set a level to `none`, name a model, or embed a layer. The floor is read from the owner-only policy node, and the runner re-runs `ResolveLevels` at bootstrap.
 - The `effort` value is passed into the agent's environment, so it is accepted only from a closed set.
 - A crash payload leaves the machine: G6, and the DSN cannot be redirected by configuration.
 - The `settings` node is new database surface: written by the owner only, read by signed-in users of the installation. Its rules entry is security-reviewed with emulator tests (T1.1).
@@ -85,10 +85,10 @@ version of this table, have merged, and so has the console redesign's step 4b-2.
 
 | In flight | Files shared with this plan | Tasks that wait |
 | --- | --- | --- |
-| #1332 (mobile P7.1b, draft) | `mobile/app.config.js`, `docs/plans/2026-10-19-mobile-telemetry.md`, `docs/mobile/implementation-plan.md` | T0.1, T3.1 |
+| #1332 (mobile P7.1b, draft) | `mobile/app.config.js`, `docs/mobile/telemetry-plan.md`, `docs/mobile/implementation-plan.md` | T0.1, T3.1 |
 | #1392 (console auto-update U3, halted) and U4, U5 | `console/package.json`, `console/package-lock.json`, `console/src/main/index.ts`, `console/test/unit/pinning.test.ts`, `console/THIRD_PARTY_NOTICES.md` | T2.1 |
 | #620 (managed-projects checks) | `docs/gcp-live-checklist.md` | X1, X2 |
-| The console redesign's steps 5 to 7 (console 0.116.0) | `console/src/renderer/theme/flight-deck.css`, `screens.css`, `console/src/renderer/screens/live.ts`, `run.ts`, `docs/design/console-styling.md` | G1.1, V1.2, V1.3 |
+| The console redesign's steps 5 to 7 (console 0.116.0) | `console/src/renderer/theme/flight-deck.css`, `screens.css`, `console/src/renderer/screens/live.ts`, `run.ts`, `docs/console-styling/spec.md` | G1.1, V1.2, V1.3 |
 | Any other run writing `internal/runner/runner.go` (one writer at a time across every plan) | `internal/runner/runner.go` | L4.2, B1.2 |
 
 ## Slices and tasks
@@ -146,7 +146,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L1.4 The owner's level floor, owner-only and tighten-only (D722)
 
 - **Files:** `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go` and `internal/cli/sharedcfg.go` (the floor never enters the launcher-writable shared configuration: `Shared()` drops it and `sharedForbidden` names it), `internal/localcfg/localcfg_test.go`, `internal/projectpolicy/policy.go`, `internal/projectpolicy/policy_test.go`, `internal/cli/project_cmd.go` (the publish builds `projectpolicy.Policy` field by field), `internal/runner/policy.go` (the job reads the node at bootstrap), `internal/policy/policy.go` (the field on `Effective`), `internal/policy/merge.go`, `internal/policy/merge_test.go`.
-- **Interfaces:** produces `review_floor: {<mode>: [l1|l2|l3, …]}` in the owner's project config, published by `fugaro project policy publish` into the **owner-only policy node** (`internal/projectpolicy`). It is **not** a project-layer key: `docs/design/bucket-iam.md` §10 L2 says a launcher can embed any project-layer text in its own `task.json` and the runner trusts it, so a floor there could be dropped by the launcher it is meant to bind. The runner reads the node at bootstrap with its run token. `policy.Effective.ReviewFloor(mode)` merges as a union, so only tightening wins. A launcher with the owner's file applies it early (L3.2), and the job is authoritative. `projectpolicy.Decode` ignores unknown top-level keys, so a runner older than L4.2 would drop the floor silently. L1.2's gate on resolved levels refuses such an image whenever a floor is set. **No policy node:** `fugaro project policy publish` needs the installation's database and a `budget.mode`. An installation without them can publish no floor, so it runs on the rigor defaults alone, and `fugaro validate` warns when the owner's file sets a floor that cannot be published.
+- **Interfaces:** produces `review_floor: {<mode>: [l1|l2|l3, …]}` in the owner's project config, published by `fugaro project policy publish` into the **owner-only policy node** (`internal/projectpolicy`). It is **not** a project-layer key: `docs/bucket-iam/spec.md` §10 L2 says a launcher can embed any project-layer text in its own `task.json` and the runner trusts it, so a floor there could be dropped by the launcher it is meant to bind. The runner reads the node at bootstrap with its run token. `policy.Effective.ReviewFloor(mode)` merges as a union, so only tightening wins. A launcher with the owner's file applies it early (L3.2), and the job is authoritative. `projectpolicy.Decode` ignores unknown top-level keys, so a runner older than L4.2 would drop the floor silently. L1.2's gate on resolved levels refuses such an image whenever a floor is set. **No policy node:** `fugaro project policy publish` needs the installation's database and a `budget.mode`. An installation without them can publish no floor, so it runs on the rigor defaults alone, and `fugaro validate` warns when the owner's file sets a floor that cannot be published.
 - **Tests:** `TestReviewFloorMergesTightenOnly`, `TestReviewFloorPublishedToPolicyNode`, `TestReviewFloorNotInLayer`, `TestReviewFloorNotInShared`, `TestRunnerReadsReviewFloorFromNode`. `TestReviewFloorUnpublishableWarns` is L3.2's, because the warning is printed by `internal/cli/validate.go`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/policy ./internal/localcfg ./internal/projectpolicy -run 'ReviewFloor' -count=1 && GOFLAGS=-p=2 go test ./internal/runner -run 'TestRunnerReadsReviewFloor' -count=1 -timeout 30m`.
 - **Depends on:** none.
@@ -156,7 +156,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### L2.1 The level-3 recipe step (D720, D726)
 
-- **Files:** `internal/recipe/recipe.go`, `internal/recipe/stages.go`, `schemas/recipe.schema.json`, `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`, `docs/recipes.md`, `docs/design/recipes.md`, `internal/recipe/recipe_test.go`, `internal/recipe/stages_test.go`.
+- **Files:** `internal/recipe/recipe.go`, `internal/recipe/stages.go`, `schemas/recipe.schema.json`, `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`, `docs/recipes.md`, `docs/recipes/spec.md`, `internal/recipe/recipe_test.go`, `internal/recipe/stages_test.go`.
 - **Interfaces:** produces `recipe.StepAdversarial` (`adversarial: { max_rounds, bounce: first_line }`): at most once, after `review`, and `bounce` may target only `first_line`. `StageBound` adds `n₃·(2 + 2·f)` with a bounce, keeping its signature: `n₃` is the step's own `max_rounds`, whose default (`recipe.DefaultAdversarialRounds`, 2) is declared in `internal/recipe` because `internal/config` imports `recipe`, never the reverse. **Superseded by `DefaultRounds`/`AdversarialDefault` (#1483): `internal/recipe` declares no such constant, the default for `n₃` is the rigor mode's senior row, and `StageBound` takes it as its fourth argument — `internal/rigor`'s own test imports `internal/recipe`, so the import cannot go the other way, and a caller with no mode passes critical's five.** It also produces `recipe.UsesAdversarial` and `adversarialSince`, a case in `recipeSinceFor` the way `UsesDigest` has one. `recipe.Recipe.newKeys` (`internal/recipe/recipe.go`) is the 0.7.0 gate and would let a 0.13 image accept the launch and then refuse the step. `recipeSinceFor` returns the base gate when the task carries no catalog recipe (`r == nil`, a repository-sourced recipe), so the launcher reads the repository's recipe at the ref and applies `adversarialSince` to it too.
 - **Tests:** `TestAdversarialStepOrder`, `TestAdversarialBounceTarget`, `TestStageBoundWithAdversarial` (which pins 11 for today's `standard` at the defaults and 19 with L3 at f = 1, n = 2, n₃ = 2), `TestRecipesSkewRefusesAdversarialOnOldImage`, and `TestRecipesSkewRefusesRepositoryAdversarialOnOldImage`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/recipe -count=1`, then `GOFLAGS=-p=2 go test ./internal/cli -run 'DocsRecipes|RecipesSkew' -count=1`.
@@ -313,7 +313,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 - **Files:** `internal/runner/abreplay.go` (new), `internal/runner/runner.go`, `internal/runner/abreplay_test.go` (new).
 - **Interfaces:** a challenger with `slot: lN` checks out the champion's base, applies the champion's patch (`runs/<slug>/<run-id>/ab/patch.diff`), runs one level-N review with the challenger model and publishes nothing (`ab.publish: none`). Its findings are recorded for the judge.
-  - The patch is untrusted: any launcher, and the champion's own job agent, can write that object (`docs/design/bucket-iam.md` §10 L3).
+  - The patch is untrusted: any launcher, and the champion's own job agent, can write that object (`docs/bucket-iam/spec.md` §10 L3).
   - It reads only the patch under `ChampionRun`'s own prefix.
   - The replay refuses a patch that touches `.claude/**`, `.fugaro/**`, `.github/**`, `.git*`, `fugaro.yaml`, a recipe file, `CLAUDE.md` or `CLAUDE.local.md` at any depth, or `.mcp.json`, so no hook, instruction or tool setting crosses runs.
   - It applies the patch with `git apply` and no scripts, and runs the review with the reviewer's read-only tool set.
@@ -359,7 +359,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Depends on:** #1367 (`working/SKILL.md`).
 - **Red step:** the new test fails on the current skill.
 - **Commit:** `plugin: job max in the parallelism skill`.
-- **Done (PR #1413, `da056ce7`).** Landed 2026-10-30, before this line was written, with the three files the **Files** line names and nothing else; its commit subject is the **Commit** line's own with the pull request's number appended. The task was picked up again on 2026-11-12, and nothing was re-implemented: the definition (`plugin/skills/parallelism/SKILL.md:33`), the three techniques (line 35), the one-yes-per-batch default with the `/jobmax` exception (line 122) and the `working` pointer (line 16) are the text #1413 wrote, both gates are green, and the run's change is the pin `TestParallelismSkillDefinesJobMax` was missing — the stub technique's own clause, "so neither side waits", which the skill's bold markers had split off from the name the test matched, so a skill keeping the name and dropping the clause passed. [Evidence, clause by clause](../review-levels-ab-jobmax-j1.1-already-landed.md).
+- **Done (PR #1413, `da056ce7`).** Landed 2026-10-30, before this line was written, with the three files the **Files** line names and nothing else; its commit subject is the **Commit** line's own with the pull request's number appended. The task was picked up again on 2026-11-12, and nothing was re-implemented: the definition (`plugin/skills/parallelism/SKILL.md:33`), the three techniques (line 35), the one-yes-per-batch default with the `/jobmax` exception (line 122) and the `working` pointer (line 16) are the text #1413 wrote, both gates are green, and the run's change is the pin `TestParallelismSkillDefinesJobMax` was missing — the stub technique's own clause, "so neither side waits", which the skill's bold markers had split off from the name the test matched, so a skill keeping the name and dropping the clause passed. [Evidence, clause by clause](j1.1-already-landed.md).
 
 #### J1.2 The `/jobmax` skill (D729, D730 as ruled)
 
@@ -399,7 +399,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### T0.1 Record the supersessions (D731)
 
-- **Files:** `docs/design/desktop-console.md` (D5 marked superseded by D731), `docs/plans/2026-10-19-mobile-telemetry.md` (D255 superseded; Analytics dropped; the §7.4 scan refuses `setAnalyticsCollectionEnabled(` and admits exactly one `setCrashlyticsCollectionEnabled(` call site), `docs/mobile/implementation-plan.md` (P7.2/P7.3 re-scoped), `internal/cli/docs_mobile_telemetry_test.go` (its pinned facts move with the text), `internal/cli/docs_no_crash_reporter_test.go` (new: G8, `TestGoModHasNoCrashReporter`, which needs no switch and so is not blocked on O9).
+- **Files:** `docs/desktop-console/spec.md` (D5 marked superseded by D731), `docs/mobile/telemetry-plan.md` (D255 superseded; Analytics dropped; the §7.4 scan refuses `setAnalyticsCollectionEnabled(` and admits exactly one `setCrashlyticsCollectionEnabled(` call site), `docs/mobile/implementation-plan.md` (P7.2/P7.3 re-scoped), `internal/cli/docs_mobile_telemetry_test.go` (its pinned facts move with the text), `internal/cli/docs_no_crash_reporter_test.go` (new: G8, `TestGoModHasNoCrashReporter`, which needs no switch and so is not blocked on O9).
 - **Tests and command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|GoModHasNoCrashReporter' -count=1 && (cd website && npm run check)`. `website/test/console.mjs` reads the D5 row.
 - **Depends on:** #1332 (the same two mobile documents).
 - **Red step:** the mobile telemetry docs test fails on the old "always on" pin until both move together.
@@ -435,7 +435,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 **Closed as superseded 2026-11-16 (the owner's ruling): it allow-listed T1.2's argv, which is not built; the allow-list row is re-planned with the registry.** Nothing below is built from this task; its text is kept as the record.
 
-- **Files:** `console/src/main/ipc.ts` (`CONSOLE_OPERATIONS` gains the exact argv), `console/src/main/spawn.ts` if its allow-list lists argvs, their pinning tests in `console/test/unit/`, `docs/design/desktop-console.md` (the §5.1 table).
+- **Files:** `console/src/main/ipc.ts` (`CONSOLE_OPERATIONS` gains the exact argv), `console/src/main/spawn.ts` if its allow-list lists argvs, their pinning tests in `console/test/unit/`, `docs/desktop-console/spec.md` (the §5.1 table).
 - **Interfaces:** a new allow-listed argv, `project show --json`, which `.claude/rules/console.md` marks security-sensitive: an independent review, its pinning tests and the §5.1 row.
 - **Tests:** the IPC and spawn pinning tests with the new row, and `internal/cli/docs_desktop_console_test.go`.
 - **Command:** `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 ipc spawn`, then `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
@@ -446,7 +446,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### T2.1 The console reporter (D733, D734; DRAFT until the processor is named)
 
-- **Files:** `console/package.json`, `console/package-lock.json` (`@sentry/electron`, exact), `console/test/unit/pinning.test.ts` (its runtime-dependency allow-list asserts `dependencies` is empty today), `console/src/main/crash.ts` (new), `console/src/main/index.ts`, the `settings.crash_reports` field decoded inside `console/src/main/crash.ts` from T1.3's `project show --json` operation (no change to `console/src/shared/schema.ts`), `console/test/unit/crash.test.ts` (new), `console/THIRD_PARTY_NOTICES.md`, `docs/licensing/dependency-audit.md`, `docs/design/desktop-console.md` (a new section: what is sent), `website/src/pages/privacy.astro` (the console paragraph), `website/test/privacy.mjs` (it scans `console/src/` for reporting hosts and pins "carries none"), `docs/releases/console/` (the release's notes).
+- **Files:** `console/package.json`, `console/package-lock.json` (`@sentry/electron`, exact), `console/test/unit/pinning.test.ts` (its runtime-dependency allow-list asserts `dependencies` is empty today), `console/src/main/crash.ts` (new), `console/src/main/index.ts`, the `settings.crash_reports` field decoded inside `console/src/main/crash.ts` from T1.3's `project show --json` operation (no change to `console/src/shared/schema.ts`), `console/test/unit/crash.test.ts` (new), `console/THIRD_PARTY_NOTICES.md`, `docs/licensing/dependency-audit.md`, `docs/desktop-console/spec.md` (a new section: what is sent), `website/src/pages/privacy.astro` (the console paragraph), `website/test/privacy.mjs` (it scans `console/src/` for reporting hosts and pins "carries none"), `docs/releases/console/` (the release's notes).
 - **Interfaces:**
   - Initialises only after `project show --json` returns `settings.crash_reports: true` for the chosen installation, and closes the client when the switch reads false or null.
   - `beforeSend` keeps the exception type and frames (function, app-relative file, line). It drops the message, breadcrumbs, contexts, user, request, `server_name`, tags, extra and local variables.
@@ -463,7 +463,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### T2.2 The console's public statements (D731)
 
-- **Files:** `website/content/downloads.json` (the `no-telemetry` property rewritten, still containing the words "crash reporting" and "update check" that `website/test/console.mjs` requires: "No telemetry and no analytics; crash reporting, stack traces only, is on by default and can be turned off in the project config; an update check that carries no identifier"), `docs/design/desktop-console.md` (the §7.4 sentence that test pairs with the property), `website/test/console.mjs`, `README.md` (the console sentence).
+- **Files:** `website/content/downloads.json` (the `no-telemetry` property rewritten, still containing the words "crash reporting" and "update check" that `website/test/console.mjs` requires: "No telemetry and no analytics; crash reporting, stack traces only, is on by default and can be turned off in the project config; an update check that carries no identifier"), `docs/desktop-console/spec.md` (the §7.4 sentence that test pairs with the property), `website/test/console.mjs`, `README.md` (the console sentence).
 - **Tests and command:** `cd website && npm run check`, then `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
 - **Depends on:** T2.1 (the statement ships with the code).
 - **Red step:** `website/test/console.mjs` fails until the property and the test move together.
@@ -473,7 +473,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 **WAITING on a re-plan, 2026-11-16 (the owner's ruling), not approved to launch as written:** it reads T1.1's `settings` node, now closed, so it is re-planned later against the orchestrator and the config-ownership registry. D731 and D734 stand.
 
-- **Files:** `mobile/package.json` and `mobile/package-lock.json` (drop `@react-native-firebase/analytics`), `mobile/app.config.js`, `mobile/src/app-config.test.js` and `mobile/src/app-config.ids.test.js` (they pin the analytics plugin), `mobile/firebase.json` (`crashlytics_auto_collection_enabled: false`, Analytics keys removed), `mobile/src/telemetry/index.js` (new: the module's only entry point), `mobile/src/telemetry/crash.js` (new: the one `setCrashlyticsCollectionEnabled(` call, from the settings node), `mobile/src/telemetry/crash.test.js` (new), `mobile/src/telemetry/scan.test.js` (new: the §7.4 scan as amended in T0.1, since P7.2/P7.3 are unbuilt — **amended 2026-11-11: P7.2 is built and P7.3 is not**, P7.2 having landed ahead of T0.1's amendment (the sequencing is recorded in `docs/plans/2026-10-19-mobile-telemetry.md`'s P7.2 section), so this scan lands beside P7.2's `notice.test.js`), `mobile/src/telemetry/notice.js` and `mobile/src/telemetry/notice.test.js` (**added 2026-11-11**: P7.2's statement names Analytics while the app ships it, and `notice.test.js` reads `mobile/package.json` and fails until the clause leaves with the package — so this task's removal empties the statement of it), `website/src/pages/privacy.astro` (the app paragraph: Crashlytics, opt-out, no Analytics) and `website/test/privacy.mjs` (its `APP_TELEMETRY` list names the analytics package, so the page and the test move with the package in one task), `docs/releases/mobile/` (the release's notes).
+- **Files:** `mobile/package.json` and `mobile/package-lock.json` (drop `@react-native-firebase/analytics`), `mobile/app.config.js`, `mobile/src/app-config.test.js` and `mobile/src/app-config.ids.test.js` (they pin the analytics plugin), `mobile/firebase.json` (`crashlytics_auto_collection_enabled: false`, Analytics keys removed), `mobile/src/telemetry/index.js` (new: the module's only entry point), `mobile/src/telemetry/crash.js` (new: the one `setCrashlyticsCollectionEnabled(` call, from the settings node), `mobile/src/telemetry/crash.test.js` (new), `mobile/src/telemetry/scan.test.js` (new: the §7.4 scan as amended in T0.1, since P7.2/P7.3 are unbuilt — **amended 2026-11-11: P7.2 is built and P7.3 is not**, P7.2 having landed ahead of T0.1's amendment (the sequencing is recorded in `docs/mobile/telemetry-plan.md`'s P7.2 section), so this scan lands beside P7.2's `notice.test.js`), `mobile/src/telemetry/notice.js` and `mobile/src/telemetry/notice.test.js` (**added 2026-11-11**: P7.2's statement names Analytics while the app ships it, and `notice.test.js` reads `mobile/package.json` and fails until the clause leaves with the package — so this task's removal empties the statement of it), `website/src/pages/privacy.astro` (the app paragraph: Crashlytics, opt-out, no Analytics) and `website/test/privacy.mjs` (its `APP_TELEMETRY` list names the analytics package, so the page and the test move with the package in one task), `docs/releases/mobile/` (the release's notes).
 - **Interfaces:** after sign-in, the app reads `settings/crash_reports` from the installation's database (T1.1's node; O9 as ruled), and follows later changes while signed in. Before sign-in, or if the node cannot be read, collection stays off and unsent reports are deleted (U2).
 - **Tests:** `crash: off until signed in`, `crash: follows the settings node, including a later change`, `scan: exactly one setCrashlyticsCollectionEnabled call site, no analytics import`.
 - **Command:** `cd mobile && npm test`, then `cd website && npm run check`.
@@ -497,7 +497,7 @@ processor (O4). No agent edits the Terms.
 
 #### G1.1 Minimum scale and horizontal-scroll fallback
 
-- **Files:** `console/src/renderer/screens/graph.ts`, `console/src/renderer/theme/screens.css`, `console/test/unit/graph.test.ts`, `console/test/unit/layout-client.test.ts`, `docs/design/console-styling.md`.
+- **Files:** `console/src/renderer/screens/graph.ts`, `console/src/renderer/theme/screens.css`, `console/test/unit/graph.test.ts`, `console/test/unit/layout-client.test.ts`, `docs/console-styling/spec.md`.
 - **Interfaces:** `GRAPH_MIN_SCALE` (the node width at which a title stays legible). When the panel width divided by the picture's width falls below it, the canvas takes `width = picture width × GRAPH_MIN_SCALE` inside a wrapper that scrolls horizontally, and that graph only. `LAYOUT_OPTIONS` (`console/src/renderer/graph/layout.ts`, unchanged) stays `layered` and `DOWN` with no wrapping key.
 - **Tests:** `graph: fits the width above the minimum scale`, `graph: scrolls horizontally below it`, `layout: no wrapping option`.
 - **Command:** `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 graph layout`, then `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1` (the styling doc is pinned).
@@ -520,7 +520,7 @@ processor (O4). No agent edits the Terms.
 
 #### V1.2 The spend-rate gauge, one-hour sparklines and cap bars on Live
 
-- **Files:** `console/src/renderer/screens/live.ts`, `console/src/renderer/theme/flight-deck.css`, `console/src/shared/schema.ts` (`LIVE_KEYS` gains `max_parallel`), `console/test/unit/live.test.ts`, `docs/design/console-styling.md`.
+- **Files:** `console/src/renderer/screens/live.ts`, `console/src/renderer/theme/flight-deck.css`, `console/src/shared/schema.ts` (`LIVE_KEYS` gains `max_parallel`), `console/test/unit/live.test.ts`, `docs/console-styling/spec.md`.
 - **Interfaces:**
   - An SVG gauge in $/h. Its red zone starts at the rate that would use up the day's remaining headroom before the UTC day ends.
   - `HourHistory` is a second bounded history (one hour, kept only while the console runs) beside the 5-minute `BurnHistory`, whose pin to `BurnWindow` is untouched.
@@ -537,7 +537,7 @@ processor (O4). No agent edits the Terms.
 
 **WAITING on a re-plan, 2026-11-16 (the owner's ruling), not approved to launch as written:** it depends on T1.2 and J1.3, both closed, so it is re-planned later against the orchestrator and the config-ownership registry.
 
-- **Files:** `internal/cli/diagnose.go` and its test (the document the Run screen reads), `console/docs/json-contract.md`, `console/src/shared/schema.ts` (`RECORD_KEYS`; `closed()` refuses unknown keys), `console/src/renderer/screens/run.ts`, `console/src/renderer/theme/screens.css`, `console/test/unit/run.test.ts`, `docs/design/console-styling.md`.
+- **Files:** `internal/cli/diagnose.go` and its test (the document the Run screen reads), `console/docs/json-contract.md`, `console/src/shared/schema.ts` (`RECORD_KEYS`; `closed()` refuses unknown keys), `console/src/renderer/screens/run.ts`, `console/src/renderer/theme/screens.css`, `console/test/unit/run.test.ts`, `docs/console-styling/spec.md`.
 - **Interfaces:** `diagnose --json` gains each level's rounds used and its cap. No console decoder reads `reviews` today. The Run screen draws one bar per level.
 - **Tests:** `run: iterations bar per level`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Diagnose|Docs' -count=1`, then `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 run`.
@@ -557,7 +557,7 @@ processor (O4). No agent edits the Terms.
 - **Depends on:** L4.2, T2.1, T3.1. #620, which is open and edits the same register, merges or rebases first.
 - **Red step:** none. It is a register entry, and the Go docs tests check the register's format and numbers.
 - **Commit:** `checklist: checks 270-272 for review levels and crash reports`.
-- **Blocked (2026-11-15): T3.1 is not built.** L4.2 and T2.1 are on `main` and T3.1 is not, so no row and no section were written into `docs/gcp-live-checklist.md` and 270–273 stay unused. **Read 271's `crash_reports: false` against the console as built**: it is T2.1 as this block describes it, and what shipped is the owner's ruling of 2026-10-31 — the console's own per-user `<userData>/crash.json`, off when it is absent. [Evidence, command by command](../review-levels-ab-jobmax-x1-blocked.md).
+- **Blocked (2026-11-15): T3.1 is not built.** L4.2 and T2.1 are on `main` and T3.1 is not, so no row and no section were written into `docs/gcp-live-checklist.md` and 270–273 stay unused. **Read 271's `crash_reports: false` against the console as built**: it is T2.1 as this block describes it, and what shipped is the owner's ruling of 2026-10-31 — the console's own per-user `<userData>/crash.json`, off when it is absent. [Evidence, command by command](x1-blocked.md).
 
 ### X2 Check 273, written into the register
 
@@ -648,11 +648,11 @@ pair of writers is joined by a dependency path):
 | `plugin/skills/parallelism/SKILL.md` | J1.1 (0), J1.2 (4) |
 | `plugin/skills/working/SKILL.md` | J1.1 (0), L5.1 (6) |
 | `docs/gcp-live-checklist.md` | X1 (6), X2 (7) |
-| `docs/design/desktop-console.md` | T0.1 (0), T1.3 (3), T2.1 (4), T2.2 (5) |
+| `docs/desktop-console/spec.md` | T0.1 (0), T1.3 (3), T2.1 (4), T2.2 (5) |
 | `docs/mobile/implementation-plan.md` | T0.1 (0), T3.2 (3) |
 | `console/docs/json-contract.md` | V1.1 (0), T1.2 (2), J1.3 (3), V1.3 (6) |
 | `console/src/shared/schema.ts` | V1.2 (1), V1.3 (6) |
-| `docs/design/console-styling.md` | G1.1 (0), V1.2 (1), V1.3 (6) |
+| `docs/console-styling/spec.md` | G1.1 (0), V1.2 (1), V1.3 (6) |
 | `console/src/renderer/theme/screens.css` | G1.1 (0), V1.3 (6) |
 | `website/src/pages/privacy.astro`, `website/test/privacy.mjs` | T3.1 (2), T2.1 (4) |
 | the CLI release's notes (`docs/releases/`) | L1.2 (2), L3.2 (4), L5.1 (6) |

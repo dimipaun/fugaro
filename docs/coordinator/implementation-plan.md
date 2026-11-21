@@ -1549,7 +1549,7 @@ was not.
 ## 9. The owner-run live checks, proposed by name and not numbered
 
 The register's own rule is that **the phase that ships the check writes it** — a sentence of
-`docs/design/voice.md` §5, quoted by work after work and **not** in the register itself — so
+`docs/voice/spec.md` §5, quoted by work after work and **not** in the register itself — so
 this plan proposes its checks **by name** and takes **no number**. The reading, name by name,
 against `docs/gcp-live-checklist.md` at `1e0953b7`:
 
@@ -1559,7 +1559,7 @@ live checks (39a–39f) and has **no section and no row at all**, because the re
 repository plan dropped 39b and 39f and amended 39a; the written sections run 19–38 and 40–47.
 **48–56** are the
 project-centric plan's, **57** the compute backend's (its section lives in
-`docs/design/compute-backend.md`), **58** the artifact-runs work's, **59a/59b** the desktop
+`docs/compute-backend/spec.md`), **58** the artifact-runs work's, **59a/59b** the desktop
 console's, **60 and 61 owner-allocated** (the budget-token channel and the monorepo folder
 export), **62–63** the console v2 pair's, **64–66** this repository's voice work (64 written, 65
 and 66 held), **67–68** managed projects', **69a–69c** and **70a–70c** the website and the website

@@ -27,8 +27,8 @@ func fakeBudgetToken(slug, run string) string {
 
 // Every write a launcher makes is under runs/, tokens/ or issues/, so the
 // launchers' conditioned write (gcp.LauncherBucketCondition: runs/ and, since
-// the budget token moved out of runs/, tokens/ — docs/design/budget-token-
-// channel.md §7.2 — and, since the shared issue store, issues/ — T-IS17) with
+// the budget token moved out of runs/, tokens/ — docs/budget-token-channel/spec.md
+// §7.2 — and, since the shared issue store, issues/ — T-IS17) with
 // writes denied everywhere else leaves launching, the claim takeover and
 // release, cancelling, the sealed token object and its cleanup working
 // (bucket-iam.md §2.2).

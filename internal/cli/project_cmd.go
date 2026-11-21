@@ -36,7 +36,7 @@ import (
 )
 
 // The `fugaro project` command group: the project's policy, its allow-list
-// and what is enrolled (docs/plans/2026-10-14-project-centric.md, phase 1
+// and what is enrolled (docs/project-centric/implementation-plan.md, phase 1
 // task 1.6). It is not internal/cli/project.go, which is project *selection*
 // (checkoutProject); the group gets its own command files, of which this is
 // the first (tasks 4.1 and 6.1 add project_enroll.go and project_export.go
@@ -1591,6 +1591,25 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		pol.OrchestratorEnabled = old.OrchestratorEnabled
 		pol.IssueSync = old.IssueSync
 	}
+	// The mobile block is the project's own answers to the pairing surface (P6
+	// of docs/mobile-identity-pairing, D2796, O9), and no key of this machine's
+	// config states them: the node is the only place they live, so a publish
+	// keeps the block it finds — a project whose owner turned pairing off, or
+	// chose to store nothing in the identity project, keeps that decision
+	// through a publish from any machine. A node that carries no block is one
+	// published before the key existed, and O9's answer is that the update
+	// writes the default on when it publishes: MobileForPublish is that rule,
+	// and it is the whole of what makes the pairing route answer after `fugaro
+	// update` and answer `mobile_disabled` before it (F40). It is written
+	// outside the `old != nil` guard above for the craft members' reason: the
+	// node's own block is one of its two sources, and the other is the default
+	// a node that carries none is written with, so a first publish and an
+	// installation that has not published since the key existed both get it.
+	var publishedMobile *projectpolicy.Mobile
+	if old != nil {
+		publishedMobile = old.Mobile
+	}
+	pol.Mobile = projectpolicy.MobileForPublish(publishedMobile)
 	// The crafts' credentials, their pools and the crafts that choose among
 	// them are the operator's own blocks from this release on (docs/model-crafts
 	// §1–3, MC18, D1667): the local config is their carrier, and this publish
@@ -1687,6 +1706,14 @@ func publishedCraftCredentials(lc *localcfg.Config, old *projectpolicy.Policy) [
 // does not carries no marker, so it is published only if its own owner says who
 // answers for it.
 //
+// The one pool that is published without an owner is the pool the config marks
+// as the cascade's: the marker never reaches the node (R15), and what the node
+// holds instead is the ordinary legacy_open pool a cascaded project's runs are
+// served — the node's readers know no cascades, and this is the shape they do
+// know (F36). Its own rule refuses a marker with no cascade behind it and an
+// owner written beside one (config.ValidateCascadePools), so the exception
+// cannot be reached by a pool nobody's migration wrote.
+//
 // A pool neither the config nor the node can publish — an ownerless one the
 // node has no copy of, which is what `fugaro accounts pool add` writes today —
 // is left out and NAMED in one line: the node would be one this Fugaro refuses
@@ -1721,7 +1748,22 @@ func publishedCraftPools(lc *localcfg.Config, old *projectpolicy.Policy, creds [
 		// taken from the node alone, and only while nothing else answers for the
 		// pool: a pool that names an owner now is not one that predates owners.
 		pub.LegacyOpen = false
-		if held {
+		// The cascade's marker is the installation's and never the node's: the
+		// node's readers are job images that know no such key, and the access
+		// record the service reads is written from the file (R15, CM36). The
+		// pool it marks is published as the ordinary legacy_open pool the
+		// cascade is — served to everyone, owned by nobody — which is the one
+		// exception to the rule above and to the owner the validator asks for:
+		// the marker's own rule refuses a marker with no cascade behind it and
+		// an owner written beside one (config.ValidateCascadePools), so a
+		// marked pool here is the migration's, and a publish that asked it for
+		// an owner would leave a cascaded project's runs served nothing (F36).
+		// The node's owner of that name goes with it: a pool served to everyone
+		// serves no owner, and carrying one forward would leave the node with a
+		// pool this publish then refuses to write at all.
+		pub.Cascade = false
+		pub.LegacyOpen = p.Cascade
+		if held && !p.Cascade {
 			if pub.Owner == "" {
 				pub.Owner = q.Owner
 			}
@@ -2092,9 +2134,14 @@ func nodeTurnsTheCascadeOn(p *projectpolicy.Policy) bool {
 // routingTurnsTheCascadeOn is that switch for a routing block rather than for
 // the node that carries one, so `fugaro project routing unset` refuses the same
 // shape this publish refuses (projectRoutingRefuseSilence): the two ask one
-// question, and neither can drift from the other about what the cascade is.
+// question, and neither can drift from the other about what the cascade is. The
+// question itself is config's (RoutingServesTheCascade), because the pool
+// carrying the cascade's marker is admitted by the same answer
+// (config.ValidateCascadePools, CM32): a project whose cascade serves is one
+// thing to this CLI, and a third reading of it here would be a way for the
+// marker's rule and the publish's to disagree.
 func routingTurnsTheCascadeOn(r *projectpolicy.Routing) bool {
-	return r != nil && r.Claude != nil && r.Claude.ViaValue() == projectpolicy.RouteCascade
+	return config.RoutingServesTheCascade(r)
 }
 
 // policyProviders is the policy's providers block, built from the operator's
@@ -2974,6 +3021,17 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	if new.IssueSync != nil {
 		fmt.Fprintf(out, "  issue_sync kept: %s\n", issueSyncText(new.IssueSync))
 	}
+	// The mobile block is kept too (P6 of docs/mobile-identity-pairing,
+	// D2796), and the line is the two above it: no key of this machine's config
+	// states it, so a block the node carries is unchanged and no +/- line above
+	// mentions it — and a person who turned pairing on, or off, or chose to
+	// store nothing in the identity project, would read that silence as "it is
+	// gone". A node that carries none is written the default block (O9), and
+	// that is the diff's own `mobile` row above: `kept` would be false of a
+	// block this publish has just written.
+	if old != nil && old.Mobile != nil {
+		fmt.Fprintf(out, "  mobile kept: %s\n", mobileText(new.Mobile))
+	}
 	// The crafts, their credentials and their pools are the operator's own
 	// blocks (docs/model-crafts §1–3, MC18, D1667), so a publish that writes
 	// them names them: a credential by its name and its type, a pool by its
@@ -3133,6 +3191,46 @@ func issueSyncText(b *projectpolicy.IssueSync) string {
 		return repos + ", mirror on: an item with no spec and no external id opens an issue"
 	}
 	return repos
+}
+
+// mobileText is the mobile block as one line, the two above it: the two
+// switches and the members a project that narrowed them writes. Only what the
+// block writes is printed, and each member is printed as the reader answers it
+// (projectpolicy's accessors), so the line says what the pairing route will do
+// and not what a node happens to spell — an absent `enabled` inside a written
+// block is on, and an absent `accepted_providers` is the default four.
+func mobileText(b *projectpolicy.Mobile) string {
+	if b == nil {
+		return "none"
+	}
+	enabled, sync := "off", "off"
+	if b.Enabled == nil || *b.Enabled {
+		enabled = "on"
+	}
+	if b.Sync == nil || *b.Sync {
+		sync = "on"
+	}
+	parts := []string{"pairing " + enabled, "sync " + sync}
+	if len(b.AcceptedProviders) > 0 {
+		parts = append(parts, "providers "+strings.Join(b.AcceptedProviders, ", "))
+	}
+	if b.MaxAuthAge != "" {
+		parts = append(parts, "auth age "+b.MaxAuthAge)
+	}
+	if b.StrictNewDevice != nil && *b.StrictNewDevice {
+		parts = append(parts, "a new device needs a QR code")
+	}
+	if len(b.CostlyModes) > 0 {
+		modes := make([]string, 0, len(b.CostlyModes))
+		for _, m := range b.CostlyModes {
+			modes = append(modes, string(m))
+		}
+		parts = append(parts, "costly modes "+strings.Join(modes, ", "))
+	}
+	if b.BiometricOnCostly != nil && *b.BiometricOnCostly {
+		parts = append(parts, "biometric on a costly start")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // binariesText is the binaries block as one line, member by member and only the
@@ -3570,7 +3668,7 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 	if len(p.Budget.AllowedModels) > 0 {
 		models = strings.Join(p.Budget.AllowedModels, ", ")
 	}
-	return map[string]string{
+	out := map[string]string{
 		"version":               fmt.Sprintf("%d", p.Version),
 		"budget.mode":           p.Budget.Mode,
 		"budget.per_run_usd":    usdVal(p.Budget.PerRunUSD),
@@ -3583,6 +3681,18 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 		"review_floor":          reviewFloorText(p),
 		"reports_commit":        reportsCommitText(p),
 	}
+	// The mobile block is the one member whose source is neither this machine's
+	// config nor the node it replaces: a publish writes the node's own block
+	// when there is one and O9's defaults when there is not (MobileForPublish),
+	// so the row is the block as written and the diff prints it as the line a
+	// publish adds to a node published before the key existed. A row is left
+	// out where there is no block at all — a node read before the publish and
+	// nothing else — because a line of "none" would read as a block this
+	// publish had taken away, which no publish does.
+	if p.Mobile != nil {
+		out["mobile"] = mobileText(p.Mobile)
+	}
+	return out
 }
 
 // reportsCommitText is the designated repository as one line — the repository

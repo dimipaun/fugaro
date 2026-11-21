@@ -5,7 +5,7 @@ import "testing"
 // TestNeedsAnthropicKey: the model ID alone decides the route, so a pin no
 // allowed provider serves (a Claude pin above all) needs the Anthropic key,
 // and one every pin's provider may serve does not (design
-// docs/design/project-centric.md §6.1).
+// docs/project-centric/spec.md §6.1).
 func TestNeedsAnthropicKey(t *testing.T) {
 	open := map[string]ModelProvider{
 		"openrouter": {Kind: ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
@@ -113,7 +113,7 @@ func TestNeedsAnthropicKeyReadsTheVisionSlot(t *testing.T) {
 // only a model no allowed provider claims goes direct. A level model the
 // route serving this repository takes needs no key, and the same model on a
 // route that may not see this repository does (design
-// docs/design/project-centric.md §6.1).
+// docs/project-centric/spec.md §6.1).
 func TestNeedsAnthropicKeyLevelModelServedByAProvider(t *testing.T) {
 	open := map[string]ModelProvider{
 		"openrouter": {Kind: ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",

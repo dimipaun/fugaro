@@ -2418,7 +2418,7 @@ func providerKeySecretCredential(lc *localcfg.Config, secret string) (string, bo
 // providers.<p>.allow_data_to names literally.
 //
 // An absent list, or one that is only "*", is "every repository" (design
-// docs/design/project-secrets.md §3a) and answers nil: the entries are named
+// docs/project-secrets/spec.md §3a) and answers nil: the entries are named
 // after each repository's slug, and a wildcard names none, so there is nothing
 // to write. The refusal says which field to write, because the value IS
 // storable the moment the field names its repositories.

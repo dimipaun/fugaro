@@ -392,11 +392,11 @@ package cli
 //	  (`agent.models.coder|reviewer|referee` for the model keys) -> fails,
 //	  naming the document and the phrase: a citation by content is a claim that
 //	  the document carries the sentence, and that claim is the check;
-//	  paste a second copy of an anchored line into `docs/design/desktop-console.md`
+//	  paste a second copy of an anchored line into `docs/desktop-console/spec.md`
 //	  -> fails, naming both lines: an anchor that names two lines is a citation
 //	  two readers would follow to different places;
 //	  cite a `docs/design/` document with no anchor behind it
-//	  (`docs/design/project-centric.md`) -> fails: the citation names a document
+//	  (`docs/project-centric/spec.md`) -> fails: the citation names a document
 //	  and no longer says where in it, which is the state the line numbers left
 //	  every one of these in;
 //	  delete the two `docs/mobile/spec.md` anchors -> fails on every citation of
@@ -1174,7 +1174,7 @@ var coordinatorRootFiles = map[string]bool{"SECURITY.md": true, "README.md": tru
 var coordinatorCitationExceptions = map[string]string{
 	"CLAUDE.md":                             "§0 records that there is NO root CLAUDE.md; naming the absent file is the point of the sentence",
 	"docs/design/always-on-orchestrator.md": "the always-on orchestrator design, in open PR #632 and not on main; §2 #29 says so",
-	"docs/design/console-styling.md":        "the console styling design, in open PR #634 and not on main; U7 says so",
+	"docs/console-styling/spec.md":          "the console styling design, in open PR #634 and not on main; U7 says so",
 	"docs/design/credentials-service*.md":   "§0.3 quotes the brief's own glob, which names no file: the documents are at docs/credentials-service/, and the point of the sentence is that docs/design/ has no such subdirectory",
 	"docs/releases/vX.Y.Z.md":               "the naming pattern of the release notes, not one file",
 	"internal/cli/report.go":                "the report command moved to ee/report/cli/report.go in E2.2b (D444); this reconciliation is dated and stays unedited, so the citation is recorded here rather than re-pointed",
@@ -2224,7 +2224,7 @@ func TestDocsCoordinatorNumbersTableIsReadFromItsSources(t *testing.T) {
 // line number: `docs/design/` and `docs/mobile/`, which other works add sections and rows to
 // while this one sits in review. A line number into one of them goes stale silently -- nothing
 // about a number says which sentence it meant -- and it went stale here: the sentence that cites
-// `docs/design/desktop-console.md` for D2 pointed at `:404`, a table's separator rule, when the
+// `docs/desktop-console/spec.md` for D2 pointed at `:404`, a table's separator rule, when the
 // D2 row it is about is at 406.
 var coordinatorContentAnchoredDirs = []string{"docs/design/", "docs/mobile/"}
 
@@ -2258,22 +2258,22 @@ type coordinatorContentAnchor struct {
 var coordinatorContentAnchors = []coordinatorContentAnchor{
 	{"docs/design/v1.md", "a Fugaro project, the spec's §2/§4 unit", "**Fugaro project** (the word users see)"},
 	{"docs/design/v1.md", "the installation, the same object named from the cloud side", "**Installation.** The project's cloud-side setup"},
-	{"docs/design/m10-multi-model.md", "the model config is per slot, not per tier", "`agent.models.coder|reviewer|background`, `agent.model`, `budget.allowed_models`"},
-	{"docs/design/desktop-console-v2.md", "D22, the one write: launch", "| **D22** | Does v2's first slice contain any write at all?"},
+	{"docs/m10-multi-model/spec.md", "the model config is per slot, not per tier", "`agent.models.coder|reviewer|background`, `agent.model`, `budget.allowed_models`"},
+	{"docs/desktop-console-v2/spec.md", "D22, the one write: launch", "| **D22** | Does v2's first slice contain any write at all?"},
 	{"docs/design/v1.md", "a Fugaro project, the definition finding #1 reads", "**Fugaro project** (the word users see)"},
-	{"docs/design/desktop-console-v2.md", "v2's status: nothing in it is approved or built", "**Nothing in v2 is approved or built**"},
-	{"docs/design/m10-multi-model.md", "the model config is per slot, not per tier, in finding #23", "`agent.models.coder|reviewer|background`, `agent.model`, `budget.allowed_models`"},
-	{"docs/design/provider-price-catalog.md", "the catalog's own design admits `cheapest` can undercharge", "**`cheapest` can undercharge, and this design says so plainly rather than hiding it.**"},
-	{"docs/design/desktop-console.md", "D2: v1 is strictly read-only", "| **D2** | Is v1 strictly read-only, with kill/resume/cancel deferred?"},
-	{"docs/design/desktop-console-v2.md", "D22 again, for the console's one write", "| **D22** | Does v2's first slice contain any write at all?"},
-	{"docs/design/desktop-console.md", "§5.1 rule 7: job-written text is text, never markup", "7. **Job-written text is text.**"},
+	{"docs/desktop-console-v2/spec.md", "v2's status: nothing in it is approved or built", "**Nothing in v2 is approved or built**"},
+	{"docs/m10-multi-model/spec.md", "the model config is per slot, not per tier, in finding #23", "`agent.models.coder|reviewer|background`, `agent.model`, `budget.allowed_models`"},
+	{"docs/provider-price-catalog/spec.md", "the catalog's own design admits `cheapest` can undercharge", "**`cheapest` can undercharge, and this design says so plainly rather than hiding it.**"},
+	{"docs/desktop-console/spec.md", "D2: v1 is strictly read-only", "| **D2** | Is v1 strictly read-only, with kill/resume/cancel deferred?"},
+	{"docs/desktop-console-v2/spec.md", "D22 again, for the console's one write", "| **D22** | Does v2's first slice contain any write at all?"},
+	{"docs/desktop-console/spec.md", "§5.1 rule 7: job-written text is text, never markup", "7. **Job-written text is text.**"},
 	{"docs/mobile/reconciliation.md", "mobile D115, phase 2 hosting", "| **D115** | **Phase 2 hosting: who holds the model credential?**"},
 	{"docs/mobile/implementation-plan.md", "P5.1, the always-on orchestrator, and its state", "### Task P5.1: Phase 2 hosting"},
 	{"docs/mobile/reconciliation.md", "mobile D111, what the app may hold", "| **D111** | **What may the app hold?**"},
 	{"docs/mobile/reconciliation.md", "mobile D115 again, for Q13's refusal", "| **D115** | **Phase 2 hosting: who holds the model credential?**"},
 	{"docs/design/v1.md", "a Fugaro project, the glossary's unit", "**Fugaro project** (the word users see)"},
 	{"docs/design/v1.md", "the installation, the glossary's cloud-side name for it", "**Installation.** The project's cloud-side setup"},
-	{"docs/design/desktop-console-spec-v2.md", "the orchestrator, one per thread of work", "- Multiple orchestrators: typically one per thread of work"},
+	{"docs/desktop-console-v2/spec-source.md", "the orchestrator, one per thread of work", "- Multiple orchestrators: typically one per thread of work"},
 	{"docs/mobile/spec.md", "phase 1: the orchestrator on the owner's laptop", "- Phase 1: orchestrator runs on the owner's laptop"},
 	{"docs/mobile/spec.md", "phase 2: the orchestrator moves to an always-on service", "- Phase 2: orchestrator moves to an always-on cloud service"},
 	{"docs/mobile/implementation-plan.md", "P5.4, the conversational front agent", "### Task P5.4: The conversational front agent"},

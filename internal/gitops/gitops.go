@@ -125,7 +125,7 @@ var ModelCredentialVars = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN
 
 // BudgetTokenEnv is internal/runner's BudgetTokenEnv: the marker the launcher
 // writes into a launch's environment, whose value is the launch's seal key
-// once the launcher seals (docs/design/budget-token-channel.md §7.1). It is
+// once the launcher seals (docs/budget-token-channel/spec.md §7.1). It is
 // named here rather than imported because internal/runner imports this
 // package, so the runner's constant is an alias of this one and the two
 // cannot drift. See processEnv for why it is stripped.
@@ -308,7 +308,7 @@ func (r *Repo) processEnv() []string {
 	// budget marker is the run's: no git call, and nothing git runs, ever sees
 	// either, whatever StripEnv says. The marker is a secret as soon as the
 	// launcher seals — its value is the launch's seal key, and whoever holds
-	// it opens this run's token object (docs/design/budget-token-channel.md
+	// it opens this run's token object (docs/budget-token-channel/spec.md
 	// §7.1) — and an agent-written .git/config (core.fsmonitor, a filter
 	// driver) is exactly a way to make git run a command of the agent's
 	// choosing, which is why the model credential is stripped the same way.
@@ -317,7 +317,7 @@ func (r *Repo) processEnv() []string {
 	// runner's /proc regardless, so what it removes is one more place the
 	// value would surface — a hook's environment, a command's dump of its own
 	// env — not the agent's own reach (SECURITY.md, "What one run's agent can
-	// reach"; docs/design/budget-token-channel.md §7.1).
+	// reach"; docs/budget-token-channel/spec.md §7.1).
 	return slices.DeleteFunc(env, func(kv string) bool {
 		k, _, _ := strings.Cut(kv, "=")
 		return config.IsProviderKeyEnv(k) || k == BudgetTokenEnv || slices.Contains(r.StripEnv, k)

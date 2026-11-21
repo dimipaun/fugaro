@@ -47,7 +47,7 @@ type prChain struct {
 	// inherits it by default, never re-deriving it from fugaro.yaml or
 	// anything else a first run would read — but an explicit --token on the
 	// follow-up command overrides it (newFollowUpSpec, owner ruling
-	// 2026-10-12, task 9b review; design docs/design/named-oauth-tokens.md
+	// 2026-10-12, task 9b review; design docs/named-oauth-tokens/spec.md
 	// §3 T6 and §6b).
 	OAuthToken string
 	// CompressionOff is the previous run's own override (task.Spec.

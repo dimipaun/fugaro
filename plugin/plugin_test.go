@@ -110,7 +110,7 @@ func skillMeta(t *testing.T, path string) (name, description string, body []byte
 }
 
 // TestSkillSetIsNine: the plugin carries exactly the nine skills (design
-// §4.1, the upgrade skill of docs/design/upgrade.md, the orchestrator skill of
+// §4.1, the upgrade skill of docs/upgrade/spec.md, the orchestrator skill of
 // docs/stateless-orchestrator, O10, and the images skill of
 // docs/image-setup-skill, and the landing skill of the owner's ruling of
 // 2026-11-13), each named after its directory with a non-empty,

@@ -508,6 +508,22 @@ import (
 // figure a row prints is the MIDDLE of the three samples it also prints, and a
 // read that never answers is held to the check's own deadline and killed with its
 // process group.
+// Check 740's fakes are a fake `fugaro` and a fake `gcloud` over one run that is
+// messaged while it is going: the fake `fugaro` answers `doctor --json`,
+// `version` and `tell --help`, launches the run the case's own document names,
+// walks `rows.1.json`, `rows.2.json` ... and stays on the last that exists (so a
+// case can drive both a run that reaches implement and ends and one that never
+// reaches implement at all), and prints the number each message took; the fake
+// `gcloud` serves the run's own record, the job and the account it really ran
+// as, the project's jobs, the Policy Troubleshooter's own answer and the
+// bucket's lifecycle configuration, each with a status the case can bend -- so a
+// case says what became of each message (the plain one delivered into a coder
+// stage; the `--now` one delivered with NO reason on its fate, which is the
+// runner's own statement that the stop found a quiet point and the same session
+// resumed, settling U2 and U3) and WHICH principal the troubleshooter was asked
+// about, and says that no message was sent into a stage that never ran. Every
+// case holds the same two things wherever it is about something else: a
+// message's own text never reaches the block, and no access token is asked for.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -611,6 +627,7 @@ var liveCheckScripts = []struct {
 	{"check811.sh", "check811_test.sh"},
 	{"check-830.sh", "check-830_test.sh"},
 	{"check-840.sh", "check-840_test.sh"},
+	{"check-740-run-messages.sh", "check-740-run-messages_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

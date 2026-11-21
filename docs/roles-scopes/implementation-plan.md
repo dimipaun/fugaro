@@ -229,7 +229,7 @@ standard.
 ### RS7 — the console reads the same commands
 
 - **Files:** `internal/cli/project.go` (the CLI half of the fence, `consoleReadPaths`), `console/src/main/spawn.ts` and `ipc.ts` (the console half),
-  the preload surface, a Members view fixture, the Go tests that hold the two halves equal, `docs/design/desktop-console.md` §5.1 row.
+  the preload surface, a Members view fixture, the Go tests that hold the two halves equal, `docs/desktop-console/spec.md` §5.1 row.
 - **Interfaces:** consumes RS5's `fugaro user ls --json` (roles.md D691(b), a read-only Members view).
   No reader of its own and no role logic in the renderer.
   **Amended 2026-11-18 (D2907 of [docs/console-improvements/reconciliation.md](../console-improvements/reconciliation.md),
@@ -269,7 +269,7 @@ standard.
 
 ### RS10 — docs, skills and the release notes
 
-- **Files:** `docs/design/roles.md` (**record D681–D695 as answered** on 2026-10-30, **mark D690 and D691 superseded by the owner's 2026-11-07 D1580 answer** and state that D446 is narrowed, F26), `internal/cli/docs_roles_scopes_test.go` (new: pins the package's claims, below), `docs/roles-scopes/`
+- **Files:** `docs/roles/spec.md` (**record D681–D695 as answered** on 2026-10-30, **mark D690 and D691 superseded by the owner's 2026-11-07 D1580 answer** and state that D446 is narrowed, F26), `internal/cli/docs_roles_scopes_test.go` (new: pins the package's claims, below), `docs/roles-scopes/`
   status, `plugin/skills/working/SKILL.md`, `docs/releases/` notes entry, `website/data/` only if a
   page names the words, the docs test pins four sentences: "a scoped role is a policy check, not a cloud barrier" (D1580), "agent sessions are detected by environment variables an agent can unset: a courtesy, not a barrier" (D1590), "anyone given the write the access node needs is effectively a project admin" (F22), and the Check 402 re-scope.
 - **Tests:** `go test ./internal/cli -run Docs`, the plugin lint, `npm run check` in `website/` if touched.
@@ -312,7 +312,7 @@ own reconciliation; security-sensitive; listed so it is not forgotten.
 | `internal/cli/run*.go`, `cancel*.go`, `logs*.go`, `runs*.go` | RS6a (5) |
 | `internal/cli/project.go` (`consoleReadPaths`), `console/src/main/spawn.ts`, `ipc.ts` | RS7 (5) |
 | `plugin/skills/**` | RS3 (2), RS5 (4), RS10 (6) |
-| `docs/design/roles.md`, `internal/cli/docs_roles_scopes_test.go` | RS10 (6) |
+| `docs/roles/spec.md`, `internal/cli/docs_roles_scopes_test.go` | RS10 (6) |
 
 **The external plans edit these same command files** (no-prompt removes confirmations in `budget.go`,
 `image*.go`, `settings_write.go`; composite-commands adds step calls): RS5 and RS6 must be sequenced

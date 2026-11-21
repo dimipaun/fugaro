@@ -1487,7 +1487,7 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 }
 
 // TestInitSecretsAnthropicKeyOnlyWhenAPinGoesDirect (design
-// docs/design/project-centric.md §6.1): with the gateway enforcing and every
+// docs/project-centric/spec.md §6.1): with the gateway enforcing and every
 // pin served by a provider the repository may send code to, the run never
 // calls Anthropic, so init asks for no Anthropic key; a pin that goes direct
 // keeps the prompt.

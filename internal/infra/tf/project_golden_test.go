@@ -217,7 +217,7 @@ func TestGoldenInstallationHasOneProjectJobPerTriple(t *testing.T) {
 	// 52 step 5 (U4), which the plan's Task 3.0 owns. The owner ran it on
 	// 2026-10-16: 10 accounts in the sandbox project, ServiceAccountsPerProject
 	// reported as -1 (no limit, UNVERIFIED) and 30 creates per minute
-	// (docs/design/project-centric.md §4.1). This assertion stands on the
+	// (docs/project-centric/spec.md §4.1). This assertion stands on the
 	// shape above, not on those numbers, which belong in the checklist.
 	projectSAs := map[string]bool{}
 	for _, rc := range p.ResourceChanges {
@@ -824,7 +824,7 @@ func TestProjectJobBucketGrantsAreTheWidenedCondition(t *testing.T) {
 }
 
 // The other half of the project job's pair (plan task 3.2 step 2;
-// docs/design/budget-token-channel.md §7.2): the sealed budget token lives
+// docs/budget-token-channel/spec.md §7.2): the sealed budget token lives
 // under tokens/, which the widened objectUser grant never covers, so the
 // shared job account carries a second, read-only grant on the whole of
 // tokens/. Without it a project job's runs that carry a budget token stop at

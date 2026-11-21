@@ -799,7 +799,7 @@ func check96Section(t *testing.T) string {
 //
 // It is named `TestDocsChecklist…` and not `TestChecklist…` on purpose: the
 // `TestChecklist…` family is the per-check tests, enumerated by name and count
-// in docs/plans/2026-10-19-compute-backend.md's open item 9 and held to the tree
+// in docs/compute-backend/implementation-plan.md's open item 9 and held to the tree
 // by TestDocsComputeBackendNamesEveryChecklistTest. This is a rule over the
 // register's shell, not a check, so it does not join that family and does not
 // make a foreign plan's enumeration wrong.

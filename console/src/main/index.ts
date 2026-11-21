@@ -80,7 +80,7 @@ import {
   registerConsoleHandlers,
   startupCompatibility,
 } from './ipc'
-import type { ConsoleHandlers, ValidatedArguments } from './ipc'
+import type { ConsoleHandler, ConsoleHandlers, ValidatedArguments } from './ipc'
 import { lapseHandlers } from './licence-state'
 import { handlersFor } from '../source/source'
 import { createBoundSource } from '../source/cli'
@@ -968,9 +968,56 @@ const gated: ConsoleHandlers = {
   // above and answers for the active installation, and both are unreachable in
   // a reduced console's withheld views by not being on one: a lapsed
   // installation is exactly the case in which the box that takes a renewal has
-  // to open (`docs/design/lapse-read-only.md`).
+  // to open (`docs/lapse-read-only/spec.md`).
   'licence.read': () => licenceRead(),
   'licence.save': (args) => licenceSave(args),
+  // **The nine console-improvements operations, each on an explicit stub**
+  // (the console improvements plan, AL). They are named one by one rather than
+  // spread from a table, and that is the whole point of them being here: the
+  // surface's `ConsoleHandlers` is closed, `registerConsoleHandlers` refuses to
+  // build a table with a handler missing, and the check has to keep stopping the
+  // console when a handler is *truly* missing. A spread of an object literal
+  // would let a name be dropped from the record and answered by nothing while
+  // the type still checked; a line each means the difference between a
+  // deliberate stub and a missing handler is one line in this diff.
+  //
+  // **I-OPS replaces them.** That task registers the real handlers through this
+  // same table, so the rows keep passing `reducedModeHandlers` and
+  // `lapseHandlers` -- a lapsed console refuses `setup.apply` and a refused
+  // console registers no channel at all, exactly as for every other row.
+  'runs.stream': newOperationStub(),
+  'spend.stream': newOperationStub(),
+  'budget.stream': newOperationStub(),
+  whoami: newOperationStub(),
+  'image.catalog.ls': newOperationStub(),
+  'recipes.ls': newOperationStub(),
+  'setup.plan': newOperationStub(),
+  'setup.apply': newOperationStub(),
+  'settings.editor.open': newOperationStub(),
+}
+
+/**
+ * NEW_OPERATIONS_UNBUILT is what an operation the console improvements declare
+ * answers before the task that implements it lands. It is the same sentence
+ * `src/shared/new-ops.ts` gives a missing bridge method for the same reason: a
+ * screen that asked anyway is told the read is not available in this build, and
+ * not that the CLI failed -- the child was never spawned.
+ *
+ * It is **spelled here and not imported** from that module, on the direction the
+ * plan states: the allow-list implements the operations beside the contract and
+ * imports nothing from it, so a renderer-loadable file is never the thing that
+ * decides what main answers.
+ */
+const NEW_OPERATIONS_UNBUILT = 'not available in this build'
+
+/** newOperationStub is one unbuilt operation's handler. It throws rather than
+ * answering data, which is this surface's one refusal path (`dispatch` turns
+ * the throw into `{ok: false, reason}`): a stub that answered an empty document
+ * would draw an empty screen instead of saying why. */
+function newOperationStub(): ConsoleHandler {
+  return async () => {
+    throw new Error(NEW_OPERATIONS_UNBUILT)
+  }
 }
 
 /**

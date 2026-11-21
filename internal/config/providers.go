@@ -69,7 +69,7 @@ type ModelProvider struct {
 	// AllowDataTo are the repositories (owner/name) whose code may be sent
 	// here. Absent (the zero value) or ["*"] mean every repository (owner
 	// ruling, 2026-10-13 and its follow-ups, design
-	// docs/design/project-secrets.md §3a); a list written with no
+	// docs/project-secrets/spec.md §3a); a list written with no
 	// repositories in it -- [] , or the key with nothing under it at all --
 	// is refused by ValidateModelProviders as ambiguous.
 	AllowDataTo []string `yaml:"allow_data_to,omitempty" json:"allow_data_to,omitempty"`
@@ -191,7 +191,7 @@ func (p ModelProvider) Matches(model string) bool {
 // AllowsData reports whether repo (owner/name) may send code to p: true for
 // every repository when AllowDataTo is nil (the key is absent -- never
 // written at all), or when it contains the literal entry "*" (owner ruling,
-// 2026-10-13, and its follow-ups, design docs/design/project-secrets.md
+// 2026-10-13, and its follow-ups, design docs/project-secrets/spec.md
 // §3a). A list written with no repositories in it -- [] , or a null key,
 // which the unmarshaller marks with allowDataToWritten -- is refused by
 // ValidateModelProviders before this method is ever called on valid config.
@@ -681,7 +681,7 @@ var ModelSecretsServedValues = []string{ModelSecretServedAll, ModelSecretServedA
 //     the RUNNER hands straight to Anthropic and the run's gateway never sees,
 //     so the service serves no call of theirs and the mount stays — with it
 //     the job account's accessor (B0's ruling of 2026-11-04,
-//     docs/design/mixed-credentials.md §11; WorkflowSpec.StageAccount is the
+//     docs/mixed-credentials/spec.md §11; WorkflowSpec.StageAccount is the
 //     fact, and it is api-key's alone: under oauth the account's token is the
 //     run's own credential and IS served).
 //   - none — a repository the switch holds off: nothing, so every mount stays.
@@ -1101,7 +1101,7 @@ func conventionUsable(name string) bool {
 // a configured provider's key. It is both halves of what
 // infra.SecretMounts refuses when a job is built, in the same order, because
 // the two names are two different collisions — and the second is the one
-// docs/design/project-secrets.md §3 names as needing exactly this pair of
+// docs/project-secrets/spec.md §3 names as needing exactly this pair of
 // documents, "a provider's .Secret is an operator-chosen, open-ended string
 // config.Validate ... has no way to know about — only SecretMounts, which has
 // both w.Secrets and lc.Providers in scope, can catch that one":
@@ -1200,7 +1200,7 @@ var ClaudePatterns = []string{"claude-*", "anthropic/*"}
 // CheckClaudeClaim is the rule for a route entry that overlaps a Claude
 // pattern: the problem, or "" when the entry is the one shape a route may
 // claim -- an explicit "anthropic/<id>", and nothing else under that prefix
-// (design docs/design/mixed-credentials.md §4, owner ruling 2026-10-14). The
+// (design docs/mixed-credentials/spec.md §4, owner ruling 2026-10-14). The
 // claim is the entry itself, so this is the whole permission: no separate
 // list, no switch. A wildcard ("anthropic/*"), a bare "claude-*" spelling, a
 // ":" variant, a "[1m]" spelling or a name the provider-ID grammar rejects is
@@ -1286,7 +1286,7 @@ func checkProviderURL(s string) error {
 // credentials and leaves this function's answer unchanged: an api-key run
 // may declare one stage-scoped Claude OAuth account for its review and
 // adversarial stages, beside the provider key its coder runs on
-// (docs/design/mixed-credentials.md §11). That account is not a provider's
+// (docs/mixed-credentials/spec.md §11). That account is not a provider's
 // key and it sits under the value this function admits before it reads
 // anything, so every refusal below still stands for the auth values it names.
 //
@@ -1440,7 +1440,7 @@ func claimed(providers map[string]ModelProvider, model string) bool {
 // the route, exactly as the gateway decides it (internal/gateway/route.go): a
 // model no allowed provider claims goes direct. So a Claude pin, or a model no
 // route serves, needs the key, and a repository whose pins are all served by
-// providers it may send code to does not (design docs/design/project-centric.md
+// providers it may send code to does not (design docs/project-centric/spec.md
 // §6.1). repo "" is an unknown repository, which no provider may serve.
 //
 // A review level's own model is a pin of its own (agent.levels.lN.model,

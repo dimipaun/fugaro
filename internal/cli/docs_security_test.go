@@ -34,7 +34,7 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		"fugaro verify",
 		"followup.trusted",
 		"docs/design/v1.md",
-		"docs/design/bucket-iam.md",
+		"docs/bucket-iam/spec.md",
 		"Budget mode defaults to off.",
 		"Vertex has no dollar cap, in any mode.",
 		"roles/storage.objectAdmin",
@@ -206,7 +206,7 @@ func TestSecurityMdNamesTheDeployersNinthGrant(t *testing.T) {
 	// (§7 and §8 count it) is not mistaken for the paragraph.
 	const f4aOpening = "**F4a — the ninth grant"
 	var f4a []string
-	for _, line := range strings.Split(readDoc(t, "docs/design/managed-deployer-fence.md"), "\n") {
+	for _, line := range strings.Split(readDoc(t, "docs/managed-deployer-fence/spec.md"), "\n") {
 		if len(f4a) == 0 {
 			if !strings.HasPrefix(line, f4aOpening) {
 				continue
@@ -569,6 +569,16 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"never falls back",
 		"the mount is the switch's, not the outage's",
 		"halts at the service's door rather than being answered from the App key its container still holds",
+		// WS12 (D2983): an unreachable service is waited for before it halts,
+		// which is the one shape of an outage a wait can end — a service that
+		// is up and answers unreadably, or refuses, still halts the run at
+		// once. Pinned with the bound and the naming, because the paragraph
+		// said "halts" flat before this task, while a run now spends minutes
+		// of its own budget on the wait and reports which service it was.
+		"**Unreachable waits, then halts, and never falls back.**",
+		"is waited for and retried for a bounded time",
+		"a reason that names **which** service could not be reached",
+		"its reason is already known, so it halts the run at once",
 		// The stop flag.
 		"fugaro budget kill --all",
 		// The database role's reach, said plainly rather than left to be

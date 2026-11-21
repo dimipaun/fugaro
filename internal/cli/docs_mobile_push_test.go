@@ -122,20 +122,20 @@ func TestDocsMobilePushCitationsExist(t *testing.T) {
 		// The channel's neighbours: what the site already tells a provider, and
 		// the console decision that asked the same question and answered "no FCM".
 		"website/src/pages/privacy.astro",
-		"docs/design/desktop-console-v2.md",
-		"docs/design/voice.md",
+		"docs/desktop-console-v2/spec.md",
+		"docs/voice/spec.md",
 		// The mailbox, its schema and the presence rule the design leans on.
 		"shared/mailbox/index.js",
 		"shared/mailbox-schema/index.js",
 		"shared/presence/index.js",
-		"docs/design/m9-budget-and-dashboard.md",
-		"docs/design/budget-token-channel.md",
+		"docs/m9-budget-and-dashboard/spec.md",
+		"docs/budget-token-channel/spec.md",
 		// Where the device node and its generation land.
 		"internal/budget/rules/rules.json.tmpl",
 		"internal/budget/rules/rules.go",
 		"internal/projectpolicy/version.go",
-		"docs/design/managed-projects.md",
-		"docs/design/project-centric.md",
+		"docs/managed-projects/spec.md",
+		"docs/project-centric/spec.md",
 		// The only scheduled cloud components: the job a sender would extend.
 		"internal/cli/history.go",
 		"deploy/terraform/gcp/modules/installation/history.tf",

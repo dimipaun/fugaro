@@ -60,7 +60,7 @@
 //
 //      This is the console's **one** key drawn in a class other than the one
 //      `WIRE_TEXT_CLASSES` declares, so it is a decision and not an oversight:
-//      `console/README.md`'s class table and `docs/design/desktop-console.md`
+//      `console/README.md`'s class table and `docs/desktop-console/spec.md`
 //      §6.2 record it, and the CLI's own `BY` column draws the same short form
 //      as plain text (`internal/cli/runs.go`'s `launcherCell`,
 //      `internal/watch/plain.go`'s `launcherText`).

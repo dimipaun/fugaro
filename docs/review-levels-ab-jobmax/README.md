@@ -23,5 +23,11 @@ well-known cross-platform task manager author". This is the literal substitution
 
 | Block | Use |
 | --- | --- |
-| **D720–D759** | this work's block: **D720–D737** written and answered 2026-10-30; **D738–D759** reserved and unused. Taken above the highest number on `main` (D679, the top of forge-authorship-images' reserved block D600–D679; model-ab-testing holds D550–D579), above D680–D719, which the roles design run (`docs/design/roles.md`, run 20261030-112626-0ae3) reserved first, and above every open PR's docs |
+| **D720–D759** | this work's block: **D720–D737** written and answered 2026-10-30; **D738–D759** reserved and unused. Taken above the highest number on `main` (D679, the top of forge-authorship-images' reserved block D600–D679; model-ab-testing holds D550–D579), above D680–D719, which the roles design run (`docs/roles/spec.md`, run 20261030-112626-0ae3) reserved first, and above every open PR's docs |
 | **Checks 270–289** | this work's block: **270–273** proposed by the plan (270–272 written by X1, 273 by X2; run by the owner; NOT RUN); **274–289** reserved and unused. Above forge-authorship-images' Checks 230–249, model-ab-testing's 210–219 and the roles design run's 250–259 |
+
+**Also in this folder** (moved here on 2026-11-21 from the top of `docs/`, the task reports):
+
+- [j1.1-already-landed.md](j1.1-already-landed.md)
+- [j1.3-blocked.md](j1.3-blocked.md)
+- [x1-blocked.md](x1-blocked.md)
