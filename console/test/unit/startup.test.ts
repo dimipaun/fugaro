@@ -1078,6 +1078,43 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     expect(activate).not.toContain('registerHandlers')
   })
 
+  it('registers no channel for a refused console, the console improvements’ nine included', () => {
+    // The one registration site lives **inside** `registerHandlers`, and
+    // `registerHandlers` is called from exactly one place -- `onDecided`, after
+    // its refused return. A refused console therefore has no channel behind
+    // *any* of the surface's rows, and the nine operations the console
+    // improvements' plan adds (`runs.stream`, `spend.stream`, `budget.stream`,
+    // `whoami`, `image.catalog.ls`, `recipes.ls`, `setup.plan`, `setup.apply`
+    // and `settings.editor.open`) are rows of `gated` like every other: no
+    // second place they could be registered exists to open a channel for them
+    // on a window that may draw nothing.
+    const register = bodyOf('function registerHandlers()')
+    expect(register).toContain('registerConsoleHandlers(')
+    expect(indexSource.match(/registerConsoleHandlers\(/g) ?? []).toHaveLength(1)
+    // The declaration is at column 0 and the one call is indented: the pattern
+    // below matches the call and not the `function registerHandlers():`.
+    expect(indexSource.match(/^\s+registerHandlers\(\)$/gm) ?? []).toHaveLength(1)
+    const onDecided = bodyOf('function onDecided(')
+    expect(onDecided).toContain('registerHandlers()')
+    expect(onDecided.indexOf("'refused'")).toBeLessThan(onDecided.indexOf('registerHandlers()'))
+    const gated = bodyOf('const gated: ConsoleHandlers = {')
+    for (const name of [
+      'runs.stream',
+      'spend.stream',
+      'budget.stream',
+      'whoami',
+      'image.catalog.ls',
+      'recipes.ls',
+      'setup.plan',
+      'setup.apply',
+      'settings.editor.open',
+    ]) {
+      // The key is quoted where it is not a bare identifier (`whoami` is the
+      // one of the nine a JavaScript identifier can spell).
+      expect(gated, name).toMatch(new RegExp(`'?${name.replace('.', '\\.')}'?:`))
+    }
+  })
+
   it('joins in the one handler `source.ts` leaves out, which is the half it names', () => {
     // `CliBackedHandlers` in `src/source/source.ts` is the surface *minus*
     // `startup.compatibility`, and its comment says the entry point joins that

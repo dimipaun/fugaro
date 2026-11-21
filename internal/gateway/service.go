@@ -310,6 +310,11 @@ type ServiceAnswer struct {
 	// zero value: an exhausted answer carries no tier, and the credentials
 	// it names are in Tried.
 	Exhausted *Exhausted
+	// Unreachable, when set, is a call this gateway could not reach the
+	// service with at all (D2983): the call was not sent, and the one thing to
+	// do about it is wait for the service until the instant it names. Every
+	// other field is then the zero value.
+	Unreachable *Unreachable
 }
 
 // Exhausted is the service's typed exhausted answer (credsvc's
@@ -335,6 +340,37 @@ type Tried struct {
 	Tier   string
 	Reason string
 }
+
+// Unreachable is a call this gateway could not reach the service with at all
+// (D2983): no answer arrived, so nothing was refused and nothing was served.
+// It carries nothing the service said, because the service said nothing.
+//
+// It is not a halt: what the run does with it is wait, which is the mechanism
+// an exhausted answer uses (the runner ends the stage in flight, waits, and
+// resumes it). Its one figure is the instant the wait ends, which is this
+// package's own bound measured from the first call that could not reach the
+// service (serviceUnreachableBound); a call that meets the spent bound is what
+// halts the run, naming the service (stateDetailUnreachable or
+// stateDetailUnreachableWorkspace).
+type Unreachable struct {
+	// RetryAt is when this run stops waiting for the service: the first call
+	// that could not reach it, plus the bound. A call that meets a spent bound
+	// is the halt.
+	RetryAt time.Time
+	// Service is which credentials service could not be reached: "project's"
+	// or "workspace's". It is a fact about the route the run read at its start
+	// and not an address, and it is here so the runner's own log line and the
+	// run's record name the same service the halt names.
+	Service string
+}
+
+// The two services a call can be sent to, as the run's log and its halt name
+// them: which one a call went to is the route the run read at its start
+// (Options.ModelFromWorkspace), never an address.
+const (
+	serviceNameProject   = "project's credentials service"
+	serviceNameWorkspace = "workspace's credentials service"
+)
 
 // serviceCall reports whether this call is the credentials service's own, and
 // so is read, answered and halted the way a service call is: the service's
@@ -936,6 +972,7 @@ func exhaustedAnswer(e serviceRefusal) (Exhausted, error) {
 // refusal is never relayed: it is fugaro's own answer, it names the project's
 // credentials, and the agent has no business seeing the set of them (D143).
 func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needTier, servedRoute bool) (status int, done bool, tier string, probed []string) {
+	s.noteServiceReached()
 	if resp.StatusCode/100 == 2 {
 		// The room the workspace's service has left arrives on the answer
 		// itself, so it is read here, before any of it reaches the agent
@@ -1133,7 +1170,11 @@ type replayBody struct {
 // Detail is displayed to the agent in every later call's 403 and stored in
 // the run's record, and nothing the service sent is ever echoed into it.
 const (
-	// stateDetailUnreachable is a service this job could not reach.
+	// stateDetailUnreachable is the project's credentials service, which this
+	// job could not reach for the whole of the bound (D2983). It is the
+	// sentence a run of a repository whose model kind is served by its own
+	// project reads, and the one the live checklist reads for that case; the
+	// workspace's own is stateDetailUnreachableWorkspace below.
 	stateDetailUnreachable = "the credentials service could not be reached"
 	// stateDetailUnreadable is an answer this gateway could not read as the
 	// service's own, or could not account a call by.
@@ -1157,6 +1198,13 @@ const (
 	// owner's step rather than the operator's own, because the member's operator
 	// cannot grant it: the workspace's project is not theirs.
 	stateDetailUnadmittedWorkspace = "the workspace's credentials service refused this job's call: this repository's job is not granted on it yet, and the workspace owner's own 'fugaro update' in the workspace's project is what grants it (nothing this run or its own repository's operator does reaches that project)"
+	// stateDetailUnreachableWorkspace is stateDetailUnreachable for a run whose
+	// model calls go to the workspace's credentials service (D2983, R16): the
+	// bound was spent without one answer from it. It names that service rather
+	// than "the credentials service" because the two are different projects
+	// with different owners, and a member's operator told only that "the
+	// credentials service" could not be reached would look at their own.
+	stateDetailUnreachableWorkspace = "the workspace's credentials service could not be reached"
 	// workspaceNotListedDetail is R19's halt: the workspace's scope refuses a
 	// repository its own record of the calling job account does not name. Like
 	// stateDetailUnadmittedWorkspace it names the workspace owner's own step,
@@ -1314,17 +1362,103 @@ func (s *Server) haltServiceMarked(w http.ResponseWriter, detail, workspace stri
 	return http.StatusForbidden
 }
 
-// serviceUnreachable halts a run whose gateway could not reach the service at
-// all (D143), answering the call with the halt, and reports whether this is
-// the thing that stopped it: an external halt or a cancelled request came
-// first, and then the agent's answer is the one that cause wrote.
-func (s *Server) serviceUnreachable(w http.ResponseWriter, base, req context.Context) (halted bool) {
+// serviceUnreachable is what a call the gateway could not reach the service
+// with is answered with (D2983): the run waits for the service and retries, for
+// at most serviceUnreachableBound from the first call that could not reach it,
+// and a call that meets the spent bound halts the run with a reason that names
+// which service it was. It never reaches for a credential of the job's own —
+// there is none to reach for, and D143 is why there is none.
+//
+// The wait is the runner's, and its mechanism is the one an exhausted answer
+// already uses (C1.17): the Unreachable answer below ends the stage in flight
+// through the run's own hook, stage waits where the answer says and resumes the
+// stage's session, and that retry — not a second send here — is what makes the
+// outage survivable. Nothing in this package sends the call again: a service
+// that is not answering is not a failure a second send fixes, and holding the
+// agent's call for the whole bound would hold the run's own stage in a request
+// nobody can cancel.
+//
+// So the call itself is answered the way an exhausted one is — 503, retryable,
+// with no retry-after of its own, so the agent backs off by its own schedule
+// for the moment it takes the run to end the stage — and the run learns of the
+// wait on the same hook its typed answers arrive on.
+//
+// Which service is named is which upstream this gateway calls: a run whose
+// model kind is routed to the workspace has the workspace's upstream IN
+// Options.Upstream (Start, Options.ModelFromWorkspace), so wsModel is the whole
+// of the question and no address is compared here.
+//
+// It reports whether this call's answer is the gateway's own — the wait's 503
+// or the halt, both written here — which is what the caller returns on: an
+// external halt or a cancelled request came first, and then the agent's answer
+// is the one that cause wrote.
+func (s *Server) serviceUnreachable(w http.ResponseWriter, base, req context.Context) (answered bool) {
 	if req.Err() != nil || base.Err() != nil {
 		return false
 	}
-	s.haltService(w, stateDetailUnreachable)
+	detail, service := stateDetailUnreachable, serviceNameProject
+	if s.wsModel {
+		detail, service = stateDetailUnreachableWorkspace, serviceNameWorkspace
+	}
+	until := s.noteUnreachable()
+	if !time.Now().Before(until) {
+		s.haltService(w, detail)
+		return true
+	}
+	s.answer(ServiceAnswer{Unreachable: &Unreachable{RetryAt: until, Service: service}})
+	s.log.Warn("the credentials service could not be reached; the run waits for it",
+		"stage", s.stageName(), "service", service, "retry_at", until.UTC().Format(time.RFC3339))
+	writeError(w, http.StatusServiceUnavailable, "api_error",
+		"fugaro: the "+service+" could not be reached; the run waits for it until "+until.UTC().Format(time.RFC3339))
 	return true
 }
+
+// noteUnreachable records a call that could not reach the service and answers
+// when this run stops waiting for it: the first such call, plus
+// serviceUnreachableBound (D2983). The clock is the run's and not the call's,
+// so a stage that meets the same outage again — and a second call in the stage
+// that met it — waits for the outage to be over rather than for a fresh bound
+// of its own, and every answer that arrives clears it (serviceAnswer): one
+// answer means the service is back.
+//
+// The first call of an outage is the one that sets the bound, and the bound is
+// this run's own: it is not persisted and not written to the record, because a
+// run that is stopped and relanced is a run that starts its own.
+func (s *Server) noteUnreachable() time.Time {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.unreachableSince.IsZero() {
+		s.unreachableSince = now
+	}
+	return s.unreachableSince.Add(serviceUnreachableBound)
+}
+
+// noteServiceReached clears the outage clock: an answer of any kind — a served
+// call, a typed refusal, a model error the service relayed — is the service
+// being reachable, and the next call that cannot reach it starts a bound of its
+// own (D2983). It is called from serviceAnswer, the one place an answer of the
+// service's own is read.
+func (s *Server) noteServiceReached() {
+	s.mu.Lock()
+	s.unreachableSince = time.Time{}
+	s.mu.Unlock()
+}
+
+// serviceUnreachableBound is how long a run waits for a credentials service it
+// cannot reach before it halts, naming the service (D2983). One constant covers
+// both services — an outage is a fact about the service and not about the route
+// that met it — and it is the bound gitforward.go's own retry is to reuse when
+// WS18 lands, because the git paths have no stage to wait in and would otherwise
+// spend a second one.
+//
+// What it is chosen for: it rides out what a service actually does (a revision
+// rollout, a cold start, a scale-to-zero revision waking, IAM propagation on a
+// grant that just landed), which is seconds to a couple of minutes, and it is
+// short enough that a service that is really gone stops the run inside the job
+// rather than at its deadline. It is a var, like endStageWait and
+// upstreamRetryDelay, so the tests do not spend it.
+var serviceUnreachableBound = 5 * time.Minute
 
 // answer hands one service answer to the run's hook, if it has one.
 func (s *Server) answer(a ServiceAnswer) {
