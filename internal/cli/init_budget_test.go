@@ -1,6 +1,12 @@
 package cli
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -521,5 +527,236 @@ func TestAResumedCreationIsNeverMarkedWithoutAPersonAtTheTerminal(t *testing.T) 
 				t.Errorf("the run announced a mark no person at the terminal confirmed:\n%s", all)
 			}
 		})
+	}
+}
+
+// The carry between runs (R5, R7 of docs/managed-flag-ergonomics/reconciliation.md):
+// a run given no budget flag takes the block from the installation's own
+// records, so a plain `fugaro update` after the run that created the alert
+// plans no change to google_billing_budget. The two records are the project's
+// creation fact (the amount and the currency) and the installation root's state
+// object (the billing account) — never the work directory, which is empty on a
+// fresh machine, after a clean, or for a console on another host (F19), and
+// which these tests seed with a DIFFERENT block so that a carry reading the
+// file would show as the wrong figures rather than as nothing.
+
+// carriedBudgetRig is an installation that is managed and holds a budget alert:
+// the two marks of a managed project (the creation fact that records the amount
+// and the label on the project itself, which the read requires together), and
+// the installation root's own state object, whose budget resource records the
+// billing account. It is updateRig — an installation that is there and whose
+// plan reads back empty — plus those records, with the terminal a plain
+// `fugaro update` confirms its ordinary steps at.
+func carriedBudgetRig(t *testing.T, amount int64, currency string) *initRig {
+	t.Helper()
+	noAgentSession(t)
+	noRunSession(t)
+	r := updateRig(t)
+	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+	labelled(r.crm, initProject)
+	seedFlagFact(t, r, managed.Marker{
+		Version:    managed.MarkerVersionNoBuilds,
+		GCPProject: initProject,
+		Budget:     &managed.Budget{Amount: amount, Currency: currency},
+	})
+	r.gcs.Put(initStateBucket, infra.InstallationStateObject, installationStateWithBudget(billingAcc))
+	return r
+}
+
+// installationStateWithBudget is a version-4 state document as terraform's GCS
+// backend writes it, holding the installation module's budget resource with the
+// billing account given. Written out here rather than shared with
+// internal/infra's own test: the shape is terraform's, and a helper shared with
+// the package under test would pin the two to each other instead of pinning the
+// document terraform really writes.
+func installationStateWithBudget(account string) []byte {
+	return []byte(`{"version":4,"terraform_version":"1.9.8","serial":3,"lineage":"a1","outputs":{},` +
+		`"resources":[{"mode":"managed","module":"module.installation","type":"google_billing_budget","name":"this",` +
+		`"instances":[{"schema_version":0,"attributes":{"billing_account":` + fmt.Sprintf("%q", account) +
+		`,"display_name":"fugaro monthly budget"}}]}]}`)
+}
+
+// seedWorkdirBudget writes a budget block into the installation workdir's tfvars
+// before a run, as a machine that planned this installation before would hold
+// it. The figures are the caller's, and every caller passes ones the
+// installation's own records do not hold: what a run writes from the file is
+// then visibly wrong rather than merely missing.
+func seedWorkdirBudget(t *testing.T, r *initRig, account string, amount int64, currency string) {
+	t.Helper()
+	dir, err := infra.InstallationWorkdir(os.Getenv, initProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(map[string]any{"project": initProject, "budget": map[string]any{
+		"billing_account": account, "amount": amount, "currency_code": currency}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := infra.WorkdirVarsPath(dir, "installation")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// budgetBlockOf is the budget block the run left in the installation's
+// variables, as one JSON string, so a test pins the three fields and nothing
+// else: an absent block reads as "null" and fails every comparison here.
+func budgetBlockOf(t *testing.T, r *initRig) string {
+	t.Helper()
+	b, err := json.Marshal(r.tfvars(t)["budget"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// TestUpdateCarriesTheBudget is R5's acceptance: `fugaro update` with no budget
+// flag carries the block from the installation's own records, so the plan it
+// makes from these variables holds the alert rather than deleting it. The
+// workdir holds a DIFFERENT block, which is what pins the carry to the records
+// and not to the local file — the plan is a function of these variables, and
+// the variables are the records'.
+func TestUpdateCarriesTheBudget(t *testing.T) {
+	r := carriedBudgetRig(t, 250, "USD")
+	seedWorkdirBudget(t, r, "111111-222222-333333", 7, "EUR")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("fugaro update: %v\n%s\n%s", err, out, errOut)
+	}
+	if want := `{"amount":250,"billing_account":"` + billingAcc + `","currency_code":"USD"}`; budgetBlockOf(t, r) != want {
+		t.Errorf("the variables' budget = %s, want the creation fact's figures and the state's account %s:\n%s\n%s",
+			budgetBlockOf(t, r), want, out, errOut)
+	}
+	// The run really did plan the installation root (the variables above are
+	// the ones that plan was made from), and it changed nothing on the way.
+	if len(r.ran(t, "plan")) == 0 {
+		t.Errorf("the run planned no root, so the variables above are not what a plan was made from:\n%s\n%s", out, errOut)
+	}
+
+	// An explicit --budget with no --billing-account takes the carried account
+	// (R7): the amount and the currency are the flags', the account is the
+	// installation's, and the run plans no delete of the alert for the missing
+	// flag.
+	t.Run("--budget with no --billing-account takes the carried account", func(t *testing.T) {
+		r := carriedBudgetRig(t, 250, "USD")
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "", "update", "--budget", "500", "--budget-currency", "EUR")
+		if err != nil {
+			t.Fatalf("fugaro update --budget: %v\n%s\n%s", err, out, errOut)
+		}
+		if want := `{"amount":500,"billing_account":"` + billingAcc + `","currency_code":"EUR"}`; budgetBlockOf(t, r) != want {
+			t.Errorf("the variables' budget = %s, want the flags' amount and currency with the carried account %s", budgetBlockOf(t, r), want)
+		}
+	})
+
+	// The whole trio replaces what is carried: nothing of the records is left in
+	// the block, so an owner who names all three gets exactly what they asked
+	// for.
+	t.Run("the trio replaces what is carried", func(t *testing.T) {
+		r := carriedBudgetRig(t, 250, "USD")
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "", "update", "--budget", "500", "--budget-currency", "EUR",
+			"--billing-account", "111111-222222-333333")
+		if err != nil {
+			t.Fatalf("fugaro update with the trio: %v\n%s\n%s", err, out, errOut)
+		}
+		if want := `{"amount":500,"billing_account":"111111-222222-333333","currency_code":"EUR"}`; budgetBlockOf(t, r) != want {
+			t.Errorf("the variables' budget = %s, want the flags' own block %s", budgetBlockOf(t, r), want)
+		}
+	})
+
+	// And with nothing to take an account from, the flag is refused by name
+	// rather than planned with an empty account: the module cannot create an
+	// alert without one, and a run that wrote the block anyway would be the
+	// alert's deletion in a plan that looks complete.
+	t.Run("--budget with nothing carried names the missing flag", func(t *testing.T) {
+		noAgentSession(t)
+		noRunSession(t)
+		r := updateRig(t) // no creation fact, no state object: nothing to carry
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "", "update", "--budget", "500", "--budget-currency", "USD")
+		if err == nil {
+			t.Fatalf("fugaro update --budget with nothing to carry was accepted:\n%s\n%s", out, errOut)
+		}
+		said := refusalText(out, errOut, err)
+		if code := ExitCode(err); code != ExitUserError {
+			t.Errorf("exit %d, want %d:\n%s", code, ExitUserError, said)
+		}
+		if !strings.Contains(said, "--billing-account") {
+			t.Errorf("the refusal does not name the flag that completes the block:\n%s", said)
+		}
+		// The refusal stands before any plan exists: nothing was planned with a
+		// half block, which is the plan that would delete the alert.
+		if n := len(r.ran(t, "plan")); n != 0 {
+			t.Errorf("the refused run planned %d root(s) anyway:\n%s", n, said)
+		}
+	})
+}
+
+// TestUpdateCarriesTheBudgetWithAnEmptyWorkdir is the same run on a machine
+// that never planned this installation: the workdir holds no tfvars at all,
+// and the block the run writes is still the records' — which is the whole point
+// of reading the cloud rather than the file (F19: the local work directory is
+// not a record).
+func TestUpdateCarriesTheBudgetWithAnEmptyWorkdir(t *testing.T) {
+	r := carriedBudgetRig(t, 50, "CAD")
+	dir, err := infra.InstallationWorkdir(os.Getenv, initProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(infra.WorkdirVarsPath(dir, "installation")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the fixture's workdir already holds tfvars (%v), so this test would not be about an empty one", err)
+	}
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("fugaro update: %v\n%s\n%s", err, out, errOut)
+	}
+	if want := `{"amount":50,"billing_account":"` + billingAcc + `","currency_code":"CAD"}`; budgetBlockOf(t, r) != want {
+		t.Errorf("the variables' budget = %s, want the carried block %s:\n%s\n%s", budgetBlockOf(t, r), want, out, errOut)
+	}
+}
+
+// TestPrintVarsSaysItCarriesNoBudget: --print-vars reads no cloud by design, so
+// it carries no budget block, and it says so rather than printing an
+// installation's values that read as an installation without an alert — the
+// document is what an owner applies by hand, and the absent key there is the
+// alert's deletion. Given the trio, the block is the flags' and there is
+// nothing to say.
+func TestPrintVarsSaysItCarriesNoBudget(t *testing.T) {
+	newInitRig(t)
+	out, stderr, err := executeStdin(t, "", "setup", "--print-vars", "--no-log-isolation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr, "budget alert this installation holds is not in these values") {
+		t.Errorf("--print-vars prints no budget block and does not say so:\n%s", stderr)
+	}
+	var v map[string]any
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if v["budget"] != nil {
+		t.Errorf("--print-vars printed a budget block it read no cloud for: %v", v["budget"])
+	}
+
+	newInitRig(t)
+	out, stderr, err = executeStdin(t, "", "setup", "--print-vars", "--no-log-isolation",
+		"--budget", "50", "--budget-currency", "USD", "--billing-account", billingAcc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stderr, "budget alert this installation holds is not in these values") {
+		t.Errorf("--print-vars warned about a budget it was given:\n%s", stderr)
+	}
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if b, err := json.Marshal(v["budget"]); err != nil || string(b) != `{"amount":50,"billing_account":"`+billingAcc+`","currency_code":"USD"}` {
+		t.Errorf("the printed budget = %s, %v, want the flags' own block", b, err)
 	}
 }
