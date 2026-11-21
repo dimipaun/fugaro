@@ -140,6 +140,7 @@ func wu15New(t *testing.T, repo string) *wu15Save {
 		Out:         s.out,
 		Getenv:      func(k string) string { return s.env[k] },
 		Now:         func() time.Time { return s.now },
+		Rand:        &wu15Rand{},
 		Designation: s.des,
 		Content:     s.body,
 		Hosts: func(kind string) (stateHost, error) {
@@ -149,6 +150,19 @@ func wu15New(t *testing.T, repo string) *wu15Save {
 		Repo: repo,
 	})
 	return s
+}
+
+// wu15Rand is the writer's random source in a test: a counter, so the branch a
+// save names is the same string on every run of the test and two saves through
+// one writer are still distinct draws (the real source is crypto/rand).
+type wu15Rand struct{ n byte }
+
+func (r *wu15Rand) Read(p []byte) (int, error) {
+	for i := range p {
+		r.n++
+		p[i] = r.n
+	}
+	return len(p), nil
 }
 
 // wu15Member is the snapshot of the usual member project.
@@ -345,6 +359,49 @@ func TestStateSaveOpensPR(t *testing.T) {
 	}
 	if !strings.Contains(s.out.String(), s.host.url) {
 		t.Errorf("the save did not print the pull request it opened:\n%s", s.out.String())
+	}
+}
+
+// TestStateSaveTwoSavesAtOneInstantPushTwoBranches: one command saves several
+// members — `workspace project save` with no argument saves every one of them —
+// so two of its saves carry the same second. A branch named after the instant
+// alone would be one branch: the second push is rejected as a non-fast-forward,
+// because that branch is already on the host with another commit, and every
+// member after it is left with its local snapshot and no pull request at all.
+//
+// So the branch names the document and carries a random suffix. The two saves
+// here are of the SAME document at the same instant, which is the case the
+// document's own name in the branch cannot tell apart: only the suffix can.
+func TestStateSaveTwoSavesAtOneInstantPushTwoBranches(t *testing.T) {
+	s := wu15New(t, "")
+	s.des.d = stateDesignation{Repo: "acme/state", Dir: "docs/state", Provider: gitprov.KindGitHub, Source: "the project layer"}
+
+	for i := 1; i <= 2; i++ {
+		if _, err := s.w.Save(context.Background(), wu15Member()); err != nil {
+			t.Fatalf("save %d of two at one instant failed: %v", i, err)
+		}
+	}
+	if len(s.host.pushed) != 2 {
+		t.Fatalf("the two saves pushed %d times, want two", len(s.host.pushed))
+	}
+	first, second := s.host.pushed[0].Branch, s.host.pushed[1].Branch
+	if first == second {
+		t.Errorf("two saves of one document at one instant pushed the branch %q twice, want two branches: the second push is rejected as a non-fast-forward and that member is left with no pull request", first)
+	}
+	// And the name says which document it is, so a person reading the branch
+	// list can tell one member's save from another's.
+	for i, branch := range []string{first, second} {
+		if want := "fugaro/state-20261121-093000-acme-workspace-acme-app-"; !strings.HasPrefix(branch, want) {
+			t.Errorf("save %d pushed the branch %q, want the instant, the workspace and the member in it (%s...)", i+1, branch, want)
+		}
+	}
+	// The audit export is a document of the same workspace and the same second,
+	// and it is named as itself.
+	if _, err := s.w.Save(context.Background(), wu15Audit()); err != nil {
+		t.Fatalf("saving the workspace's audit export failed: %v", err)
+	}
+	if got := s.host.pushed[2].Branch; !strings.HasPrefix(got, "fugaro/state-20261121-093000-acme-workspace-audit-") {
+		t.Errorf("the audit export pushed the branch %q, want the workspace and audit in it", got)
 	}
 }
 
@@ -670,10 +727,10 @@ func TestStateSaveHostIsTheRepositorysOwn(t *testing.T) {
 	for _, want := range []string{
 		"repo view github.com/acme/state --json visibility",
 		"clone --quiet -- https://github.com/acme/state.git",
-		"checkout --quiet -b fugaro/state-20261121-093000",
+		"checkout --quiet -b fugaro/state-20261121-093000-acme-workspace-acme-app-01020304",
 		"add -- docs/state/members/acme-app.json",
-		"push --quiet origin fugaro/state-20261121-093000",
-		"pr create --repo github.com/acme/state --head fugaro/state-20261121-093000 --base main",
+		"push --quiet origin fugaro/state-20261121-093000-acme-workspace-acme-app-01020304",
+		"pr create --repo github.com/acme/state --head fugaro/state-20261121-093000-acme-workspace-acme-app-01020304 --base main",
 	} {
 		if !strings.Contains(ran, want) {
 			t.Errorf("the save never ran %q. Everything it ran:\n%s", want, ran)
@@ -1044,7 +1101,7 @@ func TestStateSaveBitbucketHostPushesWithTheTokenInTheEnvironment(t *testing.T) 
 	ran := wu15Calls(t, gitCalls)
 	for _, want := range []string{
 		"clone --quiet -- https://bitbucket.org/acme/state.git",
-		"push --quiet origin fugaro/state-20261121-093000",
+		"push --quiet origin fugaro/state-20261121-093000-acme-workspace-acme-app-01020304",
 	} {
 		if !strings.Contains(ran, want) {
 			t.Errorf("the save never ran %q. Everything it ran:\n%s", want, ran)
@@ -1068,7 +1125,7 @@ func TestStateSaveBitbucketHostPushesWithTheTokenInTheEnvironment(t *testing.T) 
 	}
 	source, _ := post["source"].(map[string]any)
 	dest, _ := post["destination"].(map[string]any)
-	if branchOf(source) != "fugaro/state-20261121-093000" || branchOf(dest) != "main" {
+	if branchOf(source) != "fugaro/state-20261121-093000-acme-workspace-acme-app-01020304" || branchOf(dest) != "main" {
 		t.Errorf("the pull request asked to merge %v into %v, want the saved branch into the branch the clone was on", post["source"], post["destination"])
 	}
 }

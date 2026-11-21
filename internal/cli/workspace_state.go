@@ -32,6 +32,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,7 +78,11 @@ const stateSnapshotVersion = 1
 // designated repository, one overwriting the other, and D2824's "state repo in
 // sync" row answering the other document's instant.
 const (
-	stateAuditFileName = "audit.json"
+	// stateAuditSegment names the workspace's own export wherever one word is
+	// needed for it: the file's name is that word and ".json", and a save's
+	// branch carries it where a member's carries the member's name.
+	stateAuditSegment  = "audit"
+	stateAuditFileName = stateAuditSegment + ".json"
 	stateMemberDir     = "members"
 )
 
@@ -119,11 +125,23 @@ func stateSnapshotName(s workspace.Snapshot) (string, error) {
 	if s.Audit {
 		return stateAuditFileName, nil
 	}
-	member, err := statePathSegment("the member project", s.Member.Project)
+	member, err := stateSnapshotSegment(s)
 	if err != nil {
 		return "", err
 	}
 	return path.Join(stateMemberDir, member+".json"), nil
+}
+
+// stateSnapshotSegment is the one word that names the document a snapshot holds
+// — the member project's name, or audit for the workspace's own export — held to
+// being one path segment (statePathSegment). The file's name and the branch's
+// are both built from it, so the two cannot disagree about which document a save
+// is about.
+func stateSnapshotSegment(s workspace.Snapshot) (string, error) {
+	if s.Audit {
+		return stateAuditSegment, nil
+	}
+	return statePathSegment("the member project", s.Member.Project)
 }
 
 // stateSnapshotPath is where one snapshot's local file lives and the name it is
@@ -309,6 +327,7 @@ type stateWriter struct {
 	out    io.Writer
 	getenv func(string) string
 	now    func() time.Time
+	rand   io.Reader
 
 	designate stateDesignationReader
 	content   stateContentReader
@@ -330,6 +349,7 @@ type stateWriterOptions struct {
 	Out         io.Writer
 	Getenv      func(string) string
 	Now         func() time.Time
+	Rand        io.Reader
 	Designation stateDesignationReader
 	Content     stateContentReader
 	Hosts       stateHostFor
@@ -343,6 +363,7 @@ func newStateWriter(o stateWriterOptions) *stateWriter {
 		out:          o.Out,
 		getenv:       o.Getenv,
 		now:          o.Now,
+		rand:         o.Rand,
 		designate:    o.Designation,
 		content:      o.Content,
 		hosts:        o.Hosts,
@@ -356,6 +377,9 @@ func newStateWriter(o stateWriterOptions) *stateWriter {
 	}
 	if w.now == nil {
 		w.now = time.Now
+	}
+	if w.rand == nil {
+		w.rand = crand.Reader
 	}
 	return w
 }
@@ -416,6 +440,13 @@ func (w *stateWriter) Save(ctx context.Context, s workspace.Snapshot) (workspace
 		return workspace.SnapshotWritten{}, err
 	}
 	taken := w.now().UTC().Truncate(time.Second)
+	// The branch is named here, before anything is written, so a name this save
+	// cannot build — a workspace or a member that is not one path segment — is
+	// still a refusal that leaves nothing behind.
+	branch, err := stateBranch(s, taken, w.rand)
+	if err != nil {
+		return workspace.SnapshotWritten{}, err
+	}
 	doc, err := stateEncodeSnapshot(s, taken, body)
 	if err != nil {
 		return workspace.SnapshotWritten{}, err
@@ -451,7 +482,7 @@ func (w *stateWriter) Save(ctx context.Context, s workspace.Snapshot) (workspace
 		Repo:    d.Repo,
 		Dir:     d.Dir,
 		File:    name,
-		Branch:  stateBranch(s, taken),
+		Branch:  branch,
 		Bytes:   doc,
 		Subject: stateCommitSubject(s, taken),
 		Body:    statePRBody(s, taken),
@@ -541,11 +572,50 @@ func (w *stateWriter) designation(ctx context.Context, s workspace.Snapshot) (st
 // one index.
 const stateDefaultRepoDir = "docs/fugaro-state"
 
-// stateBranch is the branch one save pushes: fugaro/state-<UTC stamp>. One
-// branch per save, so a save never rewrites a branch somebody is reviewing, and
-// the fugaro/ prefix keeps a person's own branches and a run's out of its way.
-func stateBranch(s workspace.Snapshot, taken time.Time) string {
-	return "fugaro/state-" + taken.UTC().Format("20060102-150405")
+// stateBranch is the branch one save pushes:
+// fugaro/state-<UTC stamp>-<workspace>-<member|audit>-<nonce>. One branch per
+// save, so a save never rewrites a branch somebody is reviewing, and the
+// fugaro/ prefix keeps a person's own branches and a run's out of its way.
+//
+// The instant alone is not a name. `workspace project save` with no argument
+// saves every member of the workspace in one command, so several saves carry the
+// same second: with the instant for a name, the second member's push is rejected
+// as a non-fast-forward — the branch is already there with another commit — and
+// every member after it is left with its local file and no pull request at all.
+// The workspace and the document are in the name so a person reading the branch
+// list can tell whose save it is, and the nonce (stateBranchNonce) is what makes
+// two saves of the same document at the same instant two branches.
+func stateBranch(s workspace.Snapshot, taken time.Time, rand io.Reader) (string, error) {
+	workspaceSeg, err := statePathSegment("the workspace", s.Workspace)
+	if err != nil {
+		return "", err
+	}
+	doc, err := stateSnapshotSegment(s)
+	if err != nil {
+		return "", err
+	}
+	nonce, err := stateBranchNonce(rand)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("fugaro/state-%s-%s-%s-%s", taken.UTC().Format("20060102-150405"), workspaceSeg, doc, nonce), nil
+}
+
+// stateBranchNonceBytes is the length of the random suffix a branch name
+// carries: 4 bytes, 8 hex characters, which is short enough to read in a branch
+// list and wide enough that two saves of one document in one second do not
+// collide.
+const stateBranchNonceBytes = 4
+
+// stateBranchNonce draws that suffix from the writer's random source. A failure
+// to read is a refusal and never a branch with no suffix: two saves that picked
+// the same branch is exactly the collision the suffix exists to prevent.
+func stateBranchNonce(rand io.Reader) (string, error) {
+	b := make([]byte, stateBranchNonceBytes)
+	if _, err := io.ReadFull(rand, b); err != nil {
+		return "", fmt.Errorf("drawing the random suffix of this save's branch name: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // stateCommitSubject is the commit and pull request title of one save.
