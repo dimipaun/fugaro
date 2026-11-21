@@ -364,6 +364,24 @@ func registerLayerMeta() {
 		Type:        TypeEnum,
 		Enum:        []string{"poc", "startup", "pro", "critical", "hotfix"},
 	})
+	each("layer.defaults.rigor.areas.*.members.*.repo", Meta{
+		Label:       "Rigor area member repository",
+		Description: "The repository of the project that one member of a rigor area names.",
+		Group:       GroupProfiles,
+		Type:        TypeString,
+	})
+	each("layer.defaults.rigor.areas.*.members.*.paths", Meta{
+		Label:       "Rigor area member paths",
+		Description: "The repository-relative paths of the member's repository that belong to the rigor area.",
+		Group:       GroupProfiles,
+		Type:        TypeString,
+	})
+	each("layer.defaults.rigor.repos", Meta{
+		Label:       "Rigor mode by repository",
+		Description: "The rigor mode the project names for one of its repositories.",
+		Group:       GroupProfiles,
+		Type:        TypeString,
+	})
 	each("layer.defaults.planning.decoupling", Meta{
 		Label:       "Plan before coding",
 		Description: "Whether a run of the project writes its plan before it writes code.",
