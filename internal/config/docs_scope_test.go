@@ -59,8 +59,8 @@ var rigorOrderRanks = []struct {
 		func(c *rigor.Config, _ *rigor.Request, l rigor.Rigor) { c.Project = l }},
 	{"a `defaults.rigor.areas` rule the run's repository and paths match", rigor.FromArea,
 		func(c *rigor.Config, r *rigor.Request, l rigor.Rigor) {
-			c.ProjectAreas = []rigor.Area{{Name: "shared", Match: "shared/**", Level: l}}
-			r.Paths = append(r.Paths, "shared/x.go")
+			c.ProjectAreas = []rigor.Area{{Name: "payments", Match: "payments/**", Level: l}}
+			r.Paths = append(r.Paths, "payments/x.go")
 		}},
 	{"the project layer's `defaults.rigor.repos` entry for the run's repository", rigor.FromProject,
 		func(c *rigor.Config, r *rigor.Request, l rigor.Rigor) {

@@ -96,21 +96,21 @@ func TestResolveLayerPrecedence(t *testing.T) {
 		{
 			"a repository's own rule lowers a project area (D20 as amended)",
 			Config{
-				ProjectAreas: []Area{{Name: "shared", Match: "shared/**", Level: Critical}},
-				RepoAreas:    []Area{{Name: "own", Match: "shared/**", Level: POC}},
+				ProjectAreas: []Area{{Name: "payments", Match: "payments/**", Level: Critical}},
+				RepoAreas:    []Area{{Name: "own", Match: "payments/**", Level: POC}},
 			},
-			Request{Paths: []string{"shared/x.go"}},
-			POC, FromArea, []string{"shared", "own"},
+			Request{Paths: []string{"payments/x.go"}},
+			POC, FromArea, []string{"payments", "own"},
 		},
 		{
 			"the project's entry for the repository outranks its own area",
 			Config{
 				Project:      Startup,
-				ProjectAreas: []Area{{Name: "shared", Match: "shared/**", Level: POC}},
+				ProjectAreas: []Area{{Name: "payments", Match: "payments/**", Level: POC}},
 				ProjectRepos: map[string]Rigor{"acme/app": Critical},
 			},
-			Request{Repo: "acme/app", Paths: []string{"shared/x.go"}},
-			Critical, FromProject, []string{"shared"},
+			Request{Repo: "acme/app", Paths: []string{"payments/x.go"}},
+			Critical, FromProject, []string{"payments"},
 		},
 		{
 			"a request equal to the resolved level leaves the tighter layer named",
@@ -159,8 +159,8 @@ var resolveRanks = []struct {
 	{"Fugaro's own default", func(*Config, *Request, Rigor) {}, FromDefault},
 	{"the project layer's default", func(c *Config, _ *Request, l Rigor) { c.Project = l }, FromProject},
 	{"a project area the repo and paths match", func(c *Config, r *Request, l Rigor) {
-		c.ProjectAreas = append(c.ProjectAreas, Area{Name: "shared", Match: "shared/**", Level: l})
-		r.Paths = append(r.Paths, "shared/x.go")
+		c.ProjectAreas = append(c.ProjectAreas, Area{Name: "payments", Match: "payments/**", Level: l})
+		r.Paths = append(r.Paths, "payments/x.go")
 	}, FromArea},
 	{"the project layer's entry for the repository", func(c *Config, r *Request, l Rigor) {
 		c.ProjectRepos = map[string]Rigor{"acme/app": l}
@@ -487,7 +487,7 @@ func TestResolvePrecedenceHoldsOverEveryPairOfModes(t *testing.T) {
 			// And a repository's own rule settles the level over a project
 			// area's, in either direction (D20 as amended).
 			mixed := Config{
-				ProjectAreas: []Area{{Name: "shared", Match: "x/**", Level: b}},
+				ProjectAreas: []Area{{Name: "payments", Match: "x/**", Level: b}},
 				RepoAreas:    []Area{{Name: "own", Match: "x/**", Level: a}},
 			}
 			if got := Resolve(mixed, Request{Paths: []string{"x/y"}}); got.Level != a {
