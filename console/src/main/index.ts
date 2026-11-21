@@ -994,6 +994,14 @@ const gated: ConsoleHandlers = {
   'setup.plan': newOperationStub(),
   'setup.apply': newOperationStub(),
   'settings.editor.open': newOperationStub(),
+  // The models write's two rows (MW1, D2903), registered the way AL registered
+  // its nine: the surface and its argv are here, and the window behind them --
+  // the plan document, the confirmation and the write -- is the Manage view's
+  // own task, which replaces these two entries with the flow's handlers
+  // (`src/main/modelsadd.ts`). Until then a screen that asks for one is
+  // answered 'not available in this build' rather than spawn anything.
+  'models.add.plan': newOperationStub(),
+  'models.add': newOperationStub(),
 }
 
 /**

@@ -389,6 +389,52 @@ export function seatsSupported(version: string): boolean {
 export const LICENCE_KEY_CLI_FLOOR: string | null = null
 
 /**
+ * MODELS_ADD_CLI_FLOOR is the oldest CLI whose `models add` takes **`--no-apply`**
+ * -- the word that says *write this and run none of its follow-up steps*
+ * (D1565), which is the word the console's own write passes -- **and** whose
+ * `--dry-run --json` prints the plan document the confirmation window draws
+ * (`schemas/models-add-plan.schema.json`, MD1). It is the release the whole
+ * models write waits for: below it, `fugaro models add` either has no
+ * `--no-apply` (so the write would run its follow-up steps behind the operator's
+ * back) or no document for the window to show.
+ *
+ * **It is `null` until that release exists**, which is this console's state
+ * today: the row is inert rather than absent -- it is on the surface, its argv
+ * is built and refused like every other row's, and `modelsAddSupported` answers
+ * false for every version, so the screen shows the command's Copy-command
+ * instead of the action (R9's floor, and the shape every AL row has). The task
+ * that ships MD1's release sets this string in the same change, and no other
+ * change may.
+ */
+export const MODELS_ADD_CLI_FLOOR: string | null = null
+
+/**
+ * modelsAddSupported answers whether one version line may be shown the models
+ * write's action at all, by comparing it against `MODELS_ADD_CLI_FLOOR` at the
+ * patch level.
+ *
+ * **Its caller is the renderer's**, through the compatibility facts the main
+ * process already publishes: a version below the floor is a CLI whose
+ * `models add` cannot be driven the way the row drives it, so the Manage view
+ * shows the Copy-command and no button. The main-process half of the same fact
+ * is `src/main/modelsadd.ts`'s own `refuseBelowFloor`, which refuses a plan
+ * from a renderer that asked anyway -- the two read one constant, so a screen
+ * and the process behind it cannot disagree.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * release will take can be tested: with the constant unset, every version is
+ * refused, which is the state this console is in until MD1's release lands
+ * (`version.test.ts` drives both).
+ */
+export function modelsAddSupported(
+  version: string,
+  floor: string | null = MODELS_ADD_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
+
+/**
  * licenceKeySupported answers whether one version line may be handed the
  * installation's licence key, by comparing it against `LICENCE_KEY_CLI_FLOOR`.
  *

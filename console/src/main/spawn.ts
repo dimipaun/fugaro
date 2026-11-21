@@ -755,6 +755,13 @@ export type SpawnArgumentKind =
   | 'roadmapTask'
   | 'roadmapRelease'
   | 'stdin'
+  // The models write's two (the console improvements plan's MW1, D2903). The
+  // three values a renderer sends are one word each: the route and the two
+  // prices are `=`-form words (`--route=<r>`), and the model ID is the
+  // positional behind the row's terminator, the shape the settings write's
+  // value already has.
+  | 'equalsValue'
+  | 'terminatedValue'
 
 /**
  * SPAWN_KIND_FOR is the one place the two kind vocabularies are related: the
@@ -820,6 +827,13 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   // that emits no argv word, and for a stronger reason than the first: a path
   // in an argv is what `--answers-file <PATH>` would be.
   setupAnswers: 'stdin',
+  // The models write's three (MW1, D2903): the two prices and the route are
+  // `=`-form words and the model ID is the positional behind the terminator.
+  // The mapping is total over ipc.ts's kinds, so these three are what a kind
+  // added there without an argv spelling would fail to compile on.
+  modelRoute: 'equalsValue',
+  modelPrice: 'equalsValue',
+  modelId: 'terminatedValue',
   // `licenceKey` is the second kind whose operation spawns nothing
   // (`licence.read`/`licence.save`, S2.7, carry `command: null`), for
   // `gitProvider`'s reason: the mapping is total over ipc.ts's kinds, and
@@ -904,6 +918,18 @@ export interface SpawnCommand {
    */
   readonly expectFlag?: string
 }
+
+/**
+ * MODELS_ADD_PLAN_OPERATION and MODELS_ADD_OPERATION are the models write's two
+ * rows (the console improvements plan's MW1, D2903), named here rather than
+ * inline because two tables below key off them: `EQUALS_FORM_FLAGS` names the
+ * three `=`-form prefixes both rows carry, and `TERMINATOR_OPERATIONS` names the
+ * two as rows whose own value is passed behind `--`. The two are one command's
+ * two phases -- the plan is the CLI's own `--dry-run` and the write is the same
+ * argv less it -- so they are two operations of the surface and two rows here.
+ */
+export const MODELS_ADD_PLAN_OPERATION = 'models.add.plan'
+export const MODELS_ADD_OPERATION = 'models.add'
 
 /**
  * SPAWN_COMMANDS is the table, read off the operations Task 1.2 declared and the
@@ -1198,6 +1224,67 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     words: ['models', 'ls', '--json'],
     takesProject: true,
     args: [],
+    dirFlag: false,
+  },
+  {
+    // **The models write's plan** (the console improvements plan's MW1, D2903):
+    // `models add --no-apply --dry-run --json`, the CLI's own dry run of the
+    // write below. Three things about this row are the whole of its safety.
+    //
+    // **`--dry-run` is what makes it a read.** The command computes the change
+    // and prints the versioned document
+    // (`schemas/models-add-plan.schema.json`) -- the claim, the allow-list
+    // entry, the two rates and the steps it would take -- and writes no config
+    // file, no published node and no saved step, which is why the window the
+    // console draws before the write can be drawn from a child at all.
+    //
+    // **`--no-apply` is a word of the command path and not a payload's.** It is
+    // what keeps the write's own follow-up steps (`fugaro apply`) off the
+    // operator's machine until they run them (D1565): the console's write saves
+    // the steps and says so, exactly as the settings write does.
+    //
+    // **The model ID is the positional behind the terminator** (`terminatedValue`
+    // below), which is the word `models add <id>` reads: a terminator is what
+    // makes a value spelled `--route` or `-x` the positional it is. The three
+    // values the renderer does send are `=`-form words -- `--route=<r>`,
+    // `--price-in=<usd>`, `--price-out=<usd>` -- so no value of this row can be
+    // read as a flag either, and every one of them is held to a grammar in main
+    // before this argv exists (`ipc.ts`'s `modelId`, `modelRoute` and
+    // `modelPrice`).
+    operation: MODELS_ADD_PLAN_OPERATION,
+    words: ['models', 'add', '--no-apply', '--dry-run', '--json'],
+    takesProject: true,
+    args: [
+      { key: 'route', flag: '--route=', kind: 'equalsValue' },
+      { key: 'priceIn', flag: '--price-in=', kind: 'equalsValue' },
+      { key: 'priceOut', flag: '--price-out=', kind: 'equalsValue' },
+      { key: 'id', flag: null, kind: 'terminatedValue' },
+    ],
+    dirFlag: false,
+  },
+  {
+    // **The models write** (the same plan's MW1, D2903): the row above less
+    // `--dry-run --json`, and the console's fifth write. It appends the model to
+    // a route's own list in the project config and writes a `model_prices` entry
+    // and a `budget.allowed_models` entry for it -- a **widening**, because it
+    // changes what every run of the project may name and spend on -- and the
+    // only argv of this surface that reaches it is this one: the never table
+    // refuses `models add` as a command and `add` as a word of `models`, and
+    // grants the two rows of this write by name (`except`, `src/main/ipc.ts`).
+    //
+    // **It declares the same four arguments as the plan and no others**, so the
+    // argv the operator confirmed is the argv this row builds: main holds the
+    // plan's own document digest and the argv beside it and re-runs *that*, never
+    // one a renderer sends again (`src/main/modelsadd.ts`).
+    operation: MODELS_ADD_OPERATION,
+    words: ['models', 'add', '--no-apply'],
+    takesProject: true,
+    args: [
+      { key: 'route', flag: '--route=', kind: 'equalsValue' },
+      { key: 'priceIn', flag: '--price-in=', kind: 'equalsValue' },
+      { key: 'priceOut', flag: '--price-out=', kind: 'equalsValue' },
+      { key: 'id', flag: null, kind: 'terminatedValue' },
+    ],
     dirFlag: false,
   },
   {
@@ -1952,6 +2039,22 @@ export const SETTINGS_EDIT_LAYERS: readonly string[] = Object.freeze(['local', '
 export const TERMINATOR_WORD = '--'
 
 /**
+ * TERMINATOR_OPERATIONS are the rows whose argv may carry that terminator, and
+ * they are exactly the rows whose **own value** is a positional the command
+ * reads: the settings write's value (C3, D1104) and the models write's model ID
+ * (MW1, D2903). It is a frozen list rather than a rule read off the table because
+ * `assertArgvFlags` is handed an operation's *name* and no row -- and the list is
+ * held two-sided by `assertSpawnSurface`, which refuses a row that emits a
+ * terminated value without being named here and a name whose row emits none, so
+ * a third row cannot quietly join it.
+ */
+export const TERMINATOR_OPERATIONS: readonly string[] = Object.freeze([
+  SETTINGS_EDIT_OPERATION,
+  MODELS_ADD_PLAN_OPERATION,
+  MODELS_ADD_OPERATION,
+])
+
+/**
  * ARGUMENT_RE is the alphabet a *renderer* argument may use. It is deliberately
  * a whitelist rather than a blacklist: a repository is `owner/name`, a run id is
  * `YYYYMMDD-HHMMSS-xxxx`, a day is `YYYY-MM-DD`, `--since` is `Nd`/`3h`/`0` or
@@ -2386,6 +2489,39 @@ export function argvFor(
         terminated.push(value)
         break
       }
+      case 'equalsValue': {
+        // One word, `--flag=value`: the value stays inside the flag's own word,
+        // so it can never be read as a flag -- the design's reason for the `=`
+        // form on the rows that carry one (design §5.1 rule 6). The value's own
+        // grammar is the validator's (`ipc.ts`'s `modelRoute` and
+        // `modelPrice`), so what is refused here is only a word no argv could
+        // carry at all.
+        if (typeof value !== 'string') refused(`${operation}'s ${spec.key} is not a string`)
+        const word = `${spec.flag ?? ''}${value}`
+        if (value === '' || word.includes('\u0000') || !isSafeArgumentValue(value)) {
+          refused(`${operation}'s ${spec.key} is not a value this console will pass to the CLI`)
+        }
+        argv.push(word)
+        break
+      }
+      case 'terminatedValue': {
+        // The positional the command reads -- `models add <id>` -- and it emits
+        // no word here: it is pushed after the installation's flags
+        // (`terminated`, above), behind the row's `--`, which is what makes a
+        // value spelled `--route` or `-x` the positional it is. What is checked
+        // here is what an argv element can be at all: a non-empty string, no
+        // NUL (execve refuses one), and inside the console's own bound.
+        if (
+          typeof value !== 'string' ||
+          value === '' ||
+          value.includes('\u0000') ||
+          value.length > MAX_ARGUMENT_LENGTH
+        ) {
+          refused(`${operation}'s ${spec.key} is not a value this console will pass to the CLI`)
+        }
+        terminated.push(value)
+        break
+      }
     }
   }
 
@@ -2543,6 +2679,8 @@ function emitsArgvWord(spec: SpawnArgument, value: ValidatedArgument): boolean {
     case 'settingValue':
     case 'roadmapTask':
     case 'roadmapRelease':
+    case 'equalsValue':
+    case 'terminatedValue':
       return true
   }
 }
@@ -2578,6 +2716,22 @@ export const RUNS_LIST_EQUALS_FLAGS: readonly string[] = Object.freeze(['--limit
  * two-sided the way the runs list's are. */
 export const RUNS_SUMMARY_EQUALS_FLAGS: readonly string[] = Object.freeze(['--since='])
 
+/** MODELS_ADD_EQUALS_FLAGS are the models write's three `=`-form prefixes (the
+ * console improvements plan's MW1, D2903): the route the model is claimed on and
+ * the two rates. All three are one word each, `--flag=value`, so no value a
+ * renderer sends can be read as a flag -- which is what the row's fourth value,
+ * the model ID, is the terminator for.
+ *
+ * It is one list for the two rows because the two rows are one command's two
+ * phases: the plan and the write declare the same three arguments, and
+ * `assertSpawnSurface` holds this table to each row's own declared flags, so a
+ * row that lost one of them fails at startup rather than at spawn time. */
+export const MODELS_ADD_EQUALS_FLAGS: readonly string[] = Object.freeze([
+  '--route=',
+  '--price-in=',
+  '--price-out=',
+])
+
 /**
  * EQUALS_FORM_FLAGS is, **per operation**, the `=`-form flag prefixes that
  * operation's argv may carry -- the one place `assertArgvFlags` reads its
@@ -2598,6 +2752,8 @@ export const EQUALS_FORM_FLAGS: Readonly<Record<string, readonly string[]>> = Ob
   [RUN_LAUNCH_OPERATION]: RUN_LAUNCH_EQUALS_FLAGS,
   'runs.list': RUNS_LIST_EQUALS_FLAGS,
   'runs.summary': RUNS_SUMMARY_EQUALS_FLAGS,
+  [MODELS_ADD_PLAN_OPERATION]: MODELS_ADD_EQUALS_FLAGS,
+  [MODELS_ADD_OPERATION]: MODELS_ADD_EQUALS_FLAGS,
 })
 
 /** assertArgvFlags refuses an argv carrying a flag outside `SPAWN_FLAGS`, and one
@@ -2638,8 +2794,8 @@ export function assertArgvFlags(operation: string, argv: readonly string[]): voi
       // follows it is read as a value and not as a flag, which is the whole of
       // what a terminator means -- and it is what lets the settings edit pass a
       // value spelled `--layer` without that word being refused here.
-      if (operation !== SETTINGS_EDIT_OPERATION) {
-        refused(`${operation} would emit ${TERMINATOR_WORD}, which only the settings write's own row may emit`)
+      if (!TERMINATOR_OPERATIONS.includes(operation)) {
+        refused(`${operation} would emit ${TERMINATOR_WORD}, which only the rows whose own value is one (${TERMINATOR_OPERATIONS.join(', ')}) may emit`)
       }
       terminated = true
       continue
@@ -2951,10 +3107,12 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
     if (row.expectFlag !== undefined && !SPAWN_FLAGS.includes(row.expectFlag)) {
       refused(`${row.operation} would emit ${row.expectFlag}, which is not a flag this console may spawn`)
     }
-    const terminates = row.args.some((spec) => spec.kind === 'settingValue')
-    if (terminates !== (row.operation === SETTINGS_EDIT_OPERATION)) {
+    const terminates = row.args.some(
+      (spec) => spec.kind === 'settingValue' || spec.kind === 'terminatedValue',
+    )
+    if (terminates !== TERMINATOR_OPERATIONS.includes(row.operation)) {
       refused(
-        `${row.operation} ${terminates ? 'emits a value behind the terminator' : 'has no value behind the terminator'}: only the settings write's own row passes one`,
+        `${row.operation} ${terminates ? 'emits a value behind the terminator' : 'has no value behind the terminator'}: only the rows whose own value is one (${TERMINATOR_OPERATIONS.join(', ')}) pass one`,
       )
     }
     const declared = new Set<string>(operation.args.map((spec) => spec.key))
