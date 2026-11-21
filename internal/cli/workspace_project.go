@@ -355,7 +355,7 @@ func (a *workspaceProjectAdd) readLinked(ctx context.Context, auth workspace.Aut
 	if a.mirror, err = ops.ReadMirror(ctx, a.member); err != nil {
 		return userErr("reading project %s's own member list at %s: %v", safetext.Field(a.member.Project), workspace.PathMemberMirror, err)
 	}
-	entries, err := workspaceMirrorEntries(a.mirror)
+	entries, err := workspaceProjectMirrorEntries(a.mirror)
 	if err != nil {
 		return userErr("project %s's own member list at %s: %v. It is the member's own document and this add replaces it with the workspace's own list, so it reads one it can trust or writes nothing",
 			safetext.Field(a.member.Project), workspace.PathMemberMirror, err)
@@ -740,14 +740,14 @@ func workspaceMirrorNames(entries []workspace.MirrorEntry, people []workspace.Pe
 }
 
 // workspaceMirrorDoc is the mirror document workspaceMirrorDocument renders and
-// workspaceMirrorEntries reads: the version this command writes and C1's
+// workspaceProjectMirrorEntries reads: the version this command writes and C1's
 // entries.
 type workspaceMirrorDoc struct {
 	Version int                     `json:"version"`
 	Members []workspace.MirrorEntry `json:"members"`
 }
 
-// workspaceMirrorEntries reads a member's mirror, strictly, as every document a
+// workspaceProjectMirrorEntries reads a member's mirror, strictly, as every document a
 // reader acts on is read here: the node is the member's own database, its own
 // admins can rewrite it (WU0's threat model), and what this add does with the
 // answer is refuse or replace the document whole -- so an unknown key, a second
@@ -755,7 +755,7 @@ type workspaceMirrorDoc struct {
 // refuses is a refusal rather than a document read as the part of it that
 // happened to parse. An absent node is a member the workspace has not mirrored
 // into, which is no entries and not an error.
-func workspaceMirrorEntries(doc workspace.MemberDoc) ([]workspace.MirrorEntry, error) {
+func workspaceProjectMirrorEntries(doc workspace.MemberDoc) ([]workspace.MirrorEntry, error) {
 	if !doc.Found {
 		return nil, nil
 	}
