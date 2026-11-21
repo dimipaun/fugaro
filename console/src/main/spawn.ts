@@ -1666,7 +1666,7 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
   },
   {
     // The first-run wizard's apply (`setup --answers-file - --events --json`):
-    // the row above less `--plan-only`, and the console's third write.
+    // the row above less `--plan-only`, and the console's fourth write.
     //
     // **It declares no argument, and that is the whole of its safety**: the
     // answers file the child reads on stdin is the one main held when it showed

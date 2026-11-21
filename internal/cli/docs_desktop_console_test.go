@@ -694,6 +694,16 @@ var consoleMovedSections = []string{
 	// held by the door's own tests.
 	"### 6.25 `fugaro coordinator roadmap move",
 	"## 4. `fugaro report --json`",
+	// §4's stream subsection (the console improvements plan's RS3, the
+	// `spend.stream` operation) is the same command's second argv, and it lives
+	// in the same ee/ package (`ee/report/cli/report_stream.go`), so this build
+	// can name neither its writer nor the flags its prose states -- `--until`
+	// and `--csv` are the report's own. It is a heading of its own rather than
+	// part of §4's because the stream is a different document (one line per
+	// row) from the indented one above it; the ee-side counterpart that would
+	// hold it says nothing about it yet, and the row of §5.1 that spawns it is
+	// held here on the design's side.
+	"### `fugaro report --stream --json`",
 }
 
 // consoleMovedRows are the document's individual lines that name a flag of a
@@ -854,6 +864,12 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		// no shape carries is a field invented rather than read.
 		reflect.TypeOf(applyDoc{}),
 		reflect.TypeOf(applyRow{}),
+		// §6.29's document (WH1, the console improvements plan's AL): the
+		// caller's own role, the scope it is held at and the patterns that scope
+		// names -- the `whoami` read. It is here for this test's own reason: a
+		// field table that names a key no shape carries is a field invented
+		// rather than read.
+		reflect.TypeOf(whoamiDoc{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -872,9 +888,11 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 	backtickRE := regexp.MustCompile("`([^`]+)`")
 	// The rows whose first column is a command or a flag rather than a json
 	// key: docs/design/desktop-console.md's spawn table and the flag
-	// inventory, both of which name commands, not fields.
+	// inventory, both of which name commands, not fields. `setup` is the flag
+	// inventory's own row for the first-run wizard, whose argv arrives partly on
+	// stdin -- a word of the table, not a key of any document.
 	notAKey := map[string]bool{"watch": true, "report": true, "diagnose": true,
-		"logs": true, "doctor": true, "version": true}
+		"logs": true, "doctor": true, "version": true, "setup": true}
 	// approvedAheadOfTheCLI are the wire keys the document names under its own
 	// bounded exception (§intro): the owner has approved a release that will
 	// write them, no shape here carries them yet, and the console accepts them
@@ -1016,20 +1034,26 @@ func TestDocsDesktopConsoleContractStatesTheRunsStatsOwnViewRefusal(t *testing.T
 }
 
 // TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited: the
-// console's own set has three line-delimited documents, and they do it through
-// two different code paths -- the watch feed through json.NewEncoder with no
-// SetIndent and the graph's stream through WriteDoc, the log lines through
-// json.Marshal in printLogEntry. A document that claims only the feed is
-// line-delimited, or that calls the log form indented, builds the log reader on
-// the wrong parser, which is what a review of the first revision found here.
+// console's own set has seven line-delimited documents, and they do it through
+// three different code paths -- the watch feed through json.NewEncoder with no
+// SetIndent, the graph's stream through WriteDoc, the log lines through
+// json.Marshal in printLogEntry, and the console improvements' four through
+// RS1's one-line-at-a-time writer and `setup --events`'s own. A document that
+// claims only the feed is line-delimited, or that calls the log form indented,
+// builds the log reader on the wrong parser, which is what a review of the
+// first revision found here.
 //
-// The count moved once, and the move is why the graph's stream is quoted here:
-// the graph plan's CG9b puts `graph --watch --json` on the console's spawn
+// The count moved twice, and each move is why a stream is quoted here: the
+// graph plan's CG9b puts `graph --watch --json` on the console's spawn
 // table, which is what makes section 6.22's compact stream a document of the
 // console's own set -- before it, the document said the graph was not in the
-// set and named CG9b as the task that would move the count with its row.
+// set and named CG9b as the task that would move the count with its row -- and
+// the console improvements plan's AL adds three live reads and the wizard's
+// event feed. The improvement's three are the sharper case: each is a new argv
+// on a command whose one-shot read is indented, so the parser follows the argv
+// and never the command word.
 //
-// The claim is scoped to the console's set, and the fourth line-delimited
+// The claim is scoped to the console's set, and the eighth line-delimited
 // document this file describes -- `fugaro cancel RUN --json` (section 6.3),
 // which is a write the console never spawns -- is stated separately and
 // asserted here too. A second review found the document claiming "exactly two
@@ -1043,18 +1067,24 @@ func TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited(t *testi
 		what   string
 		quotes []string
 	}{
-		{"the three in the console's set are line-delimited", []string{
+		{"the seven in the console's set are line-delimited", []string{
 			"one compact `logLine` object per line",
 			"printLogEntry",
 			"json.Marshal",
-			"Three of the commands in the console's set are line-delimited",
-			"`watch --json`, `logs RUN\n   --json` and `graph --watch --json`",
+			"Seven of the commands in the console's set are line-delimited",
+			"`watch --json`, `logs RUN --json`, `graph --watch --json` and the console",
+			"improvements' four",
 			"Every other command in that set is indented",
+			// The console improvements' three live reads sit on an indented
+			// command's own words, so the document must say the parser follows
+			// the argv: the one-shot form of the same command is not compact.
+			"`runs ls --stream\n   --json` is line-delimited while `runs ls --json` (§5) is not",
 		}},
 		{"cancel's document is compact, outside that set", []string{
 			"**Its document is compact — one object per line**",
 			"`printCancel` marshals the struct with `json.Marshal`",
 			"the only one outside the console's set",
+			"the only one of the eight the console never spawns",
 		}},
 		{"every other document in the console's set is indented", []string{
 			"## 9. What the console may do with all this",
@@ -1229,6 +1259,31 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// `apply` is the same constructor's write arm, and both its words are
 	// checked against it here rather than in the design's table alone.
 	"apply": newApplyCmd,
+	// §6.29 documents the roster read and its `--me` form (the roles-and-scopes
+	// plan's RS7, WH1), and the console spawns the second as §5.1 rule 6's
+	// `user ls --me --json` row, the caller's own role. The document describes
+	// both forms' flags, so they are checked against this constructor like any
+	// other command's.
+	"user ls": newUserLsCmd,
+	// §6.30 documents the image catalog's read (the console improvements plan's
+	// AL), which is the console's `image.catalog.ls` and §5.1's `image ls
+	// --json` row. The group's writers -- `image add`, `image rm`, `image
+	// promote`, `image build`, `image refresh` -- are the never table's, so this
+	// one section is the group's whole reach; its flags are checked against this
+	// constructor like any other command's.
+	"image ls": newImageLsCmd,
+	// §6.31 documents the recipes in force (the same plan's AL, §5.1's
+	// `recipes ls --json` row, the console's `recipes.ls`). `recipes publish`
+	// and `recipes validate` are the never table's, so this read is the group's
+	// whole reach here too.
+	"recipes ls": newRecipesLsCmd,
+	// §6.32 documents the first-run wizard (the same plan's ST1, ST2 and SW3a):
+	// `setup --plan-only --answers-file - --events --json` is the console's
+	// `setup.plan` and the same command without `--plan-only` is `setup.apply`,
+	// the console's fourth write. Both argvs are §5.1's rows, so the section's
+	// flags -- `--plan-only`, `--answers-file` and `--events` not least -- are
+	// checked against this constructor like any other command's.
+	"setup": newSetupCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -1539,7 +1594,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the thirty-one argvs and nothing else -- the console's one spawn table
+// the forty-two argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1552,8 +1607,30 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	want := []string{
 		"watch --json",
 		"budget show --json",
+		// The caps as a live feed (the console improvements plan's RS4, the
+		// `budget.stream` operation): the same command with the flag that makes
+		// it a stream -- one newline-delimited `row` per repository and one
+		// `end` line, the kill switch among the rows as `slug: "kill"` -- so the
+		// command carries two argvs here, a one-shot read and its stream. D2906
+		// is why it is a **flag** rather than members of §3's document: the
+		// one-shot document is unchanged, member for member and byte for byte.
+		"budget show --stream --json",
 		"report --json",
+		// The report as a live feed (the same plan's RS3, the `spend.stream`
+		// operation): one `row` per element of §4's `rows`, an `end` line
+		// carrying the document's own `totals`, and nothing of the header or the
+		// `warnings`. The report's section is checked against the tagged tree
+		// (ee/report/cli/console_contract_test.go), but its row of this table is
+		// this list's, so the argv is spelled here.
+		"report --stream --json",
 		"runs ls --json",
+		// The listing as it arrives (the same plan's RS1, the `runs.stream`
+		// operation): the console's newest feed, always with `--since 24h` as it
+		// spawns the one-shot read, drawn row by row and capped at 10,000 rows,
+		// 16 MiB and a per-line bound. It is the row whose argv shows that the
+		// parser follows the argv and never the command word: the command's
+		// one-shot read above is indented and this one is not.
+		"runs ls --stream --json",
 		// The Spend screen's by-person view (console L5b): the one read whose
 		// rows the CLI scopes to the caller, and the one argv here the console
 		// may not widen with --all-users.
@@ -1740,6 +1817,38 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// from a renderer: no positional word, no `--repo`, and the two project
 		// flags are rule 3's, so the row spells the whole argv back.
 		"apply --project <name> [--config <path>]",
+		// The caller's own role (WH1, the console improvements plan's AL, the
+		// `whoami` operation, D2907): the one argv of `user ls` that reads no
+		// roster -- with `--me` the command answers about the caller instead of
+		// listing everybody -- so it carries neither `--repo` nor `--all` and
+		// no positional word at all. The console reads it at startup and maps
+		// it to disabled-with-a-reason controls; it decides no role of its own.
+		"user ls --me --json",
+		// The Code tab's two catalogue reads (the same plan's AL, the
+		// `image.catalog.ls` and `recipes.ls` operations): the project's image
+		// catalog and the recipes in force. Both are offline, both have no
+		// argument at all -- the commands are cobra's `NoArgs`, and `image ls`'s
+		// `--shared` and `recipes ls`'s `--verbose` are deliberately not the
+		// console's words -- and each is the whole of its group's reach, the
+		// groups' writers being on the never table below.
+		"image ls --json",
+		"recipes ls --json",
+		// The first-run wizard's plan and its apply (the same plan's AL, the
+		// `setup.plan` and `setup.apply` operations, ST1, ST2 and SW3a): the
+		// converge `setup` drives, whose five answers arrive as one JSON
+		// document on the child's standard input -- `--answers-file -`, never a
+		// path, so no file exists for another process of the same user to change
+		// between main's validation and the CLI's read, and no word of the argv
+		// is a path. `--plan-only` is the word that makes the child read instead
+		// of create, so the second row is the first less it: **the console's
+		// fourth write**, after rules 11, 12 and 14, and the reason §5.1 gained
+		// two rows and consoleLaunchPaths an entry. Neither row carries `--yes`,
+		// `--name`, `--gcp-project`, `--region`, `--bake-repos` or any argument
+		// at all: the answers file is the only place a project name crosses, and
+		// a flag beside the file wins over it, so the row spells the command's
+		// argv and the four words the console's two rows carry.
+		"setup --plan-only --answers-file - --events --json",
+		"setup --answers-file - --events --json",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -1998,7 +2107,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Thirty-one commands: the thirteen dashboard reads (logs has two argvs), the
+	// Thirty-four commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
 	// `graph --json` (the graph plan's CG9a), the project view's
@@ -2028,9 +2137,17 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// two enrolment reads of the repos-management plan's RE5 (D2413) are the
 	// thirtieth and thirty-first commands: `project repos ls --json` and `project
 	// repos status --json`, the `project repos` group's whole reach, since its two
-	// writes are on the never table below.
-	if len(allowed) != 31 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 31 (logs and apply have two argvs each)", path, argvs, len(allowed))
+	// writes are on the never table below. The console improvements plan's AL
+	// adds the thirty-second to thirty-fourth: the Code tab's two catalogue reads
+	// `image ls --json` and `recipes ls --json`, each offline and each the whole
+	// of its group's reach, and the first-run wizard's `setup`, whose two rows
+	// are the plan (`setup --plan-only …`) and the apply (`setup …`) -- a write,
+	// so `fugaro setup` is named in consoleLaunchPaths rather than here. Its
+	// three streams are second argvs of commands this census already carries
+	// (`budget show`, `report` and `runs ls`), so they move the argv count and
+	// not the command count.
+	if len(allowed) != 34 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 34 (logs and apply have two argvs each, `settings` and `settings set` are one command's two rows, and each of the console improvements' three streams is a second row on a command the table already carries)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -2616,17 +2733,19 @@ func TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters(t *testing.T) {
 // consoleLaunchPaths is §5.1's allow-list written as an exemption rather
 // than as a hole: the writers the console spawns are deliberately absent from
 // consoleReadPaths -- a write is not a read and must not be -- and this map is
-// where each one is named instead. There are four: `fugaro run` is the launch
+// where each one is named instead. There are six: `fugaro run` is the launch
 // (rule 11, D22), `fugaro settings set`/`fugaro settings unset` are the
 // settings write (the settings-edit plan's C3, D1103, rule 12), whose row on
 // §5.1's table is the `set` form and whose two words share this one entry's
 // reason, `fugaro coordinator roadmap move` is the record's move (the
 // dependency-graph plan's GV3.2, rule 14), whose row the same task added on
-// 2026-11-12, and `fugaro apply` is the chain the console runs after a
+// 2026-11-12, `fugaro apply` is the chain the console runs after a
 // management command saved a change for later (docs/composite-commands,
-// D1572; §5.1 carries its own row). The exemption is the security claim, so it
-// sits beside the reason: a table that grew another writer comes back here and
-// says so.
+// D1572; §5.1 carries its own row), and `fugaro setup` is the first-run
+// wizard's apply (the console improvements plan's AL, rule 5), whose read arm
+// is the same command with `--plan-only`. The exemption is the security claim,
+// so it sits beside the reason: a table that grew another writer comes back
+// here and says so.
 //
 // `fugaro apply` is the one command on both lists at once, and it is not an
 // oversight: §5.1 carries two rows for one command because its two argv are
@@ -2639,12 +2758,18 @@ func TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters(t *testing.T) {
 // remembered checkout. A later task that wants the chain to record the
 // checkout it ran in has to split this command's entry by argv, which is a
 // change to the table's key rather than a row in it.
+//
+// `fugaro setup` is the same arrangement the other way round: its two argvs are
+// the wizard's read (`--plan-only`) and its write, and the write is the one
+// that is exempt. A command whose every row writes, `run`'s, needs no such
+// note.
 var consoleLaunchPaths = map[string]bool{
 	"fugaro run":                      true,
 	"fugaro settings set":             true,
 	"fugaro settings unset":           true,
 	"fugaro coordinator roadmap move": true,
 	"fugaro apply":                    true,
+	"fugaro setup":                    true,
 }
 
 // planPhaseRow returns the "What ships" cell of the project-centric plan's

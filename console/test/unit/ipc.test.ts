@@ -1178,7 +1178,7 @@ describe("the allow-list's read-only invariant", () => {
       // two differ by the `--me` word in the second's command path.
       'user ls',
       // The first-run wizard's plan and apply (AL, D2904): `setup --plan-only
-      // …` is a read and `setup …` is the console's third write, and the two
+      // …` is a read and `setup …` is the console's fourth write, and the two
       // differ by the one mode word in their command path.
       'setup',
     ])
@@ -3716,7 +3716,7 @@ describe('the spend read’s arguments', () => {
  *     path** -- `--stream` or `--me` -- rather than through a flag, which is the
  *     shape `graph.watch` established, and each carries exactly the arguments
  *     its sibling declares.
- *   - **`setup.apply` is the surface's third write** and the only one of the
+ *   - **`setup.apply` is the surface's fourth write** and the only one of the
  *     nine with `refusedAfterLapse`, which is what makes a lapsed console refuse
  *     it while `setup.plan` -- the same command as a read -- keeps answering.
  *   - **`settings.editor.open` is the one operation of the nine that spawns
@@ -3820,7 +3820,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   // quietly. They are five reads of what the installation and the project
   // already have (the run list's live form, the caller's own role, the image
   // catalog, the recipes and the wizard's plan), the spend and caps reads' live
-  // forms, the console's **third write** (`setup.apply`, the only one of the
+  // forms, the console's **fourth write** (`setup.apply`, the only one of the
   // nine with `refusedAfterLapse`) and the settings editor's window -- the one
   // operation of the nine whose `command` is `null`. Every one of them is inert
   // until the CLI release that carries its flags, which is why the floors in
