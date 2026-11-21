@@ -234,11 +234,10 @@ var fdPath = regexp.MustCompile(`= *\d+<([^>]*)>`)
 // repository files its test processes and their children opened: the paths under
 // root, minus those under a drop root the caller names — the go build and module
 // caches, which the shard reads out of `go env` — minus .git, and minus the
-// paths the checkout does not hold, since strace prints the name of an open that
-// failed too. A path that is a directory becomes the "dir/**" a read of a
-// directory means in the map everywhere else, and the result is sorted and
-// deduplicated, so the artifact does not depend on the order the shard's
-// processes ran or on how often they opened one file.
+// paths the checkout does not hold. A path that is a directory becomes the
+// "dir/**" a read of a directory means in the map everywhere else, and the
+// result is sorted and deduplicated, so the artifact does not depend on the
+// order the shard's processes ran or on how often they opened one file.
 //
 // A relative argument is placed by -y's decoration alone: it means the
 // process's working directory, which the log does not carry.
@@ -256,6 +255,12 @@ func ReduceOpens(raw, root string, drop ...string) []string {
 			drops = append(drops, filepath.Clean(d))
 		}
 	}
+	// The checkout, and not the disk, is the point, exactly as in the scan: a
+	// path a commit does not hold is in no diff, and a read of one — the name of
+	// an open that failed, a report a run wrote into the tree, a file the
+	// checkout ignores — would make the committed map differ between two
+	// checkouts of the same commit.
+	files, dirs := checkoutIndex(root)
 	seen := map[string]bool{}
 	for _, line := range strings.Split(raw, "\n") {
 		p, ok := openPath(line)
@@ -266,17 +271,47 @@ func ReduceOpens(raw, root string, drop ...string) []string {
 		if !ok {
 			continue
 		}
-		switch info, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); {
-		case err != nil:
-			// The checkout does not hold it: a failed open, or a name only a
-			// build wrote, neither of which a change can reach.
-		case info.IsDir():
-			seen[rel+"/**"] = true
+		switch {
+		case files != nil:
+			switch {
+			case files[rel]:
+				seen[rel] = true
+			case dirs[rel]:
+				seen[rel+"/**"] = true
+			}
 		default:
-			seen[rel] = true
+			// Not a checkout: with no commit to read, the disk is all there is.
+			switch info, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); {
+			case err != nil:
+			case info.IsDir():
+				seen[rel+"/**"] = true
+			default:
+				seen[rel] = true
+			}
 		}
 	}
 	return sorted(seen)
+}
+
+// checkoutIndex is the paths the checkout holds and the directories that hold
+// them, for a membership test. Both are nil when git cannot answer — no git, or
+// a tree that is not a repository — which is when a caller reads the disk.
+func checkoutIndex(root string) (files, dirs map[string]bool) {
+	names, ok := checkoutFiles(root)
+	if !ok {
+		return nil, nil
+	}
+	files, dirs = make(map[string]bool, len(names)), map[string]bool{}
+	for _, name := range names {
+		if !repoRelative(name) {
+			continue
+		}
+		files[name] = true
+		for dir := path.Dir(name); dir != "." && dir != "/"; dir = path.Dir(dir) {
+			dirs[dir] = true
+		}
+	}
+	return files, dirs
 }
 
 // openPath is the path one open line names: the descriptor's -y decoration when

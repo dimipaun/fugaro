@@ -232,6 +232,30 @@ func TestFromArtifactMergesIntoTheCommittedMap(t *testing.T) {
 	}
 }
 
+// The trace reads the checkout as the scan does: a path the checkout ignores is
+// in no commit — the JUnit report a test command leaves in a gitignored reports/,
+// the binary a build writes into the tree root — so a read of one would make the
+// committed map differ between two checkouts of the same commit.
+func TestTraceIgnoresAPathTheCheckoutIgnores(t *testing.T) {
+	root := tree(t, map[string]string{
+		"go.mod":           goMod,
+		".gitignore":       "# the reports the test command writes\n/reports/\n",
+		"docs/x.md":        "x\n",
+		"reports/tree.xml": "<testsuite/>\n",
+	})
+	git(t, root, "init", "-q")
+	git(t, root, "add", "--", "go.mod", ".gitignore", "docs/x.md")
+	raw := strings.Join([]string{
+		openLine(1234, filepath.Join(root, "reports", "tree.xml"), filepath.Join(root, "reports", "tree.xml")),
+		openLine(1234, filepath.Join(root, "docs", "x.md"), filepath.Join(root, "docs", "x.md")),
+	}, "\n")
+
+	got := ReduceOpens(raw, root)
+	if !slices.Equal(got, []string{"docs/x.md"}) {
+		t.Errorf("ReduceOpens = %v, want only docs/x.md: reports/ is in no commit", got)
+	}
+}
+
 // The trace adds reads and nothing else. A shard traces the tests it ran — one
 // family of them, for a ./internal/cli leg — so its reads are a subset of what
 // the package opens, and a merge that took them for the whole would clear an
