@@ -569,6 +569,16 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"never falls back",
 		"the mount is the switch's, not the outage's",
 		"halts at the service's door rather than being answered from the App key its container still holds",
+		// WS12 (D2983): an unreachable service is waited for before it halts,
+		// which is the one shape of an outage a wait can end — a service that
+		// is up and answers unreadably, or refuses, still halts the run at
+		// once. Pinned with the bound and the naming, because the paragraph
+		// said "halts" flat before this task, while a run now spends minutes
+		// of its own budget on the wait and reports which service it was.
+		"**Unreachable waits, then halts, and never falls back.**",
+		"is waited for and retried for a bounded time",
+		"a reason that names **which** service could not be reached",
+		"its reason is already known, so it halts the run at once",
 		// The stop flag.
 		"fugaro budget kill --all",
 		// The database role's reach, said plainly rather than left to be

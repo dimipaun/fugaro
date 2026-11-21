@@ -476,10 +476,24 @@ func TestSwitchedRunRetriesARoutedProviderCallOnce(t *testing.T) {
 	noHalt(t, h)
 }
 
+// noServiceWait spends the bound an unreachable service is waited for before
+// the call is made, so the call in the case that follows is a call that meets
+// the spent bound: the halt. What a run does *inside* the bound -- wait, and
+// resume the stage -- is service_unreachable_test.go's, which is where WS12's
+// wait is pinned.
+func noServiceWait(t *testing.T) {
+	t.Helper()
+	old := serviceUnreachableBound
+	serviceUnreachableBound = 0
+	t.Cleanup(func() { serviceUnreachableBound = old })
+}
+
 // TestServiceUnreachableHalts: a job that cannot reach the credentials
-// service halts the run the way an unreachable budget backend does (D143),
-// and every later call gets the same refusal.
+// service for the whole of the bound halts the run the way an unreachable
+// budget backend does (D143, D2983), and every later call gets the same
+// refusal.
 func TestServiceUnreachableHalts(t *testing.T) {
+	noServiceWait(t)
 	// A server that was up and is now gone: the address refuses connections.
 	gone := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	base := gone.URL
@@ -655,6 +669,7 @@ func TestNoInJobFallback(t *testing.T) {
 	})
 
 	t.Run("an unreachable service is not replaced", func(t *testing.T) {
+		bound(t, 20*time.Millisecond)
 		gone := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 		base := gone.URL
 		gone.Close()
@@ -666,8 +681,16 @@ func TestNoInJobFallback(t *testing.T) {
 		}
 		defer srv.Close()
 		h := newServiceGateway(t, base, nil)
+		// Inside the bound the run waits (the wait's own cases are
+		// service_unreachable_test.go's), and once the bound is spent the same
+		// call is the halt: neither is a destination of its own.
+		if resp, body := h.post(msg(sonnet, 1000)); resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("an unreachable service inside the bound: %d %s, want the wait's 503", resp.StatusCode, body)
+		}
+		noHalt(t, h)
+		time.Sleep(25 * time.Millisecond)
 		if resp, _ := h.post(msg(sonnet, 1000)); resp.StatusCode != http.StatusForbidden {
-			t.Fatalf("an unreachable service: %d, want the halt's 403", resp.StatusCode)
+			t.Fatalf("an unreachable service past the bound: %d, want the halt's 403", resp.StatusCode)
 		}
 		haltOf(t, h)
 		if fallback.Count() != 0 {
@@ -1240,6 +1263,7 @@ func TestServiceRefusalLongerThanTheContractHalts(t *testing.T) {
 // charged the whole reservation -- zero is for a call nothing reached, which
 // is the branch above it (mutation M16).
 func TestServiceUnreachableAfterTheRequestIsSentIsCharged(t *testing.T) {
+	noServiceWait(t)
 	h, f := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
 		return anthropicfake.Reply{DropBeforeHeaders: true}
 	}, nil)
@@ -1260,10 +1284,10 @@ func TestServiceUnreachableAfterTheRequestIsSentIsCharged(t *testing.T) {
 }
 
 // TestServiceClientBoundsTheWaitForHeaders: a connection that never answers
-// and never fails either would hang the call until the stage's deadline
-// instead of halting (D143). The bound covers the wait for the service's
-// response headers and nothing else: the body is a stream the run may be
-// waiting on for minutes.
+// and never fails either would hang the call until the stage's deadline instead
+// of the call meeting the bound (D2983). The bound covers the wait for the
+// service's response headers and nothing else: the body is a stream the run may
+// be waiting on for minutes.
 func TestServiceClientBoundsTheWaitForHeaders(t *testing.T) {
 	// Start's own wiring, not only the helper: the bound is a fact about the
 	// client a service call is made with.
@@ -1279,6 +1303,7 @@ func TestServiceClientBoundsTheWaitForHeaders(t *testing.T) {
 	old := serviceResponseHeaderTimeout
 	serviceResponseHeaderTimeout = 100 * time.Millisecond
 	defer func() { serviceResponseHeaderTimeout = old }()
+	noServiceWait(t)
 	h, f := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
 		return anthropicfake.Reply{Hold: true} // reads the request and answers nothing
 	}, nil)
