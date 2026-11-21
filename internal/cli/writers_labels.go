@@ -109,6 +109,14 @@ const (
 
 	reasonTerraform = "`fugaro setup` writes it from its flags as it applies the installation's root: a Terraform input of the installation"
 
+	// LD4's two shapes (docs/rigor-modes, plan LV3.1): what a project area is
+	// made of, and the level of one repository the project names by itself. The
+	// project layer is published from a file a person writes, and no command
+	// names a member or a per-repository entry — `fugaro rigor set --area`
+	// writes a rule's glob, name and level, which are the rows beside these.
+	reasonRigorMembers = "a member of a project layer's rigor area: the layer is published from a file a person writes, and no command names the repositories and paths an area is made of"
+	reasonRigorRepos   = "the project layer's per-repository rigor levels: the layer is published from a file a person writes, and a repository's own level is its rigor.default, which `fugaro rigor set --layer repo` writes"
+
 	// The locations record: `fugaro setup` and `fugaro update` write the
 	// block from what the cloud holds, after the last apply (LP14 of
 	// docs/location-preference/), and no flag states one — the location of a
@@ -175,6 +183,7 @@ var settingsLabelRows = []settingsLabelRow{
 	{"region", labelPlumbing, "`fugaro setup` writes it when it creates the file: the installation's GCP region"},
 	{"registry", labelFile, "the legacy shared registry's address, stated in the local config: no command writes it"},
 	{"registry_host", labelPlumbing, "`fugaro setup` writes it from the apply's outputs as it installs: the registry's host"},
+	{"rigor.repos", labelFile, reasonRigorRepos},
 	{"rigor_pending", labelPlumbing, "`fugaro setup` writes the wizard's rigor answer into it, and the layer stage clears it once the project layer carries the mode: the answer a run that stopped before its Layer stage left for the next one"},
 	{"runs_bucket", labelPlumbing, "`fugaro setup` writes it from the apply's outputs as it installs: the bucket a run's task is written to"},
 	{"scheduler_region", labelPlumbing, "`fugaro setup` writes it as it installs: the region the installation's Cloud Scheduler job runs in"},

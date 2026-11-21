@@ -361,8 +361,9 @@ func (c *Config) RigorConfig() rigor.Config {
 	return out
 }
 
-// ProjectRigor is the project layer's half alone: defaults.rigor.default and
-// its areas, with the repository's rigor: block left out. It is what a run
+// ProjectRigor is the project layer's half alone: defaults.rigor.default,
+// its areas and its per-repository map, with the repository's rigor: block
+// left out. It is what a run
 // falls back to when the base branch's own fugaro.yaml cannot be read
 // (internal/runner, D25): the layer came with the task and is no branch's, so
 // it is the one part of the configuration that is still true when no branch
@@ -372,6 +373,7 @@ func (c *Config) ProjectRigor() rigor.Config {
 	var out rigor.Config
 	if c.Layer != nil {
 		out.Project, out.ProjectAreas = c.Layer.Defaults.Rigor.Default, c.Layer.Defaults.Rigor.Areas
+		out.ProjectRepos = c.Layer.Defaults.Rigor.Repos
 	}
 	return out
 }
