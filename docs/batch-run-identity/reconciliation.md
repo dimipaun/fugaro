@@ -516,11 +516,13 @@ make a printed ticket harmless. Consequence: BR1, BR2, BR13, and U3's re-read.
 carries the ticket and the nonce and nothing else (`ClaimRequest`, that plan's C1); its bodies are
 read with `DecodeStrict`, so a field the service does not know is refused by name rather than
 ignored. The delta therefore adds two fields and a route to a **merged** contract —
-`TicketRequest.Job`, `ClaimRequest.Attestation`, `POST /v1/identity/job` — and one interface field
-to the service's identity configuration. The field rule permits all three (adding a field is fine);
-what does not follow from it is *who writes them*, because that plan's C1 files are on `main` and
-its tasks are unlaunched. Consequence: this plan's C1 task writes them, the collision is stated in
-both directions (its F18, its O11), and it is put to the owner (D3113).
+`TicketRequest.Job`, `ClaimRequest.Attestation`, `POST /v1/identity/job` — one interface field to
+the service's identity configuration, and the merged route count that the added route breaks
+(`internal/identitywire/wire_test.go`, which pins the table at five routes). The field rule permits
+the fields (adding a field is fine); what does not follow from it is *who writes them*, because
+that plan's C1 files are on `main` and its tasks are unlaunched. Consequence: this plan's C1 task
+writes them, the collision is stated in both directions (its F18, its O11), and it is put to the
+owner (D3113).
 
 **F37 — Rule: the skew a new field makes is closed on Batch.** A service of the release behind
 refuses a body it does not know, so a runner that sends the attestation to one gets a refusal
@@ -569,7 +571,7 @@ to the owner again, and none of them answered.**
 | **D3110** | `update-converge` | Where does `fugaro update` apply the compute root and create the key (O13)? | Wherever a `batch:` block exists: selection then works straight after an update | Only where the backend is selected: about 1 more task, because selecting is gated on a doctor check that wants the key first | **Only where Batch is selected. Not the recommendation** (2026-11-20). **Amended after review:** as answered, the trigger was the updating machine's own `backend:` key, which is never published (F32). Asked again, the owner chose a published opt-in fact (as recommended, 2026-11-20): his intent, no key ring until someone chooses Batch, is kept; the trigger is the installation's, not a machine's. **Amended by LM19, wording put to the owner:** the answer stands and the question loses "and create the key" — the root creates no key ring, and the fact's three states, the opt-out and the convergence are as before |
 | **D3111** | `update-converge` | The opt-in fact is never withdrawn, so an installation that stops using Batch keeps the grants and the key (O16). Is that wanted? | Yes: once in, always applied, so a later tightening reaches every installation that ever opted in | Add a way to opt out: about 2 more tasks, and `update` gains a removal of grants | **Add a way to opt out. Not the recommendation** (2026-11-20). The owner was told the cost as two more tasks, a removal of grants in `update`, and care with runs in flight; R16 carries each. Unchanged by the amendment, which only re-cuts what the removal takes (R16, BR21) |
 | **D3112** | `claim-attestation` | After an opt-out, a launcher whose local config still says "in" is not refused by the CLI, and once the grants are gone the run fails only after its VM has started (O19). How is that closed? | The service refuses first: the update tells the credentials service Batch is off and the registration is refused before a job exists; about 1 more task and one more deploy input | Accept it, stated: a billed VM minute per stale launch. Or every Batch launch reads the published block: about 1 more task, a bucket read per launch, and R3 reversed for this fact | **The service refuses first** (2026-11-20, as recommended). **Amended by LM19, wording put to the owner:** the same deploy input and the same rule, read where the claim's records are written — the ticket ask that names a job and the registration are refused before any job exists (R17 as re-cut, BR22); the answer stands |
-| **D3113** | `claim-attestation` | Who declares the delta's fields (F36)? The attestation rides in a claim of the other plan's C1, which is merged; its tasks are unlaunched | This plan's C1 task adds them: two fields on that wire (`TicketRequest.Job`, `ClaimRequest.Attestation`), one route (`POST /v1/identity/job`) and one interface field on the service's identity configuration. Adding a field is what the field rule allows, and one claim path is what requirement 2 asks | A claim route of Batch's own: about 1 more task, no skew at all, and two claim paths where the brief asks for one identity scheme. Or wait for that plan to declare them: a second C1 there, a second go, and this plan's C1 dependent on a task of another plan | **Put to the owner (2026-11-21). Recommended: this plan's C1 task declares them**, and the plan records the collision in both directions (the other plan's O11, this plan's O21) |
+| **D3113** | `claim-attestation` | Who declares the delta's fields (F36)? The attestation rides in a claim of the other plan's C1, which is merged; its tasks are unlaunched | This plan's C1 task adds them: two fields on that wire (`TicketRequest.Job`, `ClaimRequest.Attestation`), one route (`POST /v1/identity/job`), one interface field on the service's identity configuration, and the merged route count's test its route breaks. Adding a field is what the field rule allows, and one claim path is what requirement 2 asks | A claim route of Batch's own: about 1 more task, no skew at all, and two claim paths where the brief asks for one identity scheme. Or wait for that plan to declare them: a second C1 there, a second go, and this plan's C1 dependent on a task of another plan | **Put to the owner (2026-11-21). Recommended: this plan's C1 task declares them** — the two fields, the one route, the one interface field and the merged route count's test, `internal/identitywire/wire_test.go` — and the plan records the collision in both directions (the other plan's O11, this plan's O21) |
 | **D3114** | `claim-attestation` | What does the service do with a claim whose record names a job but carries no attestation (F3, F35)? | Refuse it: a record that names a job is a Batch launch, and a Batch identity is served only to the recorded job's VM. Without this, a claim could omit the field and fall back to the account check alone, which is exactly the replay F4 describes | Accept it: the account check alone, which a second launcher passes. Or a claim of the release behind is *also* refused, which it already is by the strict decode | **Put to the owner (2026-11-21). Recommended: refuse it**, with one audit line naming the field, and the run halts with the claim's own reason |
 | **D3115** | `claim-attestation` | Batch prints a job's variables, and the ticket is one of them (F3, F35). Accept it? | Accept it, stated: the ticket on its own claims nothing, because the claim must come from the recorded job's VM; the run's identity is served once, and a second job of the same name is refused by the id (D3108) | Keep the ticket off the job: no carrier is left on Batch (the old K3 again), about 6 tasks back. Or a per-run Secret Manager secret: F5's (a), declined | **Put to the owner (2026-11-21). Recommended: accept it, stated**, with Check 830 measuring that a ticket read out of a job is not enough to claim (U3) and BR13's second attack trying it |
 
@@ -828,8 +830,9 @@ decided which way it goes; what is left is the owner's answer to the four amende
 - **O8.** The link must also refuse a plain Compute Engine VM that someone with
   `compute.instances.create` and `actAs` on a run account made by hand. Check 830 tries it; no
   Fugaro role holds that pair today.
-- **O9.** BR2 and BR4 rest on U2 and are built before Check 830 runs. If the check fails U2, R4
-  applies and their work is at risk. **Re-cut by LM19:** the attestation *is* U2 — if the task's
+- **O9.** BR2 and BR4 rest on U2. **Corrected by LM19, to R4's own list:** BR2 is not built before
+  Check 830 runs — it waits for the check, as R4 as re-cut says, because the attestation it serves
+  is the fact the check records. **Re-cut by LM19:** the attestation *is* U2 — if the task's
   container cannot reach the metadata server, or the full-format token carries no instance there,
   the claim cannot be attested on Batch at all and the work returns to the owner rather than
   falling back to K1.
@@ -874,9 +877,10 @@ decided which way it goes; what is left is the owner's answer to the four amende
   audit record a deletion writes, which `fugaro doctor` then prints. Stated. **Re-cut by LM19:**
   the bindings are the role's, the job read's and the shared accounts', and there is no decrypt.
 - **O21. The delta edits a merged contract of another plan** (F36, F38). The two fields, the one
-  route and the one interface field are written by this plan's C1 task into files that are on
-  `main`, and the collision is stated there too (that plan's F18, its O11 says how it names such
-  waits). Put to the owner as D3113.
+  route, the one interface field and the merged route count's test
+  (`internal/identitywire/wire_test.go`, which names the five routes as a number) are written by
+  this plan's C1 task into files that are on `main`, and the collision is stated there too (that
+  plan's F18, its O11 says how it names such waits). Put to the owner as D3113.
 - **O22. Nothing is launched on the amended answers.** C1's and BR6's approvals of 2026-11-20 are
   on hold by D3129 (that plan's O16), the re-cut C1 needs a go of its own, and D3113 to D3115 are
   unanswered. The plan says so in its status line and the folder's README says so.

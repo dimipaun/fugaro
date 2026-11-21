@@ -126,9 +126,9 @@ live probe can settle (U1, Check 830).
 **What a reader should not take from here:** nothing is approved — the approvals of 2026-11-20 are
 on hold until the owner answers D3113 to D3115 and the amended answers, and no task has his go by
 name under the amended text. Nothing is launched. Checks 830 and 831 are owner-run;
-BR3, BR5, BR12, BR13 and BR23 do not start before the owner has run Check 830 and answered O1. No
-CLI release is cut between the merge of BR1, BR6, BR16, BR18 or BR22 and I1, BR23's retirement
-included. The merged files of the old carrier (`internal/budget/token/wrap_contract.go`,
-`internal/credsvc/sealkey_wire.go`, `internal/credsvc/sealkey_stub.go`,
-`internal/localcfg/batch_sealkey.go`) are still in the tree, and no acceptance of this plan depends
-on them.
+BR2, BR3, BR5, BR12, BR13 and BR23 do not start before the owner has run Check 830, and BR3 and
+BR5 wait on O1's answer with it. No CLI release is cut between the merge of BR1, BR6, BR16, BR18 or
+BR22 and I1, BR23's retirement included. The merged files of the old carrier
+(`internal/budget/token/wrap_contract.go`, `internal/credsvc/sealkey_wire.go`,
+`internal/credsvc/sealkey_stub.go`, `internal/localcfg/batch_sealkey.go`) are still in the tree, and
+no acceptance of this plan depends on them.

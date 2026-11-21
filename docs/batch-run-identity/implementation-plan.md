@@ -94,16 +94,18 @@ reviewed at the strictest tier before any side starts, whatever the default says
 - Acceptance: the shapes below compile; the two fields the claim's wire gains and the two the
   issuance record gains are the only wire change, a body naming a field the service does not know
   is still refused by name, the service refuses a claim whose record names a job and carries no
-  attestation, the registration route answers the service's `not_served` in the stub file the
-  identity routes already answer from, and `contract-batch-claim.md` says what each side may rely
-  on. The merged key-release code is untouched by this task: BR23 retires it, and nothing here
-  reads it.
+  attestation, the registration route is in the wire's route table, so `RouteFor` names it and the
+  merged route-count test the added route breaks is updated in the same task (the mount that admits
+  the path at the service's door, and the `not_served` a caller gets there until the link is wired,
+  are BR17's: `internal/credsvc/server.go` is BR17's and I1's file, not this contract's), and
+  `contract-batch-claim.md` says what each side may rely on. The merged key-release code is
+  untouched by this task: BR23 retires it, and nothing here reads it.
 - Holds: the ticket's job field (the full name of the Batch job the launcher is about to create,
   empty for a Cloud Run launch) and the claim's attestation field (the VM's identity token in full
   format, empty for a Cloud Run launch); the `Job` and `JobID` fields of the issuance record, the
   first written with the ticket and the second by the registration (R19), with `JobID` empty on a
   record that names no job and on one whose job is not yet registered; the registration route
-  (`POST /v1/batch/claim/job`), its request, its response and its refusals; the `VMIdentity`
+  (`POST /v1/identity/job`), its request, its response and its refusals; the `VMIdentity`
   interface (is this attestation a VM of this job, and is the job live and created within the
   bound) and the one field it fills on the service's identity configuration; the rule that a
   record naming a job is a Batch launch and is served only with an attestation (D3114); the
@@ -114,26 +116,27 @@ reviewed at the strictest tier before any side starts, whatever the default says
   `internal/identitywire/batchclaim.go` (new: the attestation's shape, the registration route and
   its bodies, and the job-name shape the release wire held,
   `validBatchJobNameRE` and `checkRunRef`, which move here rather than being retyped in BR23),
-  `internal/identitywire/wire.go` (two fields on two bodies, two on the record),
+  `internal/identitywire/wire.go` (two fields on two bodies, two on the record, and the
+  registration route in the table `RouteFor` reads), `internal/identitywire/wire_test.go` (the one
+  count the added route breaks: the merged test that pins the table at five routes),
   `internal/credsvc/identity_config.go` (one interface and the field it fills),
-  `internal/credsvc/identity_stub.go` (the registration route's `not_served` answer, where the
-  identity routes' stub already answers it: **this is C1's one stub**, and I1 deletes the file when
-  the real link is wired), and the contract's own tests. Five files; three of the last four are one
-  field or one answer each.
+  `internal/credsvc/identity_stub.go` (the door the identity routes are answered at, and **this
+  contract's one stub**: its answer is the same for every route the table declares, so no line of
+  it changes here, and I1 replaces its answer and deletes the file when the real link is wired),
+  and the contract's own tests. Six files; two of them are one count and one field.
 - Tests: `TestTheTicketNamesAJobAndTheClaimCarriesAnAttestation`,
   `TestABodyNamingAFieldTheServiceDoesNotKnowIsRefusedByName`,
   `TestAJobRecordClaimedWithoutAnAttestationIsRefused`,
   `TestARecordWithoutAJobIsACloudRunClaim`,
-  `TestTheRegistrationRouteNamesTheJobAndItsId`,
-  `TestTheRegistrationRouteAnswersNotServedUntilItIsWired`.
+  `TestTheRegistrationRouteNamesTheJobAndItsId`.
 - Command: `go test ./internal/identitywire/ -run 'TicketNamesAJob|RefusedByName|RegistrationRouteNames' -count=1 && go test ./internal/credsvc/ -run 'JobRecordClaimedWithoutAnAttestation|RecordWithoutAJob|Identity' -count=1`.
 - Red step: a claim whose record names a job and carries no attestation is signed, and the ticket
   carries no job.
 - Depends on: none. It is written against the launcher plan's merged C1 — its wire and its
   document, `internal/identitywire/wire.go` and that plan's `contract.md` — and **the graph draws
-  no edge for that**: an edge may only name a node of this plan (that plan's O11). The two fields
-  it adds to that plan's files are the whole of the cross-plan change, and D3113 puts it to the
-  owner.
+  no edge for that**: an edge may only name a node of this plan (that plan's O11). The fields it
+  adds to that plan's files, the route and the route count's own test are the whole of the
+  cross-plan change, and D3113 puts it to the owner.
 - Commit: `batch: the claim's attestation, the ticket's job and the registration (C1, D3108, D3114)`.
 - Reviewer tier: opus, mandatory independent review before any side is written against it.
 
@@ -684,8 +687,10 @@ is no decrypt on a key to remove.
   identity cannot register another's job; an id that does not belong to the job the record names is
   refused; only the launcher class is admitted and every other class is refused — a roster service
   account is a launcher (D3123, R20); no token holder can write the record, by the database rules;
-  the route answers the service's `not_served` where the identity configuration is not wired
-  (C1's stub answer); each refusal writes one audit line. If the rules' version has to move,
+  the route is mounted at the service's door — the path joins `servedRoute`'s list and the refusal
+  that answers a path the service does not serve names it — and answers the service's `not_served`
+  where the identity configuration is not wired (C1's stub answer); each refusal writes one audit
+  line. If the rules' version has to move,
   `fugaro update` carries it and a test shows an installation at the previous rules version
   converging.
 - Files: `internal/credsvc/batchclaim_register.go` (new),
@@ -697,8 +702,9 @@ is no decrypt on a key to remove.
   `TestAnotherIdentityCannotRegisterTheJob`, `TestTheJobIdIsWrittenOnce`,
   `TestAnIdThatIsNotTheJobsIsRefused`, `TestARetryIsANewRunId`,
   `TestOnlyTheLauncherClassRegisters`, `TestNoTokenHolderWritesTheRegistration`,
+  `TestTheRegistrationRouteAnswersNotServedUntilItIsWired`,
   `TestEachRegistrationRefusalWritesOneAuditLine`.
-- Command: `go test ./internal/credsvc/ -run 'LauncherThatAskedForTheTicket|AnotherIdentityCannotRegister|JobIdIsWrittenOnce|NotTheJobsIsRefused|RetryIsANewRunId|OnlyTheLauncherClassRegisters|RegistrationRefusalWritesOne' -count=1 && go test ./internal/budget/... -run 'Rules' -count=1 && go test -tags firebase ./internal/budget/rules/ -run NoTokenHolderWritesTheRegistration -count=1` (the last needs the rules emulator the `firebase` tag's tests already use; no live project).
+- Command: `go test ./internal/credsvc/ -run 'LauncherThatAskedForTheTicket|AnotherIdentityCannotRegister|JobIdIsWrittenOnce|NotTheJobsIsRefused|RetryIsANewRunId|OnlyTheLauncherClassRegisters|RegistrationRouteAnswersNotServed|RegistrationRefusalWritesOne' -count=1 && go test ./internal/budget/... -run 'Rules' -count=1 && go test -tags firebase ./internal/budget/rules/ -run NoTokenHolderWritesTheRegistration -count=1` (the last needs the rules emulator the `firebase` tag's tests already use; no live project).
 - Red step: a run's own token writes the record's job id.
 - Depends on: C1; BR2 (kept: one file, `server.go`).
 - Commit: `credsvc: the launcher that asked for a ticket registers the job it created (BR17, D3108)`.

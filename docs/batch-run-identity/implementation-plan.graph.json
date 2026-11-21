@@ -16,6 +16,7 @@
           "docs/batch-run-identity/contract-batch-claim.md",
           "internal/identitywire/batchclaim.go",
           "internal/identitywire/wire.go",
+          "internal/identitywire/wire_test.go",
           "internal/credsvc/identity_config.go",
           "internal/credsvc/identity_stub.go"
         ]
