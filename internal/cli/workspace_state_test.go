@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -484,10 +487,10 @@ func TestStateSaveNamesALocalFolderOfItsOwn(t *testing.T) {
 	}
 }
 
-// TestStateSnapshotFileRefusesWhatItCannotRead: the local file is one a person
+// TestStateSaveFileRefusesWhatItCannotRead: the local file is one a person
 // may edit and a newer Fugaro may write, so a version this build does not read,
 // an unknown key and a file with no time are refusals and never half a snapshot.
-func TestStateSnapshotFileRefusesWhatItCannotRead(t *testing.T) {
+func TestStateSaveFileRefusesWhatItCannotRead(t *testing.T) {
 	base := `{"version":1,"taken":"2026-11-21T09:30:00Z","workspace":"acme-workspace","member":"acme-app","state":{}}`
 	for _, tc := range []struct {
 		name string
@@ -541,7 +544,7 @@ func TestStateSaveHostIsTheRepositorysOwn(t *testing.T) {
 	}
 }
 
-// TestStateContentReadsTheProjectsOwnState: the body a member's snapshot holds
+// TestStateSaveBodyIsTheProjectsOwnState: the body a member's snapshot holds
 // is the project's published settings node and the day's spend counters, read
 // from the project's own two stores (its Realtime Database) — the "settings and
 // spend summary" of the acceptance, and nothing invented.
@@ -550,7 +553,7 @@ func TestStateSaveHostIsTheRepositorysOwn(t *testing.T) {
 // each entry decoded and re-encoded through C1's own codec, oldest first, so the
 // export restates no field of an event and a reader of the file reads what the
 // trail stores.
-func TestStateContentReadsTheProjectsOwnState(t *testing.T) {
+func TestStateSaveBodyIsTheProjectsOwnState(t *testing.T) {
 	ctx := context.Background()
 	fixed := time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)
 	day := budget.Day(fixed)
@@ -689,6 +692,54 @@ func TestStateContentReadsTheProjectsOwnState(t *testing.T) {
 	other := workspace.Snapshot{Workspace: "acme-workspace", Member: workspace.MemberTarget{Project: "someone-else"}}
 	if _, err := c.Body(ctx, other); err == nil || ExitCode(err) != ExitUserError {
 		t.Errorf("a reader built for acme-app answered %v for someone-else's snapshot, want a refusal", err)
+	}
+}
+
+// TestStateSaveBitbucketHostReadsVisibility: the fence is the repository's own
+// is_private on the host that has no CLI, read through internal/gitprov — and an
+// answer that does not say is a refusal, never a public repository taken for
+// private (D2824).
+func TestStateSaveBitbucketHostReadsVisibility(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want stateVisibility
+	}{
+		{"a private repository", `{"is_private":true}`, stateVisibilityPrivate},
+		{"a public one", `{"is_private":false}`, stateVisibilityPublic},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var path string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				path = r.URL.Path
+				io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+
+			h := stateBitbucketHost{token: "a-token-this-test-invented", baseURL: srv.URL + "/2.0"}
+			got, err := h.Visibility(context.Background(), "acme/state")
+			if err != nil {
+				t.Fatalf("reading the visibility of a %s repository: %v", tc.name, err)
+			}
+			if got != tc.want {
+				t.Errorf("Visibility answered %q, want %q", got, tc.want)
+			}
+			if want := "/2.0/repositories/acme/state"; path != want {
+				t.Errorf("the read went to %s, want %s: the repository the save is about", path, want)
+			}
+		})
+	}
+
+	// An answer with no is_private says nothing about who may read the
+	// repository, and a save that guessed "private" would push addresses into
+	// the open (D2824).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+	h := stateBitbucketHost{token: "a-token-this-test-invented", baseURL: srv.URL + "/2.0"}
+	if v, err := h.Visibility(context.Background(), "acme/state"); err == nil {
+		t.Errorf("Visibility answered %q for a repository whose answer does not say, want a refusal", v)
 	}
 }
 

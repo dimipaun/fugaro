@@ -3,7 +3,7 @@ package cli
 // workspace_state.go is WU15 of docs/workspace-projects-users: the state writer
 // `workspace project save` and `workspace project rm` save through (D2807,
 // D2824). It is the concrete side I1 adapts onto C2's workspace.StateWriter
-// (contract-member.md §5), and it is the only saver of the family.
+// (contract-member.md §5).
 //
 // Three properties are this file's own, and none of them can be re-derived from
 // the method list:
@@ -568,7 +568,7 @@ func (h stateGitHubHost) Visibility(ctx context.Context, repo string) (stateVisi
 // Publish implements stateHost: clone, write, commit to a new branch, push, and
 // open the pull request with gh.
 func (h stateGitHubHost) Publish(ctx context.Context, p statePublish) (string, error) {
-	_, base, err := stateCloneAndCommit(ctx, nil, p, "https://github.com/"+p.Repo+".git")
+	base, err := stateCloneAndCommit(ctx, nil, p, "https://github.com/"+p.Repo+".git")
 	if err != nil {
 		return "", err
 	}
@@ -635,7 +635,7 @@ func (h stateBitbucketHost) Publish(ctx context.Context, p statePublish) (string
 		return "", err
 	}
 	env := gitops.WithVars(os.Environ(), vars)
-	_, base, err := stateCloneAndCommit(ctx, env, p, "https://bitbucket.org/"+p.Repo+".git")
+	base, err := stateCloneAndCommit(ctx, env, p, "https://bitbucket.org/"+p.Repo+".git")
 	if err != nil {
 		return "", err
 	}
@@ -646,42 +646,42 @@ func (h stateBitbucketHost) Publish(ctx context.Context, p statePublish) (string
 	return pr.URL, nil
 }
 
-// stateCloneAndCommit clones remote into a fresh directory, writes the
+// stateCloneAndCommit clones remote into a scratch directory, writes the
 // snapshot's file at its path, commits it to p.Branch and pushes that branch,
-// answering the checkout's directory and the branch the clone started on (the
-// pull request's base).
+// answering the branch the clone started on (the pull request's base).
+//
+// The checkout is thrown away either way — it exists to carry one commit to one
+// push — so a save leaves nothing behind but the snapshot itself, and a failed
+// one leaves nothing at all: there is nothing in a half-made clone a person
+// could use that `fugaro workspace project save` would not do again.
 //
 // env is the environment git runs with, nil for the process's own: GitHub's push
 // is authenticated by gh's credential helper and needs nothing added, and
 // Bitbucket's carries the token as a credential variable and never in a URL.
-func stateCloneAndCommit(ctx context.Context, env []string, p statePublish, remote string) (dir, base string, err error) {
-	dir, err = os.MkdirTemp("", "fugaro-state-")
+func stateCloneAndCommit(ctx context.Context, env []string, p statePublish, remote string) (base string, err error) {
+	dir, err := os.MkdirTemp("", "fugaro-state-")
 	if err != nil {
-		return "", "", fmt.Errorf("making a directory to clone %s into: %w", pluginwire.Printable(p.Repo), err)
+		return "", fmt.Errorf("making a directory to clone %s into: %w", pluginwire.Printable(p.Repo), err)
 	}
-	defer func() {
-		if err != nil {
-			os.RemoveAll(dir)
-		}
-	}()
+	defer os.RemoveAll(dir)
 	if err := stateRun(ctx, env, "", nil, stateGit, "clone", "--quiet", "--", remote, dir); err != nil {
-		return "", "", err
+		return "", err
 	}
 	base, err = stateOutput(ctx, env, dir, stateGit, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	if base == "" || base == "HEAD" {
 		// A detached HEAD names no branch for a pull request to target, and a
 		// pull request against a guess is worse than none.
-		return "", "", fmt.Errorf("the clone of %s is on a detached HEAD, so there is no branch a pull request could target", pluginwire.Printable(p.Repo))
+		return "", fmt.Errorf("the clone of %s is on a detached HEAD, so there is no branch a pull request could target", pluginwire.Printable(p.Repo))
 	}
 	target := filepath.Join(dir, filepath.FromSlash(p.Path()))
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return "", "", fmt.Errorf("creating %s: %w", filepath.Dir(target), err)
+		return "", fmt.Errorf("creating %s: %w", filepath.Dir(target), err)
 	}
 	if err := os.WriteFile(target, p.Bytes, 0o644); err != nil {
-		return "", "", fmt.Errorf("writing %s: %w", target, err)
+		return "", fmt.Errorf("writing %s: %w", target, err)
 	}
 	for _, args := range [][]string{
 		{"checkout", "--quiet", "-b", p.Branch},
@@ -690,11 +690,29 @@ func stateCloneAndCommit(ctx context.Context, env []string, p statePublish, remo
 		{"push", "--quiet", "origin", p.Branch},
 	} {
 		if err := stateRun(ctx, env, dir, nil, stateGit, args...); err != nil {
-			return "", "", err
+			return "", err
 		}
 	}
-	return dir, base, nil
+	return base, nil
 }
+
+// stateCapped keeps the first stateCappedBytes of what a child complained with
+// and drops the rest, so a git that prints a megabyte of progress cannot grow
+// the save's memory — and, because only the first line of it is ever quoted
+// (oneLineCLI), keeping more than a few hundred bytes would keep nothing a
+// reader sees. A write never fails, so the child is never blocked on it.
+type stateCapped struct{ s string }
+
+const stateCappedBytes = 4096
+
+func (c *stateCapped) Write(p []byte) (int, error) {
+	if room := stateCappedBytes - len(c.s); room > 0 {
+		c.s += string(p[:min(room, len(p))])
+	}
+	return len(p), nil
+}
+
+func (c *stateCapped) String() string { return c.s }
 
 // stateRun runs one command for a save, with its output dropped and its exit
 // status in the error. It is procgroup's own spawn, as every other child this
@@ -713,7 +731,7 @@ func stateRunInto(ctx context.Context, env []string, dir string, stdin io.Reader
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	var complaint strings.Builder
+	var complaint stateCapped
 	code, err := procgroup.Run(ctx, procgroup.Cmd{
 		Name:   bin,
 		Args:   args,
