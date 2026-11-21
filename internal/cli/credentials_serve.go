@@ -994,6 +994,22 @@ func credentialsWorkspaceService(ctx context.Context, workspace string, env map[
 		Open: func(databaseURL string) (credsvc.Getter, error) {
 			return credentialsDatabase(ctx, databaseURL, ts)
 		},
+		// The workspace's OWN state and switch, over the one client this
+		// deployment opened at its own database's URL (FUGARO_RTDB_URL) — the
+		// same pair the installation's configuration wires over its own
+		// (credentialsServiceConfig). Neither is the calling member's: State is
+		// what the scope answers a call's State() with and is read from the
+		// workspace's database by R8's rule (a cooldown, a rotation position
+		// and a spend figure for a workspace credential are facts about the
+		// workspace), and Kills is the node `fugaro budget kill --workspace
+		// <name>` writes, which workspaceKills reads BESIDE the calling
+		// member's own pair — a member's operator holds no grant on this
+		// database and can neither read nor lift that switch (D1302, spec.md
+		// §9). NewWorkspace refuses a configuration carrying neither, so the
+		// pair is what this mode starts with rather than a service that would
+		// serve every call of a stopped workspace.
+		State: &creds.RTDBStore{DB: db},
+		Kills: db,
 	})
 	if err != nil {
 		return credentialsWorkspaceDeployment{}, userErr("the workspace's service cannot verify its callers, so it will not start: %v", err)
