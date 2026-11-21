@@ -299,6 +299,7 @@
         "internal/cli/doctor_batch.go",
         "internal/cli/doctor_brokering.go",
         "internal/cli/initsecrets.go",
+        "internal/cli/owner_probe.go",
         "internal/cli/repos_view.go",
         "internal/cli/voice_serve.go",
         "internal/cmdlog/**",
