@@ -389,6 +389,15 @@ spec["containers"][0]["env"] = [e for e in spec["containers"][0]["env"] if e["na
 doc.append(second)
 json.dump(doc, open(sys.argv[2], "w"))
 PY
+  # The same job under the truncated name Terraform gives a long profile and
+  # provider (fugaro-p-<profile>-bitbucke-<hash>), found by its labels.
+  python3 - "$1/json/jobs.json" "$1/json/jobs-truncated.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+doc[0]["metadata"]["name"] = "fugaro-p-bb-bitbucke-7f3a2b"
+doc[0]["metadata"]["labels"] = {"fugaro": "p", "fugaro_profile": "bb", "fugaro_provider": "bitbucket"}
+json.dump(doc, open(sys.argv[2], "w"))
+PY
   # The run's own row: it ended succeeded, pushed and opened a pull request, and
   # its execution names the profile's shared job.
   cat >"$1/json/row.json" <<JSON
@@ -1030,6 +1039,13 @@ test_one_job_of_the_profile_without_the_url_is_a_finding() {
   assert_no_launch "$dir" "one of the profile's jobs without the URL"
 }
 
+test_a_job_with_a_truncated_name_is_found_by_its_labels() {
+  local dir=$work/truncated-job
+  prepare "$dir"
+  run_check "$dir" FAKE_JOBS_FILE=jobs-truncated.json
+  expect_contains "$out" "FACT job: PASS" "a truncated job name: found by the profile and provider labels"
+}
+
 test_a_jobs_list_that_could_not_be_read_is_not_measured() {
   local dir=$work/jobs-fail
   prepare "$dir"
@@ -1364,6 +1380,7 @@ t test_the_first_model_call_is_read_from_the_runs_own_start
 t test_a_git_line_that_was_not_served_is_not_the_git_row
 t test_a_line_of_another_run_is_not_read
 t test_kept_scratch_is_reported
+t test_a_job_with_a_truncated_name_is_found_by_its_labels
 t test_an_unknown_argument_is_refused
 t test_the_belong_guard_is_named_in_every_block
 
