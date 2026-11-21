@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { REFUSALS } from '../../../shared/mailbox-schema/index.js';
-import { MESSAGING_CODES } from './messaging.js';
+import { RELAY_CODES } from './relay.js';
 import { TOKEN_CODES, MemoryTokenSource, readPushToken } from './token.js';
 
 const TOKEN = 'not-a-real-token-0123456789';
@@ -52,11 +52,11 @@ test('a source that throws is a broken device, and a source that refuses is not'
   const thrown = await readPushToken(new MemoryTokenSource({ fail: true }));
   assert.equal(thrown.ok, false);
   assert.equal(thrown.code, TOKEN_CODES.TOKEN_FAILED, 'a throw is not "this phone has no token"');
-  // P5.2.8 and question 10: a build that has not created the app instance the
-  // token is minted on says so, and that code is passed through rather than
-  // flattened into `no-token` -- the two have different fixes.
-  const appUnknown = await readPushToken(source({ ok: false, code: MESSAGING_CODES.APP_UNKNOWN, field: 'app' }));
-  assert.equal(appUnknown.code, MESSAGING_CODES.APP_UNKNOWN);
+  // P5.2.8 and Q7's answer: a source with a reason of its own says so, and that
+  // code is passed through rather than flattened into `no-token` -- the two have
+  // different fixes. `relay.js` is the real one, and this is its code.
+  const relayFailed = await readPushToken(source({ ok: false, code: RELAY_CODES.RELAY_FAILED, field: 'relay' }));
+  assert.equal(relayFailed.code, RELAY_CODES.RELAY_FAILED);
 });
 
 test('a token the schema would refuse is refused, and the code is the schema’s', async () => {

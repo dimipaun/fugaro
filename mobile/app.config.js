@@ -320,18 +320,22 @@ function declaring(section) {
 
 /**
  * The four packages the app's Firebase wiring is made of: P7.1a's three, and
- * P5.2.8's `messaging`, which is the one that mints the push token the phone
- * registers with. It is the same family and the same pinned version, so the
- * native SDK stays one SDK with one set of pods.
+ * P5.2.8's `messaging`, which mints the phone's own push token -- the one piece
+ * of a registration the publisher's relay is given. It is the same family and
+ * the same pinned version, so the native SDK stays one SDK with one set of pods.
  *
- * **`messaging` is not the telemetry wiring, and the difference matters here.**
- * D259 builds the native config into the app for `fugaro-prod`, so the app's
- * DEFAULT Firebase app belongs to the telemetry project -- and an installation's
- * push token has to be minted on an app instance that belongs to the
- * installation's own Firebase project (FCM HTTP v1 delivers only to tokens of
- * the sending project). This file registers the SDK; **which project the token
- * is minted for is question 10's answer and is named at runtime**, in
- * `src/push/messaging.js`'s `appName` -- never defaulted here and never guessed.
+ * **`messaging` is not the delivery path, and Q7's answer is why it is enough.**
+ * The owner ruled on 2026-11-21 that the app registers with a relay **the
+ * publisher holds**, which owns the delivery credentials (design §3.3: FCM HTTP
+ * v1 delivers only to tokens of the sending project and an APNs `.p8` is
+ * Apple-team-wide, so the installations that are not the publisher's cannot be
+ * reached directly). Under that relay the app's DEVICE token is minted on the
+ * default Firebase app -- the project D259 builds the native config from,
+ * `fugaro-prod`, which is the publisher's -- and the relay, which holds that
+ * project's reach, is what delivers on it. So the default is the project that
+ * can deliver, this file pins no project of its own, and **which relay the token
+ * is handed to is named at runtime** in `src/push/relay.js`'s required
+ * `endpoint`, by the app's wiring -- never defaulted here and never guessed.
  */
 export const FIREBASE_PACKAGES = Object.freeze([
   '@react-native-firebase/app',

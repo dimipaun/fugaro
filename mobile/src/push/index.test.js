@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
-// The push module's door (mobile plan, Task P5.2.8; D113, D259).
+// The push module's door (mobile plan, Task P5.2.8; D113, D259; the owner's Q7
+// ruling of 2026-11-21).
 //
 // The exported surface is asserted as an **exact set**, because it is a
 // decision: every name here is something a screen, `mobile/index.js` or a test
 // may reach, and a name added without this list changing is a name nobody
-// chose. Two names in it are the ones the plan is about -- `firebaseTokenSource`
-// (the token, and the app instance it is minted on, D259) and `createPush` (the
-// switches and the registration over one account) -- and the rest is the
-// vocabulary a screen renders: the phrases, the switch names, the state and code
-// lists, and the memory doubles the tests build over.
+// chose. Three names in it are the ones the plan is about -- `relayTokenSource`
+// (the registration with the publisher's relay, and the token the mailbox
+// carries), `deviceTokenSource` (the phone's own token, from the pinned SDK's
+// default app, D259) and `createPush` (the switches and the registration over
+// one account) -- and the rest is the vocabulary a screen renders: the phrases,
+// the switch names, the state and code lists, and the memory doubles the tests
+// build over.
 //
 // **The other half of the door's job is what is NOT in it.** No Firebase SDK
 // import (the messaging namespace arrives as an object: the suite runs in a
@@ -41,9 +44,7 @@ const SURFACE = Object.freeze([
   'CONTROL_DEFAULTS',
   'CONTROL_LINES',
   'CONTROL_NAMES',
-  'DEFAULT_APP_NAME',
   'MESSAGE_CODES',
-  'MESSAGING_CODES',
   'MemoryTokenSource',
   'PUSH_LINES',
   'PUSH_SETTINGS_PREFIX',
@@ -52,17 +53,19 @@ const SURFACE = Object.freeze([
   'REGISTRATION_FIELDS',
   'REGISTRATION_KIND',
   'REGISTRATION_TEXT',
+  'RELAY_CODES',
   'TOKEN_CODES',
   'WINDOW_FIELDS',
   'createPush',
   'createPushControls',
   'createPushRegistration',
-  'firebaseTokenSource',
+  'deviceTokenSource',
   'judgeField',
   'pushScreen',
   'pushSettingsKey',
   'pushStateLine',
   'readPushToken',
+  'relayTokenSource',
 ]);
 
 /** A mailbox id shaped like an Auth uid, and never a real one. */
@@ -106,10 +109,11 @@ async function ports() {
 
 test('the door is exactly its names, and nothing else', () => {
   assert.deepEqual(Object.keys(push).sort(), [...SURFACE]);
-  // The two names the plan exists for are on it, and they are the ones a caller
-  // reaches for: a surface that lost either would be a door to something else.
+  // The names the plan exists for are on it, and they are the ones a caller
+  // reaches for: a surface that lost one would be a door to something else.
   assert.equal(typeof push.createPush, 'function');
-  assert.equal(typeof push.firebaseTokenSource, 'function');
+  assert.equal(typeof push.relayTokenSource, 'function');
+  assert.equal(typeof push.deviceTokenSource, 'function');
 });
 
 test('the door hands the SDK in as an object: no file in it imports a package', () => {

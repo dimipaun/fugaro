@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { CONTROL_DEFAULTS, CONTROL_NAMES } from './controls.js';
-import { MESSAGING_CODES } from './messaging.js';
+import { RELAY_CODES } from './relay.js';
 import { PUSH_STATES } from './registration.js';
 import { CONTROL_LINES, PUSH_LINES, PUSH_WAITING, pushScreen, pushStateLine } from './screen.js';
 import { TOKEN_CODES } from './token.js';
@@ -33,7 +33,7 @@ test('the state line says which of the three states the phone is in', () => {
   // up and never has to know which vocabulary it was handed.
   assert.equal(pushStateLine({ state: PUSH_STATES.UNREGISTERED, code: TOKEN_CODES.NO_TOKEN }), PUSH_LINES[TOKEN_CODES.NO_TOKEN]);
   assert.equal(pushStateLine({ state: PUSH_STATES.UNREGISTERED, code: TOKEN_CODES.TOKEN_FAILED }), PUSH_LINES[TOKEN_CODES.TOKEN_FAILED]);
-  assert.equal(pushStateLine({ state: PUSH_STATES.UNREGISTERED, code: MESSAGING_CODES.APP_UNKNOWN }), PUSH_LINES[MESSAGING_CODES.APP_UNKNOWN]);
+  assert.equal(pushStateLine({ state: PUSH_STATES.UNREGISTERED, code: RELAY_CODES.RELAY_FAILED }), PUSH_LINES[RELAY_CODES.RELAY_FAILED]);
   assert.equal(pushStateLine({ state: PUSH_STATES.UNREGISTERED, code: 'no-connection' }), PUSH_LINES['no-connection']);
   assert.equal(Object.keys(PUSH_LINES).length, 6, 'two states and four codes, and no phrase without a key');
 });
@@ -73,7 +73,7 @@ test('no phrase carries a token, an id, a repository or a code', () => {
     assert.equal(/[0-9a-f]{32,}/.test(text), false, `a hex run in: ${text}`);
     assert.equal(/\b[0-9a-f]{40,64}\b/.test(text), false, `a tag-shaped string in: ${text}`);
     // A code is the app's word for a branch; the phrases are English sentences.
-    for (const code of ['no-token', 'token-failed', 'app-unknown', 'no-connection', 'store-failed', 'unknown-field']) {
+    for (const code of ['no-token', 'token-failed', 'relay-failed', 'no-connection', 'store-failed', 'unknown-field']) {
       assert.equal(text.includes(code), false, `${code} in: ${text}`);
     }
     // A repository, a run or a pull request is never named (§3.1).

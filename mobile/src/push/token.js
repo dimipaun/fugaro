@@ -10,14 +10,14 @@
 // the suite runs in a fresh clone with no `node_modules`, so the SDK is reached
 // in `mobile/index.js` -- the entry, the one file `write-path.test.js`'s rule 5
 // allows `@react-native-firebase/*` in -- and what reaches this directory is
-// the port (`messaging.js` is that port's real shape). The rule is the one
+// the port (`relay.js` is that port's real shape). The rule is the one
 // `createMailboxClient` follows for the database: the entry knows what a device
 // is, a screen never does.
 //
 // **What a source answers, exactly.** `token()` is awaited and may do three
 // things: answer `{ok: true, token}`; answer a refusal `{ok: false, code,
 // field}` when there is no token to be had and the reason is known
-// (`messaging.js`'s `app-unknown`, or this module's `no-token`); or THROW, when
+// (`relay.js`'s `relay-failed`, or this module's `no-token`); or THROW, when
 // the port itself failed. A source that answered `''` or `null` for "no token"
 // is understood too and reported as `no-token` rather than written as an empty
 // field -- but a throw is the shape a broken device reports itself in, and

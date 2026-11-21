@@ -40,7 +40,7 @@ export const PUSH_LINES = Object.freeze({
   /** The phone has no token to register with -- §6's first row, said out loud. */
   'no-token': 'This phone has no push token yet, so nothing has been sent. The app will try again.',
   'token-failed': 'The app could not ask this phone for a push token, so nothing has been sent.',
-  'app-unknown': 'This build has no Firebase app instance for push yet, so nothing has been sent.',
+  'relay-failed': 'The app could not register this phone with the push service, so nothing has been sent.',
   'no-connection': 'This phone is offline, so the registration is waiting for a connection.',
 });
 
