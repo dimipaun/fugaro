@@ -470,6 +470,31 @@ func TestPushRetriesAPendingIntentInsideTheWindowAndDropsItPastIt(t *testing.T) 
 	}
 }
 
+// TestPushStopsTheSweepWhenARetryReapsTheToken is the retry path's own stop. A
+// pending intent whose retry the provider reports unregistered ends the
+// account's turn exactly as a fresh send does, and it has to: the registration
+// is gone, so the events the same sweep derived must not be offered to a
+// provider that has just said the token is dead. The sweep below derives the
+// kill switch, and the provider is called ONCE — for the retry — because the
+// reap is what the retry answered with.
+func TestPushStopsTheSweepWhenARetryReapsTheToken(t *testing.T) {
+	f := newPushFixture(t, pushTestNow)
+	f.pair(t, mailboxSwitchState(nil))
+	f.kill()
+	inside := budget.Key(pushPrompt + ":p-inside")
+	f.db.Set(pushTestPath+"/ledger/"+inside, map[string]any{"category": pushPrompt, "key": "p-inside",
+		"at": f.now.Add(-10 * time.Minute).UnixMilli(), "state": pushStatePending, "attempts": 1})
+	f.answer = pushUnregistered
+
+	out, _ := f.sweep(t)
+	if got := f.categories(); !slices.Equal(got, []string{pushPrompt}) {
+		t.Fatalf("the provider was called for %v, want the retry alone: the token it reaped is not one this sweep's own events may be sent to", got)
+	}
+	if !strings.Contains(out, "1 tokens reaped") {
+		t.Errorf("output = %q, want the reaped token counted once", out)
+	}
+}
+
 // TestPushReapsATokenTheProviderReportsUnregistered is §6's first row: FCM says
 // the token is dead, so the entry is DELETED — never marked, never retried — and
 // the account's prefs are left alone so the app's next registration is a fresh
@@ -783,6 +808,10 @@ func TestPushNoProducerWritesAPendingRow(t *testing.T) {
 	runSide := []string{
 		"internal/runner", "internal/agent", "internal/gateway", "internal/gitops",
 		"internal/gitprov", "internal/runstore", "internal/backend", "internal/infra",
+		// internal/budget runs inside the run container too: the runner takes its
+		// leases through it, so it holds the run's own identity and is exactly the
+		// kind of account §3.6 (A) refuses to widen with a send.
+		"internal/budget",
 	}
 	var offenders []string
 	for _, dir := range runSide {

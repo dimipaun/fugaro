@@ -78,6 +78,12 @@ const (
 	// which a ledger row is pruned on the sweep, so the node holds state about
 	// the last window only. One hour is the cap's own period, which is why the
 	// two share one row and one lifetime (§3.7).
+	//
+	// It is the whole of what the SENDER keeps. The rest of Q10's retention is
+	// the pairing's lifetime — the node goes with `fugaro pair revoke` (P5.2.5),
+	// so nothing outlives the pairing — and the provider's own copy of a
+	// payload, which the disclosure states (P5.2.10) rather than this sender
+	// implying it away.
 	pushLedgerWindow = time.Hour
 	// pushRetryWindow is §6's retry window: a pending intent is retried by the
 	// sweeps inside it — two of them at the job's 15-minute cadence — and
@@ -290,8 +296,12 @@ func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent
 		return nil
 	}
 	// A pending intent is retried before new events are derived, so a retry is
-	// not crowded out by the events of the same sweep.
-	if err := p.retry(ctx, uid, &node, rep); err != nil {
+	// not crowded out by the events of the same sweep — and a retry that reaps
+	// the token ends the account's turn exactly as a fresh send does: the
+	// registration is gone, so the events this sweep derived must not be offered
+	// to a provider that has just said the token is dead.
+	stop, err := p.retry(ctx, uid, &node, rep)
+	if err != nil || stop {
 		return err
 	}
 	events, err := p.accountEvents(ctx, uid)
@@ -372,7 +382,12 @@ func (p *pushSender) consider(ctx context.Context, uid string, node *pushNode, e
 
 // retry sends again what a previous sweep left pending, inside the retry
 // window. An intent past it is dropped by pushPrune, never escalated (§6).
-func (p *pushSender) retry(ctx context.Context, uid string, node *pushNode, rep *pushReport) error {
+//
+// It answers what deliver answers — whether the account's turn is over because
+// the provider reported the token unregistered — so a retry that reaps the
+// registration stops the sweep's own events from following it to a token the
+// provider has just called dead.
+func (p *pushSender) retry(ctx context.Context, uid string, node *pushNode, rep *pushReport) (bool, error) {
 	now := p.now().UnixMilli()
 	keys := make([]string, 0, len(node.Ledger))
 	for key := range node.Ledger {
@@ -390,7 +405,7 @@ func (p *pushSender) retry(ctx context.Context, uid string, node *pushNode, rep 
 			// dropped rather than sent. Deleting the row is the sender's own
 			// write to its own state and never a marker.
 			if err := p.deleteRow(ctx, uid, key); err != nil {
-				return err
+				return false, err
 			}
 			delete(node.Ledger, key)
 			rep.Suppressed++
@@ -400,10 +415,10 @@ func (p *pushSender) retry(ctx context.Context, uid string, node *pushNode, rep 
 		rep.Retried++
 		stop, err := p.deliver(ctx, uid, node, e, &row, rep)
 		if err != nil || stop {
-			return err
+			return stop, err
 		}
 	}
-	return nil
+	return false, nil
 }
 
 // deliver is the one place a send happens. The row is written BEFORE the
