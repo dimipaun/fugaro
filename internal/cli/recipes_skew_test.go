@@ -4574,3 +4574,36 @@ func TestIdentitySinceRefusesAnOlderImage(t *testing.T) {
 		}
 	})
 }
+
+// TestIdentitySinceHasAReleaseBullet: identitySince names 0.29.0, and no test
+// can derive that number from the tree — the plan it belongs to names no
+// release, and the release it is for is two minors past the one this tree
+// makes — so docs/release.md's Before-you-tag list is the only thing holding
+// the value to the tag actually cut. Its own refusal test is not that check:
+// TestIdentitySinceRefusesAnOlderImage shifts every row off the constant itself
+// (shiftRelease), so a value that named the wrong release stays green there.
+//
+// The pinned phrases are the bullet's account of the number: the ticket's
+// variable, the call site that keeps a bridge launch out of the gate, the
+// release the plan cannot ship before, the two values it is not, and the
+// "refuses too late" failure a value below the claiming release buys.
+func TestIdentitySinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `identitySince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no identitySince bullet: the checklist is where a release verifies the constant, and this constant names a release two minors past the one this tree makes")
+	}
+	if !strings.Contains(bullet, "currently `\""+identitySince+"\"`") {
+		t.Errorf("docs/release.md's identitySince bullet does not carry the constant's release (%q)", identitySince)
+	}
+	for _, want := range []string{"FUGARO_IDENTITY_TICKET", "only for a launch that holds a ticket", "release A", "0.27.0", "refuses too late"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's identitySince bullet does not say %q", want)
+		}
+	}
+}

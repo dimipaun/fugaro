@@ -191,12 +191,21 @@ const serviceAuthSince = "0.25.0"
 // before and its execution carries the old seal marker, which a runner of an
 // older release still opens, so nothing about it is judged here.
 //
-// It names 0.28.0, the CLI release after keys-through-service's release A
-// (D3128: this work ships in the release after that plan's, in its own
-// release, D3124), which is not tagged yet: the release that cuts it holds
-// this number to the tag it cuts, the way every other *Since constant here is
-// held.
-const identitySince = "0.28.0"
+// It names 0.29.0, the earliest release that can carry the claim, and not
+// either of the two numbers a reader of this tree might expect instead: 0.27.0
+// "Xerus" is the release docs/release-streams.yaml makes next and
+// keys-through-service's release A is not in it (docs/status.md's gate list
+// names no keys-through-service task, and the release's own notes say a
+// provider's key is not taken until that plan's flip), while release A's own
+// slot is the minor after that. D3128 puts this plan's tasks after release A
+// and D3124 ships the work in one release, so the claim arrives in the release
+// after release A's. Neither is tagged yet, so docs/release.md's Before-you-tag
+// list is what holds this number to the tag actually cut, as it does for every
+// other *Since constant here, and TestIdentitySinceHasAReleaseBullet holds that
+// bullet to this value. A value below the release that really claims is the
+// direction to fear: such a launch is admitted, paid for, and stops at
+// bootstrap with no identity at all.
+const identitySince = "0.29.0"
 
 // identitySubject and identityKnows are this gate's two names in the family's
 // sentence (checkImageSince): what is refused (a launch whose run claims its
