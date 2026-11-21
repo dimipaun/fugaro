@@ -68,8 +68,6 @@ Merged since the last read (86 commits, read from `4ce11172f`; 2 are specs' own 
 
 | Spec | State |
 | --- | --- |
-| key-signing-service | a design and threat model with no plan of its own (docs/key-signing-service, moved from docs/design on 2026-11-21); its own status line says the infrastructure and the issuing service are written and neither is applied; not re-derived against licence-key-v2 and portal |
-| lapse-read-only | a design with no plan, not built (docs/lapse-read-only, moved from docs/design on 2026-11-21) |
 | managed-flag-ergonomics | a design only, nothing built and no task approved (docs/managed-flag-ergonomics, moved from docs/design on 2026-11-21) |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
 | voice-module, collateral, backlog, plans, design | no plan or not a spec (plans holds v1's milestone plans M0 to M6, design holds v1 and update-in-flight) |
@@ -126,6 +124,8 @@ Merged since the last read (86 commits, read from `4ce11172f`; 2 are specs' own 
 | in-job-review | historical; delivered through cloud-senior-review, review-levels and api-key-review |
 | issue-mine | owner Checks 470 to 472: all ran 2026-11-14 and none has passed in full (470 passed in part, its issue-record read and two human steps unmeasured; 471 failed its cache-cleared row; 472 passed on an empty store, not at size), so re-runs are owner-run |
 | issues-resolved-on-update | none |
+| key-signing-service | superseded by licence-key-v2 and portal (2026-11-21) |
+| lapse-read-only | superseded by licence-key-v2 and desktop-console rule 13 (2026-11-21) |
 | layered-config | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | m10-multi-model | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | m11-setup-and-skills | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
