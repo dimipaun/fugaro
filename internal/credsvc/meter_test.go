@@ -14,15 +14,18 @@ package credsvc
 // it, a subscription token's call reserves nothing at all, and an installation
 // (a scope with no meter) is untouched by every one of them.
 //
-// The workspace's own scope is WS2's and does not exist in this tree yet
-// (scope_stub.go), so the fixture below answers every call with an
-// installation's scope carrying the workspace's meter — which is exactly what
-// R1's parameterisation is for: one code path serves both deployments, and the
-// meter is what differs. The member the calls are spent for is the caller's own
-// verified project claim (testProject), and the record's own member table — what
-// the front door reads to resolve a caller to a member — is not consulted here
-// at all: the meter is handed the member the identity carries, and the fence
-// below proves it reads nothing else.
+// The workspace's own scope is WS2's, and the fixture below does NOT use it: it
+// answers every call with an installation's scope carrying the workspace's meter,
+// which is the smallest thing the meter's own rules can be tested through — and
+// the test at the end of this file is the one that goes through the real
+// resolver (NewWorkspaceScopeResolver), because the two scopes differ in one
+// thing the meter must not be priced by. Either way it is R1's parameterisation
+// at work: one code path serves both deployments, and the meter is what
+// differs. The member the calls are spent for is the caller's own verified
+// project claim (testProject), and the record's own member table — what the
+// front door reads to resolve a caller to a member — is not consulted here at
+// all: the meter is handed the member the identity carries, and the fence below
+// proves it reads nothing else.
 //
 // Every value here is a name or a dollar amount; no literal is, or looks like,
 // a credential.
@@ -40,11 +43,13 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // wsCapUSD is the ceiling the fixture's workspace states, in dollars: large
@@ -790,4 +795,97 @@ func TestTheMeterWritesNothingToAMember(t *testing.T) {
 func (f *wsMeterFixture) dbValue(path, key string) string {
 	node, _ := f.meterDB.Value(path).(map[string]any)
 	return fmt.Sprint(node[key])
+}
+
+// The workspace's meter is priced from a table the MEMBER cannot write, and
+// this is the test that goes through the real scope rather than the fixture's
+// own: the policy a workspace's call reads is the member's published node —
+// RTDBPolicy over the database its verified `iss` names (scope_workspace.go) —
+// and `model_prices` there belongs to the member's own administrator, who is
+// exactly the party the workspace's cap exists to hold (SECURITY.md's residual
+// risk 1: a member whose operator spends hard spends the workspace's month).
+//
+// A price only has to be above zero (pricing.go's override check), so a member
+// that published a price near it would have every reservation and every settle
+// of its calls come out at about nothing: the workspace's cap would bind
+// nothing for that member, and the reconciliation alarm that would read the
+// difference between its ledger and the workspace's figure runs nowhere
+// (D2991, the paragraph SECURITY.md states it in). The meter therefore prices
+// every call from the embedded catalogue, which is nobody's to edit.
+//
+// The call is a whole one — the front door, the real resolver, the workspace's
+// own paid credential — because what is under test is the figure the workspace
+// ends up holding, not a reader: the member's millionth-of-a-dollar price must
+// move neither the reservation the month takes before the call nor the settle
+// it leaves after it.
+func TestTheMeterIsNotPricedByTheMembersOwnNumbers(t *testing.T) {
+	// The workspace's own database, its record's ceiling, and the meter over
+	// them — the same three W7's tests build, through the fixture that serves
+	// the workspace scene.
+	db, client := wsMeterDB(t)
+	wsSeedRecord(t, db, wsCapUSD)
+	meter := wsMeter(t, client)
+
+	// One credential, offered to member A and to nobody else: the project's own
+	// paid key. It is a Tier-B credential, so the call is one the workspace pays
+	// for — a subscription account's would reserve nothing at all (R15, D1300)
+	// and this test would have no figure to read.
+	node := wsOneRepo()
+	node.Shared = []projectpolicy.WorkspaceShared{{
+		Name: config.AnthropicSecret, Kind: projectpolicy.SharedKindModel, Projects: []string{wsMemberA},
+	}}
+	s := newWS2Scope(t, wsPublished(node), func(cfg *WorkspaceScopeConfig) { cfg.Meter = meter })
+	s.setPolicy(wsMemberA, config.AnthropicKeyAccount)
+	s.allowModels(wsMemberA, testModel)
+
+	// The member's administrator writes its own price node: a millionth of a
+	// dollar per million tokens, which is above the zero the decoder refuses and
+	// is the whole of what the member can do about the workspace's figure.
+	const tinyPrice = 0.000001
+	policy, ok := s.dbs[wsMemberA].nodes[projectpolicy.PathShared()].(map[string]any)
+	if !ok {
+		t.Fatal("the member's policy node is not published")
+	}
+	policy["model_prices"] = map[string]any{
+		testModel: map[string]any{"input_per_m": tinyPrice, "output_per_m": tinyPrice},
+	}
+
+	// The call, through the front door, with the workspace's month read at the
+	// moment the upstream request goes out (wsMeterWatch).
+	watch := &wsMeterWatch{meter: meter}
+	svc := newSvcWith(t, func(sv *svc, cfg *Config) {
+		cfg.Resolver = s.res
+		sv.src.docs = [][]byte{wsPoolDoc(t)}
+		watch.next = cfg.Client.Transport
+		cfg.Client = &http.Client{Transport: watch}
+	})
+	body := callBody("ws8-member-prices")
+	resp, answer := svc.call(t, body, s.hdr(wsAccountA))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call answered %d %s, want it served by the workspace's paid credential", resp.StatusCode, answer)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierB {
+		t.Fatalf("%s = %q, want %q: this test is about the path the workspace pays for", HeaderTier, got, TierB)
+	}
+	if n := svc.up.Count(); n != 1 {
+		t.Fatalf("the upstream saw %d requests, want the run's call alone: nothing here is backed off, so no probe is owed", n)
+	}
+
+	wantWorst := wsWorst(t, testModel, []byte(body), 16)
+	if got := watch.reservedAt(t, 0); got.Reserved != wantWorst {
+		t.Errorf("the month held %v of room at the call, want the catalogue's worst case %v: a member's own price must not lower what the workspace takes before the call",
+			got.Reserved.USD(), wantWorst.USD())
+	}
+	room, err := meter.Room(context.Background())
+	if err != nil {
+		t.Fatalf("reading the workspace's room: %v", err)
+	}
+	wantCost := wsRow(t, testModel).Rates.Cost(testUsage)
+	if room.Settled != wantCost {
+		t.Errorf("the month settled at %v, want the catalogue's own cost of the usage %v: a member's price must not lower what the workspace is charged either",
+			room.Settled.USD(), wantCost.USD())
+	}
+	if room.Reserved != 0 {
+		t.Errorf("the month still holds %v of room after the call settled, want none", room.Reserved.USD())
+	}
 }

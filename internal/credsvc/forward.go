@@ -482,9 +482,9 @@ func (cm *callMeter) take(ctx context.Context, s *Server, cl *call, e Entry) boo
 		return false
 	}
 	cm.model = model
-	table, err := cm.priceTable(ctx, s)
+	table, err := cm.priceTable(s)
 	if err != nil {
-		cl.fail = cm.fail("the workspace's price table could not be read, so the workspace did not pay for this call", "", nil)
+		cl.fail = cm.fail("the workspace's price table could not be built, so the workspace did not pay for this call", "", nil)
 		return false
 	}
 	row, ok := table.Lookup(model)
@@ -539,35 +539,33 @@ func (cm *callMeter) fail(message, marker string, room *budget.WorkspaceRoom) *m
 	return f
 }
 
-// priceTable is the table the call is priced from: the embedded one with the
-// project's own model_prices over it, which is the table every other reader of
-// a price in this tree builds (requestPriceTable).
+// priceTable is the table the call is priced from: the embedded catalogue, with
+// no project's overrides over it.
 //
-// It is read through the scope's policy, which for a workspace's call is the
-// workspace's own published policy — the one whose prices the workspace's
-// members are metered against. The read is memoized per call: the reserve needs
-// the row and the settle its rates, and one answer must not be priced from two
-// tables.
-func (cm *callMeter) priceTable(ctx context.Context, s *Server) (*pricing.Table, error) {
+// **The workspace's meter must never be priced by the member's own numbers.**
+// The scope a workspace's call resolves to answers Policy() from the MEMBER's
+// own published policy — RTDBPolicy over the database the member's verified
+// `iss` names (scope_workspace.go) — and `model_prices` there is written by the
+// member's own administrator, who is exactly the party the workspace's cap
+// exists to hold (SECURITY.md's residual risk 1: a member whose operator spends
+// hard spends the workspace's month). A price is checked only for being above
+// zero (pricing.go), so a member that published near-zero prices would have
+// every reservation and every settle of its calls come out at about nothing and
+// the workspace's cap bind nothing for it — with the reconciliation alarm that
+// would read the difference still running nowhere (D2991). The catalogue is the
+// workspace's own figure because it is nobody's to edit, and the plan's file for
+// a workspace of its own prices is not this task's: a model the catalogue does
+// not price is refused here rather than priced by the member's number, which is
+// the fail-closed direction every other refusal on this path takes.
+//
+// The read is memoized per call: the reserve needs the row and the settle its
+// rates, and one answer must not be priced from two tables.
+func (cm *callMeter) priceTable(s *Server) (*pricing.Table, error) {
 	if cm.priced {
 		return cm.prices, cm.priceErr
 	}
 	cm.priced = true
-	sc := scopeOfCall(ctx, s)
-	if sc == nil {
-		cm.priceErr = errors.New("credsvc: the call's scope could not be resolved")
-		return nil, cm.priceErr
-	}
-	shared, found, err := sc.Policy().Shared(ctx)
-	if err != nil {
-		cm.priceErr = err
-		return nil, err
-	}
-	if !found {
-		cm.priceErr = errors.New("credsvc: the policy that prices this call is not published")
-		return nil, cm.priceErr
-	}
-	cm.prices, cm.priceErr = requestPriceTable(shared, s.now())
+	cm.prices, cm.priceErr = requestPriceTable(nil, s.now())
 	return cm.prices, cm.priceErr
 }
 
