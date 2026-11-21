@@ -3286,6 +3286,15 @@ func (c *Config) validate() error {
 	for _, p := range config.ValidatePools(c.Pools, c.Credentials) {
 		bad("%s: %s", p.Path, p.Message)
 	}
+	// And the pool that carries the cascade's marker is held to the rule the
+	// marker is read under (D3064 as amended): it is the pool `fugaro update`
+	// migrates out of a project whose cascade serves, so a file that turns no
+	// cascade on may not carry one. The routing is the file's own block, which
+	// is the statement that decides whether a run of this installation's
+	// projects is cascaded at all, and it is validated just above.
+	for _, p := range config.ValidateCascadePools(c.Pools, c.Routing) {
+		bad("%s: %s", p.Path, p.Message)
+	}
 	for _, p := range config.ValidateCrafts(c.Crafts) {
 		bad("%s: %s", p.Path, p.Message)
 	}
