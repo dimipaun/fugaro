@@ -1166,6 +1166,12 @@ probe account carries predefined grants only).
 | 640 | The status labels on a real pull request ([`docs/forge-labels/`](forge-labels/implementation-plan.md), its task **CK** and the block it reserves — **640–649**, 640 used; **U1** and **U3** are the two questions nothing offline can answer, and **D2437**'s table with **D2439**'s token and **D2440**'s create-on-first-use are what the labels' colours and the route's behaviour rest on): with the installation's orchestrator daemon running and **one approved task** launched, the pull request the run opens carries **`fugaro:running`** while the run is in flight and, once it has ended, **no** status label (a run that ended `succeeded` or `cancelled`) or **`fugaro:failed`** — plus the **`spec:<name>`** label its item's own spec asks for, in D2437's grey. **U1** — whether the dogfood installation's GitHub App really holds `pull_requests: write` — is read from the **credentials service's own audit lines** (`gcloud logging read`, purpose `label`), which are the service's record of the act and never the run's word; **U3** — what GitHub does with a label name that carries a **colon** — is read from the repository's own label table (`gh label list`). Run by **you**, on the **dogfood installation `fugaro`** (GCP project `fugaro-dev`, region `us-east5`, never `belong`), at your own terminal, as **one command**: `bash scripts/live-checks/check640.sh --installation fugaro`, with the test that drives it against fakes, `scripts/live-checks/check640_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** It reads and writes nothing anywhere, launches no run and costs nothing billable; the one conditional owner step is the plan's: if the check shows the App lacks `pull_requests: write`, you raise it on the App's settings page, which an agent cannot. **OWNER-RUN, NOT RUN.** |
 | 780 | **One project owner's `fugaro update` across a run in flight** ([`docs/keys-through-service/`](keys-through-service/implementation-plan.md), its **Check 780** and task **KS17**; the reconciliation's **R4**, **R7**, **U3**, **D3001**, **D3005** and **D3006**): on an installation that was still at the release before **Release A**, one project owner's `fugaro update` of a sandbox repository copies the model keys into the installation's one credentials bundle, drops that repository's model mounts and deletes the old secret containers — **with a run already in flight, which finishes and succeeds** — while an operator's update of the same repository copies nothing, deletes nothing and says who must run it | See "Check 780" below; **the script is how you run it**: `bash scripts/live-checks/check780.sh --sandbox <a sandbox repository checkout>`, with the test that drives every step of it against fakes, `scripts/live-checks/check780_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, authenticated as a **project owner** of the installation, on a **sandbox installation, project and repository only** (**never `belong`**), and **no agent runs any step of it** | The premise is read first, and ends the check as one that could not measure when it does not hold: the repository's jobs still MOUNT a model credential and the containers behind those mounts are still there — an installation no project owner has updated since Release A is not in the state this check is about. Then: the bundle gained a version written **inside the update's own window**; no job of the repository is fed from a model credential of any kind afterwards; every model container **no job of the installation mounts any more** is gone (one another job still mounts is **kept**, KS15's own rule, and recorded as kept); each deletion is **named** in the update's transcript and no value of it is printed; the run launched before the update is terminal, succeeded, and started **before** the repository's jobs were last updated. The operator's half is a transcript you hand the check (`--operator-transcript <file>`) from an update made by an account that is **not** a project owner **before** you run it; with none handed, that row is one the check could **not measure** and its text is the instruction for making one. **OWNER-RUN, NOT RUN.** |
 | 781 | **A non-Claude provider model served through the credentials service, end to end** ([`docs/keys-through-service/`](keys-through-service/implementation-plan.md), its **Check 781** and task **KS17**; the reconciliation's **R6**, **F13** and **D3005**): after Release A, a real run of a sandbox repository whose job mounts **no** model key at all — the job carries the credentials service's address instead — whose provider call was served **from the installation's one bundle**, and which was charged the **provider's own reported cost** | See "Check 781" below; **the script is how you run it**: `bash scripts/live-checks/check781.sh --sandbox <a sandbox repository checkout>`, with the test that drives every step of it against fakes, `scripts/live-checks/check781_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on a **sandbox installation, project and repository only** (**never `belong`**), and **no agent runs any step of it** | One sandbox run, followed to a terminal state, then read four ways and never for a value: the job the run's execution names is **fed from no model credential** — no `credential-<name>-key` container, no `anthropic-api-key`, no `claude-oauth-token*`, no `FUGARO_PROVIDER_KEY_*` variable with a value — while the service's own address **is** in its environment; the gateway's `model call` lines for that execution carry `route`, which only a call that went to a provider ever emits, with their `serving_model`, `priced_as` and the provider's `reported_micros`; `result.json`'s `cost.reported_usd`, `cost.route_by` and `cost.model_usd` agree with them; and the service's own `credsvc: audit` line for the run names the credential it served, its tier and its purpose `forward` with status `ok`, which is the service saying the key came from the bundle. A bundle that is missing, a job that still mounts a provider key, a job with no service address, calls that all went direct, a routed call nobody reported, a denied forward, a run that never ends and a record that is another run's are each a row of their own. **OWNER-RUN, NOT RUN.** |
+| 570 | **Pay before setup** — a sandbox purchase that leaves an **unbound** entitlement, the binding of that entitlement to a project that holds no Fugaro installation and the refusal it gets, `fugaro setup` on a test installation, `fugaro licence login` binding and minting, and a seat purchase that reaches the installation through `fugaro licence refresh` with nothing pasted ([`docs/portal/`](portal/implementation-plan.md), its **Check 570** and task **P9.4**; the reconciliation's **F25/D2197**, **D2205**, **D2196** and **D2200/K3.4**): the state a customer who pays before their project exists is in, and the one act that gets them a licence | See "Check 570" below; **the script is how you run it**: `bash scripts/live-checks/check570.sh --sandbox <a checkout> --project fugaro-staging --token-file <file> --no-installation-project <a project with no installation>`, with the test that drives every step of it against fakes, `scripts/live-checks/check570_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on the **staging** project and the staging portal first (**never `belong`**), and **no agent runs any step of it** | The purchase reads **unbound** — `source` `purchase`, `status` `active`, `bound_at` null and no key — because F25 is that a purchase creates an entitlement and never a key; the binding to a project with no installation is **refused** `422 no_installation` with `fugaro setup` in its sentence, and the entitlement is re-read and is **still unbound**; after `fugaro licence login` it is bound to the installation's own Firebase project id and the installation holds a key; and after `fugaro licence refresh` the installation's own seats are the entitlement's, with nothing pasted. A purchase that already holds a key, a binding that bound, and a refusal for another reason are each a **FAIL**; an organisation with no unbound purchase is a row that could **not be measured**, naming what to do first. **OWNER-RUN, NOT RUN.** |
+| 571 | **The identity census** — every identity that reaches signing in the portal's one project, printed as a list ([`docs/portal/`](portal/implementation-plan.md), its **Check 571** and task **P9.4**; the reconciliation's **F18/D2194**, whose accepted risk this row is): the signer role on the signing ring, the minter's invokers, `run.services.update` on the minter, `datastore.user`, the Hosting deployers, `run.services.update` and `iam.serviceAccounts.actAs` on the API's service and account, the sealer role on the handover ring, and any project-level role carrying `useToSign` — the list the owner reads rather than the risk they were told about once | See "Check 571" below; **the script is how you run it**: `bash scripts/live-checks/check571.sh --project fugaro-staging`, with the test that drives every step of it against fakes, `scripts/live-checks/check571_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, authenticated to an account that can read IAM policies in the project, on the **staging** project first (**never `belong`**), and **no agent runs any step of it** | The census is printed, one line per binding whose role carries a permission that reaches signing, above the block — and **nothing in it is a FAIL**: it is D2194's accepted exposure, and printing it is the point. The rows held to a figure are the fences: the minter has exactly **one** invoker and it is the API's account, never `allUsers`; the signing ring's signer role holds exactly the minter's account and no other member on a role that can sign; the handover ring's sealer role holds exactly the API's account and no other member; and the two accounts' own policies are empty. A second invoker, a second member where the plan states one, or a non-empty account policy is a **FAIL**, named. It writes nothing anywhere. **OWNER-RUN, NOT RUN.** |
+| 572 | **An email-link account is refused** by the operations and the reseller API, and sees the portal's SSO dialog — on a phone-width window too ([`docs/portal/`](portal/implementation-plan.md), its **Check 572** and task **P9.4**; the reconciliation's **D2207/F10**): a sign-in that verified and is not an SSO one reaches the ordinary routes and is refused `403 sso_required` at the operations and at the reseller screens, each with its own sentence — the rule following the membership and never the route | See "Check 572" below; **the script is how you run it**: `bash scripts/live-checks/check572.sh --project fugaro-staging --token-file <file>`, with the test that drives every step of it against fakes, `scripts/live-checks/check572_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, with an **email-link** account's ID token, on the **staging** deployment first (**never `belong`**), and **no agent runs any step of it** | The token decodes locally as an email-link sign-in of `--project`'s own `aud`, unexpired, and the **control** row is that it verifies: `GET /api/entitlements` answers **200** — which is what makes the two refusals the memberships' own rule rather than a sign-in the API rejected. `GET /api/ops/organisations` and `GET /api/resellers/customers` then each answer `403 sso_required` with the sentence the section quotes. A **200** at either is the finding this check exists for; a `not_operations` is a row that could **not be measured**. The dialog is printed as one `MANUAL:` line of browser steps, and its row is only that the line was printed: no script sees a dialog, so the section writes the steps out. **OWNER-RUN, NOT RUN.** |
+| 573 | **A redelivered event and a replayed one** — the redelivery leaves the ledger unchanged and a delivery outside the five-minute window is refused ([`docs/portal/`](portal/implementation-plan.md), its **Check 573** and task **P9.4**; the reconciliation's **F16/D2192** and F16's window): the check signs its own Paddle-shaped deliveries with the deployment's sandbox webhook secret, so a redelivery is made on command instead of waited for | See "Check 573" below; **the script is how you run it**: `bash scripts/live-checks/check573.sh --project fugaro-staging --token-file <file> --webhook-secret-file <file>`, with the test that drives every step of it against fakes, `scripts/live-checks/check573_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on the **staging** deployment first (**never `belong`**), and **no agent runs any step of it** | Delivery A is stored as **one** parked record; the same bytes and the **same signature** again leave exactly **one** record for A in the same state, with a new `received_at` — a redelivery received and not applied twice. A stale delivery (a `ts` half an hour old) answers the same `200` with no body that a forger gets and leaves **no record at all**, while the **same body signed now** is stored: the only difference between the two is the age of the stamp, so the window is what refused the first. The check leaves **two parked events** in the operations queue and names their ids in its `restore` row; dismissing them is the owner's own write, with the section's command. **OWNER-RUN, NOT RUN.** |
+| 574 | **A staging-signed key in a production build** — the released CLI refuses a key whose id is the staging ring's, before the signature is read and before anything is written ([`docs/portal/`](portal/implementation-plan.md), its **Check 574** and task **P9.4**; the reconciliation's **F17/D459**): the fence a production installation rests on, that a verifier trusts the key ids of ONE environment | See "Check 574" below; **the script is how you run it**: `bash scripts/live-checks/check574.sh --project fugaro-staging --sandbox <a throwaway installation's checkout> --key-file <file>`, with the test that drives every step of it against fakes, `scripts/live-checks/check574_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on the **staging** deployment and a **throwaway** installation whose licence reads free (**never `belong`**), and **no agent runs any step of it** | The key decodes here as a v1 key whose `kid` is the staging id, and `--project`'s ring really holds that id (`ASYMMETRIC_SIGN`, `EC_SIGN_ED25519`, at least one ENABLED version) — so the refusal is the id's and not an empty ring's. `fugaro licence status` and `fugaro licence set` both carry the id's own sentinel (`licence: the key id is not in the keyring`), `licence set` writes nothing, and the installation's licence read before and after is the same. The **control** — the same key with its id rewritten to the **other** environment's, so its payload no longer matches its signature — says which of two states this deployment is in: refused for the **signature** means the ring holds that id too, and the fence is the id; refused for the **id** again means the ring holds neither, so today's refusal cannot be told from a ring that refuses everything. A build that **accepted** the key is the worst finding here. `--project` is the project the key service is deployed in, never the installation's. **OWNER-RUN, NOT RUN.** |
+| 575 | **A staging reseller's month** — the accrual, the statement's mail and a sale the credit limit refuses ([`docs/portal/`](portal/implementation-plan.md), its **Check 575** and task **P9.4**; the reconciliation's **D2189**, against P6.2 and P6.3 as the deployed portal runs them): the wholesale terms and the credit limit operations set, the customers and the keys the reseller may see, P1.5's monthly statement job and its OIDC token, the run's own log line and the month it issued, and the sale that is refused over the limit with the licences it already holds unchanged | See "Check 575" below; **the script is how you run it**: `bash scripts/live-checks/check575.sh --project fugaro-staging --token-file <file>`, with the test that drives every step of it against fakes, `scripts/live-checks/check575_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, as a member of a **reseller organisation** signed in with Google or Microsoft, on the **staging** deployment first (**never `belong`**), and **no agent runs any step of it** | The reseller's terms give the limit and the per-row rate the sale is composed against; the customer's newest key names the workspace it is sold into; the job's method, path, token account and audience hold against the API revision's own `FUGARO_SCHEDULER_ACCOUNT`/`FUGARO_SCHEDULER_AUDIENCE` (an audience that is the job's own target URI is the misconfiguration), and the run's log line — `the statement run as <account> issued N statement(s) and mailed M message(s)` — carries the job's own account, so it is this fire's line and not an earlier run's. The newest statement's lines are all positive, sum to its `accrued_micros`, its `state` follows the two amounts, its month is a whole UTC month that is over and every line is a customer of this reseller. The sale is sized so its cost is **strictly greater than the whole limit**, and a sale beyond the limit that was **admitted** is a **FAIL**; the customer's keys, read before and after, are the same. A job still **PAUSED** is a row that could **not be measured** (naming `statements_paused=false`) and the run is fired by hand anyway. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -22502,3 +22508,458 @@ assertion or a Ctrl-C. It costs one sandbox run and the provider credit that cal
 **OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
 `scripts/live-checks/check781_test.sh`, which drives every step of it against fake tools — a fake `gcloud`
 and a fake `fugaro`, no cloud, no installation and no run — and is run by `go test ./scripts`.
+
+## Check 570: pay before setup — the unbound purchase, the refused binding and the seat a refresh brings (the staging project and the staging portal first, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **P9.4** of
+[docs/portal/implementation-plan.md](portal/implementation-plan.md) — its row for **570**, out of that
+plan's "Checks this plan takes (570–579)" — and run on **staging** first, which is the plan's **P0.6**. It
+answers the reconciliation's **F25/D2197**, **D2205**, **D2196** and **D2200/K3.4**: a purchase creates an
+entitlement and never a key, so a customer pays before their project exists and the term runs from the
+payment; binding needs an installation and is refused rather than done unchecked; binding is the act that
+mints; and a seat change reaches the installation through `fugaro licence refresh`, with nothing pasted.
+**No agent runs any step of it**, and none can: it runs the installed `fugaro` CLI's own `licence login`
+and `licence refresh` and binds a real entitlement on a real deployment.
+
+**What it settles.**
+
+- **The unbound state.** `GET /api/entitlements`, read with the owner's own token, carries one
+  entitlement whose `source` is `purchase`, whose `status` is `active`, whose `bound_at` is **null** and
+  which holds **no key** — F25's state, a licence paid for and not yet bound, read as the state itself
+  rather than as an absent key.
+- **D2205, the refusal.** `POST /api/workspaces/bind` for that entitlement and a project that holds no
+  Fugaro installation answers `422 no_installation`, and the sentence it carries names `fugaro setup`.
+  This is the check's one WRITE attempt and it must not bind: the entitlement is re-read afterwards and is
+  **still unbound**.
+- **Binding mints.** `fugaro licence login` runs in the checkout (its browser step is yours, and its own
+  device code is the command's own bound), and the entitlement then reads bound — `bound_at` set, the
+  workspace's `project_id` the installation's own Firebase project id — while `fugaro licence status
+  --json` carries a tier and a `paid_through`: **D2196**, the key came from the binding and not from a
+  paste.
+- **K3.4, the seats.** `fugaro licence refresh` runs, and the installation's own `licence status --json`
+  seats are the entitlement's — the number the portal shows, arrived at with nothing pasted into a
+  terminal.
+- **The origin is the API's.** One read carries no sign-in at all: `GET /api/workspaces` answers `401
+  unauthenticated`, which is what says the origin in front of the check is the portal's API and not a
+  marketing page or somebody else's host.
+- **The installation is the one you named.** `fugaro doctor --json` reads the checkout's own name, GCP
+  project and region, and a project that disagrees with `--project` is a row the check could not measure
+  rather than a row it compares: this check measures the installation you work in, never one it guessed.
+
+**The command.** It is **one command**, run from the installation's own checkout at your own terminal:
+
+```sh
+bash scripts/live-checks/check570.sh --sandbox <the checkout> --project fugaro-staging \
+  --token-file <a 0600 file holding your ID token> \
+  --no-installation-project <a project that holds no Fugaro installation>
+```
+
+`--dry-run` makes every guard and prints every command it would run, calling nothing; `--help` prints the
+header above. `--project` is refused for `fugaro-prod` unless `--production` is given, a value naming
+`belong` is refused **by name**, and a coding agent's session is refused too, because every command here is
+one you could type yourself. The check prints ONE block on **stdout** headed `CHECK 570 RESULT`, ending
+`CHECK 570 RESULT END (exit N)`: exit **0** when every criterion held, **1** when one did not or a guard
+stopped the check, **2** when it could not measure — a missing tool, a token file that is not 0600, a
+project whose doctor disagrees with `--project`, an organisation with **no unbound purchase**. That last one
+is the standing premise, so the section says what to do first: make the sandbox purchase (a Paddle sandbox
+payment in a browser, which is not this check's to make), then run it. Paste the block back for the row; a
+key the run never reached reads `FAIL — not reached`. The block's keys are `fugaro-version`, `xtrace`,
+`agent-session`, `project`, `belong`, `api`, `token`, `installation`, `purchase`, `binding`, `login`,
+`seats`, `restore` and `scratch`.
+
+**What it reads, and what it never prints.** No licence key, no renewal secret and no ID token: names and
+numbers only — a project id, a workspace id, an entitlement id, a tier, a status, seats and an HTTP status.
+The ID token travels in a `0600` curl config file and reaches neither a command line nor the block.
+
+**What it leaves behind.** One binding and the key it mints, which is the whole point of the check, plus
+whatever the `licence refresh` writes (a successor key, or its "nothing to renew yet" answer): nothing in
+the project is undone, because the binding and the key are the check's own evidence. The scratch directory
+is removed from the exit trap even on a failed assertion or a Ctrl-C.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check570_test.sh`, which drives every step of it against fake tools — a fake `curl`, a
+fake `gcloud` and a fake `fugaro`, no cloud, no installation and no purchase — and is run by
+`go test ./scripts`.
+
+## Check 571: every identity that reaches signing in the project, printed as a census (the staging project first, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **P9.4** of
+[docs/portal/implementation-plan.md](portal/implementation-plan.md) — its row for **571** — and run on
+**staging** first, which is the plan's **P0.6**. It is the row of the reconciliation's **F18/D2194**: the
+portal lives in **one** project and not a dedicated one, round 1 of that review found what that costs, and
+the owner re-asked on 2026-11-12 and **kept** the one project with those facts in hand. This check is the
+half that remains: it prints the list, so the accepted risk is one the owner **reads** rather than one they
+were told about once. **No agent runs any step of it**; it reads IAM policies with your own credential.
+
+**What it settles.**
+
+- **The census.** Every binding in the project's IAM policy whose role carries a permission that reaches
+  signing — `useToSign`, `signBlob`, `actAs`, `getAccessToken`, `run.services.update`, the store's
+  entities, a Hosting site's update, `resourcemanager.projects.setIamPolicy` — is printed, one line per
+  binding, above the block, beside a row that counts it. **Nothing in the census is a FAIL**: it is
+  D2194's accepted exposure, and printing it is the whole point. The two examples the review found are
+  named in the section rather than assumed: Firebase Hosting's IAM is project-wide, so the website's CI
+  deployer can replace the portal's JavaScript and with it take a fresh operations sign-in and mint; and a
+  project-level `datastore.user` or `run.services.update` reaches signing too.
+- **The minter's invokers.** Exactly **one**, the API's account — D2194's own fence, and the fence D450(a)
+  rests on — and never `allUsers`.
+- **The signing ring.** The signer role on the ring holds exactly the minter's account, and **no other
+  member** sits on a role that can sign: a second identity there signs licence keys for workspaces it does
+  not serve.
+- **The handover ring.** The sealer role holds exactly the API's account and no other member: a second
+  identity there opens every sealed reveal in the store (**D2182**).
+- **The two accounts' own policies** are **empty**. `actAs` on the minter's account is impersonating the
+  one identity that signs; `actAs` on the API's is wearing the identity the minter trusts.
+
+**The command.** It is **one command**, run at your own terminal:
+
+```sh
+bash scripts/live-checks/check571.sh --project fugaro-staging
+```
+
+`--environment staging|production` picks which key id this deployment signed for and so which ring's policy
+is read (production for `fugaro-prod`, staging otherwise); `--minter-service`, `--minter-account`,
+`--api-service`, `--api-account`, `--ring`, `--signer-role`, `--handover-ring` and `--handover-role`
+default to `ee/keyservice/terraform/services/variables.tf`'s own names, so an unset shell runs it as
+written. `--dry-run` makes every guard and prints every command it would run; `--help` prints the header
+above. `--project` is refused for `fugaro-prod` unless `--production` is given, a value naming `belong` is
+refused by name, and a coding agent's session is refused too. The check prints the census and ONE block on
+**stdout** headed `CHECK 571 RESULT`: exit **0** when every reading held, **1** when one did not — a second
+invoker, a second member where the plan states one — and **2** when it could not measure (no `gcloud`, or
+an account that cannot read the project's policies). The block's keys are `gcloud`, `xtrace`,
+`agent-session`, `project`, `belong`, `census`, `invokers`, `signer`, `handover`, `actas`, `restore` and
+`scratch`.
+
+**What it reads, and what it never prints.** A policy read here is a list of **names** — addresses, service
+accounts, roles. No permission is asked for, no secret is read, no key material is touched and no token is
+minted: this check **is** the list, and a list of names is what the owner pastes back.
+
+**What it leaves behind.** Nothing: every call is a `get-iam-policy`, a `describe` or a `list`, and the
+`restore` row says so. The scratch directory is removed from the exit trap even on a failed assertion or a
+Ctrl-C.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check571_test.sh`, which drives every step of it against a fake `gcloud` — no cloud
+and no project — and is run by `go test ./scripts`.
+
+## Check 572: an email-link account, refused by the operations and the reseller API and shown the SSO dialog (the staging deployment first, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **P9.4** of
+[docs/portal/implementation-plan.md](portal/implementation-plan.md) — its row for **572** — and run on
+**staging** first, which is the plan's **P0.6**. It answers the reconciliation's **D2207/F10** and the
+plan's own constraint row: a person who belongs to an operations or reseller organisation is refused, for
+any request using that membership, unless they signed in with `google.com` or `microsoft.com` — an email
+link is not an SSO sign-in, and the rule follows the **membership** rather than the route. **No agent runs
+any step of it**: it needs an account an owner has, signed in in a browser.
+
+**What it settles.**
+
+- **The origin is the API's.** `GET /api/workspaces` with no sign-in answers `401 unauthenticated`.
+- **The token is an email-link one, decided locally.** The ID token's payload is decoded in the scratch
+  directory and never printed: its `firebase.sign_in_provider` has to be one of the two spellings an email
+  link signs in under (`password` or `emailLink` — P1.3's UNVERIFIED item in the reconciliation is which of
+  the two the project records, so the row says **which it read**), its `aud` has to be `--project`'s, and
+  it has to be unexpired. A token that fails any of those would be refused for a reason of its own, and
+  every row below would then say nothing about D2207.
+- **The control makes the refusals the membership's.** The same token **verifies**: `GET
+  /api/entitlements` answers **200**. That row is what separates "refused because operations do not admit
+  email links" from "refused because the API does not accept this sign-in".
+- **The operations refusal.** `GET /api/ops/organisations` answers `403` with code `sso_required` and the
+  sentence "The operations organisation's members sign in with Google or Microsoft. Sign in that way to
+  reach these screens." A `not_operations` here is a row that could **not be measured** — the account is
+  not a member of the staging operations organisation — and a `200` is the finding this check exists for.
+- **The reseller refusal.** `GET /api/resellers/customers` answers the same way, with the reseller
+  organisation's own sentence. One staging account is a member of both, and each refusal is measured on
+  the membership it is about.
+- **The dialog, which no script sees.** The check prints ONE `MANUAL:` line carrying the exact browser
+  steps, and the `manual` row is the check saying it printed that line — it is **not** a claim about the
+  browser. The steps are yours: sign in to the portal with an email link in a **phone-width window**, and
+  the operations or reseller screen must show the SSO dialog offering Google and Microsoft rather than the
+  screen itself; at **desktop width** the same account must be shown the same refusal. Record what you saw
+  beside the pasted block, because that half of the check is a reading no test in this tree can take.
+
+**The command.** It is **one command**, run at your own terminal:
+
+```sh
+bash scripts/live-checks/check572.sh --project fugaro-staging --token-file <a 0600 file holding the ID token>
+```
+
+`--dry-run` makes every guard and prints every command it would run; `--help` prints the header above.
+`--project` is refused for `fugaro-prod` unless `--production` is given, a value naming `belong` is refused
+by name, and a coding agent's session is refused too. The check prints the `MANUAL:` line and ONE block on
+**stdout** headed `CHECK 572 RESULT`: exit **0** when every criterion held, **1** when an email-link
+sign-in **reached** the operations or reseller screens (or a guard stopped the check), and **2** when it
+could not measure — a token file that is not 0600, a token that is not an email-link one, an account that
+is not a member of the staging organisation. Paste the block back for the row; a key the run never reached
+reads `FAIL — not reached`. The block's keys are `xtrace`, `agent-session`, `project`, `belong`, `api`,
+`token`, `signin`, `verified`, `operations`, `reseller`, `manual`, `restore` and `scratch`.
+
+**What it reads, and what it never prints.** No ID token, in whole or in part, and no address, uid or
+organisation id of the account. The token travels in a `0600` curl config file, its payload is decoded in
+the scratch directory (mode `0700`, removed at the end) to read three claims, and what the block carries of
+it is a **provider name** (one of the project's own spellings), the `aud` project id and an expiry state —
+never a claim that names the person.
+
+**What it leaves behind.** Nothing: four reads and one refused read, with the token you already hold. It
+writes no account, no organisation and no membership, and the scratch directory goes from the exit trap
+even on a failed assertion or a Ctrl-C. It costs nothing billable.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check572_test.sh`, which drives every step of it against a fake `curl` — no cloud, no
+project and no account — and is run by `go test ./scripts`.
+
+## Check 573: a redelivered sandbox event, a replayed one and the five-minute window (the staging deployment first, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **P9.4** of
+[docs/portal/implementation-plan.md](portal/implementation-plan.md) — its row for **573** — and run on
+**staging** first, which is the plan's **P0.6**. It answers the reconciliation's **F16/D2192** and F16's
+window: a delivery is verified, then stored, then processed; a redelivery of an event the ledger already
+holds does not unmake it nor is it applied twice; and `VerifyDelivery` (`ee/keyservice/paddleevents.go`)
+refuses a delivery whose own `ts` is more than five minutes (`DeliveryWindow`) from the service's clock,
+while a body that failed verification never reaches the store at all. **No agent runs any step of it**, and
+none should: the check holds the deployment's sandbox webhook secret and posts signed deliveries at it.
+
+**How it makes a redelivery happen.** Paddle sandbox cannot be made to redeliver on command, so the check
+signs its own deliveries: it takes the deployment's sandbox webhook secret from the file you hand it,
+writes two Paddle-shaped `transaction.completed` bodies, and signs each the way Paddle does — HMAC-SHA256
+of `ts:<body>` under that secret — then posts them at the webhook route. Every id it uses carries the
+instant this run started, so a second run's deliveries are its own events and not the first run's.
+
+**What it settles.**
+
+- **The ledger it compares against.** `GET /api/ops/events?state=parked`, read with the operations
+  member's own token, is read **before** anything is delivered. A body whose transaction did not begin with
+  a checkout this API created is **parked** there (F15); an invented transaction is exactly that, so
+  parking is the state the check's own events have.
+- **The delivery.** Body A, signed with a `ts` of now, answers `200` with no body, and the queue then holds
+  exactly **one** record for A, in state `parked`.
+- **The redelivery (D2192).** The same bytes and the **same signature** again — one second later, so the
+  two instants are told apart — answer `200` with no body, and the queue still holds exactly **one** record
+  for A: its **state did not move**, and its `received_at` did. One record and an unchanged state is the
+  whole of what "the ledger is unchanged" means here.
+- **The window.** Body B, signed with a `ts` half an hour old, answers the same `200` with no body that a
+  forger gets (§5.2), and the queue holds **no record for B at all** — the difference a refused delivery
+  makes, because it never reaches the store.
+- **The control that makes that reading the window's and not the signature's.** The **same body B** signed
+  with a `ts` of now is stored, and the queue then holds exactly one record for it. Same body, same secret,
+  same scheme: the only difference between the two deliveries is the age of the timestamps, so the
+  five-minute window is what refused the first.
+- **The origin is the API's.** `GET /api/workspaces` with no sign-in answers `401 unauthenticated`.
+
+**The command, and the one secret it needs.** It is **one command**, run at your own terminal, and it needs
+a file only you can write — the deployment's sandbox webhook secret, whose name P1.5's variables give as
+`fugaro-portal-paddle-webhook-secret`:
+
+```sh
+gcloud secrets versions access latest --secret=fugaro-portal-paddle-webhook-secret \
+  --project=fugaro-staging > /tmp/paddle-webhook-secret && chmod 600 /tmp/paddle-webhook-secret
+
+bash scripts/live-checks/check573.sh --project fugaro-staging \
+  --token-file <a 0600 file holding the operations member's ID token> \
+  --webhook-secret-file /tmp/paddle-webhook-secret
+```
+
+That `gcloud` line is **yours** and is the only place the secret is read: the check itself runs no `gcloud`
+and no `fugaro`. `--dry-run` makes every guard and prints every command it would run; `--help` prints the
+header above. `--project` is refused for `fugaro-prod` unless `--production` is given, a value naming
+`belong` is refused by name, and a coding agent's session is refused too. The check prints ONE block on
+**stdout** headed `CHECK 573 RESULT`: exit **0** when every criterion held, **1** when one did not — a
+ledger that moved under a redelivery, a stale delivery that was stored — and **2** when it could not
+measure (a secret file that is not 0600, a token that is not an operations member's, a body this service
+parked as something else). Paste the block back for the row; a key the run never reached reads `FAIL — not
+reached`. The block's keys are `xtrace`, `agent-session`, `project`, `belong`, `api`, `token`, `secret`,
+`queue`, `delivery`, `redelivery`, `window`, `replay`, `restore` and `scratch`.
+
+**What it leaves behind, and what it does not.** **Two parked events per run**, one for A and one for B,
+whose ids the `restore` row names: they are the check's own evidence and are left in the operations queue
+on purpose. Ending one is a WRITE with a sign-in from the last five minutes, which the check does not make
+on your behalf — `POST /api/ops/events/resolutions` with `{"id":"<id>","decision":"dismiss"}` — so parse
+the two ids from the `restore` row and dismiss them when you are done reading them. The scratch directory,
+which holds the signature configs and the two bodies, is removed from the exit trap even on a failed
+assertion or a Ctrl-C.
+
+**What it never prints.** Not the webhook secret, not one byte of a signature over a body, and not the ID
+token. The secret is read from its file into `python3`'s own stdin, never onto a command line; each
+signature travels in a `0600` curl config file; and the block carries names and numbers only — event ids
+this check minted, states, a received instant, an HTTP status. It costs nothing billable.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check573_test.sh`, which drives every step of it against a fake `curl` — no cloud, no
+project and no secret — and is run by `go test ./scripts`.
+
+## Check 574: a staging-signed key in a production build (the staging deployment and a throwaway installation, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **P9.4** of
+[docs/portal/implementation-plan.md](portal/implementation-plan.md) — its row for **574** — and run on
+**staging** first, which is the plan's **P0.6**. It answers the reconciliation's **F17/D459** as the code
+holds it: a verifier trusts the key ids of **one** environment, so a staging-signed licence key is refused
+by a production build for its **id** alone — before the signature is read, before the claim set is decoded
+and before anything is written (`ee/licence/key.go`'s first rule, and `ErrUnknownKeyID`). **No agent runs
+any step of it**: it runs the released CLI against a real keyring and would install a key if the build were
+wrong.
+
+**Why the build is the released CLI.** The production build this check drives is the released `fugaro`, the
+verifier a person's own installation really runs (`ee/register`'s `licenceRing`, the ring `licence set` and
+`licence status` both verify with). Its ring is empty in a build of P9.4 and stays empty until S2.9
+publishes the owner's production public keys in `ee/licence`'s own table — which is why every key is
+refused by its id today, and why the check **reads the state of that ring rather than assuming it**.
+
+**What it settles.**
+
+- **The key.** The file you hand it is one line and mode `0600`, and it decodes here, without the build: a
+  v1 key whose `kid` is the staging id the ring below holds, with its tier, kind, renewal mode, term and
+  its renewal secret's digest **named**. The key's text is never printed.
+- **The ring.** `--project`'s signing key for that id — `ASYMMETRIC_SIGN`, `EC_SIGN_ED25519`, at least one
+  ENABLED version (`ee/keyservice/terraform/keyring`) — which is the key this staging key was signed with
+  and the public half a production build must **not** hold. `--project` is the project the key service is
+  deployed in (P1.5, one project per environment), never the installation's.
+- **The refusal.** The released build, handed the key the way a console hands one to the CLI it spawns
+  (`FUGARO_LICENCE_KEY`, never a word on a command line), refuses it: `fugaro licence status --json`
+  answers the verifier's own refusal — `licence: the key id is not in the keyring`, inside the sentence
+  about `fugaro/licence.json` — and `fugaro licence set --file`, the one command here that **could** install
+  a key, refuses it too, with `the key was not accepted, and nothing was written: …`. Both sentences carry
+  the id's sentinel, which is the row.
+- **The control, and what it says about the ring.** The same key with its `kid` rewritten to the **other**
+  environment's id re-encodes the payload and so breaks the signature over its raw bytes. Refused for the
+  **signature** means the ring holds that id, so the fence the refusal above rests on is the **id** and not
+  an empty ring; refused for the **id** again means the ring holds neither, so today's refusal cannot be
+  told apart from a ring that refuses everything. The row says **which of the two** this deployment is in
+  rather than picking the convenient one.
+- **Nothing was written.** The installation's own licence is read before and after and the two reads have
+  to be the **same**. The check refuses a checkout whose licence does not read free, because the row it
+  drives is `licence set`: on a correct build that command stops before its first write, and a working
+  installation's licence is not what this check is for.
+- **The digest is not a fence here**, and the block says so rather than leans on it: `licenceSecretMatches`
+  (`ee/register/licence.go`) answers true whenever no secret was read, so a build that wrongly held this id
+  would write line 1 alone. That is what the `before`/`after` pair exists for.
+
+**The command.** It is **one command**, run at your own terminal:
+
+```sh
+bash scripts/live-checks/check574.sh --project fugaro-staging \
+  --sandbox <a throwaway installation's checkout, its licence free> \
+  --key-file <a 0600 file holding one line: the staging-signed key>
+```
+
+The key is an artifact you produce — a key minted by the staging portal for a workspace you own, written to
+a file with no trailing comment and nothing else on the line. `--fugaro` names the released build (PATH by
+default); `--location`, `--ring`, `--kms-key` and `--other-key-id` default to
+`ee/keyservice/terraform/keyring`'s own spellings. `--dry-run` makes every guard and prints every command it
+would run; `--help` prints the header above. `--project` is refused for `fugaro-prod` unless `--production`
+is given, a value naming `belong` is refused by name, and a coding agent's session is refused too. The
+check prints ONE block on **stdout** headed `CHECK 574 RESULT`: exit **0** when every criterion held, **1**
+when one did not — a build that **accepted** the staging key, one that refused it for something other than
+its id, an installation whose licence moved — and **2** when it could not measure (a key file that is not
+0600 or not one line, a ring the project does not hold, a checkout that is not an installation's or whose
+licence is not free). Paste the block back for the row; a key the run never reached reads `FAIL — not
+reached`. The block's keys are `xtrace`, `agent-session`, `project`, `belong`, `ambient`, `gcloud`, `ring`,
+`key`, `sandbox`, `version`, `before`, `refusal`, `install`, `control`, `after`, `restore` and `scratch`.
+
+**What it reads, and what it never prints.** Not the licence key's text, not its signature and not one byte
+of the payload as it arrived. The key is read from its file into this shell and handed to the one child that
+needs it as a variable in **that child's own environment** — never as a word on a command line, where `ps`
+would show it — and the CLI takes that variable out of its environment as its first step
+(`ee/licence/store.go`, F41). The block carries names and numbers only: the key id, the claims, the ring,
+states and exit codes.
+
+**What it leaves behind.** Nothing, on a correct build: three `gcloud` reads and four CLI runs, of which
+the only one that is not a read is `licence set`, and it writes nothing. The scratch directory — the check's
+copy of the rewritten key and the tools' output — is removed from the exit trap even on a failed assertion
+or a Ctrl-C.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check574_test.sh`, which drives every step of it against fake `gcloud` and `fugaro`
+binaries — no cloud, no project and no key — and is run by `go test ./scripts`.
+
+## Check 575: a staging reseller's month — the accrual, the statement's mail and the refusal over the limit (the staging deployment first, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **P9.4** of
+[docs/portal/implementation-plan.md](portal/implementation-plan.md) — its row for **575** — and run on
+**staging** first, which is the plan's **P0.6**. It answers **D2189** against P6.2 and P6.3 as the deployed
+portal runs them: a reseller's accrual is days × seats × the wholesale rate; a sale that would pass the
+credit limit operations set is refused with `over_credit_limit`; the month's statement carries one line per
+customer and the sum of the part of each term inside a UTC month; and the run that issues and mails it is
+P1.5's Cloud Scheduler job, with F33's OIDC token and `api_statements.go`'s own line for what the run did.
+**No agent runs any step of it**: it signs in as a reseller, fires the statement job and reads a real
+reseller's money.
+
+**What it settles.**
+
+- **The origin is the API's.** `GET /api/workspaces` with no sign-in answers `401 unauthenticated`.
+- **The sign-in is a reseller's.** The token's provider has to be an SSO one (`google.com` or
+  `microsoft.com`): a reseller organisation's members sign in that way and an email-link account is refused
+  at its routes (that refusal is **Check 572**'s row, and this check is the other side of the same rule), so
+  a token of the other kind would make every row below say nothing about a reseller.
+- **The terms.** `GET /api/resellers/terms` gives the credit limit and the wholesale price per row that
+  operations set; they are what the sale below is composed against, and a row this reseller is not priced
+  for is a row it cannot sell (`resellers.schema.json`).
+- **The customers and their keys.** `GET /api/resellers/customers` and `GET
+  /api/resellers/customers/{id}/keys` give one customer and the newest key it holds with the workspace that
+  key is bound to — the sale below names that workspace, and **F5** is why this is all of the key a reseller
+  sees: metadata and never a key.
+- **The job.** `gcloud scheduler jobs describe` reads P1.5's monthly statement job: its method and path, the
+  account its OIDC token is minted for, the audience that token carries, and whether the deployment has
+  lifted the pause the apply creates it under. Those are held against the API revision's **own**
+  `FUGARO_SCHEDULER_ACCOUNT` and `FUGARO_SCHEDULER_AUDIENCE`, which is the comparison
+  `ee/keyservice/portalauth.go`'s `SchedulerVerifier` makes: an audience that is the job's own target URI is
+  the misconfiguration `scheduler.tf` documents, and the row names it as that.
+- **The run and its mail.** The check **fires** that job and then reads the API's own log line for it —
+  `the statement run as <account> issued N statement(s) and mailed M message(s)`, which is what
+  `api_statements.go` says an operator reads of a run, since the run route answers `204` with no body. The
+  account in that line has to be the job's own token's, which is what makes the line **this** fire's and not
+  an earlier run's; the counts are the run's own.
+- **The month.** `GET /api/statements` gives the reseller's newest statement, held to the arithmetic the
+  schema promises: every line positive, the lines' sum equal to the statement's `accrued_micros`, `state`
+  following the two amounts, the month a whole UTC month that is **over**, and every line a customer this
+  reseller holds. That is the accrual read as the month it was billed in rather than recomputed here.
+- **The refused sale.** `POST /api/resellers/customers/{id}/keys` with a row, a seat count and a span whose
+  cost is **strictly greater than the whole credit limit**, so that no state of the accrual can admit it,
+  has to answer `409 over_credit_limit` with the sentence "This sale would pass the credit limit operations
+  set for this reseller. The licences it already holds are unchanged." The customer's keys are read before
+  and after it: the sentence's own claim, **measured** rather than believed.
+
+**What creates, and what it does not.** Firing P1.5's job is the **one** act here, and it is the act the
+deployment does by itself once a month (the first of the month, 03:00 UTC). The run is idempotent per month
+(`issueStatement` reads a month it already holds), so a second fire states no month twice, and a month it
+does state is mailed to that reseller's owners — on staging through the merchant's and the mail provider's
+test modes (P0.2). **If the deployment's job is still PAUSED** (the apply creates it paused), the check
+fires it by hand and says so, and the pause is a row that could **not be measured** naming
+`statements_paused=false` rather than a FAIL: a job left paused is a month nobody is billed for, which is
+worth knowing and is not this check's criterion. The refused sale writes nothing, and the check writes no
+customer, no term and no licence of its own.
+
+**The command.** It is **one command**, run at your own terminal:
+
+```sh
+bash scripts/live-checks/check575.sh --project fugaro-staging --token-file <a 0600 file holding a reseller member's ID token>
+```
+
+`--customer`, `--row` (`team-annual` by default), `--days` (29), `--seats` (computed from the limit and the
+rate), `--api-service` (`fugaro-portal-api`), `--statement-job` (`fugaro-portal-statements`), `--region`
+(`us-east5`) and `--statement-path` (`/api/statements/run`) all default to P1.5's own names. `--dry-run`
+makes every guard and prints every command it would run; `--help` prints the header above. `--project` is
+refused for `fugaro-prod` unless `--production` is given — whoever reads a production reseller's month is
+reading real money — a value naming `belong` is refused by name, and a coding agent's session is refused
+too. The check prints ONE block on **stdout** headed `CHECK 575 RESULT`: exit **0** when every criterion
+held, **1** when one did not — a sale beyond the limit that was **admitted**, a month whose lines do not sum
+to what it says it accrued, a job whose token is minted for the wrong account or audience — and **2** when
+it could not measure (a token file that is not 0600, an account that is not a member of a reseller
+organisation, a customer that holds no key, a job the deployment does not have). Paste the block back for
+the row; a key the run never reached reads `FAIL — not reached`. The block's keys are `xtrace`,
+`agent-session`, `project`, `belong`, `api`, `token`, `signin`, `terms`, `customers`, `keys`, `service`,
+`job`, `run`, `statements`, `limit`, `restore` and `scratch`.
+
+**What it reads, and what it never prints.** No ID token, in whole or in part, and no address, uid or name
+of the account: the token travels in a `0600` curl config file, its payload is decoded in the scratch
+directory to read three claims, and what the block carries of it is the provider spelling, the `aud` project
+id and an expiry state. Organisation ids, key ids and the scheduler account **are** named, which is what a
+register row is read against. It costs nothing billable: a handful of reads, one refused sale and one
+scheduler fire.
+
+**What it leaves behind.** The run it fires and nothing else; the scratch directory — the check's copy of
+the composed sale and the tools' output — is removed from the exit trap even on a failed assertion or a
+Ctrl-C.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check575_test.sh`, which drives every step of it against fake `curl` and `gcloud` —
+no cloud, no project and no reseller — and is run by `go test ./scripts`.
