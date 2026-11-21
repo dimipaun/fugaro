@@ -29,23 +29,41 @@ folder's pin refuses a duplicate id so it surfaces there rather than on `main`.
 
 ## The front matter
 
-Eight fields, each required, between an opening and a closing `---` fence. A
-ninth field is a field nobody decided, and is refused.
+Nine fields, each required, between an opening and a closing `---` fence. A
+tenth field is a field nobody decided, and is refused.
 
 | Field | What it says |
 | --- | --- |
 | `id` | the file name's first two segments (D26) |
 | `title` | the filer's words, one line |
-| `mode` | the **resolved** mode the run ran under; `none` for an item filed by hand |
+| `level` | the **resolved** rigor level the run ran under; `none` for an item filed by hand |
+| `kind` | `deferred` or `open-risk` — two words, and no third (LD5) |
 | `area` | the matched areas' names, **strictest first**, comma-separated; `project` or `repo` for an item about the whole layer |
 | `status` | `open`, `closed` or `dropped` — three words, and no fourth |
 | `filed-by` | the run's launcher, or the filer's login for a hand-filed item — a login, never an email address: a run whose launcher is recorded only as an address writes `unknown` |
 | `filed-in` | what filed it: `run:<run id>`, `pr:<number>`, or `hand` for an item a person filed |
 | `date` | the record's finish time in UTC, as `YYYY-MM-DD` — **never** the clock of whoever regenerates the index |
 
-The mode and the area are recorded as the **resolved** values rather than as
+The level and the area are recorded as the **resolved** values rather than as
 the configuration's own words, so an item is readable without the config that
-produced it — the same reason the run record carries the resolved mode (D27).
+produced it — the same reason the run record carries the resolved level (D27).
+
+The kind is what makes an open risk an item of its own (LD5): a `deferred`
+item is something a run or a person consciously left open — a finding Startup
+or Pro tolerated, a deferral the agent listed, the proper fix a Hotfix owes —
+and an `open-risk` item is a risk Critical could not close, which is the one
+thing Critical files for itself. Every item filed by hand takes `deferred`
+unless it says `open-risk`.
+
+An item filed by a released version — every one through v0.27.0 — spells the
+level **`mode`**, the name D27 gave it before LD2 renamed the field, and carries
+no `kind` at all. A reader reads such an item rather than refusing it: its level
+is the `mode` it states, and its kind is `deferred`, the one kind a folder of
+that age could hold. That is what makes an upgrade need no hand-editing —
+`fugaro update` folds a folder still on disk into the project's backlog, and
+`fugaro backlog index` regenerates its index still. `mode` is a released
+spelling that is **read and never written**, and `level` decides where an item
+carries both.
 
 `filed-in`'s third value is the one word D27 does not name: it names the two
 shapes a **run** produces (`run:<run id>` and the `pr:<number>` of the pull

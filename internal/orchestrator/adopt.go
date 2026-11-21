@@ -324,11 +324,20 @@ type adoptPlan struct {
 	changed bool
 }
 
-// read reads every node the runs name, plus the state node, and remembers which
-// run ids the items of those nodes already carry: their own, the run each is
-// going, and the ladder run an item's ledger names (claimed).
+// read reads every node the runs name, plus the state node and the standing
+// backlog's, and remembers which run ids the items of those nodes already
+// carry: their own, the run each is going, and the ladder run an item's ledger
+// names (claimed).
+//
+// The backlog node is read beside the nodes the runs name because the item a
+// standing backlog run is already an item of lives there and nowhere else: such
+// a run carries no plan task, so shardOf sends it to the state node (D2735),
+// which does not hold its item — and a claim that missed it would write a
+// second running item, and a second intent, for a run the daemon itself
+// launched, on every start. Nothing is ever written back to it (shardOf sends
+// no run there), so it is read and not one of the nodes to write (order).
 func (a *adoption) read(ctx context.Context, runs []RunInFlight) error {
-	shards := []Shard{ShardState}
+	shards := []Shard{ShardState, ShardBacklog}
 	for _, r := range runs {
 		shards = append(shards, a.shardOf(r))
 	}
@@ -339,7 +348,7 @@ func (a *adoption) read(ctx context.Context, runs []RunInFlight) error {
 		if err != nil {
 			return err
 		}
-		if shard != ShardState {
+		if shard != ShardState && shard != ShardBacklog {
 			a.order = append(a.order, shard)
 		}
 		for _, w := range p.state.WorkItems {

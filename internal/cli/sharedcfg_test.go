@@ -38,6 +38,7 @@ func publishable(t *testing.T) *localcfg.Config {
 
 func TestPublishSharedWritesAndOverwrites(t *testing.T) {
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	lc := publishable(t)
 	if err := publishShared(context.Background(), lc); err != nil {
 		t.Fatal(err)
@@ -252,6 +253,7 @@ func publishedRepos(t *testing.T, dir string) map[string]localcfg.Repo {
 
 func TestPublishSharedKeepsTheReposOfOtherMachines(t *testing.T) {
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	dir := filepath.Join(f.dir, "runs")
 	writePublished(t, dir, publishedWithOtherRepo)
 	lc := publishable(t)
@@ -277,6 +279,7 @@ func TestPublishSharedKeepsTheReposOfOtherMachines(t *testing.T) {
 
 func TestPublishSharedIgnoresAForeignObjectAndWarns(t *testing.T) {
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	dir := filepath.Join(f.dir, "runs")
 	writePublished(t, dir, strings.Replace(publishedWithOtherRepo, "gcp_project: proj-1234", "gcp_project: other-proj", 1))
 	lc := publishable(t)
@@ -295,6 +298,7 @@ func TestPublishSharedIgnoresAForeignObjectAndWarns(t *testing.T) {
 
 func TestPublishSharedTreatsABadExistingObjectAsAbsent(t *testing.T) {
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	dir := filepath.Join(f.dir, "runs")
 	lc := publishable(t)
 	for name, content := range map[string]string{
@@ -344,6 +348,7 @@ func TestInitPublishConfigIsInstallationOnlyForRepo(t *testing.T) {
 // older publisher's) is refused and replaced, not merged.
 func TestPublishSharedNeverPublishesProviders(t *testing.T) {
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	dir := filepath.Join(f.dir, "runs")
 	block := "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n"
 	writePublished(t, dir, publishedWithOtherRepo+block)
@@ -383,6 +388,7 @@ func TestPublishSharedNeverPublishesProviders(t *testing.T) {
 // another operator's Claude calls by adding one.
 func TestPublishSharedNeverPublishesRouting(t *testing.T) {
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	dir := filepath.Join(f.dir, "runs")
 	block := "routing:\n  claude:\n    via: direct\n    models: [claude-sonnet-5-5]\n"
 	writePublished(t, dir, publishedWithOtherRepo+block)
@@ -424,6 +430,7 @@ func TestPublishSharedRefusesALaunderedObject(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCloudFixture(t)
+			f.noBudget(t)
 			dir := filepath.Join(f.dir, "runs")
 			if _, err := localcfg.Parse([]byte(content)); err != nil {
 				t.Fatalf("fixture: %v", err)
@@ -471,6 +478,7 @@ func TestPublishSharedSelfCheck(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCloudFixture(t)
+			f.noBudget(t)
 			dir := filepath.Join(f.dir, "runs")
 			writePublished(t, dir, publishedWithOtherRepo)
 			lc := publishable(t)
@@ -520,6 +528,7 @@ func TestInitPublishConfigSaysSoWhenItDoesNotPublish(t *testing.T) {
 // of failing for good.
 func TestPublishSharedOversizeMergeFallsBackToLocal(t *testing.T) {
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	dir := filepath.Join(f.dir, "runs")
 	pub, err := localcfg.Parse([]byte(publishedWithOtherRepo))
 	if err != nil {
@@ -805,6 +814,7 @@ func TestSharedConfigRefusesCloneURLs(t *testing.T) {
 // teammate reads.
 func TestConfigPublishRefusesTheBinariesKey(t *testing.T) {
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	dir := filepath.Join(f.dir, "runs")
 	block := "binaries:\n  allow: [\"brand/*.png\"]\n  max_bytes: 1048576\n"
 	writePublished(t, dir, publishedWithOtherRepo+block)
@@ -870,6 +880,7 @@ func TestCascadeCarrierIsNeverSharedConfig(t *testing.T) {
 		}
 	}
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	dir := filepath.Join(f.dir, "runs")
 	block := "credential_cascade: {fallback: auto, wait_threshold: 90s}\n" +
 		"model_grades:\n  strong: {model: anthropic/claude-sonnet-5.5, access: acme-main}\n" +
@@ -1037,6 +1048,7 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 		{"node_removals", "node_removals:\n    pools: [acme-pool]\n"},
 		{"reports_commit", "reports_commit: {repo: acme/reports}\n"},
 		{"workspace_shared", "workspace_shared:\n    anthropic-api-key: {kind: model, projects: [aurora]}\n"},
+		{"locations", "locations:\n    firestore: us-east5\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := localcfg.Parse([]byte(validShared() + tc.yaml))

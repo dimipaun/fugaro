@@ -1,7 +1,8 @@
 ---
 id: 20261021-02
 title: Nothing reacts to a merge, so a Hotfix follow-up is run by hand
-mode: none
+level: none
+kind: deferred
 area: repo
 status: open
 filed-by: dimipaun

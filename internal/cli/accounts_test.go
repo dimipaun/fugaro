@@ -153,6 +153,7 @@ func TestAccountsLsDefaultFirstThenNamedSorted(t *testing.T) {
 // costs the operator nothing.
 func TestAccountsLsLeavesAKeyCredentialOut(t *testing.T) {
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	f.appendConfig(t, claudeAccountsConfig+"credentials:\n  - { name: acme-overflow, type: openrouter }\n")
 	out, _, err := execute(t, "accounts", "ls", "--repo", "acme/other", "--json")
 	if err != nil {
@@ -254,6 +255,7 @@ func TestAccountsLsDefaultsToCheckoutOrigin(t *testing.T) {
 // nothing else (never a secret ID, a repo list or a token value).
 func TestAccountsLsTextOutputIsNamesOnly(t *testing.T) {
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	f.appendConfig(t, claudeAccountsConfig)
 	out, _, err := execute(t, "accounts", "ls", "--repo", "acme/other")
 	if err != nil {
@@ -447,7 +449,8 @@ func TestAccountsLsShowsAvailableForAnUnmarkedAccount(t *testing.T) {
 // every account as available — "no mark" and "no database" are not the same
 // answer (the fallback accountsConfig already makes for selection).
 func TestAccountsLsNamesNoStateWithoutABackend(t *testing.T) {
-	f := newCloudFixture(t) // no budget: block
+	f := newCloudFixture(t)
+	f.noBudget(t)
 	f.appendConfig(t, claudeAccountsConfig)
 	out, errOut, err := execute(t, "accounts", "ls", "--repo", "acme/other", "--json")
 	if err != nil {

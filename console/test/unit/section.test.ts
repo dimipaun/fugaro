@@ -257,6 +257,28 @@ describe('one section’s read', () => {
     expect(host.getAttribute(BUSY_BUSY_ATTRIBUTE)).toBeNull()
   })
 
+  it('answers whose token is newest without settling it, for a read that draws in parts', () => {
+    // The question a stream asks between its chunks (RS2): `current` is the same
+    // fact `settle` decides on, but it takes nothing down -- a read still
+    // arriving is the section's, and its mark has to stay up while it does.
+    const read = sectionRead({ factory, theme: 'light' })
+    const { host, slot } = drawnSection()
+    const first = read.start()
+    read.mark(first, host, slot, 'Reading the runs…')
+    expect(read.current(first), 'the newest read was not its own section’s').toBe(true)
+    // Asking changes nothing: the mark is still up, and asking again still
+    // answers the same thing.
+    expect(host.getAttribute(BUSY_ATTRIBUTE)).toBe('true')
+    expect(read.current(first)).toBe(true)
+
+    const second = read.start()
+    expect(read.current(first), 'a superseded read still claimed the section').toBe(false)
+    expect(read.current(second)).toBe(true)
+    // And a superseded token still settles `false`, so the two agree.
+    expect(read.settle(first)).toBe(false)
+    expect(classed(slot, BUSY_CLASS)).toHaveLength(1)
+  })
+
   it('draws nothing for a token a later change has already superseded', () => {
     const read = sectionRead({ factory, theme: 'light' })
     const { host, slot } = drawnSection()

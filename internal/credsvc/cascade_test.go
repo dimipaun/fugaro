@@ -695,7 +695,8 @@ func TestProviderKeyEntryIsNotOfferedToAnyOtherCaller(t *testing.T) {
 
 	// And the one pairing that is offered it is refused before a byte leaves the
 	// service: the offer is the pairing's, and the SELECTION is the selector's,
-	// which does not select tier C in this release.
+	// which serves a tier-C credential to every model but a Claude one (D3000)
+	// — and a selection told no model is the refusing one.
 	r := providerReviewSvc(t)
 	resp, body = r.callTokens(t, callBody("review-provider-key"), r.reviewRunToken(), r.reviewJobToken(), r.job)
 	if resp.StatusCode != StatusUnavailable {

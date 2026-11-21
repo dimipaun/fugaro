@@ -3,12 +3,14 @@ package runner_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -549,5 +551,73 @@ func TestAutoLeavesADormantOrExplicitRunOnTheAccountThatAnswered(t *testing.T) {
 				t.Errorf("%d agent calls; want the one attempt, with no retry on a walk that does not apply", n)
 			}
 		})
+	}
+}
+
+// TestSweptOnlyCredentialRefusesClearly is U4, asked of the whole run: the
+// credential an offboarding swept (WU9 -- the person's own secrets deleted
+// from the member's intake) can be the ONLY one the installation's bundle
+// held, and what such a run must not do is come back as a generic 401 that
+// reads like a bad key. The credentials service answers its own typed
+// refusal with an empty tried list -- nothing was dropped, because nothing
+// was there -- and the run stops on the gateway's own halt, with the
+// sentence that names the cause.
+//
+// The sentence is the gateway's, not the service's: the detail is built
+// from the refusal's type (noCredentialDetail) and the agent is answered
+// the halt rather than the service's body, so an empty bundle reads as
+// "there was nothing to admit" in the record, in the agent's 403 and in
+// the report, and an operator is sent to the bundle rather than to a key.
+func TestSweptOnlyCredentialRefusesClearly(t *testing.T) {
+	svc := &cascadeService{}
+	b := newCascade(t, cascadeConfig(t), svc)
+	// The service with nothing to offer. The stand-in IS the credentials
+	// service here (newCascade points the run's gateway at it), so this is
+	// the answer a bundle holding no model credential produces: the typed
+	// refusal, and no tried entry, because no credential was considered and
+	// dropped.
+	svc.fake.Func = func(*http.Request, []byte) anthropicfake.Reply {
+		return anthropicfake.Reply{
+			Status: http.StatusServiceUnavailable,
+			Body:   `{"error":"no_candidate_credentials","message":"no credential is offered to this call"}`,
+		}
+	}
+
+	var status int
+	var body string
+	rec, err := b.run(t, func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		status, body = post(t, req, sonnet, 4096)
+		return implement("feature")(t, ctx, req)
+	})
+	if err != nil {
+		t.Fatalf("a refusal the run cannot be served by returned %v, want nil so the run ends halted", err)
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("the agent was answered %d, want 403: a call every credential was swept out from under is a refusal, not a model error and not a retry", status)
+	}
+	// What the agent is told: the halt, and the cause in the detail. The
+	// service's own message never reaches it (D143).
+	for _, want := range []string{"fugaro: budget halted:", "no_candidate_credentials", "holds no model credential"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the agent's 403 does not say %q, so a swept bundle reads as a broken key:\n%s", want, body)
+		}
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil {
+		t.Fatalf("rec = %+v, halt = %+v: a run nothing can serve stops", rec, rec.Halt)
+	}
+	if rec.Halt.Reason != runstore.HaltBudgetUnavailable || rec.Halt.Scope != "run" {
+		t.Errorf("halt = %+v, want the budget_unavailable halt scoped to the run (D143)", rec.Halt)
+	}
+	if !strings.Contains(rec.Halt.Detail, "no_candidate_credentials") || !strings.Contains(rec.Halt.Detail, "holds no model credential") {
+		t.Errorf("the record's detail is %q, want the bundle cause named: the operator reads this, and an empty bundle is what an offboarding leaves behind", rec.Halt.Detail)
+	}
+	// The service was asked once and nothing was forwarded to a model: the
+	// refusal is the service's answer about itself, and a run that kept
+	// calling would spend the job's whole timeout on it.
+	if svc.count() != 0 {
+		t.Errorf("the stand-in settled %d calls, want none: no credential was selected for any of them", svc.count())
+	}
+	if n := b.fake.Count(); n != 1 {
+		t.Errorf("the credentials service was asked %d times, want the one call the gateway stopped on", n)
 	}
 }

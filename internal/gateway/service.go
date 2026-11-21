@@ -159,6 +159,22 @@ const (
 	// detail, which the agent reads: the set of the project's credentials is
 	// not the agent's business (D143).
 	ErrorNoCandidateCredentials = "no_candidate_credentials"
+	// ErrorRepositoryNotListed is the workspace's own refusal of a call from a
+	// repository its member row does not name (R19): the workspace's record of
+	// a job account carries the repositories that account serves (D2992, R6),
+	// and a run whose repository is not in that list cannot be served from the
+	// workspace's credentials at all. A refusal, so the run halts (D143), and
+	// the halt's detail names the workspace owner's own fix.
+	//
+	// It is written by the workspace's scope — the Scope C1 declares and
+	// internal/credsvc (WS2) implements, told apart from the member's own
+	// service by WorkspaceModeEnv and nothing else — and it is mirrored here
+	// the way every other type of this contract is, because this package
+	// cannot import the service's half (the header comment above says why). A
+	// scope that spelled it otherwise would halt a run with the
+	// unreadable-answer sentence instead of the one that names the fix, so
+	// TestAnUnlistedRepositoryHaltsNamingTheFix holds the spelling.
+	ErrorRepositoryNotListed = "repository_not_listed"
 )
 
 // Why a credential was not used, in a refusal's tried list
@@ -294,6 +310,11 @@ type ServiceAnswer struct {
 	// zero value: an exhausted answer carries no tier, and the credentials
 	// it names are in Tried.
 	Exhausted *Exhausted
+	// Unreachable, when set, is a call this gateway could not reach the
+	// service with at all (D2983): the call was not sent, and the one thing to
+	// do about it is wait for the service until the instant it names. Every
+	// other field is then the zero value.
+	Unreachable *Unreachable
 }
 
 // Exhausted is the service's typed exhausted answer (credsvc's
@@ -320,6 +341,51 @@ type Tried struct {
 	Reason string
 }
 
+// Unreachable is a call this gateway could not reach the service with at all
+// (D2983): no answer arrived, so nothing was refused and nothing was served.
+// It carries nothing the service said, because the service said nothing.
+//
+// It is not a halt: what the run does with it is wait, which is the mechanism
+// an exhausted answer uses (the runner ends the stage in flight, waits, and
+// resumes it). Its one figure is the instant the wait ends, which is this
+// package's own bound measured from the first call that could not reach the
+// service (serviceUnreachableBound); a call that meets the spent bound is what
+// halts the run, naming the service (stateDetailUnreachable or
+// stateDetailUnreachableWorkspace).
+type Unreachable struct {
+	// RetryAt is when this run stops waiting for the service: the first call
+	// that could not reach it, plus the bound. A call that meets a spent bound
+	// is the halt.
+	RetryAt time.Time
+	// Service is which credentials service could not be reached: "project's"
+	// or "workspace's". It is a fact about the route the run read at its start
+	// and not an address, and it is here so the runner's own log line and the
+	// run's record name the same service the halt names.
+	Service string
+}
+
+// The two services a call can be sent to, as the run's log and its halt name
+// them: which one a call went to is the route the run read at its start
+// (Options.ModelFromWorkspace), never an address.
+const (
+	serviceNameProject   = "project's credentials service"
+	serviceNameWorkspace = "workspace's credentials service"
+)
+
+// serviceCall reports whether this call is the credentials service's own, and
+// so is read, answered and halted the way a service call is: the service's
+// Messages path (no route at all beside a service upstream), and a SERVED
+// provider route, whose key is the service's too (Served, KS5, R1/R12).
+//
+// A route the job holds the key for beside a service upstream is not one of
+// these even though its kind's upstream is: it went to the provider's own
+// endpoint with the job's key (a switched api-key run, R6/D1634), so its
+// answer is the provider's, it is retried by this gateway, and a service
+// refusal is not something it can be given.
+func (s *Server) serviceCall(rt route) bool {
+	return s.o.Upstream.Kind == KindService && (rt.provider == nil || rt.provider.Served)
+}
+
 // serviceUpstream builds a service call's headers and credential: the model
 // request's own headers as the anthropic upstream would forward them, the
 // job service account's Google ID token as the bearer credential Cloud Run
@@ -331,15 +397,19 @@ type Tried struct {
 // job's own: validate refuses a service upstream that has one, and this
 // function writes only the two identities above — the agent's own headers,
 // the gateway token and every credential header Claude Code sent are already
-// gone from what forwardHeaders returns. A route is refused as well, on
-// oauthUpstream's reasoning: a route is a provider's own endpoint and is
-// reached with the provider's key, which a service run does not have. A
-// routed call never reaches this function at all — upstreamRequest returns
-// the provider's own request before the kind switch — and the check is kept
-// so a route handed to it in code cannot have a service call built for it
-// either.
+// gone from what forwardHeaders returns. A route the job holds the key for is
+// refused as well, on oauthUpstream's reasoning: such a route is a provider's
+// own endpoint and is reached with that key, which a cascade run does not
+// have. That call never reaches this function at all — upstreamRequest returns
+// the provider's own request before the kind switch — and the check is kept so
+// a route handed to it in code cannot have a service call built for it either.
+//
+// A SERVED route is the opposite case and does reach this function (KS5):
+// its key is the service's, so the call this builds is the call a routed
+// served call is made of — the two identities, and then the provider's name
+// on top, which upstreamRequest sets from the route (HeaderProvider).
 func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) (http.Header, error) {
-	if rt.provider != nil {
+	if rt.provider != nil && !rt.provider.Served {
 		return nil, errServiceOnRoute
 	}
 	sv := s.o.Upstream.Service
@@ -362,8 +432,12 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	// dropped for that same second reason: the agent runs inside the
 	// repository whose auth it is, so a mode or an account it wrote would
 	// read as the runner's statement about a repository it may not be in —
-	// what travels below is what the runner resolved for this run.
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount} {
+	// what travels below is what the runner resolved for this run. The
+	// provider's name (HeaderProvider) is dropped for it too: it is what
+	// decides which of the repository's keys the service serves a routed
+	// call with (R2, KS5), so it is set here from the route the gateway
+	// routed to and never taken from a header the agent wrote.
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount, HeaderProvider} {
 		h.Del(k)
 	}
 	h.Set("Authorization", "Bearer "+id)
@@ -504,16 +578,21 @@ const maxServiceAnswerBytes = 128 << 10
 // so a test can answer that question directly.
 var serviceCallClient = serviceUpstreamClient(upstreamClient(nil))
 
-// errServiceOnRoute is the refusal a service call gives a route offered to it,
-// from validateRoutes and from serviceUpstream. There is no cycle to break
-// here (a route's key would be the job's own credential, which a cascade run
-// does not have): it is refused by name so a misconfiguration says what it
-// is, and in both places so a Route built in code past validation cannot
-// reach a provider through a service run either. The one service upstream
-// that does have a key of its own is a switched api-key run's, whose routes
-// validateRoutes admits (B2.2, R6/D1634) — and whose routed calls the
-// upstream path never builds a service request for.
-var errServiceOnRoute = errors.New("a provider route is never reached through the credentials service: a route is a provider's own endpoint and is called with the job's own key, which a cascade run does not have (D143)")
+// errServiceOnRoute is the refusal a service call gives a route the job holds
+// the key for, from validateRoutes and from serviceUpstream. There is no cycle
+// to break here (such a route's key is the job's own credential, which a
+// cascade run does not have): it is refused by name so a misconfiguration says
+// what it is, and in both places so a Route built in code past validation
+// cannot reach a provider through a service run either. The one service
+// upstream that does hold provider keys is a switched api-key run's, whose
+// routes validateRoutes admits (B2.2, R6/D1634) — and whose routed calls the
+// upstream path still sends to the provider's own address.
+//
+// It is about the UNSERVED route, and that is what its sentence says (KS5): a
+// served route (Served) carries no key of the job's, and its call goes to the
+// service's provider route by design (R1, R12) — validateRoutes admits it
+// beside the service upstream and upstreamRequest builds its call there.
+var errServiceOnRoute = errors.New("a provider route the job holds a key for is never reached through the credentials service: such a route is a provider's own endpoint and is called with the job's own key, which a cascade run does not have (D143)")
 
 // errServiceUnidentified is every way a service call fails before it is sent
 // for want of an identity: the run's own token, or the job's Google ID token,
@@ -869,6 +948,20 @@ func exhaustedAnswer(e serviceRefusal) (Exhausted, error) {
 // write) halts the run rather than settling by a guess. A token count is free
 // and settles nothing, and asks for nothing.
 //
+// servedRoute is an answer the service's provider route relayed from a
+// provider (KS5, R1/R12): this run's route is served, so the call went to the
+// service with the provider's name on it and what came back is the provider's
+// own answer — not the service's text about this job. Nothing in it is acted
+// on here except the contract's own typed refusals, which are the closed set
+// the switch below decides by; any other non-2xx answer is done false, so the
+// caller relays it exactly as it relays a provider's error on the path where
+// the job holds the key (providerError: the error type, and a sentence this
+// gateway writes — never a byte of the body, and an allow-list of headers).
+// The readings that are a Messages call's alone are skipped for it: the
+// platform's front-door 401/403 (stateDetailUnadmitted) would otherwise halt
+// the run for the provider's own moderation refusal or exhausted key, which
+// the mount path relays and another model or another call continues after.
+//
 // The probes the answer reports (HeaderProbe, C1.12) come back with the tier:
 // each one is a call the run paid for and settles the same way the call does,
 // by the tier it was made on (C1.16).
@@ -878,7 +971,8 @@ func exhaustedAnswer(e serviceRefusal) (Exhausted, error) {
 // today, and its body is put back on the response for the relay to stream. A
 // refusal is never relayed: it is fugaro's own answer, it names the project's
 // credentials, and the agent has no business seeing the set of them (D143).
-func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needTier bool) (status int, done bool, tier string, probed []string) {
+func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needTier, servedRoute bool) (status int, done bool, tier string, probed []string) {
+	s.noteServiceReached()
 	if resp.StatusCode/100 == 2 {
 		// The room the workspace's service has left arrives on the answer
 		// itself, so it is read here, before any of it reaches the agent
@@ -936,10 +1030,28 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 	haltOn := func(detail string) int { return s.haltServiceMarked(w, detail, wsRefusal) }
 	if rerr != nil {
 		// A body that broke mid-read, before any of it reached the agent:
-		// not a refusal this code can read, and not one to relay.
+		// not a refusal this code can read, and not one to relay. A served
+		// call's answer is the provider's whatever state it arrived in, and
+		// the relay below writes a sentence of this gateway's and the type
+		// the status implies, so nothing of it is lost by handing it on.
+		if servedRoute {
+			return resp.StatusCode, false, "", nil
+		}
 		return haltOn(stateDetailUnreadable), true, "", nil
 	}
 	e, ok, err := readServiceRefusal(resp.StatusCode, head)
+	if servedRoute && (!ok || err != nil) {
+		// Not this contract's refusal, on a call whose answer is the
+		// provider's: it is relayed rather than read. The two readings that
+		// follow this branch — the platform's front door on a 401 or 403,
+		// and a body that claims to be a refusal and is not one this release
+		// can read — belong to a Messages call, where the body really is the
+		// service's own about this job. A provider writes both shapes: a 403
+		// whose error is OpenRouter's own object is its moderation refusal,
+		// and a string error is its own text as well, and the mount path
+		// relays both without stopping the run.
+		return resp.StatusCode, false, "", nil
+	}
 	if !ok {
 		// Not this contract's refusal. A 401 or 403 that is not the model
 		// API's own envelope either is the platform's layer answering: Cloud
@@ -961,6 +1073,13 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// as it always did. The run is not stopped by it either: another
 		// credential, or a person, may be what fixes it.
 		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && !modelErrorEnvelope(head) {
+			// Which of the two services answered decides which grant the
+			// detail names: the member's own job on its own project's service,
+			// or the same job on the workspace's, where only the workspace
+			// owner's own `fugaro update` can grant it (R16).
+			if s.wsModel {
+				return haltOn(stateDetailUnadmittedWorkspace), true, "", nil
+			}
 			return haltOn(stateDetailUnadmitted), true, "", nil
 		}
 		return resp.StatusCode, false, "", nil // a model error the service relayed
@@ -1006,8 +1125,33 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// never reaches the agent (D143): without it the operator reads a
 		// detail about a broken service instead of the missing allow-list.
 		return haltOn(refusalDetail(e.Error)), true, "", nil
+	case ErrorRepositoryNotListed:
+		// R19: the workspace's scope, refusing a repository its own record of
+		// the calling job account does not name. The detail names the
+		// workspace owner's own step, as the platform's 403 above does and for
+		// the same reason: nothing on this side of the workspace can add a
+		// repository to that list.
+		return haltOn(refusalDetail(e.Error)), true, "", nil
 	case ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity:
 		return haltOn(refusalDetail(e.Error)), true, "", nil
+	case ErrorProviderNotServed, ErrorProviderNotAllowed:
+		// The provider route's own two refusals (C1, KS5): the service holds
+		// no key for this repository and this provider, or the published
+		// policy does not allow the call. Both halt the run (D143): this job
+		// carries R12's fact, which is the owner's own record that the keys
+		// are served, so an absent key there is a snapshot of the
+		// installation and not a state a run papers over with a mounted key
+		// -- and there is none mounted for a served route in any case.
+		return haltOn(refusalDetail(e.Error)), true, "", nil
+	}
+	if servedRoute {
+		// A body that says it is a refusal and carries a type outside the
+		// closed set the switch above decides by: on a served call that is
+		// the provider's own answer — its error member is a string, or a
+		// shape of its own — and it is relayed as the mount path relays one,
+		// which keeps the type it reads and writes a sentence of this
+		// gateway's in place of the body.
+		return resp.StatusCode, false, "", nil
 	}
 	// A refusal whose type this release does not know. It is the service's
 	// own answer and is not relayed, and the call cannot be accounted for
@@ -1026,7 +1170,11 @@ type replayBody struct {
 // Detail is displayed to the agent in every later call's 403 and stored in
 // the run's record, and nothing the service sent is ever echoed into it.
 const (
-	// stateDetailUnreachable is a service this job could not reach.
+	// stateDetailUnreachable is the project's credentials service, which this
+	// job could not reach for the whole of the bound (D2983). It is the
+	// sentence a run of a repository whose model kind is served by its own
+	// project reads, and the one the live checklist reads for that case; the
+	// workspace's own is stateDetailUnreachableWorkspace below.
 	stateDetailUnreachable = "the credentials service could not be reached"
 	// stateDetailUnreadable is an answer this gateway could not read as the
 	// service's own, or could not account a call by.
@@ -1039,6 +1187,29 @@ const (
 	// identity on: the run's own token, or the Google ID token the metadata
 	// server mints. Nothing was sent.
 	stateDetailUnidentified = "this job could not present its identity to the credentials service (the metadata server or the run's own identity was not available)"
+	// stateDetailUnadmittedWorkspace is stateDetailUnadmitted for a run whose
+	// model calls go to the workspace's credentials service (R16): the
+	// platform's own front door refuses every call this job makes, which is a
+	// job the workspace has not granted run.invoker yet — the expected state of
+	// a member that has just added a repository, because its own `fugaro update`
+	// publishes the route that sends the repository here and the workspace
+	// owner's has not admitted the repository's job (F17). It is not waited for:
+	// every later call would be refused the same way. The sentence names the
+	// owner's step rather than the operator's own, because the member's operator
+	// cannot grant it: the workspace's project is not theirs.
+	stateDetailUnadmittedWorkspace = "the workspace's credentials service refused this job's call: this repository's job is not granted on it yet, and the workspace owner's own 'fugaro update' in the workspace's project is what grants it (nothing this run or its own repository's operator does reaches that project)"
+	// stateDetailUnreachableWorkspace is stateDetailUnreachable for a run whose
+	// model calls go to the workspace's credentials service (D2983, R16): the
+	// bound was spent without one answer from it. It names that service rather
+	// than "the credentials service" because the two are different projects
+	// with different owners, and a member's operator told only that "the
+	// credentials service" could not be reached would look at their own.
+	stateDetailUnreachableWorkspace = "the workspace's credentials service could not be reached"
+	// workspaceNotListedDetail is R19's halt: the workspace's scope refuses a
+	// repository its own record of the calling job account does not name. Like
+	// stateDetailUnadmittedWorkspace it names the workspace owner's own step,
+	// which is the one thing that adds a repository to that list.
+	workspaceNotListedDetail = "the workspace's credentials service does not serve this repository (repository_not_listed): the workspace's record of this job account does not name it, and the workspace owner's own 'fugaro update' in the workspace's project is what adds it"
 )
 
 // refusalDetail is the detail for a typed refusal the run cannot be served
@@ -1063,6 +1234,20 @@ func refusalDetail(typ string) string {
 		// does not claim that is the only one, because the same type answers
 		// for a server tool, an unbounded shape and a max_tokens bound.
 		return "the credentials service refused this request (request_refused: check the project's published budget.allowed_models and this call's model, tools and max_tokens)"
+	case ErrorProviderNotServed:
+		// The provider route's own refusal (C1, KS5), and the operator's two
+		// documents are named because the cause is one of two: an entry the
+		// bundle does not hold for this repository and provider, or one whose
+		// value the copy never wrote. Neither is a key's value and neither is
+		// a credential's name.
+		return "the credentials service holds no key for this repository's provider (provider_not_served: check the installation's bundle for this repository's provider entry and the copy's record, then run fugaro update)"
+	case ErrorProviderNotAllowed:
+		// The other one: the key is held and the published policy is what
+		// refuses the call (R11, D3003), so the reader is sent to the
+		// allowance and never to a key.
+		return "the credentials service refused this provider call (provider_not_allowed: check the project's published allowance and this repository's own admission)"
+	case ErrorRepositoryNotListed:
+		return workspaceNotListedDetail
 	}
 	return stateDetailUnreadable
 }
@@ -1177,17 +1362,103 @@ func (s *Server) haltServiceMarked(w http.ResponseWriter, detail, workspace stri
 	return http.StatusForbidden
 }
 
-// serviceUnreachable halts a run whose gateway could not reach the service at
-// all (D143), answering the call with the halt, and reports whether this is
-// the thing that stopped it: an external halt or a cancelled request came
-// first, and then the agent's answer is the one that cause wrote.
-func (s *Server) serviceUnreachable(w http.ResponseWriter, base, req context.Context) (halted bool) {
+// serviceUnreachable is what a call the gateway could not reach the service
+// with is answered with (D2983): the run waits for the service and retries, for
+// at most serviceUnreachableBound from the first call that could not reach it,
+// and a call that meets the spent bound halts the run with a reason that names
+// which service it was. It never reaches for a credential of the job's own —
+// there is none to reach for, and D143 is why there is none.
+//
+// The wait is the runner's, and its mechanism is the one an exhausted answer
+// already uses (C1.17): the Unreachable answer below ends the stage in flight
+// through the run's own hook, stage waits where the answer says and resumes the
+// stage's session, and that retry — not a second send here — is what makes the
+// outage survivable. Nothing in this package sends the call again: a service
+// that is not answering is not a failure a second send fixes, and holding the
+// agent's call for the whole bound would hold the run's own stage in a request
+// nobody can cancel.
+//
+// So the call itself is answered the way an exhausted one is — 503, retryable,
+// with no retry-after of its own, so the agent backs off by its own schedule
+// for the moment it takes the run to end the stage — and the run learns of the
+// wait on the same hook its typed answers arrive on.
+//
+// Which service is named is which upstream this gateway calls: a run whose
+// model kind is routed to the workspace has the workspace's upstream IN
+// Options.Upstream (Start, Options.ModelFromWorkspace), so wsModel is the whole
+// of the question and no address is compared here.
+//
+// It reports whether this call's answer is the gateway's own — the wait's 503
+// or the halt, both written here — which is what the caller returns on: an
+// external halt or a cancelled request came first, and then the agent's answer
+// is the one that cause wrote.
+func (s *Server) serviceUnreachable(w http.ResponseWriter, base, req context.Context) (answered bool) {
 	if req.Err() != nil || base.Err() != nil {
 		return false
 	}
-	s.haltService(w, stateDetailUnreachable)
+	detail, service := stateDetailUnreachable, serviceNameProject
+	if s.wsModel {
+		detail, service = stateDetailUnreachableWorkspace, serviceNameWorkspace
+	}
+	until := s.noteUnreachable()
+	if !time.Now().Before(until) {
+		s.haltService(w, detail)
+		return true
+	}
+	s.answer(ServiceAnswer{Unreachable: &Unreachable{RetryAt: until, Service: service}})
+	s.log.Warn("the credentials service could not be reached; the run waits for it",
+		"stage", s.stageName(), "service", service, "retry_at", until.UTC().Format(time.RFC3339))
+	writeError(w, http.StatusServiceUnavailable, "api_error",
+		"fugaro: the "+service+" could not be reached; the run waits for it until "+until.UTC().Format(time.RFC3339))
 	return true
 }
+
+// noteUnreachable records a call that could not reach the service and answers
+// when this run stops waiting for it: the first such call, plus
+// serviceUnreachableBound (D2983). The clock is the run's and not the call's,
+// so a stage that meets the same outage again — and a second call in the stage
+// that met it — waits for the outage to be over rather than for a fresh bound
+// of its own, and every answer that arrives clears it (serviceAnswer): one
+// answer means the service is back.
+//
+// The first call of an outage is the one that sets the bound, and the bound is
+// this run's own: it is not persisted and not written to the record, because a
+// run that is stopped and relanced is a run that starts its own.
+func (s *Server) noteUnreachable() time.Time {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.unreachableSince.IsZero() {
+		s.unreachableSince = now
+	}
+	return s.unreachableSince.Add(serviceUnreachableBound)
+}
+
+// noteServiceReached clears the outage clock: an answer of any kind — a served
+// call, a typed refusal, a model error the service relayed — is the service
+// being reachable, and the next call that cannot reach it starts a bound of its
+// own (D2983). It is called from serviceAnswer, the one place an answer of the
+// service's own is read.
+func (s *Server) noteServiceReached() {
+	s.mu.Lock()
+	s.unreachableSince = time.Time{}
+	s.mu.Unlock()
+}
+
+// serviceUnreachableBound is how long a run waits for a credentials service it
+// cannot reach before it halts, naming the service (D2983). One constant covers
+// both services — an outage is a fact about the service and not about the route
+// that met it — and it is the bound gitforward.go's own retry is to reuse when
+// WS18 lands, because the git paths have no stage to wait in and would otherwise
+// spend a second one.
+//
+// What it is chosen for: it rides out what a service actually does (a revision
+// rollout, a cold start, a scale-to-zero revision waking, IAM propagation on a
+// grant that just landed), which is seconds to a couple of minutes, and it is
+// short enough that a service that is really gone stops the run inside the job
+// rather than at its deadline. It is a var, like endStageWait and
+// upstreamRetryDelay, so the tests do not spend it.
+var serviceUnreachableBound = 5 * time.Minute
 
 // answer hands one service answer to the run's hook, if it has one.
 func (s *Server) answer(a ServiceAnswer) {

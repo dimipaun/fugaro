@@ -1,6 +1,7 @@
 package infra
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"slices"
@@ -119,6 +120,12 @@ type CatalogCheckRepository struct {
 	// installation cannot name, where no build of its entries is submitted at
 	// all (catalogCheckRepo's own refusals).
 	GitSecretID string `json:"git_secret_id,omitempty"`
+	// OwnGitSecretID is the repository's own container when it holds a live
+	// version and the plan names the project's copy above: a build resolves the
+	// own copy first, so the identity is granted it as well. A second grant and
+	// never a replacement of the first, which a managed project's deploy
+	// account could not apply without the owner's delete approval.
+	OwnGitSecretID string `json:"own_git_secret_id,omitempty"`
 }
 
 // CatalogCheckJobSpec is the document CatalogCheckSpecEnv carries: the whole
@@ -178,6 +185,10 @@ type CatalogCheckRepoSpec struct {
 	// the name it is given exists, so this is the repository's own first.
 	Workflow            string `json:"workflow"`
 	BuildServiceAccount string `json:"build_service_account"`
+	// grantedGitSecretID is the credential the build identity's grant names
+	// whether or not the repository's own copy won (see catalogCheckRepo); the
+	// job's wire format never carries it.
+	grantedGitSecretID string
 	// Entries are the catalog entries this repository builds: a
 	// Dockerfile-sourced one the repository its source names, an inline one the
 	// repository the project's map puts it on, and one whose repository this
@@ -209,7 +220,14 @@ type CatalogCheckRepoSpec struct {
 // this job (and its schedule) or leaves every entry of the project's catalog
 // exactly as it is.
 func CatalogCheck(lc *localcfg.Config, bucket string, paused bool, containers map[string]string) (*CatalogCheckSpec, error) {
-	cat, repos, err := catalogCheckFor(lc, containers)
+	return catalogCheckSpec(lc, bucket, paused, containers, nil)
+}
+
+// catalogCheckSpec is CatalogCheck with the repositories whose own provider
+// credential container holds a live version (LiveGitSecrets), which a build
+// resolves ahead of the project's copy and so the identity must be granted.
+func catalogCheckSpec(lc *localcfg.Config, bucket string, paused bool, containers map[string]string, own map[string]bool) (*CatalogCheckSpec, error) {
+	cat, repos, err := catalogCheckFor(lc, containers, own)
 	if err != nil {
 		return nil, err
 	}
@@ -296,9 +314,14 @@ func CatalogCheck(lc *localcfg.Config, bucket string, paused bool, containers ma
 		Repositories: make([]CatalogCheckRepository, 0, len(repos)),
 	}
 	for _, r := range repos {
+		own := ""
+		if r.GitSecretID != r.grantedGitSecretID {
+			own = r.GitSecretID
+		}
 		out.Repositories = append(out.Repositories, CatalogCheckRepository{
-			Slug:        r.Slug,
-			GitSecretID: r.GitSecretID,
+			OwnGitSecretID: own,
+			Slug:           r.Slug,
+			GitSecretID:    r.grantedGitSecretID,
 			RecordsCondition: Condition{
 				Title:      gcp.CatalogRecordsConditionTitle(r.Slug),
 				Expression: gcp.CatalogRecordsCondition(bucket, r.Slug),
@@ -317,7 +340,7 @@ func (s InstallationSpec) WithPlannedProjectSecrets(lc *localcfg.Config) (Instal
 	if s.CatalogCheck == nil {
 		return s, nil
 	}
-	cc, err := CatalogCheck(lc, s.RunsBucket, s.CatalogCheck.Paused, s.ProjectSecrets)
+	cc, err := catalogCheckSpec(lc, s.RunsBucket, s.CatalogCheck.Paused, s.ProjectSecrets, s.OwnGitSecrets)
 	if err != nil {
 		return s, err
 	}
@@ -325,16 +348,45 @@ func (s InstallationSpec) WithPlannedProjectSecrets(lc *localcfg.Config) (Instal
 	return s, nil
 }
 
+// LiveGitSecrets reports which of the catalog's repositories hold a live
+// version in their own provider-credential container, keyed by that
+// container's secret ID. A build resolves the repository's own copy first and
+// the project's only when it has none (resolveSecretID), so the build identity's
+// grant has to follow the same fact or a build reads a secret it cannot.
+func LiveGitSecrets(ctx context.Context, c *Clients, lc *localcfg.Config) (map[string]bool, error) {
+	repos, err := CatalogRepos(lc)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	tg := target{project: lc.GCPProject}
+	for _, r := range repos {
+		logical, ok := GitSecret(r.Provider)
+		if !ok {
+			continue
+		}
+		id := gcp.SecretID(r.Slug, logical)
+		has, err := hasEnabledVersion(ctx, c.Secrets, tg, id)
+		if err != nil {
+			return nil, err
+		}
+		if has {
+			out[id] = true
+		}
+	}
+	return out, nil
+}
+
 // catalogCheckFor is CatalogCheck's own head: the effective catalog and the
 // repositories its entries build in, both nil for a project with nothing to
 // check. CatalogBuilds asks it too, so the two can never disagree about
 // whether this installation's catalog is one it builds.
-func catalogCheckFor(lc *localcfg.Config, containers map[string]string) (*config.Catalog, []CatalogCheckRepoSpec, error) {
+func catalogCheckFor(lc *localcfg.Config, containers map[string]string, own map[string]bool) (*config.Catalog, []CatalogCheckRepoSpec, error) {
 	cat := lc.ImageCatalogEffective(nil)
 	if cat == nil {
 		return nil, nil, nil
 	}
-	repos, err := catalogCheckRepos(lc, cat, containers)
+	repos, err := catalogCheckRepos(lc, cat, containers, own)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -357,7 +409,7 @@ func catalogCheckFor(lc *localcfg.Config, containers map[string]string) (*config
 // refusal already, with the sentence that belongs to it, in the spec the run
 // builds before its first apply (CatalogCheck).
 func CatalogBuilds(lc *localcfg.Config) bool {
-	_, repos, err := catalogCheckFor(lc, nil)
+	_, repos, err := catalogCheckFor(lc, nil, nil)
 	return err == nil && len(repos) > 0
 }
 
@@ -396,7 +448,7 @@ func CatalogHasBuildEntries(lc *localcfg.Config) bool {
 // names the rest), so the two can never disagree about whose build account an
 // entry's build runs as.
 func CatalogRepos(lc *localcfg.Config) ([]CatalogCheckRepoSpec, error) {
-	_, repos, err := catalogCheckFor(lc, nil)
+	_, repos, err := catalogCheckFor(lc, nil, nil)
 	return repos, err
 }
 
@@ -416,7 +468,7 @@ func CatalogRepos(lc *localcfg.Config) ([]CatalogCheckRepoSpec, error) {
 // skips for: no provider kind the config names, no workflow to render the
 // smoke's spec for, no git credential for its provider, a GitHub repository
 // with no App ID, or a name no provider could address.
-func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog, containers map[string]string) ([]CatalogCheckRepoSpec, error) {
+func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog, containers map[string]string, own map[string]bool) ([]CatalogCheckRepoSpec, error) {
 	var out []CatalogCheckRepoSpec
 	// at resolves a canonical repository name to the repository that answers for
 	// it: the first of the sorted keys naming it that this installation can build
@@ -431,7 +483,7 @@ func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog, containers map[
 		if err != nil {
 			continue
 		}
-		r, ok, err := catalogCheckRepo(lc, name, containers)
+		r, ok, err := catalogCheckRepo(lc, name, containers, own)
 		if err != nil {
 			return nil, err
 		}
@@ -522,7 +574,7 @@ func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog, containers map[
 
 // catalogCheckRepo is one repository's part of the assignment, and whether this
 // installation can build its entries at all.
-func catalogCheckRepo(lc *localcfg.Config, name string, containers map[string]string) (CatalogCheckRepoSpec, bool, error) {
+func catalogCheckRepo(lc *localcfg.Config, name string, containers map[string]string, own map[string]bool) (CatalogCheckRepoSpec, bool, error) {
 	r := lc.Repos[name]
 	if !slices.Contains(config.Providers, r.Provider) || len(r.Workflows) == 0 {
 		return CatalogCheckRepoSpec{}, false, nil
@@ -570,16 +622,26 @@ func catalogCheckRepo(lc *localcfg.Config, name string, containers map[string]st
 	if containers == nil {
 		containers = projectSecretContainers(lc)
 	}
+	repoID := gcp.SecretID(slug, logical)
 	if projectID, ok := ProjectSecretCandidate(lc, logical, name); ok && containers[logical] == projectID {
 		id = projectID
 	} else {
-		id = gcp.SecretID(slug, logical)
+		id = repoID
+	}
+	// A repository's own container that holds a live version wins over the
+	// project's copy, as every live resolution decides it (resolveSecretID):
+	// the build reads that one. The planned copy keeps its grant (granted), so
+	// the plan only ever adds the second one.
+	granted := id
+	if own[repoID] {
+		id = repoID
 	}
 	branch, _ := config.EffectiveBaseBranch("", false, r.BaseBranch, lc.BaseBranch)
 	workflows := slices.Sorted(slices.Values(r.Workflows))
 	return CatalogCheckRepoSpec{
 		Repo: name, Slug: slug, Provider: r.Provider, RepoURL: url, BaseBranch: branch,
 		GitSecretID: id, GitUser: gitUser, GitHubAppID: r.GitHubAppID,
+		grantedGitSecretID:  granted,
 		Workflow:            workflows[0],
 		BuildServiceAccount: serviceAccountEmail(gcp.BuildServiceAccountID(slug), lc.GCPProject),
 	}, true, nil

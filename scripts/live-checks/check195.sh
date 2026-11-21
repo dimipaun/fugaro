@@ -408,7 +408,7 @@ guard_project() {
   # doctor would die on the broken pipe (141) and pipefail would stop the run
   # just the same.
   local doctor_out
-  doctor_out=$(fugaro doctor --project fugaro || true)
+  doctor_out=$(fugaro doctor --project fugaro --all || true)
   if ! printf '%s\n' "$doctor_out" | grep '^project: .*(GCP fugaro-dev,' >/dev/null; then
     stop "this is not the fugaro-dev installation: fugaro doctor --project fugaro printed no 'project: ... (GCP fugaro-dev,' line. Either this is not the fugaro-dev installation, or --project fugaro disagrees with this checkout's project:, or doctor itself failed (doctor is not offline: it needs usable credentials). Run 'fugaro doctor --project fugaro' here yourself and read its output before going on — this check runs on the sandbox installation only, never belong"
   fi
@@ -647,8 +647,21 @@ step_caller() {
 
   # The grant this check exists for: on the SERVICE, never on the project, and
   # read back from the service's own policy just below.
-  if ! gcloud run services add-iam-policy-binding "${SVC:?}" --project="${P:?}" --region="${L:?}" \
-    --member="serviceAccount:${CALLER_EMAIL}" --role=roles/run.invoker --quiet >&2 2>"$SCRATCH/invoker.err"; then
+  # A service account that was just created is not yet visible to every IAM
+  # front end: the grant answers "does not exist" for a few seconds. That answer
+  # is waited out and retried; any other refusal (a denied setIamPolicy) is not.
+  local grant_try=0 grant_ok=no
+  while [ "$grant_try" -lt 8 ]; do
+    grant_try=$((grant_try + 1))
+    if gcloud run services add-iam-policy-binding "${SVC:?}" --project="${P:?}" --region="${L:?}" \
+      --member="serviceAccount:${CALLER_EMAIL}" --role=roles/run.invoker --quiet >&2 2>"$SCRATCH/invoker.err"; then
+      grant_ok=yes
+      break
+    fi
+    grep -q 'does not exist' "$SCRATCH/invoker.err" || break
+    sleep_bg "${CHECK195_GRANT_RETRY_SECONDS:-5}"
+  done
+  if [ "$grant_ok" != yes ]; then
     fact invoker-grant FAIL "${CALLER_EMAIL} could not be granted roles/run.invoker on ${SVC}: $(last_lines "$SCRATCH/invoker.err")"
     stop "${CALLER_EMAIL} could not be granted roles/run.invoker on this check's own service ${SVC}, so the build's step would be refused at the front end and nothing about the grant could be measured. YOUR account needs run.services.setIamPolicy on it (an Owner has it). Nothing was built; the account and the service are deleted by this run's Restore"
   fi

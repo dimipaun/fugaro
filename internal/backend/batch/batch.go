@@ -48,7 +48,6 @@ import (
 	"net/http"
 	"path"
 	"regexp"
-	"sort"
 	"time"
 
 	batch "google.golang.org/api/batch/v1"
@@ -195,23 +194,73 @@ type Options struct {
 	// FUGARO_PROJECT, not the GCP project ID). A run's RequireProject check
 	// reads it, so a job that omits it fails closed on a VM.
 	FugaroProject string
+	// JobEnv is the installation's own values as the deployed job this run
+	// stands in for carries them -- the runs bucket, the budget backend, the
+	// credentials service's URL, the price tables, the caps and the rest --
+	// keyed by the environment variable's name (internal/infra's JobEnvNames
+	// is that key set). **BR8 fills a run's job from this** (env.go): a Batch
+	// job's variables are the run's whole environment, so these are written
+	// into the task's environment beside the identity entries, each reserved
+	// against the launch's own entries bar the credentials service's URL, which
+	// a switched launch is itself the writer of (env.go), and a run can write
+	// its results and open its session where it could not before (F8). Empty
+	// means the
+	// installation's values are not passed in, which is every launch today;
+	// the values are the launcher's to read, because a backend that read them
+	// itself would be the config layer this seam deliberately is not.
+	JobEnv map[string]string
 	// Image is the container image a run's job runs: the workflow's derived
 	// image. New refuses an empty one -- a job with no runnable image would
 	// be created and fail on the VM, after the launcher had reported it
 	// started. Task 7/8 resolve it per (slug, workflow); here it is one
 	// installation's.
 	Image string
-	// ServiceAccount is the email of the dedicated service account the job's
-	// VMs run as (design §3.2). New refuses an empty one and the default
-	// Compute Engine service account: that account is Editor, "not
-	// recommended for production", and shared with everything else in the
-	// project, so a run on it would hold far more than its own resources.
+	// ServiceAccount is the email of the dedicated service account an
+	// installation's block carries (design §3.2). New still refuses an empty
+	// one and the default Compute Engine service account: that account is
+	// Editor, "not recommended for production", and shared with everything
+	// else in the project, so a run on it would hold far more than its own
+	// resources. **No launch reads it for a job's identity any more** (BR10,
+	// D3103): a run's VMs run as the account of the deployed job it stands in
+	// for (account.go), and JobAccounts below is where those are named.
 	ServiceAccount string
+	// JobAccounts is the account each deployed job runs as, keyed by that
+	// job's own name -- gcp.JobName(slug, workflow) for a per-repository job,
+	// gcp.ProjectJobName(profile, provider, account) for a shared project
+	// job. **BR10 reads it** (account.go): a shared project job's name is
+	// written, never parsed (R2-5), so the (profile, provider, account) triple
+	// it hashes cannot be recovered and its account has to be named. A
+	// per-repository job's account is not in here: it is
+	// gcp.ServiceAccountID(slug, workflow) in this installation's project,
+	// which is what a launch derives when the job is not recorded (F11: the
+	// block's single account is not a job's to run under). **No caller fills
+	// it yet**, so a project job's launch is refused rather than run under the
+	// wrong identity (account.go): the launcher resolves which job a run lands
+	// on from the project's published policy, per launch, after this backend
+	// was opened -- so the account has to reach the launch through a field the
+	// launch carries, which is the contract change BR10 raises
+	// (`R-C1-project-job-account`). Empty costs a per-repository launch
+	// nothing, and it is the state every launch is in today.
+	JobAccounts map[string]string
 	// Secrets maps an environment variable name to a Secret Manager secret
-	// name -- never a value. They are sent as Environment.secretVariables,
-	// so the values never enter the job definition, which anyone with read
-	// access to the job can read (design §1.6, C10).
+	// name -- never a value. Nothing is mounted from it (BR11, D3104): a Batch
+	// job carries no secret, and a run's credentials come from the credentials
+	// service alone. The field stays because the block that carries it does
+	// (R10: a block mid-upgrade is read, not refused), and what it is read for
+	// is checkSecrets' shape check, which refuses a value that reached either
+	// slot of the map before anything is created (secrets.go, design §1.6, C10).
 	Secrets map[string]string
+	// SealKey is the installation's budget seal key as a sealed launch needs
+	// it (batch-run-identity R13, F3): the key version's name and that
+	// version's public key, exactly what `fugaro update` records in the
+	// installation's `batch:` block. The private half never leaves Cloud KMS
+	// and no launcher holds a grant on it, so the public key is all this
+	// carries. **BR1 fills this in and BR1 alone reads it** (seal.go): where
+	// it names no key the launch is refused with `fugaro update` as its fix,
+	// and where it does the seal key is wrapped to it and the plain key is
+	// never a job's variable. Zero means the block names no key, which is the
+	// state every installation is in until the update that writes one has run.
+	SealKey SealKey
 	// MachineType is the Compute Engine machine type a run's VM is (design
 	// §1.3, §4.3). It sets the job's computeResource and the machine type
 	// Execution reports, and its quantities are what the run's compute cost
@@ -351,71 +400,6 @@ func checkServiceAccount(email string) error {
 		return errors.New("the Batch backend needs the dedicated service account's email: left unset, Batch runs the job's VMs as the default Compute Engine service account, which is Editor on the project")
 	case defaultComputeServiceAccountRE.MatchString(email):
 		return fmt.Errorf("the Batch backend must not run a job's VMs as the default Compute Engine service account (%s): use the repository's dedicated account", email)
-	}
-	return nil
-}
-
-// envNameRE is what an environment variable name looks like: the form every
-// container runtime accepts, and therefore the form Options.Secrets' keys must
-// have.
-var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-// secretNameRE is what Options.Secrets' values must look like: a Secret
-// Manager secret's resource name, with or without an explicit version. The
-// version is optional because Batch accepts the name and resolves the latest
-// version on the VM, and an installation that wants a pinned version gets one
-// by naming it (design §1.6).
-var secretNameRE = regexp.MustCompile(`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/secrets/([A-Za-z0-9_-]{1,255})(/versions/([A-Za-z0-9_-]{1,255}))?$`)
-
-// checkSecrets refuses a Secrets map that could put a secret's VALUE into a
-// job definition. The job object is readable by anyone with batch.jobs.get,
-// and the whole point of the field is that the values never enter it (design
-// §1.6, C10): the map is environment variable NAME -> Secret Manager secret
-// NAME, and the VM resolves the names as the job's service account.
-//
-// Both halves are checked, because either can be misused to smuggle a value
-// in: a caller that passes a value where a name belongs, and a caller that
-// passes a value as the environment variable name. The check is here rather
-// than at the create so that an installation misconfigured once is refused at
-// startup, not at the first run that asked for a secret.
-//
-// **What the check can and cannot tell apart.** The value slot has a shape to
-// check -- a Secret Manager resource name is not a secret's value -- but the
-// key slot does not: an environment variable name and a secret's value can be
-// spelled identically. `AKIAIOSFODNN7EXAMPLE` is an AWS access key id and a
-// legal environment variable name; so is a GitHub token. So a key that passes
-// envNameRE **may still be a secret's value**, and nothing here can say which
-// it is. What this function refuses is the two shapes it can recognise: a
-// value passed as a key in a name-shaped spelling is accepted, reaches the job
-// as a `secretVariables` entry, and sets a variable the workflow never asked
-// for -- which is why the map is built by the config plumbing from the
-// installation's own configuration (Task 8) and never from anything a workflow
-// or a run can write.
-//
-// **Neither refusal repeats what it refused.** The key slot's refusal names
-// nothing, because a key that failed envNameRE may be a secret's value. The
-// value slot's refusal names the entry **by position** and not by its key, for
-// the same reason: the key is only *usually* the variable's name, so a caller
-// who put a value there (Secrets{"AKIAIOSFODNN7EXAMPLE": "AWS_ACCESS_KEY_ID"})
-// would otherwise have that value printed back at them. An error string is
-// written to terminals, logs and issue reports; it is never a place to print a
-// secret.
-func checkSecrets(secrets map[string]string) error {
-	keys := make([]string, 0, len(secrets))
-	for k := range secrets {
-		keys = append(keys, k)
-	}
-	// Sorted, so an installation with two bad entries reports the same one
-	// every time (a map's order is not one), and so an entry's position in the
-	// messages below is stable.
-	sort.Strings(keys)
-	for i, k := range keys {
-		if !envNameRE.MatchString(k) {
-			return errors.New(`an entry of the Batch backend's secrets has a key that is not an environment variable name: the map is variable name -> Secret Manager secret name, so each key is the variable's name ([A-Za-z_][A-Za-z0-9_]*). The refused key is not repeated here, because a secret's value is the one thing that must not be: if a value was passed as a key, this is where it stops, and this message is not the place to print it (design compute-backend.md §1.6, C10)`)
-		}
-		if !secretNameRE.MatchString(secrets[k]) {
-			return fmt.Errorf("entry %d of %d in the Batch backend's secrets is not a Secret Manager secret's resource name: it must be projects/<project>/secrets/<secret> or projects/<project>/secrets/<secret>/versions/<version>. The entry is named by its position and not by its key, because a key is only usually the variable's name: if a secret's value was passed on either side of the map, this message must not print it. A job carries names and never values (design compute-backend.md §1.6, C10)", i+1, len(keys))
-		}
 	}
 	return nil
 }

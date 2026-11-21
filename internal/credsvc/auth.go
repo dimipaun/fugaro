@@ -68,7 +68,7 @@ import (
 // The refusals. Each is a sentinel so a caller can answer the wire contract's
 // error type without reading a message: an unverified run identity, an
 // unverified caller, and state the service cannot read (which is a refusal
-// too — D143's "unreachable halts, never falls back").
+// too — D143's "unreachable waits, then halts, and never falls back").
 var (
 	// ErrUnverified is a run identity this service does not admit.
 	ErrUnverified = errors.New("credsvc: the run identity is not verified")

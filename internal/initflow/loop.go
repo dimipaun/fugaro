@@ -105,6 +105,28 @@ type Options struct {
 	// appear in any output, error or JSON; they are replaced before
 	// anything is recorded or printed.
 	Redact []string
+	// OnStep, OnStage and OnLeft, when set, are the run as it happens,
+	// handed to a caller that renders it while it goes rather than reading
+	// its result afterwards: the console's setup wizard spawns `fugaro
+	// setup --events` and draws each line as it arrives
+	// (docs/console-improvements ST2, D2904).
+	//
+	// OnStep is a stage the run has reached and is about to work on — the
+	// moment a line goes up for it — and it is the one fact the results
+	// cannot give a reader, because a stage's check is seconds and the
+	// apply behind it is minutes. OnStage is a stage the run settled, once
+	// per stage, with the state, the detail and the wait it settled in.
+	// OnLeft is a thing only the user can do, recorded where the run
+	// records it, with the step's own one line to run: a surface with no
+	// terminal hands it back rather than waiting for one.
+	//
+	// They are nil in every caller but that one, and a nil one changes
+	// nothing at all: what is handed out is what the run already records
+	// for --json, and no hook here is a step, a confirmation or a word the
+	// run would not otherwise take.
+	OnStep  func(stage string)
+	OnStage func(StageResult)
+	OnLeft  func(Left)
 }
 
 // StageResult is one stage's line in the result.
@@ -338,7 +360,48 @@ func (l *loop) left(stage string, lf Left, why string) Left {
 		lf.Why = why
 	}
 	lf.one(l.redact, l.redactAll)
+	l.emitLeft(lf)
 	return lf
+}
+
+// stepUp tells the caller's OnStep that the run has reached a stage and is
+// about to work on it: the moment a line goes up for it, and the one fact a
+// reader of the results cannot place afterwards, because a stage's check and
+// plan are seconds and the apply behind them is minutes.
+func (l *loop) stepUp(stage string) {
+	if l.o.OnStep != nil {
+		l.o.OnStep(stage)
+	}
+}
+
+// emitStage hands a settled stage to the caller's OnStage. It is called where
+// the run's own result is built — the execution pass (record, which a failure
+// enters through fail), and the preview of a plan-only run, which is that
+// run's whole account — so what a caller rendering the run sees is the run,
+// and never the review screen an applying run throws away.
+//
+// The guard is the one emitLeft carries and it is load-bearing: an applying
+// run's preview records the stage a failed check stopped at (fail), and the
+// execution pass behind it resets that result and records the stage again, so
+// without it a caller is handed the same stage twice — a `stage ... failed`
+// line from the throwaway pass, ahead of the step line of the run's own pass,
+// and then that stage again where converge records it.
+func (l *loop) emitStage(r StageResult) {
+	if l.o.OnStage == nil || !(l.executing || l.o.PlanOnly) {
+		return
+	}
+	l.o.OnStage(r)
+}
+
+// emitLeft hands a step only the user can do to the caller's OnLeft, and it is
+// the same rule as emitStage's: the preview of an applying run records lefts
+// for the review screen and drops them when the execution pass starts, so a
+// caller is handed the ones the run keeps and not the ones the screen showed.
+func (l *loop) emitLeft(lf Left) {
+	if l.o.OnLeft == nil || !(l.executing || l.o.PlanOnly) {
+		return
+	}
+	l.o.OnLeft(lf)
 }
 
 // preview checks every stage (read-only) and, in a plan-only run, plans the
@@ -430,6 +493,14 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 			}
 		}
 		l.res.Stages = append(l.res.Stages, r)
+		if l.o.PlanOnly {
+			// A plan-only run's preview IS the run: it applies nothing, so
+			// the stages settled here are the ones it reports, and a caller
+			// rendering it as it goes sees each one as its check comes back.
+			// An applying run's rows are the review screen instead, and the
+			// execution pass behind them owns the account (see below).
+			l.emitStage(r)
+		}
 	}
 	if !l.o.PlanOnly {
 		l.view(l.res.Stages)
@@ -595,6 +666,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		l.pastStops(s, name, stops)
 		// The line in flight goes up before the stage is looked at: its check
 		// and its plan are seconds, and the apply behind them is minutes.
+		l.stepUp(name)
 		l.openStep(name)
 		if l.cancelled(ctx, name) {
 			return nil
@@ -866,6 +938,7 @@ func (l *loop) record(r StageResult) {
 		}
 	}
 	l.res.Stages = append(l.res.Stages, r)
+	l.emitStage(r)
 	if l.o.Report == nil || !l.executing {
 		return
 	}

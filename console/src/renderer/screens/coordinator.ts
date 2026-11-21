@@ -72,6 +72,7 @@ import type {
   CoordinatorStatusView,
   Decoded,
   PlanStatusView,
+  RunsListRow,
   RunsSummaryView,
 } from '../../shared/schema'
 import { MICROS_PER_USD, capsAtCap } from './spend'
@@ -1106,6 +1107,15 @@ export interface CoordinatorModel {
  */
 export interface CoordinatorInputs {
   readonly view: CoordinatorStatusView | null
+  /** `runsWhole` is whether the read these rows came from has **ended**. The
+   * queue is the one part of the screen written in two shapes: `runs ls --json`
+   * whole, or `runs.stream`'s rows as they arrive (RS2), where `runs` is the
+   * rows read so far and the read is still going. A list still arriving is not a
+   * whole queue, and the head's sentence for an empty one is held to a read that
+   * ended (`queueWhole` below) -- so a caller drawing a stream passes `false`
+   * until the feed's `end` line lands, and every caller whose list arrived in
+   * one answer leaves it out. */
+  readonly runsWhole?: boolean
   readonly runs: readonly CoordinatorRunRow[] | null
   readonly plans: PlanStatusView | null
   readonly caps: SpendCaps | null
@@ -1155,8 +1165,29 @@ function textAt(raw: unknown): string | null {
 export function queueRuns(document: unknown): Decoded<readonly CoordinatorRunRow[]> {
   const decoded = decodeRunsList(document)
   if (!decoded.ok) return decoded
+  return { ok: true, value: waitingRuns(decoded.value.runs) }
+}
+
+/**
+ * waitingRuns is the queue's selection out of rows the console has **already
+ * decoded**: the two grounds D810 names, row by row, and the six members the
+ * queue draws.
+ *
+ * **It exists so the two reads of the same list cannot draw two different
+ * queues.** `queueRuns` is this function applied to a whole document, and the
+ * streamed read (`runs.stream`, RS2) holds rows the contract decoded with
+ * `decodeRunsList` and needs the queue's own filter over them: a stream that
+ * drew every row the CLI printed beside a fallback that drew only the waiting
+ * ones would be the same screen showing two different lists, which is exactly
+ * what the console's one-reader-per-document rule refuses.
+ *
+ * There is no skew to answer here. The contract decodes a feed's rows before
+ * this sees them, and a row it will not decode refuses the feed whole, so this
+ * half is total where the document read can still refuse.
+ */
+export function waitingRuns(rows: readonly RunsListRow[]): readonly CoordinatorRunRow[] {
   const waiting: CoordinatorRunRow[] = []
-  for (const row of decoded.value.runs) {
+  for (const row of rows) {
     if (!row.halted && !(row.terminal && row.status !== 'succeeded')) continue
     waiting.push({
       repo: row.repo,
@@ -1167,7 +1198,7 @@ export function queueRuns(document: unknown): Decoded<readonly CoordinatorRunRow
       halted: row.halted,
     })
   }
-  return { ok: true, value: waiting }
+  return waiting
 }
 
 /**
@@ -1659,7 +1690,7 @@ export function buildCoordinatorModel(inputs: CoordinatorInputs): CoordinatorMod
         : budgetQueuePart(caps),
   }
   const counted = document !== null && plans !== null && caps !== null
-  const whole = counted && inputs.runs !== null
+  const whole = counted && inputs.runs !== null && inputs.runsWhole !== false
   const drawn = (['document', 'runs', 'plans', 'budget'] as const).reduce(
     (total, source) => total + (queue[source]?.items.length ?? 0),
     0,

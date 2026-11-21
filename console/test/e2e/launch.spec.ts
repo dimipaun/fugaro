@@ -330,7 +330,9 @@ async function doubleAnswer(confirm: Page): Promise<void> {
   const late = await swallowClosedPage(
     confirm.evaluate(
       async ({ key, closed }) => {
-        const bridge = (window as unknown as Record<string, { answer: (yes: boolean) => Promise<unknown> }>)[key]
+        const bridge = (
+          window as unknown as Record<string, { answer: (answer: { answer: 'yes' }) => Promise<unknown> }>
+        )[key]
         if (bridge === undefined) throw new Error('the confirmation document has no bridge')
         // Held in an object because the assignment is made in a callback this
         // loop does not await, which a `let` would not be read back with.
@@ -351,8 +353,8 @@ async function doubleAnswer(confirm: Page): Promise<void> {
           return true
         }
         for (let attempt = 0; attempt < 200; attempt += 1) {
-          const first = bridge.answer(true)
-          const second = bridge.answer(true)
+          const first = bridge.answer({ answer: 'yes' })
+          const second = bridge.answer({ answer: 'yes' })
           // The second answer is the one this loop does not follow: its reply is
           // a refusal the main process sends to a window that is going away.
           // The swallow is written out here rather than called: this function
@@ -436,9 +438,9 @@ async function confirmWhenReady(confirm: Page): Promise<void> {
  *
  * One main-process evaluation does both halves: it emits the window's own
  * `focus` (which is the event the delay is measured from, and a re-focus starts
- * it over) and then runs the window's page's own `answer(true)`, so the yes
- * arrives a renderer round trip after the delay was reset and inside it by
- * construction -- no timer of this spec's stands between the two. Emitting
+ * it over) and then runs the window's page's own `answer({ answer: 'yes' })`, so
+ * the yes arrives a renderer round trip after the delay was reset and inside it
+ * by construction -- no timer of this spec's stands between the two. Emitting
  * `focus` is what a spec has instead of a window manager: the shipped path is
  * Electron's own event for a window that has taken the keyboard, and rule 11's
  * readiness question is about the delay, not about who raised it.
@@ -451,7 +453,7 @@ function answerEarly(app: ElectronApplication): Promise<{ ok: boolean; reason?: 
       target.emit('focus')
       return (await target.webContents.executeJavaScript(source.expression)) as { ok: boolean; reason?: string }
     },
-    { title: CONFIRM_WINDOW_TITLE, expression: `window.${CONFIRM_BRIDGE_KEY}.answer(true)` },
+    { title: CONFIRM_WINDOW_TITLE, expression: `window.${CONFIRM_BRIDGE_KEY}.answer({ answer: 'yes' })` },
   )
 }
 

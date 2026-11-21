@@ -312,7 +312,7 @@ func shortFormClaims(root *cobra.Command, text string) (claims, unreadable []str
 func shortIDRuleTexts(t *testing.T) map[string]string {
 	t.Helper()
 	out := map[string]string{
-		"the job prompt": runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}, ""),
+		"the job prompt": runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}, "", ""),
 	}
 	for path, text := range skillTexts(t) {
 		out[path] = text

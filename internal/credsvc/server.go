@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -262,7 +263,11 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
+	case MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
+		return true
+	// The five identity routes (C1, R2): a run's identity is issued here, with
+	// every one of them answered ahead of the shared parse below.
+	case identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath, identitywire.DevicePath, identitywire.ProbePath:
 		return true
 	}
 	return false
@@ -660,7 +665,9 @@ type Config struct {
 	AuditLog slog.Handler
 	// JobAccounts binds a job service account to the repository whose runs
 	// are launched as it. It is the table the run-to-job binding is checked
-	// against (N1), so an empty one refuses every call.
+	// against (N1), so an empty one leaves the deployment's own scope with
+	// nothing to bind — which NewServer refuses unless the deployment handed in
+	// a resolver of its own (Resolver), whose binding is its own.
 	JobAccounts []JobAccount
 	// ReviewAccounts are the installation's review jobs (C3.9a): the same rows
 	// AuthConfig.ReviewJobAccounts holds, and the reason they are here as well
@@ -713,6 +720,16 @@ type Config struct {
 	// and a workspace's scope answers its own for the routes it serves
 	// (scope_workspace.go, WS2). The field is how a workspace's deployment is
 	// built without a second Server (WS5).
+	//
+	// Identity is the identity configuration the five identity routes are
+	// served from (C1, R2; identity_config.go). Its zero value is an
+	// installation not yet given an issuer, and the routes answer the
+	// contract's "not served" on it (R7) — this release mounts them in every
+	// service so that a launcher can ask and be told, rather than asking a
+	// service that does not know the path. `credentials serve` reads it out of
+	// the environment (LM22) and wires the issuer in (I1); no caller, no record
+	// and no policy can set any of it.
+	Identity IdentityConfig
 	Resolver ScopeResolver
 }
 
@@ -1010,7 +1027,24 @@ func NewServer(cfg Config) (*Server, error) {
 		// service whose every issuance and every mint would refuse.
 		return nil, errors.New("credsvc: the service has no audit handler, so it cannot record a probe and a backed-off credential could never come back")
 	}
-	if len(cfg.JobAccounts) == 0 {
+	if len(cfg.JobAccounts) == 0 && cfg.Resolver == nil {
+		// The table is the INSTALLATION's binding (N1): it is what
+		// installationResolver pairs a caller's verified account with, so an
+		// empty one leaves the deployment's own scope with nothing to bind — and
+		// a deployment that admits nobody is one an operator would read as
+		// healthy while every run halted (D143). A deployment that hands in a
+		// resolver of its own binds its runs through that resolver instead: a
+		// workspace's scope takes the calling account's member and repositories
+		// from the published node (scope_workspace.go, C3), which is also the
+		// only place they can come from, because the workspace's container
+		// carries no job document and sets no FUGARO_JOB_ACCOUNTS
+		// (internal/infra/tf's WorkspaceServiceEnv, WS6). THIS TABLE is not what
+		// admits a caller there and its emptiness is not an admission: the
+		// resolver's own front door is the workspace's verifier, and a caller it
+		// does not admit is refused before any handler runs, while the handlers
+		// that verify their caller themselves read cfg.Auth above, whose table is
+		// the node's member accounts. Neither is this table, and a deployment
+		// that handed none in admits nobody here.
 		return nil, errors.New("credsvc: the service has no job accounts, so it can bind no run to a repository")
 	}
 	if len(cfg.ReviewAccounts) > 0 && len(cfg.Repos) == 0 {
@@ -1181,7 +1215,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+" and "+BuildCredentialsPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+" and "+identitywire.ProbePath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	// The scope this call is served under (R1, C1), asked once and before any
@@ -1346,6 +1380,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.slipGrant(ctx, w, r)
 		return
 	}
+	if _, isIdentity := identitywire.RouteFor(r.URL.Path); isIdentity {
+		// The five identity routes (C1, R2), answered before the shared parse
+		// for the slip's grant reason and not a new one: their caller holds no
+		// run identity — a ticket is asked for before the run exists, and a
+		// claim is the run's own first call — so RequestFromHTTP would refuse
+		// the call for the missing identity headers before the class ever read
+		// its token. What replaces the parse is each route's own read: the
+		// caller's Google ID token off the Authorization bearer (the roster
+		// class the slip's grant already uses) and its own body, read strictly
+		// (identitywire.DecodeStrict).
+		//
+		// It is one door and not five because what is behind it is the issuer's
+		// own handler, which reads the class and the body off the route itself;
+		// until that is wired in (I1) every one of them answers the contract's
+		// "not served" (R7), which is the answer the CLI of this release bridges
+		// on.
+		s.identityRoute(ctx, w, r)
+		return
+	}
 	// The caller this call was resolved as (the resolver's own work: the two
 	// identities verified, the pairing made). A route below this line is one the
 	// shared parse answers, so a scope that named no caller here is a resolver
@@ -1481,13 +1534,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// nothing below it is: the run identity and the job's own token have
 		// been verified, the binding between them has been made — which is what
 		// fixes the repository the token is scoped to — and the operator's stop
-		// flag has been read, so a stopped service mints nothing. It reads the
-		// bundle itself, because the App key is in it, and it reads no policy
-		// of its own and consults no cascade: an installation token is not a
-		// model credential and no tier has anything to say about it. The one
-		// policy this route is held to was read by the pairing above, and only
-		// for a shared caller (pairShared): the project's answer for the calling
-		// job's profile is what says that repository may be served, and the mint
+		// flag has been read, so a stopped service mints nothing. The handler
+		// reads that repository back out of the SCOPE rather than being handed
+		// the row resolved here (WS17): the table is the scope's answer for this
+		// caller, and a workspace's holds the calling job account's own
+		// repositories and no other member's. It reads the bundle itself,
+		// because the App key is in it, and it reads no policy of its own and
+		// consults no cascade: an installation token is not a model credential
+		// and no tier has anything to say about it. The one policy this route
+		// is held to was read by the pairing above, and only for a shared
+		// caller (pairShared): the project's answer for the calling job's
+		// profile is what says that repository may be served, and the mint
 		// reads no policy here because the gate belongs to the class's binding
 		// rather than to the route.
 		//
@@ -1497,7 +1554,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// review is about. The pairing above already refused a review identity
 		// of any other shape, so a coding run launched into the review job never
 		// reaches a mint at all.
-		s.mint(ctx, w, r, id, s.jobRow(id, canonical))
+		s.mint(ctx, w, r, id)
 		return
 	}
 	if r.URL.Path == ContextTokenPath {
@@ -1519,12 +1576,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// identity gains nothing beyond its launch.
 		//
 		// It reads the bundle itself, because the App key is in it, and it reads
-		// the project's published policy for the allow-list that admits each
-		// context repository — the same list the launcher admitted them against,
-		// re-read here so `fugaro project repos rm` narrows a run's reach from
-		// the next call on. It consults no cascade and no budget: an installation
-		// token is not a model credential and no tier has anything to say about
-		// it.
+		// the allow-list that admits each context repository out of the calling
+		// SCOPE's policy (WS17) — the installation's own store for an
+		// installation, the member's project for a workspace — the same list the
+		// launcher admitted them against, re-read here so `fugaro project repos
+		// rm` narrows a run's reach from the next call on. It consults no cascade
+		// and no budget: an installation token is not a model credential and no
+		// tier has anything to say about it.
 		s.contextTokens(ctx, w, r, id)
 		return
 	}
@@ -1588,6 +1646,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.bitbucketProxy(ctx, w, r, id, canonical)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, ProviderRoutePrefix) {
+		// The provider route (C1, R11, KS4). Everything above it is its
+		// admission and nothing below it is: the two identities have been
+		// verified, the pairing has fixed the repository this call is a run of,
+		// the operator's stop switches have been read, so a stopped service
+		// serves no provider call, and the slip rule has been applied — a named
+		// provider entry is a bundle key and not one of the grammar's names, so
+		// no slip fences it (slipRequiresSlip). What it reads is the provider's
+		// name off the call, the project's published policy and the bundle entry
+		// the run's own VERIFIED repository and that name derive, and what rules
+		// its call is judged by are the policy's — the block must name the
+		// provider, the provider must claim the model, and the gateway's own
+		// request check is applied over the policy's routes — rather than the
+		// cascade's. The handler reads the scope itself (scopeOfCall), so the
+		// caller is held to the state and the policy of the deployment that
+		// answered it, exactly as the cascade's own handlers are.
+		s.providerCall(ctx, w, r, id, purpose, req)
+		return
+	}
 	// The project's policy, and the request itself, are read before the bundle:
 	// the request's check needs the policy's allow-list, and neither is a
 	// credential. A request the gateway's own rules refuse is answered here —
@@ -1625,7 +1702,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.refuseCall(ctx, w, id, purpose, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+noAllowList)
 			return
 		}
-		refusal, err := s.requestRefusal(shared, cl.body)
+		// The pin is the project's allow-list and there are no routes: this
+		// path forwards to the Anthropic upstream, where an accepted call goes
+		// whatever its model is called, so the two rules that are about a
+		// provider route have no call to be about here (requestRefusal). The
+		// provider route's own path passes both, with the policy's providers as
+		// its routes (providerCall).
+		refusal, err := s.requestRefusal(shared, cl.body, requestPin(shared), nil)
 		if err != nil {
 			// The project's own prices could not be read: a state the caller
 			// cannot fix, and never a refusal of what it sent. The read is

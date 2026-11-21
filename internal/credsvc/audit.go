@@ -608,19 +608,27 @@ const StatusOK = "ok"
 // (exhausted, broken, not_admitted, stopped) and its error types say why the
 // call itself was refused (exhausted_until, unverified_run_identity,
 // unverified_job_identity, state_unavailable, request_refused,
-// no_candidate_credentials, issue_gone).
+// no_candidate_credentials, issue_gone, no_read_consumer,
+// provider_not_served, provider_not_allowed).
 func ValidStatus(status string) bool {
 	return status == StatusOK || ValidReason(status) || validErrorType(status)
 }
 
 // validErrorType reports whether s is one of the refusal body's error types
-// (wire.go). It is the reader's half of a closed set the writer already owns —
-// all seven of them, the request-shape refusal included: the answer path
-// records that refusal like the rest (server.go), so this set is the wire's own
-// vocabulary and not a subset of what this service happens to answer today.
+// (wire.go, provider_wire.go). It is the reader's half of a closed set the
+// writer already owns — all ten of them, the request-shape refusal included:
+// the answer path records that refusal like the rest (server.go), so this set is
+// the wire's own vocabulary and not a subset of what this service happens to
+// answer today.
+//
+// The provider route's two are here for that reason and not because a path
+// answers them today: a set that stopped at the eight would leave a refusal of
+// either — a routed call the published policy does not allow, and one no bundle
+// entry serves (KS4, R11) — with NO line at all, which is the one state the
+// audit contract does not have.
 func validErrorType(s string) bool {
 	switch s {
-	case ErrorExhaustedUntil, ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity, ErrorStateUnavailable, ErrorRequestRefused, ErrorNoCandidateCredentials, ErrorIssueGone:
+	case ErrorExhaustedUntil, ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity, ErrorStateUnavailable, ErrorRequestRefused, ErrorNoCandidateCredentials, ErrorIssueGone, ErrorNoReadConsumer, ErrorProviderNotServed, ErrorProviderNotAllowed:
 		return true
 	}
 	return false

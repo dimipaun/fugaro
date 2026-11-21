@@ -88,6 +88,12 @@ type cloudRig struct {
 	// budget mode and the per-run cap (empty for none) the jobs are given.
 	// cap changes between runs, under mu.
 	gatewayUpstream, budgetMode, budgetCap string
+	// budget is the installation's budget database, which its local config
+	// names unless the test asked for none (noBudget). The jobs a launch
+	// starts are given it by the launcher, never by this rig: a container's
+	// own environment is Cloud Run's, and a database on a loopback address
+	// is refused there (internal/runner's BackendFromEnv).
+	budget *testutil.Budget
 
 	mu      sync.Mutex
 	calls   []gcpfake.RunCall
@@ -106,12 +112,17 @@ type rigOption func(r *cloudRig)
 // after another.
 func fixedWorkdir(r *cloudRig) { r.workdir = filepath.Join(r.dir, "work") }
 
+// noBudget is a rig whose installation's config names no budget database:
+// what every command of an installation that has never had the stage run
+// meets, and what a test of one of those answers asks for.
+func noBudget(r *cloudRig) { r.budget = testutil.NoBudget() }
+
 // newCloudRig sets up the fakes, the bucket and the local config. The
 // runner checks for the cancel marker every cancelPoll.
 func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, opts ...rigOption) *cloudRig {
 	t.Helper()
 	testutil.IsolateGit(t)
-	r := &cloudRig{t: t, fugaro: testutil.BuildFugaro(t), cancelPoll: cancelPoll, run: gcpfake.NewRun(t), logging: gcpfake.NewLogging(t)}
+	r := &cloudRig{t: t, fugaro: testutil.BuildFugaro(t), cancelPoll: cancelPoll, run: gcpfake.NewRun(t), logging: gcpfake.NewLogging(t), budget: testutil.NewBudget(t)}
 	// Start names executions in the job's own project and region, as
 	// Cloud Run does for a retried or duplicated execution.
 	r.run.Project, r.run.Region = cloudProject, cloudRegion
@@ -173,7 +184,7 @@ func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, op
 		t.Fatal(err)
 	}
 	cfg := "version: 1\nname: " + cloudProjectName + "\ngcp_project: " + cloudProject + "\nregion: " + cloudRegion + "\nruns_bucket: unused-bucket\n" +
-		"bucket_url: '" + r.bucket + "'\nuser: someone@example.com\n" +
+		"bucket_url: '" + r.bucket + "'\nuser: someone@example.com\n" + r.budget.ConfigBlock() +
 		"endpoints:\n  run: '" + r.run.URL + "/'\n  logging: '" + r.logging.URL + "/'\n  no_auth: true\n" +
 		"repos:\n  acme/app: { provider: " + cloudProvider + ", base_branch: main, workflows: [" + cloudWorkflow + "] }\n"
 	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {

@@ -143,6 +143,62 @@ func TestRecipesGuideNamesCommitReports(t *testing.T) {
 	}
 }
 
+// TestDocsRecipesGuideNamesByLevel: the level branch (LD9) has one home in
+// docs/recipes.md, section 1's key list, and the things a person has to learn
+// there are pinned here rather than left to the prose: which levels a
+// by_level: entry may name, that a level may vary nothing but roles, which
+// release's reader parses the key — and, the fact a person acts on, that no
+// run applies the block yet, so a recipe that writes it runs on its top-level
+// roles. The level list is held against recipe.LevelNames (the vocabulary the
+// parser accepts) and the release against levelRolesSince (the gate that
+// refuses a job image whose runner would die on the key at bootstrap), so the
+// page cannot drift from either the parser or the launch check.
+// The name carries Docs because that is the filter the repository's doc runs
+// use (CONTRIBUTING.md's census); the sibling pins in this file are older and
+// run only with the whole package.
+func TestDocsRecipesGuideNamesByLevel(t *testing.T) {
+	data, err := os.ReadFile("../../docs/recipes.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"`by_level`",
+		"its level's own share of the deployed cap, whatever the recipe says",
+		"No run applies the block yet",
+		"runs on its top-level `roles` at every level",
+		"is not a recipe key",
+		"remove by_level",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/recipes.md never says %q: section 1 is where a person learns what a by_level: entry may name and vary, and section 8 what it refuses (LD9)", want)
+		}
+	}
+	levels := "`" + strings.Join(recipe.LevelNames[:len(recipe.LevelNames)-1], "`, `") +
+		"` or `" + recipe.LevelNames[len(recipe.LevelNames)-1] + "`"
+	if !strings.Contains(doc, levels) {
+		t.Errorf("docs/recipes.md never lists the levels a by_level: entry may name as the parser knows them (%s)", levels)
+	}
+	if want := "The first release whose reader knows the key is " + levelRolesSince; !strings.Contains(doc, want) {
+		t.Errorf("docs/recipes.md never says %q: the page and the launch gate (levelRolesSince) have to move together", want)
+	}
+	// The refusal a level-conditioned budget gets is the parser's own wording,
+	// quoted in section 8 rather than paraphrased.
+	_, ps := recipe.Parse([]byte("version: 1\nname: x\nroles: { reviewer: coder }\nby_level: { critical: { cap: 1 } }\nsteps:\n  - review: {}\n"))
+	if len(ps) == 0 {
+		t.Fatal("a by_level entry that tries to set a budget is not refused")
+	}
+	msg := recipe.ProblemsText(ps)
+	for _, want := range []string{"a by_level entry can set roles only", "the cap a run gets is its level's own, and the loop's shape is the recipe's"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("the budget refusal inside by_level no longer says %q: %v", want, msg)
+		}
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/recipes.md never quotes the refusal's own words %q (section 8)", want)
+		}
+	}
+}
+
 // TestLaunchSkillAllowsReviewModeTaskText: the working skill's launch.md
 // guides the agent's own `fugaro run` invocations, so a wrong claim there
 // about review-only/pick taking "never a task description" (true once,
