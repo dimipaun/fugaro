@@ -251,6 +251,28 @@ func runWorkspaceProjectAdd(cmd *cobra.Command, project string, o *workspaceProj
 	return workspaceChain(cmd, lc, path, add.declaredFrom, add.declaredTo, workspaceDoor("project add"), workspaceOwnerHalf(), *o.member.noApply)
 }
 
+// readRoster is one read of the workspace's own roster node, decoded: the
+// picture this add judges against, and every round of the conditional write
+// below. It is one function because the two read the same document the same way
+// -- a read that FAILED is not an absent node (C1's own rule) and a node nobody
+// can decode is refused wherever it was read -- and the caller writes the
+// sentence for an absent node itself, because "not written yet" and "removed
+// under this writer" are the two states it can be absent in.
+func (a *workspaceProjectAdd) readRoster(ctx context.Context, store workspace.Store) (workspace.Revision, *workspace.Roster, bool, error) {
+	rev, raw, err := store.Read(ctx)
+	if err != nil {
+		return rev, nil, false, userErr("reading workspace %s's roster at %s: %v", safetext.Field(a.options.workspace), store.Path(), err)
+	}
+	if !rev.Found {
+		return rev, nil, false, nil
+	}
+	roster, err := workspace.DecodeRoster(raw)
+	if err != nil {
+		return rev, nil, false, userErr("workspace %s's roster at %s: %v", safetext.Field(a.options.workspace), store.Path(), err)
+	}
+	return rev, roster, true, nil
+}
+
 // read is everything the add reads before it writes anything: the workspace's
 // own roster (C1), the member's mirror and, where the workspace holds the member,
 // the member's roster and the live bindings its admins are trusted by (C2).
@@ -259,17 +281,13 @@ func (a *workspaceProjectAdd) read(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	rev, raw, err := store.Read(ctx)
+	_, roster, found, err := a.readRoster(ctx, store)
 	if err != nil {
-		return userErr("reading workspace %s's roster at %s: %v", safetext.Field(a.options.workspace), store.Path(), err)
+		return err
 	}
-	if !rev.Found {
+	if !found {
 		return userErr("workspace %s's roster at %s is not there yet, so there is nothing to adopt into: the workspace's own machinery writes the first one, with its mechanism and its first admin (R7). Nothing was written",
 			safetext.Field(a.options.workspace), store.Path())
-	}
-	roster, err := workspace.DecodeRoster(raw)
-	if err != nil {
-		return userErr("workspace %s's roster at %s: %v", safetext.Field(a.options.workspace), store.Path(), err)
 	}
 	a.roster = roster
 
@@ -513,16 +531,12 @@ func (a *workspaceProjectAdd) writeRoster(ctx context.Context) (*workspace.Roste
 		return nil, false, err
 	}
 	for attempt := 0; attempt < workspaceProjectAddAttempts; attempt++ {
-		rev, raw, err := store.Read(ctx)
+		rev, current, found, err := a.readRoster(ctx, store)
 		if err != nil {
-			return nil, false, userErr("reading workspace %s's roster at %s: %v", safetext.Field(a.options.workspace), store.Path(), err)
+			return nil, false, err
 		}
-		if !rev.Found {
+		if !found {
 			return nil, false, userErr("workspace %s's roster at %s is gone: it was there when this add read it, and this command writes nothing into a workspace that has none", safetext.Field(a.options.workspace), store.Path())
-		}
-		current, err := workspace.DecodeRoster(raw)
-		if err != nil {
-			return nil, false, userErr("workspace %s's roster at %s: %v", safetext.Field(a.options.workspace), store.Path(), err)
 		}
 		next, changed := a.mergeRoster(current)
 		if !changed {
