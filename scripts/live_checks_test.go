@@ -454,6 +454,22 @@ import (
 // calls that all went direct, a routed call nobody reported, an audit line
 // whose forward was denied, a run that never ends and a record that is another
 // run's, and says what the check charged the provider's reported cost against.
+// Check 740's fakes are a fake `fugaro` and a fake `gcloud` over one run that is
+// messaged while it is going: the fake `fugaro` answers `doctor --json`,
+// `version` and `tell --help`, launches the run the case's own document names,
+// walks `rows.1.json`, `rows.2.json` ... and stays on the last that exists (so a
+// case can drive both a run that reaches implement and ends and one that never
+// reaches implement at all), and prints the number each message took; the fake
+// `gcloud` serves the run's own record, the job and the account it really ran
+// as, the project's jobs, the Policy Troubleshooter's own answer and the
+// bucket's lifecycle configuration, each with a status the case can bend -- so a
+// case says what became of each message (the plain one delivered into a coder
+// stage; the `--now` one delivered with NO reason on its fate, which is the
+// runner's own statement that the stop found a quiet point and the same session
+// resumed, settling U2 and U3) and WHICH principal the troubleshooter was asked
+// about, and says that no message was sent into a stage that never ran. Every
+// case holds the same two things wherever it is about something else: a
+// message's own text never reaches the block, and no access token is asked for.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -540,6 +556,7 @@ var liveCheckScripts = []struct {
 	{"check50.sh", "check50_test.sh"},
 	{"check780.sh", "check780_test.sh"},
 	{"check781.sh", "check781_test.sh"},
+	{"check-740-run-messages.sh", "check-740-run-messages_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
@@ -604,7 +621,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 243 items on one runner (81 scripts, three shards each) and under
+// The suite is 249 items on one runner (83 scripts, three shards each) and under
 // a minute each; a split that dropped one, ran one twice or fell back to
 // everything would show up as a green run that tested less, which is the failure
 // this pins.
