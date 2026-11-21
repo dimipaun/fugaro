@@ -1412,7 +1412,10 @@ func onlyBudgetEnv(env map[string]string) map[string]string {
 
 // With the budget off the job gets no mode, but still the owner's cap and
 // price overrides: they are the ceiling a repository's committed policy is
-// clamped to (M9a.1; M9a dropped them when the mode was off).
+// clamped to (M9a.1; M9a dropped them when the mode was off). The run that
+// reads this environment is accounted for — from AB1a on a job that names no
+// mode is observe (D3009, R3), and its price table is built whatever the mode
+// is — with the owner's cap as the ceiling it runs on.
 func TestWorkflowEnvBudgetOff(t *testing.T) {
 	rs, err := Repo(budgetInputs(t, ""))
 	if err != nil {
@@ -1437,8 +1440,8 @@ func TestWorkflowEnvBudgetOff(t *testing.T) {
 				if _, ok := got[BudgetModeEnv]; ok || got[MaxRunUSDEnv] != "5" || got[ModelPricesEnv] == "" || len(got) != 2 {
 					t.Errorf("%s env = %v: want the cap and prices, no mode", w.Name, got)
 				}
-				if s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok }); err != nil || s.On() || s.Cap != 5_000_000 || s.Prices == nil {
-					t.Errorf("%s: SpendFromEnv = %+v, %v", w.Name, s, err)
+				if s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok }); err != nil || !s.On() || s.Cap != 5_000_000 || s.Prices == nil {
+					t.Errorf("%s: SpendFromEnv = %+v, %v; want the run accounted for on the owner's cap", w.Name, s, err)
 				}
 			}
 		})
@@ -1719,9 +1722,12 @@ func TestBudgetEnvWritesRTDBURLAndAPIKeyWhenFirebaseIsConfigured(t *testing.T) {
 }
 
 // With the budget off the job still learns where the database is — a policy
-// may exist and a run must be able to read it — but its budget is off: no
-// mode, and nothing that would turn the shared caps on.
-func TestBudgetEnvKeepsModeOff(t *testing.T) {
+// may exist and a run must be able to read it — and it names no mode. From
+// AB1a on the run that reads this environment is accounted for whatever the
+// mode says (D3009, R3): a job whose mode entry is missing is observe, so the
+// word an older config wrote no longer turns a run's accounting off, and what
+// the block names is the backend and, where it does, the cap.
+func TestBudgetEnvNamesTheBackendWhateverTheMode(t *testing.T) {
 	for name, block := range map[string]string{
 		"mode off":   "budget:\n  mode: off\n" + backendBlock + "  unreachable_grace: 90s\n",
 		"empty mode": "budget:\n  per_run_usd: 5\n" + backendBlock,
@@ -1740,8 +1746,8 @@ func TestBudgetEnvKeepsModeOff(t *testing.T) {
 			if w.Env[RTDBURLEnv] == "" || w.Env[FirebaseAPIKeyEnv] == "" {
 				t.Errorf("%s: %s = %v, want the backend's address and web key", name, w.Name, backendEnv(w.Env))
 			}
-			if s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok }); err != nil || s.On() {
-				t.Errorf("%s: %s: SpendFromEnv = %+v, %v; want the budget off", name, w.Name, s, err)
+			if s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok }); err != nil || !s.On() {
+				t.Errorf("%s: %s: SpendFromEnv = %+v, %v; want the run accounted for", name, w.Name, s, err)
 			}
 		}
 	}

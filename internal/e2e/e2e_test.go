@@ -65,19 +65,23 @@ type scenario struct {
 	script             string // fake claude script
 	fails              string // tests that fail
 	cancelOnAgentStart bool   // write the cancel marker once the agent has actually started
-	// noBudget builds this run as one whose job carries no database address:
-	// the state a run of an installation that has never had the budget stage
-	// run is in, and the one a test of that refusal asks for.
-	noBudget bool
 }
 
+// runScenario runs the scenarios below the way every one of them is meant: as
+// the CLI's local invocation (`--task-file`, D149), whose job carries no budget
+// database at all. That is the state a local run is in, and the one an
+// installation that has never had the budget stage gives its runs; from AB1a on
+// it is also the state a run may be accounted for nothing in, because a job
+// that names a database is a job whose launcher minted this run a token (the
+// launcher mints for every launch on an installation with a database, whatever
+// the mode: D11, AB4) and the run then opens a session against it. A harness
+// that names one without minting describes a launch no launcher makes, so these
+// scenarios ask for none; what a run does with a database is
+// runBudget's (budget_test.go), which plays the launcher and where the run
+// opens its session end to end.
 func runScenario(t *testing.T, sc scenario) result {
 	t.Helper()
 	testutil.IsolateGit(t)
-	budget := testutil.NewBudget(t)
-	if sc.noBudget {
-		budget = testutil.NoBudget()
-	}
 	files := testutil.FixtureFiles(t)
 	if sc.config != "" {
 		files["fugaro.yaml"] = sc.config
@@ -106,11 +110,11 @@ func runScenario(t *testing.T, sc scenario) result {
 		"--bucket", "file://"+bucket, "--task-file", taskFile,
 		"--workdir", filepath.Join(tmp, "work"), "--remote", remote, "--state-dir", filepath.Join(tmp, "state"),
 		"--provider", "fake", "--provider-state", providerState, "--claude", claude, "--cancel-poll", "100ms")
-	cmd.Env = append([]string{
+	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + tmp,
 		"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
 		"ANTHROPIC_API_KEY=test-key-1234", "FIXTURE_FAILS_FILE=" + failsFile, "UNDECLARED_SECRET=hunter2",
-	}, budget.Env()...)
+	}
 	// On timeout, SIGQUIT rather than kill outright: a Go binary dumps its
 	// goroutines to stderr (captured below) before exiting, so a real hang
 	// is diagnosable instead of just "the test timed out".

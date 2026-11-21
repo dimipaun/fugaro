@@ -4845,6 +4845,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateStopFraction(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// agent.workspace_beat is the same kind of break on workspaceBeatSince, in
+	// either file: the repository writes it in fugaro.yaml and the project in
+	// the layer file it publishes.
+	if err := r.gateWorkspaceBeat(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	// agent.triage is the same kind of break on triageSince, in the
 	// repository's own file alone: the key is InRepo, so no layer can carry
 	// it.
@@ -5529,6 +5535,28 @@ func (r *initRun) gateStopFraction(o *initOptions, repo string, lc *localcfg.Con
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseStopFractionSkew(repo, cfg.RepoStopFractionSet, cfg.Layer.SetsStopFraction(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateWorkspaceBeat is fugaro update --repo's gate for workspaceBeatSince:
+// refuseWorkspaceBeatSkew, with gateStopFraction's shape and for its reason.
+// Both files can write the key — the repository's agent.workspace_beat and the
+// project layer's defaults.agent.workspace_beat — and both are decoded with
+// KnownFields, so each is judged where it is set and the subject names it.
+//
+// Each half is the key being written rather than the value it holds
+// (gateSecurity's own reading): RepoWorkspaceBeatSet for the repository's file,
+// and the layer's own SetsWorkspaceBeat, which counts a key written as null —
+// SetsDefault would not, and the layer would then be converged onto an image
+// whose runner refuses it at bootstrap for every repository of the project.
+func (r *initRun) gateWorkspaceBeat(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseWorkspaceBeatSkew(repo, cfg.RepoWorkspaceBeatSet, cfg.Layer.SetsWorkspaceBeat(), lc.BaseImage(config.BaseKind), w)
 }
 
 // gateTriage is fugaro update --repo's gate for triageSince: refuseTriageSkew,

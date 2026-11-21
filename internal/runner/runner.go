@@ -397,6 +397,13 @@ type run struct {
 	// because the beat's own goroutine runs while the run goes on.
 	slip   *slipHold
 	slipMu sync.Mutex
+	// workspaceBeat is the keep-warm beat this run sends to its workspace's
+	// credentials service, or nil for a run whose route record serves no kind
+	// there, a run whose agent.workspace_beat is off, and a local run — which
+	// is not routed at all (WS13, R10). workspaceMu guards it, because the
+	// beat's own goroutine runs while the run goes on.
+	workspaceBeat *workspaceBeat
+	workspaceMu   sync.Mutex
 	// The gateway, when the budget is on for an api-key or vertex run, and
 	// what its stages cost; all guarded by mu. gwUsed is the money its calls
 	// settled -- the run's billed model spend -- and gwNotional is the tier-A
@@ -781,11 +788,12 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("panic: %v", p)
 		}
-		// First, on every path out of here: the keep-warm beat is the one
-		// goroutine of this run that is not waited for anywhere else, and a
+		// First, on every path out of here: the keep-warm beats are the two
+		// goroutines of this run that are not waited for anywhere else, and a
 		// request still in flight when the run ends is a request of a
-		// finished run (DS1.5).
+		// finished run (DS1.5, WS13's beat for the workspace's service).
 		r.stopSlipBeat()
+		r.stopWorkspaceBeat()
 		if errors.Is(err, ErrDuplicateExecution) || errors.Is(err, errOwnerUnknown) {
 			// Another execution owns this run, or may: its result.json and
 			// lock are not ours to touch.

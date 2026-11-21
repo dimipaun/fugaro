@@ -7161,6 +7161,7 @@
         "schemas/whoami.schema.json",
         "schemas/workspace-list.schema.json",
         "schemas/workspace-login.schema.json",
+        "schemas/workspace-users.schema.json",
         "scripts/**",
         "scripts/deploy-website.sh",
         "scripts/gen-price-catalog.sh",
