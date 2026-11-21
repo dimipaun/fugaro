@@ -1146,6 +1146,15 @@ func TestSetupPrintsWhereEachThingGoes(t *testing.T) {
 			if !strings.Contains(got, "the installation's own region: "+m.Region+" ") {
 				t.Errorf("the region itself is not the first line of the block:\n%s", got)
 			}
+			// The region line names only what follows the region itself, and
+			// the scheduler is not one of them: gcp.SchedulerRegion answers
+			// us-east4 for us-east5, the US default, so naming it there would
+			// be a fallback described as the region (F3).
+			line, _, _ := strings.Cut(strings.TrimPrefix(
+				got[strings.Index(got, whereEachThingGoesIntro)+len(whereEachThingGoesIntro):], "\n"), "\n")
+			if strings.Contains(line, "scheduler") {
+				t.Errorf("the region line claims the scheduler, whose region is not this one:\n%s", line)
+			}
 			// One line per row, and the reason — where there is one — under
 			// that line rather than in it: a reader has to be able to tell
 			// what is where from what is why.

@@ -454,10 +454,16 @@ const whereEachThingGoesIntro = "where each thing goes (the region above decides
 // (London, Zürich, anything but us-* and europe-*) is said to carry no promise,
 // which is what D3081 promises it: nothing is refused, and everything it falls
 // back to is on a line above.
+//
+// The scheduler is not one of the things that follow the region, and so is not
+// named among them: its own region is gcp.SchedulerRegion's answer, which for
+// the US default is us-east4 rather than us-east5 (F3), and R7's mapping has no
+// row for it to be read from. Saying nothing about it is better than saying
+// where it goes in a line that is the region's own.
 func (r *initRun) printWhereEachThingGoes() {
 	m := place.For(r.o.cloud.region)
 	fmt.Fprintf(r.w, "%s%s\n", r.o.programPrefix(), whereEachThingGoesIntro)
-	fmt.Fprintf(r.w, "  the installation's own region: %s (the jobs, the scheduler, the image registry and the runs bucket)\n", m.Region)
+	fmt.Fprintf(r.w, "  the installation's own region: %s (the jobs, the image registry and the runs bucket)\n", m.Region)
 	rows := []struct {
 		what string
 		loc  place.Location
