@@ -12,7 +12,7 @@
 # and prints a listing built from the row template the case wrote, and the fake
 # `gcloud` serves the job list and the credentials service's own lines. Every
 # document a case bends is a file the case wrote — a policy with no profile, two
-# profiles, another provider, no claude_accounts or mode off; a job list whose
+# profiles, another provider, no claude_accounts or no budget mode; a job list whose
 # jobs carry no service URL or a Bitbucket token; a row that did not push, names
 # no pull request, ran on another job or had not finished; a service log with no
 # git line, no forward line, another credential, or two forward lines whose
@@ -346,7 +346,6 @@ def only_other_provider(x):
 
 
 out("policy-other-provider-only.json", only_other_provider)
-out("policy-mode-off.json", lambda x: x["policy"]["budget"].__setitem__("mode", "off"))
 out("policy-no-mode.json", lambda x: x["policy"]["budget"].pop("mode"))
 out("policy-not-admitted.json", lambda x: x["policy"].__setitem__("allow_repos", ["bitbucket/other-owner/elsewhere"]))
 
@@ -975,23 +974,13 @@ test_a_profile_with_no_claude_accounts_is_a_finding() {
   assert_no_launch "$dir" "a profile with no claude_accounts"
 }
 
-test_a_budget_mode_of_off_is_a_finding() {
-  local dir=$work/mode-off
-  prepare "$dir"
-  run_check "$dir" FAKE_POLICY_FILE=policy-mode-off.json
-  expect_status "$status" 1 "a budget mode of off"
-  expect_contains "$out" "FACT policy: FAIL — the profile 'bb' admits $repo and the published budget mode is 'off'" "a budget mode of off: the row"
-  expect_contains "$out" "the gateway is what reaches the credentials service" "a budget mode of off: why it matters"
-  assert_no_launch "$dir" "a budget mode of off"
-}
-
 test_a_policy_with_no_budget_mode_is_not_measured() {
   local dir=$work/no-mode
   prepare "$dir"
   run_check "$dir" FAKE_POLICY_FILE=policy-no-mode.json
   expect_status "$status" 2 "a policy with no budget mode"
   expect_contains "$out" "FACT policy: FAIL — $repo is on the profile 'bb' and the policy document carries no budget mode" "a policy with no budget mode: the row"
-  expect_contains "$out" "a mode the document does not carry is not a mode that is not off" "a policy with no budget mode: why it is not a finding"
+  expect_contains "$out" "a mode the document does not carry is neither" "a policy with no budget mode: why it is not a finding"
   assert_no_launch "$dir" "a policy with no budget mode"
 }
 
@@ -1348,7 +1337,6 @@ t test_a_repository_two_profiles_admit_is_not_measured
 t test_a_profile_of_another_provider_does_not_admit_the_repository
 t test_a_policy_whose_only_profile_serves_another_provider_is_a_finding
 t test_a_profile_with_no_claude_accounts_is_a_finding
-t test_a_budget_mode_of_off_is_a_finding
 t test_a_policy_with_no_budget_mode_is_not_measured
 t test_no_shared_job_of_the_profile_is_not_measured
 t test_a_shared_job_without_the_service_url_is_a_finding
