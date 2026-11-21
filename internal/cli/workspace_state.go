@@ -66,10 +66,18 @@ import (
 const stateSnapshotVersion = 1
 
 // stateAuditFileName is the file the workspace's own audit export is written
-// as, inside its workspace's folder. A member's snapshot is named after that
-// member. The two cannot collide, because a project is never called "audit.json"
-// (stateSnapshotPath holds both to one clean path segment).
-const stateAuditFileName = "audit.json"
+// as, directly inside its workspace's folder, and stateMemberDir is the folder
+// the members' snapshots are written in under it. A member's file is named after
+// that member, so the two kinds are told apart by the FOLDER and not by the
+// name: a project may legally be called "audit" (config.ProjectNameRE), and a
+// flat folder therefore let a member's settings and spend and the workspace's
+// own export be one file — the same local path, the same path inside the
+// designated repository, one overwriting the other, and D2824's "state repo in
+// sync" row answering the other document's instant.
+const (
+	stateAuditFileName = "audit.json"
+	stateMemberDir     = "members"
+)
 
 // stateGit is the `git` a save clones, commits and pushes with, and stateGH is
 // the `gh` it opens a GitHub pull request and reads a GitHub repository's
@@ -97,26 +105,39 @@ func stateWhat(s workspace.Snapshot) string {
 	return "the settings and spend of " + pluginwire.Printable(s.Member.Project)
 }
 
-// stateSnapshotPath is where one snapshot's local file lives:
-// <dir>/<workspace>/<member>.json for a member's settings and spend, and
-// <dir>/<workspace>/audit.json for the workspace's own audit export.
+// stateSnapshotName is one snapshot's name inside its workspace's folder:
+// audit.json for the workspace's own export, members/<member>.json for a
+// member's settings and spend. It is the name the file is written under locally
+// and the path it is committed at inside the designated repository, so the two
+// kinds cannot be one document in either place (stateAuditFileName,
+// stateMemberDir).
 //
-// The path is derived from the Snapshot and from nothing else, so LastSaved
-// reads back the file the last Save wrote without being told where it went.
-func stateSnapshotPath(dir string, s workspace.Snapshot) (string, error) {
-	workspaceSeg, err := statePathSegment("the workspace", s.Workspace)
+// It is derived from the Snapshot and from nothing else, so LastSaved reads back
+// the file the last Save wrote without being told where it went.
+func stateSnapshotName(s workspace.Snapshot) (string, error) {
+	if s.Audit {
+		return stateAuditFileName, nil
+	}
+	member, err := statePathSegment("the member project", s.Member.Project)
 	if err != nil {
 		return "", err
 	}
-	name := stateAuditFileName
-	if !s.Audit {
-		member, err := statePathSegment("the member project", s.Member.Project)
-		if err != nil {
-			return "", err
-		}
-		name = member + ".json"
+	return path.Join(stateMemberDir, member+".json"), nil
+}
+
+// stateSnapshotPath is where one snapshot's local file lives and the name it is
+// committed under inside the designated repository: the file is
+// <dir>/<workspace>/<name>, and name is what statePublish carries.
+func stateSnapshotPath(dir string, s workspace.Snapshot) (path, name string, err error) {
+	workspaceSeg, err := statePathSegment("the workspace", s.Workspace)
+	if err != nil {
+		return "", "", err
 	}
-	return filepath.Join(dir, workspaceSeg, name), nil
+	name, err = stateSnapshotName(s)
+	if err != nil {
+		return "", "", err
+	}
+	return filepath.Join(dir, workspaceSeg, filepath.FromSlash(name)), name, nil
 }
 
 // stateDefaultFolder is where a save's local files live when the caller names no
@@ -389,7 +410,7 @@ func (w *stateWriter) Save(ctx context.Context, s workspace.Snapshot) (workspace
 	if err != nil {
 		return workspace.SnapshotWritten{}, err
 	}
-	path, err := stateSnapshotPath(folder, s)
+	path, name, err := stateSnapshotPath(folder, s)
 	if err != nil {
 		return workspace.SnapshotWritten{}, err
 	}
@@ -398,10 +419,15 @@ func (w *stateWriter) Save(ctx context.Context, s workspace.Snapshot) (workspace
 	if err != nil {
 		return workspace.SnapshotWritten{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// The snapshot is the operator's own alone: it carries the addresses the
+	// project reaches (D2824), so another account on this machine must not be
+	// able to read it — 0o700 on the folders and 0o600 on the file, which is
+	// what the rest of this state directory is kept at (the mailbox's ledger,
+	// the issue store).
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return workspace.SnapshotWritten{}, fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
 	}
-	if err := os.WriteFile(path, doc, 0o644); err != nil {
+	if err := os.WriteFile(path, doc, 0o600); err != nil {
 		return workspace.SnapshotWritten{}, fmt.Errorf("writing %s: %w", path, err)
 	}
 	written := workspace.SnapshotWritten{File: path}
@@ -423,7 +449,7 @@ func (w *stateWriter) Save(ctx context.Context, s workspace.Snapshot) (workspace
 	url, err := host.Publish(ctx, statePublish{
 		Repo:    d.Repo,
 		Dir:     d.Dir,
-		File:    filepath.Base(path),
+		File:    name,
 		Branch:  stateBranch(s, taken),
 		Bytes:   doc,
 		Subject: stateCommitSubject(s, taken),
@@ -450,7 +476,7 @@ func (w *stateWriter) LastSaved(ctx context.Context, s workspace.Snapshot) (time
 	if err != nil {
 		return time.Time{}, false, err
 	}
-	path, err := stateSnapshotPath(folder, s)
+	path, _, err := stateSnapshotPath(folder, s)
 	if err != nil {
 		return time.Time{}, false, err
 	}
@@ -694,7 +720,11 @@ func (h stateBitbucketHost) Publish(ctx context.Context, p statePublish) (string
 // env is the environment git runs with, nil for the process's own: GitHub's push
 // is authenticated by gh's credential helper and needs nothing added, and
 // Bitbucket's carries the token as a credential variable and never in a URL.
+// Whatever it is, it is stateGitEnv's before the first spawn: a git that wants a
+// username must fail rather than open a terminal and wait for a person to type
+// one (GIT_TERMINAL_PROMPT=0, as every other git spawn in this tree does).
 func stateCloneAndCommit(ctx context.Context, env []string, p statePublish, remote string) (base string, err error) {
+	env = stateGitEnv(env)
 	dir, err := os.MkdirTemp("", "fugaro-state-")
 	if err != nil {
 		return "", fmt.Errorf("making a directory to clone %s into: %w", pluginwire.Printable(p.Repo), err)
@@ -730,6 +760,28 @@ func stateCloneAndCommit(ctx context.Context, env []string, p statePublish, remo
 		}
 	}
 	return base, nil
+}
+
+// stateGitEnv is the environment every git a save spawns runs with: env when the
+// caller named one, the process's own otherwise, and GIT_TERMINAL_PROMPT=0 in
+// both cases. A clone or a push that needs credentials — a machine with no gh
+// credential helper for GitHub, a Bitbucket token the host rejects — would
+// otherwise open the terminal and wait for a person to type a username, and a
+// call to an underlying tool that comes back as a prompt is what this policy
+// forbids in as many words (docs/no-prompt-policy/spec.md, rule 1: "Calls to
+// underlying tools must also be non-interactive ... so that no prompt comes
+// through from a lower layer"). Every other git spawn in this tree sets the same
+// variable; with it, git fails at once and the save says what it refused with.
+//
+// gitops.WithVars is what sets it rather than a plain append: a
+// GIT_TERMINAL_PROMPT the process already carries is REPLACED, because the first
+// entry of a name is the one a program reads, and a machine that exported
+// GIT_TERMINAL_PROMPT=1 would otherwise keep the prompt it asked to be rid of.
+func stateGitEnv(env []string) []string {
+	if env == nil {
+		env = os.Environ()
+	}
+	return gitops.WithVars(env, map[string]string{"GIT_TERMINAL_PROMPT": "0"})
 }
 
 // stateCapped keeps the first stateCappedBytes of what a child complained with

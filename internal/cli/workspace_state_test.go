@@ -216,10 +216,14 @@ func TestStateSaveAlwaysWritesLocal(t *testing.T) {
 		t.Fatalf("a save with no designated repository failed: %v", err)
 	}
 
-	want := filepath.Join(s.dir, "acme-workspace", "acme-app.json")
+	want := filepath.Join(s.dir, "acme-workspace", stateMemberDir, "acme-app.json")
 	if got.File != want {
 		t.Errorf("Save answered File %q, want %q: the local file is the one thing every save leaves", got.File, want)
 	}
+	// The snapshot carries the addresses the project reaches (D2824), so it is
+	// the operator's own alone: another account on this machine must not read it.
+	wu15Mode(t, want, 0o600)
+	wu15Mode(t, filepath.Dir(want), 0o700)
 	if got.PullRequest != "" {
 		t.Errorf("Save answered PullRequest %q with no repository designated, want empty", got.PullRequest)
 	}
@@ -322,8 +326,8 @@ func TestStateSaveOpensPR(t *testing.T) {
 	if p.Repo != "acme/state" || p.Dir != "docs/state" {
 		t.Errorf("the snapshot went to %s folder %q, want acme/state folder docs/state", p.Repo, p.Dir)
 	}
-	if p.File != "acme-app.json" || p.Path() != "docs/state/acme-app.json" {
-		t.Errorf("the snapshot's file is %q at %q, want acme-app.json at docs/state/acme-app.json", p.File, p.Path())
+	if p.File != stateMemberDir+"/acme-app.json" || p.Path() != "docs/state/"+stateMemberDir+"/acme-app.json" {
+		t.Errorf("the snapshot's file is %q at %q, want members/acme-app.json at docs/state/members/acme-app.json", p.File, p.Path())
 	}
 	if !strings.HasPrefix(p.Branch, "fugaro/state-") {
 		t.Errorf("the save pushed branch %q, want one under fugaro/state- so it cannot touch a person's own branch", p.Branch)
@@ -540,12 +544,83 @@ func TestStateSaveNamesALocalFolderOfItsOwn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a save with no folder named failed: %v", err)
 	}
-	want := filepath.Join(state, "fugaro", "state", "acme-workspace", "acme-app.json")
+	want := filepath.Join(state, "fugaro", "state", "acme-workspace", stateMemberDir, "acme-app.json")
 	if got.File != want {
 		t.Errorf("the save wrote %q, want %q: the state directory, so the file is where a person expects it", got.File, want)
 	}
 	if _, found, err := s.w.LastSaved(ctx, wu15Member()); err != nil || !found {
 		t.Errorf("LastSaved answered found=%v err=%v for the file the same writer just wrote", found, err)
+	}
+}
+
+// TestStateSaveAMemberCalledAuditIsNotTheWorkspacesExport: "audit" is a legal
+// project name (config.ProjectNameRE), so a member project called audit and the
+// workspace's own audit export are two documents — and a folder that told them
+// apart by the file's name alone made them one: the same local path, the same
+// path inside the designated repository, the second save overwriting the first,
+// and LastSaved answering the other document's instant, which is exactly what
+// D2824's "state repo in sync" row reads.
+func TestStateSaveAMemberCalledAuditIsNotTheWorkspacesExport(t *testing.T) {
+	ctx := context.Background()
+	s := wu15New(t, "")
+	s.des.d = stateDesignation{Repo: "acme/state", Dir: "docs/state", Provider: gitprov.KindGitHub, Source: "the project layer"}
+
+	export := wu15Audit()
+	member := wu15Member()
+	member.Member.Project = "audit"
+
+	first, err := s.w.Save(ctx, export)
+	if err != nil {
+		t.Fatalf("saving the audit export failed: %v", err)
+	}
+	exportAt := s.now
+	s.now = s.now.Add(time.Hour)
+	second, err := s.w.Save(ctx, member)
+	if err != nil {
+		t.Fatalf("saving a member called audit failed: %v", err)
+	}
+	memberAt := s.now
+
+	if first.File == second.File {
+		t.Fatalf("the workspace's audit export and a member project called audit were written to one file, %q: the second save overwrites the first", first.File)
+	}
+	for path, want := range map[string]bool{first.File: true, second.File: false} {
+		if doc := wu15Read(t, path); doc.Audit != want {
+			t.Errorf("%s holds audit %v, want %v: the two documents are not one", path, doc.Audit, want)
+		}
+	}
+	if len(s.host.pushed) != 2 {
+		t.Fatalf("the save pushed %d snapshots, want the two", len(s.host.pushed))
+	}
+	if s.host.pushed[0].Path() == s.host.pushed[1].Path() {
+		t.Errorf("both documents were committed at %q inside the designated repository", s.host.pushed[0].Path())
+	}
+	for _, tc := range []struct {
+		what string
+		snap workspace.Snapshot
+		at   time.Time
+	}{
+		{"the audit export", export, exportAt},
+		{"the member called audit", member, memberAt},
+	} {
+		at, found, err := s.w.LastSaved(ctx, tc.snap)
+		if err != nil || !found || !at.Equal(tc.at) {
+			t.Errorf("LastSaved for %s answered (%s, found=%v, err=%v), want its own instant %s", tc.what, at, found, err, tc.at)
+		}
+	}
+}
+
+// wu15Mode asserts the permission bits of a path a save wrote: a snapshot
+// carries the addresses the project reaches (D2824), so it is the operator's own
+// alone on a machine other accounts can log in to.
+func wu15Mode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("reading the mode of %s: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Errorf("%s has mode %04o, want %04o", path, got, want)
 	}
 }
 
@@ -596,7 +671,7 @@ func TestStateSaveHostIsTheRepositorysOwn(t *testing.T) {
 		"repo view acme/state --json visibility",
 		"clone --quiet -- https://github.com/acme/state.git",
 		"checkout --quiet -b fugaro/state-20261121-093000",
-		"add -- docs/state/acme-app.json",
+		"add -- docs/state/members/acme-app.json",
 		"push --quiet origin fugaro/state-20261121-093000",
 		"pr create --repo acme/state --head fugaro/state-20261121-093000 --base main",
 	} {
@@ -614,6 +689,12 @@ func TestStateSaveHostIsTheRepositorysOwn(t *testing.T) {
 	ghRan := wu15Calls(t, ghCalls)
 	if i := strings.Index(ghRan, "pr create"); i >= 0 && strings.Contains(ghRan[i:], "--json") {
 		t.Errorf("the save asked `gh pr create` for JSON, which that subcommand does not have:\n%s", ghRan[i:])
+	}
+	// git is never allowed to ask a person for a username: this save hands git
+	// no environment of its own (gh's own login authenticates the push), so the
+	// variable has to be one the save adds.
+	if got := wu15GitEnv(t, gitCalls)["GIT_TERMINAL_PROMPT"]; got != "0" {
+		t.Errorf("the save ran git with GIT_TERMINAL_PROMPT=%q, want 0: a clone or a push git cannot authenticate must fail rather than open a terminal and wait for someone to type a username", got)
 	}
 	// The URL is read off gh's output, which is the one line `gh pr create`
 	// prints on success.
@@ -836,8 +917,7 @@ func TestStateSaveBitbucketHostReadsVisibility(t *testing.T) {
 // spelled the token into the clone URL would pass every other test here.
 func TestStateSaveBitbucketHostPushesWithTheTokenInTheEnvironment(t *testing.T) {
 	const token = "a-token-this-test-invented"
-	gitCalls := wu15FakeGitPushing(t)
-	envFile := filepath.Join(filepath.Dir(gitCalls), wu15GitEnvFile)
+	gitCalls := wu15FakeGit(t)
 
 	var (
 		mu    sync.Mutex
@@ -881,19 +961,16 @@ func TestStateSaveBitbucketHostPushesWithTheTokenInTheEnvironment(t *testing.T) 
 		t.Errorf("the save answered PullRequest %q, want the URL the host returned", got.PullRequest)
 	}
 
-	raw, err := os.ReadFile(envFile)
-	if err != nil {
-		t.Fatalf("the fake git recorded no environment, so the push was handed none (%v)", err)
-	}
-	env := string(raw)
-	for _, want := range []string{
-		"FUGARO_GIT_TOKEN=" + token,
-		"FUGARO_GIT_USERNAME=x-token-auth",
-		"GIT_CONFIG_KEY_0=credential.https://bitbucket.org.helper",
-		"GIT_CONFIG_KEY_1=credential.https://bitbucket.org.helper",
+	env := wu15GitEnv(t, gitCalls)
+	for want, value := range map[string]string{
+		"FUGARO_GIT_TOKEN":    token,
+		"FUGARO_GIT_USERNAME": "x-token-auth",
+		"GIT_CONFIG_KEY_0":    "credential.https://bitbucket.org.helper",
+		"GIT_CONFIG_KEY_1":    "credential.https://bitbucket.org.helper",
+		"GIT_TERMINAL_PROMPT": "0",
 	} {
-		if !strings.Contains(env, want) {
-			t.Errorf("the push ran without %s in its environment, so the token does not reach git through the credential helper", want)
+		if got := env[want]; got != value {
+			t.Errorf("the push ran with %s=%q, want %q: the token reaches git through the credential helper, and git never asks a person for one", want, got, value)
 		}
 	}
 
@@ -929,23 +1006,27 @@ func TestStateSaveBitbucketHostPushesWithTheTokenInTheEnvironment(t *testing.T) 
 	}
 }
 
-// wu15GitEnvFile is where the fake git dumps its environment — the push's, the
-// one call whose environment carries the credential — beside the calls it
-// records, which is the same directory testutil.FakeCommand writes both to.
+// wu15GitEnvFile is where the fake git dumps the environment it was run with,
+// beside the calls it records, which is the same directory testutil.FakeCommand
+// writes both to. Each invocation overwrites it, so a test that reads it after a
+// save sees the environment of that save's last git call.
 const wu15GitEnvFile = "env"
 
-// wu15FakeGitPushing is wu15FakeGit with one addition: the push's environment is
-// written out, so a test can see what the token travelled in.
-func wu15FakeGitPushing(t *testing.T) string {
+// wu15GitEnv is the environment the last git a save spawned was handed, by name:
+// a save that hands git no environment at all is the process's own, which is
+// what the fake is run with and dumps.
+func wu15GitEnv(t *testing.T, calls string) map[string]string {
 	t.Helper()
-	return testutil.FakeCommand(t, stateGit, `
-case "$1" in
-clone) mkdir -p "$5" ;;
-rev-parse) echo main ;;
-push) env > "${0%/*}/`+wu15GitEnvFile+`" ;;
-esac
-exit 0
-`)
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(calls), wu15GitEnvFile))
+	if err != nil {
+		t.Fatalf("the fake git recorded no environment, so a save's git was handed none: %v", err)
+	}
+	env := map[string]string{}
+	for _, kv := range strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n") {
+		k, v, _ := strings.Cut(kv, "=")
+		env[k] = v
+	}
+	return env
 }
 
 // branchOf reads the branch name out of a Bitbucket endpoint object.
@@ -957,10 +1038,12 @@ func branchOf(e map[string]any) string {
 
 // wu15FakeGit puts a `git` on PATH that answers the subcommands a save runs —
 // the clone makes the directory git would make, and the clone's HEAD is a
-// branch — and answers the path of the file every argv is appended to.
+// branch — records the environment it was run with, and answers the path of the
+// file every argv is appended to.
 func wu15FakeGit(t *testing.T) string {
 	t.Helper()
 	return testutil.FakeCommand(t, stateGit, `
+env > "${0%/*}/`+wu15GitEnvFile+`"
 case "$1" in
 clone) mkdir -p "$5" ;;
 rev-parse) echo main ;;
