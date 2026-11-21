@@ -92,8 +92,11 @@ import (
 // `shared/prompts` exports as PROMPT_TTL_MS (M3, §10). It is bound here rather
 // than declared because a ledger's horizon is max(window, prompt TTL) and both
 // are the module's numbers; TestMailboxPromptTtlIsTheModulesNumber holds this
-// one to shared/prompts/index.js, so the two cannot drift.
-const mailboxPromptTtlMs = 72 * 60 * 60 * 1_000
+// one to shared/prompts/index.js, so the two cannot drift. Since T7 it is
+// `internal/mailbox`'s own constant rather than a second copy of the
+// arithmetic: the sweeper in that package draws the same boundary, and two
+// spellings of one number is one spelling too many.
+const mailboxPromptTtlMs = mailbox.PromptTTLMs
 
 // mailboxPromptRetentionMs is how long this machine's memory of a spent id
 // lasts: D118's TTL plus one sweep interval, so a replay cannot outlive the
@@ -1861,6 +1864,17 @@ func leaseDocument(run mailbox.LeaseRun) mailboxLease {
 // node whose `at` a reader cannot use is kept rather than deleted, because a
 // record that cannot be dated is not one this command can call expired.
 //
+// **Its other half is this machine's own state, and the presence verdict it
+// reports** (T7, §6, §4.2). `sweep` deletes the store's expired prompts under
+// the operator's credential; `local` lets go of the consumer's own expired
+// state — the ledger records past its horizon and the memory's settled prompts
+// and spent ids — through the same two rules the consumer applies to itself, and
+// a delete set naming anything else is **refused and reported** rather than
+// performed (M8). Neither half answers a conversation. And the presence verdict
+// is computed from each mailbox's stored heartbeat and written nowhere: no node
+// and no grant is designated for a verdict, and the sweeper holds no key to
+// verify the MAC with, so it reports what the node says and moves on.
+//
 // **It needs no keychain and no lease.** The mailboxes it walks are the
 // `mailbox.keychain_item` keys of the project config — the uids `fugaro pair`
 // recorded — so a revocation that emptied an item leaves its mailbox sweepable,
@@ -1904,11 +1918,18 @@ func newMailboxSweepCmd() *cobra.Command {
 			"The mailboxes it walks are the pairing uids in this project's\n" +
 			"mailbox.keychain_item block, so a revoked pairing's mailbox is swept too. It\n" +
 			"deletes no Firebase user — the `m~` rule belongs to the history sweeper — and\n" +
-			"nothing outside the mailboxes it is configured for.\n" +
+			"nothing outside the store nodes it is configured for and this machine's own\n" +
+			"state: the ledger records and prompt entries a retention window already\n" +
+			"allows, which it lets go of through the consumer's own two rules.\n" +
+			"\n" +
+			"It also reports, for each mailbox, what the stored heartbeat says about the\n" +
+			"presence of the consumer that wrote it — live, stale, offline, or a clock\n" +
+			"that differs — and writes nothing for that verdict.\n" +
 			"\n" +
 			"It prints one line per mailbox, or with --json one document, naming each id it\n" +
-			"deleted and how many prompts it kept. With --dry-run it prints the same plan\n" +
-			"and writes nothing. A message's text, a MAC and a key are never printed.",
+			"deleted, how many prompts it kept, the presence it read and what its own half\n" +
+			"let go of. With --dry-run it prints the same plan and writes nothing. A\n" +
+			"message's text, a MAC and a key are never printed.",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE:   func(cmd *cobra.Command, _ []string) error { return runMailboxSweep(cmd, o) },
@@ -1926,15 +1947,70 @@ func newMailboxSweepCmd() *cobra.Command {
 // outbox key, and never by its text (§4.3's rule, which holds for this command's
 // output as much as for a pass's).
 type mailboxSweepDocument struct {
-	Project   string                `json:"project"`
-	At        string                `json:"at"`
-	DryRun    bool                  `json:"dry_run"`
+	Project string `json:"project"`
+	At      string `json:"at"`
+	DryRun  bool   `json:"dry_run"`
+	// Local is the other half of a sweep (§6): this machine's own state, which
+	// is not in the store at all and which no mailbox entry can report.
+	Local     mailboxSweepLocal     `json:"local"`
 	Mailboxes []mailboxSweepMailbox `json:"mailboxes"`
 	Warnings  []string              `json:"warnings"`
 }
 
+// mailboxSweepLocal is the sweeper's local half — the delete set §6 gives it:
+// the two files the consumer keeps under the operator's own state directory, and
+// the records this sweep let go of in them. **Nothing under `mailbox/` is in it**
+// and the paths are the machine's own; SweepRefusals reads the set before
+// anything is deleted, and a key this command does not own (a Firebase user, a
+// store node) is a refusal rather than a deletion (M8).
+type mailboxSweepLocal struct {
+	// Ledger and Prompts are the two files, absolute, under
+	// $XDG_STATE_HOME/fugaro/mailbox/<project>/. They are reported so an
+	// operator can see the sweep reached this machine's state — a path is not a
+	// secret and it is not a message's text (§4.3).
+	Ledger  string `json:"ledger"`
+	Prompts string `json:"prompts"`
+	// LedgerIDs are the `sender`/`id` pairs the ledger let go of — acked
+	// deliveries past its horizon — and PromptIDs the settled prompts and spent
+	// ids the memory let go of. A prompt still to be answered is in neither:
+	// dropping it would lose the safe answer it is owed.
+	LedgerIDs []string `json:"ledger_ids"`
+	PromptIDs []string `json:"prompt_ids"`
+	// Wrote says whether the two files were rewritten at all. A sweep with
+	// nothing to let go of writes nothing, so a reader can tell "I swept this
+	// machine" from "I rewrote it".
+	Wrote bool `json:"wrote"`
+}
+
+// mailboxSweepPresence is the presence verdict (§4.2, `shared/presence`): what
+// the mailbox's stored heartbeat says about the consumer that wrote it, and the
+// readings the rule decided it from. **It is reported and nothing is written
+// for it** — no node and no grant is designated for a verdict — and the sweeper
+// holds no pairing key, so it can honestly report only what the stored node
+// says: the MAC is not verified here, and the lease the node stands for is the
+// consumer's.
+type mailboxSweepPresence struct {
+	// State is one of `live`, `stale`, `offline` and `clock-differs`, or empty
+	// when the stored heartbeat is not one the rule can read — `Code` then says
+	// which refusal it was.
+	State  string `json:"state"`
+	Reason string `json:"reason"`
+	// AgeMs is the heartbeat's age, and **null** when the mailbox has no
+	// heartbeat at all: the module's own answer, and not the same fact as an age
+	// of zero.
+	AgeMs *int64 `json:"age_ms"`
+	// BootID is the boot id the stored heartbeat names — `boot` on the wire, D117
+	// — and empty when there is none.
+	BootID string `json:"boot_id"`
+	// Code is the refusal, when the node is there and is not a heartbeat.
+	Code string `json:"code,omitempty"`
+}
+
 type mailboxSweepMailbox struct {
 	Mailbox string `json:"mailbox"`
+	// Presence is the verdict for this mailbox's stored heartbeat, reported
+	// whether or not the sweep deleted anything.
+	Presence mailboxSweepPresence `json:"presence"`
 	// Deleted is the id of every stored prompt this sweep removed (or, with
 	// `--dry-run`, would remove). It is empty rather than absent when a mailbox
 	// lost nothing: an empty list and a missing field are two different facts to
@@ -2006,6 +2082,18 @@ func (s *mailboxSweeper) sweep(ctx context.Context, uids []string) error {
 		Mailboxes: []mailboxSweepMailbox{},
 		Warnings:  []string{},
 	}
+	// This machine's own state first, and its fence before any store write: the
+	// set this command deletes is the consumer's expired state, and a set that
+	// named anything else (a Firebase user, a store node) is refused — with the
+	// store untouched, so a refusal is never a half-performed sweep.
+	local, err := s.local(now.UnixMilli())
+	if err != nil {
+		return err
+	}
+	if findings := mailbox.SweepRefusals(localKeys(local)); len(findings) > 0 {
+		return userErr("this sweep's delete set names something it does not own, so nothing was deleted: %s", strings.Join(findings, "; "))
+	}
+	doc.Local = local
 	for _, uid := range uids {
 		one, warnings, err := s.mailbox(ctx, uid, now)
 		if err != nil {
@@ -2015,6 +2103,66 @@ func (s *mailboxSweeper) sweep(ctx context.Context, uids []string) error {
 		doc.Warnings = append(doc.Warnings, warnings...)
 	}
 	return s.report(doc)
+}
+
+// localKeys is every key a local sweep names: the two files and the ids it let
+// go of, which is the whole of what it is allowed to touch.
+func localKeys(sweep mailboxSweepLocal) []string {
+	keys := append([]string{}, sweep.Ledger, sweep.Prompts)
+	keys = append(keys, sweep.LedgerIDs...)
+	return append(keys, sweep.PromptIDs...)
+}
+
+// local is the sweeper's half for this machine: the same two files the consumer
+// keeps and the same retention boundary it applies to itself (`mailbox.SweepLocal`
+// calls the ledger's eviction and the memory's own prune rather than a second
+// copy of either rule), so a sweep can never let go of something the consumer
+// would have kept.
+//
+// It needs no pairing and no lease, and **it writes nothing when there is nothing
+// to let go of**: a sweep that rewrote an untouched file would be a write the
+// consumer's next pass reads as its own. With `--dry-run` it writes nothing at
+// all and reports the same set, which is why the plan is read one pass earlier
+// than the state it plans over.
+func (s *mailboxSweeper) local(nowMs int64) (mailboxSweepLocal, error) {
+	ledger, err := mailbox.OpenLedger(mailbox.LedgerOptions{Project: s.lc.Name, PromptTtlMs: mailboxPromptTtlMs})
+	if err != nil {
+		return mailboxSweepLocal{}, userErr("this machine's mailbox ledger could not be read (%v); it is the consumer's own dedupe memory at $XDG_STATE_HOME/fugaro/mailbox/%s/ledger.json, and a sweep that could not read it would delete out of a state it does not know", err, s.lc.Name)
+	}
+	memory, err := mailbox.OpenConfirmMemory(mailbox.ConfirmMemoryOptions{
+		Project:     s.lc.Name,
+		RetentionMs: mailboxPromptRetentionMs(),
+		MaxPrompts:  mailbox.ConfirmMaxPrompts,
+	})
+	if err != nil {
+		return mailboxSweepLocal{}, userErr("this machine's prompt memory could not be read (%v); it is the consumer's own record of the prompts it is holding and the ids it has spent, at $XDG_STATE_HOME/fugaro/mailbox/%s/pending.json, and a sweep that could not read it would let go of nothing rather than of what the window allows", err, s.lc.Name)
+	}
+	var sweep mailbox.LocalSweep
+	if s.dryRun {
+		sweep, err = mailbox.PlanLocal(ledger, memory, nowMs)
+	} else {
+		sweep, err = mailbox.SweepLocal(ledger, memory, nowMs)
+	}
+	if err != nil {
+		return mailboxSweepLocal{}, userErr("this machine's mailbox state could not be swept (%v); nothing was written", err)
+	}
+	// The two id lists are empty rather than absent when nothing was dropped: an
+	// empty list and a missing field are two different facts to a reader that has
+	// to tell "this sweep had nothing to let go of" from "this sweep never
+	// looked".
+	ids := func(list []string) []string {
+		if list == nil {
+			return []string{}
+		}
+		return list
+	}
+	return mailboxSweepLocal{
+		Ledger:    sweep.Ledger,
+		Prompts:   sweep.Prompts,
+		LedgerIDs: ids(sweep.LedgerIDs),
+		PromptIDs: ids(sweep.PromptIDs),
+		Wrote:     !s.dryRun && !sweep.Empty(),
+	}, nil
 }
 
 // mailbox sweeps one mailbox: one read of its outbox, one decision per child,
@@ -2029,6 +2177,11 @@ func (s *mailboxSweeper) sweep(ctx context.Context, uids []string) error {
 // kept: this command deletes what it can prove is past the TTL.
 func (s *mailboxSweeper) mailbox(ctx context.Context, uid string, now time.Time) (mailboxSweepMailbox, []string, error) {
 	out := mailboxSweepMailbox{Mailbox: uid, Deleted: []string{}}
+	presence, err := s.presence(ctx, uid, now)
+	if err != nil {
+		return out, nil, err
+	}
+	out.Presence = presence
 	var raw map[string]json.RawMessage
 	found, err := s.db.Get(ctx, "mailbox/"+uid+"/outbox", &raw)
 	if err != nil {
@@ -2075,9 +2228,57 @@ func (s *mailboxSweeper) mailbox(ctx context.Context, uid string, now time.Time)
 	return out, warnings, nil
 }
 
+// presence reads `mailbox/<uid>/heartbeat` — D117's node, `{at, boot, mac}` —
+// and reports what `shared/presence` decides about it, or the refusal when the
+// node is there and is not a heartbeat. An absent node is the module's own
+// `offline`/`no-heartbeat`, which is a fact about the account rather than a
+// refusal.
+//
+// **The MAC is not verified here and nothing is written for the verdict.** The
+// sweeper holds no pairing key (§4.2: it needs none), so what it can honestly
+// report is what the stored node says; the lease that node stands for is the
+// consumer's, taken with its own key under an if-match, and a sweep that
+// believed a forged heartbeat would be a sweep that could be made to report a
+// consumer alive. It reports and moves on.
+func (s *mailboxSweeper) presence(ctx context.Context, uid string, now time.Time) (mailboxSweepPresence, error) {
+	out := mailboxSweepPresence{}
+	var value any
+	found, err := s.db.Get(ctx, "mailbox/"+uid+"/heartbeat", &value)
+	if err != nil {
+		return out, dbErr(s.lc, err, false)
+	}
+	var heartbeat *mailbox.PresenceHeartbeat
+	if found {
+		// The client decodes a node into `map[string]any` and this package's
+		// record is that same map behind a name, so the reading is converted
+		// rather than asserted: what is asserted is that the node is an object at
+		// all, and anything else is the module's `invalid-heartbeat`.
+		decoded, ok := value.(map[string]any)
+		if !ok {
+			out.Code = string(mailbox.CodePresenceInvalidHeartbeat)
+			return out, nil
+		}
+		record := mailbox.Record(decoded)
+		boot, _ := record["boot"].(string)
+		heartbeat = &mailbox.PresenceHeartbeat{At: mailbox.RecordAt(record), BootID: boot}
+	}
+	answer := mailbox.EvaluatePresence(mailbox.PresenceOptions{Heartbeat: heartbeat, Now: now.UnixMilli()})
+	if !answer.OK {
+		out.Code = string(answer.Code)
+		return out, nil
+	}
+	out.State, out.Reason, out.BootID = string(answer.State), answer.Reason, answer.BootID
+	if answer.HasAge {
+		age := answer.AgeMs
+		out.AgeMs = &age
+	}
+	return out, nil
+}
+
 // report prints one sweep: the JSON document, or one line per mailbox with the
-// ids it deleted under it. Either way the text of a message never appears — an
-// id is a key and a fact about the sweep, and what a prompt said is not.
+// ids it deleted under it, the machine's own half, and the warnings. Either way
+// the text of a message never appears — an id is a key and a fact about the
+// sweep, and what a prompt said is not.
 func (s *mailboxSweeper) report(doc mailboxSweepDocument) error {
 	if s.asJSON {
 		return json.NewEncoder(s.out).Encode(doc)
@@ -2088,12 +2289,51 @@ func (s *mailboxSweeper) report(doc mailboxSweepDocument) error {
 	}
 	for _, one := range doc.Mailboxes {
 		fmt.Fprintf(s.out, "mailbox %s: %d stored prompt(s) past the TTL, %d kept\n", one.Mailbox, len(one.Deleted), one.Kept)
+		fmt.Fprintf(s.out, "  presence %s (%s)\n", presenceWord(one.Presence), presenceReason(one.Presence))
 		for _, id := range one.Deleted {
 			fmt.Fprintf(s.out, "  %s %s\n", verb, id)
 		}
+	}
+	fmt.Fprintf(s.out, "local state: %d ledger record(s) and %d prompt memory entr(ies) past the retention window%s\n", len(doc.Local.LedgerIDs), len(doc.Local.PromptIDs), writtenWord(doc.Local, doc.DryRun))
+	for _, id := range doc.Local.LedgerIDs {
+		fmt.Fprintf(s.out, "  %s %s\n", verb, id)
+	}
+	for _, id := range doc.Local.PromptIDs {
+		fmt.Fprintf(s.out, "  %s %s\n", verb, id)
 	}
 	for _, warning := range doc.Warnings {
 		fmt.Fprintf(s.out, "  warning: %s\n", warning)
 	}
 	return nil
+}
+
+// presenceWord is a verdict in one word for the line output: the state, or
+// `unreadable` when the stored node is there and is not a heartbeat.
+func presenceWord(p mailboxSweepPresence) string {
+	if p.State == "" {
+		return "unreadable"
+	}
+	return p.State
+}
+
+// presenceReason is why, in the rule's own words: the refusal's code when the
+// node could not be read, and otherwise the module's reason.
+func presenceReason(p mailboxSweepPresence) string {
+	if p.Code != "" {
+		return p.Code
+	}
+	return p.Reason
+}
+
+// writtenWord says what the local half did, which is the one thing a reader of a
+// dry run must be able to tell from a sweep that wrote.
+func writtenWord(l mailboxSweepLocal, dryRun bool) string {
+	switch {
+	case dryRun:
+		return " (a dry run: nothing was written)"
+	case l.Wrote:
+		return " (rewritten)"
+	default:
+		return " (nothing to let go of, so nothing was written)"
+	}
 }

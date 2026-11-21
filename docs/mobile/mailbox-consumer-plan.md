@@ -13,7 +13,7 @@ Three things it deliberately does **not** claim:
   Answering D113c (which fixed the *shape* — a new `fugaro` command — and the *name* —
   `fugaro mailbox`) approves no task.
 - **Phase 6 is approved, and most of its modules are merged — this plan is written against what
-  landed.** The owner approved all of Phase 6 on 2026-10-18. **Merged on `main` today — six of its
+  landed.** The owner approved all of Phase 6 on 2026-10-18. **Merged on `main` today — seven of its
   tasks, each with the module that proves it:** **P6.1** (`shared/command/index.js` — the command
   grammar),
   **P6.2** (`shared/confirm/index.js`, with the confirmation machine's rules, its `vectors.json` and
@@ -28,11 +28,11 @@ Three things it deliberately does **not** claim:
   `deleteUsers`), and **P6.7** (the consumer's enforcement of the D128 amendment:
   `internal/mailbox/action.go`, the Go port of `shared/confirm`'s rules that the re-validation and
   the action allow-list live in, held to `shared/confirm/vectors.json`, and `internal/cli/mailbox.go`,
-  this plan's T5, which is where the runner it refuses from sits). **Partly built:** **P6.13** — the
-  command the sweeper hides behind is in the tree and the store-side deletion it adds to that same
-  file (`internal/cli/mailbox.go`) has landed with it, while this plan's own T7 half — the
-  sweeper's local delete set and the presence verdict it reports (`internal/mailbox/expiry.go`) —
-  is not. **Approved and not built:** **P6.12** (the phone's spoken
+  this plan's T5, which is where the runner it refuses from sits), and **P6.13** (the sweeper — the
+  hidden `fugaro mailbox sweep` and the stored prompts it deletes, in `internal/cli/mailbox.go`,
+  which landed with the pairing CLI plan's T7, and the half this plan's own T7 adds beside it,
+  `internal/mailbox/expiry.go`: the consumer's local delete set and the presence verdict the sweep
+  reports and writes nothing for). **Approved and not built:** **P6.12** (the phone's spoken
   confirmation, which consumes the merged confirmation machine). So the MAC **can** be
   computed today and the **key can** too: the pairing command's wait and its delivery landed with the
   pairing CLI plan's T2b and T3, so a phone that has paired holds a per-pairing MAC key. What that means for
@@ -1549,8 +1549,10 @@ and P6.13 own, and the corpus's known gap.
   delete set cannot contain one: it deletes the consumer's own state and **refuses and reports** if
   it is ever about to delete an `m~…` — or an `r~…` — user (M8, §6, §17). The `m~`-keyed deletion
   is a **finding for the owner**, never a silent fix here.
-- **The stored-prompt deletion is P6.13's** and is not built: at P4.1 `fugaro mailbox sweep` deletes
-  the consumer's own expired state and **no store node** (§6's last row, T7).
+- **The sweeper's two halves are two tasks'.** The stored-prompt deletion is P6.13's and has landed
+  (the pairing CLI plan's T7); what this plan's T7 adds is the other half — the consumer's own
+  expired state, which is where the sweeper's delete set starts (§6's last row). Neither half
+  reaches the other's: T7's set holds no store path, and the sweep asserts it.
 - **The shared package's CI job (P4.3) is written and staged, not running.** The job that installs
   the shared package's dependencies, runs its test script and runs its mutation proofs — alongside
   the Go job and the `rules` job, which is the only job that sets up Node today — is committed at

@@ -125,6 +125,19 @@ func (s LocalSweep) Paths() []string {
 // file is rewritten — because the consumer's own state is not this command's to
 // touch when there is no work for it.
 func SweepLocal(l *Ledger, m *ConfirmMemory, now int64) (LocalSweep, error) {
+	return sweepLocal(l, m, now, true)
+}
+
+// PlanLocal is the same set **without the write**, which is what a `--dry-run`
+// prints: the sweep is asked what the window allows before it is allowed to do
+// it, and the answer is the one the sweep itself would act on because it is the
+// same call. Nothing is written and no in-memory state is moved, so a caller that
+// plans and then sweeps gets the same set both times.
+func PlanLocal(l *Ledger, m *ConfirmMemory, now int64) (LocalSweep, error) {
+	return sweepLocal(l, m, now, false)
+}
+
+func sweepLocal(l *Ledger, m *ConfirmMemory, now int64, write bool) (LocalSweep, error) {
 	out := LocalSweep{}
 	if l != nil {
 		out.Ledger = l.Path()
@@ -137,10 +150,12 @@ func SweepLocal(l *Ledger, m *ConfirmMemory, now int64) (LocalSweep, error) {
 			}
 			sort.Strings(out.LedgerIDs)
 			state := ledgerState{now: max(now, l.state.now), evictedThrough: through, seen: seen}
-			if err := l.commit(state); err != nil {
-				return LocalSweep{}, err
+			if write {
+				if err := l.commit(state); err != nil {
+					return LocalSweep{}, err
+				}
+				l.state = state
 			}
-			l.state = state
 		}
 	}
 	if m != nil {
@@ -159,10 +174,12 @@ func SweepLocal(l *Ledger, m *ConfirmMemory, now int64) (LocalSweep, error) {
 			}
 			sort.Strings(out.PromptIDs)
 			next.Now = max(now, m.state.Now)
-			if err := m.commit(next); err != nil {
-				return LocalSweep{}, err
+			if write {
+				if err := m.commit(next); err != nil {
+					return LocalSweep{}, err
+				}
+				m.state = next
 			}
-			m.state = next
 		}
 	}
 	return out, nil
