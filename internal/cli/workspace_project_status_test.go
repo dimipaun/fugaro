@@ -16,6 +16,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -962,6 +963,16 @@ func TestProjectLsJSONSchema(t *testing.T) {
 	id, _ := doc.(map[string]any)["$id"].(string)
 	if id == "" {
 		t.Fatal("schemas/workspace-projects.schema.json has no $id")
+	}
+	// The schema's own const is the same number: the two are one contract.
+	var plain map[string]any
+	if err := json.Unmarshal(raw, &plain); err != nil {
+		t.Fatal(err)
+	}
+	props, _ := plain["properties"].(map[string]any)
+	ver, _ := props["version"].(map[string]any)
+	if got := ver["const"]; got != float64(wsProjectDocVersion) {
+		t.Fatalf("the schema's version const is %v, and wsProjectDocVersion is %d: the document and its schema have to state one version", got, wsProjectDocVersion)
 	}
 	c := jsonschema.NewCompiler()
 	if err := c.AddResource(id, doc); err != nil {
