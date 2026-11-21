@@ -142,6 +142,14 @@ const SPEC = 'projects.spec.ts'
  * arrives as a raw `models ls --json` object and the entry decodes it before the
  * model builder sees it (`decodeModelsList`), so the spec decodes it in the page
  * the same way rather than hand-writing a view the decoder is the judge of.
+ * The thirteen after `renderer/screens/projects.js` are the Manage section (the
+ * console-improvements plan's task I-MG): the screen now imports
+ * `renderer/manage/kinds/index.js` and `renderer/manage/shell.js`, which closes
+ * over the kind files, the descriptor, the command builder and the Spend screen
+ * the Budget kind's cap rows come from. They are `projects.spec.ts`'s own
+ * readings either way -- this file draws the frame the section is mounted into
+ * and asserts on the tab around it -- and `manage.spec.ts` is where the section
+ * itself is drawn and proved.
  * `src/main/ipc.ts` is imported by the screen
  * for a **type** only, which the compiler erases, so nothing of the main
  * process is reachable from here -- and the registry below refuses a specifier
@@ -160,6 +168,19 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/writes.js',
   'renderer/screens/policynotes.js',
   'renderer/screens/projects.js',
+  'renderer/screens/spend.js',
+  'renderer/manage/types.js',
+  'renderer/manage/command.js',
+  'renderer/manage/shell.js',
+  'renderer/manage/kinds/index.js',
+  'renderer/manage/kinds/read.js',
+  'renderer/manage/kinds/people.js',
+  'renderer/manage/kinds/repos.js',
+  'renderer/manage/kinds/images.js',
+  'renderer/manage/kinds/recipes.js',
+  'renderer/manage/kinds/models.js',
+  'renderer/manage/kinds/keys.js',
+  'renderer/manage/kinds/budget.js',
 ])
 
 /** moduleSource is one compiled module as a registry entry. */
