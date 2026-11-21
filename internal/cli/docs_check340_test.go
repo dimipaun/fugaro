@@ -62,11 +62,12 @@ func check340Row(register string) string {
 }
 
 // TestDocsCheck340IsRegistered: the check has both halves of its registration,
-// each half says it has not been run, and the section names the ONE command the
-// owner runs. A check this one is owner-run and unrun: a row or a section that
-// read as a pass would be a live claim nobody made, and a section that listed
-// steps instead of a script would be the hand work the owner's standing rule of
-// 2026-11-07 exists to remove.
+// the row records the run that answered it, and the section names the ONE
+// command the owner runs. A check this one is owner-run: a pass belongs in the
+// row only off the run that produced it — the fourth run, held by
+// TestDocsCheck340RecordsTheFourthRun — and a section that listed steps instead
+// of a script would be the hand work the owner's standing rule of 2026-11-07
+// exists to remove.
 func TestDocsCheck340IsRegistered(t *testing.T) {
 	register := readDoc(t, liveChecksDoc)
 
@@ -74,8 +75,8 @@ func TestDocsCheck340IsRegistered(t *testing.T) {
 	if row == "" {
 		t.Fatalf("%s's register has no `| %s |` row: Check %s is written below it, and the table is where a reader finds it", liveChecksDoc, check340Number, check340Number)
 	}
-	if !strings.Contains(row, "USER-RUN, NOT RUN.") {
-		t.Errorf("Check %s's row does not read `USER-RUN, NOT RUN.`: the check is the owner's and has not been run, and a row that leaves either half out is read as a result", check340Number)
+	if !strings.Contains(row, "USER-RUN, PASS (2026-11-13).") {
+		t.Errorf("Check %s's row does not read `USER-RUN, PASS (2026-11-13).`: the fourth run of 2026-11-13 held every criterion with a clean Restore, and the row is where a reader takes that from", check340Number)
 	}
 
 	section := check340Section(t, register)
@@ -83,7 +84,7 @@ func TestDocsCheck340IsRegistered(t *testing.T) {
 	// missed a phrase across a line break would be a pin on the line breaks.
 	flat := strings.ToLower(flattenDoc(section))
 	for _, want := range []string{
-		"**not run.**",
+		"**pass, 2026-11-13.**",
 		// The register's own rule for an owner-run check: no agent runs any
 		// step of it, and the text has to say so.
 		"no agent runs any step of it",
@@ -139,7 +140,6 @@ func TestDocsCheck340IsRegistered(t *testing.T) {
 func TestDocsCheck340RecordsTheFirstRun(t *testing.T) {
 	register := readDoc(t, liveChecksDoc)
 	section := flattenDoc(check340Section(t, register))
-	lower := strings.ToLower(section)
 	for _, want := range []string{
 		// The date, the exit, and what exit 2 means here.
 		"2026-11-07",
@@ -160,20 +160,19 @@ func TestDocsCheck340RecordsTheFirstRun(t *testing.T) {
 			t.Errorf("Check %s's section does not say %q: the first run ended exit 2 and the register is where what it did and did not measure is recorded", check340Number, want)
 		}
 	}
-	// The row is where a reader looks first, and it has to carry the attempt as
-	// well as the standing "NOT RUN" — which is what it still reads.
+	// The row is where a reader looks first, and it has to carry the attempt
+	// beside the pass: the pass belongs to the fourth run, and a reader who
+	// stopped at the table has to be able to tell which run settled the check
+	// from which one settled nothing.
 	row := check340Row(register)
 	if !strings.Contains(row, "2026-11-07") || !strings.Contains(row, "exit `2`") {
 		t.Errorf("Check %s's row does not record the 2026-11-07 attempt and its exit 2: the row and the section are one registration, and a reader who stops at the table has to see that the one attempt settled nothing", check340Number)
 	}
-	// No form is answered, anywhere in the check's own two halves.
-	for _, text := range []string{row, section} {
-		if strings.Contains(text, "`list-prefix` row is **PASS**") || strings.Contains(text, "list-prefix: PASS") {
-			t.Errorf("Check %s records a PASS for `list-prefix`: the run that was made ended exit 2 and measured nothing about the attribute, so a PASS here would be a live claim nobody made", check340Number)
-		}
-	}
-	if !strings.Contains(lower, "no `pass` is recorded for `list-prefix`") {
-		t.Errorf("Check %s's section does not say in as many words that no `PASS` is recorded for `list-prefix`: the first run aborted, and the sentence is what stops its block being read as one", check340Number)
+	// What this run left behind is an attempt and not an answer: the section
+	// has to say the PASS came later, or its block reads as the block that
+	// answered R12's question.
+	if !strings.Contains(section, "the fourth run is the answer") {
+		t.Errorf("Check %s's section does not tie the PASS to the fourth run: the first run ended exit 2 and measured nothing about the attribute, so a section that let its block be read as the answer would hand R12 a string nobody measured", check340Number)
 	}
 }
 
@@ -195,7 +194,7 @@ func TestDocsCheck340RecordsTheSecondRun(t *testing.T) {
 		// The second attempt, its exit, and the standing statement that the
 		// attribute is still unanswered.
 		"Second run: 2026-11-07, exit `2`",
-		"no `PASS` is recorded for `list-prefix` anywhere here",
+		"no `PASS` was recorded for `list-prefix` anywhere here off it",
 		// What the relative form measured, and the reading that separates a
 		// clause which does not match from a grant that never landed: the
 		// policy named the binding.
@@ -247,9 +246,9 @@ func TestDocsCheck340RecordsTheSecondRun(t *testing.T) {
 			t.Errorf("Check %s's section does not say %q: a bucket that is not there stops the run, and a stop that does not name the create command leaves the owner with a check that will not start", check340Number, want)
 		}
 	}
-	// The row is where a reader stops, so it carries every attempt.
-	if row := check340Row(register); !strings.Contains(row, "Three attempts have been made") {
-		t.Errorf("Check %s's row does not record all three attempts: the row and the section are one registration, and a reader who stops at the table has to see that the check has been run three times, twice aborting and once failing on the bare reports/ prefix", check340Number)
+	// The row is where a reader stops, so it carries every run.
+	if row := check340Row(register); !strings.Contains(row, "Four runs have been made") {
+		t.Errorf("Check %s's row does not record all four runs: the row and the section are one registration, and a reader who stops at the table has to see that the check has been run four times, twice aborting, once failing on the bare reports/ prefix and once passing", check340Number)
 	}
 }
 
@@ -263,10 +262,11 @@ func TestDocsCheck340RecordsTheSecondRun(t *testing.T) {
 // bucket policy named the reports binding, which is why the revision after it
 // reads the four prefixes the job actually lists and asks the bare prefix as a
 // DIAGNOSTIC that gates nothing: a check that kept gating on a listing the job
-// never makes would fail R12 on a request nobody sends. The row stays NOT RUN
-// until that revision has itself been run, and the section has to say so in as
+// never makes would fail R12 on a request nobody sends. The row stayed NOT RUN
+// until that revision had itself been run, and the section has to say so in as
 // many words — a reader who took the settled form for a settled check would
-// hand R12 its string off a script nobody has run.
+// have handed R12 its string off a script nobody had run, which is what the
+// fourth run (TestDocsCheck340RecordsTheFourthRun) then supplied.
 func TestDocsCheck340RecordsTheThirdRun(t *testing.T) {
 	register := readDoc(t, liveChecksDoc)
 	raw := check340Section(t, register)
@@ -296,8 +296,9 @@ func TestDocsCheck340RecordsTheThirdRun(t *testing.T) {
 		"**R11 does not exist in this tree**",
 		"and never the bare `reports/` or the bucket root",
 		"a **DIAGNOSTIC** that gates nothing",
-		// The row is still NOT RUN, and one more run is what clears it.
-		"the row above is still NOT RUN",
+		// The row stayed NOT RUN until the fourth run, and one more run of the
+		// same command is what cleared it.
+		"the row above stayed **NOT RUN**",
 		"one more run of the same command",
 	} {
 		if !strings.Contains(section, want) {
@@ -347,6 +348,66 @@ func TestDocsCheck340RecordsTheThirdRun(t *testing.T) {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check %s's section does not say %q: the check seeds at the year level the job writes to, and the teardown has to name its own object rather than the prefix that holds the owner's reports", check340Number, want)
 		}
+	}
+}
+
+// TestDocsCheck340RecordsTheFourthRun: the fourth run is the one that answered
+// the check, and it is the reading the register's PASS rests on — so the
+// section has to carry it, and what it measured has to survive a later edit.
+// It settled the value form for good (the attribute carries the request's own
+// prefix, and that is the string R12's builder writes), it held every criterion
+// with a clean Restore, and it explains the bare `reports/` refusal the third
+// run left open as gcloud's own request rather than as a clause that does not
+// reach the prefix — which is why R12 needs no change for it. And it records
+// why the run before it could not be made: the bucket had to have uniform
+// bucket-level access enabled, and the guard that stops on that (#2584) is what
+// turns it into a stop with the command to run rather than a reading.
+func TestDocsCheck340RecordsTheFourthRun(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	section := flattenDoc(check340Section(t, register))
+	for _, want := range []string{
+		// The run, its exit, and that it is the one that answered.
+		"Fourth run: 2026-11-13, exit `0`",
+		"the run that answers the check",
+		// What it held: every criterion, and a Restore that confirmed the
+		// teardown — which is what makes the PASS a reading rather than a run
+		// that happened to end 0.
+		"every criterion held",
+		"its **Restore was clean**",
+		// The stop before it, and the guard that makes the missing access mode
+		// a stop rather than a reading: without either, the next reader takes a
+		// bucket's configuration for a failure of the grant.
+		"The bucket had to have uniform bucket-level access enabled first",
+		"#2584",
+		"872a5a32a",
+		// The two halves of the command the stop names, pinned apart from each
+		// other: flattenDoc folds a `gs://` URL's `//` into a space, so a pin
+		// written across the URL would be a pin on the folding rather than on
+		// the command.
+		"gcloud storage buckets update",
+		"--uniform-bucket-level-access",
+		// The answer itself, which is the only thing the check exists to
+		// produce: the value form, and the two prefixes R12's builder writes.
+		"the attribute carries the request's own prefix",
+		`api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith("<prefix>/")`,
+		"`runs/` for the runs binding and `reports/` for the reports binding",
+		// The diagnostic, answered, and why it changes nothing about R12: the
+		// job never lists the bare prefix, so a clause that does reach it is
+		// enough and no edit is owed.
+		"refused naming `storage.objects.list`",
+		"prefix=reports/&delimiter=/",
+		"it needs no change on that account",
+		"the row above is a **PASS**",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check %s's section does not say %q: the fourth run is the reading the PASS rests on, and the register is where R12's builder finds the string it writes", check340Number, want)
+		}
+	}
+	// The plan records the same pass, so a reader of the plan and a reader of
+	// the register read one fact: the plan's §P8 is what claims the number.
+	plan := flattenDoc(readDoc(t, "docs/periodic-reviews/implementation-plan.md"))
+	if !strings.Contains(plan, "the register's row reads **USER-RUN, PASS (2026-11-13)**") {
+		t.Errorf("docs/periodic-reviews/implementation-plan.md does not record Check %s's PASS in §P8: the plan claims the number and the register records what the run measured, and a plan still reading NOT RUN sends the next reader to a check that answers", check340Number)
 	}
 }
 
@@ -494,7 +555,7 @@ func TestDocsCheck340IsThePlansNumber(t *testing.T) {
 	plan := flattenDoc(readDoc(t, "docs/periodic-reviews/implementation-plan.md"))
 	for _, want := range []string{
 		"**Check 340 — the prefix-limited listing grant (R12's, and it gates R12).**",
-		"Owner-run, **NOT RUN**.",
+		"Owner-run, and **PASS on 2026-11-13**",
 		"Check 340, Check 341 and Check 342 are this round's; Check 343 is R9's, claimed by the designation design of 2026-11-17, and 344–349 are reserved and unused.",
 	} {
 		if !strings.Contains(plan, want) {
