@@ -12,16 +12,22 @@ package credsvc
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
 // upstreamTimeout bounds the whole attempt, headers and body. It is generous
@@ -109,6 +115,18 @@ type call struct {
 	// ledger input only: the names a probe was made on are the service's own
 	// record (C1.13's audit line) and are not carried here.
 	probed []string
+	// meter is the workspace's cap over this call, and nil when the call's
+	// scope has no meter (every call an installation's service serves) or the
+	// call is not one the workspace's own credentials pay for (WS8). A call
+	// that has one reserves before it goes out and settles on the answer's
+	// usage, and a probe carries its own (probeCall's result).
+	meter *callMeter
+	// fail is the refusal the meter made of THIS call, and nil when it made
+	// none. It is set beside the error send answers (errMeterRefused), because
+	// a refusal has a sentence, a marker and a credential that an error value
+	// cannot carry, and it is cleared by nothing: the call is over when it is
+	// set.
+	fail *meterFail
 }
 
 // readCall reads the call the service was handed, and refuses a body larger
@@ -176,12 +194,19 @@ type answer struct {
 // Authorization is dropped by the gateway's own deny-list, the run identity by
 // the scrub below, and this contract's headers when the call was read.
 //
-// This is the call the workspace's meter is meant to bracket, and it is not
-// bracketed yet: a call the workspace pays for is the one the meter takes the
-// room for BEFORE it goes out and settles on the answer's usage
-// (workspace_cap.go), and nothing here reserves. The wiring belongs in this
-// file, and workspace_cap.go's header states what it adds and why it is a task
-// of its own rather than a correction.
+// This is the call the workspace's meter brackets (WS8): a call the workspace's
+// own credentials pay for takes the room for its worst case out of the
+// workspace's month BEFORE the request goes out — a probe included, since a
+// probe is a call the workspace pays for too (C1.16) — and the answer settles
+// it on the usage the response reported (the caller's half: settleCall). A
+// reservation that cannot be taken, a model the price table cannot price and a
+// table that cannot be read all refuse the call here, with the refusal on the
+// call (cl.fail) and errMeterRefused as the error, so the caller answers the
+// workspace's own refusal rather than the upstream-unreachable one.
+//
+// A call whose scope has no meter (an installation's, every call this release
+// serves at one) is untouched by any of it: cl.meter is nil and this function
+// is what it was.
 func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 	dest, err := s.destination(cl, e)
 	if err != nil {
@@ -234,15 +259,1015 @@ func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 	}
 	req.Header = hdr
 	req.ContentLength = int64(len(cl.body))
+	// The room is taken here, after the request is built and validated and
+	// immediately before it goes out: a reservation for a call that was never
+	// made would hold room nothing will settle, and the reservation must not
+	// be held across a header build that can refuse the call for its own
+	// reasons.
+	if cl.meter != nil && paidCall(cl, e) && !cl.meter.take(ctx, s, cl, e) {
+		return nil, errMeterRefused
+	}
 	resp, err := s.cfg.Client.Do(req)
 	if err != nil {
 		// The transport's own error is not carried: it quotes the URL, and a
 		// URL of this call is the upstream's, which carries no credential —
 		// but it also carries a request id and a host, and the rule here is
 		// that the service's refusals are its own sentences.
+		//
+		// The reservation stands and is settled at what the call was charged
+		// for it, which is the fail-closed direction: whether the request
+		// reached the upstream is exactly what a transport error does not say.
+		// The refusal the run gets is the unreachable-upstream one either way
+		// (the call did not go out), so a settle that fails here is the
+		// service's log line and nothing else.
+		if fail := s.settleCall(ctx, cl, nil); fail != nil {
+			s.log.Error("credsvc: a metered call's reservation could not be settled after the upstream could not be reached",
+				"credential", fail.credential, "tier", fail.tier)
+		}
 		return nil, errors.New("credsvc: the upstream could not be reached")
 	}
 	return &answer{resp: resp, credential: key}, nil
+}
+
+// The workspace's cap, taken where the money is spent (WS8, D1301, F10, F18,
+// R15): the room for a call's worst case is reserved out of the workspace's
+// month BEFORE the request goes out, the answer settles it on the usage the
+// response reported, and a call whose cost cannot be recorded is refused rather
+// than served — on every path whose answer is still in hand, which is every path
+// but a streamed one (the second rule below). The transaction itself is
+// internal/budget/workspace.go's and the meter over it is workspace_cap.go's;
+// what is here is the bracket around one upstream call, which is the only place
+// a call can be priced and the only place its usage is readable.
+//
+// Four rules of the shape are worth stating where the code is:
+//
+//   - the worst case is what is reserved, always. What a call will cost is not
+//     known until its answer reports usage, so the amount held is the table's
+//     own bound for the request (pricing.Model.WorstCase) — the same figure the
+//     gateway reserves before its own calls, from the same table. A call that
+//     settles for less returns the difference at the settle, and a call whose
+//     answer never reported usage — a stream cut in half — settles at the
+//     bound, which is the direction a cap must fail in.
+//   - a settle that cannot be WRITTEN is a different case from either, and only
+//     the whole-body path can refuse a call on it: a whole body and a probe are
+//     read for their usage before any byte of them leaves, so the refusal
+//     withholds an answer the run never got. A streamed answer has already left
+//     by the time its usage is known, so a settle that cannot be written there
+//     is the service's log line and nothing else: the reservation is not
+//     charged, it stands until it ages out, and the release then leaves the
+//     call recorded as nothing at all — a month short by its whole worst case
+//     with no figure saying so. SECURITY.md states the exception beside the
+//     fail-closed rule it limits, and
+//     TestAStreamedSettleThatFailsIsServedAndUncharged pins it here.
+//   - a reservation is taken for every attempt, a probe included: a probe is a
+//     call the workspace's credential pays for (C1.16), and a workspace whose
+//     cap cannot see its probes has a cap that leaks a call per probe.
+//   - the meter is the SCOPE's (C1, R1): a workspace's member is metered
+//     against the workspace's own database and month, and a call an
+//     installation's service serves has no meter at all, so nothing an
+//     installation does changes (the acceptance's own last clause).
+//
+// Nothing here writes to a member: the member is the caller's own verified
+// project (`fp`), the figure is the workspace's, and what the member learns
+// travels on the answer the service is already sending (SetWorkspaceHeadroom).
+
+// errMeterRefused is what send answers when the workspace's meter refused the
+// call. The refusal is on the call (call.fail) rather than in the error,
+// because a refusal carries a sentence, a marker and the credential it was made
+// on, and an error value carries none of them. It is a sentinel and not a
+// formatted error: the caller asks whether the meter refused, and answers
+// cl.fail.
+var errMeterRefused = errors.New("credsvc: the workspace's meter refused this call")
+
+// meterFail is one refusal the meter made, with everything the refusal needs:
+// the sentence the run reads, the marker the member's gateway reads
+// (gateway.WorkspaceRefusalHeader), the credential the attempt was made with,
+// and the room the member is answered with when a read of the month produced
+// one.
+type meterFail struct {
+	message    string
+	marker     string
+	credential string
+	tier       string
+	room       budget.WorkspaceRoom
+	hasRoom    bool
+}
+
+// callMeter is the workspace's cap over ONE call: the room it took before the
+// call went out and everything settling it needs. It is one per call and never
+// shared — a probe carries its own (probeCall's result) — and it holds one live
+// reservation at a time, which is what makes settleCall's "settle exactly once
+// whatever happens" a property of the struct rather than of the code that
+// happens to run.
+type callMeter struct {
+	meter *WorkspaceMeter
+	// member is the workspace member the call is spent for: the caller's own
+	// verified project, which is the only identity the workspace's meter knows
+	// (the member table's own key). run is the verified run the call belongs
+	// to, and it is what the reservation's call id is built from so that a
+	// retry of one call is identifiable in the workspace's month.
+	member string
+	run    string
+
+	// credential and tier are the attempt's, and they are what a meter refusal
+	// is reported with: the same names every other refusal on this path
+	// carries.
+	credential string
+	tier       string
+
+	// hold is the reservation and reserved says whether it is still live. A
+	// call that has settled clears it, and settleCall does nothing on a call
+	// that holds none.
+	hold     budget.WorkspaceHold
+	reserved bool
+
+	// room is the workspace's room as the last read of the month answered it,
+	// and hasRoom says whether one ever did. It is the advisory figure the
+	// answer carries (SetWorkspaceHeadroom).
+	room    budget.WorkspaceRoom
+	hasRoom bool
+
+	// model and row are the priced model the call named, and ttl the longest
+	// cache write the request can cause — the two inputs the settle needs and
+	// the reserve already had.
+	model string
+	row   pricing.Model
+	ttl   string
+
+	// prices is the price table, read once per call and memoized: the reserve
+	// needs it for the worst case and the settle for the rates, and reading
+	// the project's policy twice for one call would be two reads of the same
+	// node for one answer.
+	prices   *pricing.Table
+	priced   bool
+	priceErr error
+}
+
+// meterOf is the meter of the call's scope, and nil when the scope has none.
+// Every call an installation's service serves answers nil here, which is what
+// "an installation's scope has no meter and is unchanged" means in code.
+func meterOf(ctx context.Context, s *Server) *WorkspaceMeter {
+	sc := scopeOfCall(ctx, s)
+	if sc == nil {
+		return nil
+	}
+	return sc.Meter()
+}
+
+// paidCall reports whether a call is one the workspace's own credentials pay
+// for, which is the whole of what the meter brackets.
+//
+// Two conditions, and each is a statement about money rather than about
+// routing:
+//
+//   - the Messages path. A token count is free on every tier — the gateway
+//     forwards it with no reservation of its own (its own forwardFree) and no
+//     credential is spent answering it — so there is nothing for a cap to take
+//     room for.
+//   - a tier that is not A. A subscription token's calls are the donor's own
+//     quota and not the workspace's money, so a call served by one reserves
+//     nothing at all (R15, D1300). Every other tier — the project's paid
+//     Anthropic key, a provider key — is money the workspace pays.
+func paidCall(cl *call, e Entry) bool {
+	return cl.path == MessagesPath && e.Tier != creds.TierA
+}
+
+// withMeter attaches the workspace's meter to a call, and answers it. It
+// answers nil for a call the meter does not bracket: a scope with no meter (an
+// installation's) and a path the workspace pays nothing for (a token count).
+//
+// The caller's identity is the source of both the member and the run — the
+// verified project claim and the verified run id — and neither is carried in
+// the request context, which is why the meter is attached where an Identity is
+// in hand rather than read where the reservation is taken. A call that resolves
+// to no member or no run is left unattached-but-refused: the meter's own
+// answer to it (take) is a refusal, because a workspace that cannot say which
+// member a call is spent for cannot charge it to one, and serving it anyway
+// would be a call outside the cap.
+func (s *Server) withMeter(ctx context.Context, cl *call, id Identity) *callMeter {
+	if cl.path != MessagesPath {
+		return nil
+	}
+	m := meterOf(ctx, s)
+	if m == nil {
+		return nil
+	}
+	cl.meter = &callMeter{meter: m, member: id.Project, run: id.Run}
+	return cl.meter
+}
+
+// take reserves the room for one call, and answers whether the call may go out.
+// A refusal is on the call (cl.fail) and this answers false; the error send
+// returns beside it is errMeterRefused.
+//
+// Every failure here is a refusal and never a pass, including the ones that
+// read as internal trouble (a price table that cannot be read, a month that
+// cannot be written): a call served with no reservation is a call that can pass
+// the cap, and a cap that opens when its own database is unreadable is not a
+// cap.
+func (cm *callMeter) take(ctx context.Context, s *Server, cl *call, e Entry) bool {
+	cm.credential, cm.tier = e.Name, wireTier(e.Tier)
+	if cm.member == "" || cm.run == "" {
+		// Unreachable through ServeHTTP, which verifies both before it serves
+		// anything. A refusal rather than a reservation under an empty name,
+		// which the meter itself would refuse for the same reason.
+		cl.fail = cm.fail("the call resolved to no workspace member, so the workspace did not take the room for it", "", nil)
+		return false
+	}
+	model, ok := callModel(cl.body)
+	if !ok {
+		cl.fail = cm.fail("the call names no model this service can price, so the workspace did not take the room for it", "", nil)
+		return false
+	}
+	cm.model = model
+	table, err := cm.priceTable(ctx, s)
+	if err != nil {
+		cl.fail = cm.fail("the workspace's price table could not be read, so the workspace did not pay for this call", "", nil)
+		return false
+	}
+	row, ok := table.Lookup(model)
+	if !ok {
+		// A model the table cannot price is refused rather than priced at a
+		// guess: an unpriced call is a call whose cost no cap can see, and the
+		// catalog's own sentence (when it recorded one) names the model and
+		// both ways out. This is the check the gateway's own path makes for a
+		// provider route, made here for every tier — the workspace's money is
+		// the workspace's money whatever the credential.
+		message := "the workspace's price table has no price for " + model + ", so the workspace did not pay for this call"
+		if why := table.Refusal(model); why != "" {
+			message = "the workspace did not pay for this call: " + why
+		}
+		cl.fail = cm.fail(message, "", nil)
+		return false
+	}
+	cm.row, cm.ttl = row, meterCacheTTL(cl.body)
+	call, err := callID(cm.run)
+	if err != nil {
+		// The random half is what makes the id unique; without it two calls of
+		// one run could not be told apart, and the meter would refuse the
+		// second as a duplicate of the first.
+		cl.fail = cm.fail("the workspace could not identify this call, so it did not take the room for it", "", nil)
+		return false
+	}
+	amount := row.WorstCase(meterRequest(cl.body, row))
+	hold, room, err := cm.meter.Reserve(ctx, cm.member, call, amount)
+	switch {
+	case errors.Is(err, budget.ErrWorkspaceCeilingReached):
+		// The ceiling is the one refusal with a number to hand the member: the
+		// room the workspace has left, which is what the member's own gateway
+		// compares its next calls against (gateway.WorkspaceHeadroomHeader).
+		cl.fail = cm.fail(fmt.Sprintf("the workspace's cap leaves %s this month and this call needs up to %s, so the workspace did not make it",
+			meterDollars(room.Headroom), meterDollars(amount)), gateway.WorkspaceRefusalCap, &room)
+		return false
+	case err != nil:
+		cl.fail = cm.fail("the workspace could not take the room for this call, so the call was not made", "", nil)
+		return false
+	}
+	cm.hold, cm.reserved, cm.room, cm.hasRoom = hold, true, room, true
+	return true
+}
+
+// fail builds the refusal an answer carries: this attempt's credential and
+// tier, and the room when a read of the month produced one.
+func (cm *callMeter) fail(message, marker string, room *budget.WorkspaceRoom) *meterFail {
+	f := &meterFail{message: message, marker: marker, credential: cm.credential, tier: cm.tier}
+	if room != nil {
+		f.room, f.hasRoom = *room, true
+	}
+	return f
+}
+
+// priceTable is the table the call is priced from: the embedded one with the
+// project's own model_prices over it, which is the table every other reader of
+// a price in this tree builds (requestPriceTable).
+//
+// It is read through the scope's policy, which for a workspace's call is the
+// workspace's own published policy — the one whose prices the workspace's
+// members are metered against. The read is memoized per call: the reserve needs
+// the row and the settle its rates, and one answer must not be priced from two
+// tables.
+func (cm *callMeter) priceTable(ctx context.Context, s *Server) (*pricing.Table, error) {
+	if cm.priced {
+		return cm.prices, cm.priceErr
+	}
+	cm.priced = true
+	sc := scopeOfCall(ctx, s)
+	if sc == nil {
+		cm.priceErr = errors.New("credsvc: the call's scope could not be resolved")
+		return nil, cm.priceErr
+	}
+	shared, found, err := sc.Policy().Shared(ctx)
+	if err != nil {
+		cm.priceErr = err
+		return nil, err
+	}
+	if !found {
+		cm.priceErr = errors.New("credsvc: the policy that prices this call is not published")
+		return nil, cm.priceErr
+	}
+	cm.prices, cm.priceErr = requestPriceTable(shared, s.now())
+	return cm.prices, cm.priceErr
+}
+
+// settleCall records what a metered call cost and ends its reservation, and
+// answers the refusal a failure is (nil when the call settled, and nil too when
+// it holds no reservation: a call the meter did not bracket settles nothing).
+//
+// use is the usage read off the answer, and nil is "the answer's usage is not
+// readable": a stream cut before its usage, a body past the reader's bound, an
+// answer that never reported a complete pair of counts. The call then settles
+// at its reservation — what the call was already charged for a cost nothing
+// could read — which is the gateway's own rule read literally ("until an
+// outcome is known it is charged its full reservation") and the fail-closed one
+// for a cap.
+//
+// The write runs on a context stripped of its cancellation, like every other
+// fact about a call that already happened (cascade.go's own rule for the mark a
+// streamed answer writes): a client that hung up mid-call must not be the
+// reason the workspace forgets what it spent.
+func (s *Server) settleCall(ctx context.Context, cl *call, use *callUsage) *meterFail {
+	cm := cl.meter
+	if cm == nil || !cm.reserved {
+		return nil
+	}
+	actual := cm.hold.Amount
+	switch {
+	case use != nil && use.uncharged:
+		// The provider billed nothing for this answer, so the workspace is
+		// charged nothing for it: what is released is the room the reservation
+		// took, and the figure the member's own gateway settles for the same
+		// answer is a zero too.
+		actual = 0
+	case use != nil && use.complete:
+		actual = cm.row.Rates.Cost(use.usage(cm.row.Rates, cm.ttl))
+	}
+	room, err := cm.meter.Settle(context.WithoutCancel(ctx), cm.hold, actual)
+	cm.reserved = false
+	if err != nil {
+		// The reservation is left where it is (the meter does not release it on
+		// a failed settle) and is bounded by budget.WorkspaceReservationTTL: a
+		// hold older than that is a call that cannot still be in flight, so it
+		// is released by the next reservation's own read and the room comes
+		// back. What is NOT done is settling it as zero, which would be the
+		// workspace forgetting a cost it could not record.
+		return &meterFail{
+			message:    "the workspace could not record what this call cost, so the call was not served",
+			marker:     gateway.WorkspaceRefusalSettle,
+			credential: cm.credential, tier: cm.tier,
+		}
+	}
+	cm.room, cm.hasRoom = room, true
+	return nil
+}
+
+// unchargedUsage is what settleCall is handed for an attempt the provider did
+// not bill for: the 401 and 429 an attempt is retried after (cascade.go's
+// forward), whose bodies are closed unread. Their status is the whole of what
+// the service knows about the cost, and it says zero — the same figure the
+// member's own gateway settles those answers at (gateway.forward's
+// zeroOutcome) and the reason the two ledgers agree on a retry.
+func unchargedUsage() *callUsage { return &callUsage{uncharged: true} }
+
+// answerHeadroom is the advisory figure an answer carries
+// (gateway.WorkspaceHeadroomHeader, SetWorkspaceHeadroom): what the workspace's
+// ceiling still leaves this month, and whether the read produced one.
+//
+// A metered call answers with the room its own reservation and settle left —
+// the settle's when it has settled, the reservation's before that, which is a
+// LOWER bound on the room (the worst case is still held) and the honest number
+// to deliver on an answer that is already streaming. A call in a metered scope
+// the meter does not bracket (a token count, a subscription token) reads the
+// room fresh instead: it says nothing about what this call cost, and what the
+// member needs is the figure that governs its next call.
+//
+// A read that fails delivers no headroom — the service's own log line and
+// nothing else — and never refuses the answer: the figure is fail-safe (a
+// member that has none stops nothing of its own) and the enforcement is the
+// meter's, which is where the cap really binds.
+func (s *Server) answerHeadroom(ctx context.Context, cl *call) (budget.WorkspaceRoom, bool) {
+	if cl.meter != nil && cl.meter.hasRoom {
+		return cl.meter.room, true
+	}
+	m := meterOf(ctx, s)
+	if m == nil {
+		return budget.WorkspaceRoom{}, false
+	}
+	room, err := m.Room(ctx)
+	if err != nil {
+		s.log.Warn("credsvc: the workspace's room could not be read for the answer", "error", err)
+		return budget.WorkspaceRoom{}, false
+	}
+	if cl.meter != nil {
+		cl.meter.room, cl.meter.hasRoom = room, true
+	}
+	return room, true
+}
+
+// refuseMeter answers a refusal the workspace's meter made, and records it. The
+// headroom and the marker are written on the response header set BEFORE the
+// refusal is written, which is what carries them out: WriteWireError preserves
+// the headers already on the set and writes its own on top of them.
+//
+// One audit line and no more: the refusal goes through refuseCall like every
+// other refusal on this path, so the act is recorded once, with the wire type
+// the run reads as its status. (The identity is verified by the time any of
+// these can be reached, which is what the rule is about.)
+func (s *Server) refuseMeter(ctx context.Context, w http.ResponseWriter, id Identity, purpose string, f *meterFail) {
+	if f == nil {
+		f = &meterFail{message: "the workspace refused this call"}
+	}
+	if f.hasRoom {
+		SetWorkspaceHeadroom(w.Header(), f.room)
+	}
+	SetWorkspaceRefusal(w.Header(), f.marker)
+	s.refuseCall(ctx, w, id, purpose, f.credential, f.tier, StatusUnavailable, ErrorStateUnavailable, f.message)
+}
+
+// callID is one call's identifier in the workspace's month: the run it belongs
+// to, and a random suffix that keeps two calls of one run apart.
+//
+// The run alone would not do. The meter refuses a second reservation under a
+// call id it already holds (budget.ErrWorkspaceCallReserved), which is what
+// makes a duplicated settle or a retried reserve visible rather than silently
+// taken twice — and a run's second call is neither of those, it is a second
+// call, so it needs an id of its own. The suffix is random and not a counter:
+// the service holds no counter, and two instances serving the same run must not
+// build the same id.
+func callID(run string) (string, error) {
+	var b [12]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return run + "-" + hex.EncodeToString(b[:]), nil
+}
+
+// meterBody is an upstream body whose head was read by the meter and put back
+// in front of the rest: the bytes the reader took, joined to what is left, so
+// the answer still reaches the client whole. Its Closer is the upstream's own
+// body, which is what the caller closes.
+type meterBody struct {
+	io.Reader
+	io.Closer
+}
+
+// readMeteredBody reads a whole (non-streamed) answer for the usage it reports,
+// and puts the bytes back where the caller will pump them from. It answers nil
+// when the usage is not readable — a body past the meter's bound, or a read
+// that failed — which settles the call at its reservation.
+//
+// The bytes are held rather than teed because the settle happens before they
+// are written: a call whose cost cannot be recorded is refused, and a refusal
+// after the answer had begun could not withhold anything.
+func readMeteredBody(ans *answer) *callUsage {
+	held, err := io.ReadAll(io.LimitReader(ans.resp.Body, meterMaxBody+1))
+	if err == nil && len(held) <= meterMaxBody {
+		use := newCallUsage(false)
+		use.feed(held)
+		use.finish()
+		ans.resp.Body = io.NopCloser(bytes.NewReader(held))
+		return use
+	}
+	ans.resp.Body = meterBody{Reader: io.MultiReader(bytes.NewReader(held), ans.resp.Body), Closer: ans.resp.Body}
+	return nil
+}
+
+// meterRequest is what the meter knows about a request before it prices it: the
+// gateway's own pricing.Request, built from the body the service holds.
+//
+// It is built conservatively wherever the two could disagree, because the
+// figure is a bound and an under-bound is room a call can spend past the cap:
+//
+//   - max_tokens is the body's own when it names a positive one (the gateway
+//     refuses a Messages body that names none, so this is the ordinary case),
+//     the model's own ceiling when it does not, and the pricing package's
+//     default when even that is unknown.
+//   - an image or a document block is counted wherever it appears in the body,
+//     not only where the gateway's own reader looks for one: a superset of a
+//     request's images is a bound above the request's cost, which is the
+//     direction this must be wrong in.
+//   - the cache TTL is the longest any cache_control in the body can cause, by
+//     the gateway's own rule (its cacheTTL/ttlOf).
+func meterRequest(body []byte, row pricing.Model) pricing.Request {
+	q := pricing.Request{BodyBytes: int64(len(body))}
+	var head struct {
+		MaxTokens int64 `json:"max_tokens"`
+	}
+	if json.Unmarshal(body, &head) == nil && head.MaxTokens > 0 {
+		q.MaxTokens = head.MaxTokens
+	} else if row.MaxOutputTokens > 0 {
+		q.MaxTokens = row.MaxOutputTokens
+	} else {
+		q.MaxTokens = pricing.DefaultMaxOutputTokens
+	}
+	q.ImageCount, q.HasPDF = meterContent(body)
+	q.CacheTTL = meterCacheTTL(body)
+	return q
+}
+
+// meterContent counts the base64 images and finds a base64 document anywhere in
+// the body, and nothing else: a block whose size is not in the body is refused
+// by the gateway's own check before this service sees it, and a shape nothing
+// in the tree prices is not one this needs an answer about.
+func meterContent(body []byte) (images int64, pdf bool) {
+	var v any
+	if json.Unmarshal(body, &v) != nil {
+		return 0, false
+	}
+	var walk func(any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			if src, ok := x["source"].(map[string]any); ok {
+				if st, _ := src["type"].(string); st == "base64" {
+					switch t, _ := x["type"].(string); t {
+					case "image":
+						images++
+					case "document":
+						pdf = true
+					}
+				}
+			}
+			for _, c := range x {
+				walk(c)
+			}
+		case []any:
+			for _, c := range x {
+				walk(c)
+			}
+		}
+	}
+	walk(v)
+	return images, pdf
+}
+
+// meterCacheTTL is the longest cache write a body can cause, by the gateway's
+// own rule: "" when the body holds no cache_control anywhere, "5m" for one
+// without a ttl or with "5m", and "1h" for anything else (its cacheTTL and
+// ttlOf, respelled for the reason carriesAny is: the package does not export
+// them).
+func meterCacheTTL(body []byte) string {
+	var v any
+	if json.Unmarshal(body, &v) != nil {
+		return ""
+	}
+	best := ""
+	var walk func(any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, c := range x {
+				if k == "cache_control" && c != nil {
+					if t := meterTTLOf(c); meterTTLRank[t] > meterTTLRank[best] {
+						best = t
+					}
+				}
+				walk(c)
+			}
+		case []any:
+			for _, c := range x {
+				walk(c)
+			}
+		}
+	}
+	walk(v)
+	return best
+}
+
+// meterTTLRank orders the three answers meterCacheTTL can give: no cache
+// control, a five-minute write, an hour-long one.
+var meterTTLRank = map[string]int{"": 0, "5m": 1, "1h": 2}
+
+// meterTTLOf is one cache_control's TTL, by the gateway's own rule exactly: an
+// object without a ttl is the API's default of five minutes, and anything else
+// — including a cache_control that is not an object at all — is reserved like
+// the longer write, because a shape nothing can read is not a reason to
+// under-bound a call.
+func meterTTLOf(cc any) string {
+	m, ok := cc.(map[string]any)
+	if !ok {
+		return "1h"
+	}
+	switch t := m["ttl"]; t {
+	case nil, "5m":
+		return "5m"
+	}
+	return "1h"
+}
+
+// meterDollars is an amount in dollars, for a refusal's sentence. It is
+// internal/gateway's own dollars, respelled for the reason carriesAny is: the
+// package does not export it, and a figure a member reads must not be
+// micro-dollars.
+func meterDollars(m pricing.Micros) string {
+	usd := m.USD()
+	if m > 0 && usd < 0.01 {
+		return strings.TrimRight(fmt.Sprintf("$%.6f", usd), "0")
+	}
+	return fmt.Sprintf("$%.2f", usd)
+}
+
+// The answer's usage, read for the settle.
+//
+// It is a smaller mirror of the gateway's own reader (internal/gateway/sse.go's
+// usageTee over wireUsage), and it reads the same two shapes the same way,
+// because the two must agree on what a complete answer is: a call that settles
+// at its usage here and at its reservation there would be a call the workspace
+// charges differently from the run's own ledger.
+//
+// Only the Claude route's rules are here — the provider route's conservative
+// merge is the gateway's, and a provider response the workspace pays for
+// settles on the same input/output counts from the same table. What is kept is
+// exactly what decides "complete", which is all the settle needs:
+//
+//   - a stream: message_start's usage with an input count (started), then a
+//     message_delta reporting output_tokens (deltas), then message_stop. A
+//     message_delta that does not parse, a negative count, or a stop without an
+//     output count makes the call incomplete, and an incomplete call settles at
+//     its reservation.
+//   - a whole body: one JSON object whose usage names an input count and an
+//     output count, and nothing after it.
+//
+// One rule comes from the ANSWER's status rather than from its body, and it is
+// the reader's unless the body could not be read at all: a response that is not
+// a 2xx costs nothing, whatever it holds (uncharged). A provider does not bill
+// for a call it refused — an overloaded 529, a 500, a 400 for a request it
+// would not take — and the member's own gateway settles every non-2xx at zero
+// (gateway.forward's zeroOutcome). Reading such an answer with the 2xx rules
+// charges the workspace the call's whole worst case for spend that never
+// happened: an agent that retries an overload the way Claude Code does would
+// use the workspace's month up without a call to show for it. A body that could
+// not be read keeps the reservation, because nothing about that answer is
+// known — not even that it arrived.
+type callUsage struct {
+	stream   bool
+	p        meterSSE
+	buf      []byte
+	overflow bool
+
+	started  bool
+	deltas   bool
+	complete bool
+	broken   bool
+
+	// uncharged is the status's verdict over the usage's own: the answer was
+	// not a 2xx, so the provider billed nothing for it and it is settled at
+	// zero rather than at its reservation. An error body reports no usage, so
+	// without it the reservation — the call's whole worst case — would stand
+	// for a call nobody paid for. It is set only where a body was read at all:
+	// an answer whose body could not be read hands a nil usage on and keeps the
+	// reservation, since nothing about it is known.
+	uncharged bool
+
+	acc meterAcc
+}
+
+// meterMaxLine and meterMaxBody bound what the reader holds, and they are the
+// gateway's own bounds (its maxSSELine and maxJSONBody): a longer line is
+// dropped with its event and any event whose line was dropped is not read, and
+// a longer body settles the call at its reservation — which is the same call
+// the gateway settles at its own reservation for the same reason.
+const (
+	meterMaxLine = 1 << 20
+	meterMaxBody = 16 << 20
+)
+
+// newCallUsage reads an answer: an event stream, or a whole body.
+func newCallUsage(stream bool) *callUsage {
+	u := &callUsage{stream: stream}
+	u.p.onEvent = u.onEvent
+	return u
+}
+
+// feed hands the reader the bytes of the answer, as the gateway's own tee is
+// handed them: a stream's events as they arrive, a whole body in the pieces it
+// comes in.
+func (u *callUsage) feed(b []byte) {
+	if u.stream {
+		u.p.feed(b)
+		return
+	}
+	if u.overflow {
+		return
+	}
+	if len(u.buf)+len(b) > meterMaxBody {
+		u.overflow, u.buf = true, nil
+		return
+	}
+	u.buf = append(u.buf, b...)
+}
+
+// finish reads a whole body. A stream was read as it arrived.
+func (u *callUsage) finish() {
+	if !u.stream {
+		u.parseBody()
+	}
+}
+
+// usage is the reported usage, priced at the model's rates. Cache writes the
+// response did not split by TTL are priced at the highest write the request
+// allowed, which is the gateway's own rule and the reason the ttl is kept.
+func (u *callUsage) usage(r pricing.Rates, cacheTTL string) pricing.Usage {
+	return u.acc.usage(r, cacheTTL)
+}
+
+// parseBody reads a whole body the way the gateway does: the object's usage,
+// only if nothing follows the object and only when it holds both an input and
+// an output count, with no negative count anywhere.
+func (u *callUsage) parseBody() {
+	if u.overflow {
+		return
+	}
+	dec := json.NewDecoder(bytes.NewReader(u.buf))
+	var body struct {
+		Type  string          `json:"type"`
+		Usage *meterUsageWire `json:"usage"`
+	}
+	if dec.Decode(&body) != nil {
+		return
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return
+	}
+	if body.Type == "error" || body.Usage == nil {
+		return
+	}
+	u.acc.merge(body.Usage)
+	if !u.acc.out.set || u.acc.negative() || !u.acc.hasInput() || u.acc.unpriced() {
+		return
+	}
+	u.started, u.complete = true, true
+}
+
+// onEvent reads one SSE event, by the gateway's own rules for the Claude route.
+func (u *callUsage) onEvent(name string, data []byte) {
+	typ := name
+	if typ == "" {
+		var head struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(data, &head)
+		typ = head.Type
+	}
+	switch typ {
+	case "message_start":
+		var ev struct {
+			Message struct {
+				Usage *meterUsageWire `json:"usage"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(data, &ev) != nil || ev.Message.Usage == nil {
+			// The documented "didn't say" case: message_delta is gated on
+			// started, which this never sets, so the call settles at its
+			// reservation without a broken flag — the same answer the
+			// gateway's own Claude-route reader gives.
+			return
+		}
+		u.acc.merge(ev.Message.Usage)
+		if u.acc.negative() {
+			// A count below zero is not usage: it must not settle a call at
+			// less than the call's own reservation.
+			u.broken = true
+		}
+		u.started = u.acc.hasInput() && !u.acc.negative()
+	case "message_delta":
+		if !u.started {
+			return
+		}
+		var ev struct {
+			Usage *meterUsageWire `json:"usage"`
+		}
+		if json.Unmarshal(data, &ev) != nil || ev.Usage == nil {
+			u.broken = true
+			return
+		}
+		u.acc.merge(ev.Usage)
+		if u.acc.negative() {
+			u.broken = true
+		}
+		if ev.Usage.OutputTokens != nil {
+			u.deltas = true
+		}
+	case "message_stop":
+		switch {
+		case u.started && u.deltas && !u.broken && !u.acc.unpriced():
+			u.complete = true
+		case u.started:
+			u.broken = true
+		}
+	}
+}
+
+// meterSSE splits server-sent events, byte for byte as the gateway's own parser
+// does: an event is its data lines, an event with no data is nothing, a line
+// longer than the bound is dropped, and an event any of whose lines was dropped
+// is not read at all.
+type meterSSE struct {
+	onEvent func(name string, data []byte)
+
+	line     []byte
+	skipping bool
+	event    string
+	data     []byte
+	hasData  bool
+	tainted  bool
+}
+
+func (p *meterSSE) feed(b []byte) {
+	for len(b) > 0 {
+		i := bytes.IndexByte(b, '\n')
+		chunk := b
+		if i >= 0 {
+			chunk, b = b[:i], b[i+1:]
+		} else {
+			b = nil
+		}
+		if !p.skipping {
+			if len(p.line)+len(chunk) > meterMaxLine {
+				p.skipping, p.line = true, p.line[:0]
+			} else {
+				p.line = append(p.line, chunk...)
+			}
+		}
+		if i < 0 {
+			return
+		}
+		if p.skipping {
+			p.tainted, p.skipping = true, false
+		} else {
+			p.processLine(bytes.TrimSuffix(p.line, []byte{'\r'}))
+		}
+		p.line = p.line[:0]
+	}
+}
+
+func (p *meterSSE) processLine(l []byte) {
+	if len(l) == 0 {
+		if p.hasData && !p.tainted {
+			p.onEvent(p.event, p.data)
+		}
+		p.event, p.data, p.hasData, p.tainted = "", p.data[:0], false, false
+		return
+	}
+	if l[0] == ':' {
+		return
+	}
+	field, value := l, []byte(nil)
+	if i := bytes.IndexByte(l, ':'); i >= 0 {
+		field, value = l[:i], bytes.TrimPrefix(l[i+1:], []byte{' '})
+	}
+	switch string(field) {
+	case "event":
+		p.event = string(value)
+	case "data":
+		if p.hasData {
+			p.data = append(p.data, '\n')
+		}
+		p.data = append(p.data, value...)
+		p.hasData = true
+		if len(p.data) > meterMaxLine {
+			p.tainted, p.data = true, p.data[:0]
+		}
+	}
+}
+
+// meterUsageWire is the usage object as the API reports it. The fields are the
+// gateway's own (its wireUsage) and they are read the same way: a pointer per
+// count, so a field the answer did not name is not a zero.
+type meterUsageWire struct {
+	InputTokens              *int64 `json:"input_tokens"`
+	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
+	OutputTokens             *int64 `json:"output_tokens"`
+	CacheCreation            *struct {
+		W5 *int64 `json:"ephemeral_5m_input_tokens"`
+		W1 *int64 `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
+	ServerToolUse *struct {
+		WebSearchRequests *int64 `json:"web_search_requests"`
+	} `json:"server_tool_use"`
+	// The three pricing dimensions a response can report that a request's
+	// own worst case does not bound: the request chooses a speed and an
+	// inference geography, and the provider chooses the tier it serves
+	// from. They are read raw, as the gateway reads them, so a value that
+	// is not even a string is still seen rather than dropped.
+	Speed        json.RawMessage `json:"speed"`
+	ServiceTier  json.RawMessage `json:"service_tier"`
+	InferenceGeo json.RawMessage `json:"inference_geo"`
+}
+
+// meterCount is one reported count and whether the answer reported it at all.
+type meterCount struct {
+	v   int64
+	set bool
+}
+
+func (f *meterCount) take(p *int64) {
+	if p != nil {
+		f.v, f.set = *p, true
+	}
+}
+
+// meterAcc accumulates usage: a later event's value for a field wins, which is
+// what a cumulative message_delta means (the gateway's own usageAcc, less the
+// provider route's conservative merge and the fields nothing here prices).
+type meterAcc struct {
+	in, cc, cr, out, w5, w1, web meterCount
+	speed, tier, geo             json.RawMessage
+}
+
+func (a *meterAcc) merge(u *meterUsageWire) {
+	a.in.take(u.InputTokens)
+	a.cc.take(u.CacheCreationInputTokens)
+	a.cr.take(u.CacheReadInputTokens)
+	a.out.take(u.OutputTokens)
+	if c := u.CacheCreation; c != nil {
+		a.w5.take(c.W5)
+		a.w1.take(c.W1)
+	}
+	if t := u.ServerToolUse; t != nil {
+		a.web.take(t.WebSearchRequests)
+	}
+	// A later event's value for a dimension wins, as each count's own take
+	// does: the answer's last word about the call is the word that stands.
+	for _, x := range []struct {
+		dst *json.RawMessage
+		src json.RawMessage
+	}{{&a.speed, u.Speed}, {&a.tier, u.ServiceTier}, {&a.geo, u.InferenceGeo}} {
+		if len(x.src) > 0 {
+			*x.dst = append(json.RawMessage(nil), x.src...)
+		}
+	}
+}
+
+// unpriced reports whether the answer named a pricing dimension the table has
+// no price for: a speed other than the standard one, a service tier other than
+// the standard one, or an inference geography outside the defaults — the
+// gateway's own three checks (its unpricedDims).
+//
+// The call then settles at its reservation rather than on the usage it
+// reported, which is where this meter and the gateway part company and the
+// honest direction to part in: the gateway charges such a response at the
+// table's maximum rates times a multiplier, and the meter cannot charge more
+// than the room it reserved, so the reservation — the bound of what the
+// workspace agreed to hold for the call — is the most it can settle at. What
+// it must not do is settle at the call's own model's own rates, which is
+// cheaper than the call: the request chooses a speed and a geography, so a
+// member's run could otherwise spend past the workspace's cap by asking for a
+// shape nothing prices.
+func (a *meterAcc) unpriced() bool {
+	return meterDimUnpriced(a.speed, []string{"standard"}) ||
+		meterDimUnpriced(a.tier, []string{pricing.StandardTier}) ||
+		meterDimUnpriced(a.geo, gateway.DefaultGeos)
+}
+
+// meterDimUnpriced reports whether one reported pricing dimension is one the
+// table cannot price. Absent or null is "the answer did not name it"; a value
+// that is not a string is reported rather than dropped, since the table has no
+// price for it either way; and anything outside the allowed set is unpriced.
+func meterDimUnpriced(raw json.RawMessage, allowed []string) bool {
+	if len(raw) == 0 || string(bytes.TrimSpace(raw)) == "null" {
+		return false
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return true
+	}
+	return !slices.Contains(allowed, s)
+}
+
+// hasInput reports whether the answer named an input count at all: the Claude
+// route's own rule, where a call's input is always a real quantity and a usage
+// with no input count is a response that said nothing (the gateway's own
+// hasInput).
+func (a *meterAcc) hasInput() bool { return a.in.set }
+
+// negative reports whether any reported count is below zero.
+func (a *meterAcc) negative() bool {
+	for _, f := range []meterCount{a.in, a.cc, a.cr, a.out, a.w5, a.w1, a.web} {
+		if f.set && f.v < 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// usage is the reported usage, with the cache writes the response did not split
+// by TTL priced at the highest write the request allowed (the gateway's own
+// usage()).
+func (a *meterAcc) usage(r pricing.Rates, cacheTTL string) pricing.Usage {
+	pos := func(f meterCount) int64 { return max(f.v, 0) }
+	u := pricing.Usage{Input: pos(a.in), CacheRead: pos(a.cr), Output: pos(a.out), WebSearches: pos(a.web)}
+	rest := pos(a.cc)
+	if a.w5.set || a.w1.set {
+		u.CacheWrite5m, u.CacheWrite1h = pos(a.w5), pos(a.w1)
+		rest -= u.CacheWrite5m + u.CacheWrite1h
+	}
+	if rest > 0 {
+		w5, w1 := r.UnsplitCacheWrites(rest, cacheTTL)
+		u.CacheWrite5m += w5
+		u.CacheWrite1h += w1
+	}
+	return u
 }
 
 // destination is where an attempt goes: the credential's own base, the call's
