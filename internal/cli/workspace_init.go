@@ -200,7 +200,7 @@ func workspaceInit(cmd *cobra.Command, d workspaceInitDeps, name string) error {
 	// one `init` has run for: its mechanism and its folder are written once and
 	// never changed (R6), and the read is what makes a second run create no
 	// folder, no binding and no entry.
-	rev, _, err := t.Store.Read(ctx)
+	rev, err := workspaceInitReadRoster(ctx, t.Store)
 	if err != nil {
 		return err
 	}
@@ -304,4 +304,20 @@ func workspaceInit(cmd *cobra.Command, d workspaceInitDeps, name string) error {
 	}
 	fmt.Fprintf(out, "the roster is at %s, with %s as the workspace's first admin: what it records is written once and never changed (D2803, R6)\n", t.Store.Path(), callerShown)
 	return nil
+}
+
+// workspaceInitReadRoster reads the workspace's own roster node through C1's
+// Store: the revision a conditional write is made under, and whether the node is
+// there at all.
+//
+// It is a helper of its own rather than a call inside the command for the one
+// reason the no-prompt lint gives it: `Read(ctx)` — one argument on a receiver —
+// is a shape a person can be asked with, and the lint exempts a site by file and
+// FUNCTION, skipping every read in it without looking at which kind it is. Keyed
+// to the command's body the exemption would also silence a confirmation somebody
+// added to any later branch of it; keyed to this line it covers the store read
+// and nothing else.
+func workspaceInitReadRoster(ctx context.Context, s workspace.Store) (workspace.Revision, error) {
+	rev, _, err := s.Read(ctx)
+	return rev, err
 }
