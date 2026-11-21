@@ -459,6 +459,15 @@
         "batch.network": {
           "default": "unset = the project's default network"
         },
+        "batch.opt_in": {
+          "default": "unset = the installation has not opted in, so no compute root is applied"
+        },
+        "batch.seal_key.public_key": {
+          "default": "unset = none: without the key fact a sealed launch is refused"
+        },
+        "batch.seal_key.version": {
+          "default": "unset = none: without the key fact a sealed launch is refused"
+        },
         "batch.secrets": {
           "default": "unset = none"
         },
