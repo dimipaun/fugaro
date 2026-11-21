@@ -256,7 +256,7 @@ off the door rather than taking it as a parameter). The note is the update
 door's and is not printed by those doors.
 
 The rows that are not simply safe are the ones the note has to own, and they are
-eight (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
+nine (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
 raise, which can bound a run that bootstrapped under `observe` from its next
 lease and is the operator's own caps becoming effective rather than the update
 stopping a run — recorded here rather than deferred, the alternative being the
@@ -277,8 +277,11 @@ because every launch of the repository after this update is proxied and holds no
 token; the creation
 fact, which a run of the release behind re-reads per command and refuses once it
 is rewritten, so that run keeps the typed confirmation it would have applied
-without; and a retirement, which deletes an orphaned job and takes the executions
-running on it.
+without; the workspace credentials node the workspace stage publishes, which the
+workspace's own service re-reads as it serves, so a member this run takes out of
+the table, or an entry it unshares, stops being served at that service's next
+read (R13); and a retirement, which deletes an orphaned job and takes the
+executions running on it.
 Each clause is the question its own step is gated on rather than the whole of its
 decision (`budgetModeBindsRuns`, `policyReadsLive`, `credentialsWindowOpens`,
 `tokensPublishReachesRuns`, `bitbucketProxySwitchTurns`, `markerConverges`,

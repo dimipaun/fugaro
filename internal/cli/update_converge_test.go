@@ -1872,7 +1872,7 @@ func wsOwnerConvergeRig(t *testing.T, ownerExtra string) *convergeRig {
 	// FUGARO_CONFIG, so the config an update reads and writes is the
 	// installation's own file in the XDG projects directory, which
 	// registerInstallation is what takes from the rig's seed.
-	r.appendConfig(t, ownerExtra)
+	appendWorkspaceConfig(t, r.initRig, ownerExtra)
 	registerInstallation(t, r.initRig)
 	return r
 }
