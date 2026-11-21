@@ -1251,7 +1251,7 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // read as a flag either, and every one of them is held to a grammar in main
     // before this argv exists (`ipc.ts`'s `modelId`, `modelRoute` and
     // `modelPrice`).
-    operation: MODELS_ADD_PLAN_OPERATION,
+    operation: 'models.add.plan',
     words: ['models', 'add', '--no-apply', '--dry-run', '--json'],
     takesProject: true,
     args: [
@@ -1276,7 +1276,7 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // argv the operator confirmed is the argv this row builds: main holds the
     // plan's own document digest and the argv beside it and re-runs *that*, never
     // one a renderer sends again (`src/main/modelsadd.ts`).
-    operation: MODELS_ADD_OPERATION,
+    operation: 'models.add',
     words: ['models', 'add', '--no-apply'],
     takesProject: true,
     args: [
