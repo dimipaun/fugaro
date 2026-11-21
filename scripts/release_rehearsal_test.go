@@ -454,3 +454,54 @@ func TestReleaseRefusesWithoutASandboxProject(t *testing.T) {
 		})
 	}
 }
+
+// TestReleaseSkipRehearsalCutsTheTagWithoutOne: the owner's ruling of 2026-11-21
+// is one release without the pre-tag rehearsal, because the sandbox it builds
+// in was not set up. The flag is the whole of the exemption: with no sandbox
+// project named the run still reaches the tag, the fake CLI is never called, no
+// record is read, and the summary and stderr both say the rehearsal is owed.
+func TestReleaseSkipRehearsalCutsTheTagWithoutOne(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with("FUGARO_LIVE_GCP_PROJECT=")
+
+	res := runRelease(t, r, g, "", "0.12.0", "--skip-rehearsal")
+	res.requireSuccess(t)
+
+	if !refExists(t, r.bare, "refs/tags/v0.12.0") {
+		t.Errorf("the run with --skip-rehearsal did not cut the tag:\n%s", res.out)
+	}
+	requireNoRehearsalCalls(t, r)
+	for _, want := range []string{
+		"--skip-rehearsal: this release is cut WITHOUT the pre-tag rehearsal",
+		"rehearsal: SKIPPED on the owner's explicit word of 2026-11-21",
+		"it is owed",
+	} {
+		if !strings.Contains(res.out, want) {
+			t.Errorf("the output does not say %q:\n%s", want, res.out)
+		}
+	}
+	if strings.Contains(res.out, "rehearsal: this repository's own go catalog entry built for real") {
+		t.Errorf("the summary claims a rehearsal that did not run:\n%s", res.out)
+	}
+}
+
+// TestReleaseSkipRehearsalIsOnlyWhatTheFlagSays: without the flag nothing about
+// the rehearsal changed -- a run with no sandbox project still refuses before the
+// branch -- and the dry-run plan with the flag names the skipped step instead of
+// the billable build.
+func TestReleaseSkipRehearsalIsOnlyWhatTheFlagSays(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with("FUGARO_LIVE_GCP_PROJECT=")
+
+	runRelease(t, r, g, "", "0.12.0").requireFailureContaining(t, "FUGARO_LIVE_GCP_PROJECT is not set")
+
+	dry := runRelease(t, r, g, "", "0.12.0", "--dry-run", "--skip-rehearsal")
+	dry.requireSuccess(t)
+	if !strings.Contains(dry.out, "4b. SKIPPED: --skip-rehearsal") {
+		t.Errorf("the dry-run plan does not name the skipped rehearsal:\n%s", dry.out)
+	}
+	if strings.Contains(dry.out, "ONE billable Cloud Build") {
+		t.Errorf("the dry-run plan still lists the billable build:\n%s", dry.out)
+	}
+	requireNoRehearsalCalls(t, r)
+}
