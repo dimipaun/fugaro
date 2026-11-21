@@ -301,6 +301,15 @@ the stage runs (Constraint 1). Commits are now born stamped.
 
 - **State:** Kept — no `Checks` on `gitprov.Provider`. image-setup's IS11 smokes a catalog entry's
   prebuilt image, which is a build-time contract check and not a commit's CI status.
+- **Closed 2026-11-21 by the owner, as superseded.** The State line above is kept as it was
+  written on 2026-11-10 and is no longer true: the orchestrator's E8 (#2387) put
+  `Checks(ctx, number, sha)` on `gitprov.Provider`, with the GitHub read in
+  `internal/gitprov/github/checks.go`, a Bitbucket one in
+  `internal/gitprov/bitbucket/escalation.go` and the fake's. The gate this task waited on never
+  opened (D3 and D4 merged without it), so nothing of B2 is built under its own name: no
+  `bitbucket/statuses.go`, no `TestLiveGitHubChecks`, and Check 231 stays unrun. The rows below
+  that name B2 (the edges, the levels, the shared-files table, Check 231 and the operator note)
+  are kept as written and wait for no one.
 
 - **Files:** `internal/gitprov/gitprov.go` (`Checks(ctx, sha) ([]CheckState, error)`),
   `internal/gitprov/github/checks.go` (new), `internal/gitprov/bitbucket/statuses.go` (new),
