@@ -134,6 +134,32 @@ func TestResolveLayerPrecedence(t *testing.T) {
 			Request{Paths: []string{"c/x"}},
 			Hotfix, FromArea, []string{"chore"},
 		},
+		{
+			"a carried request lowers no repository default (T5.2, LF5 §3a)",
+			Config{Repo: Critical}, Request{Level: POC, Carried: true},
+			Critical, FromRepo, nil,
+		},
+		{
+			"a carried request lowers no area rule either",
+			Config{RepoAreas: []Area{{Name: "pay", Match: "p/**", Level: Critical}}},
+			Request{Level: POC, Carried: true, Paths: []string{"p/x.go"}},
+			Critical, FromArea, []string{"pay"},
+		},
+		{
+			"a carried request raises",
+			Config{Repo: Startup}, Request{Level: Critical, Carried: true},
+			Critical, FromRequest, nil,
+		},
+		{
+			"a carried request for the level the layers set leaves them named",
+			Config{Repo: Pro}, Request{Level: Pro, Carried: true},
+			Pro, FromRepo, nil,
+		},
+		{
+			"a carried hotfix is still taken whole",
+			Config{Repo: Critical}, Request{Level: Hotfix, Carried: true},
+			Hotfix, FromRequest, nil,
+		},
 	}
 	for _, c := range cases {
 		got := Resolve(c.cfg, c.req)
@@ -347,6 +373,11 @@ func TestLayersRigorAnswersOnlyBesideARequestBelowThem(t *testing.T) {
 		{"a request for hotfix", Request{Level: Hotfix}, ""},
 		{"a request for hotfix over an area", Request{Level: Hotfix, Paths: []string{"p/x.go"}}, ""},
 		{"no request at all", Request{}, ""},
+		// A carried request never lowers, so it leaves no row behind it: the
+		// run is at the layers' own level and reads their row as its own
+		// (task's Spec.RigorCarried, T5.2, D1844).
+		{"a carried request that the layers outrank", Request{Level: POC, Carried: true}, ""},
+		{"a carried request below an area the paths match", Request{Level: POC, Carried: true, Paths: []string{"p/x.go"}}, ""},
 	} {
 		if got := LayersRigor(cfg, c.req, ""); got != c.want {
 			t.Errorf("%s: LayersRigor = %q; want %q", c.name, got, c.want)

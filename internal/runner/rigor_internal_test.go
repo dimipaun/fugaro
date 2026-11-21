@@ -358,6 +358,79 @@ rigor:
 	}
 }
 
+// TestACarriedModeNeverLowersTheSettings: a mode a launch carried from a
+// record rather than one its caller typed on this run — the one a --pr
+// follow-up keeps from its pull request, and the parent's own answer a task
+// filed from a run carries (task.Spec.RigorCarried) — is raise-only against
+// the layers (T5.2, LF5 §3a, D1844). A repository whose settings have risen
+// since the parent ran therefore holds the run at its own level, and the mode
+// kept beside the request stays empty, because a carried request never takes
+// the run below the layers and so leaves no floor row behind it. The other
+// half is a carried mode that does outrank them: it is the answer, and the
+// record names the request as the layer that decided it.
+//
+// This is the launcher's rule too: internal/cli resolves the mode it prices,
+// gates and asks the levels of through the same Request (Spec.RigorRequest),
+// so a follow-up cannot be launched as one mode and run as another.
+func TestACarriedModeNeverLowersTheSettings(t *testing.T) {
+	base := `version: 1
+project: aurora
+git: { provider: github }
+rigor: { default: critical }
+` + workflowsYAML
+	for _, tc := range []struct {
+		name  string
+		spec  *task.Spec
+		files map[string]string
+		cfg   *config.Config
+		setup func(*run)
+	}{
+		{
+			name:  "a task filed from a parent run",
+			spec:  &task.Spec{Rigor: rigor.Startup, FollowUpOf: &task.FollowUpOf{Run: "20261024-120000-abcd", Keys: []string{"fix"}}},
+			files: map[string]string{"README.md": "hello\n", "fugaro.yaml": base},
+		},
+		{
+			name:  "a --pr follow-up",
+			spec:  &task.Spec{Rigor: rigor.Startup, Branch: "fugaro/20261024-120000-abcd", PR: 7, PreviousRun: "20261024-120000-abcd"},
+			files: map[string]string{"README.md": "hello\n"},
+			cfg:   &config.Config{RepoRigor: &config.Rigor{Default: rigor.Critical}},
+			setup: func(r *run) { r.follow = &followState{} },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := rigorRun(t, tc.files, tc.cfg, tc.spec)
+			if tc.setup != nil {
+				tc.setup(r)
+			}
+
+			r.bootstrapRigor(context.Background())
+
+			rg := r.rec.Rigor
+			if rg == nil || rg.LevelOf() != rigor.Critical || rg.From != rigor.FromRepo {
+				t.Fatalf("the block = %+v; want critical from the repository: a carried startup may not lower the settings", rg)
+			}
+			if got := r.layersRigor; got != "" {
+				t.Errorf("the mode kept beside the request = %q; want none: a carried request never goes below the layers", got)
+			}
+		})
+	}
+
+	raiseBase := `version: 1
+project: aurora
+git: { provider: github }
+rigor: { default: startup }
+` + workflowsYAML
+	raised, _ := rigorRun(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": raiseBase},
+		nil, &task.Spec{Rigor: rigor.Critical, FollowUpOf: &task.FollowUpOf{Run: "20261024-120000-abcd", Keys: []string{"fix"}}})
+
+	raised.bootstrapRigor(context.Background())
+
+	if rg := raised.rec.Rigor; rg == nil || rg.LevelOf() != rigor.Critical || rg.From != rigor.FromRequest {
+		t.Errorf("a carried critical over a startup repository resolved %+v; want critical from the request: a carry may still raise", rg)
+	}
+}
+
 // TestAHotfixRequestIsTheRunsOwnAndLastsOneRun: the owner's ruling of
 // 2026-11-20 (point 4) puts no gate, no second approval and no question over
 // `--mode hotfix` — who may ask is the door that already exists — and it writes

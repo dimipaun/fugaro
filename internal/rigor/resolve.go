@@ -122,7 +122,8 @@ type Request struct {
 	// Level is the level the run's own task asks for (fugaro run --mode); ""
 	// asks for none. It is the narrowest rank of all: it settles the level
 	// whether it raises or lowers one a layer set (the owner's LD3), and only
-	// a floor, which is outside every layer, holds it back (LF5).
+	// a floor, which is outside every layer, holds it back (LF5) — unless it
+	// was carried rather than asked for (Carried below).
 	//
 	// Hotfix is the one level the request takes a run to outright rather than
 	// by outranking what the layers resolved (Rigor.PerRun): it is off the
@@ -146,6 +147,15 @@ type Request struct {
 	// escalation, which turns the adversarial pass on for the run whatever
 	// level it is at (internal/runner/plan.go).
 	Level Rigor
+	// Carried marks a Level the launch took from a record rather than one its
+	// caller typed on this run: the level a --pr follow-up keeps from its pull
+	// request, and the parent run's own answer a task filed from one carries
+	// (internal/task's Spec.RigorCarried, T5.2, F14, D1844). A carried level
+	// may raise the level the layers resolve and never lower it (LF5 §3a), so
+	// a record older or weaker than the configuration it is read under leaves
+	// the run where the configuration put it: the carry is a starting point
+	// and not a request this run's caller made.
+	Carried bool
 	// Repo is the repository the run is for, in the "owner/name" spelling a
 	// task's own Repo carries; "" for a caller that has none. It is what the
 	// project layer's members are matched on (LD4) and what
@@ -177,9 +187,11 @@ type Request struct {
 // level could be left behind (D8, LF5: a request lowers a default and never a
 // floor). A request that raised the level, or that asked for the level the
 // layers already set, leaves the run at or above them, and there is no second
-// row to read. Hotfix is the owner's ruling of 2026-11-20: a hotfix run is
-// held to hotfix's own row and nothing beside it, so a floor written for pro
-// or critical does not reach it, and the answer here is none.
+// row to read. A request a launch carried (Request.Carried) never lowers at
+// all, so it leaves no row behind either. Hotfix is the owner's ruling of
+// 2026-11-20: a hotfix run is held to hotfix's own row and nothing beside it,
+// so a floor written for pro or critical does not reach it, and the answer
+// here is none.
 //
 // It is the level whose floor holds beside the requested one's, which is why
 // the two readers of an owner's floor — internal/runner's resolveLevelsForcing
@@ -188,7 +200,7 @@ type Request struct {
 // Reached does, so a caller asking at each of D22's moments keeps the
 // strictest answer its layers have given.
 func LayersRigor(cfg Config, req Request, reached Rigor) Rigor {
-	if !Known(req.Level) || req.Level.PerRun() {
+	if !Known(req.Level) || req.Level.PerRun() || req.Carried {
 		return ""
 	}
 	layers := Resolve(cfg, Request{Repo: req.Repo, Paths: req.Paths, Reached: reached}).Level
@@ -241,9 +253,14 @@ type Resolved struct {
 // holds the level a run has already been at.
 //
 // The request is the strongest rank for every level a run may ask for
-// (Rigor.PerRun says which those are). A request that names no level, or the
-// very level the order already resolved, leaves the rank that set it named:
-// that is the narrower reason for the same answer.
+// (Rigor.PerRun says which those are), and it is so for a level its caller
+// typed on this run. A level a launch carried from a record instead
+// (Request.Carried: a --pr follow-up's, a filed task's) may only raise the
+// level the layers resolved and never lower it (LF5 §3a, T5.2, D1844), so a
+// carried level the layers already reach or outrank leaves the rank that set
+// it named. A request that names no level, or the very level the order already
+// resolved, leaves that rank named too: the narrower reason for the same
+// answer.
 //
 // It is the only place any of that is decided: no other package orders levels,
 // and this function is what docs/project-layer.md §2's one rule states for a
@@ -270,7 +287,11 @@ func Resolve(cfg Config, req Request) Resolved {
 	if matched := Select(cfg.RepoAreas, req.Repo, req.Paths); len(matched) > 0 {
 		level, from = Strictest(RigorsOf(matched)...), FromArea
 	}
-	if Known(req.Level) && req.Level != level {
+	// A carried request is the one that may only raise: it decides when it is
+	// a level a request takes whole (Rigor.PerRun) or when it outranks what
+	// the layers resolved, and is left out when they reach or outrank it.
+	if Known(req.Level) && req.Level != level &&
+		(req.Level.PerRun() || !req.Carried || req.Level.Rank() > level.Rank()) {
 		level, from = req.Level, FromRequest
 	}
 	if Known(req.Reached) && req.Reached.Rank() > level.Rank() {

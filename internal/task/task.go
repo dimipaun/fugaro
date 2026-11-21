@@ -342,6 +342,14 @@ type Spec struct {
 	// off the axis, an operator's own mode (D12) — so a record carrying one
 	// leaves the field empty, like any other record that imposes nothing.
 	//
+	// A mode a launch carried from a record rather than one its caller typed —
+	// the follow-up's, and the parent run's that a filing launcher writes into
+	// a task of its own (internal/cli's followUpsParentMode, D1844) — is
+	// raise-only against the layers too, which is what RigorCarried reports
+	// and what the resolver holds it to (rigor.Request.Carried, LF5 §3a): the
+	// carry says where the work was left, never that this run may run below
+	// the configuration its repository has since resolved.
+	//
 	// It is called rigor and not mode because Spec.Mode is already taken: it
 	// is the *recipe's* mode (implement, review, artifact), a different
 	// question with a different vocabulary, and a spec that wrote this one
@@ -1581,6 +1589,24 @@ func Parse(data []byte) (*Spec, error) {
 
 // IsFollowUp reports whether the task continues an existing Fugaro PR.
 func (s *Spec) IsFollowUp() bool { return s.Branch != "" }
+
+// RigorCarried reports whether Rigor is a mode this launch carried from a
+// record rather than one its own caller typed on this run: a --pr follow-up
+// keeps the mode its pull request recorded (IsFollowUp, T5.2, F14), and a task
+// a filing launcher wrote carries the parent run's own answer (FollowUpOf,
+// D1844). Either way the mode says where the work was left, so it may raise
+// the level the layers resolve and never lower it (LF5 §3a) — which is what
+// rigor.Request.Carried tells the resolver, and the one reason a resolution
+// reads a spec's Rigor any differently from a flag typed on this run.
+func (s *Spec) RigorCarried() bool { return s.IsFollowUp() || s.FollowUpOf != nil }
+
+// RigorRequest is the resolver's input for this spec's own request (LD3, T5.1,
+// T5.2): the mode it asks for, over the paths given — the ones the launch
+// declared, or the paths a moment of the run measured — and whether that mode
+// was carried rather than asked for here.
+func (s *Spec) RigorRequest(paths []string) rigor.Request {
+	return rigor.Request{Level: s.Rigor, Paths: paths, Carried: s.RigorCarried()}
+}
 
 // Validate checks the spec's own rules; it does not look at the repository.
 func (s *Spec) Validate() error {

@@ -80,7 +80,11 @@ func (r *run) roundRigor(ctx context.Context) {
 // rank of the mode's order (LD3), so it is what a later, different read is
 // settled against, and giving it to all three moments is what makes a
 // requested level hold for the whole run rather than for the moment it arrived
-// at. Request.Reached is the other half of that: the level the run has already
+// at. A mode the spec carried rather than asked for — a --pr follow-up's, a
+// filed task's — is raise-only against the layers (Request.Carried, task's
+// Spec.RigorRequest), so a record weaker than the configuration the run reads
+// never takes it below that configuration, at any of the three moments.
+// Request.Reached is the other half of that: the level the run has already
 // reached is folded in as well, so a moment whose own read comes out weaker
 // never takes the run down (D22).
 //
@@ -90,7 +94,8 @@ func (r *run) roundRigor(ctx context.Context) {
 // matched, not the level each moment resolved.
 func (r *run) recordRigor(at string, paths []string) {
 	before := r.reachedRigor()
-	req := rigor.Request{Level: r.spec.Rigor, Paths: paths, Reached: before}
+	req := r.spec.RigorRequest(paths)
+	req.Reached = before
 	res := rigor.Resolve(r.rigorCfg, req)
 	// The floor the run is held to is read off the level it is at, so a request
 	// that took the run below the layers has to leave the level they resolved

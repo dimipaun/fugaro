@@ -180,7 +180,11 @@ the request is the narrowest rank of the order below, so it decides whether it
 asks for more or for less than the configuration says, and the launcher notes the
 one request that decides nothing — the one naming the very mode the configuration
 already resolves. What a request never goes below is a declared floor, which is a
-review level and not a mode (§[The floor](#the-floor)). `hotfix` is the one mode
+review level and not a mode (§[The floor](#the-floor)). A mode a launch
+**carried** from a record rather than one typed on this run is the one kind of
+request that may only raise the configuration's answer: the level a `--pr`
+follow-up keeps from its pull request, and the parent's own answer a task filed
+from a run carries (the follow-up paragraph below, and D1844). `hotfix` is the one mode
 the request takes whole rather than by rank: it is off the axis and ranks below
 every other mode, so it needs no opt-in anywhere — from a terminal, from a coding
 agent's session, on a first run or on a follow-up (§[The hotfix mode](#the-hotfix-mode)).
@@ -237,7 +241,12 @@ differences worth knowing:
 
 **A follow-up** (`fugaro run --pr N`) keeps the mode the pull request's runs
 recorded, and may only raise it — with `--mode` or without. A follow-up is a
-continuation of the same work, so it may not review less than the run it follows.
+continuation of the same work, so it may not review less than the run it follows,
+nor less than the repository resolves today: the mode it keeps is carried rather
+than asked for, so it is raise-only, and a configuration that has risen since
+that run holds the follow-up at the higher mode. A task filed from a run's
+deferred findings carries the parent's mode the same way, and is raise-only
+against its own repository's settings for the same reason.
 A recorded `hotfix` is the one mode it does not keep: the follow-up re-resolves
 from its layers rather than reaching the mode through a launch that asked for
 nothing. Asking for it on a follow-up works exactly as it does on a first run:

@@ -555,13 +555,15 @@ func TestFollowupsDropsARecordedHotfix(t *testing.T) {
 
 // TestFollowupsNeverLowersAFloor: the mode a filed task carries is the
 // parent's own answer and never a floor the launcher resolved — a run below
-// the repository's floor is written as it is. The request is the narrowest rank
-// of the resolver's order (LD3), so the filed run is at the parent's own mode
-// even where the layers resolve a stricter one; what the layers still hold is
-// the floor, which is read at the mode they resolved when the request went
-// below them (rigor.LayersRigor, D6, D8, LF5, D1844). A block no reader may
-// trust imposes nothing at all, which is what the record of a run that died
-// before its first resolution says.
+// the repository's floor is written as it is, and the floors the run itself
+// resolves through can only raise it (D6, D1844). The mode is one the launch
+// *carried* rather than one it asked for (task.Spec.RigorCarried), so the
+// resolver holds the run to raise-only (rigor.Request.Carried, LF5 §3a): a
+// repository that resolves a stricter mode than the parent's, or a rule the
+// child's own paths match, decides this run's level, and no floor row is read
+// beside a request that never went below the layers (rigor.LayersRigor). A
+// block no reader may trust imposes nothing at all, which is what the record
+// of a run that died before its first resolution says.
 func TestFollowupsNeverLowersAFloor(t *testing.T) {
 	f := newCloudFixture(t)
 	launchable(t, f)
@@ -583,15 +585,17 @@ func TestFollowupsNeverLowersAFloor(t *testing.T) {
 	if len(spec.Paths) != 0 {
 		t.Fatalf("paths = %v, want none", spec.Paths)
 	}
-	// The request settles the mode (LD3), and the floor is what the layers
-	// hold: poc is below the mode a repository that configures nothing
-	// resolves, so the run is at poc and the floor is read at pro.
+	// The request is raise-only, so the floors hold whatever the record said:
+	// poc is below the mode a repository that configures nothing resolves, and
+	// the filed run is at that mode rather than at the parent's.
 	cfg := rigor.Config{}
-	if got := rigor.Resolve(cfg, rigor.Request{Level: spec.Rigor}).Level; got != rigor.POC {
-		t.Fatalf("the run resolves %q, want the parent's own %q", got, rigor.POC)
+	if got := rigor.Resolve(cfg, spec.RigorRequest(spec.Paths)).Level; got != rigor.Default {
+		t.Fatalf("the run resolves %q, want its floor %q", got, rigor.Default)
 	}
-	if layers := rigor.LayersRigor(cfg, rigor.Request{Level: spec.Rigor}, ""); layers != rigor.Default {
-		t.Fatalf("the mode the layers resolved beside the request = %q, want %q: the floor is read there", layers, rigor.Default)
+	// A request that never went below the layers leaves no second floor row to
+	// read: the run is at the layers' own mode and reads that row.
+	if layers := rigor.LayersRigor(cfg, spec.RigorRequest(spec.Paths), ""); layers != "" {
+		t.Fatalf("the mode the layers resolved beside the carried request = %q, want none", layers)
 	}
 
 	// A block outside the vocabulary is not a decision anybody made, and is
