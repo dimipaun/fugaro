@@ -29,6 +29,7 @@ import { validateMessage } from '../../../shared/mailbox-schema/index.js';
 import { MemorySecureStore, MemorySettingsStore, SecretStore, SettingsStore, secret } from '../accounts/index.js';
 import { createMailboxClient } from '../mailbox/client.js';
 import { MemoryConnection } from '../mailbox/connection.js';
+import { verifyMac } from '../mailbox/mac.js';
 import { MemoryMailboxStore } from '../mailbox/store.js';
 import { MemorySpeaker } from '../mailbox/speaker.js';
 import { CONTROL_DEFAULTS } from './controls.js';
@@ -184,7 +185,13 @@ test('quiet hours travel as a window with the zone NAME, and clearing them publi
   const on = await w.door.setQuietHours({ start: 1320, end: 420 });
   assert.equal(on.ok, true);
   assert.equal(on.published.ok, true);
-  assert.deepEqual({ ...(await w.inbox())[0].prefs.quiet_hours }, { zone: ZONE, start: 1320, end: 420 });
+  const record = (await w.inbox())[0];
+  assert.deepEqual({ ...record.prefs.quiet_hours }, { zone: ZONE, start: 1320, end: 420 });
+  // A window is a nested object, so the tag is the interesting half: the bytes
+  // the sender signs are the consumer's own canonical ones, and a window that
+  // did not survive them would be a registration the consumer refuses.
+  assert.equal(validateMessage(record).ok, true);
+  assert.equal(verifyMac(record, MAC_KEY, 'inbox'), true);
 
   const off = await w.door.clearQuietHours();
   assert.equal(off.ok, true);
