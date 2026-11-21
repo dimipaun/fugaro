@@ -4502,3 +4502,75 @@ func TestWorkspaceBeatSinceIsTheReleaseTheDocsName(t *testing.T) {
 		}
 	}
 }
+
+// TestIdentitySinceRefusesAnOlderImage is identitySince's launch gate and LM8's
+// red step: a launch that holds a ticket for its run's identity is not put on a
+// job image whose runner cannot claim it. From the release that claims on, the
+// launcher signs nothing and writes no sealed object (R7, LM6), so such an
+// execution carries the ticket and nothing else; a runner older than that
+// release looks for the sealed token under tokens/ where its launcher no longer
+// writes one, finds nothing, and stops at bootstrap with no identity at all —
+// with the launch already paid for.
+//
+// The judge is the one every *Since gate uses (checkImageSince, and its
+// checkout: clone twin checkCloneImageSince for a workflow with no build record
+// of its own), and the rows are the boundary itself: the release below the
+// constant is refused, the constant's own release and the one above it are
+// admitted. The refusal names the move that fixes it — the image refresh
+// `fugaro update` performs — and it carries no alt, because the ticket is the
+// whole of what a run's identity travels on and an older image cannot be given
+// one another way.
+func TestIdentitySinceRefusesAnOlderImage(t *testing.T) {
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	older := shiftRelease(t, identitySince, -1)
+
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+older)
+	err := env.identityGate(context.Background(), appSlug, spec, "base", false, io.Discard)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused on a job image older than %s", err, identitySince)
+	}
+	for _, want := range []string{
+		identitySubject,
+		"needs a job image whose runner knows " + identityKnows,
+		"fugaro " + identitySince + " or later",
+		"was built from base image ghcr.io/dimipaun/fugaro-base:" + older + ", release " + older,
+		imageGateRemedy + ", in your own terminal window (never in a coding agent's session",
+		"its images stage verifies this release's base base image, pins it by digest through the installation's remote repository and rebuilds the workflow's image",
+		causeMarkerJobImage,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+
+	for _, rel := range []string{identitySince, shiftRelease(t, identitySince, 1)} {
+		t.Run("a job image at "+rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			env := fileEnv(t, f)
+			writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+rel)
+			if err := env.identityGate(context.Background(), appSlug, spec, "base", false, io.Discard); err != nil {
+				t.Fatalf("a job image whose runner knows the claim was refused: %v", err)
+			}
+		})
+	}
+
+	// A checkout: clone workflow has no build record to judge: its gate is the
+	// installation's own base image, through checkCloneImageSince, and the
+	// boundary is the same one.
+	t.Run("a checkout: clone workflow", func(t *testing.T) {
+		f := newCloudFixture(t)
+		f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:"+older+"}\n")
+		env := fileEnv(t, f)
+		err := env.identityGate(context.Background(), appSlug, spec, "base", true, io.Discard)
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want the checkout: clone launch refused", err)
+		}
+		for _, want := range []string{identityKnows, "fugaro update --base base"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the clone refusal does not name %q: %v", want, err)
+			}
+		}
+	})
+}
