@@ -401,7 +401,11 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 		if config.KeyCredentialType(typ) {
 			serves := "the credentials service, which reads the value from the bundle"
 			if config.CredentialServingPath(typ) == config.CredentialPathRunner {
-				serves = "the credentials service, which serves the provider's address and auth out of the bundle's entry for each repository claude_accounts." + pluginwire.Printable(name) + ".allow_data_to names, so no job mounts the key"
+				// The mount a provider job still carries is named rather than
+				// denied: this write enters no version of it, and a line that
+				// said the job mounts the key would send the owner to look at a
+				// container this run left empty.
+				serves = "the credentials service, which serves the provider's address and auth out of the bundle's entry for each repository claude_accounts." + pluginwire.Printable(name) + ".allow_data_to names — the mount of " + pluginwire.Printable(config.CredentialSecret(name)) + " that job carries is left without a version"
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "no job is deployed for %s: a key credential is not a run's Claude account token, so no profile lists it — what carries its key to a call is %s\n", pluginwire.Printable(name), serves)
 		} else {
